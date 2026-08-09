@@ -4,29 +4,33 @@
    (default ON; flip it OFF in Settings or in `vis.yml` via `toggles: {shell: false}`
    to drop the tools). The OS process jail is the containment layer while active.
 
-   FIVE model-facing bindings — `shell_run`, `shell_background`, `shell_logs`,
-   `shell_type`, `shell_stop` — bound BARE in the flat Python sandbox next to
-   `git` / `cat` / `grep`. One tool is one verb with one satisfiable schema and
-   one result shape: a single `op`-discriminated tool made every precondition
-   conditional prose, and the model discovered the contract by failing a call.
+   ONE model-facing tool — `shell_run` — bound BARE in the flat Python sandbox
+   next to `git` / `cat` / `grep`. `wait` says how long the CALLER waits, and it
+   is the only difference there has ever been between a \"run\" and a \"background\"
+   shell, so there is one verb with one schema and one result shape.
 
-   1. `await shell_run([\"ls\"])` — `bash -lc` in the workspace root, bounded by an
-      internal deadline. Output is bounded at READ time to a head+tail budget per
-      stream, so only the MIDDLE of a huge stream is dropped, never its start or
-      end (a chatty-then-killed command cannot balloon the heap). A non-zero exit
-      is DATA the model reads, not an error.
+   1. `await shell_run([\"ls\"])` — `bash -lc` in the workspace root, waited for up
+      to 120s. Output is bounded at READ time to a head+tail budget per stream, so
+      only the MIDDLE of a huge stream is dropped, never its start or end (a
+      chatty-then-killed command cannot balloon the heap). A non-zero exit is DATA
+      the model reads, not an error.
 
-   2. `await shell_background([\"npm run dev\"], id=\"dev\")` — spawned under a REAL
-      pty, its merged output streamed verbatim to a log FILE, registered as a
-      session RESOURCE. Prefer this for long builds, test suites, servers,
-      watchers, and interactive commands; reserve `shell_run` for short bounded
-      work.
+   2. `await shell_run([\"npm run dev\"], {\"wait\": 0, \"id\": \"dev\"})` — the wait
+      that expires immediately: spawned under a REAL pty, its merged output
+      streamed verbatim to a log FILE, registered as a session RESOURCE, and
+      answered in the same run shape with `timed_out` true. Prefer it for servers,
+      watchers, long builds and interactive commands. Re-issuing a LIVE id returns
+      that shell instead of a second copy of it.
 
-   3. `await shell_logs(\"dev\")` reads that log from a byte OFFSET and returns
-      NOW, `await shell_type(\"dev\", \"y\")` types into the pty,
-      `await shell_stop(\"dev\")` kills the tree. NOTHING blocks on the model's
-      behalf: waiting is control flow, and control flow belongs in a bounded
-      `python_execution` loop that can break on what it actually read.
+   3. A run that outstays a non-zero wait is not lost either: the process keeps
+      running under the id the call already answered with.
+
+   `shell_logs` / `shell_type` / `shell_stop` are bare sandbox verbs, NOT native
+   tools: they operate on a handle the caller already holds, which is control flow,
+   and control flow belongs in a bounded `python_execution` loop that can break on
+   what it actually read. `await shell_logs(\"dev\")` reads the log from a byte
+   OFFSET and returns NOW, `await shell_type(\"dev\", \"y\")` types into the pty,
+   `await shell_stop(\"dev\")` kills the tree. NOTHING blocks on the model's behalf.
 
    `shell-dispatch` survives as the INTERNAL grammar the Python-extension entry
    points use, since those hand-author an options map and genuinely need an `op`.
@@ -1255,7 +1259,7 @@
         {:result (assoc (bg-core "background" id (bg-entry session id))
                    "already_running" false
                    "note" nil)
-         :op :shell-background
+         :op :shell-run
          :metadata
          {:command script :pid (:pid p) :started-at-ms t0 :finished-at-ms t0 :duration-ms 0}}))))
 
@@ -1299,7 +1303,7 @@
                                    "\"). To start a fresh process, first run await shell_stop(\""
                                    id
                                    "\")."))
-             :op :shell-background
+             :op :shell-run
              :metadata {:command (:script live)
                         :pid (:pid (:proc live))
                         :started-at-ms (:started-at live)
@@ -1402,6 +1406,70 @@
     (.start))
   nil)
 
+(defn- live-bg-entry
+  "The registry entry for `id` when its process is STILL RUNNING, else nil. One
+   place decides \"is this handle alive\", so a start, a re-issue and a stop all
+   agree about it."
+  [session id]
+  (when-let [e (bg-entry session id)]
+    (when (and (:proc e) ((:alive? (:proc e)))) e)))
+
+(defn- live-run-result
+  "A named run whose shell is ALREADY live: the same run shape, answering with the
+   process that exists instead of spawning a second copy of it. Re-issuing an id is
+   how a caller re-attaches to work it already started, so this is a success and
+   never a refusal, and `timed_out` is true because nothing was waited for."
+  [id entry]
+  (let [t (now-ms)]
+    (extension/success
+      {:result (shell-result "run"
+                             {"id" id
+                              "cwd" (:dir entry)
+                              batch/commands-key (mapv #(command-result {"command" (str %)
+                                                                         "started" true})
+                                                       (:commands entry))
+                              "started" true
+                              "exit" nil
+                              "duration_ms" 0
+                              "timed_out" true
+                              "note" (str "Shell '"
+                                          id
+                                          "' was ALREADY running — nothing was restarted. Read it"
+                                          " with await shell_logs(\""
+                                          id
+                                          "\", offset=0) and stop it with await shell_stop(\""
+                                          id
+                                          "\").")})
+       :op :shell-run
+       :metadata {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}})))
+
+(defn- run-of-background
+  "A `wait=0` start answered in the RUN shape. The wait is the ONLY difference
+   between a run and a background shell, so the two must not answer with two
+   different maps: `id`, `commands` and `timed_out` are read the same way whether
+   the caller waited two minutes or none at all. `timed_out` is true because that
+   is literally what happened — the wait expired at once — and `exit` is nil
+   because nothing was waited for."
+  [r]
+  (let [m (:result r)]
+    (assoc r
+      :result (shell-result "run"
+                            {"id" (get m "id")
+                             "cwd" (get m "cwd")
+                             batch/commands-key (get m batch/commands-key)
+                             "started" true
+                             "exit" (get m "exit")
+                             "duration_ms" 0
+                             "timed_out" true
+                             "timeout_secs" 0
+                             "note" (or (get m "note")
+                                        (str "Started without waiting: the shell runs under id '"
+                                             (get m "id")
+                                             "' — read it with await shell_logs(\"" (get m "id")
+                                             "\", offset=0), type at it with await shell_type, and"
+                                             " stop it with await shell_stop."))})
+      :op :shell-run)))
+
 (defn- shell-batch-impl
   "Run `commands` strictly in input order: each bounded foreground shell call
    finishes before the next begins. Same ordered-batch machinery
@@ -1435,7 +1503,10 @@
      ;; The handle is named after the program, exactly as a background start is,
      ;; and never hijacks an id a live shell already holds.
      id
-     (auto-bg-id session commands)
+     (or (some-> (or (get opts "id") (get opts :id))
+                 str
+                 not-empty)
+         (auto-bg-id session commands))
 
      script
      (str/join "\n" commands)
@@ -1843,7 +1914,9 @@
                  str/trim
                  str/lower-case
                  not-empty)
-         (if id "background" "run"))
+         ;; `run` is the only default there is now: a caller that names an `id` is
+         ;; naming its handle, not selecting a second lifecycle.
+         "run")
 
      ;; Lifecycle stages operate on an existing background shell.  A caller that
      ;; mechanically reuses the start shape may still carry `commands`; it is not
@@ -1896,7 +1969,36 @@
 
     (case op
       "run"
-      (do (reject-text) (shell-batch-impl env (need-commands) opts))
+      ;; `wait` is the ONE knob: it says how long the CALLER waits, and nothing else.
+      ;; `wait=0` is not a mode — it is the wait that expires immediately, which is
+      ;; exactly what "background" meant, so it spawns under a real PTY (stdin stays
+      ;; writable for `shell_type`) and answers in the same run shape.
+      (do (reject-text)
+          (let
+            [cmds
+             (need-commands)
+
+             wait
+             (->pos-long (opt opts :wait) "wait")
+
+             session
+             (:session-id env)
+
+             run-id
+             (or id (auto-bg-id session cmds))
+
+             opts
+             (assoc opts "id" run-id)]
+
+            (if-let [live (live-bg-entry session run-id)]
+              (live-run-result run-id live)
+              (if (and wait (zero? (long wait)))
+                (run-of-background (shell-bg-impl env run-id cmds opts))
+                (shell-batch-impl env
+                                  cmds
+                                  (cond-> opts
+                                    wait
+                                    (assoc "timeout_secs" wait)))))))
 
       "background"
       ;; A start is the one background stage with no prior handle: derive the id from
@@ -2126,19 +2228,14 @@
 
 (defn shell-run
   "`await shell_run([\"git status\"])` — run bash lines in order and return their
-   output. Bounded by an internal deadline so a foreground call cannot hang the
-   turn; long or interactive work is `shell_background`."
+   output. `wait` is how long the CALLER waits (default 120s): the call returns
+   EARLY with the exit code when the command finishes first, and `wait=0` returns
+   at once with the shell running under a pty. Either way the result carries an
+   `id`, so nothing is ever lost to a deadline."
   {:arglists '([commands] [commands opts])}
   [env & args]
   (shell-dispatch env (assoc (shell-call-opts ["commands"] args) "op" "run")))
 
-(defn shell-background
-  "`await shell_background([\"npm run dev\"], id=\"dev\")` — spawn a PTY under `id`
-   and return immediately. Re-issuing the same script returns the LIVE shell instead
-   of spawning a second one. Watch it with `shell_logs`."
-  {:arglists '([commands] [commands opts])}
-  [env & args]
-  (shell-dispatch env (assoc (shell-call-opts ["commands"] args) "op" "background")))
 
 (defn shell-logs
   "`await shell_logs(\"dev\")` — read a background shell's log from a byte offset
@@ -2452,41 +2549,6 @@
 
     {:summary summary :body (when (seq body) body)}))
 
-(defn- render-shell-bg-result
-  "shell op `background` → lifecycle card with the command, pid, and human attach
-   hint in the expandable body."
-  [r]
-  (let
-    [id
-     (get r "id")
-
-     status
-     (or (get r "status") "started")
-
-     summary
-     ;; Text-presentation glyph, never an emoji: U+2699 COG is emoji-presented by
-     ;; iOS/WebKit, so the companion painted a colour pictogram in a monochrome
-     ;; card. `▸` matches the stop card's `✕` and the app's own chevrons.
-     (str "▸ `"
-          id
-          "` "
-          status
-          (when-let [pid (get r "pid")]
-            (str " · pid " pid)))
-
-     details
-     (kv-lines [["id" id] ["status" status] ["pid" (get r "pid")] ["cwd" (get r "cwd")]
-                ["attach" (get r "attach")] ["socket" (get r "socket")]
-                ["uptime" (duration-label (get r "uptime_ms"))]
-                ["already_running" (when (get r "already_running") "true")]])
-
-     body
-     (->> [(shell-section "COMMAND" (format-shell-command (result-script r)) "bash")
-           (shell-section "STATUS" details) (shell-section "NOTE" (get r "note"))]
-          (remove nil?)
-          (str/join "\n\n"))]
-
-    {:summary summary :body (when (seq body) body)}))
 
 (defn- render-shell-logs-result
   "shell op `logs` → compact process/log status plus the window this read returned."
@@ -2726,43 +2788,25 @@
           "ALWAYS a handle: `timed_out` means the WAIT expired, not the process.")
      :description
      (str
-       "Run `bash -lc` lines in order and return their output; drive it from `python_execution`: "
-       "batch the `commands`, read `r[\"commands\"][i][\"stdout\"]`, print only what you need. "
-       "The result is always a handle: on `timed_out` the command is STILL RUNNING under `id`, so "
-       "resume with `shell_logs(id, offset=0)` and `shell_stop(id)` instead of running it again. "
-       "Long or interactive work goes to `shell_background`.")
+       "Run `bash -lc` lines in order; `wait` is how long YOU wait and the only knob. Drive it "
+       "from `python_execution`: batch the `commands`, read `r[\"commands\"][i][\"stdout\"]`, print "
+       "only what you need. The result is always a handle: on `timed_out` the command is STILL "
+       "RUNNING under `id`, so resume with `shell_logs(id, offset=0)`, `shell_type(id, text)` and "
+       "`shell_stop(id)` instead of running it again. `wait=0` returns at once under a real pty — "
+       "that is how a server, a watcher or an interactive command is started — and re-issuing a "
+       "live `id` returns THAT shell rather than a second copy.")
      :render-finish-call-fn render-shell-batch-result
      :render-start-call-fn (shell-start-renderer "run")
      :schema {:type "object"
               :properties {"commands" (batch/commands-property
                                         {:items {:type "string"}
                                          :description "`bash -lc` lines, run strictly in order."})
-                           "cwd" {:type "string"
-                                  :description "Dir under allowed root; relative uses workspace."}}
-              :required ["commands"]
-              :additionalProperties false}
-     :inject-env? true
-     :tag :mutation
-     :on-error-fn (shell-on-error :shell-run)}))
-
-(def shell-background-symbol
-  (vis/symbol
-    #'shell-background
-    {:symbol 'shell-background
-     :native-tool? true
-     :name "shell_background"
-     :result
-     (str "`{id, cwd, commands, pid, status, note}`, plus `already_running` and `uptime_ms` when "
-          "an idempotent re-issue found the shell already live.")
-     :description
-     (str "Spawn a PTY under `id` and return immediately; re-issuing the same script returns the "
-          "LIVE shell instead of a second one. Then poll `shell_logs` in `python_execution`.")
-     :render-finish-call-fn render-shell-bg-result
-     :render-start-call-fn (shell-start-renderer "background")
-     :schema {:type "object"
-              :properties {"commands" (batch/commands-property
-                                        {:items {:type "string"}
-                                         :description "`bash -lc` lines, run strictly in order."})
+                           "wait" {:type "integer"
+                                   :minimum 0
+                                   :maximum 600
+                                   :description
+                                   (str "Seconds to wait, default 120; 0 returns immediately with "
+                                        "the shell still running.")}
                            "id" {:type "string"
                                  :minLength 1
                                  :description "Handle; derived from the program name when omitted."}
@@ -2772,13 +2816,14 @@
               :additionalProperties false}
      :inject-env? true
      :tag :mutation
-     :on-error-fn (shell-on-error :shell-background)}))
+     :on-error-fn (shell-on-error :shell-run)}))
+
 
 (def shell-logs-symbol
   (vis/symbol
     #'shell-logs
     {:symbol 'shell-logs
-     :native-tool? true
+     :native-tool? false
      :name "shell_logs"
      :result
      (str "`{id, text, offset, next_offset, is_eof, is_truncated, status, exit}` — always the same "
@@ -2809,7 +2854,7 @@
   (vis/symbol
     #'shell-type
     {:symbol 'shell-type
-     :native-tool? true
+     :native-tool? false
      :name "shell_type"
      :result "`{id, text, is_enter, status}`."
      :description
@@ -2831,7 +2876,7 @@
   (vis/symbol
     #'shell-stop
     {:symbol 'shell-stop
-     :native-tool? true
+     :native-tool? false
      :name "shell_stop"
      :result "`{id, status, exit, note}`."
      :description "Kill a background shell's process tree and drop its retained logs and resource."
@@ -2846,7 +2891,12 @@
      :on-error-fn (shell-on-error :shell-stop)}))
 
 (def shell-symbols
-  [shell-run-symbol shell-background-symbol shell-logs-symbol shell-type-symbol shell-stop-symbol])
+  ;; ONE native tool for the whole family. `shell_logs` / `shell_type` /
+  ;; `shell_stop` stay bare Python verbs in the sandbox (`:native-tool? false`),
+  ;; because operations on an object the caller already holds are control flow,
+  ;; and control flow belongs in `python_execution` — not in four more schemas the
+  ;; model has to disambiguate before it can run one command.
+  [shell-run-symbol shell-logs-symbol shell-type-symbol shell-stop-symbol])
 
 (defn shell-attach-command
   "`vis-agent extension shell attach <id>` — the human-side passthrough: join a live
@@ -2889,10 +2939,10 @@
 (vis/register-toggle! {:id "shell"
                        :label "Shell commands"
                        :description
-                       (str "Expose the five shell tools: `shell_run` plus the background "
-                            "lifecycle (`shell_background` / `shell_logs` / `shell_type` / "
-                            "`shell_stop`). When OFF none of them is bound. Contained by the "
-                            "OS process jail whenever it is ON.")
+                       (str "Expose `shell_run` — one tool whose `wait` decides whether the "
+                            "caller blocks — plus the handle verbs it hands back (`shell_logs` "
+                            "/ `shell_type` / `shell_stop`). When OFF none of them is bound. "
+                            "Contained by the OS process jail whenever it is ON.")
                        :default true
                        :owner :vis
                        :persist? true
@@ -2902,7 +2952,7 @@
   (vis/extension
     {:ext/name "foundation-shell"
      :ext/description
-     "Five shell tools: `shell_run` for bounded commands, and `shell_background` / `shell_logs` / `shell_type` / `shell_stop` for the background PTY lifecycle; `resource_stop` also stops PTYs. Default-on behind the `shell` toggle and OS process jail."
+     "One shell tool: `shell_run`, whose `wait` decides whether the caller blocks — 0 does not wait at all — plus the handle verbs `shell_logs` / `shell_type` / `shell_stop`; `resource_stop` also stops PTYs. Default-on behind the `shell` toggle and OS process jail."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

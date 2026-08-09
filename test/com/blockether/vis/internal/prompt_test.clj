@@ -113,7 +113,7 @@
           "Direct native tools: single operations" "default for most Python/data work"
           ;; No tool blocks on the model's behalf: the old `shell` op `wait`/`until`
           ;; is gone, so core routes to background + a poll the model can read.
-          "Nothing blocks for you" "`shell_background`" "poll `shell_logs`"
+          "Nothing blocks for you" "`wait=0`" "poll `shell_logs`"
           "functions that accept or return\n  callables"
           "NEVER paste a near-identical loop or block twice" "define once and reuse"
           "second occurrence factor it out and call it" "raw data, not rendered text"
@@ -218,7 +218,7 @@
       ;; Invocation syntax belongs to the shell symbol docs; this supplemental
       ;; block only exposes otherwise-undiscoverable compatibility routing.
       (let [text (#'prompt/sandbox-shims-prompt-block [{:ext/name "foundation-shell"}])]
-        (expect (str/includes? text "active `shell_run`/`shell_background` shell tools"))
+        (expect (str/includes? text "active `shell_run` shell tools"))
         (expect (not (str/includes? text "DISABLED")))
         (expect (str/includes? text "subprocess"))
         (expect (str/includes? text "os.system"))

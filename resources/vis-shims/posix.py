@@ -3,8 +3,8 @@
 # The agent sandbox is deny-by-default (no native access), so CPython's real
 # `subprocess` / `os.system` cannot spawn — they fail with an opaque error.
 # This shim replaces them with a thin layer that DELEGATES to the vis shell
-# TOOLS (`shell_run`, `shell_background`, `shell_logs`, `shell_type`,
-# `shell_stop` — one verb each), so the
+# TOOL `shell_run` and its sandbox verbs (`shell_logs`, `shell_type`,
+# `shell_stop`), so the
 # model's ordinary Python (`subprocess.run([...])`, `os.system(...)`) just works
 # and still rides the workspace-cwd containment, timeout,
 # process-tree kill, output bounding, render badge, and trace recording.
@@ -183,20 +183,22 @@ def __vis_install_posix_compat__():
         return getstatusoutput(cmd)[1]
 
     class Popen(object):
-        # Background process backed by `shell_background` (a session resource).
-        # Auto picks an id; terminate/kill use `shell_stop`, poll/wait read
-        # `shell_logs` status, and communicate drains the log buffer.
+        # Background process backed by `shell_run` with `wait` 0 — the wait that
+        # expires immediately, which is what "background" always meant (a session
+        # resource under a pty). Auto picks an id; terminate/kill use
+        # `shell_stop`, poll/wait read `shell_logs` status, and communicate walks
+        # the log from offset 0.
         _counter = [0]
 
         def __init__(self, args, shell=False, cwd=None, **kwargs):
-            sb = _tool("shell_background")
+            sr = _tool("shell_run")
             Popen._counter[0] += 1
             self._id = "popen_" + str(Popen._counter[0])
             self.args = args
-            opts = {"id": self._id}
+            opts = {"id": self._id, "wait": 0}
             if cwd is not None:
                 opts["cwd"] = str(cwd)
-            reg = sb([_to_cmd(args, shell)], opts)
+            reg = sr([_to_cmd(args, shell)], opts)
             self.pid = reg.get("pid")
             self.returncode = None
 

@@ -3751,7 +3751,7 @@
                  "errors surface"
                  ;; The sleep/poll prohibition lives HERE and nowhere else: the core
                  ;; prompt deliberately dropped its duplicate copy.
-                 "`shell_logs`" "`shell_background`" "no tool waits for you"
+                 "`shell_logs`" "`wait=0`" "no tool waits for you"
                  ;; Sandbox Python does NOT close a dropped file handle, so an
                  ;; unclosed `open(...)` leaks a PROCESS descriptor until a GC —
                  ;; enough of them and no `shell`/`git` child can be spawned at
@@ -3839,7 +3839,7 @@
         ;; lint_code takes a whole dict → it declares NO :call and uses the default.
         (expect (nil? (get real-call-shapes "lint_code")))
         ;; Every shell verb and Git are one-map calls; none may grow a positional shape.
-        (doseq [n ["shell_run" "shell_background" "shell_logs" "shell_type" "shell_stop" "git"]]
+        (doseq [n ["shell_run" "shell_logs" "shell_type" "shell_stop" "git"]]
           (expect (nil? (get real-call-shapes n)))))
     (it "a tool with NO :call gets the generic whole-dict call"
         (expect (= "rg({\"query\": [\"x\"]})" (synth {:name "rg" :input {"query" ["x"]}})))
@@ -3891,8 +3891,8 @@
     (it "all-positional + optional-trailing-positional shapes"
         ;; Every shell verb receives its complete request as one map.
         ;; Every shell verb receives its complete request as one map.
-        (expect (= "shell_background({\"id\": \"x\", \"commands\": [\"sleep 1\"]})"
-                   (synth {:name "shell_background" :input {"id" "x" "commands" ["sleep 1"]}})))
+        (expect (= "shell_run({\"id\": \"x\", \"commands\": [\"sleep 1\"]})"
+                   (synth {:name "shell_run" :input {"id" "x" "commands" ["sleep 1"]}})))
         (expect (= "shell_logs({\"id\": \"x\", \"offset\": 4096})"
                    (synth {:name "shell_logs" :input {"id" "x" "offset" 4096}})))
         (expect (= "shell_stop({\"id\": \"x\"})"
@@ -4056,15 +4056,15 @@
 
         (expect (= "native" (:lang block)))
         (expect (= {"query" "vis"} (:vis/native-input block)))))
-  (it "renders a pending `shell_logs` call as the op-card it becomes, not the call JSON"
+  (it "renders a pending `shell_run` call as the op-card it becomes, not the call JSON"
       ;; End to end over the real seam: the block's input reaches the tool's own
       ;; `:render-start-call-fn`, so the running form is the shell CARD its result card
-      ;; completes instead of `shell_logs({\"id\": …})`.
+      ;; completes instead of `shell_run({\"commands\": …})`.
       (let
         [renderers (extension/native-tool-start-call-renderers [sh/vis-extension])
          tc {:id "c4"
-             :name "shell_logs"
-             :input {"id" "svar-verify" "limit" 200}}
+             :name "shell_run"
+             :input {"commands" ["echo one"]}}
          block (native-tool-call-block {} nil tc)
          display (pending-call-display renderers
                                        (:vis/tool-name block)
@@ -4072,15 +4072,10 @@
 
         ;; The card BODY, built by the very sections the finished card uses — no
         ;; comment band invented for pending calls…
-        (expect (= "**STATUS**\n```\nid: svar-verify\n```"
-                   (:pending-render display)))
+        (expect (= "**COMMAND**\n```bash\necho one\n```" (:pending-render display)))
         ;; …and therefore no separate code band saying the same thing in JSON.
         (expect (nil? (:display-code display)))
         (expect (nil? (:display-language display)))
-        ;; …under the op-card HEADLINE, so the running block is the shell CARD in
-        ;; its awaiting state rather than a naked band.
-        (expect (= "◷ `svar-verify` reading logs"
-                   (:pending-summary display)))
         ;; A pending display is never mistaken for an outcome.
         (expect (nil? (:result-summary display)))
         (expect (nil? (:result-render display)))))

@@ -473,10 +473,17 @@ Done:
   by name), and it is LEFT ALONE at the end of a turn — listed as a session resource, running
   until it exits or `resource_stop`.
 
+- Phase 6, `wait` is the only knob — `PENDING`. `shell_background` is deleted: `shell_run` takes
+  `wait` (0 does not wait at all, and takes the adopted-run path Phase 5 built), so "run" and
+  "background" are one request with one result shape and one id. `shell_run` is now the ONLY
+  native shell tool; `shell_logs` / `shell_type` / `shell_stop` stay as sandbox Python symbols on
+  the handle's id, so the model's schema surface is one tool instead of five. `subprocess` in
+  `resources/vis-shims/posix.py` spawns through `shell_run` with `wait` 0 and reads the log
+  cursor to EOF.
+
 TODO, in order:
 
-1. Phase 6 — `wait` replaces `shell_background`, the handle object replaces `shell_logs` /
-   `shell_type` / `shell_stop`, one shell under `subprocess`/`shell_run`, `git` as
-   `wrap_with_shell`.
+1. Phase 7 — the handle OBJECT (`sh.logs()`, `sh.wait(s)`, `sh.stop()`) replacing the three
+   id-taking Python symbols, and `git` folded into `wrap_with_shell` over the same request.
 
 Each step ships as one commit with its own tests, lint-clean and formatted, per `AGENTS.md`.

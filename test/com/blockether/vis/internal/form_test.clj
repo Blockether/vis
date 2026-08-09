@@ -103,10 +103,10 @@
       (expect (not (form/hide-tool-code? {:vis/tool-name "cat" :error "boom"})))
       (expect (not (form/hide-tool-code? {:vis/tool-name "cat" :success? false})))
       ;; A long-running tool needs no exception here: `python_execution` keeps its
-      ;; program above, and shell_run/shell_background author their own pending card
+      ;; program above, and shell_run authors its own pending card
       ;; body, so nothing has to re-show raw invocation JSON while a call runs.
       (expect (form/hide-tool-code? {:vis/tool-name "shell_run"}))
-      (expect (form/hide-tool-code? {:vis/tool-name "shell_background"})))
+      (expect (form/hide-tool-code? {:vis/tool-name "shell_run"})))
   (it "removes redundant mutation verbs from new and persisted tool summaries"
       (doseq
         [[tool summary expected] [["patch" "update `a.clj` · add `b.clj`" "`a.clj`, `b.clj`"]

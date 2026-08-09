@@ -4687,7 +4687,7 @@
      "natives, then print only needed output. State persists; project packages need a project REPL. "
      "Only `print` returns; bare expressions drop and errors surface. Native results return inline and stay "
      "at their `# saved:` coordinate (`ntr[\"t5/i1/f2\"]`); engine-bound natives are bare snake_case, "
-     "native-only ones absent. A background shell is WATCHED here: `shell_background`, then a BOUNDED "
+     "native-only ones absent. A background shell is WATCHED here: `shell_run` with `wait=0`, then a BOUNDED "
      "loop that calls `shell_logs` and breaks on what it read (an error line, a parsed port) — no tool "
      "waits for you. Close what you open (`with open(...)`): a dropped file handle is "
      "NOT auto-closed here, so the sandbox reclaims leaked descriptors and refuses more than 512 held at "
@@ -9228,9 +9228,10 @@
      (toggles/enabled? "shell")
 
      ;; The renderer is looked up by the tool NAME, and a bang picks the same
-     ;; tool the model would: a foreground run or a background start.
+     ;; tool the model would — there is only one: a background bang is a run
+     ;; whose caller waits for nothing.
      tool-name
-     (if (= kind :bg) "shell_background" "shell_run")
+     "shell_run"
 
      t0
      (System/currentTimeMillis)
@@ -9259,15 +9260,13 @@
      (when enabled?
        (try (let
               [shell-fn (requiring-resolve
-                          (if (= kind :bg)
-                            'com.blockether.vis.internal.foundation.shell/shell-background
-                            'com.blockether.vis.internal.foundation.shell/shell-run))]
+                          'com.blockether.vis.internal.foundation.shell/shell-run)]
               ;; Calling the shell var directly skips the symbol-call seam, so the
               ;; workspace view stays unbound and `resolve-dir` falls back to the
               ;; PROCESS cwd — a bang inside a draft would then run on trunk.
               (extension/with-context
                 {:env env}
-                (if (= kind :bg) (shell-fn env [cmd] {"id" id}) (shell-fn env [cmd]))))
+                (if (= kind :bg) (shell-fn env [cmd] {"id" id "wait" 0}) (shell-fn env [cmd]))))
             (catch Throwable t
               (tel/log! {:level :warn :id ::bang-run-threw :data {:cmd cmd :error (ex-message t)}})
               {:result nil :error {:message (or (ex-message t) (str t))}})))
@@ -9306,9 +9305,9 @@
      block
      (cond->
        {:code (if (= kind :bg)
-                (str "await shell_background({\"commands\": ["
+                (str "await shell_run({\"commands\": ["
                      (pr-str cmd)
-                     "], \"id\": "
+                     "], \"wait\": 0, \"id\": "
                      (pr-str id)
                      "})")
                 (str "await shell_run({\"commands\": [" (pr-str cmd) "]})"))
