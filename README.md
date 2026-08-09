@@ -39,8 +39,6 @@ vis-agent update            # move the command and its runtime to the newest com
 {:deps {com.blockether/vis {:mvn/version "0.1.34"}}}
 ```
 
-`com.blockether/vis` pulls in every bundled extension — one coordinate, the full agent. Take a single package (`com.blockether/vis-channel-tui`, `com.blockether/vis-provider-anthropic`, `com.blockether/vis-language-python`, …) only when you embed just that part.
-
 ## Companion app (iPhone / Android)
 
 Vis Companion is the phone client for a Vis gateway you run yourself — it drives the same sessions as the TUI (see [Gateway & pairing](resources/vis-docs/gateway.md)). Both stores are in public testing; no invite, no tester list, just the link.
