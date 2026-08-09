@@ -3588,7 +3588,31 @@
             (let [r (rename-tool "zz" "ww")]
               (expect (= 1 (get-in r [:result "file_count"])))))
           (expect (clojure.string/includes? (slurp (fs/file f1)) "ww/q"))
-          (expect (= "(ns none)\n(defn k [] 1)\n" (slurp (fs/file f2))))))))
+          (expect (= "(ns none)\n(defn k [] 1)\n" (slurp (fs/file f2))))))
+    ;; Regression: struct_rename finds its own targets, so the argument-shaped
+    ;; `:before-fn` never saw them and a rename walked straight past `:fs/access`.
+    (it "a refused candidate blocks the WHOLE rename, so nothing is half-renamed"
+        (let
+          [_ (temp-dir-path "nsrename3")
+           f1 (str (temp-root) "/nsrename3/has.clj")
+           f2 (str (temp-root) "/nsrename3/guarded.clj")
+           seen! (atom [])]
+
+          (spit (fs/file f1) "(ns has)\n(zz/q 1)\n")
+          (spit (fs/file f2) "(ns guarded)\n(zz/q 2)\n")
+          (with-redefs [editing/rg-search (constantly {:files [f1 f2]})]
+            (with-fs-gate!
+              (refusing-gate seen! "guarded.clj" "Ask the owner before renaming in this tree.")
+              (fn []
+                (let [err (try (rename-tool "zz" "ww") nil (catch clojure.lang.ExceptionInfo e e))]
+                  (expect (some? err))
+                  (expect (= :ext.foundation.editing/path-protected (:type (ex-data err))))
+                  (expect (clojure.string/includes? (ex-message err) "Ask the owner"))
+                  ;; A rename is a WRITE, whichever surface reaches it.
+                  (expect (= ["file-write"] (distinct (mapv :operation @seen!))))))))
+          ;; The refusal landed before the first edit, so the allowed file is untouched.
+          (expect (= "(ns has)\n(zz/q 1)\n" (slurp (fs/file f1))))
+          (expect (= "(ns guarded)\n(zz/q 2)\n" (slurp (fs/file f2))))))))
 
 (defdescribe
   render-patch-result-compact-headline-test

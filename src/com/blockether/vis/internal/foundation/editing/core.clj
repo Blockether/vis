@@ -7376,6 +7376,15 @@
                   {"query" [name] "is_files_only" true "paths" paths "limit" Integer/MAX_VALUE}))
               []))
 
+     _
+     ;; struct_rename discovers its own targets, so no `:before-fn` over the
+     ;; ARGUMENTS can see them - ask the `:fs/access` gate here, over the candidate
+     ;; set, and refuse the whole rename: half a renamed project is worse than none.
+     (when-let [refusal (fs-access-refusal extension/*current-environment* :dir "file-write" files)]
+       (throw (ex-info (str "struct_rename blocked: " (:resolved (:target refusal))
+                            " - " (:reason refusal))
+                       {:type :ext.foundation.editing/path-protected :owner (:owner refusal)})))
+
      out
      (reduce
        (fn [acc path]
