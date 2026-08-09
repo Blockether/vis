@@ -25,6 +25,19 @@
                             (try (sb/ordered "shell" [])
                                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
 
+(defdescribe budget-test
+             (it "hands out what is LEFT of one shared budget, never a fresh wait per command"
+                 (let [left (sb/budget 2)]
+                   (expect (= 2 (left)))
+                   (Thread/sleep 1100)
+                   ;; A second command asks a moment later and gets LESS, which is the
+                   ;; whole point: three commands under one wait cannot cost three waits.
+                   (expect (= 1 (left)))))
+             (it "reports 0 once the budget is spent, so the rest of a batch stays unstarted"
+                 (let [left (sb/budget 1)]
+                   (Thread/sleep 1100)
+                   (expect (zero? (left))))))
+
 (defdescribe run-serial-test
              (it "runs commands strictly in order and returns results in that order"
                  (let

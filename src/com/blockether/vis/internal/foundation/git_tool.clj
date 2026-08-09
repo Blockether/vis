@@ -140,26 +140,38 @@
    separate git process machinery: git commands are bounded shell commands, so
    they inherit the same working directory resolution, process jail, capped
    capture and timeout — a literal argv, so nothing is quoted or interpreted.
+   `secs` is what is LEFT of the BATCH's one wait budget (`serial-batch/budget`);
+   0 means it is spent, and the command is reported unstarted instead of starting
+   a fresh full timeout of its own.
    A non-zero exit is deliberately a result, so callers can continue a batch and
    inspect every command's stdout/stderr independently."
-  [env args]
+  [env args ^long secs]
   (let [tokens (normalize-args args)]
     (when (empty? tokens)
       (throw
         (ex-info
           "Every git command needs at least one argument, e.g. [\"status\"] or [\"commit\", \"-m\", \"msg\"]."
           {:type ::no-args})))
-    (let
-      [r (shell/run-argv env
-                         (into ["git"] (verbose-add-tokens tokens))
-                         {"timeout_secs" default-timeout-secs})]
+    (if (zero? secs)
+      ;; The batch's shared budget is spent. The entry keeps the SAME total key set
+      ;; as one that ran, so `r["commands"][i]["stdout"]` never KeyErrors on it.
       {"command" (str "git " (str/join " " tokens))
        "args" (vec tokens)
-       "stdout" (or (get r "stdout") "")
-       "stderr" (or (get r "stderr") "")
-       "exit" (get r "exit")
-       "duration_ms" (get r "duration_ms")
-       "timed_out" (boolean (get r "timed_out"))})))
+       "stdout" ""
+       "stderr" (str "Not started: the "
+                     default-timeout-secs
+                     "s wait is ONE budget for the whole batch and it ran out before this command.")
+       "exit" nil
+       "duration_ms" 0
+       "timed_out" true}
+      (let [r (shell/run-argv env (into ["git"] (verbose-add-tokens tokens)) {"timeout_secs" secs})]
+        {"command" (str "git " (str/join " " tokens))
+         "args" (vec tokens)
+         "stdout" (or (get r "stdout") "")
+         "stderr" (or (get r "stderr") "")
+         "exit" (get r "exit")
+         "duration_ms" (get r "duration_ms")
+         "timed_out" (boolean (get r "timed_out"))}))))
 
 (defn- git-impl
   "Run the `commands` array from one options map, preserving its serial order."
@@ -174,8 +186,13 @@
      t0
      (now-ms)
 
+     ;; ONE budget for the whole batch, not a fresh one per command: ten commands
+     ;; must not be able to cost ten times the timeout.
+     left-secs
+     (batch/budget default-timeout-secs)
+
      results
-     (batch/run-serial commands #(git-command-result env %))
+     (batch/run-serial commands #(git-command-result env % (left-secs)))
 
      t1
      (now-ms)]
@@ -464,7 +481,7 @@
     "await git({\"commands\": [[\"status\", \"--short\"], [\"diff\", \"--stat\"]]})
 await git({\"commands\": [[\"add\", \"-A\"], [\"commit\", \"-m\", \"message with spaces\"]]})
 
-Run host Git serially from the workspace root. Pass ONE map whose non-empty `commands` is a list of non-empty argv lists, with `git` omitted; each token is one literal argument, so paths and messages with spaces are safe. Never pass a positional array. Later commands see earlier mutations. Result: `{\"commands\": [{\"command\", \"args\", \"stdout\", \"stderr\", \"exit\", \"duration_ms\", \"timed_out\"}, ...]}`; output stays with its command. Non-zero `exit` is data, and later commands still run."
+Run host Git serially from the workspace root. Pass ONE map whose non-empty `commands` is a list of non-empty argv lists, with `git` omitted; each token is one literal argument, so paths and messages with spaces are safe. Never pass a positional array. Later commands see earlier mutations. Result: `{\"commands\": [{\"command\", \"args\", \"stdout\", \"stderr\", \"exit\", \"duration_ms\", \"timed_out\"}, ...]}`; output stays with its command. Non-zero `exit` is data, and later commands still run. The timeout is ONE budget for the whole batch, so a long batch cannot cost it once per command."
     :arglists '([opts])}
   git
   git-impl)

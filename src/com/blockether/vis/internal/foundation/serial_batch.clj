@@ -15,6 +15,8 @@
      (deliberately) a SET are refused — an unordered collection cannot
      describe a strictly ordered batch.
    - [[run-serial]] — run in input order, every result at its input position.
+   - [[budget]] — the ONE wait budget an ordered batch shares, so a command is
+     given what is LEFT of it and never a fresh full wait of its own.
    - [[result]] — the `{\"commands\" [...]}` key both tools answer with: `git`
      returns it alone, `shell` merges it onto its own total result shape.
    - [[card]] — one expandable op-card, `### n. <summary>` per command.
@@ -77,6 +79,24 @@
                      (run-one command))))
            []
            commands)))
+
+(defn budget
+  "The batch's ONE wait budget, as a no-argument function returning the whole
+   seconds LEFT of it — 0 once it is spent.
+
+   A wait is what the CALLER waits for the CALL, so it belongs to the whole
+   ordered batch and never to each command in turn: three commands under a 5s
+   wait have to answer in 5 seconds, not in 15, and ten git commands under a 120s
+   default cannot cost twenty minutes. Each command is handed what is LEFT, and a
+   batch that spends its budget leaves the rest of the commands unstarted rather
+   than borrowing a fresh full wait for every one of them.
+
+   Rounded UP, so a command still inside the budget always gets at least the one
+   whole second a process timeout can express."
+  [^long total-secs]
+  (let [end (+ (System/currentTimeMillis) (* 1000 total-secs))]
+    (fn []
+      (max 0 (long (Math/ceil (/ (double (- end (System/currentTimeMillis))) 1000.0)))))))
 
 (defn result
   "The batch's own key: `{\"commands\" [per-command result …]}`, in input order.

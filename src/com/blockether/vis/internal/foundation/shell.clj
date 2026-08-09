@@ -7,7 +7,9 @@
    ONE model-facing tool — `shell` — bound BARE in the flat Python sandbox
    next to `git` / `cat` / `grep`. `wait` says how long the CALLER waits, and it
    is the only difference there has ever been between a \"run\" and a \"background\"
-   shell, so there is one verb with one schema and one result shape.
+   shell, so there is one verb with one schema and one result shape. It is ONE
+   budget for the whole ordered batch, never one per command: three commands under
+   a 5s wait answer in 5 seconds, not in 15.
 
    1. `await shell([\"ls\"])` — `bash -lc` in the workspace root, waited for up
       to 120s. Output is bounded at READ time to a head+tail budget per stream, so
@@ -23,7 +25,8 @@
       that shell instead of a second copy of it.
 
    3. A run that outstays a non-zero wait is not lost either: the process keeps
-      running under the id the call already answered with.
+      running under the id the call already answered with, and the commands after
+      it stay unstarted — the batch is ordered, so nothing later can have run.
 
    `shell_logs` / `shell_type` / `shell_stop` are bare sandbox verbs, NOT native
    tools: they operate on a handle the caller already holds, which is control flow,
@@ -1519,6 +1522,15 @@
      t0
      (now-ms)
 
+     ;; The wait is ONE budget for the WHOLE call, fixed before the first spawn:
+     ;; `shell([a b c], {"wait" 5})` answers in 5 seconds, not in 15. Every command
+     ;; is given what is LEFT of it (`batch/budget`).
+     budget-secs
+     (clamp-timeout-secs (get opts "timeout_secs"))
+
+     left-secs
+     (batch/budget budget-secs)
+
      exit-atom
      (atom nil)
 
@@ -1532,6 +1544,16 @@
      ;; and its process is what gets adopted.
      overdue
      (atom nil)
+
+     ;; The budget ran out BETWEEN commands: the previous one finished just inside
+     ;; it, so there is no live process to come back to — and the rest of the batch
+     ;; must not each borrow another full wait.
+     exhausted
+     (atom false)
+
+     unstarted
+     (fn [command why]
+       (command-result {"command" command "status" "not started" "note" why}))
 
      index-fn
      (fn [m]
@@ -1568,22 +1590,30 @@
      (batch/run-serial
        commands
        (fn [command]
-         (if @overdue
-           (command-result {"command" command
-                            "status" "not started"
-                            "note" (str "The wait expired on an earlier command, which is still"
-                                        " running as shell '" id
-                                        "'; nothing after it was" " started.")})
-           (let [r (shell-run-impl env command opts {:sink sink :on-spawn on-spawn})]
-             (when (get r "timed_out") (reset! overdue (meta r)))
-             r)))
+         (cond @overdue
+               (unstarted
+                 command
+                 (str "The wait expired on an earlier command, which is still running as shell '"
+                      id
+                      "'; nothing after it was started."))
+               (or @exhausted (zero? (long (left-secs))))
+               (do (reset! exhausted true)
+                   (unstarted command
+                              (str "The wait of " budget-secs
+                                   "s is ONE budget for the whole batch and it ran out before this"
+                                   " command started; nothing from here on ran.")))
+               :else (let
+                       [r (shell-run-impl env
+                                          command
+                                          (assoc opts "timeout_secs" (left-secs))
+                                          {:sink sink :on-spawn on-spawn})]
+                       (when (get r "timed_out") (reset! overdue (meta r)))
+                       r)))
        ;; An infrastructure failure (for example ProcessBuilder refusing
        ;; its dir) must not erase the completed entries nor make later
        ;; commands ambiguous. Keep the input-position result and continue.
        (fn [command ^Exception e]
-         (command-result {"command" command
-                          "status" "not started"
-                          "note" (or (.getMessage e) (.getName (class e)))})))
+         (unstarted command (or (.getMessage e) (.getName (class e))))))
 
      ;; Request scope lives on the GROUP, read back off the entries' metadata
      ;; rather than duplicated into each.
@@ -1591,7 +1621,12 @@
      (some #(:dir (meta %)) results)
 
      timed-out
-     @overdue]
+     @overdue
+
+     ;; A spent budget is a timeout of the CALL just as much as an overdue command
+     ;; is: the caller waited what it asked for and did not get the whole batch.
+     spent
+     @exhausted]
 
     (if timed-out
       (adopt-run! {:session session
@@ -1611,33 +1646,38 @@
           (index-fn {:dir cwd :ended-at @exited-at :exit @exit-atom})
           (drop-bg-entry! session id)))
     (extension/success
-      {:result (shell-result "run"
-                             (merge {;; ALWAYS a handle, finished or not — that is the whole point:
-                                     ;; no rule to remember about when an id is present.
-                                     "id" id
-                                     "cwd" cwd
-                                     ;; Started only when EVERY child was spawned, so a
-                                     ;; launch failure anywhere stays visible at the top.
-                                     "started" (every? #(get % "started") results)
-                                     "exit" (batch-exit results)
-                                     "duration_ms"
-                                     (reduce + 0 (keep #(get % "duration_ms") results))
-                                     "timed_out" (boolean timed-out)
-                                     "timeout_secs" (clamp-timeout-secs (get opts "timeout_secs"))
-                                     "note" (if timed-out
-                                              (str (batch-note (count results))
-                                                   " The WAIT expired, not the process: it is still"
-                                                   " running as shell '"
-                                                   id
-                                                   "' — read everything it"
-                                                   " printed with await shell_logs(\""
-                                                   id
-                                                   "\", offset=0), and stop it with"
-                                                   " await shell_stop(\""
-                                                   id
-                                                   "\").")
-                                              (batch-note (count results)))}
-                                    (batch/result results)))
+      {:result (shell-result
+                 "run"
+                 (merge {;; ALWAYS a handle, finished or not — that is the whole point:
+                         ;; no rule to remember about when an id is present.
+                         "id" id
+                         "cwd" cwd
+                         ;; Started only when EVERY child was spawned, so a
+                         ;; launch failure anywhere stays visible at the top.
+                         "started" (every? #(get % "started") results)
+                         "exit" (batch-exit results)
+                         "duration_ms" (reduce + 0 (keep #(get % "duration_ms") results))
+                         "timed_out" (boolean (or timed-out spent))
+                         "timeout_secs" budget-secs
+                         "note" (cond spent (str (batch-note (count results))
+                                                 " The WAIT expired BETWEEN commands: it is one"
+                                                 " budget for the whole batch, so the commands"
+                                                 " after it never started \u2014 re-run them with a"
+                                                 " longer wait.")
+                                      timed-out (str
+                                                  (batch-note (count results))
+                                                  " The WAIT expired, not the process: it is still"
+                                                  " running as shell '"
+                                                  id
+                                                  "' — read everything it"
+                                                  " printed with await shell_logs(\""
+                                                  id
+                                                  "\", offset=0), and stop it with"
+                                                  " await shell_stop(\""
+                                                  id
+                                                  "\").")
+                                      :else (batch-note (count results)))}
+                        (batch/result results)))
        :op :shell})))
 
 (defn- retired-log-core
@@ -2788,14 +2828,16 @@
           "`note` (`*_omitted_chars` says what a huge stream lost). Nonzero exit is data. `id` is "
           "ALWAYS a handle: `timed_out` means the WAIT expired, not the process.")
      :description
-     (str "Run `bash -lc` lines in order. `wait` is the ONLY knob — how long YOU wait, not a mode; "
-          "`wait=0` returns at once under a real pty, which is how a server, watcher or "
-          "interactive command starts. The result is ALWAYS a handle: `timed_out` means the WAIT "
-          "expired and the command still RUNS under `id`, so resume with `shell_logs(id, "
-          "offset=0)` / `shell_type(id, text)` / `shell_stop(id)` (contracts: "
-          "`doc(\"shell_logs\")`), never a rerun; re-issuing a live `id` returns THAT shell. "
-          "Drive it from `python_execution`: batch `commands`, read "
-          "`r[\"commands\"][i][\"stdout\"]`, print only what you need.")
+     (str
+       "Run `bash -lc` lines in order. `wait` is the ONLY knob — how long YOU wait for the WHOLE "
+       "batch, not a mode nor a budget per command; "
+       "`wait=0` returns at once under a real pty, which is how a server, watcher or "
+       "interactive command starts. The result is ALWAYS a handle: `timed_out` means the WAIT "
+       "expired and the command still RUNS under `id`, so resume with `shell_logs(id, "
+       "offset=0)` / `shell_type(id, text)` / `shell_stop(id)` (contracts: "
+       "`doc(\"shell_logs\")`), never a rerun; re-issuing a live `id` returns THAT shell. "
+       "Drive it from `python_execution`: batch `commands`, read "
+       "`r[\"commands\"][i][\"stdout\"]`, print only what you need.")
      :render-finish-call-fn render-shell-batch-result
      :render-start-call-fn (shell-start-renderer "run")
      :schema {:type "object"

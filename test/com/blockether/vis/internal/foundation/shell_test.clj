@@ -1490,6 +1490,32 @@
                               (do (Thread/sleep 100) (recur (inc n))))))]
                   (expect (str/includes? text "up")))
                 (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))))
+  (it
+    "the wait is ONE budget for the whole batch, not a fresh one per command"
+    ;; Three 2s commands under a 3s wait have to answer in about 3s: the second
+    ;; outstays what is LEFT of the budget and is adopted, and the third never
+    ;; starts. Per command the same call cost 6s and reported no timeout at all.
+    (with-shell-on
+      (fn []
+        (binding [workspace/*workspace-root* (workspace/trunk-root)]
+          (let
+            [sid "shell-wait-budget"
+             env {:session-id sid}
+             t0 (System/currentTimeMillis)
+             r (:result
+                 (shell* env {"commands" ["sleep 2" "sleep 2" "sleep 2"] "wait" 3 "id" "budgeted"}))
+             elapsed (- (System/currentTimeMillis) t0)
+             cmds (get r "commands")]
+
+            (try (expect (true? (get r "timed_out")))
+                 (expect (= 3 (get r "timeout_secs")))
+                 (expect (> 6000 elapsed))
+                 (expect (= 3 (count cmds)))
+                 (expect (zero? (long (get (first cmds) "exit"))))
+                 (expect (true? (get (second cmds) "timed_out")))
+                 (expect (not (get (nth cmds 2) "started")))
+                 (expect (str/includes? (get (nth cmds 2) "note") "expired on an earlier command"))
+                 (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))))
   (it "re-issuing a live id answers with THAT shell instead of starting a second one"
       (with-shell-on
         (fn []
