@@ -656,7 +656,7 @@ export const Markdown = memo(function Markdown({
                 />
               );
             }
-            // A CSV/TSV artifact is DATA: `vis_attach` fences it as `vis-table` and
+            // A CSV/TSV artifact is DATA: `attach` fences it as `vis-table` and
             // both surfaces paint a real grid — the TUI's table dialog, this table.
             if (language === "vis-table") {
               return (
@@ -1292,7 +1292,8 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
             <Disclosure
               isOpen={expanded}
               tone="step"
-              className="-ml-2 min-w-0 flex-1 px-2"
+              bleed
+              className="min-w-0 flex-1"
               onClick={() => setExpanded((current) => !current)}
             >
               <span className="min-w-0 truncate">
@@ -1537,7 +1538,7 @@ export const ThinkingBand = memo(function ThinkingBand({
   );
 });
 
-// ONE artifact a tool call produced (a matplotlib figure, a `vis_attach`ed
+// ONE artifact a tool call produced (a matplotlib figure, an `attach`ed
 // image). The gateway ships descriptors only, never bytes, so the picture is
 // pulled from the attachment endpoint on first paint — with the auth headers an
 // `<img src>` cannot carry, hence the object URL. This is the app's twin of the

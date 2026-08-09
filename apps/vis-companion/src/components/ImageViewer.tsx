@@ -423,7 +423,8 @@ export function ImageViewer({
         title={name}
         closeLabel={`Close ${name}`}
         onClose={onClose}
-        className="absolute inset-x-0 top-0 z-20 pt-[env(safe-area-inset-top)]"
+        isUnderNotch
+        className="absolute inset-x-0 top-0 z-20"
       />
 
       <div
@@ -473,7 +474,8 @@ export function ImageViewer({
             </Button>
             <Button
               variant="secondary"
-              className="min-w-14 border-x-0"
+              isJoined
+              className="min-w-14"
               onClick={resetTransform}
               aria-label="Reset zoom"
             >

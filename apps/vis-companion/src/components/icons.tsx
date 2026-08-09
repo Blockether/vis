@@ -300,32 +300,10 @@ export function SortIcon({
 }
 
 /**
- * The tab bar and the header cog. One box each, on the same grid as everything
- * above: the nav used to keep its own 20-unit set, which meant the app had two
- * icon grammars and a control could only match one of them.
- */
-export function TranscriptsIcon({ className }: { className?: string }) {
-  return (
-    <Icon className={className}>
-      <path d="M4.66 5.79h14.68v12.42H4.66zM8.05 9.18h7.9M8.05 12h7.9M8.05 14.82h4.52" />
-    </Icon>
-  );
-}
-
-export function MachinesIcon({ className }: { className?: string }) {
-  return (
-    <Icon className={className}>
-      <path d="M4.95 5.54h14.1v4.7H4.95zM4.95 13.76h14.1v4.7H4.95z" />
-      <path d="M7.89 7.89h0.01M7.89 16.11h0.01" />
-    </Icon>
-  );
-}
-
-/**
- * A project: a folder, drawn in the same flat-cornered geometry as `MachinesIcon`
- * and `TranscriptsIcon` rather than the rounded folder every icon set ships. A
- * project in this app IS a directory on a machine, so the tab is not decoration —
- * it is the one shape that separates "a place on disk" from a document.
+ * A project: a folder, drawn with the same flat corners as the rest of this set
+ * rather than the rounded folder every icon set ships. A project in this app IS a
+ * directory on a machine, so the shape is not decoration — it is the one mark that
+ * separates "a place on disk" from a document.
  */
 export function ProjectsIcon({ className }: { className?: string }) {
   return (

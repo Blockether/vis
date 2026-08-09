@@ -330,9 +330,8 @@ export function ManageProjectsSheet({
                   action={
                     <IconButton
                       edge
-                      variant="quiet"
+                      variant="close"
                       label={`Remove every transcript in ${entry.name}`}
-                      className="text-err"
                       onClick={() => onRemove(entry)}
                     >
                       <TrashIcon className="size-4" />
@@ -452,7 +451,7 @@ export function ManageProjectsSheet({
           <p className={`py-3 font-mono text-meta text-err ${SHEET_EDGE}`}>{error}</p>
         ) : busy && !listing ? (
           <MenuNote>
-            <Spinner className="text-accent-ink" />
+            <Spinner tone="accent" />
             Reading folders...
           </MenuNote>
         ) : rows.length === 0 ? (

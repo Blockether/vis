@@ -1,3 +1,4 @@
+import iconsSource from "./icons.tsx?raw";
 import uiSource from "./ui.tsx?raw";
 import sessionsSource from "../screens/SessionsScreen.tsx?raw";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -13,7 +14,6 @@ import {
   DotsIcon,
   DraftIcon,
   ImageIcon,
-  MachinesIcon,
   MicIcon,
   PencilIcon,
   PlayIcon,
@@ -21,7 +21,6 @@ import {
   SettingsIcon,
   SortIcon,
   StarIcon,
-  TranscriptsIcon,
   TrashIcon,
 } from "./icons";
 
@@ -35,7 +34,6 @@ const ICONS = {
   CloseIcon: <CloseIcon />,
   DotsIcon: <DotsIcon />,
   ImageIcon: <ImageIcon />,
-  MachinesIcon: <MachinesIcon />,
   MicIcon: <MicIcon />,
   PencilIcon: <PencilIcon />,
   PlayIcon: <PlayIcon />,
@@ -45,7 +43,6 @@ const ICONS = {
   "SortIcon asc": <SortIcon dir="asc" />,
   "SortIcon desc": <SortIcon dir="desc" />,
   StarIcon: <StarIcon />,
-  TranscriptsIcon: <TranscriptsIcon />,
   TrashIcon: <TrashIcon />,
 };
 
@@ -436,6 +433,27 @@ describe("the shipped screens", () => {
         /<svg/.test(source),
     );
     expect(drawn.map(([path]) => path)).toEqual([]);
+  });
+
+  // Regression: the app's two-item tab bar was deleted, and its marks — a
+  // document and a stack of machines — stayed behind in `icons.tsx` with no call
+  // site, kept alive only by this file. A geometry test over a mark nobody draws
+  // proves nothing, so the set is checked against the screens that use it.
+  it("draw every mark the icon module exports", () => {
+    const exported = [...iconsSource.matchAll(/export function (\w+)/g)].map(
+      ([, name]) => name,
+    );
+    const dead = exported.filter((name) =>
+      Object.entries(sources).every(
+        ([path, source]) =>
+          path.includes("/icons.tsx") ||
+          path.includes("/dev/") ||
+          path.includes(".test.") ||
+          !new RegExp(`\\b${name}\\b`).test(source),
+      ),
+    );
+
+    expect(dead).toEqual([]);
   });
 
   // Regression, reported as "the paperclip is too big now": the artifacts chip

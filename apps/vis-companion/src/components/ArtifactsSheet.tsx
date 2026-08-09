@@ -424,7 +424,7 @@ function DetailOverlay({
       className="absolute inset-0 z-40 flex flex-col bg-ink"
     >
       <DialogHeader
-        className="border-t border-dialog-title-foreground/20"
+        isStacked
         title={name}
         closeLabel="Back to artifacts"
         onClose={onClose}

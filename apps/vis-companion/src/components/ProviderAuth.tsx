@@ -935,7 +935,6 @@ export function AddProviderPanel({
             key={preset.id}
             isFramed
             disabled={busy}
-            className="disabled:opacity-50"
             onClick={() => {
               if (preset.is_local) {
                 setBaseUrl('');

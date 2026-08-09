@@ -11,6 +11,8 @@ import docSource from "./DocArtifact.tsx?raw";
 import tableBarSource from "./DataTable.tsx?raw";
 import boundarySource from "./ErrorBoundary.tsx?raw";
 import artifactsSheetSource from "./ArtifactsSheet.tsx?raw";
+import manageProjectsSource from "./ManageProjectsSheet.tsx?raw";
+import imageViewerSource from "./ImageViewer.tsx?raw";
 import humanInputSource from "./HumanInputPrompt.tsx?raw";
 import providerAuthSource from "./ProviderAuth.tsx?raw";
 import routerSource from "../screens/RouterScreen.tsx?raw";
@@ -28,6 +30,7 @@ import {
   CopyChip,
   DialogClose,
   DialogFrame,
+  DialogHeader,
   HeaderActions,
   HeaderMeta,
   HeaderTally,
@@ -55,6 +58,7 @@ import {
   TextButton,
   RowDisclosure,
   SectionHeader,
+  Spinner,
   UnreadBadge,
 } from "./ui";
 
@@ -1747,5 +1751,128 @@ describe("every ✕ in the app", () => {
     expect(
       renderToStaticMarkup(<RemoveButton label="Remove notes.md" />),
     ).not.toContain("text-dialog-hint");
+  });
+});
+
+// The vocabulary's own rule, made executable: a `className` at a call site may only
+// POSITION. It had drifted in nine places — four copies of `min-h-9 px-3 font-mono
+// text-meta` two hundred lines apart in one settings screen, a spinner choosing its
+// own ink in three files, a trash can painting itself red, a zoom button dropping its
+// own frame — and every one of them was a FACE settled by whichever call site Tailwind
+// happened to emit last rather than by the component that owns it.
+describe("a call site positions, and the component paints", () => {
+  const sources = import.meta.glob(["../**/*.tsx"], {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  }) as Record<string, string>;
+
+  const controls = new Set(
+    [...uiSource.matchAll(/export (?:function|const) ([A-Z]\w+)/g)].map(
+      ([, name]) => name,
+    ),
+  );
+
+  // Anything you can SEE. A width, a margin and a stacking context are PLACEMENT
+  // — `flex-1`, `min-w-14`, `absolute inset-x-0` — and stay legal; ink, paper,
+  // frame, type, padding and height belong to the owner.
+  const paint =
+    /^(?:sm:|md:|lg:|mouse:|hover:|focus:|focus-visible:|active:|disabled:|motion-reduce:|dark:)*(?:text-|font-|bg-|border|rounded|shadow|opacity-|italic|uppercase|tracking-|leading-|p-|px-|py-|pt-|pb-|pl-|pr-|min-h-|h-\d)/;
+
+  function paintAtCallSites(source: string): string[] {
+    const offenders: string[] = [];
+    for (const [, name, between, classes] of source.matchAll(
+      /<([A-Z]\w+)([^>]*?)className=\{?["'`]([^"'`]*)["'`]/g,
+    )) {
+      if (!controls.has(name) || between.includes(">")) continue;
+      const seen = classes.split(/\s+/).filter((one) => paint.test(one));
+      if (seen.length > 0) offenders.push(`${name}: ${seen.join(", ")}`);
+    }
+    return offenders;
+  }
+
+  it("tells placement from paint", () => {
+    expect(paintAtCallSites('<Button className="flex-1 shrink-0" />')).toEqual([]);
+    expect(
+      paintAtCallSites('<Button className="min-h-9 px-3 font-mono text-meta" />'),
+    ).toEqual(["Button: min-h-9, px-3, font-mono, text-meta"]);
+    expect(paintAtCallSites('<Spinner className="text-accent-ink" />')).toEqual([
+      "Spinner: text-accent-ink",
+    ]);
+    // A control this file does not own paints where it stands.
+    expect(paintAtCallSites('<div className="bg-panel" />')).toEqual([]);
+  });
+
+  it("hands no paint to a control `ui.tsx` owns", () => {
+    const offenders = Object.entries(sources).flatMap(([path, source]) =>
+      path.includes("/ui.tsx") ||
+      path.includes("/dev/") ||
+      path.includes(".test.")
+        ? []
+        : paintAtCallSites(source).map((one) => `${path}: ${one}`),
+    );
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("gives a settings panel's verbs one density", () => {
+    const panel = renderToStaticMarkup(
+      <Button density="panel">Notify me from this machine</Button>,
+    );
+    expect(panel).toContain("font-mono");
+    expect(panel).toContain("min-h-9");
+    expect(renderToStaticMarkup(<Button>Save</Button>)).not.toContain("font-mono");
+    expect(settingsSource.match(/density="panel"/g)).toHaveLength(4);
+  });
+
+  it("gives the spinner the app's waiting ink as a tone", () => {
+    expect(renderToStaticMarkup(<Spinner tone="accent" />)).toContain(
+      "text-accent-ink",
+    );
+    expect(renderToStaticMarkup(<Spinner />)).not.toContain("text-accent-ink");
+  });
+
+  it("keeps a disclosure's own gutter on the disclosure", () => {
+    expect(
+      renderToStaticMarkup(
+        <Disclosure isOpen={false} bleed tone="step">
+          Ran a tool
+        </Disclosure>,
+      ),
+    ).toContain("-ml-2");
+    expect(
+      renderToStaticMarkup(<Disclosure isOpen={false}>Ran a tool</Disclosure>),
+    ).not.toContain("-ml-2");
+  });
+
+  it("lets a dialog band clear the notch and stand over another band", () => {
+    expect(
+      renderToStaticMarkup(<DialogHeader title="Pasted #1" isUnderNotch />),
+    ).toContain("pt-[env(safe-area-inset-top)]");
+    expect(
+      renderToStaticMarkup(<DialogHeader title="report.png" isStacked />),
+    ).toContain("border-dialog-title-foreground/20");
+    expect(renderToStaticMarkup(<DialogHeader title="Pasted #1" />)).not.toContain(
+      "safe-area-inset-top",
+    );
+  });
+
+  it("draws the zoom bar as one frame", () => {
+    expect(
+      renderToStaticMarkup(
+        <Button variant="secondary" isJoined>
+          100%
+        </Button>,
+      ),
+    ).toContain("border-x-0");
+    expect(imageViewerSource).toContain("isJoined");
+  });
+
+  // The trash in "Manage projects" was the one destructive icon in the app that was
+  // red at REST, beside a `RemoveButton` and a `DialogClose` that are ink until the
+  // pointer arrives — one gesture wearing two faces on the same sheet.
+  it("removes a project in the app's one destructive ink", () => {
+    expect(manageProjectsSource).toContain('variant="close"');
+    expect(manageProjectsSource).not.toContain('className="text-err"');
   });
 });

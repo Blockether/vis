@@ -1187,7 +1187,7 @@ export function SessionsScreen({
                   human owns the word. Same box editing or resting — no jump. */}
               {scopeChrome && onRenameMachine ? (
                 <EditableName
-                  className="truncate font-mono text-ui font-bold text-white"
+                  face="truncate font-mono text-ui font-bold text-white"
                   label={`Rename ${machineLabel(scopeChrome.conn)}`}
                   value={machineLabel(scopeChrome.conn)}
                   onCommit={(next) => onRenameMachine(scopeChrome.conn, next)}
@@ -1200,7 +1200,7 @@ export function SessionsScreen({
               <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-chip text-dialog-hint">
                 {sessions === null ? (
                   <>
-                    <Spinner className="text-accent-ink" />
+                    <Spinner tone="accent" />
                     <span>Reading sessions...</span>
                   </>
                 ) : scopedError ? (
@@ -1546,7 +1546,7 @@ export function SessionsScreen({
               </MenuHeading>
               {drafts === null ? (
                 <MenuNote>
-                  <Spinner className="text-accent-ink" />
+                  <Spinner tone="accent" />
                   Reading drafts...
                 </MenuNote>
               ) : drafts.length === 0 ? (

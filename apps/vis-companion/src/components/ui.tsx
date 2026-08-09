@@ -57,11 +57,32 @@ export const Button = forwardRef<
      * row where the primary is 32px and the `⋯` beside it is 24px is precisely
      * the incoherence this app was reported for. Touch is untouched — a finger
      * still gets the full box.
+     *
+     * `panel` is a SETTINGS PANEL's own verb. The panel reports in monospace at
+     * the meta scale, so the buttons under its prose speak in that voice too, in
+     * a 36px box on the rhythm of the rows above them. It used to be four copies
+     * of the same forty characters of `className`, two hundred lines apart in one
+     * file — which is how a fifth copy gets one utility wrong and nobody sees it.
      */
-    density?: 'default' | 'compact';
+    density?: 'default' | 'compact' | 'panel';
+    /**
+     * This button stands INSIDE a segmented run — the image viewer's `− 100% +`.
+     * The middle of the run drops its side frames so the three boxes draw ONE
+     * outline rather than a doubled hairline in every seam. A frame is a face, so
+     * it is a prop: two `border` utilities meeting at a call site are settled by
+     * Tailwind's emission order and never by which one the call site typed.
+     */
+    isJoined?: boolean;
   }
 >(function Button(
-  { variant = 'primary', pressEffect = 'scale', density = 'default', className = '', ...props },
+  {
+    variant = 'primary',
+    pressEffect = 'scale',
+    density = 'default',
+    isJoined = false,
+    className = '',
+    ...props
+  },
   ref,
 ) {
   // Disabled colours live PER VARIANT, not in the base class: `quiet` has to stay
@@ -132,15 +153,18 @@ export const Button = forwardRef<
   // So Apple's 44pt target survives untouched while the ink stops shouting; the
   // `⋯` beside it shrinks by exactly the same amount, because a header that holds
   // one 32px button and one 44px button holds two different affordances.
-  const scale =
-    density === 'compact'
-      ? 'relative h-8 self-center after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] mouse:h-6 mouse:min-h-6 mouse:text-meta mouse:after:content-none'
-      : '';
+  const scale = {
+    default: '',
+    compact:
+      'relative h-8 self-center after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] mouse:h-6 mouse:min-h-6 mouse:text-meta mouse:after:content-none',
+    panel: 'min-h-9 px-3 font-mono text-meta',
+  }[density];
+  const joined = isJoined ? 'border-x-0' : '';
 
   return (
     <button
       ref={ref}
-      className={`min-h-7 rounded-none border px-2.5 py-0.5 text-meta font-bold transition-[background-color,border-color,color,opacity,transform,translate,scale,rotate] duration-150 ${press} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-100 disabled:shadow-none motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-ui ${scale} ${styles} ${className}`}
+      className={`min-h-7 rounded-none border px-2.5 py-0.5 text-meta font-bold transition-[background-color,border-color,color,opacity,transform,translate,scale,rotate] duration-150 ${press} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-100 disabled:shadow-none motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-ui ${scale} ${joined} ${styles} ${className}`}
       {...props}
     />
   );
@@ -440,7 +464,7 @@ export const ListRow = forwardRef<
     <button
       ref={ref}
       type="button"
-      className={`flex min-h-12 w-full min-w-0 items-center gap-2 px-3 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none disabled:cursor-default disabled:hover:bg-transparent motion-reduce:transition-none ${paper} ${className}`}
+      className={`flex min-h-12 w-full min-w-0 items-center gap-2 px-3 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent motion-reduce:transition-none ${paper} ${className}`}
       {...props}
     />
   );
@@ -462,12 +486,20 @@ export const ListRow = forwardRef<
 export function Disclosure({
   isOpen,
   tone = 'muted',
+  bleed = false,
   className = '',
   children,
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   isOpen: boolean;
   tone?: 'step' | 'thinking' | 'muted';
+  /**
+   * Gives the row's own gutter back: the chevron lines its ink up with the card's
+   * leading edge while the press target keeps the padding a finger needs. It is
+   * the row's spacing, so it belongs to the row rather than to a `-ml-2 px-2`
+   * pair spelled at a call site, where the two halves can drift apart.
+   */
+  bleed?: boolean;
 }) {
   const ink =
     tone === 'step'
@@ -480,7 +512,7 @@ export function Disclosure({
       type="button"
       data-disclosure-toggle
       aria-expanded={isOpen}
-      className={`flex min-h-8 w-full min-w-0 cursor-pointer select-none items-center gap-1.5 text-left font-mono text-chip transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:min-h-6 ${ink} ${className}`}
+      className={`flex min-h-8 w-full min-w-0 cursor-pointer select-none items-center gap-1.5 text-left font-mono text-chip transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:min-h-6 ${bleed ? '-ml-2 px-2' : ''} ${ink} ${className}`}
       {...props}
     >
       <ChevronIcon open={isOpen} className="size-3 shrink-0 opacity-70" />
@@ -1107,6 +1139,8 @@ export function DialogHeader({
   subtitle,
   closeLabel,
   onClose,
+  isUnderNotch = false,
+  isStacked = false,
   className = '',
 }: {
   title: ReactNode;
@@ -1116,11 +1150,24 @@ export function DialogHeader({
   /** Names what it closes: three of these can be open over one another. */
   closeLabel?: string;
   onClose?: () => void;
+  /**
+   * This band is the TOP of the screen, so it clears the notch itself. The desktop
+   * has no inset to clear and drops the padding again.
+   */
+  isUnderNotch?: boolean;
+  /**
+   * This band opens OVER another dialog's band, so it draws the hairline that
+   * tells the two of them apart — an artifact opened inside the artifacts sheet.
+   */
+  isStacked?: boolean;
+  /** Placement only; the band's own face is fixed. */
   className?: string;
 }) {
   return (
     <header
-      className={`flex min-h-12 shrink-0 items-stretch bg-dialog-title text-dialog-title-foreground mouse:min-h-9 ${className}`}
+      className={`flex min-h-12 shrink-0 items-stretch bg-dialog-title text-dialog-title-foreground mouse:min-h-9 ${
+        isUnderNotch ? 'pt-[env(safe-area-inset-top)] sm:pt-0' : ''
+      } ${isStacked ? 'border-t border-dialog-title-foreground/20' : ''} ${className}`}
     >
       <div className={`min-w-0 flex-1 self-center py-1.5 ${LIST_EDGE}`}>
         {/* A title can be a whole QUESTION from `vis.ask`, and a question clipped to
@@ -1215,9 +1262,22 @@ const SPINNER_DELAYS = [
  * relayout on every frame — about a fifth of the WebKit main thread on an
  * otherwise idle iOS screen. Here the box is fixed and only `opacity` moves.
  */
-export function Spinner({ className = '' }: { className?: string }) {
+export function Spinner({
+  tone = 'inherit',
+  className = '',
+}: {
+  /**
+   * `accent` is the app's waiting ink: a spinner that reports work in the amber
+   * the rest of the screen uses for it. `inherit` takes the ink of the line it
+   * rides, which is what a spinner inside a sentence wants.
+   */
+  tone?: 'inherit' | 'accent';
+  /** Placement only; the frames' own face is fixed. */
+  className?: string;
+}) {
+  const ink = tone === 'accent' ? 'text-accent-ink' : '';
   return (
-    <span aria-hidden="true" className={`inline-grid ${className}`}>
+    <span aria-hidden="true" className={`inline-grid ${ink} ${className}`}>
       {SPINNER_FRAMES.map((frame, index) => (
         <span
           key={frame}
@@ -1480,12 +1540,18 @@ export function SectionHeader({
 export function EditableName({
   value,
   label,
-  className,
+  face,
   onCommit,
 }: {
   value: string;
   label: string;
-  className: string;
+  /**
+   * The TYPE the name is set in — required, and spelled `face` rather than
+   * `className` because it is not a call site positioning a control: this field
+   * has to read as the heading it replaces, in the heading's own ink, or the
+   * screen changes shape the moment a caret arrives.
+   */
+  face: string;
   onCommit: (name: string) => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
@@ -1496,7 +1562,7 @@ export function EditableName({
         aria-label={label}
         title={label}
         onClick={() => setDraft(value)}
-        className={`${className} text-left hover:underline focus-visible:outline-none focus-visible:underline`}
+        className={`${face} text-left hover:underline focus-visible:outline-none focus-visible:underline`}
       >
         {value}
       </button>
@@ -1517,7 +1583,7 @@ export function EditableName({
         if (event.key === 'Enter') commit();
         if (event.key === 'Escape') setDraft(null);
       }}
-      className={`${className} border-0 bg-transparent p-0 focus:outline-none`}
+      className={`${face} border-0 bg-transparent p-0 focus:outline-none`}
     />
   );
 }
@@ -1570,7 +1636,7 @@ export function HeaderTitle({
       <span className="flex min-w-0 items-baseline gap-2">
         {onRename ? (
           <EditableName
-            className={`shrink-0 truncate font-mono font-bold text-white ${qualifier ? 'max-w-[60%]' : 'min-w-0'} ${HEADER_TYPE}`}
+            face={`shrink-0 truncate font-mono font-bold text-white ${qualifier ? 'max-w-[60%]' : 'min-w-0'} ${HEADER_TYPE}`}
             label={renameLabel ?? 'Rename'}
             value={typeof name === 'string' ? name : ''}
             onCommit={onRename}

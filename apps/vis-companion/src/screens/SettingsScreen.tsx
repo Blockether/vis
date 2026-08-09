@@ -1685,7 +1685,8 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
         <div className="flex flex-wrap gap-2">
           {!notifying && (
             <Button
-              className="min-h-9 flex-1 px-3 font-mono text-meta"
+              density="panel"
+              className="flex-1"
               disabled={busy !== null || !supported}
               onClick={() => void enable()}
             >
@@ -1695,7 +1696,8 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
           {notifying && (
             <Button
               variant="danger"
-              className="min-h-9 flex-1 px-3 font-mono text-meta"
+              density="panel"
+              className="flex-1"
               disabled={busy !== null}
               onClick={() => void disable()}
             >
@@ -1898,7 +1900,8 @@ function NativeNotificationsPanel({
         <div className="flex flex-wrap gap-2">
           {supported && !notifying && (
             <Button
-              className="min-h-9 flex-1 px-3 font-mono text-meta"
+              density="panel"
+              className="flex-1"
               disabled={busy !== null || !available}
               onClick={() => void enable()}
             >
@@ -1910,7 +1913,8 @@ function NativeNotificationsPanel({
           {supported && notifying && (
             <Button
               variant="danger"
-              className="min-h-9 flex-1 px-3 font-mono text-meta"
+              density="panel"
+              className="flex-1"
               disabled={busy !== null}
               onClick={() => void disable()}
             >

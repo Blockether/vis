@@ -612,7 +612,7 @@ function reduceLiveEvent(
   if (type === "iteration.completed") {
     const position = eventIteration(event);
     // Byte-free descriptors for whatever the agent attached during this
-    // iteration (`vis_attach`). The bytes come from the gateway's attachment
+    // iteration (`attach`). The bytes come from the gateway's attachment
     // endpoint on demand; this is the only frame that announces them live, and
     // the transcript hydrates the identical shape for history.
     const attached = Array.isArray(event.attachments)
@@ -941,7 +941,7 @@ function PasteEditor({
         }}
       >
         <DialogHeader
-          className="pt-[env(safe-area-inset-top)] sm:pt-0"
+          isUnderNotch
           titleId="paste-editor-title"
           title={`Pasted #${editingPaste.id}`}
           subtitle={pasteSummary(editingPaste.id, editingPaste.draft)}
@@ -3505,7 +3505,7 @@ export function SessionScreen({
 
   // A page of a DOCUMENT arrives here as fresh PNG bytes named after the page it
   // came from (`report-p3.png`). It becomes a NEW pending attachment rather than
-  // replacing anything: `vis_attach` keeps the PDF or the HTML page itself off
+  // replacing anything: `attach` keeps the PDF or the HTML page itself off
   // the wire, so the captured — and possibly drawn-on — picture is the only
   // thing that can carry its content to the model, and the name is what says
   // which page that was. A refusal THROWS because the human is still standing in
