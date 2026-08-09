@@ -26,7 +26,6 @@
                      (expect (contains? slugs "index"))
                      (expect (contains? slugs "extending"))
                      (expect (contains? slugs "configuration"))
-                     (expect (contains? slugs "git"))
                      ;; lean listing: never the content
                      (expect (every? #(and (get % "slug") (get % "title")) pages))
                      ;; every declared page carries a one-line blurb of what it covers
@@ -82,19 +81,6 @@
           (expect (str/includes? content "vis/extension"))
           (expect (str/includes? content "register-extension!"))
           (expect (str/includes? content "META-INF/vis-extension/vis.edn")))))
-  (it "publishes the Git tool's direct and Python call forms"
-      (let
-        [result
-         (vis-docs-tool "git")
-
-         content
-         (get (first (get (result-of result) "pages")) "content")]
-
-        (expect (extension/envelope-success? result))
-        (expect (str/includes? content "\"commands\""))
-        (expect (str/includes? content "do not include the executable"))
-        (expect (str/includes? content "await git({"))
-        (expect (str/includes? content "\"timed_out\""))))
   (it "every manifest page resolves to non-blank markdown"
       (doseq [{:keys [slug]} (:pages (docs/collect))]
         (let [result (vis-docs-tool slug)]

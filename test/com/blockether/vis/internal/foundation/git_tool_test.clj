@@ -47,8 +47,9 @@
   (it "makes ONE command the closed native contract"
       (let [schema (:ext.symbol/schema gt/git-symbol)]
         (expect (= ["command"] (:required schema)))
-        ;; No call shape means the generic synthesizer preserves the entire
-        ;; options map; Git has no positional projection.
+        ;; The argv is the WHOLE call: Git projects `command` positionally, so
+        ;; Python reads `git(["status", "--short"])`.
+        (expect (= {:pos ["command"]} (:ext.symbol/call gt/git-symbol)))
         (expect (true? (:ext.symbol/inject-env? gt/git-symbol)))
         (expect (false? (:additionalProperties schema)))
         (expect (= "array" (get-in schema [:properties "command" :type])))
@@ -83,7 +84,7 @@
       (with-redefs
         [shell/run-argv (fn [_ _ _]
                           {"exit" 0 "stdout" "" "stderr" "" "timed_out" false "duration_ms" 1})]
-        (let [result (:result (git-impl {} {"command" ["status" "--short"]}))]
+        (let [result (:result (git-impl {} ["status" "--short"]))]
           (expect (= #{"command" "args" "stdout" "stderr" "exit" "duration_ms" "timed_out"}
                      (set (keys result))))))))
 
@@ -97,12 +98,12 @@
              (swap! seen conj (vec (rest argv)))
              {"exit" 128 "stdout" "" "stderr" "bad revision\n" "timed_out" false "duration_ms" 2})]
           (let
-            [{:keys [python-context]} (ep/create-python-context {'git (fn [opts]
-                                                                        ;; The Python bridge receives the one options map.
-                                                                        (:result (git-impl {}
-                                                                                           opts)))})
+            [{:keys [python-context]} (ep/create-python-context {'git (fn [command]
+                                                                        ;; The Python bridge receives the argv itself.
+                                                                        (:result
+                                                                          (git-impl {} command)))})
              result (ep/run-python-block python-context
-                                         (str "r = await git({'command': ['show', 'missing']})\n"
+                                         (str "r = await git(['show', 'missing'])\n"
                                               "(r['stdout'], r['stderr'], r['exit'])")
                                          "t1/i1")]
 
@@ -121,13 +122,13 @@
           [shell/run-argv (fn [_ argv _]
                             (swap! seen conj (vec (rest argv)))
                             {"exit" 0 "stdout" "" "stderr" "" "timed_out" false "duration_ms" 1})]
-          (git-impl {} {"command" "status --short"})
-          (git-impl {} {"command" "commit -m 'wip: with spaces'"})
+          (git-impl {} "status --short")
+          (git-impl {} "commit -m 'wip: with spaces'")
           (expect (= [["status" "--short"] ["commit" "-m" "wip: with spaces"]] @seen)))))
   (it "still refuses a missing command and a command that is no argv"
-      (expect (some? (try (git-impl {} {}) nil (catch Throwable e e))))
-      (expect (some? (try (git-impl {} {"command" []}) nil (catch Throwable e e))))
-      (expect (some? (try (git-impl {} {"command" #{"status"}}) nil (catch Throwable e e)))))
+      (expect (some? (try (git-impl {} nil) nil (catch Throwable e e))))
+      (expect (some? (try (git-impl {} []) nil (catch Throwable e e))))
+      (expect (some? (try (git-impl {} #{"status"}) nil (catch Throwable e e)))))
   (it "answers ONE command with ONE flat result"
       (let [seen (atom [])]
         (with-redefs
@@ -135,7 +136,7 @@
            (fn [_ argv _]
              (swap! seen conj (vec (rest argv)))
              {"exit" 0 "stdout" "clean\n" "stderr" "" "timed_out" false "duration_ms" 1})]
-          (let [one (:result (git-impl {} {"command" ["status" "--short"]}))]
+          (let [one (:result (git-impl {} ["status" "--short"]))]
             (expect (= [["status" "--short"]] @seen))
             (expect (= "git status --short" (get one "command")))
             (expect (= "clean\n" (get one "stdout")))))))
@@ -147,7 +148,7 @@
           [shell/run-argv (fn [_ argv _]
                             (swap! seen conj (vec (rest argv)))
                             {"exit" 0 "stdout" "" "stderr" "" "timed_out" false "duration_ms" 1})]
-          (git-impl {} {"command" ["commit" "-m" "wip: with spaces"]})
+          (git-impl {} ["commit" "-m" "wip: with spaces"])
           (expect (= [["commit" "-m" "wip: with spaces"]] @seen))))))
 
 
@@ -210,7 +211,7 @@
                 ["-C" "other" "commit" "-m" "x"]
 
                 command
-                (:result (git-impl {} {"command" args}))]
+                (:result (git-impl {} args))]
 
                (expect (= 1 (get command "exit")))
                (expect (= "verification required" (get command "stderr")))

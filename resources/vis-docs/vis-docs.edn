@@ -22,8 +22,6 @@
           :blurb "Config files, providers, and models — how to set Vis up."}
          {:file "context-and-prompts.md" :title "Context files & prompts" :section "Using Vis" :order 55
           :blurb "AGENTS.md/CLAUDE.md project context files and prompt customization."}
-         {:file "git.md" :title "Git tool" :section "Using Vis" :order 56
-          :blurb "The host-Git native tool: direct calls, Python use, argv batches, and result data."}
          {:file "exporting-sessions.md" :title "Exporting sessions" :section "Using Vis" :order 58
           :blurb "Exporting and sharing past sessions and forensic reports."}
          {:file "skills.md" :title "Skills" :section "Using Vis" :order 60

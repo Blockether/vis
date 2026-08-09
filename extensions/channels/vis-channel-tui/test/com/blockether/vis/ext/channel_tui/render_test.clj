@@ -4295,7 +4295,7 @@
                (format-iteration-entry
                  {:iteration 0
                   :forms [{:vis/tool-name "git"
-                           :code "git({\"commands\": [[\"commit\"]]})"
+                           :code "git([\"commit\"])"
                            :pending-summary "commit — feat: thing (running)"
                            :pending-render
                            (str "**COMMAND**\n```bash\ngit commit -m feat: thing\n```\n\n"

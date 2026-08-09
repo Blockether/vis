@@ -11,6 +11,7 @@
             [com.blockether.vis.internal.prompt :as prompt]
             [com.blockether.vis.internal.ctx-engine :as eng]
             [com.blockether.vis.internal.foundation.editing.core :as ed]
+            [com.blockether.vis.internal.foundation.git-tool :as gt]
             [com.blockether.vis.internal.foundation.shell :as sh]
             [com.blockether.vis.internal.foundation.language-surface :as lsf]
             [com.blockether.vis.internal.titling :as titling]
@@ -3712,7 +3713,7 @@
         (apply concat symbol-vecs)))
 
 (def ^:private real-call-shapes
-  (merge (shapes-from @ed/editing-symbols sh/shell-symbols lsf/symbols)
+  (merge (shapes-from @ed/editing-symbols sh/shell-symbols gt/git-symbols lsf/symbols)
          {"mcp__call" {:pos ["server"] :opt-pos ["tool" "args"]}}))
 
 (defdescribe
@@ -3838,9 +3839,11 @@
         (expect (fn? (get real-call-shapes "patch")))
         ;; lint_code takes a whole dict → it declares NO :call and uses the default.
         (expect (nil? (get real-call-shapes "lint_code")))
-        ;; Every shell verb and Git are one-map calls; none may grow a positional shape.
-        (doseq [n ["shell" "shell_logs" "shell_type" "shell_stop" "git"]]
-          (expect (nil? (get real-call-shapes n)))))
+        ;; Every shell verb is a one-map call; none may grow a positional shape.
+        (doseq [n ["shell" "shell_logs" "shell_type" "shell_stop"]]
+          (expect (nil? (get real-call-shapes n))))
+        ;; Git is the argv itself, so it projects `command` positionally.
+        (expect (= {:pos ["command"]} (get real-call-shapes "git"))))
     (it "a tool with NO :call gets the generic whole-dict call"
         (expect (= "rg({\"query\": [\"x\"]})" (synth {:name "rg" :input {"query" ["x"]}})))
         (expect (= "grep({\"query\": \"x\"})" (synth {:name "grep" :input {"query" "x"}})))
@@ -3848,8 +3851,9 @@
                    (synth {:name "struct_index" :input {"paths" ["src/x.clj"]}})))
         (expect (= "lint_code({\"code\": \"x\"})" (synth {:name "lint_code" :input {"code" "x"}})))
         (expect (= "shell({\"command\": \"ls\"})"
-                   (synth {:name "shell" :input {"command" "ls"}})))
-        (expect (= "git({\"command\": [\"status\", \"--short\"]})"
+                   (synth {:name "shell" :input {"command" "ls"}}))))
+    (it "git projects its argv positionally — the array IS the call"
+        (expect (= "git([\"status\", \"--short\"])"
                    (synth {:name "git" :input {"command" ["status" "--short"]}}))))
     (it "python_execution still passes the model's code through"
         (expect (= "print(1)" (synth {:name "python_execution" :input {"code" "print(1)"}}))))

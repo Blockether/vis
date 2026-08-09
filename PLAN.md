@@ -482,7 +482,7 @@ Done:
   cursor to EOF. With one verb left, `shell_run` is NAMED `shell`: the `_run` suffix only ever
   distinguished it from `shell_background`, so it now names a distinction that does not exist.
 
-- Phase 7, ONE call is ONE command — `PENDING`. `commands` is deleted from BOTH tools: `shell`
+- Phase 7, ONE call is ONE command — `32d1b9ccf`, and `git` is now the ARGV ITSELF. `commands` is deleted from BOTH tools: `shell`
   takes `command` (one `bash -lc` line; `&&` chains, independent work is separate calls) and
   `git` takes `command` (one argv). Both answer with a FLAT result — `r["stdout"]`, `r["exit"]`,
   never `r["commands"][i]` — which is the same shape a `wait` 0 start already returned, so a
@@ -490,7 +490,10 @@ Done:
   deleted with the batch they existed for: with one command there is no budget to divide, no
   `started: false` entry to explain, and the shared-deadline defect fixed in `cdcfe21e8` cannot
   recur. `vis.shell` / `vis.jailed_shell` / `vis.jailed_shell_session`, `posix.py`'s
-  `subprocess`, the `!` bang path and the synthesized Python call all move to the same key.
+  `subprocess`, the `!` bang path and the synthesized Python call all move to the same key. `git`
+  keeps no options map at all: the call IS the argv (`await git(["status", "--short"])`, declared
+  as `:call {:pos ["command"]}`), and the `git.md` docs page is deleted — the tool's own
+  description and result contract are the documentation.
 
 TODO, in order:
 

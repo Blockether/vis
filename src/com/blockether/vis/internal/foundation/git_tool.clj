@@ -1,8 +1,9 @@
 (ns com.blockether.vis.internal.foundation.git-tool
   "The single `git` tool — a thin, honest proxy to the host `git` binary.
 
-   ONE built-in Python function, `git`, runs ONE `git <args…>` command in the
-   active workspace root and returns a TOTAL, string-keyed result the model reads
+   ONE built-in Python function, `git`, takes ONE argv list of strings — no
+   options map — runs that `git <args…>` command in the active workspace root
+   and returns a TOTAL, string-keyed result the model reads
    directly: `{\"command\", \"args\", \"stdout\", \"stderr\", \"exit\", \"duration_ms\",
    \"timed_out\"}`. Every key is present (`stderr` \"\" when empty, `exit` None only
    when the command timed out), so no field ever KeyErrors. A non-zero exit is
@@ -70,7 +71,7 @@
                 :else (recur (inc i) (.append buf c) true q tokens)))))))
 
 (defn- normalize-args
-  "Coerce the caller's `command` into a vector of literal git tokens. The
+  "Coerce the caller's argv into a vector of literal git tokens. The
    schema's shape is a sequential of literal args, spaces and all, and it passes
    through untouched. A bare STRING is not refused: it is the one-line spelling of
    that same argv, so it is split by [[split-argv]] instead of wasting the call.
@@ -81,7 +82,7 @@
         (string? args) (into [] (remove str/blank?) (split-argv args))
         :else (throw
                 (ex-info
-                  (str "git `command` must be a list of literal tokens \u2014 "
+                  (str "git takes ONE argv list of literal tokens \u2014 "
                        "one argv, e.g. [\"status\", \"--short\"] or [\"commit\", \"-m\", \"wip\"]. "
                        "Got "
                        (pr-str (type args))
@@ -145,21 +146,15 @@
        "timed_out" (boolean (get r "timed_out"))})))
 
 (defn- git-impl
-  "Run the ONE `command` argv from one options map."
-  [env opts]
-  (when-not (map? opts)
-    (throw (ex-info "git takes one options map, e.g. await git({\"command\": [\"status\"]})."
-                    {:type ::bad-options :tool "git"})))
+  "Run ONE git argv. `command` is the argv itself \u2014 a list of literal tokens
+   with `git` omitted \u2014 not an options map; a bare one-line string is the
+   same argv spelled on one line and is split."
+  [env command]
+  (when (nil? command)
+    (throw (ex-info "git needs one argv, e.g. await git([\"status\", \"--short\"])."
+                    {:type ::no-command :tool "git"})))
   (let
-    [command
-     (or (get opts "command") (get opts :command))
-
-     _
-     (when (nil? command)
-       (throw (ex-info "git needs {\"command\": [\"status\", \"--short\"]} in its options map."
-                       {:type ::no-command :tool "git"})))
-
-     t0
+    [t0
      (now-ms)
 
      r
@@ -171,6 +166,12 @@
     (extension/success {:result r
                         :op :git
                         :metadata {:started-at-ms t0 :finished-at-ms t1 :duration-ms (- t1 t0)}})))
+
+(defn- git-tool-handler
+  "Native-tool entry: the structured input map carries the argv under `command`,
+   which is the only thing [[git-impl]] wants."
+  [env input]
+  (git-impl env (or (get input "command") (get input :command))))
 
 ;; =============================================================================
 ;; Render — the op-card for a `git` call: `<args>` headline (with an
@@ -435,11 +436,11 @@
 
 (def
   ^{:doc
-    "await git({\"command\": [\"status\", \"--short\"]})
-await git({\"command\": [\"commit\", \"-m\", \"message with spaces\"]})
+    "await git([\"status\", \"--short\"])
+await git([\"commit\", \"-m\", \"message with spaces\"])
 
-Run ONE host Git command from the workspace root. Pass ONE map whose `command` is a non-empty argv list with `git` omitted; each token is one literal argument, so paths and messages with spaces are safe. Never pass a positional array. Result: `{\"command\", \"args\", \"stdout\", \"stderr\", \"exit\", \"duration_ms\", \"timed_out\"}`. Non-zero `exit` is data, not a failure. One call is one command — issue a second call for the next one."
-    :arglists '([opts])}
+Run ONE host Git command from the workspace root. Pass ONE non-empty argv list with `git` omitted; each token is one literal argument, so paths and messages with spaces are safe. Result: `{\"command\", \"args\", \"stdout\", \"stderr\", \"exit\", \"duration_ms\", \"timed_out\"}`. Non-zero `exit` is data, not a failure. One call is one command — issue a second call for the next one."
+    :arglists '([command])}
   git
   git-impl)
 
@@ -454,13 +455,14 @@ Run ONE host Git command from the workspace root. Pass ONE map whose `command` i
      :name "git"
      :description
      (str "Run ONE host Git command only when `session[\"workspace\"]` lacks VCS facts or to act. "
-          "ONE options map; a non-zero exit is data.")
+          "ONE argv list of strings; a non-zero exit is data.")
      :render-finish-call-fn render-git-result
      :render-start-call-fn render-git-call
-     ;; Native calls dispatch straight to this two-argument handler. Python keeps
-     ;; the same implementation through :inject-env?, so both paths have exactly
-     ;; `[env opts]` and cannot drift into a third positional argument.
-     :handler git-impl
+     ;; Native calls arrive as a structured input map, so the handler unwraps
+     ;; `command` and hands the ARGV to the same implementation Python calls
+     ;; positionally — one code path, one argument.
+     :handler git-tool-handler
+     :call {:pos ["command"]}
      :inject-env? true
      :tag :mutation
      :schema {:type "object"
@@ -470,8 +472,7 @@ Run ONE host Git command from the workspace root. Pass ONE map whose `command` i
                             :items {:type "string"}
                             :description
                             (str "ONE argv with `git` omitted, e.g. `[\"status\", \"--short\"]`; "
-                                 "a bare line is split into tokens; "
-                                 "pass ONE options map, never a positional array.")}}
+                                 "a bare line is split into tokens.")}}
               :required ["command"]
               :additionalProperties false}}))
 
