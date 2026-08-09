@@ -36,7 +36,7 @@ describe("ManageProjectsSheet paints no box of its own", () => {
   });
 
   it("names itself with the menu's own band and its one way out", () => {
-    expect(source).toContain("<MenuHeading onClose={onCancel}>");
+    expect(source).toContain("closeLabel={`Close projects on ${label}`}");
     expect(source).not.toContain('title="Manage projects"');
     expect(source).not.toContain("const BAND");
     expect(source).not.toContain("const QUIET_BAND");
@@ -49,7 +49,7 @@ describe("ManageProjectsSheet paints no box of its own", () => {
   it("closes out of adding instead of retreating into the inventory", () => {
     expect(source).not.toContain("<MenuBack");
     expect(source).toContain(
-      "<MenuHeading onClose={onCancel}>{`Add a project · ${label}`}</MenuHeading>",
+      "closeLabel={`Close add a project on ${label}`}",
     );
     expect(source).toContain("onDismiss={onCancel}");
   });

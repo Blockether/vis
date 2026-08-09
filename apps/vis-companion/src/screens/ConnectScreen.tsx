@@ -9,7 +9,14 @@ import {
   normalizeGatewayUrl,
   reachOf,
 } from '../lib/endpoints';
-import { Banner, Button, DialogHeader, Input, ListRow } from '../components/ui';
+import {
+  Banner,
+  Button,
+  closeWith,
+  DialogHeader,
+  Input,
+  ListRow,
+} from '../components/ui';
 import { ChevronIcon } from '../components/icons';
 
 // The QR scanner drags in jsqr (~250 kB of source, a fifth of the launch chunk)
@@ -300,7 +307,7 @@ export function ConnectScreen({
 
       {conns.length > 0 && (
         <section className="overflow-hidden border border-dialog-edge bg-panel shadow-none sm:shadow-[4px_4px_0_var(--dialog-shadow)]">
-          <DialogHeader title="Saved machines" closeLabel="Close machines" onClose={onClose} />
+          <DialogHeader title="Saved machines" {...closeWith(onClose, 'Close machines')} />
           <div className="divide-y divide-dialog-edge border-t border-dialog-edge">
             {conns.map((conn) => {
               const selected = active?.url === conn.url;

@@ -1133,6 +1133,21 @@ export function Modal({
  * The band is the list's own (`min-h-12 mouse:min-h-9`), so a dialog's header and a
  * machine's header are the same height on the same screen.
  */
+/**
+ * The way out as ONE value: the handler and the name that goes with it, or nothing
+ * at all. A surface whose own `onClose` is optional spreads this, so the pair can
+ * never come apart on the way down — an unnamed X is a screen reader saying
+ * "button" and nothing else.
+ */
+export function closeWith(
+  onClose: (() => void) | undefined,
+  label: string,
+):
+  | { onClose: () => void; closeLabel: string }
+  | { onClose?: undefined; closeLabel?: undefined } {
+  return onClose ? { onClose, closeLabel: label } : {};
+}
+
 export function DialogHeader({
   title,
   titleId,
@@ -1147,9 +1162,7 @@ export function DialogHeader({
   /** For a surface labelled by `aria-labelledby` rather than `aria-label`. */
   titleId?: string;
   subtitle?: ReactNode;
-  /** Names what it closes: three of these can be open over one another. */
-  closeLabel?: string;
-  onClose?: () => void;
+  /** The way out. Both halves travel together — see the union below. */
   /**
    * This band is the TOP of the screen, so it clears the notch itself. The desktop
    * has no inset to clear and drops the padding again.
@@ -1162,7 +1175,19 @@ export function DialogHeader({
   isStacked?: boolean;
   /** Placement only; the band's own face is fixed. */
   className?: string;
-}) {
+} & (
+  | {
+      onClose: () => void;
+      /**
+       * The way out is icon-only, so its name is not optional, and three of these
+       * bands can stand over one another: a plain "Close" names all three the same
+       * and a screen reader cannot tell the human which one it is on. Say what it
+       * closes — "Close model picker", "Close report.pdf".
+       */
+      closeLabel: string;
+    }
+  | { onClose?: undefined; closeLabel?: undefined }
+)) {
   return (
     <header
       className={`flex min-h-12 shrink-0 items-stretch bg-dialog-title text-dialog-title-foreground mouse:min-h-9 ${
@@ -1187,7 +1212,11 @@ export function DialogHeader({
           </p>
         )}
       </div>
-      {onClose && <DialogClose label={closeLabel ?? 'Close'} tone="title" onClose={onClose} />}
+      {/* The two travel together by type; the second test is what TypeScript needs
+          to see it, because a destructured union does not narrow on its own. */}
+      {onClose && closeLabel && (
+        <DialogClose label={closeLabel} tone="title" onClose={onClose} />
+      )}
     </header>
   );
 }
@@ -1198,6 +1227,7 @@ export function DialogFrame({
   children,
   footer,
   onClose,
+  closeLabel,
   className = '',
 }: {
   title: string;
@@ -1206,6 +1236,11 @@ export function DialogFrame({
   children: ReactNode;
   footer?: ReactNode;
   onClose?: () => void;
+  /**
+   * What LEAVING does, when it is not simply "Close <title>": the human-input
+   * dialog's way out CANCELS the request it is asking about.
+   */
+  closeLabel?: string;
   className?: string;
 }) {
   return (
@@ -1215,7 +1250,13 @@ export function DialogFrame({
       aria-modal="true"
       aria-label={title}
     >
-      <DialogHeader title={title} subtitle={subtitle} closeLabel="Close dialog" onClose={onClose} />
+      {/* A dialog knows its own title, so it is never told the name of its own way
+          out — five surfaces used to hand a screen reader the same two words. */}
+      <DialogHeader
+        title={title}
+        subtitle={subtitle}
+        {...closeWith(onClose, closeLabel ?? `Close ${title}`)}
+      />
       {/* A COLUMN, so a dialog that lays out its own regions gets a scrolling body and
           a docked footer. It used to be one plain scroll box: "Manage projects" put its
           own `flex-1` list and its own `New folder` / `Use project` footer inside it,

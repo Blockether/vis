@@ -244,7 +244,9 @@ export function HumanInputSheet({
       >
         <DialogFrame
           title={request.title}
-          {...(request.is_cancellable ? { onClose: onCancel } : {})}
+          {...(request.is_cancellable
+            ? { onClose: onCancel, closeLabel: 'Cancel this request' }
+            : {})}
           footer={
             // Pinned: the banner that explains a refusal and the buttons that
             // answer it stay put while the form above them scrolls.

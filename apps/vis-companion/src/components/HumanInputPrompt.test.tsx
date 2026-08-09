@@ -64,11 +64,13 @@ describe('human input sheet', () => {
 
   it('offers no way out of a pause that has none', () => {
     const html = markup('uncancellable');
-    expect(html).not.toContain('Close dialog');
+    expect(html).not.toContain('Cancel this request');
     expect(html).not.toContain('Esc cancel');
     expect(html).toContain('Unlock');
     const cancellable = markup('approve');
-    expect(cancellable).toContain('Close dialog');
+    // The way out of a question CANCELS it — the one dialog whose leaving is not
+    // simply "Close <title>", and it says so.
+    expect(cancellable).toContain('Cancel this request');
     expect(cancellable).toContain('Not now');
   });
 

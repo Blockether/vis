@@ -403,6 +403,10 @@ function SurfaceFooter() {
  * own padding), while a list of rows keeps the padded scroller. A document that
  * sizes itself to `60vh` inside a padded scroller is a page floating in a
  * letterbox with the app's paper above and below it.
+ *
+ * The way out is the header band's own, and it NAMES the artifact (`Close chart.png`)
+ * exactly as a document opened beside it does. That same mark used to be called
+ * "Back to artifacts", so one sheet had two names for one gesture.
  */
 function DetailOverlay({
   name,
@@ -426,7 +430,7 @@ function DetailOverlay({
       <DialogHeader
         isStacked
         title={name}
-        closeLabel="Back to artifacts"
+        closeLabel={`Close ${name}`}
         onClose={onClose}
       />
       <div

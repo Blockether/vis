@@ -61,6 +61,7 @@ import {
   Spinner,
   UnreadBadge,
 } from "./ui";
+import { MenuHeading } from "./Menu";
 
 // Regression (reported: "why we still have this chevron here showing something is
 // collapsible if we cannot click it — let's have just one color"): the caret half of
@@ -1874,5 +1875,131 @@ describe("a call site positions, and the component paints", () => {
   it("removes a project in the app's one destructive ink", () => {
     expect(manageProjectsSource).toContain('variant="close"');
     expect(manageProjectsSource).not.toContain('className="text-err"');
+  });
+});
+// The user's own words: "go over all close buttons and ensure we are using them
+// consistently". The MARK was already the app's one `DialogClose`, but its NAME was
+// not: `DialogFrame` welded "Close dialog" onto five different surfaces, a menu band
+// said plain "Close", and an artifact opened inside the artifacts sheet called the
+// same X "Back to artifacts" while the document opened beside it called it
+// "Close report.pdf" — one gesture with four names, and a screen reader on a stack of
+// three open bands could not tell the human which one it was about to leave.
+describe("one way out, and it says what it closes", () => {
+  const sources = import.meta.glob(["../**/*.tsx"], {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  }) as Record<string, string>;
+
+  /**
+   * Every opening `<Tag …>` in a file, as text. Braces are counted so the `>` inside
+   * an arrow function or a nested `footer={<div>…}` never ends the element early.
+   */
+  const elementsOf = (source: string, tag: string) => {
+    const found: string[] = [];
+    const open = new RegExp(`<${tag}\\b`, "g");
+    for (let match = open.exec(source); match; match = open.exec(source)) {
+      let depth = 0;
+      for (let i = match.index; i < source.length; i += 1) {
+        const ch = source[i];
+        if (ch === "{") depth += 1;
+        else if (ch === "}") depth -= 1;
+        else if (ch === ">" && depth === 0) {
+          found.push(source.slice(match.index, i + 1));
+          break;
+        }
+      }
+    }
+    return found;
+  };
+
+  const shipped = Object.entries(sources).filter(
+    ([path]) => !path.endsWith(".test.tsx"),
+  );
+
+  it("never leaves an icon-only way out unnamed", () => {
+    // The scan itself, on the two shapes it has to tell apart.
+    const sample = [
+      "<MenuHeading onClose={onCancel}>{`Projects · ${label}`}</MenuHeading>",
+      "<MenuHeading onClose={onCancel} closeLabel={`Close projects`}>x</MenuHeading>",
+    ].join("\n");
+    const [bare, named] = elementsOf(sample, "MenuHeading");
+    expect(bare?.includes("closeLabel")).toBe(false);
+    expect(named?.includes("closeLabel")).toBe(true);
+
+    const unnamed: string[] = [];
+    for (const [path, source] of shipped) {
+      for (const tag of ["DialogHeader", "MenuHeading"]) {
+        for (const element of elementsOf(source, tag)) {
+          const named =
+            element.includes("closeLabel") || element.includes("closeWith(");
+          if (element.includes("onClose") && !named) {
+            unnamed.push(`${path} <${tag}>`);
+          }
+        }
+      }
+      for (const element of elementsOf(source, "DialogClose")) {
+        if (!element.includes("label")) unnamed.push(`${path} <DialogClose>`);
+      }
+    }
+    expect(unnamed).toEqual([]);
+  });
+
+  it("never names a way out just \"Close\"", () => {
+    const generic: string[] = [];
+    for (const [path, source] of shipped) {
+      if (/\blabel="Close"/.test(source)) generic.push(path);
+    }
+    expect(generic).toEqual([]);
+  });
+
+  it("takes the dialog's own title as the name of its way out", () => {
+    const html = renderToStaticMarkup(
+      <DialogFrame title="Machine settings" onClose={() => {}}>
+        body
+      </DialogFrame>,
+    );
+    expect(html).toContain('aria-label="Close Machine settings"');
+    // The five words that used to name five different surfaces.
+    expect(uiSource).not.toContain("Close dialog");
+  });
+
+  it("lets a dialog say what LEAVING does instead", () => {
+    const html = renderToStaticMarkup(
+      <DialogFrame
+        title="Which branch?"
+        closeLabel="Cancel this request"
+        onClose={() => {}}
+      >
+        body
+      </DialogFrame>,
+    );
+    expect(html).toContain('aria-label="Cancel this request"');
+    expect(humanInputSource).toContain("closeLabel: 'Cancel this request'");
+  });
+
+  it("gives a band with nowhere to go no way out at all", () => {
+    expect(renderToStaticMarkup(<DialogHeader title="How to fix it" />)).not.toContain(
+      "<button",
+    );
+    expect(
+      renderToStaticMarkup(<MenuHeading>Projects · tower</MenuHeading>),
+    ).not.toContain("<button");
+  });
+
+  it("closes a menu band by the name of the panel it holds", () => {
+    expect(
+      renderToStaticMarkup(
+        <MenuHeading onClose={() => {}} closeLabel="Close projects on tower">
+          Projects · tower
+        </MenuHeading>,
+      ),
+    ).toContain('aria-label="Close projects on tower"');
+  });
+
+  it("calls the artifact's way out the same thing on both surfaces", () => {
+    expect(artifactsSheetSource).toContain("closeLabel={`Close ${name}`}");
+    expect(docSource).toContain("closeLabel={`Close ${name}`}");
+    expect(artifactsSheetSource).not.toContain('closeLabel="Back to artifacts"');
   });
 });

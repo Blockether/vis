@@ -79,9 +79,9 @@ describe("every dialog header is the one dialog header", () => {
     );
   });
 
-  it("routes every close through DialogClose", () => {
-    expect(ui).toContain(
-      "<DialogClose label={closeLabel ?? 'Close'} tone=\"title\"",
-    );
+  it("routes every close through DialogClose, and makes it say its name", () => {
+    expect(ui).toContain('<DialogClose label={closeLabel} tone="title"');
+    // The name travels WITH the handler: a band with a way out has to name it.
+    expect(ui).toContain("| { onClose?: undefined; closeLabel?: undefined }");
   });
 });

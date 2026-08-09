@@ -305,7 +305,12 @@ export function ManageProjectsSheet({
           out inside it, and rows that are `MenuItem`s. It used to be a full-height
           `DialogFrame` — a different box, a different header and a different
           entrance for a list one tap away from the menu that opened it. */}
-      {!adding && <MenuHeading onClose={onCancel}>{`Projects · ${label}`}</MenuHeading>}
+      {!adding && (
+        <MenuHeading
+          onClose={onCancel}
+          closeLabel={`Close projects on ${label}`}
+        >{`Projects · ${label}`}</MenuHeading>
+      )}
 
       {!adding ? (
         <>
@@ -355,7 +360,10 @@ export function ManageProjectsSheet({
           out. A BACK arrow into the project inventory was an exit into a screen the
           human never asked for — the `+` says "add a project", so the only way out of
           it is closing it (or the scrim, which `AnchoredPanel` already dismisses on). */}
-      <MenuHeading onClose={onCancel}>{`Add a project · ${label}`}</MenuHeading>
+      <MenuHeading
+        onClose={onCancel}
+        closeLabel={`Close add a project on ${label}`}
+      >{`Add a project · ${label}`}</MenuHeading>
 
       {typed === null ? (
         <div
