@@ -455,7 +455,7 @@ Done:
 - Project rename (`struct_rename`) deleted — `71f00d8c9`. Requested during the plan and not
   part of its argument; it removed the one editing symbol whose targets were discovered rather
   than passed, so the surface the later phases reason about is smaller.
-- Phase 4, the offset-cursor shell log — `dccadb987`. `internal/shell_log.clj` owns the file
+- Phase 4, the offset-cursor shell log — `e98cc607e`. `internal/shell_log.clj` owns the file
   (`~/.vis/logs/shell/<session>/<id>.log`), the `::log-chunk` answer and the sidecar index row;
   the pump tees the PTY through it, `shell_logs` takes `offset`/`limit` and returns
   `text`/`offset`/`next_offset`/`is_eof`/`is_truncated`, and the line ring plus `dropped_lines`
