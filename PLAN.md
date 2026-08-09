@@ -446,13 +446,18 @@ Done:
   and the access vocabulary are gone; `confine!` and the native editors ask one gate op, the
   Bridge re-declares its path sandbox as its own hook, and a Python extension guards the
   filesystem with `vis.op_hook(["fs_access"], …)`.
+- Phase 3, `ls` as a sandbox helper — `d3db4c514`. The tool schema, its renderers and its
+  symbol are gone; `list-directories` is public, asks the `:fs/access` gate itself and keeps
+  the fff-backed walk, and `resources/vis-shims/ls.py` binds it as `ls(paths, depth,
+  is_hidden)`. The measurement decided it: a gitignore-aware walk in guest Python costs
+  295 ms for this repo at `depth` 3 against 15.6 ms for the host walk, so the helper calls
+  the host.
 
 TODO, in order:
 
-1. Phase 3 — remove `ls`, land the sandbox walk helper and its prompt line.
-2. Phase 4 — the offset-cursor log file, with its index row in the session DB.
-3. Phase 5 — every run carries an `::id`, so a timeout is a wait that expired.
-4. Phase 6 — `wait` replaces `shell_background`, the handle object replaces `shell_logs` /
+1. Phase 4 — the offset-cursor log file, with its index row in the session DB.
+2. Phase 5 — every run carries an `::id`, so a timeout is a wait that expired.
+3. Phase 6 — `wait` replaces `shell_background`, the handle object replaces `shell_logs` /
    `shell_type` / `shell_stop`, one shell under `subprocess`/`shell_run`, `git` as
    `wrap_with_shell`.
 
