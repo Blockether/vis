@@ -146,7 +146,11 @@
    boundary: map keys must be strings and no keyword/symbol may appear at any
    depth — a violation throws `boundary-violation!` naming the key path.
    Primitives and Strings pass through (the Context auto-converts Java boxed
-   types); collections become polyglot proxies so Python sees dict/list;
+   types); collections become polyglot proxies, which GraalPy shows as
+   `ForeignDict`/`ForeignList` — subscript, `len`, iteration, `.keys()`, `dict(_)`,
+   `{**_}` and even `isinstance(_, dict)` behave, but `json.dumps` refuses them
+   (it dispatches on the exact type), so a value the guest must SERIALIZE is
+   rebuilt by `__vis_pyify__` or handed over as a JSON string;
    leaves convert via `leaf->py` (UUID/Temporal/Date -> ISO strings)."
   [x]
   (->py* x []))

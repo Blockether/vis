@@ -658,13 +658,16 @@ except Exception:
 
 
 def __vis_pyify__(x):
-    # Tool results cross the host boundary as ProxyHashMap/ProxyArray. GraalPy lets
-    # you subscript / iterate / .get them, but isinstance(_, dict), {**_},
-    # json.dumps(_), dict(_) and type(_) all see a FOREIGN object — NOT a real
-    # dict — a frequent source of friction. Rebuild proxies into REAL python
-    # dict/list ONCE (at settle) so the model composes on true dicts. A HOST proxy
-    # carrying 'op' is a tool result → mark its type __VisResult__. Order is
-    # preserved (source is an ordered LinkedHashMap; comprehensions keep it).
+    # Tool results cross the host boundary as ProxyHashMap/ProxyArray, and GraalPy
+    # 25.1.3 shows those to Python as ForeignDict/ForeignList: subscript, len,
+    # iteration, .keys()/.get, KeyError on a missing key, dict(_) and {**_} all
+    # behave, and isinstance(_, dict) is even True. The ONE thing that does not
+    # work is json.dumps(_) ("Object of type ForeignDict is not JSON
+    # serializable"): the encoder dispatches on the EXACT type, and type(_) is not
+    # dict. Rebuild proxies into REAL python dict/list ONCE (at settle) so the
+    # model composes on true dicts AND can serialize them. A HOST proxy carrying
+    # 'op' is a tool result -> mark its type __VisResult__. Order is preserved
+    # (source is an ordered LinkedHashMap; comprehensions keep it).
     #
     # ONLY foreign proxies are rebuilt. A value the model itself built — set /
     # frozenset / tuple / defaultdict / Counter / any user object — is ALREADY
