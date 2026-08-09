@@ -58,6 +58,23 @@
                "extensions/languages/vis-language-clojure/test" "--dir"
                "extensions/languages/vis-language-python/test" "--dir"
                "extensions/languages/vis-language-typescript-bun/test"]}
+  ;; The NATIVE BINARY's own suite (test-native/): what only `target/vis` can
+  ;; answer — the TUI's first frame on a pty, a whole one-shot agent turn, the
+  ;; provider extensions linked into it. A SEPARATE alias because it needs a
+  ;; ~20-minute `clojure -T:build native` first, and because it must fail loudly
+  ;; when the binary is missing instead of skipping inside the default suite.
+  ;;   clojure -T:build native && clojure -M:test-native
+  ;; No network hook: its only socket is the loopback provider stub it serves
+  ;; itself, and the binary under test is a separate process the hook cannot see.
+  :test-native
+  {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+   :extra-paths ["test-native"]
+   ;; The pty the TUI test spawns the binary on is Panama FFM into libc
+   ;; (internal.foundation.pty), so this run needs the same native-access grants
+   ;; every other Vis JVM gets.
+   :jvm-opts ["-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
+              "--enable-preview" "--sun-misc-unsafe-memory-access=allow"]
+   :main-opts ["-m" "lazytest.main" "--dir" "test-native"]}
   :vis {:jvm-opts ["-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
                    "--enable-preview" "--sun-misc-unsafe-memory-access=allow"
                    ;; The TUI's live heap is small, but G1 over-commits and
