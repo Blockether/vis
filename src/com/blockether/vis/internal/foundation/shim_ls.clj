@@ -1,0 +1,76 @@
+(ns com.blockether.vis.internal.foundation.shim-ls
+  "Built-in sandbox SHIM: `ls` — the DIRECTORY listing, as a Python call instead
+   of a native tool.
+
+   Mapping a tree is the cheapest question there is and the one a model asks
+   most, so it must not cost a wire round trip: `ls(dir)` runs inside the
+   `python_execution` block the model is already in, its rows land in a Python
+   variable, and the model prints only what it needed. As a native tool the same
+   listing spent a whole tool result — plus a schema and a description in every
+   request — to hand back a tree that was usually filtered one line later.
+
+   The walk itself stays on the HOST: `editing/list-directories` is fff's
+   ignore-aware listing (`.gitignore`, `.ignore`, cache directories, the `vis.yml`
+   overlay), an order of magnitude faster than a guest `os.scandir` recursion that
+   would honour none of those rules. The bridge is one callable taking a JSON
+   request and answering the `[ok result kind]` envelope every shim uses, because
+   errors must cross the boundary as DATA — GraalPy does not route a host
+   exception through Python `except`.
+
+   `:fs/access` is asked by `list-directories` itself, so an extension that hides
+   a tree hides it from the listing exactly as it hides it from `cat`."
+  (:require [charred.api :as json]
+            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.foundation.editing.core :as editing]))
+
+(def ^:private error-kinds
+  "`ex-info` `:type` → the KIND the Python shim turns into a real exception, so a
+   caller catches `NotADirectoryError` rather than parsing a sentence. Anything
+   unmapped stays a `RuntimeError`."
+  {:ext.foundation.editing/path-protected "denied"
+   :ext.foundation.editing/ls-missing-path "missing"
+   :ext.foundation.editing/ls-on-file "file"
+   :ext.foundation.editing/invalid-ls-args "args"})
+
+(defn- ls-bridge-bindings
+  "Host callable the `ls` shim delegates to. `__vis_list_directories__` takes the
+   JSON request (`{\"paths\": [...], \"depth\": n, \"is_hidden\": b}`) and answers
+   `[true json-rows nil]`, or `[false message kind]` when the listing was refused,
+   the path is missing, the path is a file, or the request is malformed."
+  []
+  {"__vis_list_directories__"
+   (fn list-directories [args-json]
+     (try [true
+           (json/write-json-str (editing/list-directories extension/*current-environment*
+                                                          (json/read-json (str args-json)))) nil]
+          (catch Throwable t
+            [false (str (or (ex-message t) t)) (get error-kinds (:type (ex-data t)))])))})
+
+(def vis-extension
+  (vis/extension
+    {:ext/name "foundation-shim-ls"
+     :ext/description
+     (str "Sandbox `ls(paths, depth=1, is_hidden=False)` — the directory listing as a Python "
+          "call: fff's ignore-aware walk, directories first, nested rows under `children`.")
+     :ext/version "0.1.0"
+     :ext/author "Blockether"
+     :ext/owner "vis"
+     :ext/license "Apache-2.0"
+     :ext/kind "foundation"
+     :ext/sandbox-shims
+     [{:shim/name "ls"
+       :shim/globals ["ls"]
+       :shim/description
+       (str "`ls(paths, depth=1, is_hidden=False)` maps a tree without spending a tool call: "
+            "`ls(dir)` returns that directory's entries `{name, path, type, size}` (directories "
+            "first, then alphabetical, nested rows under `children` when `depth` > 1), and "
+            "`ls([dir, ...])` one `{path, entries}` row per directory in request order. Dotfiles "
+            "need `is_hidden=True`; gitignored entries are never listed. A file raises "
+            "`NotADirectoryError` (read it with `cat`), a path that does not exist raises "
+            "`FileNotFoundError` naming the nearest existing directory, and a path an extension "
+            "protects raises `PermissionError`.")
+       :shim/bindings ls-bridge-bindings
+       :shim/source "vis-shims/ls.py"}]}))
+
+(vis/register-extension! vis-extension)

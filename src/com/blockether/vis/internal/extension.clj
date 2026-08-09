@@ -3709,6 +3709,7 @@
     com.blockether.vis.internal.foundation.shim-xlsxwriter
     com.blockether.vis.internal.foundation.shim-pptx
     com.blockether.vis.internal.foundation.shim-attach
+    com.blockether.vis.internal.foundation.shim-ls
     com.blockether.vis.internal.foundation.shim-fonttools
     com.blockether.vis.internal.foundation.shim-anydoc com.blockether.vis.internal.foundation.rewind
     com.blockether.vis.internal.foundation.mcp.core

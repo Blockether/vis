@@ -9,10 +9,11 @@
         (cat path opts)       ; opts DICT only: ranges [[s e]…] / anchor A|[A1 A2] / tail N
         (cat path :tail)      ; last 400 lines (tail)
         (cat path :tail n)    ; last n lines
-        (ls dir)              ; a DIRECTORY -> shallow listing {path, entries [{name path type size}], depth}
-        (ls dir opts)         ; opts keys: depth (recurse) / is_hidden
+        (ls dir)              ; a DIRECTORY -> [{name path type size}], directories first;
+        (ls dir, depth=2)     ; nested rows sit in `children`. A SANDBOX helper, not a
+                              ; native tool: it is called inside a python_execution block.
                               ; Batch arg keys are NOT interchangeable: cat takes `files`,
-                              ; ls and struct_index take `paths`. `cat` on a directory
+                              ; struct_index takes `paths`. `cat` on a directory
                               ; refuses and points at `ls`, and vice versa; a nil/blank
                               ; path throws before any I/O.
         (grep query)         ; -> content hits (anchored) + ranked file-NAME matches;
@@ -878,25 +879,31 @@
                :owner owner
                :kind kind}})))
 
+(defn- fs-access-refusal
+  "First `:fs/access` refusal among `paths`, or nil when every one is allowed.
+
+   ONE place asks the gate, so a native reader and the sandbox `ls` helper cannot
+   drift into two vocabularies. `operation` is the verb the hook sees
+   (`\"file-read\"`, `\"file-write\"`) — the same vocabulary `internal/sandbox-fs`
+   passes for guest IO, so one rule covers the tool and `open(p, \"w\")` alike."
+  [env kind operation paths]
+  (when (extension/gate-hooked? :fs/access)
+    (some (fn [path]
+            (let [target (path->target path kind)]
+              (some-> (extension/run-gate-hooks :fs/access
+                                                env
+                                                {:operation operation
+                                                 :path (or (:absolute target) (str path))})
+                      (assoc :target target))))
+          paths)))
+
 (defn- fs-access-before-fn
   "Ask the `:fs/access` gate about every path this op touches, BEFORE it runs.
-   `operation` is the verb the hook sees (`\"file-read\"`, `\"file-write\"`) — the
-   same vocabulary `internal/sandbox-fs` passes for guest IO, so one rule covers
-   the tool and `open(p, \"w\")` alike. The first refusal wins and no path of the
-   batch is touched: a batch that would be half-refused is refused whole."
+   The first refusal wins and no path of the batch is touched: a batch that would
+   be half-refused is refused whole."
   [op kind operation path-extractor]
   (fn [env f args]
-    (if-let
-      [refusal (when (extension/gate-hooked? :fs/access)
-                 (some (fn [path]
-                         (let [target (path->target path kind)]
-                           (some-> (extension/run-gate-hooks :fs/access
-                                                             env
-                                                             {:operation operation
-                                                              :path (or (:absolute target)
-                                                                        (str path))})
-                                   (assoc :target target))))
-                       (extracted-paths path-extractor args)))]
+    (if-let [refusal (fs-access-refusal env kind operation (extracted-paths path-extractor args))]
       {:result (gate-refusal-failure op kind operation refusal)}
       {:env env :fn f :args args})))
 
@@ -4110,10 +4117,10 @@
   [path]
   (throw (ex-info (str "`cat` reads files — `"
                        path
-                       "` is a directory. Use `ls`: "
-                       "ls({\"paths\": [\""
+                       "` is a directory. List it in `python_execution`: "
+                       "ls(\""
                        path
-                       "\"]})")
+                       "\")")
                   {:type :ext.foundation.editing/cat-on-directory :path path})))
 
 (defn- cat-one
@@ -4132,9 +4139,10 @@
    Each key IS the `patch` from_anchor — copy it straight into an edit.
    Not \"eof\"/\"truncated\" → paginate from \"next_offset\".
    A DIRECTORY path is a routing mistake, not a read: it throws and names the
-   replacement call, because `ls` owns listings — `ls({\"paths\": [dir]})`, with
-   `depth` / `is_hidden` there. A nil/blank path throws too; the batch form
-   `cat({\"files\": [...]})` rejects blank entries before any read."
+   replacement call, because `ls` owns listings — `ls(dir)` inside a
+   `python_execution` block, with `depth` / `is_hidden` there. A nil/blank path
+   throws too; the batch form `cat({\"files\": [...]})` rejects blank entries
+   before any read."
   ([path]
    (if (map? path)
      ;; All-kwargs form: `cat(path="p", ranges=rs)` collapses at the Python
@@ -4311,7 +4319,7 @@
       (apply cat-one args))))
 
 (defn- ls-one
-  "List ONE normalized `ls` spec. `ls` is the DIRECTORY tool, so a file path is a
+  "List ONE normalized `ls` spec. `ls` is the DIRECTORY helper, so a file path is a
    routing mistake and says so instead of returning a degenerate one-row tree.
    A path that does NOT exist reports the nearest EXISTING directory above it
    (`nearest-existing-dir`, the same climb `grep` uses for `missing_paths`), so an
@@ -4336,7 +4344,7 @@
                                      " \u2014 nearest existing directory is `" near
                                      "`. List that, or `grep` the name: a language namespace is"
                                      " not a path \u2014 this workspace has many source roots.")))
-                        (cond-> {:type :ext.foundation.editing/invalid-ls-args :path path}
+                        (cond-> {:type :ext.foundation.editing/ls-missing-path :path path}
                           near
                           (assoc :nearest near))))))
     (when-not (.isDirectory f)
@@ -4349,46 +4357,40 @@
                       {:type :ext.foundation.editing/ls-on-file :path path})))
     (list-dir f {:depth (or (get spec "depth") 1) :is_hidden (boolean (get spec "is_hidden"))})))
 
-(defn- ls-tool
-  "List directories: `{\"paths\": [dir, ...]}` answers `{\"results\": [...]}` in request
-   order. Shared `depth`/`is_hidden` apply to every entry; a
-   `{\"path\": \"...\", \"depth\": 2}` entry overrides them for that one directory."
-  [& args]
+(defn list-directories
+  "List directories for the sandbox's `ls` helper. `args` is the string-keyed
+   request — `{\"paths\" [dir | {\"path\" dir, …}, …], \"depth\" n, \"is_hidden\" b}`,
+   an entry's own options overriding the shared ones — and the answer is one row
+   per requested directory IN REQUEST ORDER.
+
+   Listing a directory is not a wire round trip: it is a call inside the Python
+   block the model was already running, so it costs no tool result and no native
+   tool slot. What it may never lose by leaving the tool layer is the boundary,
+   so the `:fs/access` gate is asked here exactly as the native readers ask it —
+   an extension that hides a tree hides it from the listing too.
+
+   Everything that can go wrong throws `ex-info` and the shim maps its `:type`
+   onto the Python exception a caller can actually catch: a gate refusal is a
+   `PermissionError`, a path that does not exist a `FileNotFoundError` (naming
+   the nearest existing directory), a FILE path a `NotADirectoryError`."
+  [env args]
   (let
-    [a
-     (first args)
-
-     m
-     (cond (map? a) a
-           (string? a) (assoc (if (map? (second args)) (second args) {}) "paths" [a])
-           :else nil)
-
-     _
-     (when-not (map? m)
-       (throw (ex-info "`ls` takes {\"paths\": [dir, ...]} or a single path string"
-                       {:type :ext.foundation.editing/invalid-ls-args :got a})))
-
-     entries
-     (or (get m "paths")
-         (when-let [p (get m "path")]
+    [entries
+     (or (get args "paths")
+         (when-let [p (get args "path")]
            [p]))
 
      specs
      (batch-path-specs "ls"
                        "paths"
                        :ext.foundation.editing/invalid-ls-args
-                       (dissoc m "paths" "path")
-                       entries)
+                       (dissoc args "paths" "path")
+                       entries)]
 
-     rows
-     (mapv ls-one specs)]
-
-    (tool-success {:op :ls
-                   :path (get (first specs) "path")
-                   :kind :dir
-                   :result {"results" rows}
-                   :metadata {:dir? true
-                              :entry-count (reduce + 0 (map #(count (get % "entries")) rows))}})))
+    (when-let [refusal (fs-access-refusal env :dir "file-read" (map #(get % "path") specs))]
+      (throw (ex-info (str "ls blocked: " (:resolved (:target refusal)) " — " (:reason refusal))
+                      {:type :ext.foundation.editing/path-protected :owner (:owner refusal)})))
+    (mapv ls-one specs)))
 
 
 (def ^:private ^:const patch-diff-context-lines 3)
@@ -5404,36 +5406,6 @@
           (seq common) (str "`" (str/join "/" common) "/{" listed "}`")
           :else (str "`" listed "`"))))
 
-(defn- render-ls-result
-  "ONE `ls` listing → `{:summary :body}`: the summary is the dir path + entry
-   count; the body lists entries one per row, `name/` for subdirs, two-space
-   indent per nested level. `r` is `{\"path\" \"entries\" \"depth\"}`."
-  [r]
-  (let
-    [entries
-     (get r "entries")
-
-     rows
-     (fn rows [indent es]
-       (mapcat (fn [e]
-                 (let
-                   [dir?
-                    (= "dir" (get e "type"))
-
-                    nm
-                    (str indent (get e "name") (when dir? "/"))]
-
-                   (cons nm (rows (str indent "  ") (get e "children")))))
-               es))
-
-     body
-     (str/join "\n" (rows "" entries))
-
-     n
-     (count entries)]
-
-    {:summary (str "`" (disp-path (get r "path")) "/` · " n " " (if (= 1 n) "entry" "entries"))
-     :body (when (seq entries) (str "\n" (strutil/fenced body)))}))
 
 (defn- render-cat-one
   "cat, ONE path → `{:summary :body}`: the summary is the path + the LINE SPANS read +
@@ -5530,20 +5502,6 @@
 
                (str "\n" fenced)))}))
 
-(defn- render-ls-results
-  "ls → `{:summary :body}`. One listed directory renders its own card; a BATCH
-   renders a shared headline over each directory's own section, in request order."
-  [r]
-  (let [results (vec (get r "results"))]
-    (if (= 1 (count results))
-      (render-ls-result (first results))
-      {:summary
-       (str (batch-paths-summary (map #(get % "path") results)) " · " (count results) " dirs")
-       :body (str/join "\n\n"
-                       (map (fn [x]
-                              (let [{:keys [summary body]} (render-ls-result x)]
-                                (str "### " summary (or body ""))))
-                            results))})))
 
 (defn- render-cat-result
   "cat → `{:summary :body}`. A single path renders its own card; a BATCH renders a
@@ -6419,7 +6377,8 @@
        "`ranges` carry metadata only (`{range,eof,next_offset,truncated}`) and never repeat the text.")
      :description
      (str
-       "Read every needed region of every path as patch-ready `lineno:hash` lines; `ls` lists directories, "
+       "Read every needed region of every path as patch-ready `lineno:hash` lines; `ls(dir)` lists "
+       "directories in `python_execution`, "
        "`struct_index` maps code first. A write invalidates only that file's earlier anchors.")
      :render-finish-call-fn render-cat-result
      :schema cat-schema
@@ -6427,52 +6386,8 @@
      :tag :observation
      :on-error-fn (tool-failure-on-error :cat :file nil)}))
 
-(def ^:private ls-entry-schema
-  "A per-directory object entry in `ls` `paths`: the path plus its own options."
-  {:type "object"
-   :properties {"path" {:type "string" :minLength 1}
-                "depth" {:type "integer" :minimum 1}
-                "is_hidden" {:type "boolean"}}
-   :required ["path"]
-   :additionalProperties false})
 
-(def ^:private ls-schema
-  "`ls`'s JSON Schema: plural `paths` plus the shared listing options."
-  {:type "object"
-   :properties
-   {"paths" {:type "array"
-             :items {:oneOf [{:type "string" :minLength 1} ls-entry-schema]}
-             :minItems 1
-             :description (str "Directories; an object entry overrides shared options. "
-                               "Exact physical paths a tool returned; never assembled from a "
-                               "language namespace \u2014 a workspace has many source roots.")}
-    "depth" {:type "integer"
-             :minimum 1
-             :description "Levels to descend (default 1); nested rows sit in `children`."}
-    "is_hidden" {:type "boolean"
-                 :description "Add dotfiles; gitignored entries stay hidden either way."}}
-   :required ["paths"]
-   :additionalProperties false})
 
-(def ls-symbol
-  (vis/symbol
-    #'ls-tool
-    {:symbol 'ls
-     :native-tool? true
-     :result
-     (str
-       "String-keyed `{results}`, one row per requested path in order: `{path,type,depth,entries}`; "
-       "entries are `{name,path,type,size}` plus `children` when `depth` nests.")
-     :description
-     (str "Directory contents batched over `paths`: directories first, then alphabetical. "
-          "Map an unfamiliar tree's SHAPE here first — `depth` descends — instead of guessing "
-          "paths for `cat`/`grep`. "
-          "Dotfiles need `is_hidden`; gitignored entries are never listed. `cat` reads files.")
-     :render-finish-call-fn render-ls-results
-     :schema ls-schema
-     :before-fn (fs-access-before-fn :ls :dir "file-read" read-arg-paths)
-     :tag :observation
-     :on-error-fn (tool-failure-on-error :ls :dir nil)}))
 
 (def grep-symbol
   (vis/symbol
@@ -7523,8 +7438,8 @@
 
 (defn available-editing-symbols
   []
-  [index-symbol cat-symbol ls-symbol grep-symbol patch-symbol write-symbol struct-patch-symbol
-   nodes-symbol symbol-rename-symbol])
+  [index-symbol cat-symbol grep-symbol patch-symbol write-symbol struct-patch-symbol nodes-symbol
+   symbol-rename-symbol])
 
 (defn available-editing-prompt
   "No separate editing prompt: active native descriptions own routing and their

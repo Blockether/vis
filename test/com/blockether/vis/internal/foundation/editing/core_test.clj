@@ -32,6 +32,12 @@
   [name]
   (deref (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" name))))
 
+(defn- ls-rows
+  "Rows of the sandbox `ls` helper for one request map. `nil` environment is what
+   a block sees when no `:fs/access` hook is registered."
+  [args]
+  (editing/list-directories nil args))
+
 (defn- fff-index-fn
   "Same, for the canonical pooled-fff namespace the index lifecycle lives in."
   [name]
@@ -93,7 +99,8 @@
        include-schema
        (get-in find-files-tool [:schema :properties "include"])]
 
-      (expect (<= 8 (count ents)))          ;; cat ls grep patch write struct_index struct_nodes
+      ;; `ls` is NOT here: the listing left the tool layer for the sandbox shim.
+      (expect (<= 7 (count ents)))          ;; cat grep patch write struct_index struct_nodes struct_patch
       (expect (contains? names "cat"))
       (expect (not (contains? names "rg"))) ;; rg folded into grep
       ;; The filesystem MUTATION verbs are gone: create/copy/move/delete/exists are
@@ -927,7 +934,7 @@
 
 (defdescribe
   vis-ls-test
-  ;; `ls` is its OWN native tool, never a hidden mode of `cat`: `ls` lists
+  ;; `ls` is its OWN surface, never a hidden mode of `cat`: `ls` lists
   ;; directories, `cat` reads files, and each refuses the other's input while
   ;; naming the replacement call. Default hides dotfiles + gitignored paths;
   ;; opts widen the view; depth nests children.
@@ -945,11 +952,8 @@
          _
          (.mkdirs (java.io.File. dir "empty"))
 
-         ls-tool
-         (private-fn "ls-tool")
-
          out
-         (first (get (:result (ls-tool {"paths" [dir]})) "results"))]
+         (first (ls-rows {"paths" [dir]}))]
 
         (expect (= "dir" (get out "type")))
         (expect (= 1 (get out "depth")))
@@ -975,11 +979,8 @@
          two
          (temp-dir-path "lsbatch/two")
 
-         ls-tool
-         (private-fn "ls-tool")
-
          out
-         (get (:result (ls-tool {"paths" [two {"path" one "depth" 1}] "depth" 2})) "results")]
+         (ls-rows {"paths" [two {"path" one "depth" 1}] "depth" 2})]
 
         (expect (= 2 (count out)))
         ;; shared depth 2 nests `two`'s subdirectory ...
@@ -1007,12 +1008,9 @@
        dir
        (temp-dir-path "lsopts")
 
-       ls-tool
-       (private-fn "ls-tool")
-
        names
        (fn [arg]
-         (->> (get (:result (ls-tool (assoc arg "paths" [dir]))) "results")
+         (->> (ls-rows (assoc arg "paths" [dir]))
               first
               (#(get % "entries"))
               (mapv (fn [e]
@@ -1034,11 +1032,8 @@
          dir
          (temp-dir-path "lsdepth")
 
-         ls-tool
-         (private-fn "ls-tool")
-
          out
-         (first (get (:result (ls-tool {"paths" [dir] "depth" 2})) "results"))
+         (first (ls-rows {"paths" [dir] "depth" 2}))
 
          sub
          (some #(when (= "sub" (get % "name")) %) (get out "entries"))]
@@ -1090,9 +1085,6 @@
         [cat-tool
          (private-fn "cat-tool")
 
-         ls-tool
-         (private-fn "ls-tool")
-
          msg
          (fn [f]
            (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-message e))))
@@ -1101,7 +1093,7 @@
          (msg #(cat-tool {"files" [""]}))
 
          ls-msg
-         (msg #(ls-tool {"paths" [""]}))]
+         (msg #(ls-rows {"paths" [""]}))]
 
         ;; `cat` batches `files`; `ls`/`struct_index` batch `paths`. A shared
         ;; normalizer must not tell a caller to fix a key that tool never takes.
@@ -1123,11 +1115,8 @@
          file
          (str (temp-dir-path "lsrefuse") "/b.txt")
 
-         ls-tool
-         (private-fn "ls-tool")
-
          err
-         (try (ls-tool {"paths" [file]}) nil (catch clojure.lang.ExceptionInfo e e))]
+         (try (ls-rows {"paths" [file]}) nil (catch clojure.lang.ExceptionInfo e e))]
 
         (expect (= :ext.foundation.editing/ls-on-file (:type (ex-data err))))
         (expect (string/includes? (ex-message err) "cat"))))
@@ -1145,13 +1134,10 @@
          missing
          (str (temp-dir-path "lsnear") "/real/com/blockether/nope")
 
-         ls-tool
-         (private-fn "ls-tool")
-
          err
-         (try (ls-tool {"paths" [missing]}) nil (catch clojure.lang.ExceptionInfo e e))]
+         (try (ls-rows {"paths" [missing]}) nil (catch clojure.lang.ExceptionInfo e e))]
 
-        (expect (= :ext.foundation.editing/invalid-ls-args (:type (ex-data err))))
+        (expect (= :ext.foundation.editing/ls-missing-path (:type (ex-data err))))
         (expect (string/includes? (ex-message err) "no such path"))
         (expect (string/includes? (ex-message err) "nearest existing directory"))
         (expect (string/includes? (ex-message err) "namespace"))
@@ -3343,51 +3329,24 @@
         (expect (not (contains? (:properties cat-schema) "range")))
         (expect (= 2 (get-in cat-schema [:properties "ranges" :items :minItems])))
         (expect (= 2 (get-in cat-schema [:properties "ranges" :items :maxItems])))))
-  ;; `ls` is a SEPARATE native tool, not a directory mode smuggled into `cat`.
-  ;; Its listing options must be advertised on the native surface, and `cat`'s
-  ;; surface must stay free of directory options.
-  (it
-    "ls is its own native tool advertising `depth` and `is_hidden`"
-    (let
-      [ls
-       (some #(when (= 'ls (:ext.symbol/symbol %)) %) (editing/available-editing-symbols))
+  ;; `ls` is NOT a native tool: listing a directory is a Python call inside the
+  ;; block the model is already running, so it spends no schema, no description
+  ;; and no tool result. What must still hold is that `cat`'s surface stays free
+  ;; of directory options — the listing left, it did not move into `cat`.
+  (it "ls is no native symbol, and cat stays a FILE reader"
+      (let
+        [ls
+         (some #(when (= 'ls (:ext.symbol/symbol %)) %) (editing/available-editing-symbols))
 
-       schema
-       (:ext.symbol/schema ls)
+         cat-entry
+         (->> (get-in editing/cat-symbol [:ext.symbol/schema :properties "files" :items :oneOf])
+              (filter #(= "object" (:type %)))
+              first)]
 
-       entry
-       (->> (get-in schema [:properties "paths" :items :oneOf])
-            (filter #(= "object" (:type %)))
-            first)
-
-       cat-entry
-       (->> (get-in editing/cat-symbol [:ext.symbol/schema :properties "files" :items :oneOf])
-            (filter #(= "object" (:type %)))
-            first)]
-
-      (expect (some? ls))
-      (expect (true? (:ext.symbol/native-tool? ls)))
-      (expect (= ["paths"] (:required schema)))
-      (expect (= "integer" (get-in schema [:properties "depth" :type])))
-      (expect (= 1 (get-in schema [:properties "depth" :minimum])))
-      (expect (= "boolean" (get-in schema [:properties "is_hidden" :type])))
-      (expect (= "integer" (get-in entry [:properties "depth" :type])))
-      (expect (string/includes? (:ext.symbol/description ls) "Directory contents"))
-      ;; `ls` advertises itself as the SHAPE-first move; without this the model reached
-      ;; for `grep`/`cat` on guessed paths in a tree it had never listed.
-      (expect (string/includes? (:ext.symbol/description ls) "SHAPE here first"))
-      (expect (string/includes? (:ext.symbol/description ls) "`depth` descends"))
-      ;; The `paths` argument itself says where a real path comes from: the namespace
-      ;; → path arithmetic that broke `ls` is only valid inside ONE source root.
-      (expect (string/includes? (get-in schema [:properties "paths" :description])
-                                "Exact physical paths a tool returned"))
-      (expect (string/includes? (get-in schema [:properties "paths" :description])
-                                "never assembled from a language namespace"))
-      (expect (string/includes? (:ext.symbol/result ls) "children"))
-      ;; cat is a FILE reader again: no directory knobs, no ls prose
-      (expect (not (contains? (:properties cat-entry) "depth")))
-      (expect (not (contains? (:properties cat-entry) "is_hidden")))
-      (expect (not (string/includes? (:ext.symbol/result editing/cat-symbol) "Directory")))))
+        (expect (nil? ls))
+        (expect (not (contains? (:properties cat-entry) "depth")))
+        (expect (not (contains? (:properties cat-entry) "is_hidden")))
+        (expect (not (string/includes? (:ext.symbol/result editing/cat-symbol) "Directory")))))
   (it "uses one portable patch shape with a path on every edit"
       (let [schema (:ext.symbol/schema editing/patch-symbol)]
         (expect (= "object" (:type schema)))
@@ -6090,12 +6049,9 @@
        dir
        (temp-dir-path dir-name)
 
-       ls-tool
-       (private-fn "ls-tool")
-
        names
        (fn []
-         (->> (get (:result (ls-tool {"paths" [dir]})) "results")
+         (->> (ls-rows {"paths" [dir]})
               first
               (#(get % "entries"))
               (map (fn [e]
@@ -6114,56 +6070,38 @@
 ;; or home directories"), so `ls("/")` and `ls("~")` answered with
 ;; "rg requires fff for directory search, but fff failed for /" and the ROOT files
 ;; were unreachable — the one listing a real `ls` never fails at.
-(defdescribe
-  ls-unindexable-dir-test
-  (it
-    "ls lists a directory fff refuses to index — filesystem root and home"
-    (let
-      [ls-tool
-       (private-fn "ls-tool")
+(defdescribe ls-unindexable-dir-test
+             (it "ls lists a directory fff refuses to index — filesystem root and home"
+                 (let [home (System/getProperty "user.home")]
+                   ;; the session that reported this had the WHOLE filesystem granted as a root
+                   (with-redefs
+                     [workspace/allowed-roots (constantly ["/" home])
+                      workspace/filesystem-root-mappings (constantly [{:trunk "/" :clone "/"}])]
 
-       home
-       (System/getProperty "user.home")]
+                     (let
+                       [row (fn [spec]
+                              (first (ls-rows {"paths" [spec]})))
+                        names (fn [spec]
+                                (into #{} (map #(get % "name")) (get (row spec) "entries")))
+                        root-names (names "/")]
 
-      ;; the session that reported this had the WHOLE filesystem granted as a root
-      (with-redefs
-        [workspace/allowed-roots
-         (constantly ["/" home])
-
-         workspace/filesystem-root-mappings
-         (constantly [{:trunk "/" :clone "/"}])]
-
-        (let
-          [row
-           (fn [spec]
-             (first (get (:result (ls-tool {"paths" [spec]})) "results")))
-
-           names
-           (fn [spec]
-             (into #{} (map #(get % "name")) (get (row spec) "entries")))
-
-           root-names
-           (names "/")]
-
-          (expect (contains? root-names "usr"))
-          (expect (contains? root-names "etc"))
-          ;; dotfiles still need `is_hidden`, exactly as under fff
-          (expect (not-any? #(string/starts-with? % ".") root-names))
-          ;; The root has no dotfiles on a clean Linux runner, but every home does
-          ;; (.bashrc/.profile on Linux, .zshrc/.zshenv on macOS).
-          (expect (some #(string/starts-with? % ".") (names {"path" home "is_hidden" true})))
-          ;; a home directory is refused for the same reason and must list too
-          (expect (= "dir" (get (row home) "type"))))))))
+                       (expect (contains? root-names "usr"))
+                       (expect (contains? root-names "etc"))
+                       ;; dotfiles still need `is_hidden`, exactly as under fff
+                       (expect (not-any? #(string/starts-with? % ".") root-names))
+                       ;; The root has no dotfiles on a clean Linux runner, but every home does
+                       ;; (.bashrc/.profile on Linux, .zshrc/.zshenv on macOS).
+                       (expect (some #(string/starts-with? % ".")
+                                     (names {"path" home "is_hidden" true})))
+                       ;; a home directory is refused for the same reason and must list too
+                       (expect (= "dir" (get (row home) "type"))))))))
 
 (defdescribe
   ls-fff-index-reuse-test
   (it
     "ls serves a workspace subdirectory from the WARM workspace index, building no per-directory index"
     (let
-      [ls-tool
-       (private-fn "ls-tool")
-
-       lease
+      [lease
        (fff-index-fn "lease")
 
        warm?
@@ -6186,7 +6124,7 @@
 
        names
        (fn [path]
-         (->> (get (:result (ls-tool {"paths" [path]})) "results")
+         (->> (ls-rows {"paths" [path]})
               first
               (#(get % "entries"))
               (map (fn [e]
@@ -6221,9 +6159,9 @@
 ;; so the listing has to be cross-validated against the OS: same names, minus the
 ;; entries fff legitimately hides (dotfiles, gitignored paths).
 ;;
-;; And `python_execution` is the model's main hand: reading a file and listing a
-;; directory must be ORDINARY Python calls. `:engine-bound? false` would keep both
-;; tools working as native tools while silently dropping them from the sandbox.
+;; And `python_execution` is the model's main hand: reading a file is an ORDINARY
+;; Python call (`cat`, engine-bound), and listing a directory is the `ls` SHIM — a
+;; plain function in the sandbox globals, costing no tool result at all.
 ;; =============================================================================
 
 (defdescribe
@@ -6252,22 +6190,28 @@
 
 (defdescribe
   python-sandbox-read-surface-test
-  "`cat` and `ls` are engine-bound: bound into sandbox globals, documented, and
-   really callable from Python."
-  (it "binds both symbols with docs that route to each other"
+  "`cat` is engine-bound and `ls` is a sandbox SHIM: both are ordinary calls inside
+   a `python_execution` block, documented there, and really callable."
+  (it "binds `cat`, ships `ls` as a shim global, and each routes to the other"
       (let
         [bind
          (extension/builtin-sandbox-bindings (constantly nil))
 
          docs
-         (extension/sandbox-symbol-docs)]
+         (extension/sandbox-symbol-docs)
+
+         ls-shim
+         (some #(when (= "ls" (:shim/name %)) %) (extension/sandbox-shims))]
 
         (expect (ifn? (get bind 'cat)))
-        (expect (ifn? (get bind 'ls)))
         (expect (string? (get docs 'cat)))
-        (expect (string? (get docs 'ls)))
-        (expect (string/includes? (get docs 'cat) "`ls`"))
-        (expect (string/includes? (get docs 'ls) "`cat`"))))
+        (expect (string/includes? (get docs 'cat) "`ls(dir)`"))
+        ;; `ls` left the tool layer entirely: a shim global, never an engine-bound
+        ;; symbol, so it costs no schema and no tool result.
+        (expect (nil? (get bind 'ls)))
+        (expect (nil? (get docs 'ls)))
+        (expect (= ["ls"] (:shim/globals ls-shim)))
+        (expect (string/includes? (:shim/description ls-shim) "`cat`"))))
   (it "lists a directory and reads a file from real Python"
       (let
         [ctx
@@ -6277,9 +6221,8 @@
          result
          (ep/run-python-block
            ctx
-           (str "r = await ls({\"paths\": "
-                "[\"src/com/blockether/vis/internal/foundation/editing\"]})\n"
-                "names = {e[\"name\"] for e in r[\"results\"][0][\"entries\"]}\n"
+           (str "names = {e[\"name\"] for e in "
+                "ls(\"src/com/blockether/vis/internal/foundation/editing\")}\n"
                 "c = await cat({\"files\": [{\"path\": \"deps.edn\", \"ranges\": [[1, 1]]}]})\n"
                 "print(\"core.clj\" in names, len(c[\"results\"][0][\"anchors\"]))")
            "t1/i1")]

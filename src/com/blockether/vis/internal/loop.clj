@@ -4985,8 +4985,8 @@
    `shapes` as wire-name → shape-map-or-fn) — the engine holds NO per-tool list, so
    a new module's tool works by default or by declaring its own shape. A shape map
    is interpreted by `synth-call`; a `(fn [input] -> {:args [raw-vals] :py-name?})`
-   is an escape hatch for the two irreducible ones (`patch` reshape, `ls` path
-   default) — it returns RAW argument values (no `py-literal`, so tool namespaces
+   is an escape hatch for the irreducible one (`patch` reshape) — it returns RAW
+   argument values (no `py-literal`, so tool namespaces
    need no engine dependency) which THIS fn renders. A tool with NO shape → the
    generic `name({…whole input…})` form (correct for struct_patch, struct_rename,
    grep, struct_index …).
@@ -7217,7 +7217,6 @@
      [["search" (+ (long (get counts "grep" 0)) (long (get counts "search" 0)))]
       ["read"
        (+ (long (get counts "cat" 0))
-          (long (get counts "ls" 0))
           (long (get counts "struct_index" 0))
           (long (get counts "struct_nodes" 0)))] ["test" (long (get counts "run_tests" 0))]
       ["tool call" (long (count names))]]]
