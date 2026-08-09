@@ -3835,7 +3835,6 @@
         ;; `cat` is plural-only (`paths`), so it declares NO positional shape.
         (expect (nil? (get real-call-shapes "cat")))
         (expect (= {:lead-opt "language" :rest :always} (get real-call-shapes "repl_eval")))
-        (expect (= {:pos ["name" "new_name"]} (get real-call-shapes "struct_rename")))
         (expect (fn? (get real-call-shapes "patch")))
         ;; lint_code takes a whole dict → it declares NO :call and uses the default.
         (expect (nil? (get real-call-shapes "lint_code")))
@@ -3896,13 +3895,8 @@
                    (synth {:name "shell_background" :input {"id" "x" "commands" ["sleep 1"]}})))
         (expect (= "shell_logs({\"id\": \"x\", \"n\": 50})"
                    (synth {:name "shell_logs" :input {"id" "x" "n" 50}})))
-        (expect (= "struct_rename(\"a\", \"b\")"
-                   (synth {:name "struct_rename" :input {"name" "a" "new_name" "b"}})))
         (expect (= "shell_stop({\"id\": \"x\"})"
                    (synth {:name "shell_stop" :input {"id" "x"}}))))
-    (it "struct_rename synthesizes its two positionals"
-        (expect (= "struct_rename(\"p\", \"q\")"
-                   (synth {:name "struct_rename" :input {"name" "p" "new_name" "q"}}))))
     (it "patch projects its one native shape to the edits vector"
         (expect (= "patch([{\"path\": \"a.clj\", \"from_anchor\": \"1:a\"}])"
                    (synth {:name "patch"

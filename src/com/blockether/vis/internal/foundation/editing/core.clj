@@ -817,13 +817,11 @@
     (cond (map? a) (let
                      [own (when-let [path (get a "path")]
                             [path])
-                      ;; struct_patch's PROJECT-wide rename scopes with `paths`.
-                      scoped (when (sequential? (get a "paths")) (get a "paths"))
                       batch (let [batch-edits (normalize-edits-arg (get a "edits"))]
                               (when (sequential? batch-edits)
                                 (keep #(when (map? %) (get % "path")) batch-edits)))]
 
-                     (seq (distinct (concat own scoped batch))))
+                     (seq (distinct (concat own batch))))
           (string? a) [a]
           :else nil)))
 
@@ -5230,7 +5228,7 @@
                               "none, or the language has no structural index yet. Use cat(path)."))
                        :else (assoc base "note" "Unknown language — use cat(path).")))})))
 
-(declare occurrences-data occurrence->wire symbol-rename-tool)
+(declare occurrences-data occurrence->wire)
 
 (defn- index-tool
   "Index source files with one paths-only contract. Results preserve request order.
@@ -6143,29 +6141,6 @@
                                     (mapcat def-block symbols)
                                     (map #(use-row % "unowned use") other)))))}))
 
-(defn- render-symbol-rename-result
-  "struct_rename → `{:summary :body}`: `renamed in N files` (+ any failures), then
-   the changed paths. `r` is `{:files [{:path :changed}] :file_count :failed}`."
-  [r]
-  (let
-    [files
-     (get r "files")
-
-     fc
-     (or (get r "file_count") (count files))
-
-     failed
-     (get r "failed")]
-
-    {:summary (str "renamed in "
-                   fc
-                   " file"
-                   (when (not= 1 fc) "s")
-                   (when (seq failed) (str " · " (count failed) " failed")))
-     :body (when (seq files)
-             (str "\n```\n"
-                  (str/join "\n" (map #(str "  " (disp-path (kw->str (get % "path")))) files))
-                  "\n```"))}))
 
 
 (defn- render-node-one
@@ -6796,63 +6771,6 @@
                     :mode :struct_patch}
          :error {:message (:message result) :failures (:failures result) :mode :struct_patch}}))))
 
-(defn- struct-patch-project-rename
-  "struct_patch with `paths` instead of `path` — the PROJECT-wide rename. Same op
-   as the single-file `rename` (tree-sitter identifier boundaries, each changed
-   file re-parsed), widened to every supported file under `paths`, and reported
-   in struct_patch's own per-file row shape."
-  [args]
-  (let
-    [op
-     (struct-op->kw (or (get args "op") "rename"))
-
-     target
-     (str (get args "target"))
-
-     new-name
-     ;; Same drift as every other `code`: the new name is decoded on the way in.
-     (patch/decode-unicode-escapes (str (get args "code")))
-
-     paths
-     (let [p (get args "paths")]
-       (if (string? p) [p] (vec p)))
-
-     ;; `paths` is the ONLY way to reach the project-wide rewrite: a missing
-     ;; `path` can never silently widen a single-file edit into one.
-     _
-     (when-not (= op :rename)
-       (throw (ex-info
-                (str
-                  "struct_patch: `paths` is the project-wide rename and takes op \"rename\", not "
-                  (pr-str (get args "op"))
-                  " — use `path` to edit ONE file.")
-                {:type :ext.foundation.editing/struct-paths-needs-rename :op (get args "op")})))
-
-     _
-     (when (or (str/blank? target) (str/blank? new-name))
-       (throw (ex-info "struct_patch rename needs `target` (current name) and `code` (new name)."
-                       {:type :ext.foundation.editing/invalid-symbol-rename-args})))
-
-     r
-     (:result (symbol-rename-tool {"name" target "new_name" new-name "paths" paths}))
-
-     ;; Model-facing rows — string keys, no keyword values.
-     rows
-     (into (mapv (fn [f]
-                   {"path" (get f "path") "op" "rename" "changed" true})
-                 (get r "files"))
-           (mapv (fn [f]
-                   {"path" (get f "path") "op" "rename" "changed" false "error" (get f "error")})
-                 (get r "failed")))]
-
-    (tool-success {:op :struct_patch
-                   :kind :dir
-                   :path (or (first paths) ".")
-                   :result rows
-                   :metadata {:mode :struct_patch
-                              :file-count (count rows)
-                              :changed-count (count (get r "files"))
-                              :edit-count 1}})))
 
 (defn- struct-patch-tool
   "struct_patch — ONE syntax-safe structural edit, or an ORDERED `edits` BATCH.
@@ -6863,15 +6781,12 @@
    repetition, and entries may also span several files. Entries apply in request
    order, each against the file as the previous entry left it, and the results
    come back as ONE ordered array. There is no rollback: a failing entry stops
-   the batch and the earlier writes stand — the error says how many applied.
-
-   `paths` (in place of `path`) with op \"rename\" is the PROJECT-wide rename."
+   the batch and the earlier writes stand — the error says how many applied."
   [& {:as args}]
   ;; Same `edits` coercion as patch: a batch a serializer stringified, or a lone edit
   ;; map, becomes a real vector instead of being silently ignored as a single call.
   (let [edits (normalize-edits-arg (get args "edits"))]
-    (cond (contains? args "paths") (struct-patch-project-rename args)
-          (not (and (sequential? edits) (seq edits))) (struct-patch-one args)
+    (cond (not (and (sequential? edits) (seq edits))) (struct-patch-one args)
           :else
           (let
             [shared (dissoc args "edits")
@@ -6934,7 +6849,7 @@
      :result
      (str
        "One row/edit: `path`, `op`, `changed`, `diff`; small regions add reusable `anchors` for the "
-       "next `from_anchor`. A `paths` rename returns one row/file; failures set `changed` false plus `error`.")
+       "next `from_anchor`.")
      :active-fn structural-supported?
      :description
      (str
@@ -6946,11 +6861,6 @@
      {:type "object"
       :properties
       {"path" {:type "string" :description "Edit file, or shared default for `edits`."}
-       "paths" {:type "array"
-                :items {:type "string" :minLength 1}
-                :minItems 1
-                :description
-                "`rename` only: rewrite `target` to `code` in scopes (`[\".\"]` = project)."}
        "edits"
        {:type "array"
         :minItems 1
@@ -7332,123 +7242,11 @@
        (seq other-uses)
        (assoc "other_uses" other-uses)))))
 
-(defn- symbol-rename-tool
-  "Rename identifier `name` → `new_name` across the WHOLE project via tree-sitter
-   — at real identifier boundaries (never a string / comment / larger token),
-   RE-PARSED per file so a syntax-breaking rename is refused. For a Clojure
-   NAMESPACE this is the cross-file ns rename: it rewrites the `(ns …)` form, every
-   `:require`/`:use` target, and qualified `old.ns/sym` usages, while leaving local
-   `:as` aliases intact (then move the defining file with move(old, new)). Returns
-   {\"files\": [{\"path\", \"changed\"}], \"file_count\", \"failed\": [{\"path\",
-   \"error\"}]}.
-     await struct_rename(\"foo.bar\", \"foo.baz\")     # ns or any symbol"
-  [& args]
-  (let
-    [spec
-     (cond (and (= 2 (count args)) (string? (first args)) (string? (second args)))
-           {"name" (first args) "new_name" (second args)}
-           (and (= 1 (count args)) (map? (first args))) (first args)
-           :else (throw (ex-info "struct_rename takes struct_rename(name, new_name)."
-                                 {:type :ext.foundation.editing/invalid-symbol-rename-args
-                                  :got args})))
 
-     name
-     (get spec "name")
-
-     new_name
-     (get spec "new_name")
-
-     _
-     (when-not
-       (and (string? name) (not (str/blank? name)) (string? new_name) (not (str/blank? new_name)))
-       (throw (ex-info "struct_rename needs non-blank `name` and `new_name`."
-                       {:type :ext.foundation.editing/invalid-symbol-rename-args :spec spec})))
-
-     paths
-     (let [p (or (get spec "paths") ["."])]
-       (if (string? p) [p] (vec p)))
-
-     files
-     ;; Unbounded: the default rg limit would silently skip every file past it —
-     ;; renaming HALF a project is worse than renaming none of it.
-     (vec (or (:files
-                (rg-search
-                  {"query" [name] "is_files_only" true "paths" paths "limit" Integer/MAX_VALUE}))
-              []))
-
-     _
-     ;; struct_rename discovers its own targets, so no `:before-fn` over the
-     ;; ARGUMENTS can see them - ask the `:fs/access` gate here, over the candidate
-     ;; set, and refuse the whole rename: half a renamed project is worse than none.
-     (when-let [refusal (fs-access-refusal extension/*current-environment* :dir "file-write" files)]
-       (throw (ex-info (str "struct_rename blocked: " (:resolved (:target refusal))
-                            " - " (:reason refusal))
-                       {:type :ext.foundation.editing/path-protected :owner (:owner refusal)})))
-
-     out
-     (reduce
-       (fn [acc path]
-         (try
-           (let
-             [src
-              (slurp (safe-path path))
-
-              hits
-              (structural/references path src name)]
-
-             (if (seq hits)
-               (let
-                 [renamed (structural/edit-source
-                            path
-                            src
-                            {:op :rename :target name :kind nil :code new_name :match nil})]
-                 (write-safe {"path" path "content" renamed "is_dirty_ok" true})
-                 (update acc :changed conj path))
-               acc))
-           (catch Exception e
-             (update acc :failed conj {"path" path "error" (or (ex-message e) (str (class e)))}))))
-       {:changed [] :failed []}
-       files)]
-
-    (tool-success {:op :struct_rename
-                   :kind :dir
-                   ;; Model-facing result — string keys, no keyword values.
-                   :result {"files" (mapv (fn [p]
-                                            {"path" p "changed" true})
-                                          (:changed out))
-                            "file_count" (count (:changed out))
-                            "failed" (:failed out)}})))
-
-(def symbol-rename-symbol
-  (vis/symbol
-    #'symbol-rename-tool
-    {:symbol 'struct_rename
-     ;; Reachable as struct_patch(paths=…, op="rename") on the native surface; kept
-     ;; here as a Python-callable function (apropos/doc), off the tool list.
-     :native-tool? false
-     :result "String-keyed `{files:[{path,changed:true}], file_count, failed:[{path,error}], op}`."
-     :name "struct_rename"
-     :call {:pos ["name" "new_name"]}
-     :active-fn structural-supported?
-     :description
-     (str
-       "Rename one identifier at syntactic boundaries across supported project code, re-parsing changed files. "
-       "First grep candidates, then struct_index those paths for declarations/occurrences. Clojure namespace "
-       "renames still require moving the defining file.")
-     :render-finish-call-fn render-symbol-rename-result
-     :schema {:type "object"
-              :properties {"name" {:type "string" :description "Current identifier or namespace."}
-                           "new_name" {:type "string"
-                                       :description "Replacement identifier or namespace."}}
-              :required ["name" "new_name"]
-              :additionalProperties false}
-     :tag :mutation
-     :on-error-fn (tool-failure-on-error :struct_rename :dir nil)}))
 
 (defn available-editing-symbols
   []
-  [index-symbol cat-symbol grep-symbol patch-symbol write-symbol struct-patch-symbol nodes-symbol
-   symbol-rename-symbol])
+  [index-symbol cat-symbol grep-symbol patch-symbol write-symbol struct-patch-symbol nodes-symbol])
 
 (defn available-editing-prompt
   "No separate editing prompt: active native descriptions own routing and their

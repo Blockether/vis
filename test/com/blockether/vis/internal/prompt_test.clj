@@ -101,8 +101,7 @@
                   "## 4. Edit + verify" "## 5. Act autonomously" "## 6. Manage context"
                   "## 7. Style and finish"]]
         (expect (str/includes? text heading)))
-      (doseq [tool ["`struct_occurrences`" "`struct_rename`"]]
-        (expect (not (str/includes? text tool))))
+      (expect (not (str/includes? text "`struct_occurrences`")))
       ;; struct_nodes IS named in the core prompt: reading a definition's SOURCE is a
       ;; first-class step of the code workflow, not a specialist tool.
       (expect (str/includes? text "`struct_nodes`"))

@@ -202,29 +202,6 @@
                            :target target
                            :language language}
                           e)))))))
-
-(defn references
-  "Occurrences of identifier `name` in `path` as
-   [{:line :column :start-byte :end-byte :anchor} …] (empty if none / unknown
-   language). `:anchor` is the line's `<lineno>:<hash>` patch anchor, so a hit
-   can be edited directly with patch — same anchors cat / index emit."
-  [path source name]
-  ;; Cheap reject: an identifier that never occurs as raw text in `source` cannot
-  ;; have a reference here, so skip the native parse instead of walking a whole
-  ;; tree to return []. Tracing runs every declared name against every indexed
-  ;; path, and on real batches ~93% of those pairs are exactly this case.
-  (if-let [language (when (str/includes? source name) (index/detect-language path))]
-    (let [lines (vec (str/split-lines source))]
-      (mapv (fn [^dev.kreuzberg.treesitterlanguagepack.StructuralApi$ReferenceHit h]
-              (let [line (.line h)]
-                {:line line
-                 :column (.column h)
-                 :start-byte (.startByte h)
-                 :end-byte (.endByte h)
-                 :anchor (patch/line-anchor line (nth lines (dec line) ""))}))
-            (StructuralApi/findReferences ^String source ^String language ^String name)))
-    []))
-
 (defn- occurrence-entries
   "Enrich the source-ordered `hits` of ONE identifier with `defs` — that same
    identifier's definitions — into the entry list `occurrences` returns."
@@ -331,8 +308,8 @@
    Tracing SEVERAL names through the same file? Call `occurrences-in` once
    instead of this per name."
   [path source name]
-  ;; Cheap reject: see `references`. No raw occurrence ⇒ no reference AND no
-  ;; definition, so the whole batch below is skippable.
+  ;; Cheap reject: an identifier that never occurs as raw text in `source` has no
+  ;; reference AND no definition, so the whole batch below is skippable.
   (if (str/includes? source name) (get (occurrences-in path source [name]) name []) []))
 
 ;; -----------------------------------------------------------------------------

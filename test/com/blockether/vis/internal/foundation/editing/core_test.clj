@@ -2523,7 +2523,7 @@
           (expect (string/includes? src "x — y"))
           (expect (string/includes? src "p … q"))
           (expect (string/includes? src "(def c \"\\u202e\")")))))
-  (it "struct_patch `paths` rename decodes the new name"
+  (it "struct_patch rename decodes the new name"
       (let
         [sp
          (private-fn "struct-patch-tool")
@@ -2535,14 +2535,9 @@
          (str (temp-root) "/spescrename/m.clj")]
 
         (spit (fs/file f) "(defn widget [] 1)\n(widget)\n")
-        (with-redefs [editing/rg-search (constantly {:files [f]})]
-          (let
-            [r (sp {"paths" [(str (temp-root) "/spescrename")]
-                    "op" "rename"
-                    "target" "widget"
-                    "code" "caf\\u00e9"})]
-            (expect (:success? r))
-            (expect (string/includes? (slurp (fs/file f)) "(defn caf\u00e9 []"))))))
+        (let [r (sp {"path" f "op" "rename" "target" "widget" "code" "caf\\u00e9"})]
+          (expect (:success? r))
+          (expect (string/includes? (slurp (fs/file f)) "(defn café []")))))
   (it "a decoded `code` still faces the re-parse gate"
       ;; Decoding happens BEFORE the file is parsed, so drift can never smuggle a
       ;; broken form past the structural guard.
@@ -3548,73 +3543,6 @@
             (expect (= :hashline-not-found (get-in r [:error :reason]))))))))
 
 (defdescribe
-  project-rename-test
-  "Cross-file rename via tree-sitter. For a Clojure ns it rewrites the ns form +
-   :require targets + qualified usages, keeps local :as aliases. (rg prefilter is
-   redef'd to a known file set so the test doesn't depend on gitignore.)"
-  (let [rename-tool (private-fn "symbol-rename-tool")]
-    (it "renames a Clojure namespace across files"
-        (let
-          [_ (temp-dir-path "nsrename")
-           f1 (str (temp-root) "/nsrename/bar.clj")
-           f2 (str (temp-root) "/nsrename/app.clj")]
-
-          (spit (fs/file f1) "(ns foo.bar)\n(defn h [x] (inc x))\n")
-          (spit
-            (fs/file f2)
-            "(ns app\n  (:require [foo.bar :as fb]))\n(defn run [] (+ (foo.bar/h 1) (fb/h 2)))\n")
-          (with-redefs [editing/rg-search (constantly {:files [f1 f2]})]
-            (let [r (rename-tool "foo.bar" "foo.baz")]
-              (expect (:success? r))
-              (expect (= 2 (get-in r [:result "file_count"])))))
-          (let
-            [a (slurp (fs/file f1))
-             b (slurp (fs/file f2))]
-
-            (expect (clojure.string/includes? a "(ns foo.baz)"))
-            (expect (clojure.string/includes? b "[foo.baz :as fb]")) ; require target renamed
-            (expect (clojure.string/includes? b "foo.baz/h 1"))      ; qualified usage renamed
-            (expect (clojure.string/includes? b "fb/h 2"))           ; local alias UNCHANGED
-            (expect (not (clojure.string/includes? b "foo.bar")))))) ; nothing left
-    (it "skips files that don't mention the name (file_count reflects only changes)"
-        (let
-          [_ (temp-dir-path "nsrename2")
-           f1 (str (temp-root) "/nsrename2/has.clj")
-           f2 (str (temp-root) "/nsrename2/none.clj")]
-
-          (spit (fs/file f1) "(ns has)\n(zz/q 1)\n")
-          (spit (fs/file f2) "(ns none)\n(defn k [] 1)\n")
-          (with-redefs [editing/rg-search (constantly {:files [f1 f2]})]
-            (let [r (rename-tool "zz" "ww")]
-              (expect (= 1 (get-in r [:result "file_count"])))))
-          (expect (clojure.string/includes? (slurp (fs/file f1)) "ww/q"))
-          (expect (= "(ns none)\n(defn k [] 1)\n" (slurp (fs/file f2))))))
-    ;; Regression: struct_rename finds its own targets, so the argument-shaped
-    ;; `:before-fn` never saw them and a rename walked straight past `:fs/access`.
-    (it "a refused candidate blocks the WHOLE rename, so nothing is half-renamed"
-        (let
-          [_ (temp-dir-path "nsrename3")
-           f1 (str (temp-root) "/nsrename3/has.clj")
-           f2 (str (temp-root) "/nsrename3/guarded.clj")
-           seen! (atom [])]
-
-          (spit (fs/file f1) "(ns has)\n(zz/q 1)\n")
-          (spit (fs/file f2) "(ns guarded)\n(zz/q 2)\n")
-          (with-redefs [editing/rg-search (constantly {:files [f1 f2]})]
-            (with-fs-gate!
-              (refusing-gate seen! "guarded.clj" "Ask the owner before renaming in this tree.")
-              (fn []
-                (let [err (try (rename-tool "zz" "ww") nil (catch clojure.lang.ExceptionInfo e e))]
-                  (expect (some? err))
-                  (expect (= :ext.foundation.editing/path-protected (:type (ex-data err))))
-                  (expect (clojure.string/includes? (ex-message err) "Ask the owner"))
-                  ;; A rename is a WRITE, whichever surface reaches it.
-                  (expect (= ["file-write"] (distinct (mapv :operation @seen!))))))))
-          ;; The refusal landed before the first edit, so the allowed file is untouched.
-          (expect (= "(ns has)\n(zz/q 1)\n" (slurp (fs/file f1))))
-          (expect (= "(ns guarded)\n(zz/q 2)\n" (slurp (fs/file f2))))))))
-
-(defdescribe
   render-patch-result-compact-headline-test
   (let [render @#'editing/render-patch-result]
     (it "uses only path chips because the tool badge already names the operation"
@@ -3904,75 +3832,58 @@
 
 (defdescribe
   merged-symbol-entry-points-test
-  "Occurrence grouping backs the one paths-only struct_index mode; `struct_rename`
-   remains unadvertised (project-wide renaming is `struct_patch(paths, op \"rename\")`)."
-  (let
-    [idx
-     (private-fn "index-tool")
+  "Occurrence grouping backs the one paths-only struct_index mode."
+  (let [idx (private-fn "index-tool")]
+    (it "an ambiguous name groups PER SYMBOL and parks the rest in other_uses"
+        (let
+          [_ (temp-dir-path "idxamb")
+           a (str (temp-root) "/idxamb/a.clj")
+           b (str (temp-root) "/idxamb/b.clj")
+           c (str (temp-root) "/idxamb/c.clj")]
 
-     sp
-     (private-fn "struct-patch-tool")]
+          (spit (fs/file a) "(defn gizmo [x] x)\n(gizmo 1)\n")
+          (spit (fs/file b) "(defn gizmo [x y] y)\n(gizmo 1 2)\n")
+          ;; uses only — owned by neither definition
+          (spit (fs/file c) "(ns c)\n(gizmo 9)\n(gizmo 8)\n")
+          (with-redefs [editing/rg-search (constantly {:files [a b c]})]
+            (let
+              [r (idx {"paths" [a b c] "include_occurrences" true})
+               res (:result r)
+               gizmo (first (filter #(= "gizmo" (get % "name")) (get res "occurrences")))
+               syms (get gizmo "symbols")]
 
-    (it
-      "an ambiguous name groups PER SYMBOL and parks the rest in other_uses"
-      (let
-        [_
-         (temp-dir-path "idxamb")
-
-         a
-         (str (temp-root) "/idxamb/a.clj")
-
-         b
-         (str (temp-root) "/idxamb/b.clj")
-
-         c
-         (str (temp-root) "/idxamb/c.clj")]
-
-        (spit (fs/file a) "(defn gizmo [x] x)\n(gizmo 1)\n")
-        (spit (fs/file b) "(defn gizmo [x y] y)\n(gizmo 1 2)\n")
-        ;; uses only — owned by neither definition
-        (spit (fs/file c) "(ns c)\n(gizmo 9)\n(gizmo 8)\n")
-        (with-redefs [editing/rg-search (constantly {:files [a b c]})]
-          (let
-            [r (idx {"paths" [a b c] "include_occurrences" true})
-             res (:result r)
-             gizmo (first (filter #(= "gizmo" (get % "name")) (get res "occurrences")))
-             syms (get gizmo "symbols")]
-
-            (expect (:success? r))
-            (expect (= 2 (get gizmo "definition_count")))
-            (expect (= 2 (count syms)))
-            ;; each definition keeps its own path + signature to disambiguate
-            (expect (= [a b] (mapv #(get % "path") syms)))
-            (expect (= ["[x]" "[x y]"] (mapv #(get % "signature") syms)))
-            ;; a use in a file that defines the name exactly once is attributed there
-            (expect (= [1 1] (mapv #(get % "use_count") syms)))
-            (expect (= [[a] [b]]
-                       (mapv (fn [s]
-                               (mapv #(get % "path") (get s "uses")))
-                             syms)))
-            ;; the third file defines nothing, so ownership is NOT guessed
-            (expect (= [c] (mapv #(get % "path") (get gizmo "other_uses"))))
-            (expect (= 2 (count (get (first (get gizmo "other_uses")) "anchors"))))))))
+              (expect (:success? r))
+              (expect (= 2 (get gizmo "definition_count")))
+              (expect (= 2 (count syms)))
+              ;; each definition keeps its own path + signature to disambiguate
+              (expect (= [a b] (mapv #(get % "path") syms)))
+              (expect (= ["[x]" "[x y]"] (mapv #(get % "signature") syms)))
+              ;; a use in a file that defines the name exactly once is attributed there
+              (expect (= [1 1] (mapv #(get % "use_count") syms)))
+              (expect (= [[a] [b]]
+                         (mapv (fn [s]
+                                 (mapv #(get % "path") (get s "uses")))
+                               syms)))
+              ;; the third file defines nothing, so ownership is NOT guessed
+              (expect (= [c] (mapv #(get % "path") (get gizmo "other_uses"))))
+              (expect (= 2 (count (get (first (get gizmo "other_uses")) "anchors"))))))))
     (it "the card renders a table: one row per symbol, its use sites beneath"
         (let
-          [render
-           (private-fn "render-occurrences-result")
-
-           {:keys [summary body]}
-           (render {"name" "gizmo"
-                    "count" 3
-                    "definition_count" 1
-                    "paths" ["."]
-                    "symbols" [{"name" "gizmo"
-                                "kind" "fn"
-                                "visibility" "public"
-                                "signature" "[x]"
-                                "path" "src/a.clj"
-                                "anchor" "1:aaa"
-                                "end_anchor" "3:bbb"
-                                "use_count" 2
-                                "uses" [{"path" "src/b.clj" "anchors" ["4:ccc" "9:ddd"]}]}]})]
+          [render (private-fn "render-occurrences-result")
+           {:keys [summary body]} (render {"name" "gizmo"
+                                           "count" 3
+                                           "definition_count" 1
+                                           "paths" ["."]
+                                           "symbols" [{"name" "gizmo"
+                                                       "kind" "fn"
+                                                       "visibility" "public"
+                                                       "signature" "[x]"
+                                                       "path" "src/a.clj"
+                                                       "anchor" "1:aaa"
+                                                       "end_anchor" "3:bbb"
+                                                       "use_count" 2
+                                                       "uses" [{"path" "src/b.clj"
+                                                                "anchors" ["4:ccc" "9:ddd"]}]}]})]
 
           (expect (= "`gizmo` · 1 def · 2 uses · 2 files · project-wide" summary))
           (expect (clojure.string/includes? body "| Def | Arity | Kind | Where | Uses |"))
@@ -3980,54 +3891,24 @@
           (expect (clojure.string/includes? body "· src/b.clj | — | use | 4, 9 | 2 |"))))
     (it "uses no definition owns are their own table rows, and anchors sort by line"
         (let
-          [render
-           (private-fn "render-occurrences-result")
-
-           {:keys [body]}
-           (render {"name" "gizmo"
-                    "count" 2
-                    "definition_count" 0
-                    "paths" ["."]
-                    "symbols" []
-                    "other_uses" [{"path" "src/c.clj" "anchors" ["9:ddd" "4:ccc"]}]})]
+          [render (private-fn "render-occurrences-result")
+           {:keys [body]} (render {"name" "gizmo"
+                                   "count" 2
+                                   "definition_count" 0
+                                   "paths" ["."]
+                                   "symbols" []
+                                   "other_uses" [{"path" "src/c.clj"
+                                                  "anchors" ["9:ddd" "4:ccc"]}]})]
 
           (expect (clojure.string/includes? body "· src/c.clj | — | unowned use | 4, 9 | 2 |"))))
     (it "struct_index without `paths` is refused"
         (expect (throws? clojure.lang.ExceptionInfo #(idx {}))))
-    (it "struct_patch with `paths` + op `rename` renames across files"
-        (let
-          [_
-           (temp-dir-path "sprename")
-
-           f1
-           (str (temp-root) "/sprename/lib.clj")
-
-           f2
-           (str (temp-root) "/sprename/use.clj")]
-
-          (spit (fs/file f1) "(defn widget [x] (inc x))\n")
-          (spit (fs/file f2) "(ns u)\n(println (widget 1))\n")
-          (with-redefs [editing/rg-search (constantly {:files [f1 f2]})]
-            (let
-              [r (sp {"paths" [(str (temp-root) "/sprename")]
-                      "op" "rename"
-                      "target" "widget"
-                      "code" "gadget"})]
-              (expect (:success? r))
-              (expect (= 2 (count (:result r))))
-              (expect (every? #(and (= "rename" (get % "op")) (get % "changed")) (:result r)))
-              (expect (clojure.string/includes? (slurp f1) "(defn gadget"))
-              (expect (clojure.string/includes? (slurp f2) "(gadget 1)"))))))
-    (it "struct_patch `paths` only accepts op `rename`"
-        (expect (throws? clojure.lang.ExceptionInfo
-                         #(sp {"paths" ["src"] "op" "delete" "target" "x"}))))
-    (it "struct_occurrences is gone entirely; struct_rename is merely unadvertised"
+    (it "struct_occurrences is gone entirely"
         ;; No `struct_occurrences` symbol is exported: occurrence analysis is an
         ;; explicit struct_index option (a stale Var can survive a REPL :reload, so
         ;; assert on the exported symbol list, not `resolve`).
         (expect (not-any? #(= 'struct_occurrences (:ext.symbol/symbol %))
-                          (editing/available-editing-symbols)))
-        (expect (false? (boolean (:ext.symbol/native-tool? @#'editing/symbol-rename-symbol)))))))
+                          (editing/available-editing-symbols))))))
 
 (defdescribe
   index-tool-e2e-test
@@ -5360,8 +5241,7 @@
          (extension/symbol-active? sym nil)))
 
      struct-syms
-     [editing/struct-patch-symbol editing/index-symbol editing/symbol-rename-symbol
-      editing/nodes-symbol]]
+     [editing/struct-patch-symbol editing/index-symbol editing/nodes-symbol]]
 
     (it "a Clojure project advertises every structural editor"
         (doseq [s struct-syms]
@@ -5376,9 +5256,7 @@
                                   {:languages {:languages [{:language "markdown"}
                                                            {:language "text"}]}})]
           (let [prompt (editing/available-editing-prompt)]
-            (doseq
-              [name ["struct_index" "struct_patch" "struct_nodes" "struct_occurrences"
-                     "struct_rename"]]
+            (doseq [name ["struct_index" "struct_patch" "struct_nodes" "struct_occurrences"]]
               (expect (not (string/includes? prompt name)))))))
     (it "a mixed repo with ANY supported language keeps them (markdown + json)"
         (expect (true? (active? editing/struct-patch-symbol ["markdown" "json"]))))

@@ -4988,8 +4988,8 @@
    is an escape hatch for the irreducible one (`patch` reshape) — it returns RAW
    argument values (no `py-literal`, so tool namespaces
    need no engine dependency) which THIS fn renders. A tool with NO shape → the
-   generic `name({…whole input…})` form (correct for struct_patch, struct_rename,
-   grep, struct_index …).
+   generic `name({…whole input…})` form (correct for struct_patch, grep,
+   struct_index …).
 
    `python_execution` is the ONE engine tool (not a symbol): its `code` really IS a
    Python program, passed through verbatim. This is deliberately the ONLY `code`
