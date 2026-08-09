@@ -122,10 +122,10 @@ describe('status bar padding', () => {
   });
 });
 
-// Regression, user report ("maybe we do different that we have only one screen and
-// the PAIRING is just one fucking ICON so we dont have two tabs"): pairing owned a
-// whole tab of a two-tab bar for a verb used twice a year, and a second cog sat
-// 40px from the app's own, so two different gears meant two different things.
+// Regression, user report (paraphrased: make it ONE screen, with pairing behind a
+// single icon, so there are not two tabs): pairing owned a whole tab of a two-tab bar
+// for a verb used twice a year, and a second cog sat 40px from the app's own, so two
+// different gears meant two different things.
 describe('one screen, pairing is a chip', () => {
   it('has no tab bar and no primary navigation at all', () => {
     expect(appSource).not.toContain('export function TabBar');
@@ -135,35 +135,42 @@ describe('one screen, pairing is a chip', () => {
   });
 
   it('names the remaining cog Preferences', () => {
-    expect(appSource).toContain('aria-label="Open preferences"');
+    expect(appSource).toContain('label="Open preferences"');
+    expect(appSource).toContain('title="Preferences"');
   });
 
-  // Regression, user report: "Everything labeled, no icons" — the bar's two verbs
-  // were bare glyphs whose meaning lived only in an `aria-label` an eye never sees.
-  it('spells its verbs and paints no icon', () => {
-    expect(appSource).toContain('>Preferences</Button>');
-    expect(appSource).not.toContain('<PlusIcon');
-    expect(appSource).not.toContain('<SettingsIcon');
+  // Regression, user report ("cog icon", drawn over the word `Preferences`): the bar
+  // spelled its verbs as word-buttons, so two nouns held the trailing corner of every
+  // screen for orders given twice a session. They are marks now — and a mark is only
+  // legible if it is NAMED where a name is read: `aria-label` for the screen reader,
+  // `title` for the pointer. An icon-only control without both is a bug.
+  it('marks the bar’s two verbs and names them twice', () => {
+    expect(appSource).toContain('<SettingsIcon className="size-4" />');
+    expect(appSource).toContain('<SearchIcon className="size-4" />');
+    expect(appSource).not.toContain('>Preferences</Button>');
+    expect(appSource).toContain('label="Search all machines"');
+    expect(appSource).toContain('title="Search all machines"');
   });
 
-  // Regression, user report: "make them nice buttons like the fucking New Session" —
-  // the bar's two verbs were hand-rolled `<button className=…>` slabs of bare text,
-  // so the one control on the screen that looked pressed-able was `New session`.
-  it('wears the app\'s own Button, not a hand-rolled slab', () => {
-    expect(appSource).toContain('import { Button, SearchField } from "./components/ui";');
+  // The bar's controls are the app's own, never a hand-rolled slab: two controls that
+  // mean the same thing must never look like two different things.
+  it('wears the app\'s own controls, not hand-rolled slabs', () => {
+    expect(appSource).toContain(
+      'import { BackButton, IconButton, SearchField } from "./components/ui";',
+    );
     expect(appSource).not.toMatch(/<button\s+type="button"/);
-    // The verb that ADDS is the amber primary, exactly like `New session`; the
-    // preferences cog beside it is its framed sibling, never a second amber.
-    expect(appSource).toContain('variant="secondary"');
   });
 
-  // Regression, user report: "search should be cross machine and it should be on top
-  // in the header" — the field sat UNDER the chip naming one machine, so a fleet-wide
-  // query read as a filter inside that machine, three rows down on a phone.
-  it('makes search the app bar, above every machine chip', () => {
+  // Regression, user report ("just search icon that triggers full page search"): the
+  // open field was the bar's whole middle at every width — the widest object on a
+  // 390px phone, permanently, for a question that is asked in bursts. Pressing the
+  // mark turns the screen into the search: the bar becomes a way back plus the field,
+  // and the list under it is the answer.
+  it('opens search as a page, not a box parked on the bar', () => {
     expect(appSource).toContain('label="Search sessions on every machine"');
     expect(appSource).toContain('placeholder="Search all machines…"');
-    // Above the chips means owned by the bar: the list takes the query as a prop.
+    expect(appSource).toContain('<BackButton label="Close search"');
+    // Nothing scopes it: the list still takes the fleet-wide query as a prop.
     expect(appSource).toContain('query={query}');
     expect(appSource).toContain('onQuery={setQuery}');
     // The rarest verb no longer holds prime real estate beside it.

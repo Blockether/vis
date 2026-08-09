@@ -24,6 +24,7 @@ import {
   RowDisclosure,
   SectionHeader,
   Spinner,
+  KebabButton,
 } from '../components/ui';
 import {
   Menu,
@@ -223,8 +224,6 @@ interface Props {
   onMachineSettings?: (conn: GatewayConn) => void;
   /** Renames the machine in place from its own header. '' clears the name. */
   onRenameMachine?: (conn: GatewayConn, label: string) => void;
-  /** Pair another machine. The `+` stands at the end of the tab strip. */
-  onPair?: () => void;
 }
 
 export function SessionsScreen({
@@ -236,7 +235,6 @@ export function SessionsScreen({
   onOpen,
   onMachineSettings,
   onRenameMachine,
-  onPair,
 }: Props) {
   // A machine OWNS its projects: every row belongs to exactly one gateway, and a
   // project only exists inside the machine it lives on. The fleet is therefore
@@ -1109,23 +1107,23 @@ export function SessionsScreen({
           a segmented switch on the page's paper now: one track, the chosen machine a
           raised tile inside it. There is no "All": a scope is one machine, always.
 
+          ONE MACHINE IS NOT A CHOICE, SO THE WHOLE BAND GOES. With a solo gateway
+          paired the switcher had exactly one tab, always on, switching to itself, and
+          the row survived only to carry `Add machine` — a twice-a-year verb that lives
+          in Preferences, beside the rest of this device's own setup. Nothing is left
+          to draw, so a solo user is charged neither the row nor the screen-reader
+          landmark.
+
           ONE INSET PER EDGE. Standing on the page's paper means wearing the PAGE's
           side edges, and the section above already spells them (`sm:px-6`). `px-3` is
           here for the phone alone, where that section is full bleed and the ink edge
-          is the app bar's own 12px — it is what lands `Add machine` at 378 under
-          `Preferences`. A `sm:px-4` on top of the section's 24px was a second inset:
-          the verb ended at 1240 of 1280 while the card's edge and `Preferences` both
-          ended at 1256, so the one control on the page's own paper hung 16px inside
-          the page. */}
-      <div
-        role="group"
-        aria-label="Machines"
-        className="relative z-10 flex items-center gap-1.5 px-3 pb-3 pt-6 sm:px-0 sm:pb-4 sm:pt-8"
-      >
-        {/* ONE MACHINE IS NOT A CHOICE. With a solo gateway paired the switcher had
-            exactly one tab, always on, switching to itself — a row of chrome that
-            costs a phone a band and answers nothing. The verb beside it stays. */}
-        {machines.length > 1 && (
+          is the app bar's own 12px. */}
+      {machines.length > 1 && (
+        <div
+          role="group"
+          aria-label="Machines"
+          className="relative z-10 flex items-center gap-1.5 px-3 pb-3 pt-6 sm:px-0 sm:pb-4 sm:pt-8"
+        >
           <MachineSwitcher>
             {machines.map((machine) => {
               const key = machineKey(machine.conn);
@@ -1144,30 +1142,8 @@ export function SessionsScreen({
               );
             })}
           </MachineSwitcher>
-        )}
-          {/* ADDING A MACHINE IS THE TAB STRIP'S OWN VERB, AND IT IS A WORD.
-
-              The strip answers "which machine", so "one more machine" belongs at its
-              end, not buried in Preferences. A bare `+` beside named tabs asks the
-              reader to guess what it adds - a project? a session? - so the control
-              says `Add machine`, on the page's own paper, never inside the card it
-              would add a sibling to. `ml-auto` puts it on the row's TRAILING edge:
-              tabs read left to right and the verb is not one of them. It is
-              `secondary` — a real, framed control beside the amber primaries in the
-              card below, without becoming a second one. It used to be a face of its
-              own (`inverse`, the page's ink poured); a fifth variant for one button
-              on one screen is a name the rest of the app has to carry. */}
-          {onPair && (
-            <Button
-              variant="secondary"
-              density="compact"
-              className="ml-auto shrink-0 whitespace-nowrap"
-              onClick={onPair}
-            >
-              Add machine
-            </Button>
-          )}
-      </div>
+        </div>
+      )}
         {/* ON A PHONE THE CARD IS THE PAGE, AND IT DOES NOT BREATHE.
             It used to be `mx-3` with a full box and a height that followed its content,
             so every page of the pager resized the frame under the finger (page 74 has 1
@@ -1246,15 +1222,19 @@ export function SessionsScreen({
                   {creating.label}
                 </span>
               )}
-              {/* The machine's two verbs, on the chrome that names it rather than on a
-                  band of its own: ADD a project, and open this machine's settings. With
-                  several machines speaking at once there is no machine to act on — a
-                  workspace only exists on one — so the chip is asked first.
-                  Both are BUTTONS with a face. They were `quiet`, which is deliberately
-                  frameless, so two words sat on the chrome as bare ink beside an amber
-                  `New session` slab and nothing said they could be pressed. ADD is the
-                  amber primary here, the same fill the list's own create verb wears;
-                  settings is the framed sibling, so one amber never rivals another. */}
+              {/* The machine's verbs, on the chrome that names it rather than on a
+                  band of its own: ADD a project, and the rarer half behind the one `⋯`
+                  this list has. With several machines speaking at once there is no
+                  machine to act on — a workspace only exists on one — so the chip is
+                  asked first.
+
+                  ADD is the amber primary here, the same fill the list's own create
+                  verb wears. `Machine settings` used to stand beside it as a second
+                  word-button, so a twice-a-year order rented the trailing corner of
+                  the header next to the verb the screen exists for. It is a row in the
+                  `⋯` now, beside `Manage projects`, which is its own order of rarity
+                  — and the `⋯` is the app's ONE overflow control, so the rarer half
+                  of a header is reached the same way everywhere. */}
               {scopeChrome && !scopeChrome.error && (
                 <Button
                   variant="primary"
@@ -1271,14 +1251,14 @@ export function SessionsScreen({
                   }}
                 >Add project</Button>
               )}
-              {scopeChrome && onMachineSettings && (
-                <Button
-                  variant="secondary"
-                  density="compact"
-                  className="shrink-0 whitespace-nowrap"
-                  aria-label={`Settings for ${machineLabel(scopeChrome.conn)}`}
-                  onClick={() => onMachineSettings(scopeChrome.conn)}
-                >Machine settings</Button>
+              {scopeChrome && (
+                <KebabButton
+                  label={`Actions for ${machineLabel(scopeChrome.conn)}`}
+                  isOpen={!!startMenu}
+                  onClick={(event) =>
+                    openStartMenuAt(event.currentTarget, scopeChrome.conn)
+                  }
+                />
               )}
             </div>
           </div>

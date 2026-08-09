@@ -4,11 +4,11 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-// The app bar reads: brand at the far left, one long quiet stretch, one control at
-// the right edge. It used to carry a Sessions/Machines nav beside that control —
-// a whole navigation for a verb (pairing) used twice a year, duplicated below the
-// breakpoint by a tab bar. Both are gone: the fleet strip in the list pairs, and
-// the single cog here means PREFERENCES, this device's own settings.
+// The app bar reads: brand at the far left, one long quiet stretch, two marks at the
+// right edge — the glass that opens the search page and the cog that means PREFERENCES,
+// this device's own settings. It used to carry a Sessions/Machines nav beside them (a
+// whole navigation for a verb used twice a year, duplicated below the breakpoint by a
+// tab bar) and then an always-open search box holding its whole middle. Both are gone.
 
 const app = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'App.tsx'),
@@ -30,74 +30,85 @@ export function classes(tag) {
   return raw ? raw[1].split(/\s+/).filter(Boolean) : [];
 }
 
+/** The call-site opening tag of the control carrying `label="<label>"`. */
+export function labelledTag(source, label) {
+  const at = source.indexOf(`label="${label}"`);
+  if (at < 0) throw new Error(`no control labelled ${label}`);
+  const start = source.lastIndexOf('<', at);
+  const end = source.indexOf('>', at);
+  return source.slice(start, end + 1);
+}
+
 describe('app bar', () => {
-  const cog = classes(openingTag(app, 'Open preferences'));
+  const cog = classes(labelledTag(app, 'Open preferences'));
 
   it('carries no navigation of its own', () => {
     expect(app).not.toContain('Primary navigation');
     expect(app).not.toContain('export function TabBar');
   });
 
-  // Regression, user report ("search should be cross machine and it should be on top
-  // in the header"): the field was the list's third row of chrome, directly under the
-  // chip naming one machine. It is the bar's own middle now — nothing scopes it — and
-  // it takes the free space, so the cog still holds the right edge.
-  it('gives the bar\'s middle to a fleet-wide search', () => {
-    const search = app.indexOf('label="Search sessions on every machine"');
-    const preferences = app.indexOf('aria-label="Open preferences"');
-    expect(search).toBeGreaterThan(0);
-    expect(search).toBeLessThan(preferences);
-    // The field is the app's own `SearchField` now, so the call site may only
-    // POSITION it — the face (Button's box, paper at rest) belongs to the component.
-    expect(app).toContain('<SearchField');
-    expect(app).toContain(
-      'className="mx-2 min-w-0 flex-1 sm:ml-auto sm:mr-3 sm:max-w-[32rem]"',
+  // Regression, user report ("just search icon that triggers full page search"): the
+  // open field held the bar's whole middle at every width — the widest object on a
+  // 390px phone, permanently, for a question that is asked in bursts. It is a MARK
+  // now, beside the cog, and pressing it turns the screen into the search.
+  it('spends the bar on two marks and no box', () => {
+    const resting = app.slice(
+      app.indexOf('aria-label="Vis"'),
+      app.indexOf('</header>'),
     );
+    expect(resting).not.toContain('<SearchField');
+    expect(labelledTag(app, 'Search all machines')).toContain('<IconButton');
+    expect(labelledTag(app, 'Open preferences')).toContain('<IconButton');
+    expect(app).toContain('<div className="ml-auto flex h-12 items-center gap-2">');
     // Pairing is a twice-a-year verb; it stopped renting the bar.
     expect(app).not.toContain('aria-label="Pair a machine"');
   });
 
-  // Regression, user report ("the input is not looking sexy for iPhones"): the field
-  // shared one 48px row with the wordmark and a word-button, so on a 390px phone the
-  // screen's own verb was a hairline slab with barely 110px of usable width. Giving it
-  // its OWN band below `sm:` was worse — a full-width framed slab under the bar — and
-  // the report said so. Search belongs ON the bar at every width (every convention for
-  // it puts it in the top bar, one line high); the width comes from the field taking
-  // the bar's free space, and it is capped where the bar is wide so a focused field is
-  // never a 1000px frame.
-  it('keeps search on the bar’s one row at every width', () => {
-    const bar = app.slice(app.indexOf('<header'), app.indexOf('aria-label="Vis"'));
-    expect(bar).not.toContain('flex-wrap');
-    expect(bar).not.toContain('pb-2');
-    const search = app.slice(app.indexOf('<SearchField'), app.indexOf('ONE SCREEN, ONE COG'));
-    expect(search).toContain('flex-1');
-    expect(search).toContain('min-w-0');
-    expect(search).not.toContain('w-full');
-    expect(search).toMatch(/sm:max-w-\[/);
+  // The search is a PAGE: the bar becomes a way back plus the field, the list under it
+  // is the answer, and nothing else rides the bar while it is open. A fleet-wide query
+  // is the screen, not a filter parked in a corner of it.
+  it('turns the bar into the search page and hands it a way back', () => {
+    const page = app.slice(
+      app.indexOf('{isSearching ? ('),
+      app.indexOf('aria-label="Vis"'),
+    );
+    expect(page).toContain('<BackButton label="Close search"');
+    expect(page).toContain('label="Search sessions on every machine"');
+    expect(page).toContain('placeholder="Search all machines…"');
+    // The field is the app's own `SearchField`, so the call site may only POSITION it —
+    // the face (box, paper at rest, the trailing ✕) belongs to the component.
+    const field = classes(page.slice(page.indexOf('<SearchField')));
+    expect(field.every((c) => ['ml-3', 'min-w-0', 'flex-1'].includes(c))).toBe(true);
+    expect(field).toContain('flex-1');
   });
 
-  // Regression, user report ("the X should be on the right side always"): the field
-  // was capped at 32rem and pinned directly after the wordmark, so on a wide bar its
-  // Clear ✕ ended at x=591 of 1280 — stranded mid-bar with 560px of empty paper to its
-  // right — while the trailing cluster held the edge alone. The FIELD takes the free
-  // space now (`sm:ml-auto`), so it ends where the trailing cluster begins and its ✕ is
-  // the last thing before `Preferences` at every width. Only one auto margin may exist
-  // on the row: two would split the space and put the gap back in the middle.
-  it('anchors the capped field to the trailing cluster', () => {
-    const search = app.slice(app.indexOf('<SearchField'), app.indexOf('ONE SCREEN, ONE COG'));
-    expect(search).toContain('sm:ml-auto');
-    expect(app).toContain('<div className="flex h-12 items-center gap-2">');
-    expect(cog).not.toContain('ml-auto');
-    expect(cog).not.toContain('sm:ml-0');
+  // Opening a page that a human still has to tap into asks for the tap twice, and a
+  // page that took the whole bar has to be leavable without aiming at a control.
+  it('puts the caret in the page and takes Escape back out', () => {
+    expect(app).toContain('searchRef.current?.focus()');
+    expect(app).toContain("event.key === 'Escape'");
+    expect(app).toContain("event.key !== '/'");
+    // `/` never fires while someone is already typing somewhere else.
+    expect(app).toContain("at.tagName === 'INPUT'");
+  });
+
+  // Leaving the page clears the query, so the list a human comes back to is the one
+  // they left rather than a silently filtered copy of it.
+  it('clears the query when the page closes', () => {
+    const close = app.slice(
+      app.indexOf('onCloseSearch={'),
+      app.indexOf('onAppSettings={'),
+    );
+    expect(close).toContain('setSearching(false)');
+    expect(close).toContain('setQuery("")');
   });
 
   // Reported earlier: the trailing controls sat at the wrong margin, a lone cog glyph
   // centred in a 48px cell while every `⋯` below it sat at 14px. A button is not
   // centred in a cell and does not bleed past the paper: it wears the bar's own gutter
   // and re-spells none of its own face at the call site.
-  it('leaves the cog’s face to the component', () => {
-    expect(cog).not.toContain('place-items-center');
-    expect(cog).not.toContain('-mr-3');
-    expect(cog.every((c) => ['shrink-0', 'whitespace-nowrap'].includes(c))).toBe(true);
+  it('leaves both marks’ faces to the component', () => {
+    expect(cog).toEqual([]);
+    expect(classes(labelledTag(app, 'Search all machines'))).toEqual([]);
   });
 });

@@ -41,7 +41,8 @@ import {
 } from "./lib/share-intake";
 import { applyTheme, resolveLocalTheme } from "./lib/theme";
 import { getThemePalette, getThemePref } from "./lib/storage";
-import { Button, SearchField } from "./components/ui";
+import { BackButton, IconButton, SearchField } from "./components/ui";
+import { SearchIcon, SettingsIcon } from "./components/icons";
 import { ConnectScreen } from "./screens/ConnectScreen";
 import { SessionsScreen } from "./screens/SessionsScreen";
 import { IncompatibleScreen } from "./screens/IncompatibleScreen";
@@ -177,6 +178,10 @@ export function App() {
   // list answers it. Kept here rather than in `SessionsScreen` so the field can sit
   // above every machine chip instead of under the one that names a machine.
   const [query, setQuery] = useState("");
+  // The search PAGE: the bar becomes a way back plus the field, and the list under it
+  // is the answer. It is shell state rather than the header's own because leaving it
+  // clears the query the list is reading.
+  const [searching, setSearching] = useState(false);
   const [openTarget, setOpenTarget] = useState<{
     conn: GatewayConn;
     sid: string;
@@ -936,6 +941,12 @@ export function App() {
         <Header
           query={query}
           onQuery={setQuery}
+          isSearching={searching}
+          onSearch={() => setSearching(true)}
+          onCloseSearch={() => {
+            setSearching(false);
+            setQuery("");
+          }}
           onAppSettings={() => setAppSettingsOpen(true)}
         />
       )}
@@ -957,7 +968,6 @@ export function App() {
                 await upsertConnection({ ...conn, label: label || undefined });
                 await refresh();
               }}
-              onPair={() => setTab("connect")}
             />
           </div>
         )}
@@ -1070,17 +1080,31 @@ export function App() {
 export function Header({
   query,
   onQuery,
+  isSearching,
+  onSearch,
+  onCloseSearch,
   onAppSettings,
 }: {
   query: string;
   onQuery: (next: string) => void;
+  /** Whether the search PAGE is the screen right now. */
+  isSearching: boolean;
+  onSearch: () => void;
+  onCloseSearch: () => void;
   onAppSettings: () => void;
 }) {
-  // `/` jumps to the search from anywhere on the shell — unannounced on purpose, and
-  // never stolen from someone already typing.
+  // `/` opens the search from anywhere on the shell — unannounced on purpose, and
+  // never stolen from someone already typing. Escape closes it again, because a page
+  // that took the whole bar has to be leavable without aiming at a control.
   const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        if (!isSearching) return;
+        event.preventDefault();
+        onCloseSearch();
+        return;
+      }
       if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) return;
       const at = document.activeElement as HTMLElement | null;
       if (
@@ -1093,73 +1117,82 @@ export function Header({
         return;
       }
       event.preventDefault();
-      searchRef.current?.focus();
+      onSearch();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [isSearching, onCloseSearch, onSearch]);
+  // The caret belongs to the page that just opened: a search screen a human still has
+  // to tap into is a screen that asked for the tap twice.
+  useEffect(() => {
+    if (isSearching) searchRef.current?.focus();
+  }, [isSearching]);
   return (
     <header className="relative z-30 shrink-0 border-b border-dialog-edge bg-panel-2 pt-[env(safe-area-inset-top)]">
-      {/* SEARCH STAYS ON THE BAR, AT EVERY WIDTH.
-          It was given its own full-width band below `sm:` and that was worse: a framed
-          slab under the bar, the loudest thing on the phone, and a second row of chrome
-          above the list. Every guideline for header search says the same thing — the
-          open field lives in the top bar, one line high, marked with a magnifying
-          glass — so it takes the bar's free space between identity and Preferences and
-          is capped where the bar is wide, because a focused 1000px frame is not a
-          search box either. */}
-      <div className="mx-auto flex w-full max-w-[1400px] items-center pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))]">
-        <div className="flex h-12 items-center gap-2.5" aria-label="Vis">
-          <img
-            src="/vis-logo.png"
-            alt=""
-            className="h-[18px] w-5 object-contain"
+      {/* SEARCH IS A PAGE, AND THE BAR IS ITS DOOR.
+
+          The open field used to hold the bar's whole middle at every width — the
+          widest box on a 390px phone, permanently, for a question that is asked in
+          bursts. It is a MARK now: one magnifying glass beside the cog, and pressing
+          it turns the whole screen into the search — the bar becomes the way back
+          plus the field, and everything under it is the answer. That is why nothing
+          else rides the bar while it is open: a fleet-wide query is the screen, not a
+          filter parked in a corner of it.
+
+          Leaving the page clears the query, so the list a human comes back to is the
+          one they left rather than a silently filtered copy of it. */}
+      {isSearching ? (
+        <div className="mx-auto flex h-12 w-full max-w-[1400px] items-stretch pr-[max(0.75rem,env(safe-area-inset-right))] sm:pr-[max(1.5rem,env(safe-area-inset-right))]">
+          <BackButton label="Close search" onClick={onCloseSearch} />
+          <SearchField
+            ref={searchRef}
+            value={query}
+            onValue={onQuery}
+            placeholder="Search all machines…"
+            label="Search sessions on every machine"
+            className="ml-3 min-w-0 flex-1"
           />
-          <span className="font-mono text-title font-black tracking-[0.18em] text-white">
-            VIS
-          </span>
         </div>
-        {/* SEARCH IS THE BAR, AND THE BAR IS ABOVE EVERY MACHINE.
-            The field used to be the list's THIRD row of chrome, sitting directly under
-            the chip that names one machine — so a query that has always fanned out over
-            every paired gateway (title/project matching AND the server-side transcript
-            search, both over `scopedConns`) read as "filter inside this machine". It is
-            the app bar's own middle now: nothing above it scopes it, it is the first
-            thing on the screen, and the placeholder says the promise out loud. The bar
-            owns the query and hands it down, because the thing being searched is the
-            fleet and not the list component.
-            Pairing left this bar with it. It is a twice-a-year verb and it was renting
-            the widest real estate on a 390px phone; it lives in Preferences, beside the
-            rest of this device's own setup. */}
-        <SearchField
-          ref={searchRef}
-          value={query}
-          onValue={onQuery}
-          placeholder="Search all machines…"
-          label="Search sessions on every machine"
-          className="mx-2 min-w-0 flex-1 sm:ml-auto sm:mr-3 sm:max-w-[32rem]"
-        />
-        {/* ONE SCREEN, ONE COG.
-            The app used to carry a two-item tab bar whose second item existed for a
-            verb used twice a year — pairing — and a nav duplicating it at `sm:`. What
-            is left here is the wordmark, the search, and the one cog on the whole app,
-            and it means PREFERENCES: this device's own settings, never a gateway's. A
-            machine's settings hang off that machine (the list's own verb), so two gears
-            can no longer sit 40px apart meaning different things.
-            It is a WORD in a button rather than a `⚙`: the glyph falls back to an emoji
-            font whose advance width and baseline differ per platform, so it never sat
-            centred in its own cell. */}
-        <div className="flex h-12 items-center gap-2">
-          <Button
-            type="button"
-            variant="secondary"
-            density="compact"
-            className="shrink-0 whitespace-nowrap"
-            onClick={onAppSettings}
-            aria-label="Open preferences"
-          >Preferences</Button>
+      ) : (
+        <div className="mx-auto flex w-full max-w-[1400px] items-center pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))]">
+          <div className="flex h-12 items-center gap-2.5" aria-label="Vis">
+            <img
+              src="/vis-logo.png"
+              alt=""
+              className="h-[18px] w-5 object-contain"
+            />
+            <span className="font-mono text-title font-black tracking-[0.18em] text-white">
+              VIS
+            </span>
+          </div>
+          {/* TWO MARKS, ONE MEANING EACH.
+              The bar carries the app's own two verbs and nothing else: the glass that
+              opens the search page, and the one cog on the whole app, which means
+              PREFERENCES — this device's own settings, never a gateway's. A machine's
+              settings hang off that machine, in the list's own `⋯`, so two gears can
+              never sit 40px apart meaning different things.
+              They are named where a name is read: `aria-label` for the screen reader,
+              `title` for the pointer. An icon-only control without one is a bug. */}
+          <div className="ml-auto flex h-12 items-center gap-2">
+            <IconButton
+              type="button"
+              label="Search all machines"
+              title="Search all machines"
+              onClick={onSearch}
+            >
+              <SearchIcon className="size-4" />
+            </IconButton>
+            <IconButton
+              type="button"
+              label="Open preferences"
+              title="Preferences"
+              onClick={onAppSettings}
+            >
+              <SettingsIcon className="size-4" />
+            </IconButton>
+          </div>
         </div>
-      </div>
+      )}
     </header>
   );
 }

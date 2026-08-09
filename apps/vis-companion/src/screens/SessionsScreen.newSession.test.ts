@@ -26,24 +26,22 @@ describe('where "New session" lives', () => {
     );
   });
 
-  // Regression, user report: the machine header should not carry a `⋯` at all —
-  // "add + and the gear and this will be add project and the machine settings".
-  // Its menu held exactly two rows, so it charged a tap and a guess for what two
-  // glyphs say on the band itself.
-  it("puts the machine's two verbs on the header, not behind a ⋯", () => {
-    expect(source).not.toContain("<KebabButton");
-    expect(source).not.toContain(
-      "label={`Actions for ${machineLabel(machine.conn)}`}",
-    );
+  // Regression, user report (paraphrased: put `+` and the gear on the band — that is
+  // add project and the machine settings): the machine header's `⋯` menu held exactly
+  // two rows, so it charged a tap and a guess for what two glyphs say on the band.
+  // Follow-up, this report (the settings word struck out on the header): a word-button
+  // for a twice-a-year order stood beside the verb the screen exists for. The band
+  // keeps the verb that CREATES and hands the rest back to the one `⋯` this list has.
+  it("puts Add project on the header and the rest behind the one ⋯", () => {
     expect(source).toContain(
       "aria-label={`Add a project on ${machineLabel(scopeChrome.conn)}`}",
     );
     expect(source).toContain(">Add project</Button>");
+    expect(source).not.toContain(">Machine settings</Button>");
     expect(source).toContain(
-      "aria-label={`Settings for ${machineLabel(scopeChrome.conn)}`}",
+      "label={`Actions for ${machineLabel(scopeChrome.conn)}`}",
     );
-    expect(source).toContain(">Machine settings</Button>");
-    expect(source).toContain("onMachineSettings(scopeChrome.conn)");
+    expect(source).toContain("onMachineSettings(");
     // The `+` opens the SAME sheet the menu row opened, aimed at this machine.
     expect(source).toContain("setManageProjects({ machine: scopeChrome, at })");
   });
@@ -367,16 +365,16 @@ describe("the machine header's own verbs", () => {
   });
 
   // Regression, user report: the `+` and the gear on a machine header were bordered
-  // boxes around a glyph. They are WORDS in buttons now (the later report "make them
-  // nice buttons like New Session" reversed the frameless `quiet` face this test used
-  // to pin), so what is left of the original complaint is that neither draws a glyph.
-  it("paints the header's two verbs as words, not as glyphs", () => {
+  // boxes around a glyph. What CREATES is a WORD in a button now (the later report
+  // "make them nice buttons like New Session" reversed the frameless `quiet` face this
+  // test used to pin); the gear's order went into the one `⋯`, which is the app's own
+  // overflow control rather than a hand-drawn glyph in a box.
+  it("paints the header's create verb as a word, not as a glyph", () => {
     expect(source).toMatch(
       /<Button\s+variant="primary"\s+density="compact"[\s\S]{0,120}aria-label=\{`Add a project on/,
     );
-    expect(source).toMatch(
-      /<Button\s+variant="secondary"\s+density="compact"[\s\S]{0,120}aria-label=\{`Settings for/,
-    );
+    expect(source).toContain("<KebabButton");
+    expect(source).not.toMatch(/aria-label=\{`Settings for/);
   });
 });
 
@@ -396,13 +394,13 @@ describe("the machine is a chip, not a second band", () => {
   });
 
   it("gives the machine's verbs to the chrome that names it", () => {
-    // One Add project and one Machine settings on the screen, both acting on the
-    // machine in scope, and both spelled out.
+    // One Add project on the band that names the machine, and the rarer half behind
+    // the one `⋯` standing beside it — both aimed at the machine in scope.
     expect(source).toContain(
       "aria-label={`Add a project on ${machineLabel(scopeChrome.conn)}`}",
     );
     expect(source).toContain(
-      "aria-label={`Settings for ${machineLabel(scopeChrome.conn)}`}",
+      "label={`Actions for ${machineLabel(scopeChrome.conn)}`}",
     );
     expect(source).toContain("onRenameMachine(scopeChrome.conn, next)");
   });
@@ -435,26 +433,24 @@ describe("the machine is a chip, not a second band", () => {
     expect(source).toContain("onClick={() => selectScope(key)}");
   });
 
-  it("spells the machine's verbs instead of drawing glyphs", () => {
+  it("spells the machine's ADD verb instead of drawing a glyph", () => {
     expect(source).not.toContain('<PlusIcon className="size-4" />');
     expect(source).toContain(">Add project</Button>");
-    expect(source).toContain(">Machine settings</Button>");
   });
 
-  // Regression, user report: "make them nice buttons like the fucking New Session" —
+  // Regression, user report (paraphrased: make them real buttons like `New session`):
   // both verbs were `variant="quiet"`, which is deliberately frameless, so the two
   // words sat on the chrome as bare ink beside an amber `New session` slab.
-  it("gives the machine's verbs a real button face", () => {
-    const start = source.indexOf("The machine's two verbs");
-    const verbs = source.slice(start, source.indexOf("Machine settings</Button>", start));
+  // Follow-up, this report (the machine's settings word struck out on the header): a
+  // twice-a-year order rented the trailing corner beside the verb the screen exists
+  // for. It is a row in the one `⋯` now.
+  it("gives the machine's ADD verb a real button face", () => {
+    const start = source.indexOf("The machine's verbs");
+    const verbs = source.slice(start, source.indexOf("Add project</Button>", start));
     expect(verbs).not.toContain('variant="quiet"');
-    // ADD is the amber primary, its settings sibling the framed one.
-    expect(verbs.slice(0, verbs.indexOf("Add project</Button>"))).toContain(
-      'variant="primary"',
-    );
-    expect(verbs.slice(0, verbs.indexOf("Machine settings</Button>"))).toContain(
-      'variant="secondary"',
-    );
+    // ADD is the amber primary, the same fill `New session` wears.
+    expect(verbs).toContain('variant="primary"');
+    expect(source).not.toContain(">Machine settings</Button>");
   });
 
   it("keeps a dead machine's Retry where its sessions would have been", () => {
@@ -462,60 +458,46 @@ describe("the machine is a chip, not a second band", () => {
   });
 });
 
-// Regression, user report ("PLEASE MAKE THE UNIFIED VIEW REGARDLESS IF WE HAVE ON
-// MACHINE OR MANY MACHINES IN FLEET"): the strip appeared only above two machines, and
-// carried a pairing chip that a solo user saw instead of chips — two different screens.
+// Regression, user report (paraphrased: unify the view whether the fleet holds one
+// machine or many): the strip appeared only above two machines, and carried a pairing
+// chip that a solo user saw instead of chips — two different screens.
+// Follow-up, this report (the pairing verb struck out on the strip): with a single
+// gateway paired the switcher had exactly one tab, always on, switching to itself, and
+// the row survived only to carry that twice-a-year verb. A choice of one is not a
+// choice, so the whole band goes and pairing lives in Preferences with the rest of
+// this device's own setup.
 describe('the machine strip', () => {
-  it('is one row, paired one machine or many', () => {
+  it('is one row, and only when there is a choice to make', () => {
     expect(source).not.toContain('hasScopeStrip');
     expect(source).not.toContain('showsScopeStrip');
+    expect(source).toContain('machines.length > 1 &&');
   });
 
-  // Regression, user report ("near this tab there should be a plus icon to add
-  // machine", then "instead of + we will have add machine?"): pairing another machine
-  // was only reachable through Preferences, and the `+` that fixed that said nothing
-  // about WHAT it adds beside a strip of named tabs.
-  it('ends with an Add machine button that pairs another machine', () => {
-    expect(source).toContain('onPair?: () => void;');
-    expect(source).toMatch(/aria-label="Machines"[\s\S]{0,2000}Add machine/);
-    expect(source).toMatch(/onClick=\{onPair\}[\s\S]{0,60}Add machine/);
+  it('carries no pairing verb of its own', () => {
+    expect(source).not.toContain('onPair');
+    expect(source).not.toMatch(/Add machine\s*<\/Button>/);
     expect(source).not.toContain("<PlusIcon");
   });
 
   // Regression, user report ("I would add a little bit more margin too for the fleet
-  // and the add machine I would add the regular button on the right please and the
-  // left side should be those machine tabs and they should have the same regular
-  // height of the button"): the strip sat flush against the bar above it, the verb
-  // followed the last tab instead of ending the row, and a 24px tab stood beside a
-  // 32px button.
-  it('is tabs on the left and the verb on the trailing edge, on one control height', () => {
+  // ... the left side should be those machine tabs and they should have the same
+  // regular height of the button"): the strip sat flush against the bar above it, and
+  // a 24px tab stood beside a 32px button.
+  // Regression, user report (paraphrased: should the switcher be regular buttons, and
+  // make it beautiful): the tabs were individually bordered chips standing beside a
+  // filled button, so a STATE and a VERB wore one species. The machines are one
+  // segmented track now (`MachineSwitcher`/`MachineTab`), and the screen no longer
+  // spells a tab's box out at the call site.
+  it('is one segmented track of tabs and nothing else', () => {
     expect(source).toMatch(/aria-label="Machines"[\s\S]{0,200}pt-6/);
-    expect(source).toContain("className=\"ml-auto shrink-0 whitespace-nowrap\"");
-    // Regression, user report (paraphrased: should the switcher be regular buttons,
-    // and make it beautiful): the tabs were individually bordered
-    // chips standing beside a filled button, so a STATE and a VERB wore one species.
-    // The machines are one segmented track now (`MachineSwitcher`/`MachineTab`), and
-    // the screen no longer spells a tab's box out at the call site.
     expect(source).toContain("<MachineSwitcher>");
     expect(source).toContain("<MachineTab");
-    // Regression, user report: remove the live tally, keep only news, and hide the
-    // switcher when a single machine is paired (a tab that switches to itself).
-    expect(source).toContain("machines.length > 1 &&");
+    // Regression, user report: remove the live tally and keep only news.
     expect(source).toContain("hasUnread={(tally?.unread ?? 0) > 0}");
     expect(source).not.toContain("<UnreadBadge");
-    expect(source).not.toContain("sr-only\"> live");
+    expect(source).not.toContain('sr-only"> live');
     expect(source).not.toContain("chipClass");
     expect(source).not.toContain('inline-flex min-h-6');
-  });
-
-  // Regression, user report ("Make add machine a black button, add even more margin
-  // top from header"): the verb was `quiet`, i.e. frameless ink that only looked like
-  // a button under a cursor, and the strip's 12px top gap still read as flush.
-  it('pours the page ink into Add machine and clears the header by more', () => {
-    expect(source).toMatch(/variant="secondary"[\s\S]{0,200}Add machine/);
-    expect(source).toMatch(
-      /aria-label="Machines"[\s\S]{0,200}px-3 pb-3 pt-6 sm:px-0 sm:pb-4 sm:pt-8/,
-    );
   });
 
   // Regression, user report ("why do we have this padding left right"): the strip
