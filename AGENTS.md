@@ -76,13 +76,15 @@ One responsive web/iOS/Android product: phone and desktop, touch, overflow, safe
 - The filter is a FLEET question: title/project matching and server-side transcript search both fan out over `scopedConns`. While a query is live the header reports the search instead of scope totals (`searchTally`) — "178 matches across 2 of 3 machines" is the only proof the query left this gateway, and a machine with no hit says "No matches on this machine", never "No sessions yet".
 - Verify with `npm run lint` and `npm run build` here. Never edit generated `ios/` or `android/`; native behavior goes in the idempotent `scripts/ios-prepare.mjs` / `scripts/android-prepare.mjs`.
 
-## Companion UI proposals are ASCII (HARD RULE)
+## Companion UI proposals are RENDERED and ATTACHED (HARD RULE)
 
-**A design proposal is ASCII art in the answer. Never in the application.** Do not build a proposal into the product, add a variant component, a dev route, a gallery, a fixture screen or a screenshot script, and do not start a browser to photograph an idea. A proposal costs zero files.
+**A design proposal is a real Tailwind rendering, attached to the answer with `vis_attach`. Never in the application.** No ASCII mockups: a sketch made of box-drawing characters cannot show a token, a weight, a radius or a touch target, so it cannot be judged. Every proposal is HTML styled with the product's own Tailwind v4 tokens, rendered in a browser, captured, and attached as an image — one attachment per answer, all versions composed into a single sheet.
 
-- Sketch at the widths that decide the layout — phone first, then desktop when they differ — and label each block with its real component name (`SectionHeader`, `HeaderActions`, `NewSessionButton`, `KebabButton`). A sketch that cannot name its controls is not a proposal.
-- Always offer SEVERAL numbered versions, each with the state that can falsify it: one machine paired, a machine not answering, a long name, a project with no sessions.
-- Nothing is written to the repo until the human picks a version; then it is built once, in the real screen, with its tests.
+- **Zero repo files.** The proposal HTML lives in a scratch directory outside the tree; it is never committed, never a variant component, a dev route, a gallery, a fixture screen or a screenshot script. Only `spel` drives the browser (`spel open`, `set viewport`, `set media dark`, screenshot), and the artifact reaches the human through `vis_attach` — a revision of a proposal goes back under its OWN filename, so it becomes that proposal's next version.
+- **Tokens only, same as the product**: the scale `text-chip` … `text-display`, the real color tokens and the closed control vocabulary from `src/components/ui.tsx`. A rendering that invents a font size or a color is proposing something the codebase cannot build.
+- Render at the widths that decide the layout — phone (390×844) first, then desktop when they differ — and label each block in the image with its real component name (`SectionHeader`, `HeaderActions`, `NewSessionButton`, `KebabButton`). A proposal that cannot name its controls is not a proposal.
+- Always offer SEVERAL numbered versions, each rendered in the state that can falsify it: one machine paired, a machine not answering, a long name, a project with no sessions.
+- Nothing is written to the repo until the human picks a version; then it is built once, in the real screen, with its tests. Proof of the SHIPPED screen is still numbers off the live DOM (see the next section) — a proposal rendering is never evidence about shipped code.
 - Legacy `src/dev/**` design-gallery files are not to be extended — delete them when a change brings you into that code.
 
 ## Proving SHIPPED companion UI
