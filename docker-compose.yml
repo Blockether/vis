@@ -5,9 +5,9 @@
 # gh, chrome, spel + Playwright browsers, ffmpeg, the Parakeet ASR model). The
 # host contributes nothing but a port, a state volume and a workspace.
 #
-# The gateway itself runs on the JVM from the source baked into the image — no
-# native-image anywhere in this build, so it is downloads and a dependency
-# warm-up rather than an hours-long, RAM-hungry compile.
+# The gateway itself is the native binary this source builds: `docker compose
+# build` runs native-image (roughly twenty minutes and a ~12 GiB live set), and
+# what the container serves is exactly the artifact a release publishes.
 #
 #   docker compose build
 #   docker compose up -d

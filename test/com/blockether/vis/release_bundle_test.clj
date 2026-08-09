@@ -290,10 +290,10 @@
       ;; other than the declared VIS_VERSION
       (expect (str/includes? dockerfile "= \"vis-agent$(tr -d '[:space:]' < VIS_VERSION)\"")
               dockerfile)
-      ;; the JVM runtime image runs the source tree, where no build writes the
-      ;; resource, so it stamps the very same string itself
-      (expect (str/includes? dockerfile "tr -d '[:space:]' < /opt/vis/src/VIS_VERSION") dockerfile)
-      (expect (str/includes? dockerfile "> /opt/vis/src/resources/vis/VERSION") dockerfile)))
+      ;; the runtime image installs that very binary, so it needs no second
+      ;; stamping step of its own
+      (expect (str/includes? dockerfile "COPY --from=native-export") dockerfile)
+      (expect (not (str/includes? dockerfile "/opt/vis/src/resources/vis/VERSION")) dockerfile)))
   (it "reports the stamped string verbatim from the classpath resource"
       (let
         [dir
