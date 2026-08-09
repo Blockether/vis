@@ -31,10 +31,19 @@ const AT_BOTTOM_PX = 64;
 
 const parked = new Map<string, number>();
 
+function distanceFromEnd(box: ScrollBox): number {
+  return box.scrollHeight - box.scrollTop - box.clientHeight;
+}
+
+/** Whether the end of `box` is already on screen. */
+export function isAtBottom(box: ScrollBox): boolean {
+  return distanceFromEnd(box) <= AT_BOTTOM_PX;
+}
+
 /** How far above the end `box` sits, or `null` when it is at the bottom. */
 export function markReadingPosition(box: ScrollBox | null): number | null {
   if (!box) return null;
-  const distance = box.scrollHeight - box.scrollTop - box.clientHeight;
+  const distance = distanceFromEnd(box);
   return distance <= AT_BOTTOM_PX ? null : distance;
 }
 
@@ -63,4 +72,22 @@ export function applyReadingPosition(box: ScrollBox, distance: number): boolean 
   if (maximum <= 0) return false;
   box.scrollTop = Math.max(0, maximum - distance);
   return maximum >= distance;
+}
+
+/**
+ * Whether the "↓ Latest" offer has anything to offer.
+ *
+ * Two facts, and either one alone withdraws it: the transcript is already
+ * chasing the end (`following`), or the end is already on screen. A screen that
+ * remembers instead of measuring eventually offers to take the reader where
+ * they are standing — a rotation, a keyboard, a queue tray or a closing fold
+ * can all put the end back under their eyes without a scroll event the screen
+ * is listening to at that moment.
+ */
+export function shouldOfferLatest(
+  box: ScrollBox | null,
+  following: boolean,
+): boolean {
+  if (!box || following) return false;
+  return !isAtBottom(box);
 }

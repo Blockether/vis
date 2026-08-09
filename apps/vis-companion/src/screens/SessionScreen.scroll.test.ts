@@ -49,3 +49,29 @@ describe('keyboard compensation while following', () => {
     expect(deferred).toBeGreaterThan(pin);
   });
 });
+
+// Regression, session 004cb1f6: on an iPad in landscape the transcript was parked on
+// its newest turn with "↓ Latest" still painted over the composer. The pill was a
+// remembered flag, and every path that can put the end back under the reader without
+// a scroll event this screen listens to — a rotation above all — left it lying.
+describe('the "Latest" pill is measured, not remembered', () => {
+  it('derives the offer from the scroller instead of the last gesture', () => {
+    expect(source).toContain(
+      'shouldOfferLatest(scrollRef.current, followingRef.current)',
+    );
+    expect(source).not.toContain('setShowJump(!following)');
+    expect(source).not.toContain('setShowJump(true)');
+  });
+
+  it('re-measures whenever the transcript or its scroller changes size', () => {
+    const observer = source.indexOf('const observer = new ResizeObserver(() => {\n      if (frame === null) frame = window.requestAnimationFrame(measure);');
+    expect(observer).toBeGreaterThan(-1);
+    expect(source).toContain('if (transcript) observer.observe(transcript);');
+  });
+
+  it('re-measures once the rotation transaction hands the scroller back', () => {
+    const restore = source.indexOf('rotationRestorePendingRef.current = false;\n          // The transaction');
+    expect(restore).toBeGreaterThan(-1);
+    expect(source.slice(restore, restore + 400)).toContain('syncJump();');
+  });
+});

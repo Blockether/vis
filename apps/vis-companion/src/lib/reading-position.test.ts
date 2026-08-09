@@ -3,9 +3,11 @@ import sessionScreenSource from '../screens/SessionScreen.tsx?raw';
 import {
   applyReadingPosition,
   forgetReadingPosition,
+  isAtBottom,
   markReadingPosition,
   parkedReadingPosition,
   rememberReadingPosition,
+  shouldOfferLatest,
   type ScrollBox,
 } from './reading-position';
 
@@ -58,5 +60,41 @@ describe('session screen honours the parked reading position', () => {
     expect(sessionScreenSource).toContain('parkedReadingPosition(sid)');
     expect(sessionScreenSource).toContain('applyReadingPosition(');
     expect(sessionScreenSource).toContain('rememberReadingPosition(sid, markReadingPosition(');
+  });
+});
+
+// Regression, session 004cb1f6: an iPad held in landscape sat on the newest turn of
+// a live session and still wore the "↓ Latest" pill, offering the reader a way to
+// where they already were. The offer was a remembered flag that only a scroll event
+// refreshed — and the screen drops every scroll event for the whole rotation.
+describe('the "Latest" offer', () => {
+  const box = (scrollTop: number, scrollHeight: number, clientHeight: number): ScrollBox => ({
+    scrollTop,
+    scrollHeight,
+    clientHeight,
+  });
+
+  it('offers nothing while the end is already on screen', () => {
+    expect(shouldOfferLatest(box(4200, 5000, 800), false)).toBe(false);
+    expect(shouldOfferLatest(box(4160, 5000, 800), false)).toBe(false);
+  });
+
+  it('offers nothing to a transcript already chasing the end', () => {
+    expect(shouldOfferLatest(box(1000, 5000, 800), true)).toBe(false);
+  });
+
+  it('offers the way down to a reader parked above the end', () => {
+    expect(shouldOfferLatest(box(1000, 5000, 800), false)).toBe(true);
+  });
+
+  it('offers nothing when there is nothing to scroll', () => {
+    expect(shouldOfferLatest(box(0, 600, 800), false)).toBe(false);
+    expect(shouldOfferLatest(null, false)).toBe(false);
+  });
+
+  it('reads the end with the same slack the parked mark uses', () => {
+    expect(isAtBottom(box(4160, 5000, 800))).toBe(true);
+    expect(isAtBottom(box(4135, 5000, 800))).toBe(false);
+    expect(markReadingPosition(box(4135, 5000, 800))).toBe(65);
   });
 });

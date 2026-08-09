@@ -99,9 +99,11 @@ import {
 import { readerOwnsScroll } from "../lib/reader-gesture";
 import {
   applyReadingPosition,
+  isAtBottom,
   markReadingPosition,
   parkedReadingPosition,
   rememberReadingPosition,
+  shouldOfferLatest,
 } from "../lib/reading-position";
 import type {
   ContentBlock,
@@ -1489,6 +1491,7 @@ export function SessionScreen({
     followingRef.current = true;
     initialScrollPendingRef.current = !fresh;
     showJumpRef.current = false;
+    setShowJump(false);
     setRouterOpen(false);
     // Switching sessions swaps the pin, so paint the NEW session's last known
     // one rather than blanking the chip back to the placeholder word.
@@ -1598,16 +1601,23 @@ export function SessionScreen({
     });
   }, []);
 
+  // "↓ Latest" is a MEASUREMENT of the scroller, never a memory of the last
+  // gesture: the offer stands only while there is something below the fold AND
+  // nothing is already carrying the reader there.
+  const syncJump = useCallback(() => {
+    const offer = shouldOfferLatest(scrollRef.current, followingRef.current);
+    if (showJumpRef.current === offer) return;
+    showJumpRef.current = offer;
+    setShowJump(offer);
+  }, []);
+
   const scrollToEnd = useCallback((behavior: ScrollBehavior = "auto") => {
     const viewport = scrollRef.current;
     if (!viewport) return;
     viewport.scrollTo({ top: viewport.scrollHeight, behavior });
     followingRef.current = true;
-    if (showJumpRef.current) {
-      showJumpRef.current = false;
-      setShowJump(false);
-    }
-  }, []);
+    syncJump();
+  }, [syncJump]);
 
   // Opening a session must LAND on the latest turn. The opening layout effect waits
   // until the mounted window is complete, so this is one correction against the
@@ -1740,6 +1750,9 @@ export function SessionScreen({
           finalFrame = null;
           restoreScrollAnchor();
           rotationRestorePendingRef.current = false;
+          // The transaction that owned the scroller is over, and the geometry it
+          // landed on is the first honest one since the turn began.
+          syncJump();
         });
       });
     });
@@ -1749,7 +1762,35 @@ export function SessionScreen({
       if (finalFrame !== null) window.cancelAnimationFrame(finalFrame);
       rotationRestorePendingRef.current = false;
     };
-  }, [captureScrollAnchor, restoreScrollAnchor]);
+  }, [captureScrollAnchor, restoreScrollAnchor, syncJump]);
+
+  // The offer answers a geometric question, so ask it whenever the geometry moves.
+  // A scroll event cannot be the only answer: the scroller shrinks under a grown
+  // composer, the transcript grows under a live turn, a fold closes above — and a
+  // rotation, whose scroll events this screen drops wholesale, can set the reader
+  // down exactly ON the end. That is how an iPad turned to landscape came to sit at
+  // the newest turn while still being offered a way to it.
+  useEffect(() => {
+    const viewport = scrollRef.current;
+    const transcript = transcriptRef.current;
+    if (!viewport || typeof ResizeObserver === "undefined") return;
+    let frame: number | null = null;
+    const measure = () => {
+      frame = null;
+      // Rotation owns the scroller until its own terminal restore, which measures.
+      if (isViewportRotating() || rotationRestorePendingRef.current) return;
+      syncJump();
+    };
+    const observer = new ResizeObserver(() => {
+      if (frame === null) frame = window.requestAnimationFrame(measure);
+    });
+    observer.observe(viewport);
+    if (transcript) observer.observe(transcript);
+    return () => {
+      observer.disconnect();
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
+  }, [syncJump]);
 
   // Pass the session's meta `row` and the transcript is re-read ONLY when that
   // row says a turn was persisted since the copy already on screen — a long
@@ -3002,10 +3043,7 @@ export function SessionScreen({
         )
           return;
         followingRef.current = false;
-        if (!showJumpRef.current) {
-          showJumpRef.current = true;
-          setShowJump(true);
-        }
+        syncJump();
       } else {
         pinToEnd();
       }
@@ -3030,6 +3068,7 @@ export function SessionScreen({
     sid,
     scrollToEnd,
     pinToEnd,
+    syncJump,
   ]);
 
   // Fill the render window back up to `visibleTurnCount`, a chunk per frame,
@@ -3935,16 +3974,8 @@ export function SessionScreen({
         preserveAnchor();
         const activeViewport = scrollRef.current;
         if (!activeViewport) return;
-        const distance =
-          activeViewport.scrollHeight -
-          activeViewport.scrollTop -
-          activeViewport.clientHeight;
-        const following = distance < 64;
-        followingRef.current = following;
-        if (showJumpRef.current !== !following) {
-          showJumpRef.current = !following;
-          setShowJump(!following);
-        }
+        followingRef.current = isAtBottom(activeViewport);
+        syncJump();
       });
     });
   }
@@ -3975,16 +4006,10 @@ export function SessionScreen({
       if (isViewportRotating() || rotationRestorePendingRef.current) return;
       // The one opening correction has already happened; subsequent scroll events
       // belong to the reader and are measured normally.
-      const distance =
-        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
-      const following = distance < 64;
-      followingRef.current = following;
+      followingRef.current = isAtBottom(viewport);
       // The reader's place, kept for the next time this session is opened.
       rememberReadingPosition(sid, markReadingPosition(viewport));
-      if (showJumpRef.current !== !following) {
-        showJumpRef.current = !following;
-        setShowJump(!following);
-      }
+      syncJump();
       // Keep the rotation anchor fresh: iOS can deliver the orientation signal
       // AFTER the reflow, and by then the top-most turn is already unreadable.
       // Scrolls during a rotation are the reflow's own, never the reader's.
