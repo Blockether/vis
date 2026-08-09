@@ -27,9 +27,11 @@ curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install
 vis-agent help
 ```
 
-The installer and the `vis-agent` command are downloaded as release assets — `raw.githubusercontent.com` is blocked on many corporate networks, `github.com` is not. `installer` is a rolling release: every commit on `main` that touches either script re-uploads it, so the one-liner is never older than the branch. What they install is not tagged either: `vis-agent` checks the source out at the newest commit of `main`, because a published tag can carry broken source and the fix lands on the branch first.
+Installs `vis-agent` into `~/.local/bin` (adding it to your PATH if needed). It checks the source out into `~/.vis/install/src` and runs `clojure -M:vis`.
 
-That installs the `vis-agent` command into `~/.local/bin` (adding it to your PATH when needed). `vis-agent` then checks out the source it owns into `~/.vis/install/src` and runs it with `clojure -M:vis`. A JVM launch reuses a matching GraalVM CE 25.1.3 already installed (including through SDKMAN), or installs the pinned JDK automatically when no Java is available; it also installs the Clojure CLI when needed. You need git. Set `VIS_NO_AUTO_INSTALL=1` to disable automatic tool installation. On macOS, the Clojure CLI uses Homebrew; on Linux, Vis installs it under `~/.vis/install/clojure`.
+Assets come from `github.com`, not `raw.githubusercontent.com`, which many corporate networks block. Both the installer and `vis-agent` track the newest commit on `main` rather than a tag, so a fix reaches you as soon as it lands.
+
+You need `git`. Vis reuses an installed GraalVM CE 25.1.3 (SDKMAN included), otherwise installs the pinned JDK and the Clojure CLI for you — Homebrew on macOS, `~/.vis/install/clojure` on Linux. `VIS_NO_AUTO_INSTALL=1` turns that off.
 
 ```bash
 vis-agent runtime show      # what is installed and selected
@@ -43,7 +45,7 @@ vis-agent update            # move the command and its runtime to the newest com
 {:deps {com.blockether/vis {:mvn/version "0.1.34"}}}
 ```
 
-`com.blockether/vis` already depends on every bundled extension, so that single coordinate gives the full agent. Depend on one package (`com.blockether/vis-channel-tui`, `com.blockether/vis-provider-anthropic`, `com.blockether/vis-language-python`, …) only when you embed a part of it.
+`com.blockether/vis` pulls in every bundled extension — one coordinate, the full agent. Take a single package (`com.blockether/vis-channel-tui`, `com.blockether/vis-provider-anthropic`, `com.blockether/vis-language-python`, …) only when you embed just that part.
 
 ## Companion app (iPhone / Android)
 
