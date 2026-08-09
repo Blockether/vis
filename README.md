@@ -40,7 +40,7 @@ vis-agent update            # move the command and its runtime to the newest com
 
 ```clojure
 ;; deps.edn
-{:deps {com.blockether/vis {:mvn/version "0.1.33"}}}
+{:deps {com.blockether/vis {:mvn/version "0.1.34"}}}
 ```
 
 `com.blockether/vis` already depends on every bundled extension, so that single coordinate gives the full agent. Depend on one package (`com.blockether/vis-channel-tui`, `com.blockether/vis-provider-anthropic`, `com.blockether/vis-language-python`, …) only when you embed a part of it.

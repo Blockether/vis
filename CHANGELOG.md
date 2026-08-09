@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.34] - 2026-08-09
+
+### Changed
+- Release v0.1.34
+- Refuse toolchain output at the incidental capture tap
+- Stop capturing the temp file nobody named
+- PLAN: record Phase 3 as done
+- Replace the `ls` native tool with a sandbox `ls()` helper
+- Invent the provider the native suite talks to
+- Companion: measure the "Latest" offer instead of remembering it
+- Prove the native binary from its own suite, not from a docker build
+- Companion: let an artifact tile show its own note, and keep its controls legible
+- Companion: one Settings dialog, this device beside the machines
+- Record Phase 2 in the plan
+- Replace protected paths with one :fs/access gate hook
+- Companion: search is a page, and the bar keeps two marks
+- Prove the native TUI, the agent entrypoint and the zai provider in the image build
+- Make the container image a base a deployment extends
+- Companion: one document stack per step, and the row is the verb
+- Pin the container agent's home to the vis user and prove it at build time
+- Install a provisioning profile only where Xcode reads it
+- Serve the container gateway from the native image
+- Pin the transcript in the frame the keyboard shrinks the shell
+- Let an attached page run its own script, never the app's origin
+- Rename the sandbox attachment surface to plain verbs
+- Make every way out say what it closes
+- Give the companion's paint back to the components that own it
+- Leave the image viewer through the app's one close
+- Give every close mark the page's own ink
+- Zoom a picture by the distance scrolled, and take Safari own pinch
+- release: update release notes for v0.1.33
+
+### Package changes
+
+#### com.blockether/vis
+- Release v0.1.34 (7e2d6cefa)
+- Refuse toolchain output at the incidental capture tap (e8c512bae)
+- Stop capturing the temp file nobody named (9386b5144)
+- PLAN: record Phase 3 as done (e3240898f)
+- Replace the `ls` native tool with a sandbox `ls()` helper (d3db4c514)
+- Invent the provider the native suite talks to (5701c9d7e)
+- Companion: measure the "Latest" offer instead of remembering it (871420423)
+- Prove the native binary from its own suite, not from a docker build (72ef3fec8)
+- Companion: let an artifact tile show its own note, and keep its controls legible (7c6fae0b9)
+- Companion: one Settings dialog, this device beside the machines (df428cafe)
+- Record Phase 2 in the plan (287bcda62)
+- Replace protected paths with one :fs/access gate hook (49d5a182e)
+- Companion: search is a page, and the bar keeps two marks (8b6bea53b)
+- Prove the native TUI, the agent entrypoint and the zai provider in the image build (72bd2b6e4)
+- Make the container image a base a deployment extends (2f36d3e44)
+- Companion: one document stack per step, and the row is the verb (c173d5421)
+- Pin the container agent's home to the vis user and prove it at build time (b2656c39a)
+- Install a provisioning profile only where Xcode reads it (59c889f7b)
+- Serve the container gateway from the native image (b067471d4)
+- Pin the transcript in the frame the keyboard shrinks the shell (eb3303a52)
+- Let an attached page run its own script, never the app's origin (5c0bcda60)
+- Rename the sandbox attachment surface to plain verbs (3913d59c9)
+- Make every way out say what it closes (b243f9cb7)
+- Give the companion's paint back to the components that own it (a4eaf0e27)
+- Leave the image viewer through the app's one close (00b058dd8)
+- Give every close mark the page's own ink (80af604cf)
+- Zoom a picture by the distance scrolled, and take Safari own pinch (b245817ce)
+- release: update release notes for v0.1.33 (9d9bf9855)
+
+#### com.blockether/vis-channel-tui
+- Rename the sandbox attachment surface to plain verbs (3913d59c9)
+
+#### com.blockether/vis-foundation-bridge
+- Replace protected paths with one :fs/access gate hook (49d5a182e)
+
+#### com.blockether/vis-persistance-sqlite
+- Rename the sandbox attachment surface to plain verbs (3913d59c9)
+
+
+
 ## [v0.1.33] - 2026-08-08
 
 ### Changed
@@ -4122,7 +4197,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.33...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.34...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -4149,3 +4224,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.31]: https://github.com/Blockether/vis/releases/tag/v0.1.31
 [v0.1.32]: https://github.com/Blockether/vis/releases/tag/v0.1.32
 [v0.1.33]: https://github.com/Blockether/vis/releases/tag/v0.1.33
+[v0.1.34]: https://github.com/Blockether/vis/releases/tag/v0.1.34
