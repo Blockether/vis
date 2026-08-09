@@ -23,9 +23,20 @@ describe("sandboxing", () => {
     expect(docSandbox("application/pdf")).not.toContain("allow-same-origin");
   });
 
-  it("runs no script for a page and allows only the browser PDF viewer", () => {
-    expect(docSandbox("text/html")).toBe("");
-    expect(docSandbox("application/xhtml+xml")).toBe("");
+  it("never lets an artifact act on the app around it", () => {
+    for (const mime of [
+      "text/html",
+      "application/xhtml+xml",
+      "application/pdf",
+    ]) {
+      expect(docSandbox(mime)).not.toContain("allow-top-navigation");
+      expect(docSandbox(mime)).not.toContain("allow-popups");
+    }
+  });
+
+  it("runs a page's own script and allows the browser PDF viewer", () => {
+    expect(docSandbox("text/html")).toContain("allow-scripts");
+    expect(docSandbox("application/xhtml+xml")).toContain("allow-scripts");
     expect(docSandbox("application/pdf")).toBe("allow-scripts");
   });
 
@@ -34,7 +45,7 @@ describe("sandboxing", () => {
       <DocFrame url="blob:x" mime="text/html" name="page.html" />,
     );
     expect(html).toContain("<iframe");
-    expect(html).toContain('sandbox=""');
+    expect(html).toContain('sandbox="allow-scripts');
     expect(html).toContain('title="page.html"');
     expect(html).not.toContain("allow-same-origin");
   });

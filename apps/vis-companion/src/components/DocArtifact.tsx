@@ -44,17 +44,26 @@ export type AnnotateContext = {
  * pixel of the app around it.
  *
  * The `sandbox` attribute is what makes that isolation a SECURITY boundary
- * rather than a styling one. A blob: URL inherits the app's origin, so
- * `allow-same-origin` would hand the artifact the app's storage and the
- * gateway's bearer token: it is never granted. HTML gets the empty sandbox — no
- * scripts, no forms, no top-level navigation, opaque origin. A PDF is not
- * markup and cannot run anything of its own; `allow-scripts` there is for the
- * BROWSER's built-in viewer (Chromium refuses to paint one otherwise), and
- * without `allow-same-origin` it still runs in an opaque origin that can see
- * nothing of ours.
+ * rather than a styling one, and the danger is a COMBINATION, not a flag:
+ * a blob: URL inherits the app's origin, so `allow-same-origin` would hand the
+ * artifact the app's storage, the gateway's bearer token and the ability to
+ * strip its own sandbox. It is never granted, to any media type.
+ *
+ * Everything else is. A page is a DESIGN, and a design that cannot run its own
+ * script is a picture of one: no CDN framework, no tab, no modal, no live data.
+ * With the origin withheld the frame runs opaque — `localStorage` throws,
+ * `document.cookie` is empty, `parent` is unreadable — so the script can style
+ * and animate its own document and reach the network, and nothing else. Two
+ * capabilities stay off because they act on the app AROUND the frame rather
+ * than inside it: `allow-top-navigation`, which would yank the user off the
+ * companion, and `allow-popups`, which would open windows behind it. A PDF
+ * needs `allow-scripts` for the same reason it always did — Chromium's built-in
+ * viewer refuses to paint without it.
  */
 export function docSandbox(mime: string | undefined): string {
-  return isPdfMedia(mime) ? "allow-scripts" : "";
+  return isPdfMedia(mime)
+    ? "allow-scripts"
+    : "allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads";
 }
 
 /**
@@ -135,7 +144,6 @@ function DocCaption({
     </div>
   );
 }
-
 
 /**
  * An opened document owns the WHOLE viewport — full height and full width —
