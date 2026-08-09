@@ -838,7 +838,7 @@
 
 
 ;; =============================================================================
-;; BACKGROUND — Python sandbox: `await shell_background(["npm run dev"], id="dev")`
+;; BACKGROUND — Python sandbox: `await shell_run(["npm run dev"], {"wait": 0, "id": "dev"})`
 ;; =============================================================================
 
 (defonce ^:private bg-procs
@@ -1264,7 +1264,7 @@
          {:command script :pid (:pid p) :started-at-ms t0 :finished-at-ms t0 :duration-ms 0}}))))
 
 (defn- shell-bg-impl
-  "`await shell_background([\"npm run dev\"], id=id)` — IDEMPOTENT on a live id.
+  "`await shell_run([\"npm run dev\"], {\"wait\": 0, \"id\": id})` — IDEMPOTENT on a live id.
 
    Re-using an id whose process is still running used to THROW. That reads as a
    plain tool failure: a model that already started the shell (or that lost the
@@ -1790,7 +1790,7 @@
        (throw (ex-info (str "No background shell '"
                             id
                             "' in this session — start one with"
-                            " await shell_background([\"…\"], id=id);"
+                            " await shell_run([\"…\"], {\"wait\": 0, \"id\": id});"
                             " live ids are listed in resources.")
                        {:type ::unknown-bg-id :id id})))
      (when-not ((:alive? (:proc entry)))
@@ -1816,7 +1816,7 @@
                              {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}}))))))
 
 ;; -----------------------------------------------------------------------------
-;; Internal lifecycle grammar — the model calls `shell_run` / `shell_background` /
+;; Internal lifecycle grammar — the model calls `shell_run` /
 ;; -----------------------------------------------------------------------------
 
 (defn- opts-arg?
@@ -1879,10 +1879,11 @@
   "INTERNAL shell lifecycle grammar, kept for the Python-extension entry points
    (`trusted-extension-shell`, `jailed-shell`, `session-jailed-shell`) whose
    caller authors an options map by hand and therefore genuinely needs an `op`
-   discriminator. The MODEL never reaches this: it calls `shell_run`,
-   `shell_background`, `shell_logs`, `shell_type` or `shell_stop`, each with its
-   own satisfiable schema, so one schema with five mutually-exclusive shapes is
-   never presented as a contract to disambiguate."
+   discriminator. The MODEL never reaches this: it calls `shell_run` — one tool
+   whose `wait` decides whether it blocks — and the bare verbs `shell_logs`,
+   `shell_type` and `shell_stop` on the id it already holds, so one schema with
+   five mutually-exclusive shapes is never presented as a contract to
+   disambiguate."
   [env opts]
   (when-not (opts-arg? opts)
     (throw (ex-info "shell takes one options map, e.g. shell({\"commands\": [\"ls\"]})."
@@ -2787,14 +2788,14 @@
           "`note` (`*_omitted_chars` says what a huge stream lost). Nonzero exit is data. `id` is "
           "ALWAYS a handle: `timed_out` means the WAIT expired, not the process.")
      :description
-     (str
-       "Run `bash -lc` lines in order; `wait` is how long YOU wait and the only knob. Drive it "
-       "from `python_execution`: batch the `commands`, read `r[\"commands\"][i][\"stdout\"]`, print "
-       "only what you need. The result is always a handle: on `timed_out` the command is STILL "
-       "RUNNING under `id`, so resume with `shell_logs(id, offset=0)`, `shell_type(id, text)` and "
-       "`shell_stop(id)` instead of running it again. `wait=0` returns at once under a real pty — "
-       "that is how a server, a watcher or an interactive command is started — and re-issuing a "
-       "live `id` returns THAT shell rather than a second copy.")
+     (str "Run `bash -lc` lines in order. `wait` is the ONLY knob — how long YOU wait, not a mode; "
+          "`wait=0` returns at once under a real pty, which is how a server, watcher or "
+          "interactive command starts. The result is ALWAYS a handle: `timed_out` means the WAIT "
+          "expired and the command still RUNS under `id`, so resume with `shell_logs(id, "
+          "offset=0)` / `shell_type(id, text)` / `shell_stop(id)` (contracts: "
+          "`doc(\"shell_logs\")`), never a rerun; re-issuing a live `id` returns THAT shell. "
+          "Drive it from `python_execution`: batch `commands`, read "
+          "`r[\"commands\"][i][\"stdout\"]`, print only what you need.")
      :render-finish-call-fn render-shell-batch-result
      :render-start-call-fn (shell-start-renderer "run")
      :schema {:type "object"

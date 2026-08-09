@@ -1033,8 +1033,28 @@
               [pat
                (if (pos? (alength args)) (.asString ^Value (aget args 0)) "")
 
+               ;; `{name -> group}` seeded by `build-agent-context`; read live so a
+               ;; per-turn extension activation is groupable the moment it binds.
+               groups
+               (let [d (.getMember g "__vis_groups__")]
+                 (when (and d (not (.isNull d)) (.hasHashEntries d)) d))
+
+               group-of
+               (fn [nm]
+                 (if (and groups (.hasHashEntry groups (->py nm)))
+                   (.asString (.getHashValue groups (->py nm)))
+                   "engine"))
+
+               ;; A query matches a NAME or its GROUP, so `apropos("providers")`
+               ;; and `apropos("filesystem")` answer without knowing one tool name.
+               needle
+               (str/lower-case pat)
+
                matched
-               (filterv #(str/includes? % pat) (names))
+               (filterv (fn [nm]
+                          (or (str/includes? (str/lower-case nm) needle)
+                              (str/includes? (str/lower-case (group-of nm)) needle)))
+                 (names))
 
                docs
                (let [d (.getMember g "__vis_docs__")]
@@ -1106,7 +1126,7 @@
     (set-python-binding-doc!
       ctx
       'apropos
-      "apropos(query='') -> {name: gist}. List sandbox tools; optional name substring.")
+      "apropos(query='') -> {name: gist}. List sandbox tools; the query matches a name substring OR a whole GROUP (filesystem, shell, providers, mcp, languages, shims, \u2026). Groups: `__vis_groups__`.")
     (set-python-binding-doc!
       ctx
       'doc
@@ -1894,10 +1914,27 @@
         [sym->doc
          (extension/sandbox-symbol-docs)
 
+         sym->group
+         (extension/sandbox-symbol-groups)
+
          py-docs
          (reduce (fn [m [sym _]]
                    (if-let [d (get sym->doc sym)]
                      (reduce #(assoc %1 %2 d) m (cons (sym->py-name sym) (py-aliases-for-sym sym)))
+                     m))
+                 {}
+                 (or custom-bindings {}))
+
+         ;; The discovery GROUP of each bound symbol, keyed by the SAME python
+         ;; names — `apropos` files its table under these headings and matches a
+         ;; query against them, so "providers" or "filesystem" is a question the
+         ;; sandbox can answer without knowing a single tool name.
+         py-groups
+         (reduce (fn [m [sym _]]
+                   (if-let [grp (get sym->group sym)]
+                     (reduce #(assoc %1 %2 grp)
+                             m
+                             (cons (sym->py-name sym) (py-aliases-for-sym sym)))
                      m))
                  {}
                  (or custom-bindings {}))]
@@ -1907,7 +1944,14 @@
           (.eval ctx
                  "python"
                  "globals().setdefault('__vis_docs__', {}).update(json.loads(__vis_docs_json__))")
-          (.putMember g "__vis_docs_json__" nil)))
+          (.putMember g "__vis_docs_json__" nil))
+        (when (seq py-groups)
+          (.putMember g "__vis_groups_json__" (json/write-json-str py-groups))
+          (.eval
+            ctx
+            "python"
+            "globals().setdefault('__vis_groups__', {}).update(json.loads(__vis_groups_json__))")
+          (.putMember g "__vis_groups_json__" nil)))
       (catch Throwable _ nil))
     ;; POSIX-compat: route subprocess / os.system to the shell tools. Eval'd
     ;; BEFORE the initial-ns-keys snapshot so any names it parks are baseline
@@ -1955,6 +1999,13 @@
           (.putMember g "__vis_shims_json__" (json/write-json-str names))
           (.eval ctx "python" "globals()['__vis_shims__'] = json.loads(__vis_shims_json__)")
           (.putMember g "__vis_shims_json__" nil))
+        (when (seq names)
+          (.putMember g "__vis_groups_json__" (json/write-json-str (zipmap names (repeat "shims"))))
+          (.eval
+            ctx
+            "python"
+            "globals().setdefault('__vis_groups__', {}).update(json.loads(__vis_groups_json__))")
+          (.putMember g "__vis_groups_json__" nil))
         (when (seq docs)
           (.putMember g "__vis_docs_json__" (json/write-json-str docs))
           (.eval ctx

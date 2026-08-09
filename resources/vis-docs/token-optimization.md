@@ -4,12 +4,16 @@ Vis follows one rule: **do not pay tokens for data that can stay addressable.** 
 
 ## Discover before guessing
 
-The live runtime is the source of truth. `apropos` finds capabilities by name; `doc` returns one exact contract:
+The live runtime is the source of truth. `apropos` finds capabilities by name **or by group** — `filesystem`, `shell`, `git`, `mcp`, `providers`, `languages`, `shims`, `engine` — and `doc` returns one exact contract:
 
 ```python
-apropos("struct")
-doc("struct_patch")
+apropos("")            # every group, one section each
+apropos("providers")   # one whole family, no tool name needed
+apropos("struct")      # name substring
+doc("struct_patch")    # description + raw result + params
 ```
+
+A group is the extension that owns the capability, so a newly registered extension is groupable the moment it binds. `doc` states the raw-result shape for bare sandbox verbs too (`doc("shell_logs")`), which have no provider schema in front of them.
 
 Use them before inventing a tool name or call shape. They read the same live registry that generates native tool descriptions, so extensions appear immediately and copied catalogs cannot go stale.
 

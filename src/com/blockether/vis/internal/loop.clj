@@ -4743,11 +4743,19 @@
   []
   {:name "apropos"
    :description
-   (str "Discover sandbox capabilities not advertised as native tools; never preflight visible "
-        "tools. Returns name/gists; in-Python a filterable dict.")
-   :result "Map of matching capability names to compact gist strings."
+   (str
+     "Discover sandbox capabilities not advertised as native tools; never preflight visible "
+     "tools. The result is filed by GROUP — `filesystem`, `shell`, `git`, `mcp`, `providers`, "
+     "`languages`, `shims`, `engine` — and a bare group name is a valid query, so "
+     "`apropos(\"providers\")` lists that family without knowing one tool name. Then `doc(name)` "
+     "for the one contract; in-Python `apropos()` is a filterable dict.")
+   :result
+   (str "Markdown sections, one per group, of matching capability names to compact gist strings, "
+        "then the list of groups. In-Python the same call returns `{name: gist}`; the group of "
+        "each name is `__vis_groups__`.")
    :schema {:type "object"
-            :properties {"query" {:type "string" :description "Optional tool-name substring."}}
+            :properties {"query" {:type "string"
+                                  :description "Tool-name substring OR a group name."}}
             :additionalProperties false}})
 
 (defn- doc-tool
@@ -4758,7 +4766,10 @@
   {:name "doc"
    :description
    "Read a discovered capability's authoritative contract; never preflight visible tools."
-   :result "Authoritative docs string, including a native tool's raw-result contract."
+   :result (str
+             "Authoritative docs string: the capability's contract, its raw-result shape and its "
+             "params block — for bare sandbox verbs (`shell_logs`, `shell_stop`) this is the only "
+             "place the result keys are stated.")
    :schema {:type "object"
             :properties {"name" {:type "string" :description "Exact capability name from apropos."}}
             :required ["name"]
@@ -9259,8 +9270,7 @@
      envelope
      (when enabled?
        (try (let
-              [shell-fn (requiring-resolve
-                          'com.blockether.vis.internal.foundation.shell/shell-run)]
+              [shell-fn (requiring-resolve 'com.blockether.vis.internal.foundation.shell/shell-run)]
               ;; Calling the shell var directly skips the symbol-call seam, so the
               ;; workspace view stays unbound and `resolve-dir` falls back to the
               ;; PROCESS cwd — a bang inside a draft would then run on trunk.

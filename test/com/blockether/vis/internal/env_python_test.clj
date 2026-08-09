@@ -392,7 +392,8 @@
           (expect (str/includes? out "raw=find,find_files"))
           (expect
             (str/includes? out "native-find=apropos('find'): no unadvertised capabilities match."))
-          (expect (str/includes? out "native-struct=| capability | gist |"))
+          (expect (str/includes? out "native-struct=### "))
+          (expect (str/includes? out "| capability | gist |"))
           (expect (str/includes? out "| `struct_patch` |"))))
     (it "apropos and doc describe their own callable contracts"
         (let [out (run (str "print(doc('apropos'))\n" "print(doc('doc'))"))]
@@ -956,3 +957,51 @@
            (expect (= "raw-done\n" (:stdout unwrapped)))
            (expect (zero? (.length raw-file)))
            (finally (run! #(.delete ^java.io.File %) [end-file mid-file raw-file dir]))))))
+
+
+;; Groups make `apropos` answerable without knowing a single tool name, and a
+;; BARE sandbox verb (`shell_logs`) is called from Python with no provider schema
+;; in front of it — so `doc(name)` is the only place its result keys are stated.
+(defdescribe
+  apropos-groups-and-bare-verb-docs-test
+  "`apropos` files every capability under the GROUP of its owning extension,
+   matches a whole group name as a query, and `doc` states the raw-result
+   contract for non-native sandbox verbs as well as native tools."
+  (let
+    [bind
+     (ext/builtin-sandbox-bindings (fn []
+                                     nil))
+
+     ctx
+     (:python-context (ep/create-python-context bind))
+
+     run
+     (fn [code]
+       (str (:stdout (ep/run-python-block ctx code))))]
+
+    (it "every bound tool is filed under a group"
+        (let
+          [out (run (str "g = __vis_groups__\n"
+                         "print('shell_run='+g.get('shell_run','?'))\n"
+                         "print('shell_logs='+g.get('shell_logs','?'))\n"
+                         "print('cat='+g.get('cat','?'))\n" "print('yaml='+g.get('yaml','?'))"))]
+          (expect (str/includes? out "shell_run=shell"))
+          (expect (str/includes? out "shell_logs=shell"))
+          (expect (str/includes? out "cat=filesystem"))
+          (expect (str/includes? out "yaml=shims"))))
+    ;; "filesystem" is nowhere in a tool NAME, so a hit proves the query matched
+    ;; the GROUP and nothing else.
+    (it "a bare group name is a valid apropos query"
+        (let
+          [out (run (str "print('fs='+','.join(sorted(apropos('filesystem'))))\n"
+                         "print('table='+__vis_apropos_table__('filesystem'))"))]
+          (expect (str/includes? out "cat"))
+          (expect (str/includes? out "table=### filesystem"))
+          (expect (str/includes? out "Groups: `filesystem`."))))
+    (it "the handle verbs carry their raw-result contract in doc"
+        (let
+          [out (run (str "print('LOGS<'+doc('shell_logs')+'>')\n"
+                         "print('STOP<'+doc('shell_stop')+'>')"))]
+          (expect (str/includes? out "Raw result: `{id, text, offset"))
+          (expect (str/includes? out "Raw result: `{id, status, exit, note}`"))
+          (expect (str/includes? out "params:"))))))

@@ -3789,8 +3789,8 @@
 
 (defn symbol-doc-text
   "Model-facing doc text for ONE symbol ENTRY: a native tool's required compact
-   description plus mandatory raw-result contract, or a non-native symbol's
-   implementation docstring, followed by one generated params block. Native
+   description or a non-native symbol's implementation docstring, then the raw-result
+   contract whenever the entry declares one, followed by one generated params block. Native
    implementation docstrings never enter model context. Returns nil without prose.
    This is the single source for sandbox docs, so `doc(name)` and provider tool
    descriptions expose the same result contract."
@@ -3804,8 +3804,12 @@
        (:ext.symbol/description entry)
        (or (:ext.symbol/description entry) (:ext.symbol/doc entry)))
 
+     ;; The raw-result contract belongs to EVERY doc-bearing symbol, native or
+     ;; not: a bare sandbox verb like `shell_logs` is called from Python without
+     ;; a provider schema in front of it, so `doc("shell_logs")` is the only
+     ;; place its result keys are ever stated.
      result
-     (when native? (:ext.symbol/result entry))
+     (:ext.symbol/result entry)
 
      params
      (schema->param-doc (:ext.symbol/schema entry))
@@ -3853,6 +3857,54 @@
            :when (and sym text)]
 
           [sym text])))
+
+(def ^:private ext-group-overrides
+  "Extension names whose own name is a worse GROUP label than the thing the group
+   actually is. Everything else derives mechanically in `ext-group-label`, so this
+   table stays a handful of entries rather than a taxonomy that drifts."
+  {"foundation-core" "filesystem" "foundation-bridge" "extensions"})
+
+(defn ext-group-label
+  "Coarse discovery GROUP for an extension name — the heading `apropos` files a
+   capability under. Mechanical: a shim is `shims`, a `foundation-<x>` extension is
+   `<x>`, and the plural families collapse (`provider-openai` -> `providers`), so a
+   new extension gets a sensible group with no registration step."
+  [ext-name]
+  (let [n (str ext-name)]
+    (cond (str/blank? n) "other"
+          (contains? ext-group-overrides n) (get ext-group-overrides n)
+          (str/starts-with? n "foundation-shim-") "shims"
+          (str/starts-with? n "foundation-") (subs n (count "foundation-"))
+          (str/starts-with? n "provider-") "providers"
+          (str/starts-with? n "language-") "languages"
+          (str/starts-with? n "channel-") "channels"
+          (str/starts-with? n "persistance-") "persistance"
+          :else n)))
+
+(defn sandbox-symbol-groups
+  "Map `{sandbox-symbol -> group}` for every engine-bound symbol across the
+   registered extensions — the same keys `sandbox-symbol-docs` produces, filed
+   under `ext-group-label` of the OWNING extension. `env_python` seeds this into
+   the sandbox as `__vis_groups__`, which is what lets `apropos` answer
+   \"filesystem\" or \"providers\" and print one section per group."
+  []
+  (load-builtin-extensions!)
+  (into {}
+        (for
+          [ext
+           (registered-extensions)
+
+           :let [group
+                 (ext-group-label (:ext/name ext))]
+           entry
+           (ext-symbols ext)
+
+           :when (symbol-bound? entry)
+           :let [sym
+                 (:ext.symbol/symbol entry)]
+           :when sym]
+
+          [sym group])))
 
 (defn builtin-sandbox-bindings
   "`{sym -> fn}` bindings for EVERY registered built-in extension
