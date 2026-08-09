@@ -27,12 +27,6 @@ curl -fsSL https://github.com/Blockether/vis/releases/download/installer/install
 vis-agent help
 ```
 
-Installs `vis-agent` into `~/.local/bin` (adding it to your PATH if needed). It checks the source out into `~/.vis/install/src` and runs `clojure -M:vis`.
-
-Assets come from `github.com`, not `raw.githubusercontent.com`, which many corporate networks block. Both the installer and `vis-agent` track the newest commit on `main` rather than a tag, so a fix reaches you as soon as it lands.
-
-You need `git`. Vis reuses an installed GraalVM CE 25.1.3 (SDKMAN included), otherwise installs the pinned JDK and the Clojure CLI for you — Homebrew on macOS, `~/.vis/install/clojure` on Linux. `VIS_NO_AUTO_INSTALL=1` turns that off.
-
 ```bash
 vis-agent runtime show      # what is installed and selected
 vis-agent update            # move the command and its runtime to the newest commit
@@ -60,9 +54,7 @@ The app is useless on its own: it needs a gateway. Start one with `vis-agent gat
 
 ## Choose the runtime
 
-`vis-agent` follows the releases by default: the published native runtime, or
-JVM source pinned to the newest `vX.Y.Z` tag. A live checkout is **dev mode** —
-opt in; it is never picked for you, not even from inside a Vis checkout.
+`vis-agent` follows the releases by default. A live checkout is **dev mode** — opt in; it is never picked for you.
 
 | Runtime | Runs |
 |---|---|
@@ -71,8 +63,7 @@ opt in; it is never picked for you, not even from inside a Vis checkout.
 | `dev` | a live checkout (`~/vis`, or `$VIS_DEV_CHECKOUT`), tracking its branch |
 | `auto` | no choice at all: native if installed, else tagged source |
 
-Dev mode is the one runtime Vis fetches a checkout for: with nothing at that
-path, `vis-agent update` clones the repository there on `main`.
+With nothing at the dev path, `vis-agent update` clones the repository there on `main`.
 
 ```bash
 vis-agent update native|jvm|dev             # acquire it, update it, select it
@@ -82,17 +73,7 @@ vis-agent --native|--jvm|--dev help         # one launch only
 VIS_RUNTIME=dev vis-agent help              # one process only
 ```
 
-A one-launch flag beats `VIS_RUNTIME`, which beats the persisted default in
-`~/.vis/runtime`. `vis-agent update` updates whichever runtime is in effect —
-the newest release bundle, or the checkout Vis owns moved onto the newest tag —
-and naming a runtime (`vis-agent update dev`) updates that one *and* makes it
-the default, so switching never needs a second command.
-Only `update --dev` follows a moving branch, and any target that is not a
-`vX.Y.Z` release pins the owned source to that git ref. A selected runtime that
-is not installed is an error with the command that fixes it, never a silent
-substitution. There is no jar runtime: `target/vis.jar` is a build artifact.
-Full flag, update, state, and environment matrix:
-[Runtime distributions](resources/vis-docs/distributions.md).
+A one-launch flag beats `VIS_RUNTIME`, which beats the persisted default in `~/.vis/runtime`. `vis-agent update` updates the runtime in effect; naming one (`vis-agent update dev`) also makes it the default. A selected runtime that is not installed is an error, never a silent substitution. Full matrix: [Runtime distributions](resources/vis-docs/distributions.md).
 
 ## License
 
