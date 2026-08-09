@@ -36,6 +36,7 @@
             [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.runtime-settings :as rt]
             [com.blockether.vis.internal.resources :as resources]
+            [com.blockether.vis.internal.shell-log :as shell-log]
             [com.blockether.vis.internal.slash :as slash]
             [com.blockether.vis.internal.strutil :as strutil :refer [truncate]]
             [com.blockether.vis.internal.titling :as titling]
@@ -12409,6 +12410,9 @@
 (defn delete!
   [id]
   (close! id)
+  ;; A shell log dies with the session that produced it, and with nothing else:
+  ;; the bytes on disk outlive the process, so the delete has to name them.
+  (shell-log/delete-session-logs! id)
   (let [d (db-info)]
     (try (persistance/db-delete-session-tree! d id) (catch Exception _ nil))))
 

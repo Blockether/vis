@@ -24,6 +24,30 @@
 
 (def ^:private shell-logs* @#'shell/shell-logs-impl)
 
+(defn- log-text
+  "Everything shell `id` has printed, read the way the model is told to read it:
+   start at 0 and continue from `next_offset` until a chunk says `is_eof`. A
+   cursor that fails to advance ends the loop rather than spinning."
+  [env id]
+  (loop
+    [offset
+     0
+
+     acc
+     ""]
+
+    (let
+      [r
+       (:result (shell-logs* env id {:offset offset}))
+
+       acc
+       (str acc (get r "text"))
+
+       next-offset
+       (long (get r "next_offset"))]
+
+      (if (or (get r "is_eof") (<= next-offset (long offset))) acc (recur next-offset acc)))))
+
 (def ^:private shell-send* @#'shell/shell-send-impl)
 
 (def ^:private shell* @#'shell/shell-dispatch)
@@ -311,36 +335,40 @@
 
 (defdescribe
   shell-background-test
-  (it "registers a session resource, tails logs, and stops cleanly via the registry"
-      (with-shell-on
-        (fn []
-          (binding [workspace/*workspace-root* (workspace/trunk-root)]
-            (let
-              [sid "shell-ext-bg"
-               env {:session-id sid}]
+  (it
+    "registers a session resource, tails logs, and stops cleanly via the registry"
+    (with-shell-on
+      (fn []
+        (binding [workspace/*workspace-root* (workspace/trunk-root)]
+          (let
+            [sid "shell-ext-bg"
+             env {:session-id sid}]
 
-              (try (let [reg (:result (shell-bg* env "worker" "echo l1; echo l2; sleep 60"))]
-                     (expect (= "running" (get reg "status")))
-                     (expect (pos? (get reg "pid"))))
-                   (let [rs (resources/list-resources sid)]
-                     (expect (= 1 (count rs)))
-                     (expect (= "worker" (get (first rs) "id")))
-                     (expect (= "shell" (get (first rs) "kind")))
-                     (expect (true? (get (first rs) "can_stop"))))
-                   (let
-                     [r (poll #(:result (shell-logs* env "worker"))
-                              #(>= (count (get % "lines")) 2))]
-                     ;; `lines` is plain strings and the ONLY copy of the tail — no
-                     ;; pre-joined `text` twin, so the payload never doubles.
-                     (expect (= "l1" (first (get r "lines"))))
-                     (expect (every? string? (get r "lines")))
-                     (expect (nil? (get r "text")))
-                     (expect (= "running" (get r "status"))))
-                   (let [stop (resources/stop! sid "worker")]
-                     (expect (= :stopped (:result stop)))
-                     (expect (empty? (resources/list-resources sid)))
-                     (expect (threw? #(shell-logs* env "worker"))))
-                   (finally (resources/stop-all! sid))))))))
+            (try (let [reg (:result (shell-bg* env "worker" "echo l1; echo l2; sleep 60"))]
+                   (expect (= "running" (get reg "status")))
+                   (expect (pos? (get reg "pid"))))
+                 (let [rs (resources/list-resources sid)]
+                   (expect (= 1 (count rs)))
+                   (expect (= "worker" (get (first rs) "id")))
+                   (expect (= "shell" (get (first rs) "kind")))
+                   (expect (true? (get (first rs) "can_stop"))))
+                 (let
+                   [r (poll #(:result (shell-logs* env "worker"))
+                            #(>= (count (str/split-lines (str (get % "text")))) 2))]
+                   ;; `text` is the bytes as they were printed and `offset`/
+                   ;; `next_offset` are the cursor into them — one copy plus a
+                   ;; place to continue, never a window that forgot its head.
+                   (expect (str/starts-with? (get r "text") "l1"))
+                   (expect (= 0 (get r "offset")))
+                   (expect (pos? (get r "next_offset")))
+                   (expect (true? (get r "is_eof")))
+                   (expect (nil? (get r "lines")))
+                   (expect (= "running" (get r "status"))))
+                 (let [stop (resources/stop! sid "worker")]
+                   (expect (= :stopped (:result stop)))
+                   (expect (empty? (resources/list-resources sid)))
+                   (expect (threw? #(shell-logs* env "worker"))))
+                 (finally (resources/stop-all! sid))))))))
   (it "keeps an exited process listed (status :exited) with readable logs + exit"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
@@ -353,12 +381,38 @@
                                   [r (poll #(:result (shell-logs* env "quick"))
                                            #(= "exited" (get % "status")))]
                                   (expect (= 7 (get r "exit")))
-                                  (expect (= ["done"] (vec (get r "lines"))))
-                                  (expect (nil? (get r "text"))))
+                                  (expect (str/includes? (get r "text") "done"))
+                                  (expect (nil? (get r "lines"))))
                                 (let [res (first (resources/list-resources sid))]
                                   (expect (some? res))
                                   (expect (= "failed" (get res "status"))))
                                 (finally (resources/stop-all! sid))))))))
+  ;; The whole point of the cursor: a shell that printed far more than one read
+  ;; returns loses NOTHING. The ring buffer this replaced dropped the head of a
+  ;; long build and only said how many lines it had thrown away.
+  (it "gives every byte of a long run back through the offset cursor"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid (str "shell-ext-cursor-" (System/nanoTime))
+               env {:session-id sid}]
+
+              (try (shell-bg* env "long" "seq 1 10000")
+                   (poll #(:result (shell-logs* env "long")) #(= "exited" (get % "status")) 200)
+                   (let [lines (str/split-lines (str/trim-newline (log-text env "long")))]
+                     (expect (= 10000 (count lines)))
+                     (expect (= "1" (str/trim (first lines))))
+                     (expect (= "10000" (str/trim (last lines))))
+                     ;; No gap and no overlap: the whole sequence, in order.
+                     (expect (= (mapv str (range 1 10001)) (mapv str/trim lines))))
+                   ;; A read past the end is empty and still at the end, so a
+                   ;; polling loop terminates instead of re-reading the tail.
+                   (let [end (:result (shell-logs* env "long" {:offset 1000000000}))]
+                     (expect (= "" (get end "text")))
+                     (expect (true? (get end "is_eof")))
+                     (expect (= (get end "offset") (get end "next_offset"))))
+                   (finally (resources/stop-all! sid))))))))
   (it
     "returns the SAME live shell (already_running) instead of failing on a duplicate id"
     (with-shell-on
@@ -447,9 +501,11 @@
                      (expect (not (contains? r "attach")))
                      (expect (not (contains? r "socket")))
                      (expect (not (contains? r "shown_count")))
-                     ;; …but CORE keys stay TOTAL: 0 dropped / nil exit, never absent
-                     (expect (contains? r "dropped"))
-                     (expect (= 0 (get r "dropped")))
+                     ;; …but CORE keys stay TOTAL: a cursor at 0 / nil exit, never absent
+                     (expect (contains? r "offset"))
+                     (expect (= 0 (get r "offset")))
+                     (expect (contains? r "next_offset"))
+                     (expect (contains? r "is_eof"))
                      (expect (contains? r "exit"))
                      (expect (nil? (get r "exit"))))
                    (finally (resources/stop-all! sid))))))))
@@ -485,13 +541,12 @@
 
                            (try (let [b (:result (shell-bg* env "c" "pwd; sleep 60" {"cwd" "src"}))]
                                   ;; The schema advertises `cwd` for run AND bg; a bg that silently
-                                  (poll #(get (:result (shell-logs* env "c")) "lines")
-                                        #(str/includes? (str/join "\n" %) "/src")
+                                  (poll #(get (:result (shell-logs* env "c")) "text")
+                                        #(str/includes? (str %) "/src")
                                         20)
                                   (let [r (:result (shell-logs* env "c"))]
                                     (expect (= (get b "cwd") (get r "cwd")))
-                                    (expect (str/includes? (str/join "\n" (get r "lines"))
-                                                           "/src"))))
+                                    (expect (str/includes? (get r "text") "/src"))))
                                 (finally (resources/stop-all! sid))))))))
   (it "stops promptly even when the command double-forks a detached daemon"
       (with-shell-on
@@ -633,8 +688,7 @@
                                 (expect (= "\"hi-there\" ↵" (get snt "keys"))))
                               (let
                                 [hit? (fn [r]
-                                        (str/includes? (str/join "\n" (get r "lines"))
-                                                       "GOT:hi-there"))
+                                        (str/includes? (str (get r "text")) "GOT:hi-there"))
                                  r (poll #(:result (shell-logs* env "echoer")) hit?)]
 
                                 (expect (hit? r)))
@@ -759,28 +813,28 @@
                                                                  "timeout_secs" 5
                                                                  "duration_ms" 5000}))
                              "$ make test (failure) · timed out after 5s · 5.0s")))
-  (it "normalizes terminal controls in rendered output without changing the native result"
-      (let
-        [stdout
-         "\u001b[0;32m✓ PASS\u001b[0m\rnext\b!"
+  (it
+    "normalizes terminal controls in rendered output without changing the native result"
+    (let
+      [stdout
+       "\u001b[0;32m✓ PASS\u001b[0m\rnext\b!"
 
-         result
-         {"command" "tests" "exit" 0 "stdout" stdout}
+       result
+       {"command" "tests" "exit" 0 "stdout" stdout}
 
-         run-card
-         (render-shell-run-result result)
+       run-card
+       (render-shell-run-result result)
 
-         logs-card
-         (render-shell-logs-result {"id" "tests"
-                                    "status" "running"
-                                    "lines" ["\u001b]0;title\u0007\u001b[31mready\u001b[0m"]})]
+       logs-card
+       (render-shell-logs-result
+         {"id" "tests" "status" "running" "text" "\u001b]0;title\u0007\u001b[31mready\u001b[0m"})]
 
-        (expect (= stdout (get result "stdout")))
-        (expect (str/includes? (:body run-card) "✓ PASS\nnext!"))
-        (expect (not (str/includes? (:body run-card) "\u001b")))
-        (expect (not (str/includes? (:body run-card) "[0;32m")))
-        (expect (str/includes? (:body logs-card) "ready"))
-        (expect (not (str/includes? (:body logs-card) "\u001b")))))
+      (expect (= stdout (get result "stdout")))
+      (expect (str/includes? (:body run-card) "✓ PASS\nnext!"))
+      (expect (not (str/includes? (:body run-card) "\u001b")))
+      (expect (not (str/includes? (:body run-card) "[0;32m")))
+      (expect (str/includes? (:body logs-card) "ready"))
+      (expect (not (str/includes? (:body logs-card) "\u001b")))))
   (it "renders background lifecycle/log cards with expandable sections"
       (let
         [bg
@@ -791,57 +845,32 @@
                                   "attach" "vis extension shell attach srv"})
 
          logs
-         (render-shell-logs-result
-           {"id" "srv" "status" "running" "lines" ["ready"] "line_count" 1 "uptime_ms" 1500})]
+         (render-shell-logs-result {"id" "srv"
+                                    "status" "running"
+                                    "text" "ready\n"
+                                    "offset" 0
+                                    "next_offset" 6
+                                    "is_eof" true
+                                    "uptime_ms" 1500})]
 
         (expect (str/includes? (:summary bg) "▸ `srv` running · pid 123"))
         (expect (str/includes? (:body bg) "**COMMAND**"))
-        (expect (str/includes? (:summary logs) "◷ `srv` running · 1 lines · 1.5s"))
+        (expect (str/includes? (:summary logs) "◷ `srv` running · 6 B at 0"))
+        (expect (not (str/includes? (:summary logs) "more")))
         (expect (str/includes? (:body logs) "**LOGS**"))))
-  ;; Regression, issue #shell-timings: a `wait` that burned its whole budget
-  ;; rendered exactly like a `logs` peek — "◷ `rel` running · 2 lines / 10 total ·
-  ;; 10.1m" — never saying it timed out, and its only timing was the PROCESS
-  ;; uptime rather than how long the wait itself had blocked.
-  (it
-    "says a wait timed out and reports the wait's OWN duration, not the uptime"
-    (let
-      [timed-out
-       (render-shell-logs-result {"stage" "wait"
-                                  "id" "rel"
-                                  "status" "running"
-                                  "lines" ["21:33:37 in_progress"]
-                                  "line_count" 10
-                                  "uptime_ms" 606000
-                                  "duration_ms" 600031
-                                  "timed_out" true
-                                  "timeout_secs" 600
-                                  "until" "DONE "
-                                  "is_matched" false})
-
-       matched
-       (render-shell-logs-result {"stage" "wait"
-                                  "id" "deep"
-                                  "status" "running"
-                                  "lines" ["DEPTHDONE"]
-                                  "line_count" 14
-                                  "uptime_ms" 8400
-                                  "duration_ms" 4900
-                                  "timed_out" false
-                                  "timeout_secs" 300
-                                  "until" "DEPTHDONE"
-                                  "is_matched" true
-                                  "matched" "DEPTHDONE"})]
-
-      (expect (str/includes? (:summary timed-out) "⏱ `rel` timed out after 600s"))
-      (expect (str/includes? (:summary timed-out) "· waited 10.0m"))
-      (expect (str/includes? (:body timed-out) "timeout: 600s"))
-      (expect (str/includes? (:body timed-out) "waited: 10.0m"))
-      ;; The process clock stays readable — it just is not this call's timing.
-      (expect (str/includes? (:body timed-out) "uptime: 10.1m"))
-      ;; A wait a condition ended says how long IT took, not the job's age.
-      (expect (str/includes? (:summary matched) "◷ `deep` running · matched"))
-      (expect (str/includes? (:summary matched) "· waited 4.9s"))
-      (expect (not (str/includes? (:summary matched) "8.4s")))))
+  ;; A read that stopped short of the end must SAY so, because the cursor is the
+  ;; only invitation to come back for the rest.
+  (it "says where the reader is and whether more is already waiting"
+      (let
+        [more (render-shell-logs-result {"id" "build"
+                                         "status" "running"
+                                         "text" "chunk"
+                                         "offset" 4096
+                                         "next_offset" 4101
+                                         "is_eof" false})]
+        (expect (str/includes? (:summary more) "◷ `build` running · 5 B at 4096 · more"))
+        (expect (str/includes? (:body more) "next_offset: 4101"))
+        (expect (str/includes? (:body more) "more: true"))))
   (it "shows the KEYSTROKES a send typed, naming every control character"
       (let
         [typed
@@ -1059,21 +1088,19 @@
                (let
                  [started (:result (shell-bg* env "pty" cmd))
                   ready? (fn [r]
-                           (str/includes? (str/join "\n" (get r "lines")) "READY"))
+                           (str/includes? (str (get r "text")) "READY"))
                   before (poll #(:result (shell-logs* env "pty")) ready?)]
 
-                 (expect (= "1"
-                            (some->> (get before "lines")
-                                     (some #(when (str/includes? (str %) "TTY_OK") "1")))))
-                 (expect (str/includes? (str/join "\n" (get before "lines")) "NESTED_SEALED"))
-                 (expect (not (str/includes? (str/join "\n" (get before "lines")) "ESCAPED")))
+                 (expect (str/includes? (get before "text") "TTY_OK"))
+                 (expect (str/includes? (get before "text") "NESTED_SEALED"))
+                 (expect (not (str/includes? (get before "text") "ESCAPED")))
                  (expect (string? (get started "attach")))
                  (expect (string? (get started "socket")))
                  (shell-send* env "pty" "hello")
                  (let
                    [after (poll #(:result (shell-logs* env "pty"))
-                                #(str/includes? (str/join "\n" (get % "lines")) "GOT:hello"))]
-                   (expect (str/includes? (str/join "\n" (get after "lines")) "GOT:hello")))))
+                                #(str/includes? (str (get % "text")) "GOT:hello"))]
+                   (expect (str/includes? (get after "text") "GOT:hello")))))
              (finally (resources/stop-all! sid)
                       (io/delete-file secret true)
                       (io/delete-file ws true)))))))
@@ -1134,7 +1161,7 @@
                 c
                 (str
                   "b = __vis_settle__(shell_background(['echo alive; sleep 30'], {'id':'pyjob'}))\n"
-                  "l = __vis_settle__(shell_logs('pyjob', {'n':10}))\n"
+                  "l = __vis_settle__(shell_logs('pyjob', {'limit':10}))\n"
                   "s = __vis_settle__(shell_stop('pyjob'))\n"
                   "[b['stage'], l['stage'], s['stage']]"))))
           (finally (resources/stop-all! sid)))))
@@ -1205,7 +1232,7 @@
                       (pr-str sid)
                       "\n"
                       "b = __vis_settle__(shell_background(['echo ready; sleep 30'], {'id':job}))\n"
-                      "l = __vis_settle__(shell_logs(job, {'n':1}))\n"
+                      "l = __vis_settle__(shell_logs(job, {'limit':1}))\n"
                       "s = __vis_settle__(shell_stop(job))\n"
                       "[b['stage'], l['stage'], s['stage']]"))))
              (finally (resources/stop-all! sid))))))

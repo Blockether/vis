@@ -201,7 +201,10 @@ def __vis_install_posix_compat__():
             self.returncode = None
 
         def _logs(self):
-            return _tool("shell_logs")(self._id)
+            return _tool("shell_logs")(self._id, {"limit": 1})
+
+        def _read(self, offset):
+            return _tool("shell_logs")(self._id, {"offset": offset, "limit": 262144})
 
         def poll(self):
             r = self._logs()
@@ -219,8 +222,15 @@ def __vis_install_posix_compat__():
 
         def communicate(self, input=None, timeout=None):
             self.wait(timeout)
-            r = self._logs()
-            out = "\n".join(str(l) for l in r.get("lines", []))
+            out, off = [], 0
+            while True:
+                r = self._read(off)
+                out.append(r.get("text", ""))
+                nxt = r.get("next_offset", off)
+                if r.get("is_eof") or nxt <= off:
+                    break
+                off = nxt
+            out = "".join(out)
             return (out, "")
 
         def terminate(self):

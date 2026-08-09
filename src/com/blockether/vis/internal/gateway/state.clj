@@ -29,6 +29,7 @@
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.provider-error :as provider-error]
             [com.blockether.vis.internal.resources :as resources]
+            [com.blockether.vis.internal.shell-log :as shell-log]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel]))
 
@@ -4672,6 +4673,9 @@
   ;; trash on-disk clones BEFORE the DB tree (delete) so the workspace row is
   ;; still resolvable; draft-only, so this can never delete a real directory.
   (try (workspace/discard-session-clones! (lp/db-info) sid) (catch Throwable _ nil))
+  ;; The log bytes are on disk, outside the DB tree, so the delete has to name
+  ;; them: a shell log dies with the session that produced it and nothing else.
+  (shell-log/delete-session-logs! sid)
   (try (persistance/db-delete-session-tree! (lp/db-info) sid) (catch Throwable _ nil))
   (drop-session! sid)
   (bus/forget! sid)

@@ -452,12 +452,21 @@ Done:
   is_hidden)`. The measurement decided it: a gitignore-aware walk in guest Python costs
   295 ms for this repo at `depth` 3 against 15.6 ms for the host walk, so the helper calls
   the host.
+- Project rename (`struct_rename`) deleted — `71f00d8c9`. Requested during the plan and not
+  part of its argument; it removed the one editing symbol whose targets were discovered rather
+  than passed, so the surface the later phases reason about is smaller.
+- Phase 4, the offset-cursor shell log — `dccadb987`. `internal/shell_log.clj` owns the file
+  (`~/.vis/logs/shell/<session>/<id>.log`), the `::log-chunk` answer and the sidecar index row;
+  the pump tees the PTY through it, `shell_logs` takes `offset`/`limit` and returns
+  `text`/`offset`/`next_offset`/`is_eof`/`is_truncated`, and the line ring plus `dropped_lines`
+  are gone. Retention was the phase's Unknown: the log dies with the session record, deleted
+  beside `db-delete-session-tree!`, and the index row rides the existing `extension_aggregate`
+  rail (`ON DELETE CASCADE`), so there is no migration.
 
 TODO, in order:
 
-1. Phase 4 — the offset-cursor log file, with its index row in the session DB.
-2. Phase 5 — every run carries an `::id`, so a timeout is a wait that expired.
-3. Phase 6 — `wait` replaces `shell_background`, the handle object replaces `shell_logs` /
+1. Phase 5 — every run carries an `::id`, so a timeout is a wait that expired.
+2. Phase 6 — `wait` replaces `shell_background`, the handle object replaces `shell_logs` /
    `shell_type` / `shell_stop`, one shell under `subprocess`/`shell_run`, `git` as
    `wrap_with_shell`.
 

@@ -3893,8 +3893,8 @@
         ;; Every shell verb receives its complete request as one map.
         (expect (= "shell_background({\"id\": \"x\", \"commands\": [\"sleep 1\"]})"
                    (synth {:name "shell_background" :input {"id" "x" "commands" ["sleep 1"]}})))
-        (expect (= "shell_logs({\"id\": \"x\", \"n\": 50})"
-                   (synth {:name "shell_logs" :input {"id" "x" "n" 50}})))
+        (expect (= "shell_logs({\"id\": \"x\", \"offset\": 4096})"
+                   (synth {:name "shell_logs" :input {"id" "x" "offset" 4096}})))
         (expect (= "shell_stop({\"id\": \"x\"})"
                    (synth {:name "shell_stop" :input {"id" "x"}}))))
     (it "patch projects its one native shape to the edits vector"
@@ -4041,11 +4041,11 @@
   ;; `:render-start-call-fn` needs and painted raw invocation JSON for the whole run.
   (it "carries the call input on the synthesized-python branch too"
       (let
-        [tc {:id "c1" :name "shell_logs" :input {"id" "dev" "n" 50}}
+        [tc {:id "c1" :name "shell_logs" :input {"id" "dev" "offset" 4096}}
          block (native-tool-call-block {} nil tc)]
 
         (expect (= "python" (:lang block)))
-        (expect (= {"id" "dev" "n" 50} (:vis/native-input block)))))
+        (expect (= {"id" "dev" "offset" 4096} (:vis/native-input block)))))
   (it "keeps carrying it for a `:handler` tool dispatched in Clojure"
       (let
         [tc {:id "c2" :name "search_web" :input {"query" "vis"}}
@@ -4064,7 +4064,7 @@
         [renderers (extension/native-tool-start-call-renderers [sh/vis-extension])
          tc {:id "c4"
              :name "shell_logs"
-             :input {"id" "svar-verify" "n" 200}}
+             :input {"id" "svar-verify" "limit" 200}}
          block (native-tool-call-block {} nil tc)
          display (pending-call-display renderers
                                        (:vis/tool-name block)

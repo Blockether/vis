@@ -17,16 +17,16 @@
       is DATA the model reads, not an error.
 
    2. `await shell_background([\"npm run dev\"], id=\"dev\")` — spawned under a REAL
-      pty, its merged output pumped into a bounded ring buffer, registered as a
+      pty, its merged output streamed verbatim to a log FILE, registered as a
       session RESOURCE. Prefer this for long builds, test suites, servers,
       watchers, and interactive commands; reserve `shell_run` for short bounded
       work.
 
-   3. `await shell_logs(\"dev\")` snapshots the ring buffer and returns NOW,
-      `await shell_type(\"dev\", \"y\")` types into the pty, `await shell_stop(\"dev\")`
-      kills the tree. NOTHING blocks on the model's behalf: waiting is control
-      flow, and control flow belongs in a bounded `python_execution` loop that can
-      break on what it actually read.
+   3. `await shell_logs(\"dev\")` reads that log from a byte OFFSET and returns
+      NOW, `await shell_type(\"dev\", \"y\")` types into the pty,
+      `await shell_stop(\"dev\")` kills the tree. NOTHING blocks on the model's
+      behalf: waiting is control flow, and control flow belongs in a bounded
+      `python_execution` loop that can break on what it actually read.
 
    `shell-dispatch` survives as the INTERNAL grammar the Python-extension entry
    points use, since those hand-author an options map and genuinely need an `op`.
@@ -51,6 +51,7 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.runtime-settings :as rt]
             [com.blockether.vis.internal.security-policy :as security-policy]
+            [com.blockether.vis.internal.shell-log :as shell-log]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.foundation.pty :as pty]
             [com.blockether.vis.internal.foundation.serial-batch :as batch]
@@ -105,7 +106,6 @@
    in memory; we force a break at this width instead."
   16000)
 
-(def ^:private default-log-tail 200)
 
 (defn- now-ms ^long [] (System/currentTimeMillis))
 
@@ -567,7 +567,14 @@
   {"run" {"timeout_secs" nil}
    "background"
    {"pid" nil "status" nil "uptime_ms" nil "attach" nil "socket" nil "already_running" false}
-   "logs" {"pid" nil "status" nil "uptime_ms" nil "lines" [] "line_count" 0 "dropped" 0}
+   "logs" {"pid" nil
+           "status" nil
+           "uptime_ms" nil
+           "text" ""
+           "offset" 0
+           "next_offset" 0
+           "is_eof" true
+           "is_truncated" false}
    "send" {"pid" nil "status" nil "sent" 0 "text" nil "keys" nil}
    "stop" {"pid" nil "status" nil "uptime_ms" nil "stopped" false}})
 
@@ -956,23 +963,29 @@
                        :dropped (+ (long dropped) (long (max over 0)))})))))
 
 (defn- start-pump!
-  "Daemon thread: drain the process's merged output into the ring buffer,
-   then record WHEN it ended and its exit code, and flip the registered resource
-   to :exited.
+  "Daemon thread: drain the process's merged output into its log FILE and the ring
+   buffer, then record WHEN it ended and its exit code, and flip the registered
+   resource to :exited.
    The resource stays listed (logs + exit readable) until resource_stop.
+
+   The FILE is the log: every byte read is written through `sink`, so a reader can
+   come back to any offset of it for as long as the session lives. The ring buffer
+   is only the LINE view the attach bridge replays and the resource card shows, and
+   it stays free to forget.
 
    `stopped?` is the cooperative-shutdown flag the stop-fn or an exited-entry
    replacement sets before retiring this generation. Final bridge/registry work
    is serialized with same-id start/stop and guarded by process identity, so an
    old pump can never update or unlink its successor. Returns the started Thread."
-  ^Thread [session id p buffer exit-atom exited-at stopped? bridge-atom]
+  ^Thread [session id p buffer exit-atom exited-at stopped? bridge-atom sink index-fn]
   (doto
     (Thread.
       (fn []
         ;; Char-level drain (not `line-seq`) so a newline-free stream
         ;; (`cat big.bin`) can't grow one unbounded line in memory: a line
-        ;; is force-flushed at `max-line-chars`.
-        (try (with-open [r (io/reader ^java.io.InputStream (:in p))]
+        ;; is force-flushed at `max-line-chars`. The tee is UNDER that splitting,
+        ;; so the file holds the stream exactly as the shell printed it.
+        (try (with-open [r (io/reader (shell-log/tee ^java.io.InputStream (:in p) sink))]
                (let [sb (StringBuilder.)]
                  (loop []
 
@@ -986,12 +999,17 @@
                                        (.setLength sb 0))
                                      (recur)))))))
              (catch Throwable _ nil))
+        ;; The stream is finished, so the file is complete: flush and close it
+        ;; BEFORE the exit code is published, or a reader that already saw
+        ;; `exited` could still be missing the last buffered bytes.
+        (shell-log/close! sink)
         (let [code (try ((:wait p)) (catch Throwable _ nil))]
           ;; Stamp the ENDING before publishing the code: `uptime_ms` is read off
           ;; these two atoms, and a reader that saw `exit` already set with no end
           ;; stamp would fall back to the clock and report the age of the READ.
           (compare-and-set! exited-at nil (now-ms))
           (reset! exit-atom code)
+          (index-fn {:ended-at @exited-at :exit code})
           ;; Avoid contending with a manual stop in the normal case: it sets the
           ;; flag before closing the reader and then joins this thread.
           (when-not @stopped?
@@ -1107,6 +1125,11 @@
        p
        (pty-spawn! script dir policy)
 
+       ;; The log is a FILE, opened BEFORE the pump so not one byte of a fast
+       ;; command's output can be printed before there is somewhere to keep it.
+       sink
+       (shell-log/open! session id)
+
        buffer
        (atom {:lines [] :next-seq 1 :dropped 0})
 
@@ -1128,8 +1151,25 @@
        t0
        (now-ms)
 
+       ;; One sidecar row per log, so "what did that build print" is answerable a
+       ;; turn later with no handle in hand. Written at spawn, and again by the
+       ;; pump once the child is gone.
+       index-fn
+       (fn [m]
+         (shell-log/index! (:db-info env)
+                           session
+                           id
+                           (merge {:commands commands
+                                   :script script
+                                   :dir (.getPath dir)
+                                   :log-path (:path sink)
+                                   :started-at t0
+                                   :ended-at nil
+                                   :exit nil}
+                                  m)))
+
        pump
-       (start-pump! session id p buffer exit-atom exited-at stopped? bridge-atom)
+       (start-pump! session id p buffer exit-atom exited-at stopped? bridge-atom sink index-fn)
 
        ;; Passthrough bridge: expose this PTY over a per-shell AF_UNIX socket
        ;; so a HUMAN can `vis-agent extension shell attach <id>` into the live terminal
@@ -1148,6 +1188,7 @@
             (catch Throwable _ nil))]
 
       (reset! bridge-atom bridge)
+      (index-fn nil)
       (swap! bg-procs assoc-in
         [(str session) id]
         {:proc p
@@ -1282,8 +1323,18 @@
                             {:type ::missing-command :op "background" :id id}))))))))
 
 (defn- shell-logs-impl
-  ([env id] (shell-logs-impl env id default-log-tail))
-  ([env id n]
+  "ONE read of a background shell's log, from a byte OFFSET.
+
+   The log is a file, so a read is a WINDOW on it and the caller owns the cursor:
+   feed `next_offset` back and the loop walks the whole stream, however long it
+   grew. There is no `n`, no eviction and no `dropped` — nothing a shell printed
+   is ever gone while the session lives.
+
+   With no `:offset` the window is the TAIL, which is what someone watching a live
+   command wants; `{:offset 0}` is the head, and a loop from there is the whole
+   log. `is_eof` false means read again NOW rather than sleep."
+  ([env id] (shell-logs-impl env id nil))
+  ([env id {:keys [offset limit]}]
    (let
      [session
       (:session-id env)
@@ -1302,36 +1353,22 @@
                             " live ids are listed in resources.")
                        {:type ::unknown-bg-id :id id})))
      (let
-       [n
-        (-> (long (or (->pos-long n "n") default-log-tail))
-            (max 1)
-            long
-            (min (long max-bg-lines)))
-
-        {:keys [lines dropped next-seq]}
-        @(:buffer entry)
-
-        total
-        (dec (long next-seq))
-
-        shown
-        (if (> (count lines) n) (subvec lines (- (count lines) n)) lines)
+       [chunk
+        (shell-log/read-chunk id (shell-log/log-file session id) {:offset offset :limit limit})
 
         t
         (now-ms)]
 
        (extension/success
          ;; Sharing `bg-core`'s identity keys with every other stage: `exit` None
-         ;; while running, `dropped` 0 when the ring buffer evicted nothing —
-         ;; model Python indexes them directly instead of dying on a KeyError.
-         ;; `lines` is a vec of plain STRINGS and is the ONLY copy of the tail:
-         ;; the seq numbers were an internal ring-buffer detail that only ever made
-         ;; `"\n".join(r["lines"])` throw, and a pre-joined `text` twin would bill
-         ;; the same bytes to the context twice. Join it yourself when you print.
+         ;; while running. `text` is the window this read returned, already joined
+         ;; — a file has no line numbers to carry and no seq pairs to unwrap.
          {:result (assoc (bg-core "logs" id entry)
-                    "lines" (mapv second shown)
-                    "line_count" total
-                    "dropped" (long (or dropped 0)))
+                    "text" (:text chunk)
+                    "offset" (:offset chunk)
+                    "next_offset" (:next-offset chunk)
+                    "is_eof" (:is-eof chunk)
+                    "is_truncated" (:is-truncated chunk))
           :op :shell-logs
           :metadata {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}})))))
 
@@ -1591,7 +1628,12 @@
                          opts))
 
       "logs"
-      (do (reject-commands) (reject-text) (shell-logs-impl env (need-id) (opt opts :n)))
+      (do (reject-commands)
+          (reject-text)
+          (shell-logs-impl env
+                           (need-id)
+                           {:offset (->pos-long (opt opts :offset) "offset")
+                            :limit (->pos-long (opt opts :limit) "limit")}))
 
       "send"
       (do (reject-commands) (shell-send-impl env (need-id) (need-text) opts))
@@ -1816,9 +1858,9 @@
   (shell-dispatch env (assoc (shell-call-opts ["commands"] args) "op" "background")))
 
 (defn shell-logs
-  "`await shell_logs(\"dev\")` — snapshot a background shell's retained output and
-   return NOW. Nothing blocks on your behalf: a wait is a bounded loop you write in
-   `python_execution` and break on what you actually read."
+  "`await shell_logs(\"dev\")` — read a background shell's log from a byte offset
+   and return NOW. Nothing blocks on your behalf: a wait is a bounded loop you
+   write in `python_execution` and break on what you actually read."
   {:arglists '([id] [id opts])}
   [env & args]
   (shell-dispatch env (assoc (shell-call-opts ["id"] args) "op" "logs")))
@@ -2164,21 +2206,11 @@
     {:summary summary :body (when (seq body) body)}))
 
 (defn- render-shell-logs-result
-  "shell ops `logs` and `wait` → compact process/log status plus a terminal
-   transcript body."
+  "shell op `logs` → compact process/log status plus the window this read returned."
   [r]
   (let
-    [lines
-     (or (get r "lines") [])
-
-     text
-     ;; `lines` is plain strings since the pre-joined `text` twin was dropped, but
-     ;; PERSISTED events from older sessions still hold `[seq text]` pairs — replay
-     ;; must render those, so unwrap defensively here (never on the model payload).
-     (->> lines
-          (map (fn [line]
-                 (if (sequential? line) (second line) line)))
-          (str/join "\n"))
+    [text
+     (or (get r "text") "")
 
      status
      (or (get r "status") "?")
@@ -2186,55 +2218,37 @@
      uptime
      (duration-label (get r "uptime_ms"))
 
-     ;; `wait` only: how long THIS call blocked. The process clock is a DIFFERENT
-     ;; one — a wait that came back in 5s on a job that has been up for an hour
-     ;; used to print the hour, which is the timing of nothing that just happened.
-     waited
-     (duration-label (get r "duration_ms"))
-
      exited?
      (= "exited" status)
 
-     ;; A wait that ran out its budget FAILED to see its condition. Unsaid, the card
-     ;; is indistinguishable from a `logs` peek at a healthy job and the reader
-     ;; cannot tell that ten minutes were spent waiting for something.
-     timed-out?
-     (true? (get r "timed_out"))
+     off
+     (long (or (get r "offset") 0))
 
+     next-off
+     (long (or (get r "next_offset") off))
+
+     ;; The card says WHERE the reader now is, because that is the number the
+     ;; next call feeds back. "more" means the file already holds bytes past this
+     ;; window — read again rather than sleep.
      summary
-     (str (cond timed-out? "⏱"
-                exited? "■"
-                :else "◷")
+     (str (if exited? "■" "◷")
           " `"
           (get r "id")
           "` "
-          (if timed-out? (str "timed out after " (get r "timeout_secs") "s") status)
+          status
           (when-let [exit (get r "exit")]
             (str " · exit " exit))
-          ;; A `wait` that a predicate ended is NOT a timeout and NOT an exit — say so.
-          (when (true? (get r "is_matched")) " · matched")
           " · "
-          (count lines)
-          " lines"
-          (when-let [total (get r "line_count")]
-            (when (not= total (count lines)) (str " / " total " total")))
-          ;; `dropped` is TOTAL (0 when nothing was evicted) — only SAY it when
-          ;; something actually fell out of the ring buffer.
-          (let [d (get r "dropped")]
-            (when (and d (pos? (long d))) (str " · " d " dropped")))
-          ;; THIS call's own timing when it has one, the process clock otherwise.
-          (if waited (str " · waited " waited) (when uptime (str " · " uptime))))
+          (- next-off off)
+          " B at "
+          off
+          (when-not (true? (get r "is_eof")) " · more")
+          (when uptime (str " · " uptime)))
 
      details
-     (kv-lines [["id" (get r "id")] ["status" status] ["exit" (get r "exit")]
-                ["shown" (str (count lines) " lines")] ["total" (get r "line_count")]
-                ["dropped" (get r "dropped")] ["uptime" uptime] ["pid" (get r "pid")]
-                ;; `wait` only: how long it blocked, and the budget it hit.
-                ["waited" waited] ["timeout" (when timed-out? (str (get r "timeout_secs") "s"))]
-                ;; `wait` only: the predicate it was given and the line that satisfied it,
-                ;; escape-stripped so a colored readiness banner reads as text.
-                ["until" (get r "until")]
-                ["matched" (normalize-terminal-output (get r "matched"))]])
+     (kv-lines [["id" (get r "id")] ["status" status] ["exit" (get r "exit")] ["offset" off]
+                ["next_offset" next-off] ["more" (when-not (true? (get r "is_eof")) "true")]
+                ["uptime" uptime] ["pid" (get r "pid")]])
 
      body
      (->> [(shell-section "STATUS" details) (shell-section "LOGS" text "bash")]
@@ -2481,20 +2495,24 @@
      :native-tool? true
      :name "shell_logs"
      :result
-     (str "`{id, lines, dropped_lines, status, exit}` — always the same keys. `dropped_lines` is "
-          "how a polling loop tells it missed output between two reads.")
+     (str "`{id, text, offset, next_offset, is_eof, is_truncated, status, exit}` — always the same "
+          "keys. `text` is the window this read returned; feed `next_offset` back to continue, and "
+          "`is_eof` false means read again now.")
      :description
-     (str "Snapshot a background shell's retained output and return NOW; nothing blocks on your "
+     (str "Read a background shell's log from a byte offset and return NOW; nothing blocks on your "
           "behalf — a wait is a bounded loop you write in `python_execution` and break on what you "
-          "read. Live ids: `session[\"resources\"]`.")
+          "read. No offset reads the TAIL; `offset=0` starts at the beginning. Live ids: "
+          "`session[\"resources\"]`.")
      :render-finish-call-fn render-shell-logs-result
      :render-start-call-fn (shell-start-renderer "logs")
      :schema {:type "object"
-              :properties {"id" {:type "string" :minLength 1 :description "Background handle."}
-                           "n" {:type "integer"
-                                :minimum 1
-                                :maximum 2000
-                                :description "Tail lines returned; default 200."}}
+              :properties
+              {"id" {:type "string" :minLength 1 :description "Background handle."}
+               "offset" {:type "integer"
+                         :minimum 0
+                         :description "Byte to read from; omit for the tail, 0 for the whole log."}
+               "limit"
+               {:type "integer" :minimum 1 :description "Bytes this read returns; default 16384."}}
               :required ["id"]
               :additionalProperties false}
      :inject-env? true
