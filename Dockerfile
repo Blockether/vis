@@ -513,6 +513,47 @@ RUN set -eux; \
     test "$(stat -c '%U %a' /home/vis/.ssh)" = 'vis 700'; \
     test "$(stat -c '%U' /home/vis/.config)" = 'vis'
 
+# Prove the image RUNS, not only that it assembled. These three are the parts
+# native-image is most likely to have broken, and no unit test can reach them:
+# they only exist once the binary is linked.
+#
+#   TUI     Lanterna drives a real terminal through JNI and reflection, and a
+#           missing reachability entry does not fail the compile — it fails the
+#           first frame. `script` hands the process a pty (a build has none),
+#           `timeout` ends it, and exit 124 IS the assertion: 124 means the TUI
+#           was still painting when the clock ran out. Any other status is a
+#           TUI that died on the way up.
+#   agent   The one-shot entrypoint boots the session store, the tool registry
+#           and provider selection. With no credential anywhere it must stop at
+#           exactly one place and SAY so; that sentence is proof the whole
+#           agent path ran from the native binary.
+#   zai     Provider extensions are compiled INTO the binary. A deployment can
+#           configure `zai-coding-plan` from outside it (an API key in the
+#           environment, a `providers:` entry in ~/.vis/config.yml) — but only
+#           if the extension is in here, so this is where its absence is cheap.
+#
+# HOME is a throwaway: these runs must not leave a draft session, a log or a
+# gateway registry entry on the image's own /home/vis.
+RUN set -eux; \
+    export TERM=xterm-256color; \
+    proof_home=/tmp/vis-proof; mkdir -p "$proof_home"; \
+    set +e; \
+    HOME="$proof_home" script -qec 'timeout 25 vis-agent channels tui' /dev/null > /tmp/tui.log 2>&1; \
+    tui_rc=$?; \
+    set -e; \
+    test "$tui_rc" -eq 124 \
+      || { echo "the native TUI left early (exit $tui_rc)"; cat /tmp/tui.log; exit 1; }; \
+    test -s /tmp/tui.log; \
+    ! grep -qE 'ClassNotFoundException|NoClassDefFoundError|UnsatisfiedLinkError|NoSuchMethodError' /tmp/tui.log; \
+    set +e; \
+    HOME="$proof_home" vis-agent --db :memory --raw 'hello world' < /dev/null > /tmp/agent.log 2>&1; \
+    agent_rc=$?; \
+    set -e; \
+    { test "$agent_rc" -ne 0 && grep -q 'needs an AI provider' /tmp/agent.log; } \
+      || { echo "the one-shot agent did not stop at provider selection (exit $agent_rc)"; cat /tmp/agent.log; exit 1; }; \
+    vis-agent providers list | grep -q 'zai-coding-plan'; \
+    rm -rf "$proof_home" /tmp/tui.log /tmp/agent.log
+
 EXPOSE 7890
 
 # A non-loopback bind MAKES a bearer token mandatory in server.clj start!, so
