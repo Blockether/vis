@@ -210,6 +210,31 @@
   (let [i (.lastIndexOf (str filename) ".")]
     (when (pos? i) (str/lower-case (subs filename (inc i))))))
 
+(def ^:private anonymous-scratch-name
+  "Shape of the filename CPython's `tempfile` invents when NOBODY named the file:
+   an 8-character draw from its own `abcdefghijklmnopqrstuvwxyz0123456789_`
+   alphabet, optionally behind the default `tmp` prefix (`mkstemp` /
+   `NamedTemporaryFile`). `tempfile.gettempdir()` PROBES each candidate directory
+   by creating one of these and writing four bytes into it, so merely ASKING for
+   the temp dir used to mint a session attachment."
+  #"(?:tmp)?[a-z0-9_]{8}")
+
+(defn- anonymous-scratch?
+  "True when `filename` has NO extension at all, wears `anonymous-scratch-name`, and
+   carries a digit or an underscore — the one signal a suffix blocklist can never
+   hold, because the files it must catch have no suffix.
+
+   The digit/underscore clause is the deliberate side of the trade: `manifest`,
+   `metadata`, `settings`, `makefile` are all eight lower-case letters, and
+   silently dropping a real artifact is worse than keeping the ~8% of random draws
+   that happen to come out all-letters. Dropping is safe at all only because this
+   tap sees WRITES UNDER A TEMP ROOT alone — a deliberate artifact either names its
+   format or goes through the explicit `attach` surface."
+  [^String filename]
+  (boolean (and (nil? (ext-of filename))
+                (re-matches anonymous-scratch-name filename)
+                (re-find #"[0-9_]" filename))))
+
 (defn sniff-media-type
   "Best-effort media-type for produced bytes: magic-byte signatures first, then a
    filename-extension fallback, then a utf-8 probe (`text/plain`), else
@@ -247,8 +272,9 @@
    the filesystem OUTBOX tap. De-dups per block via `*outbox-seen*` (a file
    re-closed in the same block records once). Skips a file larger than
    `max-capture-bytes`, an EMPTY (0-byte) file, one whose extension is in
-   `noisy-capture-exts`, a directory, or one already seen. NEVER throws — an
-   outbox write must not break a turn."
+   `noisy-capture-exts`, one `anonymous-scratch?` judges nameless scratch, a
+   directory, or one already seen. NEVER throws — an outbox write must not break a
+   turn."
   [^Path path]
   (try
     (let
@@ -261,6 +287,7 @@
       (when (and *attachment-sink*
                  (or (nil? seen) (not (contains? @seen k)))
                  (not (contains? noisy-capture-exts (ext-of (str (.getFileName path)))))
+                 (not (anonymous-scratch? (str (.getFileName path))))
                  (Files/isRegularFile path (make-array LinkOption 0)))
         (let
           [^BasicFileAttributes attrs
