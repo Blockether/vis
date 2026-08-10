@@ -473,7 +473,7 @@ Done:
   by name), and it is LEFT ALONE at the end of a turn — listed as a session resource, running
   until it exits or `resource_stop`.
 
-- Phase 6, `wait` is the only knob — `PENDING`. `shell_background` is deleted: `shell` takes
+- Phase 6, `wait` is the only knob — `634c0476c`, renamed in `25089f16f`. `shell_background` is deleted: `shell` takes
   `wait` (0 does not wait at all, and takes the adopted-run path Phase 5 built), so "run" and
   "background" are one request with one result shape and one id. `shell` is now the ONLY
   native shell tool; `shell_logs` / `shell_type` / `shell_stop` stay as sandbox Python symbols on
