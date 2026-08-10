@@ -240,6 +240,20 @@
    the body made a two-column hydra read as a table."
   3)
 
+(def default-panes
+  "The grid a band wants: FOUR columns. A hydra is read by scanning across, not
+   by scrolling down, so the default shape is the one a normal terminal can hold
+   — the width decides how many of those four there is actually room for
+   ([[pane-min-w]]), never the accident of how many categories the spec has."
+  4)
+
+(def pane-min-w
+  "The narrowest column still worth painting: the lead, the indent, a key, its
+   gutter, the trailing column, and enough label left over to read a verb by. A
+   column below this is a stack of ellipses, so the band drops to fewer columns
+   instead — that is what makes the grid RESOLUTION-AWARE rather than fixed."
+  22)
+
 (defn- group-block
   "PURE: one group's display rows — its header, then its items."
   [{:keys [title items]}]
@@ -248,12 +262,46 @@
                {:kind :item :item it}))
         items))
 
+(def ^:private split-min-rows
+  "Rows (heading included) a group must have before it is cut across two panes.
+   Cutting a three-verb category leaves two lonely stubs; FOUR verbs split into a
+   pair beside a pair, and a long list — every draft to switch to — is exactly
+   what wants the extra columns."
+  5)
+
+(defn- split-tall
+  "PURE: `blocks` spread over `n` panes when there are FEWER groups than columns
+   the width allows — the tallest group is cut in half repeatedly until the panes
+   are used or nothing is tall enough ([[split-min-rows]]) to cut.
+
+   A continuation carries a BLANK where its heading was, so its verbs sit on the
+   same rows as the half it continues and the heading is not shouted twice."
+  [blocks ^long n]
+  (loop [bs (mapv vec blocks)]
+    (if (>= (count bs) n)
+      bs
+      (let [i (long (apply max-key #(count (nth bs (long %))) (range (count bs))))
+            b (nth bs i)]
+        (if (< (count b) (long split-min-rows))
+          bs
+          (let [items (subvec b 1)
+                half (long (Math/ceil (/ (double (count items)) 2.0)))
+                head (into [(first b)] (subvec items 0 half))
+                tail (into [{:kind :blank}] (subvec items half))]
+            (recur (-> (subvec bs 0 i)
+                       (conj head)
+                       (conj tail)
+                       (into (subvec bs (inc i)))))))))))
+
 (defn panes
-  "PURE: `spec`'s groups dealt into at most `n` side-by-side panes, in order,
-   ONE GROUP PER PANE while there is a pane for it — a category IS a column,
-   heading and verbs together, so the grid reads like which-key's own. Only when
-   there are more groups than panes are neighbours packed together, balanced by
-   row count and still NEVER splitting a group.
+  "PURE: `spec`'s groups dealt into `n` side-by-side panes, in order.
+
+   ONE GROUP PER PANE while the counts match — a category IS a column, heading
+   and verbs together, so the grid reads like which-key's own. When there are
+   MORE groups than panes, neighbours are packed together, balanced by row count
+   and still never split. When there are FEWER groups than the width affords, a
+   tall group is CUT across the spare columns ([[split-tall]]) instead of leaving
+   the right of the band empty and the list running off the bottom.
 
    Every pane is padded with blanks to the tallest, so pane `j` row `i` is always
    the cell at that grid position and a painter walks a rectangle instead of a
@@ -273,7 +321,7 @@
 
      packed
      (if (>= n (count blocks))
-       (mapv vec blocks)
+       (split-tall blocks n)
        (reduce (fn [acc block]
                  (let [cur (peek acc)]
                    (if (and (seq cur) (< (count acc) n) (> (+ (count cur) 1 (count block)) target))
@@ -328,19 +376,35 @@
 (defn pane-count
   "PURE: how many side-by-side panes `spec` is dealt into inside `region`.
 
-   EVERY CATEGORY GETS ITS OWN COLUMN: as many panes as the spec has groups, so
-   a heading is never stacked under another heading while the terminal is wide
-   enough to stand them side by side. The bound is what those panes ACTUALLY
-   measure ([[pane-natural]]) rather than the widest label anywhere in the spec
-   — one long verb in one category used to shrink the whole grid. When the
-   groups outnumber the room the leftovers are packed by [[panes]]. No region ⇒
-   one column."
+   THE WIDTH DECIDES, and it aims at [[default-panes]]: a band is four columns
+   wherever four columns of [[pane-min-w]] fit, three on a narrow terminal, one
+   on a phone-sized one. Four is a FLOOR on a wide screen, not a ceiling on the
+   spec — a two-category band still fills its four columns (a tall group is cut,
+   see [[panes]]) while a five-category band gets its five, because stacking two
+   headings in one column to honour a number would only make the band taller and
+   steal transcript rows.
+
+   The width the panes ACTUALLY measure ([[pane-natural]]) is the last word: if
+   the dealt panes do not stand side by side, one column is dropped and the deal
+   is retried. No region ⇒ one column."
   ^long [spec region]
   (if (or (nil? region) (not (:is-sideless region)))
     1
-    (let [inner-w (long (or (:inner-w region) 0))]
-      (loop [n (max 1 (count (:groups spec)))]
-        (if (or (= n 1) (panes-fit? (panes spec n) inner-w)) n (recur (dec n)))))))
+    (let
+      [inner-w
+       (long (or (:inner-w region) 0))
+
+       room
+       (max 1 (quot (+ inner-w (long pane-gap)) (+ (long pane-min-w) (long pane-gap))))
+
+       want
+       (max (min (long default-panes) room) (count (:groups spec)))]
+
+      (loop [n want]
+        (let [ps (panes spec n)]
+          (if (or (= n 1) (panes-fit? ps inner-w))
+            (count ps)
+            (recur (dec n))))))))
 
 (defn pane-widths
   "PURE: the columns EACH of `ps` gets inside `region`'s inner width, the gaps

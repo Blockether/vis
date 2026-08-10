@@ -516,9 +516,60 @@
   (it "a MODAL keeps magit's single column: its paper is sized to the spec"
       (expect (= 1 (tr/pane-count leader-spec (dissoc leader-band-region :is-sideless))))
       (expect (= 1 (tr/pane-count leader-spec nil))))
-  (it "a short band still gets one column per category"
-      (expect (= (count (:groups commit-transient-spec))
-                 (tr/pane-count commit-transient-spec leader-band-region)))))
+  (it "panes are never invented: two short categories stay two columns"
+      (expect (= 2 (count (:groups commit-transient-spec))))
+      ;; neither category is tall enough to cut, so the default four columns
+      ;; cannot be filled with anything and the band does not pad itself with
+      ;; empty ones
+      (expect (= 2 (tr/pane-count commit-transient-spec leader-band-region)))))
+
+(def ^:private list-spec
+  "A band that is ONE long list, the shape `C-x d`'s draft chooser has."
+  {:title "Drafts"
+   :groups [{:title "Switch to"
+             :items (mapv (fn [i]
+                            {:key (str i)
+                             :type :action
+                             :id (keyword (str "d" i))
+                             :label (str "draft " i)})
+                          (range 12))}]})
+
+;; Regression, issue #C-x resolution-aware columns: the band took its column
+;; count from how many categories the spec happened to have, so a one-group list
+;; painted a single column down the left of a 160-column terminal with the rest
+;; of the band empty and the list running off the bottom.
+(defdescribe
+  transient-resolution-test
+  (it "a one-group list FILLS the default four columns on a wide band"
+      (let [lay (tr/layout list-spec (assoc leader-band-region :inner-w 160))]
+        (expect (= 4 (:pane-count lay)))
+        ;; the heading is said ONCE: a continuation column carries a blank where
+        ;; its heading was, so its verbs sit on the same rows as the half above
+        (expect (= 1 (count (filter #(= :header (:kind %)) (apply concat (:panes lay))))))
+        ;; and every verb is still on the grid, in order
+        (expect (= (mapv :id (:items (first (:groups list-spec))))
+                   (mapv (comp :id :item)
+                         (filter #(= :item (:kind %))
+                                 (apply concat (:panes lay))))))))
+  (it "THE WIDTH DECIDES how many of those four there is room for"
+      (expect (= [1 2 3 4 4 4]
+                 (mapv (fn [w]
+                         (tr/pane-count list-spec (assoc leader-band-region :inner-w w)))
+                       [40 60 80 100 120 160]))))
+  (it "at every resolution the panes fill the width and none is ellipsized"
+      (expect (every? true?
+                      (map (fn [w]
+                             (let [lay (tr/layout list-spec (assoc leader-band-region :inner-w w))
+                                   ws (:pane-ws lay)]
+                               (and (= (long w) (+ (reduce + 0 ws) (* 3 (dec (count ws)))))
+                                    (every? true?
+                                            (map (fn [pw pane] (>= (long pw) (tr/pane-natural pane)))
+                                                 ws
+                                                 (:panes lay))))))
+                           [40 60 80 100 120 160]))))
+  (it "four is a FLOOR on a wide screen, not a ceiling on the spec"
+      (expect (= 5 (count (:groups leader-spec))))
+      (expect (= 5 (tr/pane-count leader-spec leader-band-region)))))
 
 ;; Regression, issue #C-x d columns: the verbs started in the SAME column as the
 ;; heading above them and their descriptions sat one space off a one-letter key,
