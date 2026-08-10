@@ -152,7 +152,7 @@ Returns {\"root\", \"count\": N, \"repositories\": [{\"path\", \"branch\", \"is_
   (:repositories (snapshot)))
 
 (defn git
-  "await git()
+  "Git facts for the environment block (host helper, not a model tool).
 Returns {\"root\", \"branch\", \"is_detached\": bool, \"is_submodules\": bool, \"is_worktree\": bool, \"stash_count\", \"upstream\", \"ahead\", \"behind\", \"is_stale\", \"is_dirty\", \"is_clean\", \"modified\", \"untracked\", \"added\", \"changed\", \"removed\", \"missing\", \"conflicting\"}, or None outside a repo."
   []
   (:git (snapshot)))

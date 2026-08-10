@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+- The `git` tool. There is no model-facing Git schema, no `git` binding in the sandbox and no
+  `foundation-git` extension: a Git command is an ordinary `shell` command, run by the same
+  jail, capture and timeout as everything else. Workspace Git FACTS (footer status, environment
+  block, file picker) and the TUI Magit surface are unchanged.
+
 ## [v0.1.35] - 2026-08-09
 
 ### Changed

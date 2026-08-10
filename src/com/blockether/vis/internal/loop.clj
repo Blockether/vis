@@ -958,7 +958,7 @@
           ;; `workspace/*filesystem-roots*` from the environment for
           ;; every extension callback (extension/with-context's own
           ;; docstring). A `:handler` native tool used to call `handler`
-          ;; directly here, so `git`/`shell` silently resolved cwd
+          ;; directly here, so `shell` silently resolved cwd
           ;; against the JVM's launch directory instead of a draft
           ;; workspace's `:workspace/root`.
           (extension/with-context {:env environment}
@@ -4692,7 +4692,7 @@
      "a parsed port); `sh.wait(secs)` is that loop already written — no tool "
      "waits for you. Close what you open (`with open(...)`): a dropped file handle is "
      "NOT auto-closed here, so the sandbox reclaims leaked descriptors and refuses more than 512 held at "
-     "once (`VIS_PY_MAX_OPEN_FILES`) — leaked descriptors stop the process spawning `shell`/`git` children."
+     "once (`VIS_PY_MAX_OPEN_FILES`) — leaked descriptors stop the process spawning `shell` children."
      (when-let [cap (python-execution-capability-line caps)]
        (str " " cap)))
    :result
@@ -4746,7 +4746,7 @@
    :description
    (str
      "Discover sandbox capabilities not advertised as native tools; never preflight visible "
-     "tools. The result is filed by GROUP — `filesystem`, `shell`, `git`, `mcp`, `providers`, "
+     "tools. The result is filed by GROUP — `filesystem`, `shell`, `mcp`, `providers`, "
      "`languages`, `shims`, `engine` — and a bare group name is a valid query, so "
      "`apropos(\"providers\")` lists that family without knowing one tool name. Then `doc(name)` "
      "for the one contract; in-Python `apropos()` is a filterable dict.")
@@ -8534,15 +8534,15 @@
                      ;; projects it directly with no per-statement explosion.
                      ;; Tag resolver: lift extension-declared
                      ;; observation/mutation tag into `classify-form-tag`
-                     ;; so extension tools (`patch`, `git_commit`,
-                     ;; `git_push`, …) classify correctly without the
+                     ;; so extension tools (`patch`, `db_commit`,
+                     ;; `db_push`, …) classify correctly without the
                      ;; engine hard-coding their head symbol.
                      ;;
                      ;; The HEAD `classify-form-tag` reads off the model's
                      ;; source is the snake_case Python CALL name
-                     ;; (`git_push`), but `extension/op-tag` is keyed by
-                     ;; canonical op keywords (`:git/push!`). The old
-                     ;; `(keyword "git_push")` lookup never hit `:git/push!`,
+                     ;; (`db_push`), but `extension/op-tag` is keyed by
+                     ;; canonical op keywords (`:db/push!`). The old
+                     ;; `(keyword "db_push")` lookup never hit `:db/push!`,
                      ;; so EVERY extension mutation fell through to
                      ;; `:observation`. `ctx-renderer/fold-op-index` is
                      ;; the ONE memoized fold to sandbox call names (the
@@ -10193,7 +10193,7 @@
 
          ;; Aliased extensions (`:ext.engine/alias 'clj`) bind into the FLAT
          ;; Python sandbox as `<alias>_<name>` — the snake form of the
-         ;; `alias/name` shape (clj_eval, git_status, search_web, br_open). Without
+         ;; `alias/name` shape (clj_eval, db_status, search_web, br_open). Without
          ;; folding the alias in, the tool leaked as its BARE suffix (`eval`,
          ;; `status`, `web`), so the model's prompt-promised `clj_eval(...)`
          ;; call hit a NameError and `apropos`/`dir` showed the wrong names.
@@ -10210,7 +10210,7 @@
                     (extension/symbol-active? (get by-sym sym) environment))
              (do (env/set-python-binding! python-context target f)
                  ;; Seed this symbol's doc into `__vis_docs__` keyed by its bound
-                 ;; py-name, so `doc(git_status)` / `doc(mcp_servers)` /
+                 ;; py-name, so `doc(db_status)` / `doc(mcp_servers)` /
                  ;; `apropos("mcp")` carry real descriptions. ALIASED extensions
                  ;; bind here (per turn), NOT at context creation, so the eager
                  ;; `build-agent-context` seed never saw them.

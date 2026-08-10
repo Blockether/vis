@@ -5,7 +5,7 @@
    its process file descriptor stays open forever. A loop like
    `open(p).read()` over a big tree therefore walks the whole JVM into EMFILE,
    and the first casualty is not Python — `ProcessBuilder` can no longer fork,
-   so every later `shell`/`git` call dies with the JDK's misleading \"spawn
+   so every later `shell` call dies with the JDK's misleading \"spawn
    helper / JDK version mismatch\" text and the session is wedged for good.
 
    So the sandbox does the reclamation CPython's refcount would: every handle is

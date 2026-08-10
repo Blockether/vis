@@ -705,7 +705,7 @@
 
 ;; ── format_code/lint_code/etc. share invoke-symbol-wrapper with draft-aware cwd ──
 ;;
-;; Turn 10-13's bug (`git`/`shell`/`repl*` bypassing `with-context`) lived in
+;; Turn 10-13's bug (`shell`/`repl*` bypassing `with-context`) lived in
 ;; `run-native-handler`, the seam ONLY for symbols carrying an explicit
 ;; `:ext.symbol/handler`. `format_code`/`lint_code` (and every plain
 ;; `:inject-env? true` engine symbol without a `:handler`) never went through

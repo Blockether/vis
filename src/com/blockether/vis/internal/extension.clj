@@ -405,7 +405,7 @@
 (s/def :ext.symbol/batch-hint pos-int?)
 ;; Hidden alias symbols still bind into the Python sandbox but are omitted from the
 ;; model-facing prompt symbol catalog (see prompt.clj). Used for back-compat
-;; aliases like git/add! ↔ git/add and git/commit ↔ git/commit! so both
+;; aliases like db/add! ↔ db/add and db/commit ↔ db/commit! so both
 ;; spellings resolve while only the canonical name is advertised.
 (s/def :ext.symbol/hidden? boolean?)
 ;; Plain value bound in the sandbox (constant, data, config).
@@ -2064,7 +2064,7 @@
 (defn- ensure-tool-result-op
   "Observed extension tools must carry canonical op metadata. The wrapper
    derives it deterministically from active alias + symbol (`cat`,
-   `git/fetch!`, ...). The tag comes from the symbol entry's inline
+   `db/fetch!`, ...). The tag comes from the symbol entry's inline
    `:ext.symbol/tag` (source of truth); a derived op->tag index covers
    call-sites without a sym-entry handle. Missing tag in BOTH places throws
    via `op-tag` so unregistered ops still fail closed."
@@ -2084,7 +2084,7 @@
 
 (defn- public-op-keyword
   "User-facing op keyword for payload EDN. Tool symbols use `!` for mutation
-   (`git/fetch!`), but result maps read like porcelain (`:git/fetch`)."
+   (`shell/run!`), but result maps read like porcelain (`:shell/run`)."
   [op]
   (when op
     (let
@@ -2102,7 +2102,7 @@
 (defn- op-kw->str
   "The STRING a tool op-keyword takes on the Python boundary: namespace folded
    with `_`, kebab→snake, trailing `?`/`!` stripped (`cat`→\"cat\",
-   `exists?`→\"exists\", `:git/push!`→\"git_push\"). The boundary is
+   `exists?`→\"exists\", `:shell/run!`→\"shell_run\"). The boundary is
    strings-only, so this is applied AT THE STAMP — no keyword ever rides a
    result map."
   [op-kw]
@@ -2139,10 +2139,10 @@
 
            :when (:ext.symbol/render-finish-call-fn e)
            ;; Alias-qualify via `default-tool-op-keyword` so an aliased verb's key
-           ;; matches the op its RESULT actually carries (`git/status` → "git_status"),
+           ;; matches the op its RESULT actually carries (`db/status` → "db_status"),
            ;; not the bare symbol ("status"). No `:native-tool?` gate: a printed result
            ;; renders off its `:op` whether the verb is a tool_use native tool (cat) or
-           ;; an engine-bound Python verb (git_status).
+           ;; an engine-bound Python verb (db_status).
            :let [op-kw
                  (public-op-keyword (default-tool-op-keyword ext e))]]
 
@@ -3113,8 +3113,8 @@
 (defn- mount-under-ext
   "Auto-place an `:ext/cli` entry under the `vis-agent extension` parent.
 
-   Authors who want nested placement (e.g. `vis-agent extension git status`)
-   can pass `:cmd/parent [\"extension\" \"git\"]` and the dispatcher
+   Authors who want nested placement (e.g. `vis-agent extension db status`)
+   can pass `:cmd/parent [\"extension\" \"db\"]` and the dispatcher
    respects it. The legacy `\"ext\"` first element is accepted and
    canonicalized to `\"extension\"`. Any other parent is rejected."
   [{:cmd/keys [parent name] :as entry}]
@@ -3688,7 +3688,7 @@
        registers unconditionally and its `:ext/sandbox-shims` autoloads into
        every sandbox (`import yaml` / `import matplotlib.pyplot` / `import requests` just work). They
        only sit in this list because it's how a built-in ns gets `require`d."
-  '[com.blockether.vis.internal.foundation.core com.blockether.vis.internal.foundation.git-tool
+  '[com.blockether.vis.internal.foundation.core
     com.blockether.vis.internal.foundation.introspection
     com.blockether.vis.internal.foundation.shell com.blockether.vis.internal.foundation.shim-yaml
     com.blockether.vis.internal.foundation.shim-matplotlib

@@ -221,7 +221,7 @@ Three lines, and only one of them is a rename.
   because the positional pair is what got swapped, that `is_overwrite` exists only on those two —
   lives in the editing-domain prose and in the five `:description`s (§4.3.3). That is the division
   the whole document argues for: core routes, the tool describes itself.
-- **`:246` (§3, BATCH) — one word.** `"\`shell\`/\`git\` \`commands\`"` → `"\`shell_run\`/\`git\` \`commands\`"`.
+- **`:246` (§3, BATCH) — one word.** `"\`shell\` \`commands\`"` → `"\`shell_run\` \`commands\`"`.
   The batching advice is unaffected: `shell_run` keeps the plural `commands` array, so the
   "one call, never one per file" rule survives verbatim. This is the proof the split does not
   cost tokens where it mattered — the batching lever was never the `op` key.
@@ -242,8 +242,8 @@ six conditional-precondition sentences costs more than five small schemas).
   is the capability `until`'s regex never had.
   The `via \`gather\` when parallel` clause is dropped: `gather` is for *independent* calls, and
   two poll loops on two shells are better written as one loop over two ids.
-- **`:4686` — one word.** `"leaked descriptors stop the process spawning \`shell\`/\`git\` children"` →
-  `\`shell_run\`/\`git\``. Same for the identical sentence rendered into the sandbox-shims blurb.
+- **`:4686` — one word.** `"leaked descriptors stop the process spawning \`shell\` children"` →
+  `\`shell_run\``. Same for the identical sentence rendered into the sandbox-shims blurb.
 - **`:9224` — a comment that becomes false.** `;; ONE shell tool for both kinds: the background one differs by its \`op\``
   is the `!`/`!&` bang-sugar path. `!` now resolves `shell_run` and `!&` resolves
   `shell_background`; the comment is rewritten to name the two, and `:9152`/`:9191`/`:9232`/`:9240`
@@ -304,9 +304,6 @@ six conditional-precondition sentences costs more than five small schemas).
   call time, so the **name string changes** (`shell` → `shell_run`) alongside the three comments.
   This is the one prose site that is also behaviour: get it wrong and `subprocess.run` raises
   "enable the shell tool" on a machine where the tool is enabled.
-- **`git_tool.clj:16, 138`** — "inherits the shell tool's working directory", "through the SHELL
-  tool's own runner". These refer to `foundation.shell`'s internal `run-argv`, which is unchanged;
-  reword to name the **namespace**, not a tool, so the sentence stops tracking a tool name at all.
 - **`gateway/state.clj:4576, 4606`** and **`channel_tui/state.clj:5767`** — resource-teardown
   comments, the last of which spells `` (`shell` op "background", … ) ``. Renamed.
 

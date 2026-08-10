@@ -470,7 +470,7 @@
    doc shape the pack reports nowhere: for `(def ^{:doc \"…\"} nm v)` /
    `(defonce ^:private ^{:doc \"…\"} nm v)` it fills neither `docComment` nor the
    docstrings list, so every metadata-documented var (the sandbox tool vars
-   `session_state`, `sessions`, `git`, `shell`, `mcp_*`, …) indexed blank while
+   `session_state`, `sessions`, `shell`, `mcp_*`, …) indexed blank while
    its whole contract lives in that map.
 
    Read from `it`'s OWN source span, and only from its metadata head — and only

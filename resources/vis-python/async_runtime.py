@@ -43,7 +43,7 @@ __vis_real_open__ = __vis_survivor__("__vis_real_open__", lambda: __vis_builtins
 # two `gc.collect()`s reclaim none of them). A loop over a big tree
 # (`open(p).read()` per file) therefore walks the WHOLE process into EMFILE, and
 # the first casualty is not Python: `ProcessBuilder` can no longer fork, so every
-# later `shell`/`git` call dies with the JDK's misleading "spawn helper / JDK
+# later `shell` call dies with the JDK's misleading "spawn helper / JDK
 # version mismatch" text and the session is wedged for good.
 #
 # So the sandbox reclaims descriptors itself, where the leak is — the way
@@ -204,7 +204,7 @@ def __vis_fd_admit__():
         + str(__vis_fd_max__)
         + ". Sandbox Python does NOT close a file when you drop it, so"
         " `open(p).read()` in a loop leaks one descriptor per iteration until no"
-        " `shell`/`git` process can start at all. Use `with open(p) as f:` (or"
+        " `shell` process can start at all. Use `with open(p) as f:` (or"
         " `Path(p).read_text()`), or close the handles you keep open."
         " VIS_PY_MAX_OPEN_FILES raises the ceiling.",
     )
@@ -384,7 +384,7 @@ class __vis_Call__:
     # ALWAYS a single-expression use of that ONE call's result — there is no
     # concurrency to forfeit (unlike a batchable set of calls), so we settle it
     # synchronously right here instead of raising 'not subscriptable'. This kills
-    # the `git(...)["stdout"]` / `cat(...)["anchors"]` papercut. We deliberately
+    # the `shell(...)["stdout"]` / `cat(...)["anchors"]` papercut. We deliberately
     # do NOT add `__iter__`: iteration is exactly the batch-me-instead case the
     # loud repr must keep nudging toward `await gather(...)`.
     def __getitem__(self, k):
@@ -490,7 +490,7 @@ def __vis_exec_call__(c):
         # GraalPy's unflushed buffer.
         __vis_flush_writes__()
         # Same boundary, the descriptor half: a tool that spawns a process
-        # (`shell`, `git`) needs free descriptors to fork with, so give back the
+        # (`shell`) needs free descriptors to fork with, so give back the
         # ones this block already dropped. Below the mark this is a no-op.
         __vis_reclaim_fds__()
         c.res = c.fn(*c.a, dict(c.k)) if c.k else c.fn(*c.a)

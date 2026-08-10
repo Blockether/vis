@@ -122,8 +122,8 @@ obligations, receipts, or next action: those are fresh, explicit outputs of
 8. The agent calls `(br/check)` again and reports clear status or remaining
    obligations in the final answer.
 
-Both TUI Magit and the model-facing Git tool call
-`internal.git/commit!`. That generic Vis operation owns Git syntax and the exact
+TUI Magit calls `internal.git/commit!`.
+That generic Vis operation owns Git syntax and the exact
 tree invariant: it resolves the effective repository after Git-global options,
 rejects index-mutating commit flags/pathspecs, computes T0 with `write-tree`,
 dispatches `:git/commit`, rechecks T0 immediately before Git, and asserts

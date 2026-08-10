@@ -11,7 +11,6 @@
             [com.blockether.vis.internal.prompt :as prompt]
             [com.blockether.vis.internal.ctx-engine :as eng]
             [com.blockether.vis.internal.foundation.editing.core :as ed]
-            [com.blockether.vis.internal.foundation.git-tool :as gt]
             [com.blockether.vis.internal.foundation.shell :as sh]
             [com.blockether.vis.internal.foundation.language-surface :as lsf]
             [com.blockether.vis.internal.titling :as titling]
@@ -516,7 +515,7 @@
 ;; `run-native-handler` invoked the handler directly instead of through
 ;; `extension/with-context` — the ONE seam that binds `workspace/*workspace-root*`
 ;; from `:workspace/root` for every other extension callback. A session running
-;; inside a draft therefore had `git`/`shell` silently act on the trunk checkout.
+;; inside a draft therefore had `shell` silently act on the trunk checkout.
 (defdescribe native-handler-workspace-root-test
              (it "binds workspace/*workspace-root* from the environment's :workspace/root"
                  (let
@@ -535,14 +534,14 @@
                     ((deref #'lp/run-native-handler) handler
                      {:workspace/root draft-root}
                      {}
-                     "git")]
+                     "shell")]
 
                    (expect (= draft-root (.getCanonicalPath (deref observed 100 (io/file ""))))))))
 
 ;; Regression, same issue: the fix lives in `run-native-handler` itself (the ONE
 ;; generic seam for every native `:handler` tool), not in a per-tool patch — so it
 ;; must hold for `repl` (start), `repl_connect`, and `repl_eval` exactly as for
-;; `git`/`shell`, since those are dispatched through the identical code path.
+;; `shell`, since those are dispatched through the identical code path.
 (defdescribe native-handler-workspace-root-repl-tools-test
   (for [tool ["repl" "repl_connect" "repl_eval"]]
     (it (str "binds workspace/*workspace-root* for the \"" tool "\" native tool")
@@ -3713,7 +3712,7 @@
         (apply concat symbol-vecs)))
 
 (def ^:private real-call-shapes
-  (merge (shapes-from @ed/editing-symbols sh/shell-symbols gt/git-symbols lsf/symbols)
+  (merge (shapes-from @ed/editing-symbols sh/shell-symbols lsf/symbols)
          {"mcp__call" {:pos ["server"] :opt-pos ["tool" "args"]}}))
 
 (defdescribe
@@ -3755,7 +3754,7 @@
                  "`sh.logs()`" "no tool waits for you"
                  ;; Sandbox Python does NOT close a dropped file handle, so an
                  ;; unclosed `open(...)` leaks a PROCESS descriptor until a GC —
-                 ;; enough of them and no `shell`/`git` child can be spawned at
+                 ;; enough of them and no `shell` child can be spawned at
                  ;; all. The sandbox reclaims and caps them
                  ;; (`env-python-fd-test`); the description says so, because the
                  ;; cheapest fix is the block never leaking in the first place.
@@ -3841,9 +3840,7 @@
         (expect (nil? (get real-call-shapes "lint_code")))
         ;; Every shell verb is a one-map call; none may grow a positional shape.
         (doseq [n ["shell" "_shell_status" "_shell_logs" "_shell_wait" "_shell_type" "_shell_stop"]]
-          (expect (nil? (get real-call-shapes n))))
-        ;; Git is the argv itself, so it projects `command` positionally.
-        (expect (= {:pos ["command"]} (get real-call-shapes "git"))))
+          (expect (nil? (get real-call-shapes n)))))
     (it "a tool with NO :call gets the generic whole-dict call"
         (expect (= "rg({\"query\": [\"x\"]})" (synth {:name "rg" :input {"query" ["x"]}})))
         (expect (= "grep({\"query\": \"x\"})" (synth {:name "grep" :input {"query" "x"}})))
@@ -3852,9 +3849,6 @@
         (expect (= "lint_code({\"code\": \"x\"})" (synth {:name "lint_code" :input {"code" "x"}})))
         (expect (= "shell({\"command\": \"ls\"})"
                    (synth {:name "shell" :input {"command" "ls"}}))))
-    (it "git projects its argv positionally — the array IS the call"
-        (expect (= "git([\"status\", \"--short\"])"
-                   (synth {:name "git" :input {"command" ["status" "--short"]}}))))
     (it "python_execution still passes the model's code through"
         (expect (= "print(1)" (synth {:name "python_execution" :input {"code" "print(1)"}}))))
     (it

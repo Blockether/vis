@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.git-test
-  "Argument parsing for the git tool.
+  "Argument parsing for the shared Git invocation helpers.
 
-   The tool itself is a thin wrapper around the `git` binary, so nothing here
+   These are a thin wrapper around the `git` binary, so nothing here
    spawns a repository: shelling out to real `git` measured whatever Git does,
    not what Vis decides, and cost the suite seconds per namespace. What Vis
    actually owns is the INVOCATION — where the global options stop, which

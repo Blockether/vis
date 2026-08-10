@@ -62,7 +62,7 @@ Two forces, one plan.
 ### What we solve, and what we do not
 
 We solve: the filesystem verbs, the second guard mechanism, `ls`, and the whole shell family
-(cursor, timeout handle, one implementation under `shell_run`/`subprocess`/`git`).
+(cursor, timeout handle, one implementation under `shell_run`/`subprocess`).
 
 We do NOT touch `cat`, `grep` or `struct_*` in this plan. They are the same fork applied
 later and separately — anchors, structural parsing and gitignore-aware search are a different
@@ -363,8 +363,8 @@ still running at the end of a turn reaped, reported, or left alone?
 ## Phase 6 — ONE shell tool: `wait` replaces `shell_background`, a handle replaces the rest
 
 **Rationale.** Without it the family still costs six schemas for operations on one object,
-`subprocess` and `shell_run` remain two paths that merely agree, and `git` keeps a schema for
-argv normalization that belongs in the shared gate.
+`subprocess` and `shell_run` remain two paths that merely agree, and argv normalization keeps a
+schema of its own instead of living in the shared gate.
 
 **Do we still need `shell_background`?** No — Phase 5 already removed the reason for it. There
 is one primitive: spawn, pump into the log, hand back a handle. `wait` is the only knob:
@@ -384,12 +384,12 @@ re-issued named shell must still return the LIVE one rather than a second copy.
 **Data.**
 
 ```clojure
-(s/def ::program      (s/and string? seq))            ; "git", "npm"
+(s/def ::program      (s/and string? seq))            ; "npm", "cargo"
 (s/def ::argv         (s/coll-of ::program :kind vector? :min-count 1))
 (s/def ::lines        (s/coll-of ::command :min-count 1))
 (s/def ::argvs        (s/coll-of ::argv :min-count 1))
 (s/def ::wait-ms      (s/int-in 0 600001))            ; 0 = do not wait; the old background
-;; `shell_run`, `subprocess` and `git(...)`/`wrap_with_shell` all build THIS.
+;; `shell_run`, `subprocess` and `wrap_with_shell` all build THIS.
 (s/def ::request  (s/keys :req-un [(or ::lines ::argvs)]
                           :opt-un [::cwd ::wait-ms ::program ::id]))
 (s/def ::pid      (s/nilable pos-int?))
@@ -400,7 +400,7 @@ re-issued named shell must still return the LIVE one rather than a second copy.
 
 Interactions the specs pin: the gate runs against `::request`, so the three spellings cannot
 diverge; a `wrap_with_shell` product differs only by `::program` on the request and the
-result, which is all the client needs to keep rendering a git batch as a git batch; and
+result, which is all the client needs to keep rendering a wrapped batch as that program's batch; and
 `::status`/`::exit`/`::log-path` live HERE, on the handle, which is why Phase 4's chunk does
 not repeat them.
 
@@ -414,19 +414,18 @@ not repeat them.
   implementation directly instead of the `shell_run` tool binding (`posix.py:125`), so the
   feature toggle, cwd, wait policy, exit rows and log file are one code path. A command
   refused for `shell_run` is refused for `subprocess`, in the same words.
-- `src/com/blockether/vis/internal/foundation/git_tool.clj` — deleted as a TOOL; argv
-  normalization, refusal of a shell-quoted blob, the ordered serial batch, exit-as-data and
-  verbose-add staged-path parsing (`:110`, `:154`) move into the shared implementation and
-  are exposed as `wrap_with_shell(program, **defaults)`, with `git` prebound:
-  `git(["status","--short"], ["log","-1","--format=%H"])`.
+- `src/com/blockether/vis/internal/foundation/git_tool.clj` — deleted outright. There is no
+  `git` tool and no prebound `git` binding: a Git command is an ordinary `shell_run` argv, so
+  argv normalization, refusal of a shell-quoted blob, exit-as-data and the process jail are the
+  shell implementation's, once.
 - Net native surface for the whole family: **`shell_run` only** — one process jail — plus the
   handle object and `wrap_with_shell` in the sandbox. Six schemas become one.
 - Tests: one gate refuses identically through all three spellings; `wait=0` returns before the
   process exits and its handle then reads the whole log; re-issuing a named shell returns the
-  live one; a git batch through the factory returns the rows the tool returned, `program`
+  live one; a wrapped batch through the factory returns the rows the runner returned, `program`
   included; `sh.wait` returns on exit and on expiry without spinning.
 
-**Unknowns.** Does any client rendering key off the `git` TOOL name rather than `::program`,
+**Unknowns.** Does any client rendering key off a TOOL name rather than `::program`,
 and does the companion transcript need a migration for that?
 
 ## Phase 8 — The result IS the handle
@@ -456,7 +455,7 @@ sandbox-side TYPE over the same dict.
 
 **Rationale.** Without it the tools are one call shape with five answer shapes: a `run` answered
 `stdout`, a `logs` read answered `text`, `send`/`stop` carried their own stage-scoped subsets, and
-`git` built a map of its own with an extra `args` and no `status`/`note`/`*_omitted_chars`. A caller
+an argv run built a map of its own with an extra `args` and no `status`/`note`/`*_omitted_chars`. A caller
 therefore had to know WHICH stage produced the map before reading it, and reading the wrong name is a
 `KeyError` — the exact failure the total-shape rule exists to prevent.
 
@@ -467,12 +466,11 @@ the tool's own return value, rendered and handed to Python in the same run.
 - `src/com/blockether/vis/internal/foundation/shell.clj` — `result-core`, `stage-keys` and
   `command-result-base` collapse into one `shell-result-base`; `logs` puts its window under `stdout`;
   `send` keeps `keys`/`sent` and drops its `text` echo; an argv run echoes a QUOTED bash line.
-- `src/com/blockether/vis/internal/foundation/git_tool.clj` — `git` returns `run-argv`'s result
-  verbatim; `args` is gone and the renderer reads the tokens back out of `command`.
+- `src/com/blockether/vis/internal/foundation/git_tool.clj` — gone; nothing returns a
+  git-specific result shape.
 - `resources/vis-python/async_runtime.py`, `resources/vis-shims/posix.py` — `sh.wait()` and
   `Popen.communicate()` accumulate `stdout`.
-- Test: `shell-one-shape-test` asserts run / wait-0 / logs / send / stop / `git` answer the SAME key
-  set, and `git-tool-test` pins that git's key set IS a shell run's.
+- Test: `shell-one-shape-test` asserts run / wait-0 / logs / send / stop answer the SAME key set.
 
 **Unknowns.** None.
 
@@ -749,18 +747,15 @@ Done:
   cursor to EOF. With one verb left, `shell_run` is NAMED `shell`: the `_run` suffix only ever
   distinguished it from `shell_background`, so it now names a distinction that does not exist.
 
-- Phase 7, ONE call is ONE command — `32d1b9ccf`, and `git` is now the ARGV ITSELF. `commands` is deleted from BOTH tools: `shell`
+- Phase 7, ONE call is ONE command — `32d1b9ccf`. `commands` is deleted from the tool: `shell`
   takes `command` (one `bash -lc` line; `&&` chains, independent work is separate calls) and
-  `git` takes `command` (one argv). Both answer with a FLAT result — `r["stdout"]`, `r["exit"]`,
+  takes one argv or one line and answers with a FLAT result — `r["stdout"]`, `r["exit"]`,
   never `r["commands"][i]` — which is the same shape a `wait` 0 start already returned, so a
   call has ONE result shape whatever it waits for. `foundation/serial_batch.clj` and its test are
   deleted with the batch they existed for: with one command there is no budget to divide, no
   `started: false` entry to explain, and the shared-deadline defect fixed in `cdcfe21e8` cannot
   recur. `vis.shell` / `vis.jailed_shell` / `vis.jailed_shell_session`, `posix.py`'s
-  `subprocess`, the `!` bang path and the synthesized Python call all move to the same key. `git`
-  keeps no options map at all: the call IS the argv (`await git(["status", "--short"])`, declared
-  as `:call {:pos ["command"]}`), and the `git.md` docs page is deleted — the tool's own
-  description and result contract are the documentation.
+  `subprocess`, the `!` bang path and the synthesized Python call all move to the same key.
 
 - Phase 8, the result IS the handle — `c57822453`. `shell` answers with `__VisShell__`, a dict
   that carries `sh.logs(offset=…)`, `sh.wait(secs)`, `sh.type(text)` and `sh.stop()`, so a process is
@@ -771,9 +766,9 @@ Done:
   lives, stop at the deadline — which is what makes "never sleep blindly" a rule with a tool behind it.
 
 - Phase 9, ONE result shape for the whole shell family — `0b698b3be`. `shell-result-base` is the
-  single key set every stage AND `git` answer with; `stage` names the producer and is the only thing
+  single key set every stage answers with; `stage` names the producer and is the only thing
   that varies. Output has one name (`stdout`) whether the call waited for it or came back for it
-  later, `git` no longer carries an `args` field beside `command`, and a key a stage has nothing to
+  later, an argv run no longer carries an `args` field beside `command`, and a key a stage has nothing to
   say about is nil / false / 0 rather than absent.
 - Phase 10, a handle is OWNED, NAMED and honestly identified — `bcf56c59f`. Distinct ids never share a log file, a re-issue that names different work is refused instead
   of silently succeeding, a handle cannot be driven across a trust origin, a nonsense `wait` is

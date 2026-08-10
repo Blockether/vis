@@ -4,7 +4,7 @@ Vis follows one rule: **do not pay tokens for data that can stay addressable.** 
 
 ## Discover before guessing
 
-The live runtime is the source of truth. `apropos` finds capabilities by name **or by group** — `filesystem`, `shell`, `git`, `mcp`, `providers`, `languages`, `shims`, `engine` — and `doc` returns one exact contract:
+The live runtime is the source of truth. `apropos` finds capabilities by name **or by group** — `filesystem`, `shell`, `mcp`, `providers`, `languages`, `shims`, `engine` — and `doc` returns one exact contract:
 
 ```python
 apropos("")            # every group, one section each

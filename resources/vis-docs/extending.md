@@ -1087,7 +1087,7 @@ my-extension/
 | `:ext/name` | Unique name string, e.g. `"weather"`. |
 | `:ext/description` | One-liner shown in `vis-agent extension list` and to the model in its extensions snapshot. |
 | `:ext/version` `:ext/author` `:ext/owner` `:ext/license` | Plain metadata strings. |
-| `:ext/kind` | Categorical bucket used as a section label: `"foundation"`, `"git"`, `"language"`, `"channel"`, `"provider"`, … |
+| `:ext/kind` | Categorical bucket used as a section label: `"foundation"`, `"language"`, `"channel"`, `"provider"`, … |
 | `:ext/activation-fn` | `(fn [env] -> boolean)`, called **once per turn**. Falsy hides every symbol and the prompt fragment for that turn. Defaults to always-on. |
 | `:ext/engine` | `{:ext.engine/alias 'weather :ext.engine/symbols [...]}` — the sandbox surface (below). |
 | `:ext/prompt-fn` | `(fn [env] -> string)` — optional dynamic routing/capability text; never a copy of native tool contracts. |
@@ -1223,11 +1223,11 @@ Fixed native extensions usually need no prompt fragment. Do not repeat signature
 
 ### Activation
 
-`:ext/activation-fn` gates the whole extension per turn. Use it to hide tools that can't work in the current workspace — foundation-git activates only when the workspace root sits inside a git repository:
+`:ext/activation-fn` gates the whole extension per turn. Use it to hide tools that can't work in the current workspace — a Node-only extension activates only when the workspace root holds a `package.json`:
 
 ```clojure
 (defn- activation-fn [env]
-  (boolean (some-> (:workspace/root env) io/file git-core/in-repository?)))
+  (boolean (some-> (:workspace/root env) (io/file "package.json") .isFile)))
 ```
 
 An inactive extension costs zero prompt tokens.

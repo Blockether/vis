@@ -610,7 +610,7 @@
   "A Clojure var can carry its doc in a `^{:doc \"…\"}` METADATA map instead of the
    docstring position, and the pack reports that shape nowhere: no `docComment`,
    and no entry in the result-level docstrings list. Every metadata-documented
-   var — the whole sandbox tool surface (`session_state`, `sessions`, `git`,
+   var — the whole sandbox tool surface (`session_state`, `sessions`,
    `shell`, `mcp_*`) documents itself this way — indexed with a blank doc until
    `doc-snippet` learned to read the definition's own metadata head."
   (it "reads :doc from var metadata on def and defonce"
@@ -633,12 +633,12 @@
          (str "(ns demo)\n"
               ;; Both traps at once: the doc TEXT contains the var's own name,
               ;; and the VALUE contains a competing :doc key.
-              "(def ^{:doc \"git runs git commands; the :doc below is data.\"}\n" "  git\n"
+              "(def ^{:doc \"probe runs probes; the :doc below is data.\"}\n" "  probe\n"
               "  {:doc \"value map doc\" :handler nil})\n" "(def plain {:doc \"value only\"})\n")
 
          by-name
          (into {} (map (juxt :name identity)) (index/definitions src "clojure"))]
 
-        (expect (= "git runs git commands; the :doc below is data." (:doc (get by-name "git"))))
+        (expect (= "probe runs probes; the :doc below is data." (:doc (get by-name "probe"))))
         ;; No metadata head at all: a :doc in the value is not documentation.
         (expect (nil? (:doc (get by-name "plain")))))))
