@@ -145,6 +145,40 @@
                      (expect (= 0 (get r "exit")))
                      (expect (= "explicit-opt-out" (get r "stdout")))))))
 
+;; Regression: a background `git stash list` came back with a stray `=` above the
+;; output, a `>` welded to the next command's first line and long paths broken
+;; mid-token. Nothing was corrupt — the pty made isatty() true, git forked `less`
+;; itself, and less's keypad-mode escapes rode into the captured log.
+(defdescribe
+  shell-pty-pager-test
+  (it "hands every PTY child a no-op pager, so git never forks less in the first place"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let [sid "shell-ext-pager"
+                  env {:session-id sid}]
+              (try (shell-bg* env
+                              "pager"
+                              "printf 'pager=[%s] git=[%s]\\n' \"$PAGER\" \"$GIT_PAGER\"")
+                   (let [out (poll #(log-text env "pager") #(str/includes? % "pager="))]
+                     (expect (str/includes? out "pager=[cat] git=[cat]")))
+                   (finally (resources/stop! sid "pager"))))))))
+  (it "strips the TWO-BYTE keypad escapes a full-screen tool writes, not only CSI"
+      (let
+        [normalize
+         @#'shell/normalize-terminal-output
+
+         ;; Exactly what `less` wrapped around git's output: smkx on entry,
+         ;; erase + rmkx on exit, with git's colour reset on the line between.
+         cleaned
+         (normalize (str "\u001B[?1h\u001B=stash@{0}: WIP\u001B[m\r\n"
+                         "\r\u001B[K\u001B[?1l\u001B>--- status ---"))]
+
+        (expect (str/includes? cleaned "stash@{0}: WIP"))
+        (expect (str/includes? cleaned "--- status ---"))
+        ;; The surviving final byte of `ESC =` / `ESC >` was the whole artifact.
+        (expect (nil? (re-find #"[=>]" cleaned))))))
+
 (defdescribe
   shell-run-sync-test
   (it "returns a TOTAL result: every key present, flags real booleans"

@@ -478,6 +478,27 @@
         p))
     (catch Throwable t (cleanup-jail-policy! policy) (throw t))))
 
+(def ^:private pty-child-env
+  "What every PTY child gets ON TOP of the ambient (or allowlisted) environment.
+
+   `TERM` is the whole point of the pty: `isatty()` is true and terminfo names a
+   real terminal, so a CLI that refuses a dumb pipe runs.
+
+   The PAGERS are the bill for that honesty, and it is paid here. `git`, `gh`,
+   `man`, `psql` and friends check `isatty(stdout)`, conclude a human is
+   watching and fork `less` THEMSELVES — the tool spawns it, not bash and not
+   this extension. `less` then writes SCREEN CONTROL into the same byte stream
+   the log file keeps: `ESC =` / `ESC >` (keypad application/numeric mode) on
+   entry and exit, erase-to-end-of-line, and soft wrapping that breaks a long
+   line mid-token with `space BS`. A live terminal eats those bytes; a log
+   READER sees a stray `=` above the output, a `>` glued to the next command's
+   first line and paths split in half — and reasonably reads it as corruption.
+   `cat` as the pager makes the captured bytes the bytes the command printed.
+   `GIT_PAGER` is set as well as `PAGER` because it also outranks a `core.pager`
+   the operator configured; a caller who genuinely wants paging still prefixes
+   its own assignment (`PAGER=less …`), which wins over an inherited value."
+  {"TERM" "xterm-256color" "PAGER" "cat" "GIT_PAGER" "cat"})
+
 (defn- pty-spawn!
   "Spawn `cmd` under a REAL pseudo-terminal (internal.foundation.pty — pure Java
    FFM, no JNA and no extracted native helper): isatty() is TRUE, $TERM is set,
@@ -495,13 +516,14 @@
                                                                  "--norc" "-lc" (str cmd)]
                                                                 policy)
                                :dir (.getPath ^File dir)
-                               :env (if-let [full (process-jail/jailed-child-env policy)]
-                                      ;; Confined child: allowlisted env only (secrets dropped).
-                                      (doto (HashMap. ^java.util.Map full)
-                                        (.put "TERM" "xterm-256color"))
-                                      (doto (HashMap. ^java.util.Map (System/getenv))
-                                        (.put "TERM" "xterm-256color")
-                                        (.putAll ^java.util.Map (process-jail/proxy-env policy))))
+                               :env (doto ^HashMap
+                                      (if-let [full (process-jail/jailed-child-env policy)]
+                                        ;; Confined child: allowlisted env only (secrets dropped).
+                                        (HashMap. ^java.util.Map full)
+                                        (doto (HashMap. ^java.util.Map (System/getenv))
+                                          (.putAll ^java.util.Map
+                                                   (process-jail/proxy-env policy))))
+                                      (.putAll ^java.util.Map pty-child-env))
                                :cols 120
                                :rows 40})))
          ::cleanup (::cleanup policy))
@@ -2031,7 +2053,12 @@
 (def ^:private terminal-escape-re
   ;; ANSI/VT sequences a PTY-attached tool emits. Stripped both when MATCHING a
   ;; `wait` predicate and when rendering captured output, so the two agree.
-  #"(?s)(?:\u001B\].*?(?:\u0007|\u001B\\)|(?:\u001B\[|\u009B)[0-?]*[ -/]*[@-~]|\u001B[ -/]*[@-~])")
+  ;; The bare-ESC alternative ends at `[0-~]`, not `[@-~]`: the two-byte private
+  ;; escapes `ESC =` / `ESC >` (keypad mode, written by `less` and every other
+  ;; full-screen tool) end in 0x3D/0x3E, so a `@-~` final left their last byte
+  ;; behind as a literal `=` or `>` in otherwise clean output. `ESC 7` / `ESC 8`
+  ;; (save/restore cursor) were escaping the same way.
+  #"(?s)(?:\u001B\].*?(?:\u0007|\u001B\\)|(?:\u001B\[|\u009B)[0-?]*[ -/]*[@-~]|\u001B[ -/]*[0-~])")
 
 
 
