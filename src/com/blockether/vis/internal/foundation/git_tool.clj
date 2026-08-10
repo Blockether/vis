@@ -123,7 +123,8 @@
 
 (defn- git-command-result
   "Run one literal Git argv through the SHELL tool's own runner
-   (`shell/run-argv`) and return its total, string-keyed result. There is no
+   (`shell/run-argv`) and return ITS result verbatim — the same shell result shape
+   every `shell` call answers with, `command` echoing the quoted `git …` line. There is no
    separate git process machinery: git commands are bounded shell commands, so
    they inherit the same working directory resolution, process jail, capped
    capture and timeout — a literal argv, so nothing is quoted or interpreted.
@@ -136,14 +137,7 @@
         (ex-info
           "The git command needs at least one argument, e.g. [\"status\"] or [\"commit\", \"-m\", \"msg\"]."
           {:type ::no-args})))
-    (let [r (shell/run-argv env (into ["git"] (verbose-add-tokens tokens)) {"timeout_secs" secs})]
-      {"command" (str "git " (str/join " " tokens))
-       "args" (vec tokens)
-       "stdout" (or (get r "stdout") "")
-       "stderr" (or (get r "stderr") "")
-       "exit" (get r "exit")
-       "duration_ms" (get r "duration_ms")
-       "timed_out" (boolean (get r "timed_out"))})))
+    (shell/run-argv env (into ["git"] (verbose-add-tokens tokens)) {"timeout_secs" secs})))
 
 (defn- git-impl
   "Run ONE git argv. `command` is the argv itself \u2014 a list of literal tokens
@@ -330,11 +324,21 @@
           (str " \u2014 " subject))
         (clip-chip headline-max-chars))))
 
+(defn- result-args
+  "The git TOKENS this result is about, read back out of the ONE `command` key the
+   whole shell family answers with. `run-argv` echoes an argv as a quoted bash
+   line, so splitting it here returns exactly the tokens that ran — which is why
+   the result needs no second `args` field beside `command` and `git` keeps the
+   very same result shape as `shell`."
+  [r]
+  (let [line (str (get r "command"))]
+    (vec (rest (split-argv line)))))
+
 (defn- render-git-result
   [r]
   (let
     [args
-     (get r "args")
+     (result-args r)
 
      exit
      (get r "exit")

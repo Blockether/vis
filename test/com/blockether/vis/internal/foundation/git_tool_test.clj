@@ -10,6 +10,19 @@
 
 (def ^:private render #'gt/render-git-result)
 
+(defn- cmd-of
+  "The `command` line a git result carries for `tokens` — the ONE key the whole
+   shell family answers with, quoted exactly as `run-argv` echoes an argv, so a
+   render test speaks the same shape the runner produces."
+  [tokens]
+  (str "git "
+       (str/join " "
+                 (map (fn [t]
+                        (if (re-matches #"[A-Za-z0-9_@%+=:,./-]+" (str t))
+                          (str t)
+                          (str "'" (str/replace (str t) "'" "'\\''") "'")))
+                      tokens))))
+
 (def ^:private render-start-call #'gt/render-git-call)
 
 (def ^:private verbose-add #'gt/verbose-add-tokens)
@@ -31,125 +44,153 @@
                      (reset! repositories [{:root "/workspace/vis"}])
                      (expect (true? (boolean (activate? {}))))))))
 
-(defdescribe
-  git-native-contract-test
-  (it "documents the direct native call shape and result semantics"
-      (let [description (:ext.symbol/description gt/git-symbol)]
-        (expect (str/includes? description "session[\"workspace\"]"))
-        ;; The argv shape belongs on the `command` parameter it governs,
-        ;; stated once rather than mirrored into the tool description.
-        (let
-          [command (get-in gt/git-symbol [:ext.symbol/schema :properties "command" :description])]
-          (expect (str/includes? command "[\"status\", \"--short\"]"))
-          (expect (str/includes? command "`git` omitted")))
-        (expect (str/includes? description "non-zero exit"))
-        (expect (< (count description) 300))))
-  (it "makes ONE command the closed native contract"
-      (let [schema (:ext.symbol/schema gt/git-symbol)]
-        (expect (= ["command"] (:required schema)))
-        ;; The argv is the WHOLE call: Git projects `command` positionally, so
-        ;; Python reads `git(["status", "--short"])`.
-        (expect (= {:pos ["command"]} (:ext.symbol/call gt/git-symbol)))
-        (expect (true? (:ext.symbol/inject-env? gt/git-symbol)))
-        (expect (false? (:additionalProperties schema)))
-        (expect (= "array" (get-in schema [:properties "command" :type])))
-        (expect (= 1 (get-in schema [:properties "command" :minItems])))
-        (expect (= "string" (get-in schema [:properties "command" :items :type])))
-        (expect (str/includes? (:doc (meta #'gt/git)) "await git"))))
-  (it "uses an explicit two-argument handler for native-tool dispatch"
-      (let
-        [handler
-         (:ext.symbol/handler gt/git-symbol)
+(defdescribe git-native-contract-test
+             (it "documents the direct native call shape and result semantics"
+                 (let [description (:ext.symbol/description gt/git-symbol)]
+                   (expect (str/includes? description "session[\"workspace\"]"))
+                   ;; The argv shape belongs on the `command` parameter it governs,
+                   ;; stated once rather than mirrored into the tool description.
+                   (let
+                     [command (get-in gt/git-symbol
+                                      [:ext.symbol/schema :properties "command" :description])]
+                     (expect (str/includes? command "[\"status\", \"--short\"]"))
+                     (expect (str/includes? command "`git` omitted")))
+                   (expect (str/includes? description "non-zero exit"))
+                   (expect (< (count description) 300))))
+             (it "makes ONE command the closed native contract"
+                 (let [schema (:ext.symbol/schema gt/git-symbol)]
+                   (expect (= ["command"] (:required schema)))
+                   ;; The argv is the WHOLE call: Git projects `command` positionally, so
+                   ;; Python reads `git(["status", "--short"])`.
+                   (expect (= {:pos ["command"]} (:ext.symbol/call gt/git-symbol)))
+                   (expect (true? (:ext.symbol/inject-env? gt/git-symbol)))
+                   (expect (false? (:additionalProperties schema)))
+                   (expect (= "array" (get-in schema [:properties "command" :type])))
+                   (expect (= 1 (get-in schema [:properties "command" :minItems])))
+                   (expect (= "string" (get-in schema [:properties "command" :items :type])))
+                   (expect (str/includes? (:doc (meta #'gt/git)) "await git"))))
+             (it "uses an explicit two-argument handler for native-tool dispatch"
+                 (let
+                   [handler
+                    (:ext.symbol/handler gt/git-symbol)
 
-         seen
-         (atom nil)]
+                    seen
+                    (atom nil)]
 
-        (expect (fn? handler))
-        (with-redefs
-          [shell/run-argv
-           (fn [_ argv _]
-             (reset! seen argv)
-             {"exit" 0 "stdout" "clean\n" "stderr" "" "timed_out" false "duration_ms" 1})]
-          (let [result (:result (handler {} {"command" ["status" "--short"]}))]
-            (expect (= ["git" "status" "--short"] @seen))
-            (expect (= "clean\n" (get result "stdout")))))))
-  (it "states the FLAT result shape a caller reads directly"
-      ;; Regression, one-command refactor: the contract described a `commands`
-      ;; array, so callers wrote `r["commands"][0]["stdout"]` against a flat map.
-      (let [contract (:ext.symbol/result gt/git-symbol)]
-        (expect (str/includes? contract "Flat MAP"))
-        (expect (str/includes? contract "stdout"))
-        (expect (str/includes? contract "no `commands` array"))))
-  (it "returns exactly the documented top-level keys"
-      (with-redefs
-        [shell/run-argv (fn [_ _ _]
-                          {"exit" 0 "stdout" "" "stderr" "" "timed_out" false "duration_ms" 1})]
-        (let [result (:result (git-impl {} ["status" "--short"]))]
-          (expect (= #{"command" "args" "stdout" "stderr" "exit" "duration_ms" "timed_out"}
-                     (set (keys result))))))))
+                   (expect (fn? handler))
+                   (with-redefs
+                     [shell/run-argv (fn [_ argv _]
+                                       (reset! seen argv)
+                                       {"command" (str/join " " argv)
+                                        "exit" 0
+                                        "stdout" "clean\n"
+                                        "stderr" ""
+                                        "timed_out" false
+                                        "duration_ms" 1})]
+                     (let [result (:result (handler {} {"command" ["status" "--short"]}))]
+                       (expect (= ["git" "status" "--short"] @seen))
+                       (expect (= "clean\n" (get result "stdout")))))))
+             (it "states the FLAT result shape a caller reads directly"
+                 ;; Regression, one-command refactor: the contract described a `commands`
+                 ;; array, so callers wrote `r["commands"][0]["stdout"]` against a flat map.
+                 (let [contract (:ext.symbol/result gt/git-symbol)]
+                   (expect (str/includes? contract "Flat MAP"))
+                   (expect (str/includes? contract "stdout"))
+                   (expect (str/includes? contract "no `commands` array"))))
+             (it "answers the SAME key set a `shell` run answers with — ONE result shape"
+                 ;; Regression, one-shape refactor: `git` used to build its own map (an extra
+                 ;; `args`, no `status`/`note`/`*_omitted_chars`), so a caller had to learn a
+                 ;; second shell shape.
+                 (let
+                   [g
+                    (:result (git-impl {} ["--version"]))
 
-(defdescribe
-  git-python-sandbox-test
-  (it "await git exposes stdout, stderr, and exit as plain Python data"
-      (let [seen (atom [])]
-        (with-redefs
-          [shell/run-argv
-           (fn [_ argv _]
-             (swap! seen conj (vec (rest argv)))
-             {"exit" 128 "stdout" "" "stderr" "bad revision\n" "timed_out" false "duration_ms" 2})]
-          (let
-            [{:keys [python-context]} (ep/create-python-context {'git (fn [command]
-                                                                        ;; The Python bridge receives the argv itself.
-                                                                        (:result
-                                                                          (git-impl {} command)))})
-             result (ep/run-python-block python-context
-                                         (str "r = await git(['show', 'missing'])\n"
-                                              "(r['stdout'], r['stderr'], r['exit'])")
-                                         "t1/i1")]
+                    s
+                    (shell/run-argv {} ["true"] nil)]
 
-            (expect (nil? (:error result)))
-            (expect (= [["show" "missing"]] @seen))
-            (expect (= ["" "bad revision\n" 128] (:result result))))))))
+                   (expect (= (set (keys s)) (set (keys g))))
+                   (expect (= "run" (get g "stage")))
+                   (expect (= "git --version" (get g "command")))
+                   (expect (zero? (long (get g "exit")))))))
 
-(defdescribe
-  git-one-command-spelling-test
-  (it "coerces a bare string into the argv it obviously means"
-      ;; `command` is an ARRAY — but the one-line spelling `"status --short"` has
-      ;; exactly one reading, so it is COERCED instead of burning the call on a
-      ;; shape complaint. Quoting still decides the tokens.
-      (let [seen (atom [])]
-        (with-redefs
-          [shell/run-argv (fn [_ argv _]
-                            (swap! seen conj (vec (rest argv)))
-                            {"exit" 0 "stdout" "" "stderr" "" "timed_out" false "duration_ms" 1})]
-          (git-impl {} "status --short")
-          (git-impl {} "commit -m 'wip: with spaces'")
-          (expect (= [["status" "--short"] ["commit" "-m" "wip: with spaces"]] @seen)))))
-  (it "still refuses a missing command and a command that is no argv"
-      (expect (some? (try (git-impl {} nil) nil (catch Throwable e e))))
-      (expect (some? (try (git-impl {} []) nil (catch Throwable e e))))
-      (expect (some? (try (git-impl {} #{"status"}) nil (catch Throwable e e)))))
-  (it "answers ONE command with ONE flat result"
-      (let [seen (atom [])]
-        (with-redefs
-          [shell/run-argv
-           (fn [_ argv _]
-             (swap! seen conj (vec (rest argv)))
-             {"exit" 0 "stdout" "clean\n" "stderr" "" "timed_out" false "duration_ms" 1})]
-          (let [one (:result (git-impl {} ["status" "--short"]))]
-            (expect (= [["status" "--short"]] @seen))
-            (expect (= "git status --short" (get one "command")))
-            (expect (= "clean\n" (get one "stdout")))))))
-  (it "keeps a quoted argument as ONE token in the argv list"
-      ;; the literal-token contract is unchanged: each element is one git
-      ;; argument, so a commit message with spaces stays a single token.
-      (let [seen (atom [])]
-        (with-redefs
-          [shell/run-argv (fn [_ argv _]
-                            (swap! seen conj (vec (rest argv)))
-                            {"exit" 0 "stdout" "" "stderr" "" "timed_out" false "duration_ms" 1})]
-          (git-impl {} ["commit" "-m" "wip: with spaces"])
-          (expect (= [["commit" "-m" "wip: with spaces"]] @seen))))))
+(defdescribe git-python-sandbox-test
+             (it "await git exposes stdout, stderr, and exit as plain Python data"
+                 (let [seen (atom [])]
+                   (with-redefs
+                     [shell/run-argv (fn [_ argv _]
+                                       (swap! seen conj (vec (rest argv)))
+                                       {"command" (str/join " " argv)
+                                        "exit" 128
+                                        "stdout" ""
+                                        "stderr" "bad revision\n"
+                                        "timed_out" false
+                                        "duration_ms" 2})]
+                     (let
+                       [{:keys [python-context]} (ep/create-python-context
+                                                   {'git (fn [command]
+                                                           ;; The Python bridge receives the argv itself.
+                                                           (:result (git-impl {} command)))})
+                        result (ep/run-python-block python-context
+                                                    (str "r = await git(['show', 'missing'])\n"
+                                                         "(r['stdout'], r['stderr'], r['exit'])")
+                                                    "t1/i1")]
+
+                       (expect (nil? (:error result)))
+                       (expect (= [["show" "missing"]] @seen))
+                       (expect (= ["" "bad revision\n" 128] (:result result))))))))
+
+(defdescribe git-one-command-spelling-test
+             (it "coerces a bare string into the argv it obviously means"
+                 ;; `command` is an ARRAY — but the one-line spelling `"status --short"` has
+                 ;; exactly one reading, so it is COERCED instead of burning the call on a
+                 ;; shape complaint. Quoting still decides the tokens.
+                 (let [seen (atom [])]
+                   (with-redefs
+                     [shell/run-argv (fn [_ argv _]
+                                       (swap! seen conj (vec (rest argv)))
+                                       {"command" (str/join " " argv)
+                                        "exit" 0
+                                        "stdout" ""
+                                        "stderr" ""
+                                        "timed_out" false
+                                        "duration_ms" 1})]
+                     (git-impl {} "status --short")
+                     (git-impl {} "commit -m 'wip: with spaces'")
+                     (expect (= [["status" "--short"] ["commit" "-m" "wip: with spaces"]] @seen)))))
+             (it "still refuses a missing command and a command that is no argv"
+                 (expect (some? (try (git-impl {} nil) nil (catch Throwable e e))))
+                 (expect (some? (try (git-impl {} []) nil (catch Throwable e e))))
+                 (expect (some? (try (git-impl {} #{"status"}) nil (catch Throwable e e)))))
+             (it "answers ONE command with ONE flat result"
+                 (let [seen (atom [])]
+                   (with-redefs
+                     [shell/run-argv (fn [_ argv _]
+                                       (swap! seen conj (vec (rest argv)))
+                                       {"command" (str/join " " argv)
+                                        "exit" 0
+                                        "stdout" "clean\n"
+                                        "stderr" ""
+                                        "timed_out" false
+                                        "duration_ms" 1})]
+                     (let [one (:result (git-impl {} ["status" "--short"]))]
+                       (expect (= [["status" "--short"]] @seen))
+                       (expect (= "git status --short" (get one "command")))
+                       (expect (= "clean\n" (get one "stdout")))))))
+             (it "keeps a quoted argument as ONE token in the argv list"
+                 ;; the literal-token contract is unchanged: each element is one git
+                 ;; argument, so a commit message with spaces stays a single token.
+                 (let [seen (atom [])]
+                   (with-redefs
+                     [shell/run-argv (fn [_ argv _]
+                                       (swap! seen conj (vec (rest argv)))
+                                       {"command" (str/join " " argv)
+                                        "exit" 0
+                                        "stdout" ""
+                                        "stderr" ""
+                                        "timed_out" false
+                                        "duration_ms" 1})]
+                     (git-impl {} ["commit" "-m" "wip: with spaces"])
+                     (expect (= [["commit" "-m" "wip: with spaces"]] @seen))))))
 
 
 (defdescribe verbose-add-tokens-test
@@ -227,7 +268,7 @@
   (it "lifts a single commit's subject onto the headline and drops the -m noise"
       (let
         [{:keys [summary body]}
-         (render {"args" ["commit" "-m" "tui: nicer git band" "-m" "explanatory body"]
+         (render {"command" (cmd-of ["commit" "-m" "tui: nicer git band" "-m" "explanatory body"])
                   "stdout" "[main f5a408ab] tui: nicer git band\n 2 files changed"
                   "exit" 0})]
         ;; Collapsed headline shows WHAT was committed, no crammed `-m -m`.
@@ -241,18 +282,20 @@
         (expect (re-find #"(?m)^> explanatory body" body))))
   (it "keeps non-message flags but drops only -m/--message"
       (expect (= "⎇ commit -a — fix: thing"
-                 (:summary (render {"args" ["commit" "-a" "-m" "fix: thing"] "exit" 0}))))
+                 (:summary (render {"command" (cmd-of ["commit" "-a" "-m" "fix: thing"])
+                                    "exit" 0}))))
       (expect (= "⎇ commit --amend — reword: x"
-                 (:summary (render {"args" ["commit" "--amend" "-m" "reword: x"] "exit" 0}))))
+                 (:summary (render {"command" (cmd-of ["commit" "--amend" "-m" "reword: x"])
+                                    "exit" 0}))))
       (expect (= "⎇ commit — inline"
-                 (:summary (render {"args" ["commit" "--message=inline"] "exit" 0})))))
+                 (:summary (render {"command" (cmd-of ["commit" "--message=inline"]) "exit" 0})))))
   (it "clips a really long commit subject on the headline; full message stays in the body"
       (let
         [subject
          (apply str "feat: " (repeat 30 "long-word "))
 
          {:keys [summary body]}
-         (render {"args" ["commit" "-m" subject] "stdout" "[main abc] x" "exit" 0})]
+         (render {"command" (cmd-of ["commit" "-m" subject]) "stdout" "[main abc] x" "exit" 0})]
 
         ;; Headline is bounded (72-char subject cap + ellipsis) so it can't blow
         ;; out the collapsed card, no matter how long the subject.
@@ -264,15 +307,15 @@
         (expect (str/includes? body (str/trim subject)))))
   (it "a FAILED commit keeps the (exit N) note as the headline's focus, no subject"
       (let
-        [{:keys [summary]} (render
-                             {"args" ["commit" "-m" "wip"] "exit" 1 "stderr" "nothing to commit"})]
+        [{:keys [summary]}
+         (render {"command" (cmd-of ["commit" "-m" "wip"]) "exit" 1 "stderr" "nothing to commit"})]
         (expect (= "⎇ commit -m (exit 1)" summary))))
   (it "a non-commit renders just its args (with any exit/timeout note)"
-      (expect (= "⎇ push" (:summary (render {"args" ["push"] "exit" 0}))))
+      (expect (= "⎇ push" (:summary (render {"command" (cmd-of ["push"]) "exit" 0}))))
       (expect (= "⎇ push origin main (exit 1)"
-                 (:summary (render {"args" ["push" "origin" "main"] "exit" 1}))))
+                 (:summary (render {"command" (cmd-of ["push" "origin" "main"]) "exit" 1}))))
       (expect (= "⎇ status --short (timed out)"
-                 (:summary (render {"args" ["status" "--short"] "timed_out" true})))))
+                 (:summary (render {"command" (cmd-of ["status" "--short"]) "timed_out" true})))))
   ;; Regression, reported card `⎇ add <four long paths>`: the collapsed headline
   ;; was UNBOUNDED, so a `git add` of four repo paths wrapped over four rows of
   ;; the card — and the **COMMAND** fence directly under it repeated the very
@@ -287,7 +330,7 @@
         "extensions/channels/vis-channel-tui/test/com/blockether/vis/ext/channel_tui/human_input_test.clj"]
 
        {:keys [summary body]}
-       (render {"args" (into ["add"] paths) "exit" 0})]
+       (render {"command" (cmd-of (into ["add"] paths)) "exit" 0})]
 
       (expect (<= (count summary) 74) summary)
       (expect (str/ends-with? summary "\u2026"))
@@ -297,7 +340,7 @@
   (it "drops the COMMAND fence when the headline already IS the whole command"
       (let
         [{:keys [summary body]}
-         (render {"args" ["status" "--short"] "exit" 0 "stdout" " M src/core.clj\n"})]
+         (render {"command" (cmd-of ["status" "--short"]) "exit" 0 "stdout" " M src/core.clj\n"})]
         (expect (= "⎇ status --short" summary))
         (expect (not (str/includes? body "**COMMAND**")) body)
         (expect (str/includes? body "**STATUS**"))

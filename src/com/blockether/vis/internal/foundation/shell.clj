@@ -38,11 +38,12 @@
    `shell-dispatch` survives as the INTERNAL grammar the Python-extension entry
    points use, since those hand-author an options map and genuinely need an `op`.
 
-   Every stage answers a stage-SCOPED total key set ([[result-core]] plus that one
-   stage's own keys): a key the stage owns is nil / false / 0 / [] instead of
-   absent, so model Python indexes it without a KeyError, while another stage's
-   keys are simply not there to carry nothing. A run answers with its `command`
-   and that command's own bytes at the TOP level — there is no entry to unwrap.
+   EVERY result of EVERY stage — and of `git`, which runs through the same runner
+   — is the one [[shell-result-base]] key set: `stage` names the producer and is
+   the only thing that varies. A key a stage has nothing to say about is nil /
+   false / 0 instead of absent, so model Python indexes any of them without a
+   KeyError, and a run answers with its `command` and that command's own bytes at
+   the TOP level — there is no entry to unwrap and no second shape to learn.
 
 
    The `shell` toggle is registered HERE, extension-owned under the vis namespace."
@@ -545,21 +546,23 @@
       long
       (min (long max-timeout-secs))))
 
-(def ^:private result-core
-  "Keys EVERY `shell` result carries, whatever stage produced it: who was asked,
-   and the GROUP summary. `stage` names the stage that produced it (run /
-   background / logs / wait / send / stop) and these keys stay present-but-neutral
-   rather than vanishing, so ordinary model Python (`r[\"exit\"]`,
-   `r[\"command\"]`) can never KeyError on a field every stage owns.
+(def ^:private shell-result-base
+  "The ONE result shape of the whole shell family — every stage, every tool.
 
-   ONE call runs ONE command, so there is no `commands` array and no entry to
-   index into: `command` is the line, and the `run` stage adds the bytes it
-   emitted. A lifecycle stage carries the same `command` for the shell it acts
-   on, so `r[\"command\"]` reads the same everywhere.
+   `shell` itself, each handle op (`sh.logs`, `sh.type`, `sh.stop`, `sh.wait`) and
+   `git` all answer THIS key set, so a caller reads `r[\"exit\"]`, `r[\"stdout\"]`,
+   `r[\"command\"]` and `r[\"status\"]` the same way whatever produced the map and no
+   key can KeyError. `stage` NAMES the producer (`run` / `background` / `logs` /
+   `send` / `stop`) — it is the only thing that varies, and it varies as DATA, not
+   as a different shape. A key a stage has nothing to say about stays
+   present-but-neutral rather than vanishing.
+
+   ONE call runs ONE command, so there is no `commands` array and no entry to index
+   into, and a lifecycle stage carries the same `command` as the shell it acts on.
 
    NOT `\"op\"`: the extension boundary stamps `\"op\"` on EVERY tool result with the
-   tool's own origin (always \"shell\" here) — tool-specific stage detail must use a
-   different key, exactly as `stamp-public-result-op` requires."
+   tool's own origin — stage detail must use a different key, exactly as
+   `stamp-public-result-op` requires."
   {"stage" nil
    "id" nil
    "cwd" nil
@@ -567,85 +570,59 @@
    ;; line the shell it acts on is running. nil only when the stage genuinely has
    ;; no command left (a stopped shell whose registry entry is already gone).
    "command" nil
-   ;; `started` is true only once EVERY child was spawned, so a batch can tell a
-   ;; command that never started apart from one that ran and failed/timed out.
+   ;; True only once the child was spawned, so a command that never started stays
+   ;; distinguishable from one that ran and failed or timed out.
    "started" false
+   "status" nil
+   "pid" nil
    "exit" nil
    "duration_ms" nil
+   "uptime_ms" nil
    "timed_out" false
-   "note" nil})
-
-(def ^:private stage-keys
-  "What ONE stage adds to [[result-core]] — and the only extra keys it may carry.
-
-   Totality is owed WITHIN the stage the caller selected: lifecycle stages expose
-   only their own fields while the shared identity/summary fields stay in
-   [[result-core]]."
-  {"run" {"timeout_secs" nil
-          "stdout" nil
-          "stderr" nil
-          "stdout_omitted_chars" 0
-          "stderr_omitted_chars" 0
-          "status" nil}
-   "background"
-   {"pid" nil "status" nil "uptime_ms" nil "attach" nil "socket" nil "already_running" false}
-   "logs" {"pid" nil
-           "status" nil
-           "uptime_ms" nil
-           "text" ""
-           "offset" 0
-           "next_offset" 0
-           "is_eof" true
-           "is_truncated" false}
-   "send" {"pid" nil "status" nil "sent" 0 "text" nil "keys" nil}
-   "stop" {"pid" nil "status" nil "uptime_ms" nil "stopped" false}})
-
-(defn- shell-result
-  "One stage's own fields merged onto THAT stage's total base, with `stage`
-   stamped last. Fields outside the stage's own set are dropped, so no stage can
-   leak another's keys back into the payload."
-  [op m]
-  (let [base (merge result-core (get stage-keys op))]
-    (assoc (merge base (select-keys m (keys base))) "stage" op)))
-
-(def ^:private command-result-base
-  "TOTAL key set of ONE command's result — the command line and its output. Every command answers this same map whether it ran
-   through the `shell` tool or as one argv of a `git` call, so `git` and `shell`
-   share one command shape and neither has a variant to tell apart.
-
-   Request-scope facts (`cwd`, `timeout_secs`) are NOT part of it: they belong to
-   the CALL and are stamped on the result that owns this entry. Nor are
-   truncation booleans — `*_omitted_chars` is 0 exactly when
-   nothing was dropped, so a flag beside it only said the same thing twice."
-  {"command" nil
-   ;; True only after the child process was spawned, so a command that never
-   ;; started stays distinguishable from one that ran and failed/timed out.
-   "started" false
+   "timeout_secs" nil
+   ;; OUTPUT, under one name everywhere: what a foreground run captured, and what a
+   ;; log read returned. There is no second spelling of \"the bytes\" to learn.
    "stdout" nil
    "stderr" nil
-   "exit" nil
-   "duration_ms" nil
-   "timed_out" false
    ;; A truncated stream has an inline \"…[N chars omitted]…\" marker spliced into
-   ;; its MIDDLE, so it is no longer valid JSON/parseable — the count says exactly
-   ;; how much is gone, and 0 means nothing was.
+   ;; its MIDDLE, so it no longer parses — the count says exactly how much is gone,
+   ;; and 0 means nothing was.
    "stdout_omitted_chars" 0
    "stderr_omitted_chars" 0
-   ;; Why a command produced no process at all (its dir refused, unspawnable), or
-   ;; that a captured stream lost its middle and no longer parses.
-   "status" nil
+   ;; The log CURSOR: a read is a window on a file and the caller owns the cursor.
+   "offset" 0
+   "next_offset" 0
+   "is_eof" true
+   "is_truncated" false
+   ;; Attach bridge for an interactive shell, and what `sh.type` wrote.
+   "attach" nil
+   "socket" nil
+   "already_running" false
+   "sent" 0
+   "keys" nil
+   "stopped" false
    "note" nil})
 
-(defn- command-result
-  "ONE command's own total entry: its fields merged onto [[command-result-base]],
-   with anything outside that set dropped."
-  [m]
-  (select-keys (merge command-result-base m) (keys command-result-base)))
+(defn- shell-result
+  "One stage's fields merged onto [[shell-result-base]], with `stage` stamped last
+   and anything outside the base dropped — so every result of every shell stage
+   has exactly the same keys."
+  [stage m]
+  (assoc (merge shell-result-base (select-keys m (keys shell-result-base))) "stage" stage))
+
+(defn- shell-quote
+  "One argv token as a literal `bash -lc` word: plain words stay bare, anything
+   else is single-quoted (with embedded quotes escaped), so a coerced argv keeps
+   exactly the arguments it named."
+  [^String token]
+  (if (re-matches #"[A-Za-z0-9_@%+=:,./-]+" token)
+    token
+    (str "'" (str/replace token "'" "'\\''") "'")))
 
 (defn- shell-run-impl
-  "Run ONE command and answer its own [[command-result]] map — never a tool
-   result: what the tool answers with is the `run` result that MERGES this map
-   (`shell-run-call`), so a command's line and output have exactly one home.
+  "Run ONE command and answer the `run`-stage [[shell-result-base]] map: the
+   command, its bytes and its outcome. `shell-run-call` merges the handle's
+   identity onto it, so a command's line and output have exactly one home.
 
    `cmd` is either one bash line (a string) or a literal argv (a sequential,
    used by `git`). The echoed `cmd` is always the display string.
@@ -663,8 +640,11 @@
      [argv
       (when (sequential? cmd) (mapv str cmd))
 
+      ;; An argv is echoed as the bash LINE that would run it — quoted token by
+      ;; token, so the `command` a caller reads back is copy-pasteable and can be
+      ;; split into exactly the tokens it named.
       cmd
-      (if argv (str/join " " argv) (str cmd))]
+      (if argv (str/join " " (map shell-quote argv)) (str cmd))]
 
      (when (str/blank? cmd)
        (throw (ex-info (str "shell needs a non-blank command — pass it as `command`,"
@@ -743,27 +723,27 @@
           t1
           (now-ms)]
 
-         (with-meta (command-result
-                      ;; TOTAL entry shape (`command-result-base`). The old "lean" map dropped a
-                      ;; key whenever it carried no signal, so ordinary model Python
-                      ;; (`c[\"stderr\"]`, `c[\"timed_out\"]`) died with a bare `KeyError` — read as
-                      ;; "the tool broke", retried with cosmetic variations, and spun.
-                      {"command" cmd
-                       ;; The child exists: this is intentionally distinct from a batch entry
-                       ;; whose launch failed before it could run.
-                       "started" true
-                       "stdout" (lf (:text out))
-                       "stderr" (lf (:text err))
-                       "exit" exit
-                       "duration_ms" (- t1 t0)
-                       "timed_out" (not finished?)
-                       ;; 0 exactly when nothing was dropped, so no truncation flag is owed
-                       ;; beside it.
-                       "stdout_omitted_chars" (long (or (:omitted out) 0))
-                       "stderr_omitted_chars" (long (or (:omitted err) 0))
-                       ;; A dropped middle makes the stream unparseable: name it here rather
-                       ;; than let a caller's parser fail with an opaque message.
-                       "note" (command-note env out err)})
+         (with-meta (shell-result "run"
+                                  ;; TOTAL shape ([[shell-result-base]]). The old "lean" map dropped a
+                                  ;; key whenever it carried no signal, so ordinary model Python
+                                  ;; (`c[\"stderr\"]`, `c[\"timed_out\"]`) died with a bare `KeyError` — read as
+                                  ;; "the tool broke", retried with cosmetic variations, and spun.
+                                  {"command" cmd
+                                   ;; The child exists: distinct from a command whose launch failed
+                                   ;; before it could run.
+                                   "started" true
+                                   "stdout" (lf (:text out))
+                                   "stderr" (lf (:text err))
+                                   "exit" exit
+                                   "duration_ms" (- t1 t0)
+                                   "timed_out" (not finished?)
+                                   ;; 0 exactly when nothing was dropped, so no truncation flag is owed
+                                   ;; beside it.
+                                   "stdout_omitted_chars" (long (or (:omitted out) 0))
+                                   "stderr_omitted_chars" (long (or (:omitted err) 0))
+                                   ;; A dropped middle makes the stream unparseable: name it here rather
+                                   ;; than let a caller's parser fail with an opaque message.
+                                   "note" (command-note env out err)})
            ;; Request scope, IDENTICAL for every entry of a batch: carried as metadata
            ;; so the group summarises one `cwd`/`timeout_secs` instead of every entry
            ;; repeating them, and nothing extra crosses to Python. A relative dir is
@@ -773,15 +753,6 @@
             :timeout-secs timeout-secs
             :process (when-not finished? p)
             :drains [out-f err-f]}))))))
-
-(defn- shell-quote
-  "One argv token as a literal `bash -lc` word: plain words stay bare, anything
-   else is single-quoted (with embedded quotes escaped), so a coerced argv keeps
-   exactly the arguments it named."
-  [^String token]
-  (if (re-matches #"[A-Za-z0-9_@%+=:,./-]+" token)
-    token
-    (str "'" (str/replace token "'" "'\\''") "'")))
 
 (defn- command-line
   "ONE bash line from the caller's `command`. A string IS the line. An array of tokens —
@@ -1433,7 +1404,7 @@
 
 (defn- shell-run-call
   "Run ONE bounded foreground command and answer the tool's own total result: the
-   command's [[command-result]] map MERGED onto the `run` stage, so `r[\"exit\"]`,
+   command's own `run`-stage map with the handle's identity merged on, so `r[\"exit\"]`,
    `r[\"stdout\"]` and `r[\"command\"]` are read at the top level and there is no
    entry to index into. One call is one command — an ordered batch is what `&&`
    and a second call are for — so there is no shared budget to divide and no
@@ -1634,10 +1605,11 @@
 
        (extension/success
          ;; Sharing `bg-core`'s identity keys with every other stage: `exit` None
-         ;; while running. `text` is the window this read returned, already joined
-         ;; — a file has no line numbers to carry and no seq pairs to unwrap.
+         ;; while running. `stdout` is the window this read returned, already joined
+         ;; — the SAME key a foreground run puts its bytes under, so "what did it
+         ;; print" is one field whether the call waited or came back for it later.
          {:result (assoc (if entry (bg-core "logs" id entry) (retired-log-core env session id))
-                    "text" (:text chunk)
+                    "stdout" (:text chunk)
                     "offset" (:offset chunk)
                     "next_offset" (:next-offset chunk)
                     "is_eof" (:is-eof chunk)
@@ -1728,7 +1700,6 @@
          (send-fn (.getBytes payload java.nio.charset.StandardCharsets/UTF_8))
          (extension/success {:result (assoc (bg-core "send" id entry)
                                        "sent" (count payload)
-                                       "text" payload
                                        "keys" (keys-label payload))
                              :op :_shell-type
                              :metadata
@@ -1952,10 +1923,9 @@
   "Run ONE literal argv through the SAME bounded machinery `shell` runs its own
    command with: cwd authorization, process-jail policy, head+tail capped
    capture, timeout and kill-tree. Returns that command's own total entry — the
-   SAME `command-result` map (`command`, `stdout`, `stderr`, `exit`, `duration_ms`,
-   `timed_out`, `*_omitted_chars`) `shell` merges onto its run result, carrying the
-   request's `:dir`/`:timeout-secs` as metadata, so there is one command shape for
-   both tools and no envelope to unwrap.
+   SAME [[shell-result-base]] map `shell` itself answers a foreground call with,
+   carrying the request's `:dir`/`:timeout-secs` as metadata, so `git` and `shell`
+   have ONE result shape and there is no envelope to unwrap.
 
    No shell is involved — each element reaches the process verbatim, so nothing
    needs quoting. The `git` tool is a USER of this: every git command is a
@@ -2468,7 +2438,7 @@
   [r]
   (let
     [text
-     (or (get r "text") "")
+     (or (get r "stdout") "")
 
      status
      (or (get r "status") "?")
@@ -2522,7 +2492,7 @@
   [r]
   (let
     [keys-lbl
-     (or (get r "keys") (keys-label (get r "text")))
+     (get r "keys")
 
      details
      (kv-lines [["id" (get r "id")] ["keys" keys-lbl]
@@ -2646,8 +2616,9 @@
      :native-tool? true
      :name "shell"
      :result
-     (str "A HANDLE: the dict `{id, cwd, command, stdout, stderr, exit, duration_ms, "
-          "timed_out, note}` (`*_omitted_chars` says what a huge stream lost) WITH the methods "
+     (str "A HANDLE: ONE result shape for every shell answer and for `git` — `{stage, id, cwd, "
+          "command, status, exit, stdout, stderr, duration_ms, timed_out, offset, next_offset, "
+          "is_eof, note, …}`, `stage` naming the producer — WITH the methods "
           "`sh.logs(offset=0)`, `sh.wait(secs)`, `sh.type(text)`, `sh.stop()` on it. Nonzero "
           "exit is data; `timed_out` means the WAIT expired, not the process.")
      :description
@@ -2688,9 +2659,9 @@
      :native-tool? false
      :name "_shell_logs"
      :result
-     (str "`{id, text, offset, next_offset, is_eof, is_truncated, status, exit}` — always the same "
-          "keys. `text` is the window this read returned; feed `next_offset` back to continue, and "
-          "`is_eof` false means read again now.")
+     (str "The same shell result shape as every other stage (`stage` is \"logs\"): `stdout` is the "
+          "window this read returned; feed `next_offset` back to continue, and `is_eof` false "
+          "means read again now.")
      :description
      (str "TRANSPORT for `sh.logs(offset=…, limit=…)` — call the HANDLE the shell result already "
           "is, not this. Reads a background shell's log from a byte offset and returns NOW. No "
@@ -2717,7 +2688,7 @@
     {:symbol '_shell-type
      :native-tool? false
      :name "_shell_type"
-     :result "`{id, text, is_enter, status}`."
+     :result "The same shell result shape (`stage` \"send\"): `sent` chars, `keys` label."
      :description
      "TRANSPORT for `sh.type(text, is_enter=True)` — call the handle. Writes keystrokes to a background shell's stdin."
      :render-finish-call-fn render-shell-send-result
@@ -2739,7 +2710,7 @@
     {:symbol '_shell-stop
      :native-tool? false
      :name "_shell_stop"
-     :result "`{id, status, exit, note}`."
+     :result "The same shell result shape (`stage` \"stop\"): `stopped`, `status`, `exit`."
      :description
      "TRANSPORT for `sh.stop()` — call the handle. Kills a background shell's process tree and drops its retained logs and resource."
      :render-finish-call-fn render-shell-stop-result

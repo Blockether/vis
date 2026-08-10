@@ -452,6 +452,30 @@ sandbox-side TYPE over the same dict.
 
 **Unknowns.** None.
 
+## Phase 9 — ONE result shape for the whole shell family
+
+**Rationale.** Without it the tools are one call shape with five answer shapes: a `run` answered
+`stdout`, a `logs` read answered `text`, `send`/`stop` carried their own stage-scoped subsets, and
+`git` built a map of its own with an extra `args` and no `status`/`note`/`*_omitted_chars`. A caller
+therefore had to know WHICH stage produced the map before reading it, and reading the wrong name is a
+`KeyError` — the exact failure the total-shape rule exists to prevent.
+
+**Data.** None. The shell result never leaves the process as a persisted or mirrored contract: it is
+the tool's own return value, rendered and handed to Python in the same run.
+
+**Acceptance criteria.**
+- `src/com/blockether/vis/internal/foundation/shell.clj` — `result-core`, `stage-keys` and
+  `command-result-base` collapse into one `shell-result-base`; `logs` puts its window under `stdout`;
+  `send` keeps `keys`/`sent` and drops its `text` echo; an argv run echoes a QUOTED bash line.
+- `src/com/blockether/vis/internal/foundation/git_tool.clj` — `git` returns `run-argv`'s result
+  verbatim; `args` is gone and the renderer reads the tokens back out of `command`.
+- `resources/vis-python/async_runtime.py`, `resources/vis-shims/posix.py` — `sh.wait()` and
+  `Popen.communicate()` accumulate `stdout`.
+- Test: `shell-one-shape-test` asserts run / wait-0 / logs / send / stop / `git` answer the SAME key
+  set, and `git-tool-test` pins that git's key set IS a shell run's.
+
+**Unknowns.** None.
+
 ## State of the plan
 
 **DONE.**
@@ -518,13 +542,19 @@ Done:
   as `:call {:pos ["command"]}`), and the `git.md` docs page is deleted — the tool's own
   description and result contract are the documentation.
 
-- Phase 8, the result IS the handle — `PENDING-COMMIT`. `shell` answers with `__VisShell__`, a dict
+- Phase 8, the result IS the handle — `c57822453`. `shell` answers with `__VisShell__`, a dict
   that carries `sh.logs(offset=…)`, `sh.wait(secs)`, `sh.type(text)` and `sh.stop()`, so a process is
   driven on the object the call already returned. `shell_logs` / `shell_type` / `shell_stop` are gone
   from the model's surface: they survive only as the private `_shell_*` transport the handle calls,
   underscore-prefixed so `apropos` never lists them. `sh.wait(secs)` is the bounded poll loop written
   ONCE in the engine — read, keep reading while bytes remain, sleep only at EOF while the process
   lives, stop at the deadline — which is what makes "never sleep blindly" a rule with a tool behind it.
+
+- Phase 9, ONE result shape for the whole shell family — `PENDING-COMMIT`. `shell-result-base` is the
+  single key set every stage AND `git` answer with; `stage` names the producer and is the only thing
+  that varies. Output has one name (`stdout`) whether the call waited for it or came back for it
+  later, `git` no longer carries an `args` field beside `command`, and a key a stage has nothing to
+  say about is nil / false / 0 rather than absent.
 
 TODO, in order: nothing. The plan is DONE.
 

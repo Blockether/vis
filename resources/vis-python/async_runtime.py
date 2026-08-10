@@ -588,7 +588,9 @@ class __VisShell__(__VisResult__):
     # underlying `_shell_*` transports stay private (underscore = absent from
     # `apropos`), and re-issuing a live `id` through `shell` hands the SAME handle back,
     # which is how a later block re-acquires one.
-    __vis_shell_ops__ = frozenset(("shell", "_shell_logs", "_shell_type", "_shell_stop"))
+    __vis_shell_ops__ = frozenset(
+        ("shell", "_shell_logs", "_shell_type", "_shell_stop")
+    )
 
     def __vis_op__(self, __vis_name__, __vis_args__):
         fn = globals().get(__vis_name__)
@@ -610,7 +612,8 @@ class __VisShell__(__VisResult__):
 
     def type(self, text, is_enter=True):
         return self.__vis_op__(
-            "_shell_type", {"id": self["id"], "text": str(text), "is_enter": bool(is_enter)}
+            "_shell_type",
+            {"id": self["id"], "text": str(text), "is_enter": bool(is_enter)},
         )
 
     def stop(self):
@@ -621,14 +624,15 @@ class __VisShell__(__VisResult__):
         # block: read from where the last read stopped, keep reading while bytes are
         # still available, sleep only when the log is at EOF and the process is alive,
         # and give up at the deadline. `timed_out` says which of the two ended it, and
-        # `text` is everything printed since this handle's own cursor.
+        # `stdout` is everything printed since this handle's own cursor — the SAME key a
+        # foreground run answers with, because there is ONE shell result shape.
         import time as __vis_time__
 
         deadline = __vis_time__.time() + float(seconds)
         offset, chunks, last = 0, [], None
         while True:
             last = self.logs(offset=offset, limit=262144)
-            chunks.append(last.get("text") or "")
+            chunks.append(last.get("stdout") or "")
             offset = last.get("next_offset", offset)
             if not last.get("is_eof", True):
                 continue
@@ -638,8 +642,9 @@ class __VisShell__(__VisResult__):
                 break
             __vis_time__.sleep(poll)
         out = dict(last)
+        out["stage"] = "wait"
         out["offset"] = 0
-        out["text"] = "".join(chunks)
+        out["stdout"] = "".join(chunks)
         out["timed_out"] = out.get("status") == "running"
         return __VisShell__(out)
 

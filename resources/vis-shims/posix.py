@@ -203,7 +203,9 @@ def __vis_install_posix_compat__():
             return _tool("_shell_logs")({"id": self._id, "limit": 1})
 
         def _read(self, offset):
-            return _tool("_shell_logs")({"id": self._id, "offset": offset, "limit": 262144})
+            return _tool("_shell_logs")(
+                {"id": self._id, "offset": offset, "limit": 262144}
+            )
 
         def poll(self):
             r = self._logs()
@@ -224,7 +226,7 @@ def __vis_install_posix_compat__():
             out, off = [], 0
             while True:
                 r = self._read(off)
-                out.append(r.get("text", ""))
+                out.append(r.get("stdout") or "")
                 nxt = r.get("next_offset", off)
                 if r.get("is_eof") or nxt <= off:
                     break
