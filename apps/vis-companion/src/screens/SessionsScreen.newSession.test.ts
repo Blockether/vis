@@ -255,9 +255,9 @@ describe('where "New session" lives', () => {
   // project header also hid its own name behind a fixed 160px count column, so `~/vis`
   // rendered as `~/v…` on a phone. Every header in the list is ONE component now.
   it("builds both list headers from one band, so neither spells its own box", () => {
-    expect(source).toContain("<SectionHeader>");
+    expect(source).toContain('<SectionHeader rule="border-accent">');
     expect(source).not.toContain('tone="machine"');
-    expect(source).toContain("<HeaderTitle");
+    expect(source).toContain("<ProjectCrumb");
     expect(source.match(/<HeaderTally/g)?.length).toBe(1);
     // Not one height, padding or paper spelled at a call site.
     expect(source).not.toContain("<header className=");

@@ -2343,7 +2343,7 @@ function NavigatorSkeleton() {
           <div key={group}>
             {/* The list's OWN header band, so a loading screen can never stand at a
                 different height from the screen it turns into. */}
-            <SectionHeader>
+            <SectionHeader rule="border-accent">
               {/* One line, because the header it stands in for is one line: a
                   skeleton two lines tall collapses to one the moment data lands. */}
               <HeaderTitle
