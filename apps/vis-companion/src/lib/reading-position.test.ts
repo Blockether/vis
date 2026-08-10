@@ -4,6 +4,7 @@ import {
   followEnd,
   forgetReadingPosition,
   isAtBottom,
+  heightSettler,
   isCorrectionEcho,
   markReadingPosition,
   parkedReadingPosition,
@@ -155,5 +156,41 @@ describe('a correction is not a gesture', () => {
 
   it('claims nothing before the first correction', () => {
     expect(isCorrectionEcho(box(0, 46_373, 767), -1)).toBe(false);
+  });
+});
+
+
+// Regression, session 15db52fb-9a44-45db-96e7-13b423eff274: the opening veil lifted
+// as soon as the last turn was MOUNTED, and the reader then watched ten more frames
+// of the transcript growing under them — measured live at 36 212 px, 36 422, 37 020,
+// 40 314, 42 002, 44 060, 45 777, 47 325, 48 119, 49 247 — because deferred markdown
+// and content-visibility keep landing pixels after React commits.
+describe('the opening veil waits for the transcript to hold still', () => {
+  // The heights the live scroller reported, frame by frame, from the reveal the
+  // reader used to get to the one they should have got.
+  const ramp = [
+    29_728, 36_799, 37_009, 37_607, 40_901, 42_589, 44_647, 46_364, 47_912,
+    48_706, 49_834,
+  ];
+
+  it('stays up for every frame the transcript is still growing', () => {
+    const settled = heightSettler();
+    expect(ramp.map(settled)).toEqual(ramp.map(() => false));
+  });
+
+  it('lifts once the same height has come back three times', () => {
+    const settled = heightSettler();
+    ramp.forEach(settled);
+    expect(settled(49_834)).toBe(false);
+    expect(settled(49_834)).toBe(false);
+    expect(settled(49_834)).toBe(true);
+  });
+
+  it('starts the count over when a late chunk lands', () => {
+    const settled = heightSettler();
+    expect([49_834, 49_834, 50_130].map(settled)).toEqual([false, false, false]);
+    expect(settled(50_130)).toBe(false);
+    expect(settled(50_130)).toBe(false);
+    expect(settled(50_130)).toBe(true);
   });
 });

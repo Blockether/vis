@@ -107,6 +107,7 @@ import { readerOwnsScroll } from "../lib/reader-gesture";
 import {
   applyReadingPosition,
   followEnd,
+  heightSettler,
   isAtBottom,
   isCorrectionEcho,
   markReadingPosition,
@@ -3081,6 +3082,30 @@ export function SessionScreen({
     restoreCancelledQueued,
   ]);
 
+  // Drop the veil once the transcript underneath it HOLDS STILL. Whoever asks
+  // gets the same single watcher: the first caller owns the frame loop, and the
+  // reveal effect below cancels it whenever the ramp moves again, so a chunk
+  // landing late restarts the quiet count instead of being revealed mid-growth.
+  const revealFrameRef = useRef<number | null>(null);
+  const cancelReveal = useCallback(() => {
+    if (revealFrameRef.current === null) return;
+    window.cancelAnimationFrame(revealFrameRef.current);
+    revealFrameRef.current = null;
+  }, []);
+  const revealWhenSettled = useCallback(() => {
+    if (revealFrameRef.current !== null) return;
+    const settled = heightSettler();
+    const step = () => {
+      if (settled(scrollRef.current?.scrollHeight ?? 0)) {
+        revealFrameRef.current = null;
+        setLoading(false);
+        return;
+      }
+      revealFrameRef.current = window.requestAnimationFrame(step);
+    };
+    revealFrameRef.current = window.requestAnimationFrame(step);
+  }, []);
+
   useLayoutEffect(() => {
     if (
       initialScrollPendingRef.current &&
@@ -3113,7 +3138,7 @@ export function SessionScreen({
       // is already WHOLE. A session whose ramp is still running is revealed by
       // the effect below, once it stops repainting itself (OPENING_RAMP_MAX_MS).
       if (hydratedTurnCount >= Math.min(visibleTurnCount, turns.length))
-        requestAnimationFrame(() => setLoading(false));
+        revealWhenSettled();
       return;
     }
     // Not while the reader is dragging. `followingRef` is a measurement from the
@@ -3149,20 +3174,30 @@ export function SessionScreen({
   }, [hydratedTurnCount, visibleTurnCount]);
 
   // The opening ramp repaints the transcript on every frame it hydrates; the
-  // reader should meet it settled, not mid-whip. Reveal when the window this
-  // screen opened with is fully hydrated, and no later than OPENING_RAMP_MAX_MS.
+  // reader should meet it settled, not mid-whip. The mounted turn COUNT is not
+  // that moment — the pixels of the last chunk keep landing after it (see
+  // `heightSettler`) — so hand the reveal to the scroller's own height and cap
+  // the wait at OPENING_RAMP_MAX_MS.
   useEffect(() => {
     if (!loading || initialScrollPendingRef.current) return;
-    if (hydratedTurnCount >= Math.min(visibleTurnCount, turns.length)) {
-      const frame = window.requestAnimationFrame(() => setLoading(false));
-      return () => window.cancelAnimationFrame(frame);
-    }
+    if (hydratedTurnCount >= Math.min(visibleTurnCount, turns.length))
+      revealWhenSettled();
     const timer = window.setTimeout(
       () => setLoading(false),
       OPENING_RAMP_MAX_MS,
     );
-    return () => window.clearTimeout(timer);
-  }, [loading, hydratedTurnCount, visibleTurnCount, turns.length]);
+    return () => {
+      cancelReveal();
+      window.clearTimeout(timer);
+    };
+  }, [
+    loading,
+    hydratedTurnCount,
+    visibleTurnCount,
+    turns.length,
+    revealWhenSettled,
+    cancelReveal,
+  ]);
 
   // The veil must DISSOLVE, not vanish. Unmounting it the instant the transcript
   // is ready swaps a full-bleed `bg-ink` sheet for the whole transcript inside a

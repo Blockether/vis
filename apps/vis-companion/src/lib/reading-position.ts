@@ -140,6 +140,39 @@ export function isCorrectionEcho(box: ScrollBox, correctedTop: number): boolean 
 }
 
 /**
+ * How many frames a transcript's height must REPEAT before the opening veil
+ * believes it. Two frames is a coincidence on a device that drops one; three
+ * consecutive identical measurements is the cheapest reading that survives a
+ * chunk of markdown landing late.
+ */
+export const OPENING_QUIET_FRAMES = 3;
+
+/**
+ * Watch an opening transcript until it stops GROWING.
+ *
+ * A mounted turn is not a painted one: deferred markdown, syntax highlighting
+ * and `content-visibility` each land their pixels a frame or two after React
+ * commits, and the corrector's re-pin is always one frame behind that growth.
+ * Measured on a 50 000 px session, the last turn mounted ~270ms before the
+ * scroller stopped growing, and each of those ten growth frames showed a slice
+ * up to 3 300 px above the newest turn — the flicker a reader sees on open.
+ * Counting hydrated TURNS cannot see any of that; the scroller's own height
+ * can, so the watcher takes one height per frame and answers true once the same
+ * height has come back `quietFrames` times in a row.
+ */
+export function heightSettler(
+  quietFrames: number = OPENING_QUIET_FRAMES,
+): (height: number) => boolean {
+  let previous = -1;
+  let quiet = 0;
+  return (height: number) => {
+    quiet = height === previous ? quiet + 1 : 0;
+    previous = height;
+    return quiet >= quietFrames;
+  };
+}
+
+/**
  * Whether the "↓ Latest" offer has anything to offer.
  *
  * Two facts, and either one alone withdraws it: the transcript is already
