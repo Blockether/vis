@@ -170,6 +170,12 @@
   com.taoensso/telemere {:mvn/version "1.2.1"}
   ;; Version MUST match com.taoensso/telemere.
   com.taoensso/telemere-slf4j {:mvn/version "1.2.1"}
+  ;; Trove is the logging FACADE svar (and any other Blockether library) emits
+  ;; through; `config/route-svar-logs!` picks Telemere as its backend the way
+  ;; Trove's README documents (`set-log-fn!` + `taoensso.trove.telemere/get-log-fn`).
+  ;; Vis requires those two namespaces directly, so the coordinate is DIRECT here
+  ;; and not inherited from svar's transitive tree.
+  com.taoensso/trove {:mvn/version "1.1.0"}
   io.github.tonsky/clojure-plus {:mvn/version "1.7.2"}
   metosin/malli {:mvn/version "0.20.1"}
   ;; GraalPy/Truffle/SVM refuse mismatched versions — bump these four together
