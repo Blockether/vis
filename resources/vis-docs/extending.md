@@ -799,6 +799,14 @@ per-turn callables (`prompt`, `activation`) fast; tools may take their time.
   loaded, so editing a `.py` — or anything else editing one — changes nothing
   until you reload. Unchanged files are fingerprint-checked, so reloading
   untouched extensions is a no-op.
+- The whole extension is frozen, not just its entry file. At load, the import
+  root (a package directory, or the extensions directory for a single-file
+  extension) is copied into a private temp tree and THAT copy is what
+  `sys.path` sees, and the reload check hashes every `.py` under it. A lazy
+  `import helper` inside a tool therefore runs the bytes the load admitted:
+  editing a sidecar module after the load changes nothing until `/reload`
+  either. Files an extension writes next to itself land in the frozen copy —
+  durable state belongs in `vis.state`.
 - `vis-agent doctor` lists every loaded file and every load failure with its
   Python error.
 
@@ -817,9 +825,9 @@ A single `.py` file is the simplest extension. For anything larger, drop a
     test_core.py      # tests (see below)
 ```
 
-- The directory is prepended to `sys.path` before `extension.py` runs, so
-  `import mypkg` / `from mypkg.core import add` just work — no manual
-  `sys.path.insert(...)`.
+- The frozen copy of the directory is prepended to `sys.path` before
+  `extension.py` runs, so `import mypkg` / `from mypkg.core import add` just
+  work — no manual `sys.path.insert(...)`.
 - Only `extension.py` is an entry point; the package's other modules are
   imported by it, never scanned as separate extensions.
 - A plain top-level `.py` file gets the same sugar for a sibling module or

@@ -53,6 +53,8 @@
             [com.blockether.vis.internal.toggles :as toggles]
             [taoensso.telemere :as tel])
   (:import [java.io File]
+           [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]
            [org.graalvm.polyglot Context Engine EnvironmentAccess PolyglotAccess Source Value]
            [org.graalvm.polyglot.io IOAccess]
            [org.graalvm.polyglot.proxy ProxyExecutable]))
@@ -1448,68 +1450,144 @@
                  [#{} []])
          second)))
 
+(defn- import-root-files
+  "Every file under an extension's import root, `__pycache__` aside. The root is
+   the directory `load-file!` puts on `sys.path`, so this is the whole body of
+   code a lazy `import` inside a symbol can still reach at CALL time - long after
+   the load."
+  [^File root]
+  (->> (file-seq root)
+       (filter (fn [^File f]
+                 (and (.isFile f) (not (str/includes? (.getPath f) "__pycache__")))))
+       (sort-by (fn [^File f]
+                  (.getCanonicalPath f)))))
+
+(defn- rel-path
+  [^File root ^File f]
+  (str (.relativize (.toPath (.getCanonicalFile root)) (.toPath (.getCanonicalFile f)))))
+
+(defn- code-sha
+  "One digest over every `.py` under the import root. An extension's identity is
+   its WHOLE tree, never its entry file alone: `def run(): import helper` reads
+   `helper.py` at CALL time, so entry-only identity let a module edited after the
+   load execute in the trusted context with no `/reload` behind it."
+  [^File root]
+  (extension/sha256-hex (str/join
+                          "\n"
+                          (map (fn [^File f]
+                                 (str (rel-path root f) " " (extension/sha256-hex (slurp f))))
+                               (filter (fn [^File f]
+                                         (str/ends-with? (.getName f) ".py"))
+                                       (import-root-files root))))))
+
+(defn- delete-tree!
+  [^File dir]
+  (when (and dir (.exists dir))
+    (doseq [^File f (reverse (file-seq dir))]
+      (.delete f))))
+
+(defonce ^:private snapshot-home
+  ;; ONE temp tree per process for every frozen import root, removed at exit.
+  (delay (let [d (.toFile (Files/createTempDirectory "vis-ext-code" (make-array FileAttribute 0)))]
+           (.addShutdownHook (Runtime/getRuntime)
+                             (Thread. ^Runnable
+                                      (fn []
+                                        (delete-tree! d))))
+           d)))
+
+(defn- snapshot-root!
+  "FREEZE an import root: copy it into a private temp tree and hand THAT to
+   `sys.path`. After this the extension's own imports resolve against the bytes
+   this load admitted - a module edited or planted next to it afterwards is
+   invisible until the next `/reload`, which is the whole freshness contract."
+  ^File [^File root]
+  (let [dest (io/file @snapshot-home (str (java.util.UUID/randomUUID)))]
+    (.mkdirs dest)
+    (doseq [^File f (import-root-files root)]
+      (let [t (io/file dest (rel-path root f))]
+        (io/make-parents t)
+        (io/copy f t)))
+    dest))
+
 (defn- load-file!
   "Evaluate one extension file in a fresh trusted context and register the
-   extension it declares. The file's own directory is prepended to
-   `sys.path` first, so a sibling package/module (`my_ext.py` next to a
-   `mypkg/` package, or its own `*_impl.py` helpers) imports with a plain
-   `import mypkg` — no manual `sys.path` hack in the extension body.
-   Returns `{:path :sha :ext-name :context}`; throws (with the context
-   closed) on any failure."
-  [^File f]
-  (let
-    [path
-     (.getCanonicalPath f)
+   extension it declares. The import root - the file's own directory - is FROZEN
+   into a private snapshot first and THAT is prepended to `sys.path`, so a
+   sibling package/module (`my_ext.py` next to a `mypkg/` package, or its own
+   `*_impl.py` helpers) imports with a plain `import mypkg` AND imports the bytes
+   this load admitted. Pointed at the live directory instead, a lazy
+   `import helper` inside a symbol would execute whatever the disk holds when the
+   call finally runs - new code in the trusted context with no `/reload` anywhere
+   in the chain.
 
-     parent
-     (.getParent (io/file path))
+   `snapshot` reuses an already-frozen root: one freeze per root per load pass,
+   and the heal path re-runs its entry against the root it was admitted with.
 
-     source
-     (slurp f)
+   Returns `{:path :sha :code-sha :snapshot :ext-name :context}`; throws (with
+   the context closed) on any failure."
+  ([^File f] (load-file! f nil))
+  ([^File f ^File snapshot]
+   (let
+     [path
+      (.getCanonicalPath f)
 
-     sha
-     (extension/sha256-hex source)
+      ^File snap
+      (or snapshot (snapshot-root! (.getParentFile (.getCanonicalFile f))))
 
-     ctx
-     (build-context)]
+      source
+      (slurp (io/file snap (.getName f)))
 
-    (try (bind-host! ctx (.getName f))
-         (locking ctx
-           (.eval ctx "python" ^String bootstrap-python)
-           ;; Prepend the extension file's own dir to sys.path so sibling
-           ;; packages/modules import cleanly. Path crosses as a bound
-           ;; member (no string-escaping into a Python snippet).
-           (let [g (.getBindings ctx "python")]
-             (.putMember g "__vis_ext_dir__" ^String parent)
-             (.eval ctx
-                    "python"
-                    (str "import sys as __vis_pathsys__\n"
-                         "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
-                         "    __vis_pathsys__.path.insert(0, __vis_ext_dir__)\n")))
-           (.eval ctx (.build (Source/newBuilder "python" ^String source (.getName f)))))
-         (let
-           [g
-            (.getBindings ctx "python")
+      sha
+      (extension/sha256-hex source)
 
-            reg
-            (call-py ctx (.getMember g "__vis_registration__") [])]
+      ctx
+      (build-context)]
 
-           (when (nil? reg)
-             (throw (ex-info (str (.getName f) " never called vis.extension(...)")
-                             {:type ::no-registration :file path})))
-           (let
-             [spec
-              (registration->spec ctx reg)
+     (try (bind-host! ctx (.getName f))
+          (locking ctx
+            (.eval ctx "python" ^String bootstrap-python)
+            ;; Prepend the FROZEN copy of the extension file's own dir to
+            ;; sys.path so sibling packages/modules import cleanly, and import
+            ;; the admitted bytes rather than whatever disk holds by the time the
+            ;; import runs. Path crosses as a bound member (no string-escaping
+            ;; into a Python snippet).
+            (let [g (.getBindings ctx "python")]
+              (.putMember g "__vis_ext_dir__" ^String (.getCanonicalPath snap))
+              (.eval ctx
+                     "python"
+                     (str "import sys as __vis_pathsys__\n"
+                          "if __vis_ext_dir__ not in __vis_pathsys__.path:\n"
+                          "    __vis_pathsys__.path.insert(0, __vis_ext_dir__)\n")))
+            (.eval ctx (.build (Source/newBuilder "python" ^String source (.getName f)))))
+          (let
+            [g
+             (.getBindings ctx "python")
 
-              validated
-              (extension/register-extension! spec)]
+             reg
+             (call-py ctx (.getMember g "__vis_registration__") [])]
 
-             (tel/log! {:level :info
-                        :id ::loaded
-                        :data {:file path :ext (:ext/name spec)}
-                        :msg (str "Python extension '" (:ext/name spec) "' loaded from " path)})
-             {:path path :sha sha :ext-name (:ext/name spec) :ext validated :context ctx}))
-         (catch Throwable t (try (.close ctx true) (catch Throwable _)) (throw t)))))
+            (when (nil? reg)
+              (throw (ex-info (str (.getName f) " never called vis.extension(...)")
+                              {:type ::no-registration :file path})))
+            (let
+              [spec
+               (registration->spec ctx reg)
+
+               validated
+               (extension/register-extension! spec)]
+
+              (tel/log! {:level :info
+                         :id ::loaded
+                         :data {:file path :ext (:ext/name spec)}
+                         :msg (str "Python extension '" (:ext/name spec) "' loaded from " path)})
+              {:path path
+               :sha sha
+               :code-sha (code-sha snap)
+               :snapshot (.getCanonicalPath snap)
+               :ext-name (:ext/name spec)
+               :ext validated
+               :context ctx}))
+          (catch Throwable t (try (.close ctx true) (catch Throwable _)) (throw t))))))
 
 (defn- live-symbol-fn
   "The CURRENTLY registered fn for `[ext-name sym]`, after `dead-ctx` was torn
@@ -1539,12 +1617,15 @@
         [entry
          (if-not (or (identical? dead-ctx (:context entry)) (context-dead? (:context entry)))
            entry
-           ;; The rebuild re-executes the file from DISK, and disk may have moved
-           ;; since this process loaded it — a heal is not a back door for bytes
-           ;; nobody reloaded. A process serves exactly what its own start or the
-           ;; last `/reload` loaded, so an edited file heals into nothing and the
-           ;; caller reports the original failure until the next `/reload`.
-           (if-not (= (:sha entry) (extension/sha256-hex (slurp (io/file path))))
+           ;; The rebuild re-executes the extension, and its whole import root
+           ;; may have moved since this process loaded it — a heal is not a back
+           ;; door for bytes nobody reloaded, and a sidecar module is as much the
+           ;; extension as its entry file. A process serves exactly what its own
+           ;; start or the last `/reload` loaded, so a changed tree heals into
+           ;; nothing and the caller reports the original failure until the next
+           ;; `/reload`.
+           (if-not (= (:code-sha entry)
+                      (code-sha (.getParentFile (.getCanonicalFile (io/file path)))))
              (do (tel/log! {:level :warn
                             :id ::heal-refused
                             :data {:extension ext-name :file path}
@@ -1552,7 +1633,10 @@
                                       "' changed on disk since it was loaded - not running the"
                                       " new version; run /reload to pick it up")})
                  nil)
-             (let [rebuilt (load-file! (io/file path))]
+             (let
+               [rebuilt (load-file! (io/file path)
+                                    (let [snap (io/file (:snapshot entry))]
+                                      (when (.isDirectory snap) snap)))]
                (swap! loaded assoc path (dissoc rebuilt :path))
                (try (.close ^Context dead-ctx true) (catch Throwable _))
                (tel/log! {:level :info
@@ -1581,6 +1665,11 @@
    change the whole set is torn down and rebuilt (contexts are ~40ms warm
    on the shared engine) — deterministic ordering, no partial states.
 
+   Change is measured over each extension's WHOLE import root, never its entry
+   file alone — a package module the entry imports is part of the extension —
+   and every root is FROZEN at load (`snapshot-root!`), one freeze per root per
+   pass.
+
    A file that fails to load is recorded in `load-failures` (and surfaced
    by `vis-agent doctor`) — it never crashes the host.
 
@@ -1595,9 +1684,25 @@
       files
       (scan dirs)
 
+      roots
+      (atom {})
+
+      root-of
+      (fn [^File f]
+        (.getParentFile (.getCanonicalFile f)))
+
+      per-root
+      (fn [k ^File root f]
+        (let [rk (.getCanonicalPath root)]
+          (or (get-in @roots [rk k])
+              (let [v (f root)]
+                (swap! roots assoc-in [rk k] v)
+                v))))
+
       fp
       (mapv (fn [^File f]
-              [(.getCanonicalPath f) (extension/sha256-hex (slurp f))])
+              [(.getCanonicalPath f) (extension/sha256-hex (slurp f))
+               (per-root :code-sha (root-of f) code-sha)])
             files)]
 
      (if (= fp @last-fingerprint)
@@ -1630,7 +1735,9 @@
              [path (.getCanonicalPath f)
               prev-ctx (get-in @loaded [path :context])]
 
-             (try (let [{:keys [ext-name] :as entry} (load-file! f)]
+             (try (let
+                    [{:keys [ext-name] :as entry}
+                     (load-file! f (per-root :snapshot (root-of f) snapshot-root!))]
                     ;; A later file (project dir) registering the same extension
                     ;; name supersedes an earlier one at a DIFFERENT path — the
                     ;; registry already swapped the registration; close the
@@ -1661,6 +1768,20 @@
            (try (extension/deregister-extension! ext-name) (catch Throwable _))
            (try (.close ^Context (:context e) true) (catch Throwable _))
            (swap! loaded dissoc opath))
+         ;; Frozen code this process no longer serves. A retained last-good entry
+         ;; (its own reload failed) still points at its snapshot, so only trees
+         ;; nothing references are removed.
+         (let [live (set (keep :snapshot (vals @loaded)))]
+           (doseq
+             [s (distinct (keep :snapshot (vals old-loaded)))
+              :when (not (live s))]
+
+             (delete-tree! (io/file s)))
+           (doseq
+             [^File s (keep :snapshot (vals @roots))
+              :when (not (live (.getCanonicalPath s)))]
+
+             (delete-tree! s)))
          (reset! last-fingerprint fp)
          ;; Propagate to live surfaces (cached session envs, TUI slash
          ;; palette). Without this a /reload only updates the GLOBAL

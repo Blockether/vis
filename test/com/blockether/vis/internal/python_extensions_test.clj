@@ -2313,6 +2313,20 @@ vis.extension(
 ;; Freshness — only a process start and `/reload` put new bytes live
 ;; =============================================================================
 
+(def ^:private sidecar-py
+  "import vis
+
+def peek():
+    '''await peek() -> str — the sidecar module's version, read at call time.'''
+    import sidecar_impl
+    return sidecar_impl.VERSION
+
+vis.extension(name='sidecar', description='sidecar', alias='sd',
+              symbols=[vis.symbol(peek)])
+")
+
+(def ^:private sidecar-impl-py "VERSION = 'v1'\n")
+
 (defdescribe
   extension-freshness-test
   (it "an implicit load never adopts an edited file - only /reload does"
@@ -2353,8 +2367,8 @@ vis.extension(
                      (pyx/reload-python-extensions! {:dirs []})
                      (ps/db-dispose-connection! store))))))
   (it "a torn-down context never heals into edited bytes"
-      ;; The heal path re-executes the file from disk with no human act in the
-      ;; chain, so it may only re-run the bytes this process loaded.
+      ;; The heal path re-executes the extension with no human act in the chain,
+      ;; so it may only re-run the bytes this process loaded.
       (with-fresh-loaded
         {"rebuilder.py" rebuilder-py}
         (fn [_ {:keys [ext-dir]}]
@@ -2372,4 +2386,50 @@ vis.extension(
               (expect (not= "pong" (:result res))))
             (expect (identical? dead (:context (first (vals @@#'pyx/loaded)))))
             (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
-            (expect (= "edited" (:result ((symbol-fn (registered "rebuilder") 'ping))))))))))
+            (expect (= "edited" (:result ((symbol-fn (registered "rebuilder") 'ping)))))))))
+  (it "a module the extension imports lazily is frozen with its entry file"
+      ;; Regression: identity was the ENTRY file's sha and `sys.path` pointed at
+      ;; the LIVE directory, so `import sidecar_impl` inside a symbol read the
+      ;; disk when the CALL ran. Editing a sidecar module - never the entry -
+      ;; put new bytes in the trusted context with no `/reload` in the chain.
+      (with-fresh-loaded
+        {"sidecar/sidecar_impl.py" sidecar-impl-py "sidecar/extension.py" sidecar-py}
+        (fn [_ {:keys [ext-dir]}]
+          (write-ext! ext-dir "sidecar/sidecar_impl.py" (str/replace sidecar-impl-py "v1" "v2"))
+          (expect (false? (:changed? (pyx/ensure-python-extensions-loaded! {:dirs [(str
+                                                                                     ext-dir)]}))))
+          (expect (= "v1" (:result ((symbol-fn (registered "sidecar") 'peek)))))
+          (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
+          (expect (= "v2" (:result ((symbol-fn (registered "sidecar") 'peek))))))))
+  (it "a heal re-runs the frozen tree, never a sidecar module edited since"
+      ;; A heal is the one re-execution with no human act behind it, so what it
+      ;; proves unchanged is the WHOLE import root - an entry-only check let an
+      ;; edited sidecar module ride into the rebuilt trusted context.
+      (with-fresh-loaded
+        {"sidecar/sidecar_impl.py" sidecar-impl-py "sidecar/extension.py" sidecar-py}
+        (fn [_ {:keys [ext-dir]}]
+          (let
+            [captured
+             (symbol-fn (registered "sidecar") 'peek)
+
+             ^Context dead
+             (:context (first (vals @@#'pyx/loaded)))]
+
+            (write-ext! ext-dir "sidecar/sidecar_impl.py" (str/replace sidecar-impl-py "v1" "v2"))
+            (.close dead true)
+            (expect (not= "v2" (:result (captured))))
+            (expect (identical? dead (:context (first (vals @@#'pyx/loaded)))))))))
+  (it "a torn-down context heals from the frozen tree when nothing changed"
+      (with-fresh-loaded
+        {"sidecar/sidecar_impl.py" sidecar-impl-py "sidecar/extension.py" sidecar-py}
+        (fn [_ _]
+          (let
+            [captured
+             (symbol-fn (registered "sidecar") 'peek)
+
+             ^Context dead
+             (:context (first (vals @@#'pyx/loaded)))]
+
+            (.close dead true)
+            (expect (= "v1" (:result (captured))))
+            (expect (not (identical? dead (:context (first (vals @@#'pyx/loaded)))))))))))
