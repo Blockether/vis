@@ -1,12 +1,15 @@
-import artifactsSheetSource from "./ArtifactsSheet.tsx?raw";
-import uiSource from "./ui.tsx?raw";
+// @vitest-environment jsdom
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ArtifactsChip,
   ArtifactsSheet,
+  previewBlocks,
   previewLines,
 } from "./ArtifactsSheet";
+import { CopyChip } from "./ui";
 import type { GatewayClient } from "../lib/gateway";
 import type { SessionArtifact } from "../lib/artifacts";
 
@@ -17,9 +20,14 @@ import type { SessionArtifact } from "../lib/artifacts";
  *  there" is checked against THAT control and not against a number typed into
  *  this file. */
 const sessionIdChipHeight = () => {
-  const chip =
-    /export function CopyChip\([\s\S]*?\n}\n/.exec(uiSource)?.[0] ?? "";
-  return /className=\{`[^`]*?\b(h-\d+)\b/.exec(chip)?.[1] ?? "";
+  const chip = renderToStaticMarkup(
+    <CopyChip value="s1" label="Copy session id">
+      s1
+    </CopyChip>,
+  );
+  return (
+    buttonClasses(chip).find((one) => /^h-\d+$/.test(one)) ?? ""
+  );
 };
 
 /** Every class on a rendering's first <button>. */
@@ -101,6 +109,19 @@ const sheet = (artifacts: SessionArtifact[]) =>
       artifacts={artifacts}
       onClose={() => {}}
     />,
+  );
+
+/** A gateway whose bytes can actually be read: the reader fetches the blob url. */
+const readable = () =>
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(
+          new TextEncoder().encode("# Note\n\nA read that works.\n"),
+          { headers: { "content-type": "text/markdown" } },
+        ),
+    ),
   );
 
 /** Visible text of a rendered chunk: tags out, entities back. */
@@ -197,18 +218,154 @@ describe("the artifacts sheet", () => {
   // one session were told apart only by the filename under them.
   it("reads the head of a written note, blank lines dropped", () => {
     expect(previewLines("# Plan\n\n\nOne\nTwo\n")).toEqual(["# Plan", "One", "Two"]);
-    // Eight lines is the whole box: a log does not get to scroll a thumbnail.
-    expect(previewLines("a\nb\nc\nd\ne\nf\ng\nh\ni\nj")).toHaveLength(8);
+    // Seven lines is the whole box: a log does not get to scroll a thumbnail, and an
+    // eighth line only ever arrived to be eaten by the fade.
+    expect(previewLines("a\nb\nc\nd\ne\nf\ng\nh\ni\nj")).toHaveLength(7);
     expect(previewLines("")).toEqual([]);
   });
 
-  // The last line lands ON the box's edge. It fades out there rather than being cut
-  // through the middle of its letters, which reads as a broken tile instead of a page
-  // that continues.
-  it("dissolves the peek at the bottom of the tile instead of slicing it", () => {
-    expect(artifactsSheetSource).toContain(
-      "[mask-image:linear-gradient(to_bottom,black_60%,transparent)]",
+  // Regression, user report ("make the MD look beautiful even in this small overview,
+  // not verbose un-marked-down stuff"): the peek QUOTED the file, so a 96px tile spent
+  // its width on `##`, `- [ ]`, `**` and a full URL, and two notes still looked alike.
+  it("reads a note as the lines it is made of, never as its source", () => {
+    const md = [
+      "---",
+      "title: front matter",
+      "---",
+      "# Plan",
+      "",
+      "Ship **it** with `care` and [a note](https://example.com).",
+      "",
+      "- first",
+      "- [ ] second",
+      "1. third",
+      "",
+      "> quoted",
+      "",
+      "```ts",
+      "const a = 1;",
+      "```",
+      "---",
+      "| a | b |",
+      "| --- | --- |",
+      "| 1 | 2 |",
+      "",
+    ].join("\n");
+    expect(previewBlocks(md, 12)).toEqual([
+      { kind: "heading", text: "Plan" },
+      { kind: "text", text: "Ship it with care and a note." },
+      { kind: "bullet", text: "first", mark: "•" },
+      { kind: "bullet", text: "second", mark: "○" },
+      { kind: "bullet", text: "third", mark: "1." },
+      { kind: "quote", text: "quoted" },
+      { kind: "code", text: "const a = 1;" },
+      { kind: "text", text: "a · b" },
+      { kind: "text", text: "1 · 2" },
+    ]);
+    // The budget is the box: seven lines, whatever the file spends them on.
+    expect(previewBlocks(md)).toHaveLength(7);
+    expect(previewBlocks("")).toEqual([]);
+  });
+
+  // The fade is measured against the BOX, never against the text: a gradient sized by
+  // the lines reaches zero somewhere past the cut, so the bottom row was guillotined at
+  // 71% opacity on a 390px screen, and a note too short to overflow faded a line nothing
+  // was going to clip.
+  it("dissolves the peek at the bottom of the tile instead of slicing it", async () => {
+    readable();
+    const view = render(
+      <ArtifactsSheet
+        client={client}
+        sid="s1"
+        artifacts={[note]}
+        onClose={() => {}}
+      />,
     );
+    const mask = "[mask-image:linear-gradient(to_bottom,black_80%,transparent)]";
+    await waitFor(() => expect(view.baseElement.innerHTML).toContain(mask));
+    const masked = [
+      ...view.baseElement.querySelectorAll(`.${CSS.escape(mask)}`),
+    ];
+    expect(masked).toHaveLength(1);
+    // The one masked element is the clipping box itself, so black-to-transparent spans
+    // exactly the height the letters are cut at.
+    expect(masked[0].className).toContain("h-24");
+    expect(masked[0].className).toContain("overflow-hidden");
+    expect(view.baseElement.querySelector('[aria-hidden="true"].text-chip')).not.toBeNull();
+    view.unmount();
+    vi.unstubAllGlobals();
+  });
+
+  // The same regression, on screen: the tile printed `# Note` in mono, and the kind
+  // chip sat on top of the one line the fade had left readable.
+  it("paints the note's title as a title, with no source and no chip over it", async () => {
+    readable();
+    const view = render(
+      <ArtifactsSheet
+        client={client}
+        sid="s1"
+        artifacts={[note]}
+        onClose={() => {}}
+      />,
+    );
+    await waitFor(() =>
+      expect(view.baseElement.textContent).toContain("A read that works."),
+    );
+    const html = view.baseElement.innerHTML;
+    expect(html).not.toContain("# Note");
+    expect(html).toContain("font-bold");
+    // The peek starts where the name below it starts.
+    expect(html).toContain("bg-panel-2 px-2 py-1.5");
+    // `MD` is the meta line's word, once, not a label stamped over the document.
+    expect(view.baseElement.textContent?.match(/MD/g)).toHaveLength(1);
+    view.unmount();
+    vi.unstubAllGlobals();
+  });
+
+  // Read off the live tile at 390px: the version `⋯` is a 32px control floating in the
+  // corner where the note's TITLE starts, so the first line ran under the button and
+  // looked like a rendering fault. Only that line gives up the width.
+  it("keeps the note's title clear of the control floating over the tile", async () => {
+    readable();
+    const threadedNote = { ...note, versions: [note, { ...note, version: 1 }] };
+    const view = render(
+      <ArtifactsSheet
+        client={client}
+        sid="s1"
+        artifacts={[threadedNote]}
+        onClose={() => {}}
+      />,
+    );
+    await waitFor(() =>
+      expect(view.baseElement.textContent).toContain("A read that works."),
+    );
+    const peek = view.baseElement.querySelector('[aria-hidden="true"].text-chip');
+    const rows = [...(peek?.children ?? [])].map((row) => row.className);
+    expect(rows.length).toBeGreaterThan(1);
+    expect(rows[0]).toContain("pr-9");
+    expect(rows.slice(1).join(" ")).not.toContain("pr-9");
+    view.unmount();
+    vi.unstubAllGlobals();
+  });
+
+  // A note with one cut has nothing floating over it, so nothing is indented for a
+  // control that is not there.
+  it("spends no width on a control an artifact without a history never shows", async () => {
+    readable();
+    const view = render(
+      <ArtifactsSheet
+        client={client}
+        sid="s1"
+        artifacts={[note]}
+        onClose={() => {}}
+      />,
+    );
+    await waitFor(() =>
+      expect(view.baseElement.textContent).toContain("A read that works."),
+    );
+    expect(view.baseElement.innerHTML).not.toContain("pr-9");
+    view.unmount();
+    vi.unstubAllGlobals();
   });
 
   // A PDF has no cheap raster and nothing this app can read without a renderer, so it
@@ -399,21 +556,57 @@ describe("an artifact with a history", () => {
 // its own scrolling — a clip, a note, a text file, a document — is handed the
 // overlay's whole body (`fill`); only a list of rows keeps the padded scroller.
 describe("an opened artifact", () => {
-  const detail =
-    /function ArtifactDetail\([\s\S]*?\n}\n/.exec(artifactsSheetSource)?.[0] ??
-    "";
+  const openNote = async () => {
+    const view = render(
+      <ArtifactsSheet
+        client={client}
+        sid="s1"
+        artifacts={[note]}
+        onClose={() => {}}
+      />,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /^Open vis-issue-115-comment\.md/ }),
+    );
+    const overlay = await screen.findByRole("dialog", {
+      name: "vis-issue-115-comment.md",
+    });
+    return { view, overlay };
+  };
 
-  it("is given the whole height of the overlay", () => {
-    const overlays = detail.match(/<DetailOverlay[^>]*>/g) ?? [];
-    // The first overlay is the loading/failed line, which is prose in a scroller.
-    expect(overlays.length).toBeGreaterThan(1);
-    expect(overlays.slice(1).every((tag) => tag.includes("fill"))).toBe(true);
+  it("is given the whole height of the overlay", async () => {
+    readable();
+    const { view, overlay } = await openNote();
+    const scroller = await screen.findByText("A read that works.", { selector: "p" });
+    // Every box between the overlay and the prose grows and may shrink, so the
+    // artifact reaches the bottom of the screen instead of stopping at its text.
+    const chain: HTMLElement[] = [];
+    for (
+      let box = scroller.parentElement;
+      box && box !== overlay;
+      box = box.parentElement
+    ) {
+      chain.push(box);
+    }
+    expect(chain.length).toBeGreaterThan(2);
+    expect(
+      chain
+        .filter((box) => box.className.includes("flex-1"))
+        .every((box) => box.className.includes("min-h-0")),
+    ).toBe(true);
+    expect(chain.at(-1)?.className).toContain("flex-1");
+    view.unmount();
+    vi.unstubAllGlobals();
   });
 
-  it("hands the filled body to the frame rather than padding around it", () => {
-    const overlay =
-      /function DetailOverlay\([\s\S]*?\n}\n/.exec(artifactsSheetSource)?.[0] ??
-      "";
-    expect(overlay).toContain("flex min-h-0 min-w-0 flex-1 flex-col");
+  it("hands the filled body to the frame rather than padding around it", async () => {
+    readable();
+    const { view, overlay } = await openNote();
+    await screen.findByText("A read that works.", { selector: "p" });
+    const body = overlay.lastElementChild as HTMLElement;
+    expect(body.className).toContain("flex min-h-0 min-w-0 flex-1 flex-col");
+    expect(body.className).not.toMatch(/\bp[xytblr]?-\d/);
+    view.unmount();
+    vi.unstubAllGlobals();
   });
 });

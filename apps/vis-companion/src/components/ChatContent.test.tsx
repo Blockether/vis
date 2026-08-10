@@ -1,9 +1,12 @@
+// @vitest-environment jsdom
+import { render, waitFor } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
   AssistantMessage,
   AttachmentRail,
   Markdown,
+  ThinkingBand,
   UserMessage,
 } from "./ChatContent";
 import type { GatewayClient } from "../lib/gateway";
@@ -13,7 +16,6 @@ import {
   mediaTileFrameClass,
 } from "../lib/media-frame";
 import type { TranscriptTurn } from "../lib/types";
-import chatContentSource from "./ChatContent.tsx?raw";
 
 /** Visible text of a rendered chunk: tags out, entities back. */
 const text = (html: string) =>
@@ -285,11 +287,29 @@ describe("the attachment rail", () => {
   });
 });
 
-// Regression, live reasoning scroll jump: the trace ramp used to pin its own scrollTop while SessionScreen's content observer pinned the same scroller again, making streamed thinking visibly jump.
+// Regression, live reasoning scroll jump: the trace ramp used to pin its own
+// scrollTop while SessionScreen's content observer pinned the same scroller again,
+// making streamed thinking visibly jump.
 describe("transcript scroll ownership", () => {
-  it("leaves scroll correction to the session screen owner", () => {
-    expect(chatContentSource).not.toMatch(/scroller\\.scrollTop/u);
-    expect(chatContentSource).not.toMatch(/rampFromRef/u);
+  it("leaves scroll correction to the session screen owner", async () => {
+    const view = render(
+      <div data-testid="scroller" className="overflow-y-auto">
+        <ThinkingBand>{"one\ntwo\nthree\nfour\nfive\nsix"}</ThinkingBand>
+      </div>,
+    );
+    const scroller = view.getByTestId("scroller");
+    scroller.scrollTop = 120;
+    // The band grows the way a live trace grows: same component, more rows.
+    view.rerender(
+      <div data-testid="scroller" className="overflow-y-auto">
+        <ThinkingBand>
+          {Array.from({ length: 40 }, (_, row) => `line ${row}`).join("\n")}
+        </ThinkingBand>
+      </div>,
+    );
+    await waitFor(() => expect(scroller.textContent).toContain("line 39"));
+    expect(scroller.scrollTop).toBe(120);
+    view.unmount();
   });
 });
 

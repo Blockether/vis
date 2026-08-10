@@ -1,3 +1,6 @@
+// @vitest-environment jsdom
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
@@ -8,7 +11,6 @@ import {
   docSandbox,
   docStackSummary,
 } from "./DocArtifact";
-import docArtifactSource from "./DocArtifact.tsx?raw";
 
 /** Visible text of a rendered chunk: tags out, entities back. */
 const text = (html: string) =>
@@ -178,9 +180,27 @@ describe("an opened document", () => {
     expect(markup).toContain('aria-label="Close report.pdf"');
   });
 
-  it("is portalled to the document body, so the composer cannot cover it", () => {
-    expect(docArtifactSource).toContain("createPortal(");
-    expect(docArtifactSource).toContain("document.body,");
+  it("is portalled to the document body, so the composer cannot cover it", async () => {
+    const view = render(
+      <DocPreview
+        name="report.pdf"
+        mime="application/pdf"
+        sizeLabel="1.2 MB"
+        url="blob:x"
+        failed={false}
+        onNeeded={() => undefined}
+      />,
+    );
+
+    await userEvent.click(screen.getByText("report.pdf"));
+    const close = document.querySelector('[aria-label="Close report.pdf"]')!;
+    expect(close).toBeTruthy();
+    // The opened document is a SCREEN, not a part of the transcript: it hangs off the
+    // body, so the composer strip the session screen pins to the bottom of the tree
+    // that rendered this row cannot paint on top of it.
+    expect(view.container.contains(close)).toBe(false);
+    expect(close.closest("body")).toBe(document.body);
+    view.unmount();
   });
 
   it("fills its box instead of standing at 60vh", () => {

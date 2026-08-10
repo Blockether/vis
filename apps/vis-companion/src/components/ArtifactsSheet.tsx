@@ -158,12 +158,20 @@ function useArtifactUrl(
 }
 
 /**
- * A DOCUMENT SHOWS ITSELF TOO.
+ * A DOCUMENT SHOWS ITSELF TOO — AS A DOCUMENT, NEVER AS ITS SOURCE.
  *
  * A note's tile used to be five grey bars — a drawing of a page, identical on every
  * document in the session, so the only thing telling two notes apart was the filename
  * under them. A written artifact is text the app already reads itself, so the tile
  * reads the head of it and paints the document's own first lines.
+ *
+ * MARKDOWN IS PAINTED, NOT QUOTED. `## Plan`, `- [ ] ship`, `**bold**` and
+ * `[a note](https://example.com)` spend a third of a 96px box on punctuation nobody
+ * reads at 9px, so the peek came out as a smudge of hashes, asterisks and URLs. The
+ * head is PARSED into what each line IS — a heading, a point in a list, a quotation,
+ * a line of code — and the tile inks that with the app's own weight and one bullet
+ * column, exactly as the reader one tap away does. Plain text has no markup to spend,
+ * so a `.log` stays verbatim in mono.
  *
  * Only a WRITTEN note and only a small one: a PDF has no cheap raster, and a 40 MB log
  * is not worth a download for a 96px box — both keep the plate. The bytes come through
@@ -171,9 +179,21 @@ function useArtifactUrl(
  * what bounds how many are fetched at once.
  */
 const PREVIEW_LIMIT = 512_000;
-const PREVIEW_LINES = 8;
+// The budget is ARITHMETIC, not taste: `text-chip` is a 14px rhythm and the box is
+// 96px (`h-24`) less its own 12px of padding, so seven lines are 98px — six land whole
+// and the seventh is the one the fade dissolves, which is what says "there is more of
+// this". Eight lines overflowed by a line and a half, and the fade ate the fifth.
+const PREVIEW_LINES = 7;
 
-/** The head of a note, blank lines dropped: eight tiny lines is the whole budget. */
+/** One line of a peek: WHAT it is, so the tile can paint it the way the reader does. */
+export type PreviewLine = {
+  kind: "heading" | "bullet" | "quote" | "code" | "text";
+  text: string;
+  /** A list's own column: `•`, `1.`, or a task's state. */
+  mark?: string;
+};
+
+/** The head of a file, verbatim, blank lines dropped. */
 export function previewLines(text: string, limit = PREVIEW_LINES): string[] {
   const lines: string[] = [];
   for (const line of text.split("\n")) {
@@ -183,6 +203,87 @@ export function previewLines(text: string, limit = PREVIEW_LINES): string[] {
     if (lines.length === limit) break;
   }
   return lines;
+}
+
+/** Everything markdown spells with punctuation, spent: the WORDS are the peek. */
+function inlineText(line: string): string {
+  return line
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/<[^>]*>/g, "")
+    .replace(/`+/g, "")
+    .replace(/\*\*|__|~~/g, "")
+    .replace(/(^|[\s([])[*_]([^*_]+)[*_]/g, "$1$2")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * The head of a markdown note, read as the lines it is made of.
+ *
+ * This is NOT a second renderer — `ChatContent`'s `Markdown` is the app's one, and it
+ * gets the whole document one tap away. Nothing renders in 96px; what a peek needs is
+ * the single question "what is this line", answered cheaply, so the paint can give a
+ * title its weight and a list its column. Front matter, rules, fences and a table's
+ * hairline are the file's plumbing and are dropped — a tile has three lines to make
+ * two notes distinguishable, and none of them is `---`.
+ */
+export function previewBlocks(text: string, limit = PREVIEW_LINES): PreviewLine[] {
+  const out: PreviewLine[] = [];
+  const lines = text.split("\n");
+  let front = lines[0]?.trim() === "---";
+  let fenced = false;
+  for (let at = front ? 1 : 0; at < lines.length && out.length < limit; at += 1) {
+    const line = lines[at].trim();
+    if (front) {
+      if (line === "---" || line === "...") front = false;
+      continue;
+    }
+    if (/^(```|~~~)/.test(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced) {
+      if (line) out.push({ kind: "code", text: line });
+      continue;
+    }
+    if (!line) continue;
+    if (/^([-*_=])\1{2,}$/.test(line)) continue;
+    if (/^\|?[\s:|-]*\|[\s:|-]*$/.test(line) && line.includes("-")) continue;
+    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (heading) {
+      const words = inlineText(heading[2].replace(/\s+#+$/, ""));
+      if (words) out.push({ kind: "heading", text: words });
+      continue;
+    }
+    const quote = /^>\s?(.*)$/.exec(line);
+    if (quote) {
+      const words = inlineText(quote[1]);
+      if (words) out.push({ kind: "quote", text: words });
+      continue;
+    }
+    const bullet = /^([-*+]|\d+[.)])\s+(.*)$/.exec(line);
+    if (bullet) {
+      const task = /^\[([ xX])\]\s*(.*)$/.exec(bullet[2]);
+      const words = inlineText(task ? task[2] : bullet[2]);
+      let mark = "•";
+      if (task) mark = task[1] === " " ? "○" : "✓";
+      else if (/^\d/.test(bullet[1])) mark = bullet[1];
+      if (words) out.push({ kind: "bullet", text: words, mark });
+      continue;
+    }
+    if (line.startsWith("|")) {
+      const cells = line
+        .split("|")
+        .map((cell) => inlineText(cell))
+        .filter(Boolean);
+      if (cells.length) out.push({ kind: "text", text: cells.join(" · ") });
+      continue;
+    }
+    const words = inlineText(line);
+    if (words) out.push({ kind: "text", text: words });
+  }
+  return out;
 }
 
 /** The note's text, once its bytes are in hand. A failure simply peeks at nothing. */
@@ -205,6 +306,69 @@ function useArtifactPreview(url: string | null, enabled: boolean): string {
   return text;
 }
 
+/** How each kind of line is inked: the reader's own emphasis, at a ninth of the size. */
+const PEEK_TONE: Record<PreviewLine["kind"], string> = {
+  heading: "font-bold text-white",
+  bullet: "",
+  quote: "border-l border-dialog-edge pl-1",
+  code: "font-mono",
+  text: "",
+};
+
+/**
+ * THE HEAD OF A DOCUMENT, PAINTED AS A DOCUMENT.
+ *
+ * ONE RHYTHM: every line is `text-chip`'s 14px, so the count of them and the height of
+ * the box are the same arithmetic and nothing is sliced through its letters.
+ *
+ * A list gets a COLUMN — the mark is its own cell and the words truncate beside it, so
+ * three bullets read as three bullets instead of as ragged text with dashes in it. The
+ * whole peek starts on the caption's leading edge (`px-2`), so the first letter of the
+ * document sits exactly above the first letter of its name.
+ *
+ * The fade belongs to the BOX, not to this text: a gradient measured against the lines
+ * reaches zero somewhere past the cut, so the bottom row is guillotined at whatever
+ * opacity it happened to have (71% at 390px), and a note SHORTER than the box fades a
+ * line that nothing was going to clip.
+ */
+function Peek({
+  lines,
+  plain,
+  reserve,
+}: {
+  lines: PreviewLine[];
+  plain: boolean;
+  /** A control floats over the tile's top corner; the title stops before it. */
+  reserve: boolean;
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`block text-chip text-dialog-hint ${plain ? "font-mono" : ""}`}
+    >
+      {lines.map((line, at) => {
+        // The `⋯` is 32px in the same corner the first line starts filling, and a
+        // truncated title running UNDER a button reads as a rendering bug. Only the
+        // line the control actually covers gives up the width.
+        const clear = at === 0 && reserve ? "pr-9" : "";
+        return line.mark ? (
+          <span key={at} className={`flex gap-1 ${clear}`}>
+            <span className="shrink-0">{line.mark}</span>
+            <span className="min-w-0 flex-1 truncate">{line.text}</span>
+          </span>
+        ) : (
+          <span
+            key={at}
+            className={`block truncate ${PEEK_TONE[line.kind]} ${clear}`}
+          >
+            {line.text}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
 /**
  * The thumbnail. A picture shows ITSELF — this is the one place in the app where
  * a produced figure is browsable without its turn around it, so a generic icon
@@ -215,10 +379,12 @@ function Thumb({
   client,
   sid,
   artifact,
+  hasHistory,
 }: {
   client: GatewayClient;
   sid: string;
   artifact: SessionArtifact;
+  hasHistory: boolean;
 }) {
   const box = "h-24 sm:h-28 shrink-0 border-b border-dialog-edge";
   const previewable =
@@ -232,7 +398,13 @@ function Thumb({
     artifact,
     artifact.kind === "image" || previewable,
   );
-  const preview = previewLines(useArtifactPreview(url, previewable));
+  // Markdown is parsed into what its lines ARE; anything else is text and stays
+  // verbatim — the same split the reader makes on the same two files.
+  const head = useArtifactPreview(url, previewable);
+  const plain = !isMarkdownMedia(artifact.mediaType, artifact.name);
+  const preview: PreviewLine[] = plain
+    ? previewLines(head).map((text): PreviewLine => ({ kind: "code", text }))
+    : previewBlocks(head);
 
   if (artifact.kind === "image") {
     return (
@@ -260,36 +432,32 @@ function Thumb({
   }
 
   if (artifact.kind === "doc") {
-    const kind = (
-      <span className="absolute right-1 bottom-1 bg-ink/80 px-1 font-mono text-chip text-white">
-        {docKindLabel(artifact.mediaType, artifact.name)}
-      </span>
-    );
     // The note itself, clipped by the box rather than summarised: a page continues
     // past the bottom of a thumbnail exactly as it does in the reader. It DISSOLVES
     // there rather than being guillotined — a row of letters sliced through the middle
-    // reads as a broken box, while a fade reads as "there is more of this".
+    // reads as a broken box, while a fade reads as "there is more of this". The gradient
+    // is measured against the BOX, so it reaches zero exactly ON the cut whatever the
+    // note is: a page that overflows dissolves into the edge, and a four-line note fades
+    // empty paper, which is no fade at all.
+    //
+    // A document that shows itself wears NO kind chip: the meta line under the tile
+    // already says `MD · 1.9KB · turn 1`, and the chip was printed on top of the last
+    // line the fade had left legible — a label over the thing it labels.
     if (preview.length) {
       return (
-        <span className={`relative block overflow-hidden bg-panel-2 px-2 py-1 ${box}`}>
-          <span
-            aria-hidden="true"
-            className="block font-mono text-chip text-dialog-hint [mask-image:linear-gradient(to_bottom,black_60%,transparent)]"
-          >
-            {preview.map((line, at) => (
-              <span key={at} className="block truncate">
-                {line}
-              </span>
-            ))}
-          </span>
-          {kind}
+        <span
+          className={`block overflow-hidden bg-panel-2 px-2 py-1.5 [mask-image:linear-gradient(to_bottom,black_80%,transparent)] ${box}`}
+        >
+          <Peek lines={preview} plain={plain} reserve={hasHistory} />
         </span>
       );
     }
-    // Nothing to read yet, or nothing this app can read: the plate, hued by name.
+    // Nothing to read yet, or nothing this app can read: the plate, hued by name. Its
+    // ink starts on the caption's own leading edge, so a grid of tiles has ONE left
+    // margin instead of one for pictures, one for plates and one for peeks.
     return (
       <span
-        className={`relative flex flex-col justify-center gap-1 overflow-hidden bg-panel-2 px-3 ${box}`}
+        className={`relative flex flex-col justify-center gap-1 overflow-hidden bg-panel-2 px-2 ${box}`}
       >
         <span className={`h-1 w-2/3 ${artifactHue(artifact.key)}`} />
         <span className="h-0.5 w-full bg-dialog-hint/50" />
@@ -297,7 +465,9 @@ function Thumb({
         <span className="h-0.5 w-4/5 bg-dialog-hint/50" />
         <span className="h-0.5 w-full bg-dialog-hint/50" />
         <span className="h-0.5 w-1/2 bg-dialog-hint/50" />
-        {kind}
+        <span className="absolute right-1 bottom-1 bg-ink/80 px-1 font-mono text-chip text-white">
+          {docKindLabel(artifact.mediaType, artifact.name)}
+        </span>
       </span>
     );
   }
@@ -319,7 +489,7 @@ function Thumb({
   // said nothing — the extension is the only part a human actually reads.
   return (
     <span
-      className={`relative flex flex-col justify-center gap-1 overflow-hidden bg-code px-3 ${box}`}
+      className={`relative flex flex-col justify-center gap-1 overflow-hidden bg-code px-2 ${box}`}
     >
       <span className="h-0.5 w-full bg-dialog-hint/25" />
       <span className="h-0.5 w-4/5 bg-dialog-hint/25" />
@@ -358,7 +528,12 @@ function Tile({
   const versions = artifact.versions ?? [];
   const body = (
     <>
-      <Thumb client={client} sid={sid} artifact={artifact} />
+      <Thumb
+        client={client}
+        sid={sid}
+        artifact={artifact}
+        hasHistory={versions.length > 1}
+      />
       <span className="min-w-0 px-2 py-1.5">
         <span className="block truncate font-mono text-meta font-bold text-white">
           {artifact.name}

@@ -166,6 +166,10 @@ interface LiveActivity {
   command?: string;
   operation?: string;
   label?: string;
+  // The tool's OWN sentence for the ticker, when the host sent one: a private
+  // transport's op+id names neither the command nor the budget, so the host
+  // composes the phrase once and every channel prints it verbatim.
+  phrase?: string;
 }
 
 interface LiveTurn {
@@ -454,6 +458,7 @@ function liveProgressPhase(
       return `Vis is parsing model response ${suffix}`;
     case "tool":
     case "tool-call": {
+      if (activity.phrase) return `Vis is ${activity.phrase} ${suffix}`;
       const label = workspaceRelativePath(activity.label, workspaceRoots);
       return `Vis is running: ${activity.operation || "tool"}${label ? ` ${compactLabel(label, "")}` : ""} ${suffix}`;
     }
@@ -703,6 +708,7 @@ function reduceLiveEvent(
             command: stringField(event, "cmd") || undefined,
             operation: stringField(event, "op") || undefined,
             label: stringField(event, "label") || undefined,
+            phrase: stringField(event, "phrase") || undefined,
           }
         : undefined,
     };

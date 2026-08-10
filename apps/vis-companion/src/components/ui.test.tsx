@@ -2031,6 +2031,31 @@ describe("a call site positions, and the component paints", () => {
     expect(offenders).toEqual([]);
   });
 
+  // Regression, user report ("the portal close vs the dialog close and dialog headers
+  // are different. WE SHOULD NORMALIZE"): seven surfaces opened over another surface,
+  // no two of their title bars agreed on height, alignment or padding, and four of the
+  // closes were hand-built at the call site. `DialogHeader.test.tsx` pins what the one
+  // band does; this is the rule that keeps a second one from being drawn.
+  it("lets no surface paint its own dialog title bar or its own way out", () => {
+    const owners = Object.entries(sources).filter(
+      ([path]) => !path.includes("/dev/") && !path.includes(".test."),
+    );
+    const bands = owners.filter(
+      ([, source]) => (source.match(/<header[^>]*bg-dialog-title/g) ?? []).length > 0,
+    );
+    expect(bands.map(([path]) => path)).toEqual(["./ui.tsx"]);
+    // The hand-built closes all wore this hairline against the title bar's ink.
+    expect(
+      owners
+        .filter(([, source]) =>
+          source.includes(
+            "border-l border-dialog-title-foreground/20 text-dialog-title-foreground",
+          ),
+        )
+        .map(([path]) => path),
+    ).toEqual([]);
+  });
+
   it("gives a settings panel's verbs one density", () => {
     const panel = renderToStaticMarkup(
       <Button density="panel">Notify me from this machine</Button>,

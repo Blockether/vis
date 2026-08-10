@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
-import appSource from '../App.tsx?raw';
-import settingsSource from '../screens/SettingsScreen.tsx?raw';
-import webPushSource from './web-push.ts?raw';
-import serviceWorkerSource from '../../public/sw.js?raw';
+// @vitest-environment jsdom
+import { screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it, vi } from 'vitest';
+import { renderApp } from '../app-harness';
+import { registerWebServiceWorker } from './web-push';
 import {
   pushIntentFrom,
   resolvePushIntent,
@@ -12,6 +13,19 @@ import {
 } from './push-intent';
 import { isShellChromeVisible, shellScreen, type ShellScreen } from './shell';
 import type { GatewayConn } from './types';
+
+/** Every handler `App` has subscribed to OS notification taps with. */
+const taps: ((tap: unknown) => void)[] = [];
+vi.mock('./push', async (original) => ({
+  ...((await original()) as object),
+  isPushSupported: () => true,
+  onPushTap: (handler: (tap: unknown) => void) => {
+    taps.push(handler);
+    return () => {
+      taps.splice(taps.indexOf(handler), 1);
+    };
+  },
+}));
 
 const laptop: GatewayConn = { url: 'http://10.0.0.5:7890', id: 'gw-laptop' };
 const desktop: GatewayConn = { url: 'http://10.0.0.6:7890', id: 'gw-desktop' };
@@ -156,21 +170,42 @@ describe('resolvePushIntent', () => {
 });
 
 describe('App wiring', () => {
-  it('subscribes to taps once, at mount, so the retained cold-start tap is caught', () => {
-    const at = appSource.indexOf('onPushTap(');
-    expect(at).toBeGreaterThan(-1);
-    // Re-subscribing when the active gateway changes would leave a window with
-    // no listener attached — precisely when the launch tap is replayed.
-    const deps = appSource.slice(at).indexOf('}, [');
-    expect(appSource.slice(at).slice(deps, deps + 6)).toBe('}, [])');
+  it('subscribes to taps once, at mount, so the retained cold-start tap is caught', async () => {
+    const view = renderApp({ machines: [{ label: 'laptop' }] });
+    await screen.findByRole('button', { name: 'Actions for laptop' });
+    expect(taps).toHaveLength(1);
+    // Re-subscribing when the shell's state changes would leave a window with no
+    // listener attached — precisely when the launch tap is replayed.
+    // Changing what the shell shows must not re-subscribe.
+    await userEvent.click(screen.getByRole('button', { name: 'Search all machines' }));
+    await screen.findByRole('button', { name: 'Close search' });
+    await waitFor(() => expect(taps).toHaveLength(1));
+    view.unmount();
+    view.restore();
   });
 
-  it('parks the tap and drains it through this module', () => {
-    expect(appSource).toContain('pushIntentFrom');
-    expect(appSource).toContain('resolvePushIntent');
+  it('parks the tap and drains it onto the tapped session', async () => {
+    const view = renderApp({ machines: [{ label: 'laptop' }] });
+    await screen.findByRole('button', { name: 'Actions for laptop' });
+    // The chrome is on screen: this is the list.
+    expect(screen.getByRole('button', { name: 'Open preferences' })).toBeTruthy();
+
+    taps[0]?.({
+      sessionId: 'sess-42',
+      gatewayId: view.conns[0].id,
+      turnId: 'turn-7',
+      status: 'completed',
+      type: 'turn.end',
+    });
+
+    // The one screen that takes the chrome away IS the session.
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Open preferences' })).toBeNull(),
+    );
+    view.unmount();
+    view.restore();
   });
 });
-
 describe('a tapped notification ends on the session screen', () => {
   /**
    * What `App.tsx` renders once the drain has answered: `openGatewaySession`
@@ -222,7 +257,6 @@ describe('a tapped notification ends on the session screen', () => {
   it('keeps the transport pinned to the tapped gateway, not the active one', () => {
     // `sessionConn` prefers `openTarget.conn`, so opening a session on a machine
     // that is not the active one still has a client the instant it renders.
-    expect(appSource).toContain('const sessionConn = openTarget?.conn ?? active;');
     const s = state({ conns: [laptop, desktop], active: desktop });
     const outcome = resolvePushIntent(pushIntentFrom(TAP, 1_000), s);
     expect(outcome).toEqual({ action: 'open', conn: laptop, sid: 'sess-42' });
@@ -232,12 +266,28 @@ describe('a tapped notification ends on the session screen', () => {
 
 // Regression, issue #web-push: the web build used to depend on foreground SSE instead of background push delivery.
 describe('web notification wiring', () => {
-  it('registers the worker and uses the background Web Push path', () => {
-    expect(appSource).toContain('void registerWebServiceWorker().catch(() => undefined);');
-    expect(settingsSource).toContain('isWebNotificationsPlatform()');
-    expect(settingsSource).toContain('isWebPushSupported');
-    expect(webPushSource).toContain('navigator.serviceWorker.register("/sw.js", { scope: "/" })');
-    expect(serviceWorkerSource).toContain('self.addEventListener("push"');
-    expect(serviceWorkerSource).toContain('self.registration.showNotification');
+  it('installs the root worker at the root scope', async () => {
+    const register = vi.fn(async () => ({}) as ServiceWorkerRegistration);
+    vi.stubGlobal('navigator', {
+      ...navigator,
+      serviceWorker: { register },
+    });
+    await registerWebServiceWorker();
+    expect(register).toHaveBeenCalledWith('/sw.js', { scope: '/' });
+    vi.unstubAllGlobals();
+  });
+
+  it('installs it on app startup, so a background push has somewhere to land', async () => {
+    const register = vi.fn(async () => ({}) as ServiceWorkerRegistration);
+    vi.stubGlobal('navigator', {
+      ...navigator,
+      serviceWorker: { register },
+    });
+    const view = renderApp({ machines: [{ label: 'laptop' }] });
+    await screen.findByRole('button', { name: 'Actions for laptop' });
+    await waitFor(() => expect(register).toHaveBeenCalledWith('/sw.js', { scope: '/' }));
+    view.unmount();
+    view.restore();
+    vi.unstubAllGlobals();
   });
 });
