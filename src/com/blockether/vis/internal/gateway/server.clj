@@ -1792,9 +1792,13 @@
           (update (json-response payload) :headers merge base))))))
 
 (defn- search-sessions-handler
-  "GET /v1/sessions/actions/search?q=&channel= — soul-id STRINGS whose transcript (user
-   request + assistant text) matches `q`. The heavy assistant text stays
-   server-side; clients union these ids into their local title/project filter."
+  "GET /v1/sessions/actions/search?q=&channel= — the ranked answer to `q`.
+
+   The SERVER decides relevance: `matches` carries every session whose title or
+   transcript matches, each with the `rank` band it earned (title 0, request 1,
+   reply 2, thinking 3) and `is_in_title`, already ordered band-then-newest.
+   Clients PAINT that order; they never re-derive it, so a third client cannot
+   invent a fourth ordering. `session_ids` mirrors the same order."
   [request]
   (let
     [q
