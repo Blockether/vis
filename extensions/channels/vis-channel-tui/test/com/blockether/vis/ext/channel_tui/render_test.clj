@@ -1250,20 +1250,21 @@
   (it "lets the TOOL say what it is doing, instead of its private op and an id"
       ;; Regression, wait audit: a nested `sh.wait(60)` painted
       ;; "Vis is running: _shell-wait tt" for the whole wait — a private transport
-      ;; name and an opaque id, naming neither the command nor the budget, so a wait
+      ;; name and a handle the caller typed, naming neither the command nor the budget,
       ;; doing its job read as a wait stuck on nothing. A tool that declares a ticker
       ;; phrase owns the sentence; everything else keeps the op+label default.
       (let
-        [body (strip-ansi (render/progress->text
-                            {:iterations [{:iteration 1
-                                           :activity :tool-call
-                                           :tool/op "_shell-wait"
-                                           :tool/label "tt"
-                                           :tool/phrase "waiting for tt (up to 60s): npm test"}]}
-                            120
-                            {:show-thinking true :show-iterations true}
-                            {:now-ms 1000 :turn-start-ms 0}))]
-        (expect (str/includes? body "Vis is waiting for tt (up to 60s): npm test"))
+        [body (strip-ansi (render/progress->text {:iterations [{:iteration 1
+                                                                :activity :tool-call
+                                                                :tool/op "_shell-wait"
+                                                                :tool/label "tt"
+                                                                :tool/phrase
+                                                                "waiting up to 60s for: npm test"}]}
+                                                 120
+                                                 {:show-thinking true :show-iterations true}
+                                                 {:now-ms 1000 :turn-start-ms 0}))]
+        (expect (str/includes? body "Vis is waiting up to 60s for: npm test"))
+        (expect (not (str/includes? body "tt")))
         (expect (not (str/includes? body "_shell-wait")))))
   (it "live progress previews huge thinking with the viewport-driven truncation"
       ;; The single-iteration truncation summary only fires when a

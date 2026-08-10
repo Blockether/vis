@@ -394,8 +394,9 @@
 (s/def :ext.symbol/on-error-fn fn?)
 ;; Live-ticker phrase: (fn [env args] -> string) completing "Vis is …" while the
 ;; call is in flight. The TOOL owns it because only the tool knows what a private
-;; transport is actually doing — `_shell-wait tt` answers nothing, `waiting for tt
-;; (up to 60s): npm test` answers everything.
+;; transport is actually doing — `_shell-wait tt` answers nothing, and neither does
+;; the caller's own disposable handle; `waiting up to 60s for: npm test` answers
+;; everything.
 (s/def :ext.symbol/ticker-fn fn?)
 ;; Op classification carried INLINE on the symbol entry — every
 ;; observed tool declares its tag right on `vis/symbol`'s opts map,

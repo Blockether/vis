@@ -711,8 +711,11 @@ payload beside `op`/`label`; it is UI prose, never persisted and never replayed 
 - `src/com/blockether/vis/internal/foundation/shell.clj` — `wait-idle-poll-ms` is a ladder
   (2 ms while a finish is plausible, 10 ms, then 50 ms once it clearly is not) driven by an idle
   counter in the wait loop, and `wait-drain-poll-ms` (5 ms) charges the shortest sleep to a
-  command that is already done. `shell-ticker` builds one phrase from the id, the budget and the
-  live script; `:ext.symbol/ticker-fn` is declared on `shell-{wait,status,logs,type,stop}-symbol`.
+  command that is already done. `shell-ticker` builds one phrase from the COMMAND and the budget,
+  read live off the registry — never the handle, which is the caller's own disposable token;
+  `shell-target-label` names a shell the same way on every card (`the shell` when nothing knows
+  the command), and `:ext.symbol/ticker-fn` is declared on
+  `shell-{wait,status,logs,type,stop}-symbol`.
 - `src/com/blockether/vis/internal/extension.clj` — `:ext.symbol/ticker-fn` is a symbol option with
   its spec and its doc line; `tool-start-phrase` calls it and `tool-start-event` carries the result.
 - `src/com/blockether/vis/internal/progress.clj` and
@@ -722,8 +725,9 @@ payload beside `op`/`label`; it is UI prose, never persisted and never replayed 
   `apps/vis-companion/src/screens/SessionScreen.tsx` — print it verbatim after `Vis is `; a tool
   with no ticker keeps the `op` + `label` default.
 - Test: `shell-test/shell-wait-answers-test` pins the poll ladder, that a finished command's wait
-  returns within 100 ms of its own `finished_at`, and the phrase for every shell transport;
-  `render-test` pins that `:tool/phrase` replaces `_shell-wait tt` in the bubble.
+  returns within 100 ms of its own `finished_at`, the phrase for every shell transport, and that no
+  phrase or card prints the caller's handle; `render-test` pins that `:tool/phrase` replaces
+  `_shell-wait tt` in the bubble.
 
 **Unknowns.** None.
 
@@ -834,7 +838,9 @@ Done:
 - Phase 17, a wait ANSWERS — `bd3774d8b`. The idle poll is a 2/10/50 ms ladder with a 5 ms drain, so a
   finished command's wait returns 9-17 ms after its exit instead of 120-154 ms; a tool declares its
   own ticker sentence (`:ext.symbol/ticker-fn`), so the bubble reads
-  `Vis is waiting for tt (up to 60s): npm test` instead of `Vis is running: _shell-wait tt`.
+  `Vis is waiting up to 60s for: npm test` instead of `Vis is running: _shell-wait tt`. The handle
+  itself left the screen in the follow-up: a ticker and every lifecycle card name the shell by its
+  COMMAND, or `the shell`, because `tt` is a token only the caller can resolve.
 
 TODO, in order: nothing. The plan is DONE.
 

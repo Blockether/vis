@@ -2635,6 +2635,23 @@
 
     (if (> (count s) n) (str (subs s 0 (max 0 (dec n))) "…") s)))
 
+(defn- shell-target-label
+  "How a background shell is NAMED on screen: by the COMMAND it runs, never by the
+   handle it answers to.
+
+   A handle is the CALLER's addressing token — `tt`, `d4`, `chk2` — routinely two
+   letters an agent typed to keep two calls apart, and disposable by construction.
+   It resolves to nothing for the person reading the screen: `◷ `tt` running` asks
+   them to look up a name that exists only inside one call site. The bash is what
+   they recognize, so the bash is the name. The handle stays in the RESULT, where
+   the caller that invented it reads it back.
+
+   `the shell` when no command is known — a generic noun beats a private token."
+  [script]
+  (if-let [cmd (shell-one-line script)]
+    (str "`" (clip-chip cmd shell-chip-max) "`")
+    "the shell"))
+
 (def ^:private card-head-chars
   "Head of a stream kept in a CARD. Display-only: capture stays whole."
   4000)
@@ -2901,9 +2918,9 @@
      ;; window — read again rather than sleep.
      summary
      (str (if exited? "■" "◷")
-          " `"
-          (get r "id")
-          "` "
+          " "
+          (shell-target-label (result-script r))
+          " "
           status
           (when-let [exit (get r "exit")]
             (str " · exit " exit))
@@ -2915,9 +2932,9 @@
           (when uptime (str " · " uptime)))
 
      details
-     (kv-lines [["id" (get r "id")] ["status" status] ["exit" (get r "exit")] ["offset" off]
-                ["next_offset" next-off] ["more" (when-not (true? (get r "is_eof")) "true")]
-                ["uptime" uptime] ["pid" (get r "pid")]])
+     (kv-lines [["status" status] ["exit" (get r "exit")] ["offset" off] ["next_offset" next-off]
+                ["more" (when-not (true? (get r "is_eof")) "true")] ["uptime" uptime]
+                ["pid" (get r "pid")]])
 
      body
      (->> [(shell-section "STATUS" details) (shell-section "LOGS" text "bash")]
@@ -2936,7 +2953,7 @@
      (get r "keys")
 
      details
-     (kv-lines [["id" (get r "id")] ["keys" keys-lbl]
+     (kv-lines [["keys" keys-lbl]
                 ["sent"
                  (when-let [n (get r "sent")]
                    (str n " chars"))] ["status" (get r "status")] ["pid" (get r "pid")]])
@@ -2946,18 +2963,18 @@
           (remove nil?)
           (str/join "\n\n"))]
 
-    {:summary (str "↵ `" (get r "id")
-                   "` sent " (if keys-lbl
-                               (clip-chip (shell-one-line keys-lbl) shell-chip-max)
-                               (str (get r "sent") " chars")))
+    {:summary (str "↵ " (shell-target-label (result-script r))
+                   " sent " (if keys-lbl
+                              (clip-chip (shell-one-line keys-lbl) shell-chip-max)
+                              (str (get r "sent") " chars")))
      :body (when (seq body) body)}))
 
 (defn- render-shell-stop-result
   "shell op `stop` → terminal lifecycle card."
   [r]
-  {:summary (str "✕ background `" (get r "id") "` stopped")
+  {:summary (str "✕ background " (shell-target-label (result-script r)) " stopped")
    :body (shell-section "STATUS"
-                        (kv-lines [["id" (get r "id")] ["status" "stopped"] ["pid" (get r "pid")]
+                        (kv-lines [["status" "stopped"] ["pid" (get r "pid")]
                                    ["command" (shell-one-line (result-script r))]
                                    ["uptime" (duration-label (get r "uptime_ms"))]]))})
 
@@ -3010,28 +3027,30 @@
      script
      (or cmd (live-bg-script id))
 
+     target
+     (shell-target-label script)
+
      summary
      (cond
        ;; A background START is its own lifecycle card even though it carries a
-       ;; command — mirror the finished `▸ `id` started · pid N`.
-       (= "background" op) (str "▸ " (when id (str "`" id "` ")) "starting")
+       ;; command — mirror the finished `▸ … started · pid N`.
+       (= "background" op) (str "▸ " target " starting")
        (seq cmd) (str "$ " (clip-chip (shell-one-line cmd) shell-chip-max) " (running)")
        (nil? id) nil
-       (= "logs" op) (str "◷ `" id "` reading logs")
-       (= "send" op) (str "↵ `" id
-                          "` sending" (when keys-lbl
-                                        (str " "
-                                             (clip-chip (shell-one-line keys-lbl) shell-chip-max))))
-       (= "stop" op) (str "✕ background `" id "` stopping")
-       :else (str "◷ `" id "` " op))
+       (= "logs" op) (str "◷ " target " reading logs")
+       (= "send" op) (str "↵ " target
+                          " sending" (when keys-lbl
+                                       (str " "
+                                            (clip-chip (shell-one-line keys-lbl) shell-chip-max))))
+       (= "stop" op) (str "✕ background " target " stopping")
+       :else (str "◷ " target " " op))
 
      body
      (->> [(shell-section "COMMAND"
                           (some-> script
                                   format-shell-command)
                           "bash")
-           (shell-section "STATUS"
-                          (kv-lines [["id" id] ["cwd" (opt input :cwd)] ["keys" keys-lbl]]))]
+           (shell-section "STATUS" (kv-lines [["cwd" (opt input :cwd)] ["keys" keys-lbl]]))]
           (remove nil?)
           (str/join "\n\n"))]
 
@@ -3049,10 +3068,12 @@
 
    A private transport's own name answers nothing: `_shell-wait tt` names neither
    the command nor the budget, which is exactly how a wait that is doing its job
-   reads as a wait stuck on nothing. The tool that KNOWS says it instead —
-   `waiting for tt (up to 60s): npm test` — and the command comes from the live
-   registry, so `wait`/`logs`/`stop`, which run no command of their own, still name
-   the one they act on."
+   reads as a wait stuck on nothing. Naming the HANDLE answers no better — `tt` is
+   bookkeeping the caller invented and nobody else can resolve. So the sentence
+   names the COMMAND and the budget — `waiting up to 60s for: npm test` — read live
+   from the registry, so `wait`/`logs`/`stop`, which run no command of their own,
+   still say which bash they act on. `the shell` when the registry knows none: a
+   generic noun tells the reader as much as a private token and misleads less."
   [op]
   (fn [_env args]
     (let
@@ -3060,11 +3081,10 @@
        (first args)
 
        id
-       (or (some-> (opt input :id)
-                   str
-                   str/trim
-                   not-empty)
-           "the shell")
+       (some-> (opt input :id)
+               str
+               str/trim
+               not-empty)
 
        secs
        (or (some-> (opt input :seconds)
@@ -3077,26 +3097,28 @@
        (some-> (live-bg-script id)
                shell-one-line)
 
+       ;; Every verb ends on the preposition, so the nameless case is the same
+       ;; sentence with the generic noun: `stopping the shell`.
        verb
        (case op
          "wait"
-         (str "waiting for " id " (up to " secs "s)")
+         (str "waiting up to " secs "s for")
 
          "logs"
-         (str "reading " id "'s log")
+         "reading the log of"
 
          "status"
-         (str "checking on " id)
+         "checking on"
 
          "send"
-         (str "typing into " id)
+         "typing into"
 
          "stop"
-         (str "stopping " id)
+         "stopping"
 
-         (str op " " id))]
+         op)]
 
-      (str verb (when (seq script) (str ": " (clip-chip script shell-chip-max)))))))
+      (if (seq script) (str verb ": " (clip-chip script shell-chip-max)) (str verb " the shell")))))
 
 (defn- shell-start-renderer
   "Pending-card renderer for ONE shell tool: the verb is fixed by the tool, so the

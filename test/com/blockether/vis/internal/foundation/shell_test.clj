@@ -62,6 +62,9 @@
 
 (def ^:private render-shell-send-result @#'shell/render-shell-send-result)
 
+
+(def ^:private render-shell-stop-result @#'shell/render-shell-stop-result)
+
 (def ^:private keys-label @#'shell/keys-label)
 
 (def ^:private format-shell-command @#'shell/format-shell-command)
@@ -867,13 +870,14 @@
   (it "renders the log card with expandable sections"
       (let
         [logs (render-shell-logs-result {"id" "srv"
+                                         "command" "npm run dev"
                                          "status" "running"
                                          "stdout" "ready\n"
                                          "offset" 0
                                          "next_offset" 6
                                          "is_eof" true
                                          "uptime_ms" 1500})]
-        (expect (str/includes? (:summary logs) "\u25f7 `srv` running \u00b7 6 B at 0"))
+        (expect (str/includes? (:summary logs) "◷ `npm run dev` running · 6 B at 0"))
         (expect (not (str/includes? (:summary logs) "more")))
         (expect (str/includes? (:body logs) "**LOGS**"))))
   ;; A read that stopped short of the end must SAY so, because the cursor is the
@@ -881,41 +885,51 @@
   (it "says where the reader is and whether more is already waiting"
       (let
         [more (render-shell-logs-result {"id" "build"
+                                         "command" "npm run build"
                                          "status" "running"
                                          "stdout" "chunk"
                                          "offset" 4096
                                          "next_offset" 4101
                                          "is_eof" false})]
-        (expect (str/includes? (:summary more) "◷ `build` running · 5 B at 4096 · more"))
+        (expect (str/includes? (:summary more) "◷ `npm run build` running · 5 B at 4096 · more"))
         (expect (str/includes? (:body more) "next_offset: 4101"))
         (expect (str/includes? (:body more) "more: true"))))
-  (it "shows the KEYSTROKES a send typed, naming every control character"
-      (let
-        [typed
-         (render-shell-send-result
-           {"id" "ops" "status" "running" "sent" 6 "keys" (keys-label "hello\n")})
+  (it
+    "shows the KEYSTROKES a send typed, naming every control character"
+    (let
+      [typed
+       (render-shell-send-result {"id" "ops"
+                                  "command" "vim notes"
+                                  "status" "running"
+                                  "sent" 6
+                                  "keys" (keys-label "hello\n")})
 
-         ;; A send is frequently ENTIRELY non-printing (Ctrl-C, Esc, a bare Enter):
-         ;; the old card said "sent 1 chars" and the reader learned nothing.
-         ctrl
-         (render-shell-send-result
-           {"id" "ops" "status" "running" "sent" 1 "keys" (keys-label "\u0003")})]
+       ;; A send is frequently ENTIRELY non-printing (Ctrl-C, Esc, a bare Enter):
+       ;; the old card said "sent 1 chars" and the reader learned nothing.
+       ctrl
+       (render-shell-send-result {"id" "ops"
+                                  "command" "vim notes"
+                                  "status" "running"
+                                  "sent" 1
+                                  "keys" (keys-label "\u0003")})]
 
-        (expect (= "\"hello\" ↵" (keys-label "hello\n")))
-        (expect (= "C-c" (keys-label "\u0003")))
-        (expect (= "Esc ⇥ \"y\" ↵" (keys-label "\u001b\ty\n")))
-        (expect (nil? (keys-label "")))
-        (expect (= "↵ `ops` sent \"hello\" ↵" (:summary typed)))
-        (expect (str/includes? (:body typed) "**KEYS**"))
-        (expect (str/includes? (:body typed) "keys: \"hello\" ↵"))
-        (expect (= "↵ `ops` sent C-c" (:summary ctrl)))
-        (expect (str/includes? (:body ctrl) "C-c"))
-        ;; Falls back to the payload when an older result carries no `keys`.
-        (expect (= "↵ `ops` sent \"y\" ↵"
-                   (:summary (render-shell-send-result
-                               {"id" "ops" "sent" 2 "keys" (keys-label "y\n")}))))
-        (expect (= "↵ `ops` sent 0 chars"
-                   (:summary (render-shell-send-result {"id" "ops" "sent" 0})))))))
+      (expect (= "\"hello\" ↵" (keys-label "hello\n")))
+      (expect (= "C-c" (keys-label "\u0003")))
+      (expect (= "Esc ⇥ \"y\" ↵" (keys-label "\u001b\ty\n")))
+      (expect (nil? (keys-label "")))
+      (expect (= "↵ `vim notes` sent \"hello\" ↵" (:summary typed)))
+      (expect (str/includes? (:body typed) "**KEYS**"))
+      (expect (str/includes? (:body typed) "keys: \"hello\" ↵"))
+      (expect (= "↵ `vim notes` sent C-c" (:summary ctrl)))
+      (expect (str/includes? (:body ctrl) "C-c"))
+      ;; Falls back to the payload when an older result carries no `keys`.
+      (expect (= "↵ `vim notes` sent \"y\" ↵"
+                 (:summary
+                   (render-shell-send-result
+                     {"id" "ops" "command" "vim notes" "sent" 2 "keys" (keys-label "y\n")}))))
+      ;; Nothing knows the command: a generic noun, never the caller's handle.
+      (expect (= "↵ the shell sent 0 chars"
+                 (:summary (render-shell-send-result {"id" "ops" "sent" 0})))))))
 
 (defdescribe
   shell-status-test
@@ -1007,8 +1021,9 @@
   shell-wait-answers-test
   ;; Regression, wait audit: a command that had ALREADY finished still cost its
   ;; caller ~130 ms of `wait` (a flat 50 ms poll, paid twice), and while it ran the
-  ;; ticker said `_shell-wait tt` — a private op name and an opaque id — so a wait
-  ;; doing exactly what it was asked read as a wait stuck on nothing.
+  ;; ticker said `_shell-wait tt` — a private op name and a handle the caller had
+  ;; invented — so a wait doing exactly what it was asked read as a wait stuck on
+  ;; nothing.
   (it "returns within a few ms of the exit it was waiting for"
       (with-shell-on
         (fn []
@@ -1052,22 +1067,27 @@
                env {:session-id sid}
                ticker-of #(:ext.symbol/ticker-fn %)]
 
-              (try (shell* env {"command" "sleep 30" "id" "dev"})
-                   ;; The live phrase names the id, the budget and the real command —
-                   ;; every shell transport, because `_shell-logs dev` answers as little
-                   ;; as `_shell-wait dev` did.
-                   (expect (=
-                             "waiting for dev (up to 60s): sleep 30"
-                             ((ticker-of shell/shell-wait-symbol) env [{"id" "dev" "seconds" 60}])))
-                   (expect (= "waiting for dev (up to 120s): sleep 30"
-                              ((ticker-of shell/shell-wait-symbol) env [{"id" "dev"}])))
-                   (expect (= "stopping dev: sleep 30"
-                              ((ticker-of shell/shell-stop-symbol) env [{"id" "dev"}])))
-                   (expect (= "checking on dev: sleep 30"
-                              ((ticker-of shell/shell-status-symbol) env [{"id" "dev"}])))
-                   (expect (= "reading nobody's log"
-                              ((ticker-of shell/shell-logs-symbol) env [{"id" "nobody"}])))
-                   (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid)))))))))
+              (try
+                (shell* env {"command" "sleep 30" "id" "dev"})
+                ;; The live phrase names the COMMAND and the budget — never the
+                ;; handle, which is the caller's own bookkeeping and answers as
+                ;; little as `_shell-wait dev` did.
+                (expect (= "waiting up to 60s for: sleep 30"
+                           ((ticker-of shell/shell-wait-symbol) env [{"id" "dev" "seconds" 60}])))
+                (expect (= "waiting up to 120s for: sleep 30"
+                           ((ticker-of shell/shell-wait-symbol) env [{"id" "dev"}])))
+                (expect (= "stopping: sleep 30"
+                           ((ticker-of shell/shell-stop-symbol) env [{"id" "dev"}])))
+                (expect (= "checking on: sleep 30"
+                           ((ticker-of shell/shell-status-symbol) env [{"id" "dev"}])))
+                ;; Regression, user report (paraphrased: what is `tt`?): no live
+                ;; shell answers, and the sentence says the generic noun rather
+                ;; than a token only the caller can resolve.
+                (expect (= "reading the log of the shell"
+                           ((ticker-of shell/shell-logs-symbol) env [{"id" "zq7"}])))
+                (expect (not (str/includes? ((ticker-of shell/shell-wait-symbol) env [{"id" "zq7"}])
+                                            "zq7")))
+                (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid)))))))))
 
 (defdescribe shell-one-shape-test
              ;; Regression, one-shape refactor: `run` answered `stdout`, `logs` answered
@@ -1458,15 +1478,14 @@
       (expect (= {:summary "$ ls -1 (running)" :render "**COMMAND**\n```bash\nls -1\n```"}
                  (render-shell-call "run" {:command "ls -1"}))))
   (it "wears the background START headline, which comes from the TOOL and not the arguments"
-      ;; A background start is a lifecycle card, not a run: it reports the handle
-      ;; the session will keep, exactly like the finished `▸ … started`.
-      (expect (= {:summary "▸ `dev` starting"
-                  :render (str "**COMMAND**\n```bash\nnpm run dev\n```\n\n"
-                               "**STATUS**\n```\nid: dev\n```")}
+      ;; A background start is a lifecycle card, not a run: it wears the same
+      ;; headline as the finished `▸ … started`, naming the bash it launched.
+      (expect (= {:summary "▸ `npm run dev` starting"
+                  :render "**COMMAND**\n```bash\nnpm run dev\n```"}
                  (render-shell-call "background" {"id" "dev" "command" "npm run dev"}))))
   (it "reports a `type` by its keystroke label, never a byte count"
-      (expect (= {:summary "↵ `dev` sending \"y\" ↵"
-                  :render "**STATUS**\n```\nid: dev\nkeys: \"y\" ↵\n```"}
+      (expect (= {:summary "↵ the shell sending \"y\" ↵"
+                  :render "**STATUS**\n```\nkeys: \"y\" ↵\n```"}
                  (render-shell-call "send" {"id" "dev" "text" "y\n"}))))
   (it "shows a lifecycle target's OWN command, read live from the registry"
       ;; A logs/type/stop runs no command of its own, but the bash it acts on
@@ -1479,15 +1498,40 @@
          id
          "pending-live-shell"]
 
-        (try
-          (swap! @#'shell/bg-procs assoc-in [sid id] {:script "npm run dev"})
-          (expect
-            (= (str "**COMMAND**\n```bash\nnpm run dev\n```\n\n" "**STATUS**\n```\nid: " id "\n```")
-               (:render (render-shell-call "logs" {"id" id}))))
-          (finally (swap! @#'shell/bg-procs dissoc sid)))
-        ;; No live shell answers to that id: the STATUS rows stand alone.
-        (expect (= (str "**STATUS**\n```\nid: " id "\n```")
-                   (:render (render-shell-call "logs" {"id" id}))))))
+        (try (swap! @#'shell/bg-procs assoc-in [sid id] {:script "npm run dev"})
+             (expect (= "**COMMAND**\n```bash\nnpm run dev\n```"
+                        (:render (render-shell-call "logs" {"id" id}))))
+             (expect (= "◷ `npm run dev` reading logs"
+                        (:summary (render-shell-call "logs" {"id" id}))))
+             (finally (swap! @#'shell/bg-procs dissoc sid)))
+        ;; No live shell answers to that id: the card has nothing to show but the
+        ;; verb — and still never falls back to printing the id.
+        (expect (nil? (:render (render-shell-call "logs" {"id" id}))))
+        (expect (= "◷ the shell reading logs" (:summary (render-shell-call "logs" {"id" id}))))))
+  ;; Regression, user report (paraphrased: "what is tt?" — a two-letter handle an
+  ;; agent typed reached the screen): every lifecycle card named the shell by the
+  ;; caller's id, which resolves to nothing for the person reading it.
+  (it "never prints the caller's disposable handle"
+      (let
+        [handle
+         "zq7"
+
+         cards
+         [(render-shell-call "logs" {"id" handle})
+          (render-shell-call "send" {"id" handle "text" "y\n"})
+          (render-shell-call "stop" {"id" handle})
+          (render-shell-logs-result {"id" handle "command" "npm run dev" "status" "running"})
+          (render-shell-send-result
+            {"id" handle "command" "npm run dev" "sent" 1 "keys" (keys-label "\u0003")})
+          (render-shell-stop-result {"id" handle "command" "npm run dev"})]]
+
+        (doseq [card cards]
+          (expect (not (str/includes? (str (:summary card) (:body card) (:render card)) handle))))
+        ;; What it says instead is the bash.
+        (expect (= "✕ background `npm run dev` stopped"
+                   (:summary (render-shell-stop-result {"id" handle "command" "npm run dev"}))))
+        (expect (= "✕ background the shell stopping"
+                   (:summary (render-shell-call "stop" {"id" handle}))))))
   (it "keeps the raw invocation when there is neither a command nor a target"
       (expect (nil? (render-shell-call "run" {})))
       ;; A malformed command is the CALL's error to report, never this preview's.
