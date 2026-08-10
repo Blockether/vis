@@ -31,6 +31,7 @@ import {
   type AnnotationSurface,
 } from "./AnnotationLayer";
 import { Button, DialogHeader } from "./ui";
+import { useStickyOverlay } from "../lib/sticky-overlay";
 
 interface ExpandableImageProps {
   src: string;
@@ -75,7 +76,10 @@ export function ExpandableImage({
   onError,
   onApply,
 }: ExpandableImageProps) {
-  const [open, setOpen] = useState(false);
+  // The picture is identified by its BYTES, not by this instance: when a turn
+  // settles, the transcript re-mounts the row that owns this trigger, and a
+  // reader looking at the picture must not be dropped back onto the answer.
+  const [open, setOpen] = useStickyOverlay(`image:${src}`);
 
   return (
     <>

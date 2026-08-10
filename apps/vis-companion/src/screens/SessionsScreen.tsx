@@ -14,13 +14,14 @@ import {
   LIST_FRAME,
   LiveCount,
   EditableName,
-  MachineGap,
+  MachineBanner,
   MachineMark,
   MachineRail,
   MachineSwitcher,
   MachineTab,
   Modal,
   NewSessionButton,
+  ProjectCrumb,
   RowDisclosure,
   SectionHeader,
   Spinner,
@@ -1307,18 +1308,31 @@ export function SessionsScreen({
           </div>
         ) : (
           <div>
-            {sections.map(({ machine, groups }, index) => {
+            {sections.map(({ machine, groups }) => {
               const key = machineKey(machine.conn);
+              const machineLive = (machine.sessions ?? []).filter(sessionIsLive).length;
               return (
                 <section key={key} aria-label={`${machineLabel(machine.conn)} projects`}>
                   {/* Every machine keeps its own named panel and landmark, even when it is
                       the only machine in the fleet. */}
-                  {/* A machine boundary is not a project boundary, so it is not drawn
-                      with the same hairline: a band of the page's own colour, closed top
-                      and bottom by the strong rule, says one computer ENDED before any
-                      label is read. It is charged once per EXTRA machine — the first
-                      block starts flush, and a solo fleet never pays it. */}
-                  {index > 0 && <MachineGap />}
+                  {/* A machine boundary is not a project boundary, so it is not drawn with
+                      the same hairline: 24px of that machine's own hue, carrying its name,
+                      says WHOSE the projects below are before any of them is read. A solo
+                      fleet renders no banner at all — the strip, like the scope chips and
+                      the machine landmark, costs a single-machine user nothing. */}
+                  {sections.length > 1 && (
+                    <MachineBanner
+                      color={machineColor(machineColors, key)}
+                      name={machineLabel(machine.conn)}
+                      meta={
+                        machine.error
+                          ? 'not answering'
+                          : `${groups.length} ${groups.length === 1 ? 'project' : 'projects'}${
+                              machineLive > 0 ? ` · ${machineLive} live` : ''
+                            }`
+                      }
+                    />
+                  )}
                   {/* Everything one machine owns hangs off ITS rail, and that rail IS
                       the card's left frame here — a project boundary is a hairline, a
                       machine boundary is a colour change, so where `tower` ends is seen
@@ -1765,6 +1779,9 @@ const ProjectGroup = memo(function ProjectGroup({
   // screen already paints: `projectPage` owns that arithmetic and the reason it
   // is not the gateway's.
   const [page, setPage] = useState(1);
+  // A project FOLDS, and it starts open: the screen's job is to show work, so the
+  // reader closes what they are done with rather than opening what they came for.
+  const [isOpen, setIsOpen] = useState(true);
   const {
     page: shownPage,
     pageCount,
@@ -1779,15 +1796,22 @@ const ProjectGroup = memo(function ProjectGroup({
   return (
     <>
     <section aria-label={`${project} sessions`}>
-      <SectionHeader>
-        {/* The leading half only NAMES the project now: its folder name and the path
-            that tells two `vis` checkouts apart. It was a disclosure button, which
-            hid a whole project's history behind a tap and said nothing about how
-            much of it there was; the history is PAGED below instead. */}
-        <HeaderTitle
+      {/* The project band wears the accent as its outgoing rule — one shelf per
+          project, and the yellow line under it says the rows below belong to the
+          name above them rather than to the machine two bands up. */}
+      <SectionHeader rule="border-accent">
+        {/* The leading half NAMES the project and FOLDS it: folder name, the path that
+            tells two `vis` checkouts apart, and a chevron in the mark column the band
+            already reserves, so the name keeps the list's one leading edge. Paging
+            walks a project's history; the fold decides whether it is on screen at
+            all, which is what a reader with four checkouts on one machine needs. */}
+        <ProjectCrumb
           name={project}
           qualifier={homeifyPath(root) || 'No workspace path'}
           qualifierTitle={root}
+          isOpen={isOpen}
+          onToggle={() => setIsOpen((open) => !open)}
+          label={`${isOpen ? 'Collapse' : 'Expand'} ${project}`}
         />
         {/* The same trailing cluster the machine header above wears: what this group
             reports, then what it offers — the yellow verb gets its gap, the `⋯` gets
@@ -1810,7 +1834,7 @@ const ProjectGroup = memo(function ProjectGroup({
       </SectionHeader>
       {/* The list carries no bottom rule of its own: the card's own bottom border
           closes it, and the two of them stacked into a doubled line under the pager. */}
-      {rows.length > 0 && (
+      {isOpen && rows.length > 0 && (
         <div>
           {rows.map((session) => (
             <SessionRow

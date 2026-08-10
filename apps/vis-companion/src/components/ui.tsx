@@ -1425,8 +1425,39 @@ export function UnreadBadge({ count }: { count: number }) {
  * Render it only BETWEEN machines: the first block starts flush and a fleet of
  * one never pays it.
  */
-export function MachineGap() {
-  return <div className="h-3 bg-ink" aria-hidden="true" />;
+/**
+ * The band that STARTS a machine: 24px of that machine's own hue, full bleed, with
+ * its name in the page's paper ink.
+ *
+ * A whole computer is not a project boundary, so it is not drawn like one. The
+ * empty gap that used to separate two machines said "something ended" and never
+ * said what began; this says WHOSE the projects below it are, in the same colour
+ * as that machine's rail and its scope chip, and it costs 24px instead of 12px of
+ * nothing. It is charged only to a fleet: one machine paired renders no banner,
+ * because then every project on screen is already its own.
+ *
+ * It does not stick. The band that follows the reader down the list is the project
+ * header — the level being acted on — and two sticky strips one hairline apart
+ * would only ever cover each other.
+ */
+export function MachineBanner({
+  color,
+  name,
+  meta,
+}: {
+  color?: MachineColor;
+  name: ReactNode;
+  /** What the machine reports for the whole block: its projects, what is live. */
+  meta?: ReactNode;
+}) {
+  return (
+    <div
+      className={`flex min-h-6 w-full items-center gap-2 font-mono text-chip font-bold uppercase tracking-[0.18em] text-ink ${LIST_EDGE} ${LIST_EDGE_END} ${color ? color.dot : 'bg-edge-strong'}`}
+    >
+      <span className="min-w-0 truncate">{name}</span>
+      {meta ? <span className="ml-auto shrink-0 font-normal tracking-normal">{meta}</span> : null}
+    </div>
+  );
 }
 
 /**
@@ -1730,6 +1761,53 @@ export function HeaderTitle({
         )}
       </span>
     </span>
+  );
+}
+
+/**
+ * The leading half of a PROJECT header, and the whole of it is the disclosure.
+ *
+ * A project is the level a reader scopes by, so it is the level that folds: with
+ * four checkouts on one machine the screen is otherwise a scroll through work
+ * nobody asked about. The mark column `HeaderTitle` already reserves carries the
+ * chevron, so the name stays on the one leading edge every row in this list shares
+ * — the disclosure buys a glyph, never an indent.
+ *
+ * It is a `HeaderTitle` inside a pressable, not a button beside one: the whole
+ * naming half answers the thumb, and the trailing cluster (`HeaderActions`) keeps
+ * its own controls, so "New session" is never swallowed by the fold.
+ */
+export function ProjectCrumb({
+  name,
+  qualifier,
+  qualifierTitle,
+  isOpen,
+  onToggle,
+  label,
+}: {
+  name: ReactNode;
+  qualifier?: ReactNode;
+  qualifierTitle?: string;
+  isOpen: boolean;
+  onToggle: () => void;
+  /** What the fold is called to a screen reader: `Collapse vis`. */
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-expanded={isOpen}
+      aria-label={label}
+      onClick={onToggle}
+      className="flex min-w-0 flex-1 items-center text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none"
+    >
+      <HeaderTitle
+        mark={<ChevronIcon open={isOpen} className="size-3.5 text-dialog-hint" />}
+        name={name}
+        qualifier={qualifier}
+        qualifierTitle={qualifierTitle}
+      />
+    </button>
   );
 }
 

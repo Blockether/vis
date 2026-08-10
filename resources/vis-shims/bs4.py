@@ -3145,12 +3145,39 @@ def __vis_install_bs4__():
             "dd": set(["dt", "dd"]),
             "option": set(["option"]),
             "optgroup": set(["option", "optgroup"]),
-            "tr": set(["tr", "td", "th"]),
-            "td": set(["td", "th"]),
-            "th": set(["td", "th"]),
-            "tbody": set(["td", "th", "tr", "tbody", "thead", "tfoot"]),
-            "thead": set(["td", "th", "tr", "tbody", "thead", "tfoot"]),
-            "tfoot": set(["td", "th", "tr", "tbody", "thead", "tfoot"]),
+            "col": set(["caption"]),
+            "colgroup": set(["caption", "colgroup"]),
+            "caption": set(["caption", "colgroup"]),
+            "tr": set(["tr", "td", "th", "caption", "colgroup"]),
+            "td": set(["td", "th", "caption", "colgroup"]),
+            "th": set(["td", "th", "caption", "colgroup"]),
+            "tbody": set(
+                ["td", "th", "tr", "tbody", "thead", "tfoot", "caption", "colgroup"]
+            ),
+            "thead": set(
+                ["td", "th", "tr", "tbody", "thead", "tfoot", "caption", "colgroup"]
+            ),
+            "tfoot": set(
+                ["td", "th", "tr", "tbody", "thead", "tfoot", "caption", "colgroup"]
+            ),
+        }
+
+        # A list item ends the previous item of ITS OWN list and no further:
+        # `<ul><li>b<ul><li>c` opens the inner item inside the inner list.
+        NARROW_SCOPE = {
+            "li": set(["ul", "ol", "menu"]),
+            "dt": set(["dl"]),
+            "dd": set(["dl"]),
+            "option": set(["select", "optgroup", "datalist"]),
+            "optgroup": set(["select"]),
+        }
+
+        # tag -> (parent HTML5 inserts for it, the open elements that need it).
+        IMPLIED_PARENT = {
+            "tr": ("tbody", set(["table"])),
+            "td": ("tr", set(["table", "tbody", "thead", "tfoot"])),
+            "th": ("tr", set(["table", "tbody", "thead", "tfoot"])),
+            "col": ("colgroup", set(["table"])),
         }
 
         # An implied end tag never reaches past one of these: `<td><p>a<tr>`
@@ -3223,11 +3250,18 @@ def __vis_install_bs4__():
         def _merge_attrs(self, node, attrs):
             # A repeated <html>/<body> start tag is not a second element; its
             # attributes land on the one that is already open.
-            for key, value in attrs:
-                if key not in node.attrs:
-                    node.attrs[key] = "" if value is None else value
+            merged = dict(
+                (key, "" if value is None else value)
+                for key, value in attrs
+                if key not in node.attrs
+            )
+            if merged and self.builder is not None:
+                merged = self.builder._replace_cdata_list_attribute_values(
+                    node.name, merged
+                )
+            node.attrs.update(merged)
 
-        def _close_upto(self, names):
+        def _close_upto(self, names, extra_stoppers=None):
             # The OUTERMOST match in scope is the one that ends: a second `<tr>`
             # ends the row, not just the `<td>` inside it.
             target = None
@@ -3235,17 +3269,30 @@ def __vis_install_bs4__():
                 name = self.stack[i].name
                 if name in names:
                     target = i
-                elif name in self.SCOPE_STOPPERS:
+                elif name in self.SCOPE_STOPPERS or (
+                    extra_stoppers and name in extra_stoppers
+                ):
                     break
             if target is not None:
                 del self.stack[target:]
 
         def _imply_end(self, tag):
             if tag in self.CLOSES_P:
-                self._close_upto(set(["p"]))
+                self._close_upto(set(["p"]), self.NARROW_SCOPE.get(tag))
             closers = self.IMPLIED_END.get(tag)
             if closers:
-                self._close_upto(closers)
+                self._close_upto(closers, self.NARROW_SCOPE.get(tag))
+
+        def _imply_parent(self, tag):
+            # `<table><tr>` is a row in an implied `<tbody>` in every browser and
+            # in libxml2, so the section a row needs is opened before the row.
+            spec = self.IMPLIED_PARENT.get(tag)
+            if not spec:
+                return
+            parent, under = spec
+            if self._cur().name in under:
+                self._imply_parent(parent)
+                _Builder.handle_starttag(self, parent, [])
 
         # -- token handling ----------------------------------------------
 
@@ -3272,6 +3319,7 @@ def __vis_install_bs4__():
             else:
                 self._enter_body()
             self._imply_end(tag)
+            self._imply_parent(tag)
             return _Builder.handle_starttag(self, tag, attrs, handle_empty_element)
 
         def handle_data(self, data):

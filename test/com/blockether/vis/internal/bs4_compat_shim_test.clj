@@ -170,7 +170,7 @@
               "       and str(B('<p>a<p>b', 'html5lib')) == '<html><head></head><body><p>a</p><p>b</p></body></html>'\n"
               "       and str(B('<p>a<p>b', 'html.parser')) == '<p>a<p>b</p></p>'\n"
               "       and str(B('<ul><li>a<li>b</ul>', 'lxml')) == '<html><body><ul><li>a</li><li>b</li></ul></body></html>'\n"
-              "       and str(B('<table><tr><td>1<td>2<tr><td>3</table>', 'lxml')) == '<html><body><table><tr><td>1</td><td>2</td></tr><tr><td>3</td></tr></table></body></html>'\n"
+              "       and str(B('<table><tr><td>1<td>2<tr><td>3</table>', 'lxml')) == '<html><body><table><tbody><tr><td>1</td><td>2</td></tr><tr><td>3</td></tr></tbody></table></body></html>'\n"
               "       and str(B('<title>T</title><p>x', 'lxml')) == '<html><head><title>T</title></head><body><p>x</p></body></html>'\n"
               "       and str(B('', 'html5lib')) == '<html><head></head><body></body></html>')\n"
               "out"))))))
@@ -192,6 +192,59 @@
               "       and B('<p class=\"a b\">x</p>', 'xml').p['class'] == 'a b'\n"
               "       and B('<p class=\"a b\">x</p>', 'lxml').p['class'] == ['a', 'b'])\n"
               "out"))))))
+  ;; Regression, issue #135: the implied-structure builders closed a nested
+  ;; list's item against the OUTER list, dropped the <tbody> a browser inserts,
+  ;; let <caption>/<colgroup> swallow the rows after them, and left a repeated
+  ;; <body class="a b"> attribute as one string instead of a multi-valued list.
+  (it
+    "implies table sections and keeps nested lists in their own list"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            (str
+              "from bs4 import BeautifulSoup as B\n"
+              "out = True\n" "for f in ('lxml', 'html5lib'):\n"
+              "    body = B('<table><td>a</table>', f).body\n"
+              "    out = out and str(body.table) == '<table><tbody><tr><td>a</td></tr></tbody></table>'\n"
+              "    body = B('<table><caption>C<col><tr><td>a</table>', f).body\n"
+              "    out = out and [t.name for t in body.table.children] == ['caption', 'colgroup', 'tbody']\n"
+              "    body = B('<ul><li>a<li>b<ul><li>c</ul><li>d</ul>', f).body\n"
+              "    out = out and str(body.ul) == '<ul><li>a</li><li>b<ul><li>c</li></ul></li><li>d</li></ul>'\n"
+              "    body = B('<dl><dt>a<dd>b<dt>c</dl>', f).body\n"
+              "    out = out and str(body.dl) == '<dl><dt>a</dt><dd>b</dd><dt>c</dt></dl>'\n"
+              "    out = out and B('<body class=\"page dark\"><p>x', f).body['class'] == ['page', 'dark']\n"
+              "out"))))))
+  (it
+    "survives a complex page identically under every builder"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            (str
+              "from bs4 import BeautifulSoup as B\n"
+              "m = ('<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">'\n"
+              "     '<title>Shop &mdash; Home</title></head><body class=\"page dark\"><!-- nav -->'\n"
+              "     '<nav><ul class=\"menu\"><li><a href=\"/a\">A</a><li><a href=\"/b\">B</a></ul></nav>'\n"
+              "     '<main><h1>Hello&nbsp;World</h1>'\n"
+              "     '<table id=\"t\"><tr><th>Name<th>Qty<tr><td>Widget<td>3</table>'\n"
+              "     '<p>loose<div class=\"card\" data-id=\"7\"><img src=x.png alt=\"x\"><p>inner'\n"
+              "     '<script>var a = 1 < 2 && 3 > 2;</script></main><footer>&copy; 2024</footer></body></html>')\n"
+              "out = True\n" "for f in ('html.parser', 'lxml', 'html5lib'):\n"
+              "    s = B(m, f)\n"
+              "    out = out and s.title.string == 'Shop — Home' and s.h1.get_text() == 'Hello\u00a0World'\n"
+              "    out = out and [a['href'] for a in s.select('nav ul.menu li a')] == ['/a', '/b']\n"
+              "    out = out and s.select_one('div.card')['data-id'] == '7'\n"
+              "    out = out and s.find('script').string == 'var a = 1 < 2 && 3 > 2;'\n"
+              "    out = out and s.footer.get_text() == '© 2024'\n"
+              "    out = out and s.body['class'] == ['page', 'dark'] and s.html['lang'] == 'en'\n"
+              "for f in ('lxml', 'html5lib'):\n"
+              "    once = str(B(m, f))\n" "    out = out and str(B(once, f)) == once\n"
+              "    rows = [[c.get_text(strip=True) for c in tr.find_all(['th', 'td'])]\n"
+              "            for tr in B(m, f).select('#t tr')]\n"
+              "    out = out and rows == [['Name', 'Qty'], ['Widget', '3']]\n" "out"))))))
   (it "still raises FeatureNotFound for a parser nobody ships"
       (with-python-context
         (expect (true? (ev python-context

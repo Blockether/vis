@@ -1,4 +1,4 @@
-import { memo, type ReactNode, useCallback, useEffect, useState } from "react";
+import { memo, type ReactNode, useCallback, useEffect } from "react";
 import { createPortal } from "react-dom";
 
 import type { GatewayClient } from "../lib/gateway";
@@ -14,6 +14,7 @@ import { PdfAnnotator } from "./PdfArtifact";
 import { TextFrame } from "./TextArtifact";
 import { ChevronIcon } from "./icons";
 import { DialogHeader, ListRow } from "./ui";
+import { useStickyOverlay } from "../lib/sticky-overlay";
 
 /**
  * What an OPENED artifact needs in order to be marked up: which session and
@@ -275,7 +276,9 @@ export const DocPreview = memo(function DocPreview({
   /** Asked for the bytes — the parent starts the fetch. */
   onNeeded: () => void;
 }) {
-  const [opened, setOpened] = useState(false);
+  // Keyed by the document, not by this row: a turn settling re-mounts the row
+  // under a different subtree, and an opened document must stay opened.
+  const [opened, setOpened] = useStickyOverlay(`doc:${name}`);
 
   useEffect(() => {
     onNeeded();

@@ -22,6 +22,7 @@ import {
 } from "../lib/artifacts";
 import type { SessionArtifact } from "../lib/artifacts";
 import { ExpandableImage } from "../components/ImageViewer";
+import { dropOverlayHandovers } from "../lib/sticky-overlay";
 import {
   BackButton,
   Banner,
@@ -1473,6 +1474,9 @@ export function SessionScreen({
   // alternative is remounting via `key`, which would also tear down the live SSE
   // subscription mid-stream, so the reset stays explicit here.
   useEffect(() => {
+    // An artifact overlay only hands itself over to the row that replaces it as a
+    // turn settles. Changing session is not that: nothing here may re-open.
+    dropOverlayHandovers();
     void recordingRef.current?.cancel();
     recordingRef.current = null;
     pendingVoiceRef.current = null;

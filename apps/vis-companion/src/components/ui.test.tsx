@@ -43,7 +43,9 @@ import {
   LiveCount,
   LoadMore,
   LiveTally,
-  MachineGap,
+  LIST_EDGE,
+  LIST_EDGE_END,
+  MachineBanner,
   MachineMark,
   MachineRail,
   MachineSwitcher,
@@ -56,6 +58,7 @@ import {
   RemoveButton,
   Switch,
   TextButton,
+  ProjectCrumb,
   RowDisclosure,
   SectionHeader,
   Spinner,
@@ -162,21 +165,86 @@ describe("UnreadBadge", () => {
   });
 });
 
-// A machine gap separates computers with space; the banner supplies the promoted name.
-describe("MachineGap", () => {
-  it("is a band of page ink, not another pair of overlapping rules", () => {
-    const html = renderToStaticMarkup(<MachineGap />);
+// The band that STARTS a machine. It replaced an empty 12px gap that said something
+// had ended and never said what began.
+describe("MachineBanner", () => {
+  it("is 24px of the machine's own hue, carrying its name", () => {
+    const html = renderToStaticMarkup(
+      <MachineBanner color={MACHINE_COLORS[0]!} name="tower" meta="2 projects" />,
+    );
 
-    expect(html).toContain("h-3");
-    expect(html).toContain("bg-ink");
-    expect(html).not.toContain("border-");
-    expect(html).not.toContain("-mb-px");
+    expect(html).toContain("min-h-6");
+    expect(html).toContain(MACHINE_COLORS[0]!.dot);
+    expect(html).toContain("tower");
+    expect(html).toContain("2 projects");
   });
 
-  it("is decoration, so a screen reader never stops on it", () => {
-    expect(renderToStaticMarkup(<MachineGap />)).toContain(
-      'aria-hidden="true"',
+  // Machine, project and session must not be three sizes of the same voice: the
+  // machine is the SHORTEST band and the only one that wears a colour as paper.
+  it("speaks in the smallest type on the screen, and is not a header band", () => {
+    const html = renderToStaticMarkup(<MachineBanner name="tower" />);
+
+    expect(html).toContain("text-chip");
+    expect(html).toContain("uppercase");
+    expect(html).not.toContain("min-h-13");
+    expect(html).not.toContain("sticky");
+  });
+
+  it("starts and ends on the list's one leading and trailing edge", () => {
+    const html = renderToStaticMarkup(<MachineBanner name="tower" />);
+
+    expect(html).toContain(LIST_EDGE);
+    expect(html).toContain(LIST_EDGE_END);
+  });
+
+  it("says nothing about what it does not report", () => {
+    expect(renderToStaticMarkup(<MachineBanner name="tower" />)).not.toContain(
+      "ml-auto",
     );
+  });
+});
+
+// A project FOLDS, and the fold is the naming half of its own header.
+describe("ProjectCrumb", () => {
+  it("is a disclosure that names its project and its state", () => {
+    const html = renderToStaticMarkup(
+      <ProjectCrumb
+        name="vis"
+        qualifier="~/vis"
+        isOpen
+        onToggle={() => {}}
+        label="Collapse vis"
+      />,
+    );
+
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain('aria-label="Collapse vis"');
+    expect(html).toContain("vis");
+    expect(html).toContain("~/vis");
+  });
+
+  // The chevron rides in the mark column `HeaderTitle` already reserves, so folding
+  // a project costs a glyph and never an indent: the name stays on the one leading
+  // edge every row of this list shares.
+  it("keeps the name on the list's leading edge", () => {
+    const folded = renderToStaticMarkup(
+      <ProjectCrumb name="vis" isOpen={false} onToggle={() => {}} label="Expand vis" />,
+    );
+
+    expect(folded).toContain(LIST_EDGE);
+    expect(folded).not.toContain("pl-6");
+    expect(folded).toContain('aria-expanded="false"');
+  });
+
+  // The trailing cluster is NOT inside the fold: "New session" is the verb this
+  // screen exists for and must never be swallowed by a disclosure.
+  it("takes only the naming half of the band", () => {
+    const html = renderToStaticMarkup(
+      <ProjectCrumb name="vis" isOpen onToggle={() => {}} label="Collapse vis" />,
+    );
+
+    expect(html).toContain("flex-1");
+    expect(html).not.toContain("w-full");
   });
 });
 

@@ -155,11 +155,12 @@ describe('where "New session" lives', () => {
     expect(source).toContain("<section aria-label={`${project} sessions`}>");
     // The header's own band — its rule, its paper, its height — belongs to
     // `SectionHeader`, and is pinned once in `ui.test.tsx`.
-    expect(source).toContain("<SectionHeader>");
+    // The project band wears the accent as its outgoing rule: one shelf per project.
+    expect(source).toContain('<SectionHeader rule="border-accent">');
     expect(source).not.toContain('tone="machine"');
     // The list's last boundary is the CARD's own bottom border, not a rule of its own:
     // the two of them stacked into a doubled line under the pager.
-    expect(source).toContain("      {rows.length > 0 && (");
+    expect(source).toContain("      {isOpen && rows.length > 0 && (");
     expect(source).not.toContain("-mt-px");
     // Nothing on this screen overlaps anything any more: the machine tabs are a
     // segmented switch on the page's own paper, not a chip merged into the card.
@@ -211,7 +212,12 @@ describe('where "New session" lives', () => {
     // alone, so on a 390px phone it had no top edge for the tab to join into and its
     // right rule sat at x=388..390, off the glass.
     expect(source).not.toContain("sm:border-y sm:border-r-2");
-    expect(source).toContain("{index > 0 && <MachineGap />}");
+    // The empty 12px gap between two machines said something had ENDED and never
+    // said what began. A 24px strip in the machine's own hue says whose the projects
+    // below it are, and a solo fleet renders none at all.
+    expect(source).toContain("{sections.length > 1 && (");
+    expect(source).toContain("<MachineBanner");
+    expect(source).not.toContain("<MachineGap />");
     expect(source).not.toContain("showMachineHeaders");
   });
 
@@ -381,15 +387,28 @@ describe("the machine header's own verbs", () => {
 // Regression, user report ("there is no much difference visually between the machine
 // and the project"): the list carried TWO bands one hairline apart, both starting at
 // the same x and both ending in the same trailing cluster, so nothing said the second
-// was inside the first. The machine is SELECTION now — a chip in the strip and the
-// title of the chrome — and the project header is the only header kind in the list.
-describe("the machine is a chip, not a second band", () => {
-  it("leaves exactly one header shape inside the list", () => {
-    expect(source).not.toContain("MachineBanner");
+// was inside the first. A machine is not a header any more: it is a 24px strip of its
+// own hue with its name in the smallest type on the screen, and the project header
+// stays the only header BAND in the list.
+describe("machine, project and session are three different shapes", () => {
+  it("keeps exactly one header band inside the list", () => {
     expect(source).not.toContain('tone="machine"');
-    // The hue still says which computer owns a block; it is a rail, not a band.
+    // The hue says which computer owns a block twice over, and neither is a band:
+    // the strip that opens it and the rail that contains it.
+    expect(source).toContain("<MachineBanner");
     expect(source).toContain(
       "<MachineRail color={machineColor(machineColors, key)}>",
+    );
+    expect(source).not.toContain("<SectionHeader>");
+  });
+
+  // A project FOLDS: with four checkouts on one machine the list is otherwise a
+  // scroll through work nobody asked about. The verb stays outside the fold.
+  it("folds a project from the naming half of its own band", () => {
+    expect(source).toContain("<ProjectCrumb");
+    expect(source).toContain("const [isOpen, setIsOpen] = useState(true);");
+    expect(source).toContain(
+      "label={`${isOpen ? 'Collapse' : 'Expand'} ${project}`}",
     );
   });
 
