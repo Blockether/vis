@@ -216,32 +216,23 @@
    out. A number the caller cannot have meant is refused at the boundary, where the
    message can still name the option."
   [x what]
-  (cond
-    (nil? x) nil
-
-    (number? x)
-    (let [d (double x)]
-      (cond
-        (or (Double/isNaN d) (Double/isInfinite d))
-        (throw (ex-info (str what " must be a finite number, got " (pr-str x) ".")
-                        {:type ::bad-option :option what :value x}))
-
-        (neg? d)
-        (throw (ex-info (str what " must not be negative, got " (pr-str x) ".")
-                        {:type ::bad-option :option what :value x}))
-
-        (not= d (Math/rint d))
-        (throw (ex-info (str what
-                             " must be a whole number, got "
-                             (pr-str x)
-                             " — a fraction rounds into a different mode (0 is the"
-                             " background start).")
-                        {:type ::bad-option :option what :value x}))
-
-        :else (long d)))
-
-    :else (throw (ex-info (str what " must be a number, got " (pr-str x) ".")
-                          {:type ::bad-option :option what :value x}))))
+  (cond (nil? x) nil
+        (number? x)
+        (let [d (double x)]
+          (cond (or (Double/isNaN d) (Double/isInfinite d))
+                (throw (ex-info (str what " must be a finite number, got " (pr-str x) ".")
+                                {:type ::bad-option :option what :value x}))
+                (neg? d) (throw (ex-info (str what " must not be negative, got " (pr-str x) ".")
+                                         {:type ::bad-option :option what :value x}))
+                (not= d (Math/rint d))
+                (throw (ex-info (str what
+                                     " must be a whole number, got " (pr-str x)
+                                     " — a fraction rounds into a different mode (0 is the"
+                                     " background start).")
+                                {:type ::bad-option :option what :value x}))
+                :else (long d)))
+        :else (throw (ex-info (str what " must be a number, got " (pr-str x) ".")
+                              {:type ::bad-option :option what :value x}))))
 
 (defn- one-line
   "Collapse a command to a single display line capped at `limit` chars."
@@ -860,14 +851,63 @@
    better."
   [env session id]
   (when-let [e (bg-entry session (str id))]
-    (let [want (env-origin env)
-          have (str (or (:origin e) want))]
+    (let
+      [want (env-origin env)
+       have (str (or (:origin e) want))]
+
       (when-not (= want have)
-        (throw (ex-info (str "Shell '" id "' was started by a different trust origin ("
-                             have ", not " want
+        (throw (ex-info (str "Shell '" id
+                             "' was started by a different trust origin (" have
+                             ", not " want
                              ") and cannot be read, typed at, stopped or re-issued from"
                              " here. Start your own shell under your own id.")
                         {:type ::foreign-shell :id id :origin have :caller want}))))))
+
+(defn- live-bg-entry
+  "The registry entry for `id` when its process is STILL RUNNING, else nil. One
+   place decides \"is this handle alive\", so a start, a re-issue and a stop all
+   agree about it."
+  [session id]
+  (when-let [e (bg-entry session id)]
+    (when (and (:proc e) ((:alive? (:proc e)))) e)))
+
+(defn- canonical-dir
+  [d]
+  (when-let
+    [d (some-> d
+               str
+               not-empty)]
+    (try (.getCanonicalPath (io/file d)) (catch Throwable _ d))))
+
+(defn- reissue-live-entry
+  "The live entry `id` may be RE-ATTACHED to, or nil when the id is free.
+
+   A re-issue is how a caller picks a shell it already started back up, so it is a
+   success — but ONLY when it names the same work. Identity is (id, command, cwd):
+   handing a live id a DIFFERENT command, or the same command with a different
+   `cwd`, used to answer success for a process that never ran what was asked, in a
+   directory nobody requested. That is a silent no-op, so it is refused."
+  [env session id command cwd]
+  (when-let [e (live-bg-entry session id)]
+    (authorize-origin! env session id)
+    (let
+      [want-cmd (some-> command
+                        str
+                        not-empty)
+       want-dir (canonical-dir cwd)
+       have-dir (canonical-dir (:dir e))
+       mismatch (cond (and want-cmd (not= want-cmd (str (:command e))))
+                      (str "it is running a different command (" (one-line (:command e) 60) ")")
+                      (and want-dir have-dir (not= want-dir have-dir))
+                      (str "it is running in a different directory (" have-dir ")"))]
+
+      (when mismatch
+        (throw (ex-info (str "Shell '" id
+                             "' is already running and " mismatch
+                             " — nothing was started. Stop it first with sh.stop(),"
+                             " or start this command under a different id.")
+                        {:type ::id-in-use :id id})))
+      e)))
 
 (defn- bg-live?
   "True only while `id` still holds a RUNNING process in this session. An entry
@@ -1295,8 +1335,7 @@
     ;; and overwrite its only stop handle. Waits/logs/sends and other ids stay free.
     #_{:clj-kondo/ignore [:locking-suspicious-lock]}
     (locking (bg-lifecycle-lock session id)
-      (let
-        [live (reissue-live-entry env session id command (get opts "cwd"))]
+      (let [live (reissue-live-entry env session id command (get opts "cwd"))]
         (if live
           (extension/success
             {:result (assoc (bg-core "background" id live)
@@ -1404,46 +1443,6 @@
     (.setDaemon true)
     (.start))
   nil)
-
-(defn- live-bg-entry
-  "The registry entry for `id` when its process is STILL RUNNING, else nil. One
-   place decides \"is this handle alive\", so a start, a re-issue and a stop all
-   agree about it."
-  [session id]
-  (when-let [e (bg-entry session id)]
-    (when (and (:proc e) ((:alive? (:proc e)))) e)))
-
-(defn- canonical-dir
-  [d]
-  (when-let [d (some-> d str not-empty)]
-    (try (.getCanonicalPath (io/file d)) (catch Throwable _ d))))
-
-(defn- reissue-live-entry
-  "The live entry `id` may be RE-ATTACHED to, or nil when the id is free.
-
-   A re-issue is how a caller picks a shell it already started back up, so it is a
-   success — but ONLY when it names the same work. Identity is (id, command, cwd):
-   handing a live id a DIFFERENT command, or the same command with a different
-   `cwd`, used to answer success for a process that never ran what was asked, in a
-   directory nobody requested. That is a silent no-op, so it is refused."
-  [env session id command cwd]
-  (when-let [e (live-bg-entry session id)]
-    (authorize-origin! env session id)
-    (let
-      [want-cmd (some-> command str not-empty)
-       want-dir (canonical-dir cwd)
-       have-dir (canonical-dir (:dir e))
-       mismatch (cond (and want-cmd (not= want-cmd (str (:command e))))
-                      (str "it is running a different command (" (one-line (:command e) 60) ")")
-
-                      (and want-dir have-dir (not= want-dir have-dir))
-                      (str "it is running in a different directory (" have-dir ")"))]
-      (when mismatch
-        (throw (ex-info (str "Shell '" id "' is already running and " mismatch
-                             " — nothing was started. Stop it first with sh.stop(),"
-                             " or start this command under a different id.")
-                        {:type ::id-in-use :id id})))
-      e)))
 
 (defn- live-run-result
   "A named run whose shell is ALREADY live: the same run shape, answering with the
@@ -2039,6 +2038,7 @@
    boundary. Foreground calls therefore work outside a session too."
   [env opts]
   (shell-dispatch (-> (or env {})
+                      (assoc :shell-origin "trusted-extension")
                       (assoc :jail-policy-fn (constantly {:disabled? true}))
                       (assoc-in [:security-policy :sandbox] false))
                   opts))
@@ -2136,7 +2136,10 @@
    on-disk configuration at every process spawn. Works with or without a session;
    invalid current config refuses that spawn instead of using a snapshot."
   [env opts]
-  (shell-dispatch (assoc (or env {}) :jail-policy-fn #(latest-jail-policy env)) opts))
+  (shell-dispatch (-> (or env {})
+                      (assoc :shell-origin "jailed-extension")
+                      (assoc :jail-policy-fn #(latest-jail-policy env)))
+                  opts))
 
 (defn session-jailed-shell
   "Run `vis.jailed_shell_session` through the invoking session's immutable jail
@@ -2145,7 +2148,7 @@
   (when-not (:session-id env)
     (throw (ex-info "jailed_shell_session is available only while handling a session"
                     {:type ::no-session})))
-  (shell-dispatch env opts))
+  (shell-dispatch (assoc env :shell-origin "jailed-session") opts))
 
 
 ;; =============================================================================

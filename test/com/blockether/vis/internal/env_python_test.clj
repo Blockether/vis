@@ -1004,6 +1004,9 @@
         (let
           [out (run (str "print('LOGS<'+doc('_shell_logs')+'>')\n"
                          "print('STOP<'+doc('_shell_stop')+'>')"))]
-          (expect (str/includes? out "Raw result: `{id, text, offset"))
-          (expect (str/includes? out "Raw result: `{id, status, exit, note}`"))
+          ;; ONE shell result shape: `logs` fills `stdout` like a foreground run does,
+          ;; and `stop` answers the same keys — never a stage-scoped subset.
+          (expect (str/includes? out "The same shell result shape as every other stage"))
+          (expect (str/includes? out "`stdout` is the window this read returned"))
+          (expect (str/includes? out "(`stage` \"stop\"): `stopped`, `status`, `exit`."))
           (expect (str/includes? out "params:"))))))

@@ -70,13 +70,40 @@
 
 (defn- vis-home ^File [] (io/file (System/getProperty "user.home") ".vis"))
 
+(defn- id-digest
+  "Eight hex chars of SHA-1 over the RAW id — enough to separate two ids that
+   sanitize or truncate to the same segment."
+  [s]
+  (let
+    [d (.digest (java.security.MessageDigest/getInstance "SHA-1")
+                (.getBytes (str s) java.nio.charset.StandardCharsets/UTF_8))]
+    (apply str (map #(format "%02x" %) (take 4 d)))))
+
 (defn- safe-name
   "One path segment from an arbitrary session or shell id: everything outside
    `[A-Za-z0-9._-]` becomes `_`, so a handle named `../../etc` names a file
-   inside the log directory and nowhere else."
+   inside the log directory and nowhere else.
+
+   The mapping is INJECTIVE. Sanitizing alone is not: `a/b` and `a_b` both became
+   `a_b`, so two live shells shared one log file and the second `open!` truncated
+   the first one's output — each handle then reported the other's bytes. Whenever
+   the segment is not the id verbatim, a digest of the RAW id is appended, so a
+   distinct id always names a distinct file."
   [s]
-  (let [cleaned (str/replace (str s) #"[^A-Za-z0-9._-]" "_")]
-    (if (str/blank? cleaned) "_" (subs cleaned 0 (min 120 (count cleaned))))))
+  (let
+    [raw
+     (str s)
+
+     cleaned
+     (str/replace raw #"[^A-Za-z0-9._-]" "_")
+
+     cleaned
+     (if (str/blank? cleaned) "_" cleaned)
+
+     cleaned
+     (subs cleaned 0 (min 100 (count cleaned)))]
+
+    (if (= raw cleaned) cleaned (str cleaned "-" (id-digest raw)))))
 
 (defn session-dir
   "Directory holding every shell log of ONE session."

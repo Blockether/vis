@@ -476,6 +476,35 @@ the tool's own return value, rendered and handed to Python in the same run.
 
 **Unknowns.** None.
 
+## Phase 10 — A handle is OWNED, NAMED and honestly identified
+
+**Rationale.** Without it a handle is a bare id and everything that drives one after the spawn
+trusts it: two ids that sanitize alike (`a/b`, `a_b`) shared ONE log file, so the second `open!`
+truncated the first shell's output and both handles reported the other's bytes; re-issuing a live id
+with a different command or `cwd` answered SUCCESS for a process that never ran what was asked;
+`logs`/`send`/`stop`/re-issue reached a process by id with no ownership check, so a jailed extension
+could read, type at or kill a trusted shell in the same session; `wait: -5` clamped to a one-second
+wait that called a real command timed out and `wait: 0.4` rounded into the background start; and the
+handle OBJECT existed only in the model's sandbox, leaving extensions to hand-author the `op`
+grammar Phase 8 deleted.
+
+**Data.** None. Nothing crosses a boundary: the origin stamp lives in the in-process registry map and
+the log file name is a local path.
+
+**Acceptance criteria.**
+- `src/com/blockether/vis/internal/shell_log.clj` — `safe-name` is INJECTIVE; a segment that is not
+  the id verbatim carries a digest of the raw id.
+- `src/com/blockether/vis/internal/foundation/shell.clj` — `->pos-long` refuses negative, fractional
+  and non-finite numbers; `env-origin`/`authorize-origin!` stamp every entry and gate
+  `logs`/`send`/`stop`/re-issue; `reissue-live-entry` makes identity (id, command, cwd) and sets
+  `already_running`.
+- `resources/vis-python/extension_bootstrap.py` — `vis.Shell` gives an extension the SAME
+  `.logs()/.type()/.stop()/.wait()` handle the sandbox gets.
+- Test: `shell-handle-integrity-test` covers the four host defects; `python-extensions-test` drives
+  an extension handle through all four verbs.
+
+**Unknowns.** None.
+
 ## State of the plan
 
 **DONE.**
@@ -550,11 +579,14 @@ Done:
   ONCE in the engine — read, keep reading while bytes remain, sleep only at EOF while the process
   lives, stop at the deadline — which is what makes "never sleep blindly" a rule with a tool behind it.
 
-- Phase 9, ONE result shape for the whole shell family — `PENDING-COMMIT`. `shell-result-base` is the
+- Phase 9, ONE result shape for the whole shell family — `0b698b3be`. `shell-result-base` is the
   single key set every stage AND `git` answer with; `stage` names the producer and is the only thing
   that varies. Output has one name (`stdout`) whether the call waited for it or came back for it
   later, `git` no longer carries an `args` field beside `command`, and a key a stage has nothing to
   say about is nil / false / 0 rather than absent.
+- Phase 10, a handle is OWNED, NAMED and honestly identified — `bcf56c59f`. Distinct ids never share a log file, a re-issue that names different work is refused instead
+  of silently succeeding, a handle cannot be driven across a trust origin, a nonsense `wait` is
+  refused rather than rounded, and `vis.Shell` gives extensions the sandbox's handle object.
 
 TODO, in order: nothing. The plan is DONE.
 

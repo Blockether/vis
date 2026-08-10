@@ -277,21 +277,87 @@ def _shell_options(name, opts):
     return opts
 
 
+class Shell(dict):
+    # A SHELL RESULT IS A LIVE HANDLE — the SAME contract the model's sandbox gets.
+    # `vis.shell`, `vis.jailed_shell` and `vis.jailed_shell_session` all answer this
+    # dict-with-methods, so an extension drives a process on the object the call
+    # returned (`sh.logs()`, `sh.wait(30)`, `sh.type('y')`, `sh.stop()`) instead of
+    # hand-authoring `{'op': 'logs', 'id': …}` maps. It IS a dict — `sh['exit']`,
+    # `json.dumps(sh)`, `{**sh}` all behave — and every op answers the one shell
+    # result shape, so no key can KeyError.
+    def __init__(self, raw, call):
+        dict.__init__(self, dict(raw or {}))
+        self._vis_call = call
+
+    def _vis_op(self, opts):
+        return Shell(self._vis_call(dict(opts, id=self.get('id'))), self._vis_call)
+
+    def logs(self, offset=None, limit=None):
+        opts = {'op': 'logs'}
+        if offset is not None:
+            opts['offset'] = int(offset)
+        if limit is not None:
+            opts['limit'] = int(limit)
+        return self._vis_op(opts)
+
+    def type(self, text, is_enter=True):
+        return self._vis_op(
+            {'op': 'send', 'text': str(text), 'is_enter': bool(is_enter)}
+        )
+
+    def stop(self):
+        return self._vis_op({'op': 'stop'})
+
+    def wait(self, seconds=120, poll=0.25):
+        # The bounded poll loop, written ONCE here exactly as the sandbox writes it
+        # once: read from the last cursor, keep reading while bytes remain, sleep only
+        # at EOF while the process lives, stop at the deadline.
+        import time as _time
+
+        deadline = _time.time() + float(seconds)
+        offset, chunks, last = 0, [], None
+        while True:
+            last = self.logs(offset=offset, limit=262144)
+            chunks.append(last.get('stdout') or '')
+            offset = last.get('next_offset', offset)
+            if not last.get('is_eof', True):
+                continue
+            if last.get('status') != 'running':
+                break
+            if _time.time() >= deadline:
+                break
+            _time.sleep(poll)
+        out = dict(last)
+        out['stage'] = 'wait'
+        out['offset'] = 0
+        out['stdout'] = ''.join(chunks)
+        out['timed_out'] = out.get('status') == 'running'
+        return Shell(out, self._vis_call)
+
+
+def _shell_call(name):
+    def call(opts):
+        return _host[name](_shell_options(name, opts))
+
+    return call
+
+
 def shell(opts):
     # Trusted extensions get the same unrestricted process boundary as subprocess.
-    return _host['shell'](_shell_options('shell', opts))
+    call = _shell_call('shell')
+    return Shell(call(opts), call)
 
 
 def jailed_shell(opts):
     # Strictly re-read the latest merged on-disk config at each process spawn.
-    return _host['jailed_shell'](_shell_options('jailed_shell', opts))
+    call = _shell_call('jailed_shell')
+    return Shell(call(opts), call)
 
 
 def jailed_shell_session(opts):
     # Explicitly use the invoking session's immutable policy snapshot.
-    return _host['jailed_shell_session'](
-        _shell_options('jailed_shell_session', opts)
-    )
+    call = _shell_call('jailed_shell_session')
+    return Shell(call(opts), call)
 
 class Answer:
     # The outcome of `vis.ask(...)`. Truthy only when the human submitted.

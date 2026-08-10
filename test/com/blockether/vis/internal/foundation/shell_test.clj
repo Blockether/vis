@@ -922,6 +922,69 @@
                      (expect (contains? logs "stdout")))
                    (finally (resources/stop-all! sid)))))))))
 
+(defdescribe
+  shell-handle-integrity-test
+  ;; Regression, handle audit: a handle outlives the spawn, and everything that
+  ;; drove one afterwards trusted the id alone.
+  (it "keeps two ids that SANITIZE alike in two different log files"
+      ;; `a/b` and `a_b` both became `a_b.log`, so the second `open!` truncated the
+      ;; first shell's output and both handles reported the same bytes.
+      (expect (not= (.getPath (shell-log/log-file "s" "a/b"))
+                    (.getPath (shell-log/log-file "s" "a_b")))))
+  (it "refuses a live id handed a DIFFERENT command or cwd instead of silently not running it"
+      ;; Re-issuing `id` returned success for a process that never ran the requested
+      ;; command, in a directory nobody asked for; `already_running` was nil besides.
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-reissue-identity"
+               env {:session-id sid}]
+
+              (try (let
+                     [_ (shell* env {"command" "sleep 30" "id" "keep" "wait" 0})
+                      same (:result (shell* env {"command" "sleep 30" "id" "keep"}))]
+
+                     (expect (true? (get same "already_running")))
+                     (expect (str/includes? (throw-message
+                                              #(shell* env {"command" "sleep 31" "id" "keep"}))
+                                            "different command"))
+                     (expect (str/includes?
+                               (throw-message
+                                 #(shell* env {"command" "sleep 30" "id" "keep" "cwd" "/tmp"}))
+                               "different directory")))
+                   (finally (resources/stop-all! sid))))))))
+  (it "refuses to read, type at, stop or re-issue a shell of another trust origin"
+      ;; The jail is consulted at spawn only: a jailed extension could read a trusted
+      ;; shell's output, type at its PTY or kill it just by naming the id.
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-origin"
+               mine {:session-id sid :shell-origin "tool"}
+               theirs {:session-id sid :shell-origin "jailed-extension"}]
+
+              (try (let [_ (shell* mine {"command" "sleep 30" "id" "owned" "wait" 0})]
+                     (doseq
+                       [call [#(shell* theirs {"op" "logs" "id" "owned"})
+                              #(shell* theirs {"op" "send" "id" "owned" "text" "x"})
+                              #(shell* theirs {"op" "stop" "id" "owned"})
+                              #(shell* theirs {"command" "sleep 30" "id" "owned"})]]
+                       (expect (str/includes? (str (throw-message call)) "different trust origin")))
+                     ;; The owner is unaffected.
+                     (expect (= "owned"
+                                (get (:result (shell* mine {"op" "logs" "id" "owned"})) "id"))))
+                   (finally (resources/stop-all! sid))))))))
+  (it "refuses a negative or fractional wait instead of rounding it into another mode"
+      ;; `wait: -5` clamped to a one-second wait that reported a real command timed
+      ;; out; `wait: 0.4` rounded to 0, which is the background start.
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (expect (str/includes? (str (throw-message #(shell* {} {"command" "echo hi" "wait" -5})))
+                               "must not be negative"))
+        (expect (str/includes? (str (throw-message #(shell* {} {"command" "echo hi" "wait" 0.4})))
+                               "whole number")))))
+
 (defdescribe shell-one-command-test
              (it "runs the ONE command and answers with a flat result"
                  ;; Regression, one-command refactor: `commands` was an ordered batch with

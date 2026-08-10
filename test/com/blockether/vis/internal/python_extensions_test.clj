@@ -1436,6 +1436,32 @@ vis.extension(
               ;; Python sees the UNWRAPPED, deep-stringified `:result` only.
               (expect (= ["echo hi" "run" ["stage" "stdout"]] (:result (run))))))))))
   (it
+    "hands an extension the SAME live handle the sandbox gets, not a raw dict"
+    ;; Regression, handle audit: `__VisShell__` was applied only in the model's
+    ;; sandbox, so an extension's only continuation was hand-authoring the
+    ;; `{"op": "logs", "id": …}` grammar that the handle object replaced.
+    (with-loaded
+      {"jail.py"
+       "import vis\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell({'command': 'echo hi', 'wait': 0, 'id': 'h'})\n    return [sh['id'], sh.logs(offset=0)['stage'], sh.type('y')['stage'], sh.stop()['stage']]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
+      (fn [_ _]
+        (let
+          [run
+           (symbol-fn (registered "jail") 'run)
+
+           env
+           {:session-id "session-1" :jail-policy-fn (constantly {:disabled? true})}]
+
+          (with-redefs
+            [shell/jailed-shell (fn [_env opts]
+                                  (extension/success {:result {"id" (get opts "id")
+                                                               "stage" (or (get opts "op") "run")}
+                                                      :op :shell
+                                                      :metadata {:duration-ms 1}}))]
+            (binding [extension/*current-environment* env]
+              ;; Every op reaches the ONE dispatch grammar, and every answer is
+              ;; itself a handle.
+              (expect (= ["h" "logs" "send" "stop"] (:result (run))))))))))
+  (it
     "raises a failing host tool envelope instead of handing Python the envelope"
     (with-loaded
       {"jail.py"
