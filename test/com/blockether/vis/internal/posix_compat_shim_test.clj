@@ -13,8 +13,8 @@
   "The sandbox tool trio the shim actually speaks to, recording every call.
 
    Every shell run is a BACKGROUND run now — the request has no wait knob — so a
-   blocking `subprocess.run` is a spawn plus the same log poll `Popen.wait` does.
-   The fake therefore has to answer `_shell_logs` too: one spawn, one exited read."
+   blocking `subprocess.run` is a spawn plus the HOST wait (`_shell_wait`), the one
+   bounded loop every caller shares. The fake answers that op and `_shell_logs`."
   [calls lifecycle]
   {'shell (fn [& args]
             (let
@@ -62,6 +62,35 @@
                      "next_offset" 6
                      "is_eof" true
                      "timed_out" false}))
+   '_shell-wait (fn [opts]
+                  ;; The host op: one call, the whole answer — the shim keeps no loop.
+                  (let
+                    [id
+                     (get opts "id")
+
+                     cmd
+                     (->> @calls
+                          (filter #(= id (get (:opts %) "id")))
+                          last
+                          :cmd
+                          str)
+
+                     failed?
+                     (str/includes? cmd "boom")]
+
+                    (swap! lifecycle conj [:wait id opts])
+                    {"stage" "wait"
+                     "id" id
+                     "command" cmd
+                     "status" "exited"
+                     "exit" (if failed? 7 0)
+                     "stdout" (if (zero? (long (or (get opts "offset") 0)))
+                                (if failed? "partial\n" "hello\n")
+                                "")
+                     "stderr" ""
+                     "next_offset" 6
+                     "is_eof" true
+                     "timed_out" false}))
    '_shell-stop (fn [opts]
                   (swap! lifecycle conj [:stop (get opts "id")])
                   {"stage" "stop" "status" "stopped" "stopped" true})})
@@ -92,7 +121,7 @@
     "passes run options and drives Popen through the shell handle verbs"
     ;; Regression, Phase 11: `run` used to carry `timeout_secs` and `Popen` a
     ;; `wait: 0` — one request selecting two modes. Both are spawns now, and the
-    ;; waiting is the shim's own bounded poll over `_shell_logs`.
+    ;; waiting is the HOST's `_shell_wait`, so the shim owns no poll loop at all.
     (let
       [calls
        (atom [])

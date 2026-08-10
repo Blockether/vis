@@ -562,6 +562,37 @@ keys the shape already declares.
 
 **Unknowns.** None.
 
+## Phase 13 — ONE wait: the poll loop moves into the host
+
+**Rationale.** Without it the bounded wait is written three times — `__VisShell__.wait` in
+`resources/vis-python/async_runtime.py`, `vis.Shell.wait` in
+`resources/vis-python/extension_bootstrap.py` and the test's own `wait*` — free to disagree about
+the deadline, the cursor and what "done" means, and `resources/vis-shims/posix.py` kept a fourth
+loop inside `Popen.wait`/`communicate`. They already disagreed once: Phase 12 had to fix the same
+unbounded-deadline defect in two files. A Python-side accumulator was also unbounded — a runaway
+printer measured ~1 MB/s, so a 600 s wait was a heap problem rather than a slow answer.
+
+**Data.** None. `shell-result-base` is unchanged; `wait` is a `stage` value the shape already
+admits, exactly as `logs` / `send` / `stop` are.
+
+**Acceptance criteria.**
+- `src/com/blockether/vis/internal/foundation/shell.clj` — `shell-wait-impl` is the ONE bounded
+  loop (deadline on every iteration, drain-to-quiet after the child exits, `capped-capture`
+  head+tail accumulation with `stdout_omitted_chars`), dispatch op `wait`, private transport
+  symbol `_shell-wait`; `capped-capture` grows an `:append!` so a pumped Reader and a wait share
+  one bounded buffer; `clamp-timeout-secs` names the option the caller spelled.
+- `resources/vis-python/async_runtime.py`, `resources/vis-python/extension_bootstrap.py`,
+  `resources/vis-shims/posix.py` — every Python wait is one call to the host op; no `time.sleep`
+  poll loop survives in any of them.
+- Test: `shell-one-wait-test` proves the loop is single (no Python file keeps one), that memory is
+  bounded on an endless printer, that a retired shell still answers from its log and a cursor is
+  never replayed, that an unknown id / another origin / a negative or fractional duration are
+  refused by name, that a stop ends the wait with its bytes intact, that a burst leaves no
+  `vis-shell-*` / `vis-pty-*` thread, and that a cancelled turn unwinds the wait at once with the
+  child still running.
+
+**Unknowns.** None.
+
 ## State of the plan
 
 **DONE.**
@@ -656,6 +687,9 @@ Done:
   `status`, and the handle's poll loop is bounded on every iteration rather than only at EOF. Proven
   by measurement, not by reading: exit 127 with the shell's own complaint in the log, `stop` killing
   a backgrounded grandchild, and the thread count returning to its baseline after every run.
+- Phase 13, ONE wait — `0fcb2b524`. The bounded poll loop is host code (`shell-wait-impl`, transport
+  `_shell_wait`); the sandbox handle, an extension's handle, `subprocess.Popen` and the tests all
+  call it, and a wait now bounds MEMORY as well as time (a runaway printer measured ~1 MB/s).
 
 TODO, in order: nothing. The plan is DONE.
 

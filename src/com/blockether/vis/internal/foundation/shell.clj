@@ -147,24 +147,31 @@
      (atom 0)
 
      trunc
-     (atom false)]
+     (atom false)
 
-    {:drain! (fn [^java.io.Reader r]
+     append!
+     ;; The ONE place text enters this capture — a pumped Reader and a `wait`
+     ;; accumulating log windows are the same problem, so they share the same
+     ;; bounded buffer instead of one of them growing without a cap.
+     (fn [^String s]
+       (when (pos? (.length s))
+         (locking sb
+           (swap! total (fn [t]
+                          (+ (long t) (.length s))))
+           (.append sb s)
+           (when (> (.length sb) cap)
+             (reset! trunc true)
+             ;; keep the first `head-limit` chars + the last `tail-limit`;
+             ;; excise the run between them so memory stays at ~cap.
+             (.delete sb (int head-limit) (int (- (.length sb) tail-limit)))))))]
+
+    {:append! append!
+     :drain! (fn [^java.io.Reader r]
                (let [buf (char-array 8192)]
                  (try (loop []
 
                         (let [n (.read r buf 0 (alength buf))]
-                          (when (pos? n)
-                            (locking sb
-                              (swap! total (fn [t]
-                                             (+ (long t) n)))
-                              (.append sb buf 0 n)
-                              (when (> (.length sb) cap)
-                                (reset! trunc true)
-                                ;; keep the first `head-limit` chars + the last `tail-limit`;
-                                ;; excise the run between them so memory stays at ~cap.
-                                (.delete sb (int head-limit) (int (- (.length sb) tail-limit)))))
-                            (recur))))
+                          (when (pos? n) (append! (String. buf 0 n)) (recur))))
                       (catch Throwable _ nil))))
      :snapshot (fn []
                  (locking sb
@@ -554,12 +561,15 @@
 ;; =============================================================================
 
 (defn- clamp-timeout-secs
-  "Effective sync timeout from the opts value: default 120, floor 1, cap 600."
-  ^long [v]
-  (-> (long (or (->pos-long v "timeout_secs") default-timeout-secs))
-      (max 1)
-      long
-      (min (long max-timeout-secs))))
+  "Effective wait in seconds from the opts value: default 120, floor 1, cap 600.
+   `label` is the option the CALLER spelled, so a refusal names the key that was
+   actually passed (`seconds` on a handle wait) instead of an internal one."
+  (^long [v] (clamp-timeout-secs v "timeout_secs"))
+  (^long [v label]
+   (-> (long (or (->pos-long v label) default-timeout-secs))
+       (max 1)
+       long
+       (min (long max-timeout-secs)))))
 
 (def ^:private shell-result-base
   "The ONE result shape of the whole shell family — every stage, every tool.
@@ -1727,6 +1737,99 @@
           :op :_shell-logs
           :metadata {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}})))))
 
+(def ^:private wait-poll-ms
+  "Idle sleep between reads inside a host-side wait. Only reached when the log is
+   at EOF and the child is still alive, so a chatty command never pays it."
+  50)
+
+(def ^:private wait-chunk-limit
+  "Bytes one wait iteration reads. Large enough that a build's output is drained in
+   a few reads, small enough that a runaway producer cannot allocate without bound
+   before the deadline is checked again."
+  262144)
+
+(defn- shell-wait-impl
+  "`sh.wait(secs)` — the ONE bounded wait in the whole product, written HERE and
+   reused by every caller: the sandbox handle, the extension handle and the tests
+   all call this instead of writing the poll loop a fourth time.
+
+   Read from the cursor, keep reading while bytes are still available, sleep only
+   when the log is at EOF and the child is alive, and stop at the deadline — which
+   bounds EVERY iteration, not only the idle one, because a command that never
+   stops printing always has more bytes and a clock checked only at EOF is never
+   reached. A child that has exited is drained to quiet before the wait reports,
+   so the last line the pump wrote after the exit is never lost.
+
+   `stdout` is everything printed since this wait's own cursor, under the same key
+   a log read answers with, and `timed_out` says which of the two ended it: the
+   deadline (true, the process runs on under its id) or the process (false)."
+  [env id {:keys [seconds offset]}]
+  (let
+    [t0
+     (now-ms)
+
+     secs
+     (clamp-timeout-secs seconds "seconds")
+
+     deadline
+     (+ t0 (* 1000 secs))
+
+     start
+     (long (or (->pos-long offset "offset") 0))
+
+     ;; A wait accumulates as much as a foreground run captured, and no more: a
+     ;; command that never stops printing (`yes`) produced a megabyte a second on
+     ;; this machine, so an unbounded accumulator turns a 600 s wait into a heap
+     ;; problem. Same head+tail capture, same inline omitted-count marker.
+     acc
+     (capped-capture max-sync-head-chars max-sync-tail-chars)
+
+     finish
+     (fn [res nxt]
+       (let [snap ((:snapshot acc))]
+         (extension/success
+           {:result (assoc res
+                      "stage" "wait"
+                      "offset" start
+                      "next_offset" nxt
+                      "stdout" (:text snap)
+                      "stdout_omitted_chars" (long (or (:omitted snap) 0))
+                      ;; The WAIT expired, not the process: a still-running child means
+                      ;; the deadline ended this call and the shell keeps its id.
+                      "timed_out" (= "running" (get res "status"))
+                      "timeout_secs" secs
+                      "duration_ms" (- (now-ms) t0))
+            :op :_shell-wait
+            :metadata
+            {:id id :started-at-ms t0 :finished-at-ms (now-ms) :duration-ms (- (now-ms) t0)}})))]
+
+    (loop
+      [off
+       start
+
+       quiet
+       0]
+
+      (let
+        [res
+         (:result (shell-logs-impl env id {:offset off :limit wait-chunk-limit}))
+
+         text
+         (or (get res "stdout") "")
+
+         nxt
+         (long (or (get res "next_offset") off))]
+
+        ((:append! acc) text)
+        (cond (>= (now-ms) deadline) (finish res nxt)
+              (not (get res "is_eof")) (recur nxt 0)
+              (= "running" (get res "status")) (do (Thread/sleep (long wait-poll-ms)) (recur nxt 0))
+              ;; Exited: one confirming quiet read before reporting, so bytes the pump
+              ;; flushed between the exit and this read still reach the caller.
+              (and (= "" text) (pos? quiet)) (finish res nxt)
+              :else (do (Thread/sleep (long wait-poll-ms))
+                        (recur nxt (if (= "" text) (inc quiet) 0))))))))
+
 (def ^:private terminal-escape-re
   ;; ANSI/VT sequences a PTY-attached tool emits. Stripped both when MATCHING a
   ;; `wait` predicate and when rendering captured output, so the two agree.
@@ -1926,7 +2029,7 @@
      ;; mechanically reuses the start shape may still carry `command`; it is not
      ;; relevant to these stages and must not make an otherwise valid call fail.
      opts
-     (if (#{"logs" "send" "stop"} op) (dissoc raw-opts "command" :command) raw-opts)
+     (if (#{"logs" "wait" "send" "stop"} op) (dissoc raw-opts "command" :command) raw-opts)
 
      command
      (opt opts :command)
@@ -2013,16 +2116,21 @@
                            {:offset (->pos-long (opt opts :offset) "offset")
                             :limit (->pos-long (opt opts :limit) "limit")}))
 
+      "wait"
+      ;; The ONE wait, on the handle and in the host: no caller writes a poll loop.
+      (do (reject-command)
+          (reject-text)
+          (shell-wait-impl env (need-id) {:seconds (opt opts :seconds) :offset (opt opts :offset)}))
+
       "send"
       (do (reject-command) (shell-send-impl env (need-id) (need-text) opts))
 
       "stop"
       (do (reject-command) (reject-text) (shell-stop-impl env (need-id)))
 
-      (throw (ex-info (str
-                        "Unknown shell op "
-                        (pr-str op)
-                        " — use \"run\" (default), \"background\", \"logs\", \"send\" or \"stop\".")
+      (throw (ex-info (str "Unknown shell op " (pr-str op)
+                           " — use \"run\" (default), \"background\", \"logs\", \"wait\", \"send\""
+                           " or \"stop\".")
                       {:type ::unknown-op :op op})))))
 
 (defn run-argv
@@ -2240,6 +2348,14 @@
   {:arglists '([id] [id opts])}
   [env & args]
   (shell-dispatch env (assoc (shell-call-opts ["id"] args) "op" "logs")))
+
+(defn shell-wait
+  "`sh.wait(secs)` — the ONLY wait there is. Block until the shell exits or the
+   deadline passes, and answer the accumulated `stdout` plus the final `exit`.
+   `timed_out` true means the WAIT expired; the process runs on under its id."
+  {:arglists '([id] [id seconds] [id seconds opts])}
+  [env & args]
+  (shell-dispatch env (assoc (shell-call-opts ["id" "seconds"] args) "op" "wait")))
 
 (defn shell-type
   "`sh.type(\"y\")` — type keystrokes at a background shell's stdin.
@@ -2786,6 +2902,34 @@
      :tag :observation
      :on-error-fn (shell-on-error :_shell-logs)}))
 
+(def shell-wait-symbol
+  (vis/symbol
+    #'shell-wait
+    {:symbol '_shell-wait
+     :native-tool? false
+     :name "_shell_wait"
+     :result
+     (str "The same shell result shape (`stage` \"wait\"): `stdout` is everything printed since "
+          "this wait's cursor, `exit`/`status` are final unless `timed_out` is true, which means "
+          "the WAIT expired and the shell keeps running under its id.")
+     :description
+     (str "TRANSPORT for `sh.wait(seconds)` — call the HANDLE the shell result already is, not "
+          "this. Blocks until the command exits or the deadline passes; the bounded poll loop "
+          "lives here so no caller writes one.")
+     :render-finish-call-fn render-shell-run-result
+     :render-start-call-fn (shell-start-renderer "wait")
+     :schema
+     {:type "object"
+      :properties
+      {"id" {:type "string" :minLength 1 :description "Background handle."}
+       "seconds" {:type "integer" :minimum 1 :description "Seconds to wait; default 120, cap 600."}
+       "offset" {:type "integer" :minimum 0 :description "Byte to accumulate from; default 0."}}
+      :required ["id"]
+      :additionalProperties false}
+     :inject-env? true
+     :tag :observation
+     :on-error-fn (shell-on-error :_shell-wait)}))
+
 (def shell-type-symbol
   (vis/symbol
     #'shell-type
@@ -2834,7 +2978,7 @@
   ;; the model calls the handle's own `sh.logs()` / `sh.wait()` / `sh.type()` /
   ;; `sh.stop()`, because operations on an object the caller already holds are
   ;; control flow, not four more schemas to disambiguate before running a command.
-  [shell-symbol shell-logs-symbol shell-type-symbol shell-stop-symbol])
+  [shell-symbol shell-logs-symbol shell-wait-symbol shell-type-symbol shell-stop-symbol])
 
 (defn shell-attach-command
   "`vis-agent extension shell attach <id>` — the human-side passthrough: join a live

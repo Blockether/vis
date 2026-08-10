@@ -1305,24 +1305,11 @@ vis.extension(
 ;; Regression, issue #113: ordinary extension process calls from process-level
 ;; provider callbacks were redirected into the session-only jail and returned nil.
 (defn- jail-wait
-  "`sh.wait(secs)` for a jailed-shell handle: every extension shell is a background
-   shell now, so a test that asserts on OUTPUT reads the log through the same jailed
-   entry point (and therefore the same trust origin) until the process is gone."
+  "`sh.wait(secs)` for a jailed-shell handle — the HOST's own wait op through the
+   jailed entry point, so the test waits exactly as an extension does and no copy
+   of the poll loop lives here."
   [started]
-  (let [id (get started "id")]
-    (loop
-      [offset 0
-       acc ""
-       n 0]
-
-      (let
-        [r (:result (shell/jailed-shell nil {"op" "logs" "id" id "offset" offset}))
-         acc (str acc (get r "stdout"))
-         nxt (or (get r "next_offset") offset)]
-
-        (cond (not (get r "is_eof")) (recur (long nxt) acc n)
-              (or (not= "running" (get r "status")) (<= 50 n)) (assoc r "stdout" acc)
-              :else (do (Thread/sleep 100) (recur (long nxt) acc (inc n))))))))
+  (:result (shell/jailed-shell nil {"op" "wait" "id" (get started "id") "seconds" 20})))
 
 (defdescribe
   python-extension-process-boundary-test
@@ -1462,7 +1449,7 @@ vis.extension(
     ;; `{"op": "logs", "id": …}` grammar that the handle object replaced.
     (with-loaded
       {"jail.py"
-       "import vis\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell({'command': 'echo hi', 'id': 'h'})\n    return [sh['id'], sh.logs(offset=0)['stage'], sh.type('y')['stage'], sh.stop()['stage']]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
+       "import vis\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell({'command': 'echo hi', 'id': 'h'})\n    return [sh['id'], sh.logs(offset=0)['stage'], sh.wait(5)['stage'], sh.type('y')['stage'], sh.stop()['stage']]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
       (fn [_ _]
         (let
           [run
@@ -1480,7 +1467,7 @@ vis.extension(
             (binding [extension/*current-environment* env]
               ;; Every op reaches the ONE dispatch grammar, and every answer is
               ;; itself a handle.
-              (expect (= ["h" "logs" "send" "stop"] (:result (run))))))))))
+              (expect (= ["h" "logs" "wait" "send" "stop"] (:result (run))))))))))
   (it
     "raises a failing host tool envelope instead of handing Python the envelope"
     (with-loaded

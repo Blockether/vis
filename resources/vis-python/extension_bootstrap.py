@@ -308,33 +308,11 @@ class Shell(dict):
     def stop(self):
         return self._vis_op({'op': 'stop'})
 
-    def wait(self, seconds=120, poll=0.25):
-        # The bounded poll loop, written ONCE here exactly as the sandbox writes it
-        # once: read from the last cursor, keep reading while bytes remain, sleep only
-        # at EOF while the process lives, stop at the deadline.
-        import time as _time
-
-        deadline = _time.time() + float(seconds)
-        offset, chunks, last = 0, [], None
-        while True:
-            last = self.logs(offset=offset, limit=262144)
-            chunks.append(last.get('stdout') or '')
-            offset = last.get('next_offset', offset)
-            if _time.time() >= deadline:
-                # Bounds EVERY iteration: a command that never stops printing always
-                # has more bytes, so a clock checked only at EOF is never reached.
-                break
-            if not last.get('is_eof', True):
-                continue
-            if last.get('status') != 'running':
-                break
-            _time.sleep(poll)
-        out = dict(last)
-        out['stage'] = 'wait'
-        out['offset'] = 0
-        out['stdout'] = ''.join(chunks)
-        out['timed_out'] = out.get('status') == 'running'
-        return Shell(out, self._vis_call)
+    def wait(self, seconds=120):
+        # ONE wait, in the HOST: `{'op': 'wait'}` runs the bounded poll loop that the
+        # sandbox handle also calls, so an extension and the model can never disagree
+        # about when a wait ends or what it accumulated.
+        return self._vis_op({'op': 'wait', 'seconds': int(seconds)})
 
 
 def _shell_call(name):

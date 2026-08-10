@@ -113,43 +113,14 @@
        (filter #(or (str/starts-with? % "vis-shell") (str/starts-with? % "vis-pty")))
        count))
 
+(def ^:private shell-wait* @#'shell/shell-wait-impl)
+
 (defn- wait*
-  "`sh.wait(secs)` in Clojure — the engine's own bounded poll loop, written here so
-   a test can assert on a finished run without a `wait` knob the request no longer
-   has: read from the cursor, keep reading while bytes remain, stop when the
-   process is gone. Answers the run map with `stdout`/`exit` filled in."
-  [env id]
-  (loop
-    [offset
-     0
-
-     acc
-     ""
-
-     n
-     0]
-
-    (let
-      [r
-       (:result (shell-logs* env id {:offset offset :limit 262144}))
-
-       acc
-       (str acc (get r "stdout"))
-
-       nxt
-       (or (get r "next_offset") offset)]
-
-      ;; The bound counts EVERY iteration, exactly as the engine's own loop does: a
-      ;; command that never stops printing always has more bytes, so a limit checked
-      ;; only at EOF is never reached and the wait runs forever.
-      (cond (<= 50 n) (assoc r
-                        "stdout" acc
-                        "stage" "wait")
-            (not (get r "is_eof")) (recur (long nxt) acc (inc n))
-            (not= "running" (get r "status")) (assoc r
-                                                "stdout" acc
-                                                "stage" "wait")
-            :else (do (Thread/sleep 100) (recur (long nxt) acc (inc n)))))))
+  "`sh.wait(secs)` in Clojure — the SAME host loop the sandbox handle and an
+   extension handle call, not a fourth copy of it: the test waits exactly the way
+   the product does, so a bug in the loop fails here."
+  ([env id] (wait* env id 30))
+  ([env id secs] (:result (shell-wait* env id {:seconds secs}))))
 
 (defdescribe shell-env-injection-test
              (it "uses declarative env injection rather than a before middleware shim"
@@ -946,38 +917,193 @@
         (expect (= "↵ `ops` sent 0 chars"
                    (:summary (render-shell-send-result {"id" "ops" "sent" 0})))))))
 
-(defdescribe shell-one-shape-test
-             ;; Regression, one-shape refactor: `run` answered `stdout`, `logs` answered
-             ;; `text`, `send`/`stop` carried their own stage-scoped subsets and `git` built a
-             ;; map of its own with an extra `args` — so a caller had to learn which shape a
-             ;; call came back in, and reading the wrong name was a KeyError.
-             (it "answers the SAME key set from EVERY stage and from git"
-                 (with-shell-on
-                   (fn []
-                     (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                       (let
-                         [sid "shell-one-shape"
-                          env {:session-id sid}
-                          ks #(set (keys %))]
+(defdescribe
+  shell-one-shape-test
+  ;; Regression, one-shape refactor: `run` answered `stdout`, `logs` answered
+  ;; `text`, `send`/`stop` carried their own stage-scoped subsets and `git` built a
+  ;; map of its own with an extra `args` — so a caller had to learn which shape a
+  ;; call came back in, and reading the wrong name was a KeyError.
+  (it "answers the SAME key set from EVERY stage and from git"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-one-shape"
+               env {:session-id sid}
+               ks #(set (keys %))]
 
-                         (try
-                           (let
-                             [run (:result (shell* env {"command" "echo hi"}))
-                              bg (:result (shell* env {"command" "read x; echo got:$x" "id" "s1"}))
-                              logs (:result (shell-logs* env "s1"))
-                              sent (:result (shell-send* env "s1" "yes"))
-                              stopped (:result (shell* env {"op" "stop" "id" "s1"}))
-                              git (shell/run-argv env ["git" "--version"] nil)]
+              (try (let
+                     [run (:result (shell* env {"command" "echo hi"}))
+                      bg (:result (shell* env {"command" "read x; echo got:$x" "id" "s1"}))
+                      logs (:result (shell-logs* env "s1"))
+                      sent (:result (shell-send* env "s1" "yes"))
+                      waited (wait* env (get run "id"))
+                      stopped (:result (shell* env {"op" "stop" "id" "s1"}))
+                      git (shell/run-argv env ["git" "--version"] nil)]
 
-                             (expect (= (ks run) (ks bg) (ks logs) (ks sent) (ks stopped) (ks git)))
-                             ;; `stage` is the ONE thing that varies, and it varies as DATA.
-                             (expect (= ["run" "run" "logs" "send" "stop" "run"]
-                                        (mapv #(get % "stage") [run bg logs sent stopped git])))
-                             ;; The bytes have ONE name, whether the call waited for them or
-                             ;; came back for them later.
-                             (expect (= "hi\n" (get (wait* env (get run "id")) "stdout")))
-                             (expect (contains? logs "stdout")))
-                           (finally (resources/stop-all! sid)))))))))
+                     (expect
+                       (= (ks run) (ks bg) (ks logs) (ks waited) (ks sent) (ks stopped) (ks git)))
+                     ;; `stage` is the ONE thing that varies, and it varies as DATA.
+                     (expect (= ["run" "run" "logs" "wait" "send" "stop" "run"]
+                                (mapv #(get % "stage") [run bg logs waited sent stopped git])))
+                     ;; The bytes have ONE name, whether the call waited for them or
+                     ;; came back for them later.
+                     (expect (= "hi\n" (get waited "stdout")))
+                     (expect (contains? logs "stdout")))
+                   (finally (resources/stop-all! sid)))))))))
+
+(defdescribe
+  shell-one-wait-test
+  ;; Regression, wait audit: the bounded poll loop was written three times — the
+  ;; sandbox handle, an extension's handle and the tests each had their own copy,
+  ;; free to disagree about the deadline, the cursor and what "done" means. It is
+  ;; ONE host op now (`_shell_wait`), and these are its edges.
+  (it "is the ONE loop: every caller routes through the host wait op"
+      (expect (= "_shell_wait" (:ext.symbol/name shell/shell-wait-symbol)))
+      (expect (false? (:ext.symbol/native-tool? shell/shell-wait-symbol)))
+      ;; No Python caller may keep a loop of its own — the sandbox handle, the
+      ;; extension handle and the subprocess shim all call the host op.
+      (doseq
+        [[f marker] {"vis-python/async_runtime.py" "_shell_wait"
+                     ;; An extension authors the op map by hand; same host loop.
+                     "vis-python/extension_bootstrap.py" "'op': 'wait'"
+                     "vis-shims/posix.py" "_shell_wait"}]
+        (let [src (slurp (io/resource f))]
+          (expect (str/includes? src marker) f)
+          (expect (not (str/includes? src "time.sleep(poll)")) f))))
+  (it "bounds MEMORY as well as time when a command never stops printing"
+      ;; A runaway printer produced ~1 MB/s: an unbounded accumulator turned a long
+      ;; wait into a heap problem, so the wait keeps head+tail exactly as a
+      ;; foreground capture does and counts what it dropped.
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-wait-runaway"
+               env {:session-id sid}]
+
+              (try (let
+                     [sh (:result (shell* env
+                                          {"command" "while true; do echo xxxxxxxxxxxxxxxxx; done"
+                                           "id" "loud"}))
+                      r (wait* env (get sh "id") 1)]
+
+                     (expect (true? (get r "timed_out")))
+                     (expect (= "running" (get r "status")))
+                     (expect (< (count (get r "stdout")) 500000))
+                     (expect (pos? (long (get r "stdout_omitted_chars")))))
+                   (finally (resources/stop-all! sid))))))))
+  (it "answers from the LOG once the process is gone, and moves no cursor twice"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-wait-retired"
+               env {:session-id sid}]
+
+              (try (let
+                     [sh (:result (shell* env {"command" "printf 'a\\nb\\n'"}))
+                      id (get sh "id")
+                      first-wait (wait* env id 20)
+                      again (wait* env id 5)
+                      onward
+                      (:result
+                        (shell-wait* env id {:seconds 5 :offset (get first-wait "next_offset")}))]
+
+                     (expect (= "a\nb\n" (get first-wait "stdout")))
+                     (expect (= 0 (get first-wait "exit")))
+                     (expect (false? (get first-wait "timed_out")))
+                     ;; A second wait from the start replays the same log — the file is
+                     ;; the truth and a finished shell keeps answering by id.
+                     (expect (= "a\nb\n" (get again "stdout")))
+                     ;; From the cursor the first wait returned, there is nothing new.
+                     (expect (= "" (get onward "stdout"))))
+                   (finally (resources/stop-all! sid))))))))
+  (it "refuses an unknown id, another origin's shell and a nonsense duration"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-wait-refusals"
+               mine {:session-id sid :shell-origin "tool"}
+               theirs {:session-id sid :shell-origin "jailed-extension"}]
+
+              (try (let
+                     [sh (:result (shell* mine {"command" "sleep 30" "id" "mine"}))
+                      id (get sh "id")]
+
+                     (expect (str/includes? (throw-message #(wait* mine "no-such-shell" 1))
+                                            "No shell"))
+                     (expect (str/includes? (throw-message #(wait* theirs id 1))
+                                            "different trust origin"))
+                     ;; The refusal names the key the CALLER spelled, not an internal one.
+                     (expect (str/includes? (throw-message #(wait* mine id -5)) "seconds"))
+                     (expect (str/includes? (throw-message #(:result
+                                                              (shell-wait* mine id {:seconds 0.5})))
+                                            "whole number")))
+                   (finally (resources/stop-all! sid))))))))
+  (it "ends the wait when someone else stops the shell, and keeps its bytes"
+      (with-shell-on (fn []
+                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
+                         (let
+                           [sid "shell-wait-stopped"
+                            env {:session-id sid}]
+
+                           (try (let
+                                  [sh (:result (shell* env
+                                                       {"command" "echo before-stop; sleep 30"
+                                                        "id" "victim"}))
+                                   _ (Thread/sleep 300)
+                                   _ (shell* env {"op" "stop" "id" "victim"})
+                                   r (wait* env (get sh "id") 10)]
+
+                                  (expect (false? (get r "timed_out")))
+                                  (expect (str/includes? (get r "stdout") "before-stop")))
+                                (finally (resources/stop-all! sid))))))))
+  (it "unwinds at once when the turn is cancelled, leaving the shell alive"
+      ;; A wait is HOST code now, so a cancelled turn must interrupt it promptly
+      ;; instead of holding the thread until the deadline; the child keeps running
+      ;; under its id, which is what makes the log a feature rather than a loss.
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-wait-interrupt"
+               env {:session-id sid}]
+
+              (try (let
+                     [_ (shell* env {"command" "sleep 60" "id" "slow"})
+                      out (promise)
+                      t (Thread. (fn []
+                                   (try (shell-wait* env "slow" {:seconds 300})
+                                        (deliver out :finished)
+                                        (catch InterruptedException _ (deliver out :interrupted))
+                                        (catch Throwable e (deliver out (class e))))))]
+
+                     (.start t)
+                     (Thread/sleep 300)
+                     (.interrupt t)
+                     (expect (= :interrupted (deref out 5000 :still-blocked)))
+                     (expect (= "running" (get (:result (shell-logs* env "slow")) "status"))))
+                   (finally (resources/stop-all! sid))))))))
+  (it "leaves no shell or pty thread behind after a burst of waits"
+      (with-shell-on (fn []
+                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
+                         (let
+                           [sid "shell-wait-threads"
+                            env {:session-id sid}
+                            base (shell-thread-count)]
+
+                           (try (doseq [i (range 6)]
+                                  (let
+                                    [sh (:result (shell* env
+                                                         {"command" (str "echo burst-" i)
+                                                          "id" (str "burst" i)}))]
+                                    (expect (= (str "burst-" i "\n")
+                                               (get (wait* env (get sh "id") 20) "stdout")))))
+                                (finally (resources/stop-all! sid)))
+                           (Thread/sleep 500)
+                           (expect (<= (shell-thread-count) base))))))))
 
 (defdescribe
   shell-handle-integrity-test
@@ -1096,7 +1222,7 @@
   (it "advertises exactly one native shell tool, because a wait is not a lifecycle"
       (expect (= ["shell"]
                  (mapv :ext.symbol/name (filter :ext.symbol/native-tool? shell/shell-symbols))))
-      (expect (= 4 (count shell/shell-symbols))))
+      (expect (= 5 (count shell/shell-symbols))))
   (it "gives each tool a satisfiable schema with no op discriminator and no blocking knobs"
       (doseq [s shell/shell-symbols]
         (let [props (get-in s [:ext.symbol/schema :properties])]
@@ -1127,7 +1253,7 @@
                  ;; next to git / cat / grep, so there is no `shell.run(…)` namespace.
                  (expect (true? (get-in shell/vis-extension [:ext/engine :ext.engine/builtin?])))
                  (expect (nil? (get-in shell/vis-extension [:ext/engine :ext.engine/alias])))
-                 (expect (= '[shell _shell-logs _shell-type _shell-stop]
+                 (expect (= '[shell _shell-logs _shell-wait _shell-type _shell-stop]
                             (mapv :ext.symbol/symbol shell/shell-symbols)))))
 
 (defdescribe
@@ -1266,9 +1392,9 @@
 (defdescribe
   python-sandbox-surface-test
   "The bare Python global has only the one-map shell grammar."
-  (it "binds the four shell symbols into sandbox globals, each with a doc"
+  (it "binds the five shell symbols into sandbox globals, each with a doc"
       (let [bind (extension/builtin-sandbox-bindings (constantly nil))]
-        (expect (= '[_shell-logs _shell-stop _shell-type shell]
+        (expect (= '[_shell-logs _shell-stop _shell-type _shell-wait shell]
                    (vec (sort (filter #(str/includes? (name %) "shell") (keys bind))))))
         (expect (contains? (extension/sandbox-symbol-docs) 'shell))))
   (it "documents the ONE command on the run tool"
@@ -1293,14 +1419,12 @@
                         (py c
                             (str "r = __vis_settle__(shell('echo hi')).wait(20)\n"
                                  "[r['stage'], r['stdout'].strip(), r['command']]"))))
-             (expect
-               (= ["run" "logs" "stop"]
-                  (py
-                    c
-                    (str
-                      "b = __vis_settle__(shell('echo alive; sleep 30', {'id':'pyjob'}))\n"
-                      "l = b.logs(limit=10)\n"
-                      "s = b.stop()\n" "[b['stage'], l['stage'], s['stage']]"))))
+             (expect (= ["run" "logs" "stop"]
+                        (py c
+                            (str
+                              "b = __vis_settle__(shell('echo alive; sleep 30', {'id':'pyjob'}))\n"
+                              "l = b.logs(limit=10)\n"
+                              "s = b.stop()\n" "[b['stage'], l['stage'], s['stage']]"))))
              (finally (resources/stop-all! sid)))))
   (it "bounds sh.wait(secs) even when the command NEVER stops printing"
       ;; Regression, shell audit: the poll loop only checked its deadline once the log
@@ -1331,17 +1455,15 @@
          c
          (py-ctx {:session-id sid})]
 
-        (try
-          (expect
-            (= [true "__VisShell__" false true "exited" false]
-               (py c
-                   (str
-                     "sh = __vis_settle__(shell('read x; echo got $x', {'id':'handle'}))\n"
-                     "sh.type('ready')\n"
-                     "w = sh.wait(30)\n" "sh.stop()\n"
-                     "[isinstance(sh, dict), type(sh).__name__, 'shell_logs' in globals(),"
-                     " 'got ready' in w['stdout'], w['status'], w['timed_out']]"))))
-          (finally (resources/stop-all! sid)))))
+        (try (expect (= [true "__VisShell__" false true "exited" false]
+                        (py c
+                            (str
+                              "sh = __vis_settle__(shell('read x; echo got $x', {'id':'handle'}))\n"
+                              "sh.type('ready')\n"
+                              "w = sh.wait(30)\n" "sh.stop()\n"
+                              "[isinstance(sh, dict), type(sh).__name__, 'shell_logs' in globals(),"
+                              " 'got ready' in w['stdout'], w['status'], w['timed_out']]"))))
+             (finally (resources/stop-all! sid)))))
   (it "removes the binding when the shell toggle is off"
       (let
         [before
@@ -1400,16 +1522,14 @@
          c
          (py-ctx {:session-id sid})]
 
-        (try (expect
-               (= ["run" "logs" "stop"]
-                  (py c
-                      (str
-                        "job = "
-                        (pr-str sid)
-                        "\n"
-                        "b = __vis_settle__(shell(['echo ready; sleep 30'], {'id':job}))\n"
-                        "l = b.logs(limit=1)\n"
-                        "s = b.stop()\n" "[b['stage'], l['stage'], s['stage']]"))))
+        (try (expect (= ["run" "logs" "stop"]
+                        (py c
+                            (str "job = "
+                                 (pr-str sid)
+                                 "\n"
+                                 "b = __vis_settle__(shell(['echo ready; sleep 30'], {'id':job}))\n"
+                                 "l = b.logs(limit=1)\n"
+                                 "s = b.stop()\n" "[b['stage'], l['stage'], s['stage']]"))))
              (finally (resources/stop-all! sid))))))
 
 
@@ -1730,7 +1850,7 @@
                  (->> shell/shell-symbols
                       (filter :ext.symbol/native-tool?)
                       (mapv :ext.symbol/name))))
-      (expect (= ["shell" "_shell_logs" "_shell_type" "_shell_stop"]
+      (expect (= ["shell" "_shell_logs" "_shell_wait" "_shell_type" "_shell_stop"]
                  (mapv :ext.symbol/name shell/shell-symbols)))))
 
 

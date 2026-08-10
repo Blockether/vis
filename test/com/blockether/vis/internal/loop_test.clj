@@ -3840,7 +3840,7 @@
         ;; lint_code takes a whole dict → it declares NO :call and uses the default.
         (expect (nil? (get real-call-shapes "lint_code")))
         ;; Every shell verb is a one-map call; none may grow a positional shape.
-        (doseq [n ["shell" "_shell_logs" "_shell_type" "_shell_stop"]]
+        (doseq [n ["shell" "_shell_logs" "_shell_wait" "_shell_type" "_shell_stop"]]
           (expect (nil? (get real-call-shapes n))))
         ;; Git is the argv itself, so it projects `command` positionally.
         (expect (= {:pos ["command"]} (get real-call-shapes "git"))))

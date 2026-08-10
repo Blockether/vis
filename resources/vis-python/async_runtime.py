@@ -589,7 +589,7 @@ class __VisShell__(__VisResult__):
     # `apropos`), and re-issuing a live `id` through `shell` hands the SAME handle back,
     # which is how a later block re-acquires one.
     __vis_shell_ops__ = frozenset(
-        ("shell", "_shell_logs", "_shell_type", "_shell_stop")
+        ("shell", "_shell_logs", "_shell_wait", "_shell_type", "_shell_stop")
     )
 
     def __vis_op__(self, __vis_name__, __vis_args__):
@@ -619,38 +619,14 @@ class __VisShell__(__VisResult__):
     def stop(self):
         return self.__vis_op__("_shell_stop", {"id": self["id"]})
 
-    def wait(self, seconds=120, poll=0.25):
-        # The bounded poll loop, written ONCE in the engine instead of once per model
-        # block: read from where the last read stopped, keep reading while bytes are
-        # still available, sleep only when the log is at EOF and the process is alive,
-        # and give up at the deadline. `timed_out` says which of the two ended it, and
-        # `stdout` is everything printed since this handle's own cursor — the SAME key a
-        # foreground run answers with, because there is ONE shell result shape.
-        import time as __vis_time__
-
-        deadline = __vis_time__.time() + float(seconds)
-        offset, chunks, last = 0, [], None
-        while True:
-            last = self.logs(offset=offset, limit=262144)
-            chunks.append(last.get("stdout") or "")
-            offset = last.get("next_offset", offset)
-            if __vis_time__.time() >= deadline:
-                # The deadline bounds EVERY iteration, not only the idle one: a
-                # command that never stops printing (`yes`, a chatty build) always
-                # had more bytes available, so a loop that only checked the clock at
-                # EOF could never reach it and `sh.wait(1)` ran forever.
-                break
-            if not last.get("is_eof", True):
-                continue
-            if last.get("status") != "running":
-                break
-            __vis_time__.sleep(poll)
-        out = dict(last)
-        out["stage"] = "wait"
-        out["offset"] = 0
-        out["stdout"] = "".join(chunks)
-        out["timed_out"] = out.get("status") == "running"
-        return __VisShell__(out)
+    def wait(self, seconds=120):
+        # ONE wait, and it does NOT live here: the bounded poll loop is host code
+        # (`_shell_wait`), so the sandbox handle, an extension's handle and the tests
+        # all wait the same way instead of each re-typing a loop that can disagree
+        # about the deadline. `timed_out` means the WAIT expired, not the process.
+        return self.__vis_op__(
+            "_shell_wait", {"id": self["id"], "seconds": int(seconds)}
+        )
 
 
 class __VisResultList__(list):

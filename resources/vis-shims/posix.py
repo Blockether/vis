@@ -3,8 +3,8 @@
 # The agent sandbox is deny-by-default (no native access), so CPython's real
 # `subprocess` / `os.system` cannot spawn — they fail with an opaque error.
 # This shim replaces them with a thin layer that DELEGATES to the vis shell
-# TOOL `shell` and its private handle transports (`_shell_logs`, `_shell_type`,
-# `_shell_stop`), so the
+# TOOL `shell` and its private handle transports (`_shell_logs`, `_shell_wait`,
+# `_shell_type`, `_shell_stop`), so the
 # model's ordinary Python (`subprocess.run([...])`, `os.system(...)`) just works
 # and still rides the workspace-cwd containment, timeout,
 # process-tree kill, output bounding, render badge, and trace recording.
@@ -181,6 +181,9 @@ def __vis_install_posix_compat__():
     def getoutput(cmd):
         return getstatusoutput(cmd)[1]
 
+    # Host cap on ONE wait (`clamp-timeout-secs`); a longer wait is more of them.
+    _WAIT_CAP = 600
+
     class Popen(object):
         # Background process backed by `shell` — every run is a background run
         # under a session-resource pty, so there is nothing to opt into. Auto picks an id; terminate/kill stop the shell,
@@ -201,6 +204,11 @@ def __vis_install_posix_compat__():
             reg = sr(_to_cmd(args, shell), opts)
             self.pid = reg.get("pid")
             self.returncode = None
+            # This handle's own cursor into the log, plus what it has already read:
+            # waiting NEVER re-reads bytes it accumulated, so communicate() is the
+            # buffer and not a second walk of the file.
+            self._out = []
+            self._off = 0
 
         def _logs(self):
             return _tool("_shell_logs")({"id": self._id, "limit": 1})
@@ -216,26 +224,36 @@ def __vis_install_posix_compat__():
                 self.returncode = r.get("exit")
             return self.returncode
 
+        def _wait_once(self, seconds):
+            # The bounded poll loop is HOST code (`_shell_wait`), the same one the
+            # sandbox handle and an extension handle call. This shim owns no loop of
+            # its own — it only decides how long it is willing to keep asking.
+            r = _tool("_shell_wait")(
+                {"id": self._id, "seconds": int(seconds), "offset": self._off}
+            )
+            self._out.append(r.get("stdout") or "")
+            self._off = r.get("next_offset", self._off)
+            if r.get("status") == "exited":
+                self.returncode = r.get("exit")
+            return r
+
         def wait(self, timeout=None):
             deadline = None if timeout is None else time.time() + timeout
-            while self.poll() is None:
-                if deadline is not None and time.time() > deadline:
+            while self.returncode is None:
+                if deadline is None:
+                    self._wait_once(_WAIT_CAP)
+                    continue
+                left = deadline - time.time()
+                if left <= 0:
                     raise TimeoutExpired(self.args, timeout)
-                time.sleep(0.1)
+                self._wait_once(min(_WAIT_CAP, max(1, int(left))))
+                if self.returncode is None and time.time() >= deadline:
+                    raise TimeoutExpired(self.args, timeout)
             return self.returncode
 
         def communicate(self, input=None, timeout=None):
             self.wait(timeout)
-            out, off = [], 0
-            while True:
-                r = self._read(off)
-                out.append(r.get("stdout") or "")
-                nxt = r.get("next_offset", off)
-                if r.get("is_eof") or nxt <= off:
-                    break
-                off = nxt
-            out = "".join(out)
-            return (out, "")
+            return ("".join(self._out), "")
 
         def terminate(self):
             _tool("_shell_stop")({"id": self._id})
