@@ -189,7 +189,9 @@
 
 (def ^:private timeout-ms-re #"[\"']?timeout_ms[\"']?\s*(?::|=)\s*([0-9]+(?:\.[0-9]+)?)")
 
-(def ^:private shell-call-re #"\bshell\s*\(|\bsubprocess\.")
+;; `subprocess` is NOT here: it never spawns (the POSIX refusal shim raises at
+;; once), so a block that mentions it buys no time. Only the `shell` tool waits.
+(def ^:private shell-call-re #"\bshell\s*\(")
 
 (def ^:private run-tests-call-re #"\brun_tests\s*\(")
 

@@ -638,6 +638,37 @@ and not a missing key.
 
 **Unknowns.** None.
 
+## Phase 15 — ONE door to a process: `subprocess` never spawns
+
+**Rationale.** Without it there are two spawn doors and the model picks whichever it remembers.
+`resources/vis-shims/posix.py` was a 313-line bridge that re-implemented `run`, `Popen`,
+`communicate`, `check_output`, `os.system` and `os.popen` on top of the shell transports — a second
+copy of the id, cursor, timeout and stop contracts that Phases 9-14 spent five commits making
+single. It also lied by omission with the toggle off: the message said only that `subprocess` could
+not run, which reads as "the other door might work". The prompt block said the same thing —
+`subprocess` "routes through the active `shell` tool" — teaching the shape we no longer want.
+
+**Data.** None. No key on any boundary changes; a Python module the sandbox synthesises is not a
+wire contract.
+
+**Acceptance criteria.**
+- `resources/vis-shims/posix.py` — a refusal, not a bridge: every spawning entry point of
+  `subprocess`, plus `os.system` / `os.popen`, raises ONE message resolved at CALL time. Shell on:
+  name the `shell` tool and its invocation. Shell off: say the toggle disabled the tool AND
+  `subprocess`. The exception types stay real classes so an `except` line cannot mask the refusal.
+- `src/com/blockether/vis/internal/env_python.clj` — `install-posix-refusal-shim!` eval's it
+  eagerly; `resources/vis-python/posix_lazy_init.py` and the `__vis_load_posix__` callback are
+  deleted, because the lazy `meta_path` finder existed only to defer a ~95ms bridge that is gone.
+- `src/com/blockether/vis/internal/prompt.clj` — both branches of the sandbox-shims block state the
+  ban; `src/com/blockether/vis/internal/runtime_settings.clj` drops `subprocess` from the
+  shell-timeout scan, since a call that raises at once buys no budget.
+- Test: `posix-refusal-shim-test` proves the refusal with `shell` BOUND (naming the tool) and with
+  it absent (naming both), across `run`/`call`/`check_call`/`check_output`/`getoutput`/
+  `getstatusoutput`/`Popen`/`os.system`/`os.popen`, with the handler line still importable and no
+  shim internals in the live-vars baseline; `shell-one-wait-test` pins that the shim keeps no wait.
+
+**Unknowns.** None.
+
 ## State of the plan
 
 **DONE.**
@@ -739,6 +770,9 @@ Done:
   `status`/`exit`, `started_at`/`finished_at`/`uptime_ms`, `log_path` and the live
   `cpu_ms`/`cpu_percent`/`rss_bytes` of the process TREE, without reading a byte or moving a
   cursor.
+- Phase 15, ONE door to a process — `149dff594`. `subprocess`, `os.system` and `os.popen` never spawn:
+  they raise, naming the `shell` tool when it is on and naming BOTH as disabled when the toggle is
+  off. The 313-line delegation bridge and its lazy loader are deleted.
 
 TODO, in order: nothing. The plan is DONE.
 

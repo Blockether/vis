@@ -1055,16 +1055,20 @@
   (it "is the ONE loop: every caller routes through the host wait op"
       (expect (= "_shell_wait" (:ext.symbol/name shell/shell-wait-symbol)))
       (expect (false? (:ext.symbol/native-tool? shell/shell-wait-symbol)))
-      ;; No Python caller may keep a loop of its own — the sandbox handle, the
-      ;; extension handle and the subprocess shim all call the host op.
+      ;; No Python caller may keep a loop of its own — the sandbox handle and
+      ;; the extension handle both call the host op.
       (doseq
         [[f marker] {"vis-python/async_runtime.py" "_shell_wait"
                      ;; An extension authors the op map by hand; same host loop.
-                     "vis-python/extension_bootstrap.py" "'op': 'wait'"
-                     "vis-shims/posix.py" "_shell_wait"}]
+                     "vis-python/extension_bootstrap.py" "'op': 'wait'"}]
         (let [src (slurp (io/resource f))]
           (expect (str/includes? src marker) f)
-          (expect (not (str/includes? src "time.sleep(poll)")) f))))
+          (expect (not (str/includes? src "time.sleep(poll)")) f)))
+      ;; The POSIX shim is not a caller at all: `subprocess` never spawns, so it
+      ;; owns no wait, no cursor and no second copy of the shell contract.
+      (let [src (slurp (io/resource "vis-shims/posix.py"))]
+        (expect (not (str/includes? src "_shell_wait")))
+        (expect (str/includes? src "never spawn"))))
   (it "bounds MEMORY as well as time when a command never stops printing"
       ;; A runaway printer produced ~1 MB/s: an unbounded accumulator turned a long
       ;; wait into a heap problem, so the wait keeps head+tail exactly as a

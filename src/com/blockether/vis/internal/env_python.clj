@@ -1141,25 +1141,16 @@
       "session_fold(target, gist=None) -> str. Collapse SETTLED steps: prior turns and the current turn only through its last completed iteration; live/future steps cannot fold. Targets: step/turn ids or through/from/to/since selectors. Folding changes rendering, not storage; there is no destructive unfold command. `ntr` never stores a `session_fold` receipt. Recover a folded result with its `# saved:` coordinate, `ntr[\"tN/iM/fK\"]`; if absent, use `s = await session_state()` and filter `['transcript']['turns'][...]['iterations'][...]['blocks']`. A broader newer fold supersedes fully covered breadcrumbs; equal scope keeps newer. Partial overlaps remain separate.")))
 
 
-(def ^:private posix-compat-shim-src
-  "Pure-Python source that replaces `subprocess` / `os.system` / `os.popen`
-   with thin wrappers that DELEGATE to the vis shell tools (`shell`,
-   `_shell_status`, `_shell_logs`, `_shell_wait`, `_shell_type`, `_shell_stop`). The body lives in the
+(def ^:private posix-refusal-shim-src
+  "Pure-Python source that replaces `subprocess` / `os.system` / `os.popen` with
+   ONE refusal that names the `shell` tool. The body lives in the
    `vis-shims/posix.py` CLASSPATH RESOURCE (`resources/vis-shims/posix.py`) -
    real Python in a real `.py` file, never a Clojure string - and is embedded in
    the native image by build.clj's `-H:IncludeResources=vis-shims/.*`.
-   Tool callables are looked up in `globals()` at CALL time, so it self-adapts:
-   when the shell tools are absent or their toggle is off it raises a clear 'enable
-   the shell tools' message. Soft string-level coupling to the tool NAMES only."
+   `shell` is looked up in `globals()` at CALL time, so ONE file serves both
+   states: with the shell tools on it names the tool and its invocation; with
+   the toggle off it says the toggle disabled BOTH doors."
   (runtime-python-src "vis-shims/posix.py"))
-
-(def ^:private posix-lazy-init-python
-  "Eager, tiny LAZY installer for the POSIX-compat bridge. Registers a
-   `subprocess` meta_path finder + `os.system`/`os.popen` thunks that DEFER the
-   ~95ms `posix-compat-shim-src` body until the FIRST `import subprocess` /
-   `os.system` / `os.popen`, so a session that never shells out never pays it.
-   `__vis_load_posix__` is the host callback that eval's the real body, once."
-  (runtime-python-src "vis-python/posix_lazy_init.py"))
 
 (def AUTO_IMPORTED_PYTHON_NAMES
   "Python names installed into builtins for every `python_execution` context.
@@ -1196,23 +1187,16 @@
   [^Context ctx]
   (try (.eval ctx "python" ^String auto-imports-python) (catch Throwable _ nil)))
 
-(defn- install-posix-compat-shim!
-  "Install the POSIX-compat bridge LAZILY. Instead of eval'ing the ~95ms shim
-   body into every context (main + every `sub_loop` fork), wire the host loader
-   `__vis_load_posix__` and eval the tiny `posix-lazy-init-python` stubs (a
-   `subprocess` meta_path finder + `os.system`/`os.popen` thunks) that DEFER the
-   body until the first `import subprocess` / `os.system` / `os.popen`. A session
-   that never shells out never pays it. Best-effort: a failure leaves the sandbox
-   without the bridge, it must never break context creation."
-  [^Context ctx ^Value g]
-  (when-let [src posix-compat-shim-src]
-    (try (.putMember g
-                     "__vis_load_posix__"
-                     (wrap-ifn (fn []
-                                 (.eval ctx "python" ^String src)
-                                 nil)))
-         (.eval ctx "python" ^String posix-lazy-init-python)
-         (catch Throwable _ nil))))
+(defn- install-posix-refusal-shim!
+  "Install the POSIX refusal shim: `subprocess` / `os.system` / `os.popen` raise
+   a message pointing at the `shell` tool. The body is a few dozen lines with no
+   module graph behind it, so it is eval'd EAGERLY - the lazy `meta_path` finder
+   it replaced existed only to defer a ~95ms delegation bridge that no longer
+   exists. Best-effort: a failure leaves the sandbox without the shim (the spawn
+   then fails opaquely), it must never break context creation."
+  [^Context ctx]
+  (when-let [src posix-refusal-shim-src]
+    (try (.eval ctx "python" ^String src) (catch Throwable _ nil))))
 
 (defn- registered-sandbox-shims
   "The Python sandbox shims contributed by the extension registry."
@@ -1953,10 +1937,10 @@
             "globals().setdefault('__vis_groups__', {}).update(json.loads(__vis_groups_json__))")
           (.putMember g "__vis_groups_json__" nil)))
       (catch Throwable _ nil))
-    ;; POSIX-compat: route subprocess / os.system to the shell tools. Eval'd
-    ;; BEFORE the initial-ns-keys snapshot so any names it parks are baseline
-    ;; (filtered out of the model-visible live-vars view).
-    (install-posix-compat-shim! ctx g)
+    ;; POSIX refusal: subprocess / os.system / os.popen point at the `shell`
+    ;; tool instead of spawning. Eval'd BEFORE the initial-ns-keys snapshot so
+    ;; any names it parks are baseline (filtered out of the live-vars view).
+    (install-posix-refusal-shim! ctx)
     ;; SANDBOX SHIMS: install every extension-contributed Python shim (host
     ;; bridge callables wired onto `g`, then the shim's source eval'd). This
     ;; is the GENERIC mechanism — `yaml` (YAMLStar) and `matplotlib` (imaging)

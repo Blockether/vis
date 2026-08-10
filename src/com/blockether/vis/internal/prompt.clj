@@ -567,11 +567,12 @@
    seeding is a `doc()` fallback the shim's own Python usually overrides. One line
    per shim, keyed by the very names advertised above it.
 
-   The process surface is stated either way. With shell active, name only the POSIX
-   compatibility routing — the shell symbol's own docs remain the single authority
-   for its invocation grammar. With shell OFF, say plainly that `subprocess` /
-   `os.system` / `os.popen` are disabled and disallowed: silence read as an invitation
-   to try, and the attempt only surfaced as an opaque spawn failure."
+   The process surface is stated either way, and it says the SAME thing about
+   `subprocess`: it never spawns. With shell active, point at the tool — the
+   shell symbol's own docs remain the single authority for its invocation
+   grammar. With shell OFF, say plainly that the tool AND `subprocess` /
+   `os.system` / `os.popen` are disabled: silence read as an invitation to try,
+   and the attempt only surfaced as an opaque spawn failure."
   [active-extensions]
   (let
     [shims
@@ -634,12 +635,11 @@
                   "memory of the library and do not reach for an API it does not claim.\n"
                   (str/join "\n" shim-capabilities)))
            (if shell?
-             (str "\n`subprocess`, `os.system`, and `os.popen` route through the active "
-                  "`shell` tool; use its authoritative contract for calls.")
+             (str "\n`subprocess`, `os.system` and `os.popen` NEVER spawn here — they raise. "
+                  "Every process starts through the `shell` tool; use its authoritative contract.")
              (str "\nShell commands are DISABLED in this sandbox: there is no shell tool, and "
-                  "`subprocess`, `os.system`, and `os.popen` are NOT allowed — every spawn "
-                  "attempt raises. No external process can run here, so use the native tools "
-                  "instead of looking for a way around it."))))))
+                  "`subprocess`, `os.system` and `os.popen` raise too — nothing here can start "
+                  "a process. Use the native tools instead of looking for a way around it."))))))
 
 (defn- turn-system-context-block
   "Turn-scoped system context that can be rebuilt/replaced as runtime

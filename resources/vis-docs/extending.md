@@ -946,7 +946,9 @@ falls back to an ASCII plot on text-only terminals; `savefig` writes a PNG (or
 `plot_wireframe`, `contour(offset=…)`, 3-D `scatter`/`plot`/`text`, `bar3d` and
 `view_init` go through a painter's-algorithm camera with shading and colormaps,
 and the ASCII backend projects the same scene into braille.
-`subprocess`, `os.system` and `os.popen` are bridged onto the `shell` tool.
+`subprocess`, `os.system` and `os.popen` never spawn in the agent sandbox: they
+raise and name the `shell` tool, which is the one door to a process. (Trusted
+extension code, outside the sandbox, keeps the real `subprocess`.)
 
 These are compatibility subsets, not the full PyPI packages — enough for
 scripting and tests, not a substitute for the real library's every corner. Each

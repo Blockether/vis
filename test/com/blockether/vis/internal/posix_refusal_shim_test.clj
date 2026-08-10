@@ -1,0 +1,72 @@
+(ns com.blockether.vis.internal.posix-refusal-shim-test
+  "The POSIX refusal shim installed into every sandbox context: `subprocess`,
+   `os.system` and `os.popen` never spawn — they raise ONE message naming the
+   `shell` tool, the single door every process goes through. The tool is looked
+   up at CALL time, so the same file also answers the toggle-off state, where it
+   must say that BOTH doors are closed rather than offering subprocess as a way
+   around a disabled shell."
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.env-python :as ep]
+            [lazytest.core :refer [defdescribe expect it]])
+  (:import [org.graalvm.polyglot Context]))
+
+(defn- raised
+  "The message `code` raises in `ctx`, or nil when it did not raise."
+  [^Context ctx ^String code]
+  (try (.eval ctx "python" code) nil (catch Throwable t (str (.getMessage t)))))
+
+(defn- shell-bound-context
+  "A sandbox context with the `shell` tool present — the shim must STILL refuse."
+  ^Context []
+  (:python-context (ep/create-python-context {'shell (fn [& _]
+                                                       {"exit" 0})})))
+
+(defdescribe subprocess-refusal-test
+             ;; Regression, handle audit: `subprocess` used to be a second spawn door that
+             ;; delegated to the shell tool, so containment, the log file and the handle had
+             ;; two entry points and the model picked whichever it remembered first.
+             (it "refuses subprocess.run even when the shell tool is bound, and names `shell`"
+                 (let [ctx (shell-bound-context)]
+                   (.eval ctx "python" "import subprocess")
+                   (let [msg (raised ctx "subprocess.run(['echo','hi'], capture_output=True)")]
+                     (expect (some? msg))
+                     (expect (str/includes? msg "`shell`"))
+                     (expect (str/includes? msg "await shell("))
+                     (expect (not (str/includes? msg "DISABLED"))))))
+             (it "refuses every spawning entry point of the module"
+                 (let [ctx (shell-bound-context)]
+                   (.eval ctx "python" "import subprocess")
+                   (doseq
+                     [code ["subprocess.call('ls')" "subprocess.check_call('ls')"
+                            "subprocess.check_output('ls')" "subprocess.getoutput('ls')"
+                            "subprocess.getstatusoutput('ls')" "subprocess.Popen('ls')"]]
+                     (expect (some? (raised ctx code)) code))))
+             (it
+               "refuses os.system and os.popen with the same message"
+               (let [ctx (shell-bound-context)]
+                 (expect (str/includes? (str (raised ctx "import os\nos.system('ls')")) "`shell`"))
+                 (expect (str/includes? (str (raised ctx "import os\nos.popen('ls')")) "`shell`"))))
+             (it "keeps the exception types importable so a handler line does not NameError"
+                 (let [ctx (shell-bound-context)]
+                   (.eval ctx "python" "import subprocess")
+                   (expect (nil? (raised ctx
+                                         (str "try:\n" "    subprocess.run('ls')\n"
+                                              "except subprocess.CalledProcessError:\n" "    pass\n"
+                                              "except RuntimeError:\n" "    pass\n")))))))
+
+(defdescribe shell-toggle-off-test
+             ;; Regression, handle audit: with the shell toggle off the shim advertised only
+             ;; that subprocess could not run, which read as "the other door might work".
+             (it "says BOTH the shell tool and subprocess are disabled when `shell` is absent"
+                 (let [ctx (:python-context (ep/create-python-context {}))]
+                   (.eval ctx "python" "import subprocess")
+                   (let [msg (raised ctx "subprocess.run(['echo','hi'])")]
+                     (expect (some? msg))
+                     (expect (str/includes? msg "DISABLED"))
+                     (expect (str/includes? msg "`shell` tool"))
+                     (expect (str/includes? msg "Shell commands")))))
+             (it "does not leak shim internals into the live-vars baseline"
+                 (let [{:keys [initial-ns-keys]} (ep/create-python-context {})]
+                   ;; subprocess lives in sys.modules, not globals; the installer is del'd
+                   (expect (not (contains? initial-ns-keys "subprocess")))
+                   (expect (not (contains? initial-ns-keys "__vis_install_posix_compat__"))))))

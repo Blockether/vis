@@ -21,8 +21,8 @@
 
 (def ^:private env-python-installed
   "Python shim sources NOT contributed as `:ext/sandbox-shims`. `posix.py` is
-   installed directly by `env-python/install-posix-compat-shim!`, behind a lazy
-   `__vis_load_posix__` stub, so it deliberately has no `shim_*.clj`."
+   installed directly by `env-python/install-posix-refusal-shim!` into every
+   sandbox context, so it deliberately has no `shim_*.clj`."
   #{"vis-shims/posix.py"})
 
 (def ^:private builtin-nses
