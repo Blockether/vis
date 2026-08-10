@@ -29,7 +29,9 @@
 
    The result IS the HANDLE: every shell answer is a dict-with-methods in the
    sandbox, so the process is driven on the object the call already returned —
-   `sh.logs(offset=0)` reads the log from a byte OFFSET and returns NOW,
+   `sh.status()` says what it is doing — running or exited, since when, where its
+   log file is, and what CPU and RAM its process tree is costing — without reading
+   a byte, `sh.logs(offset=0)` reads the log from a byte OFFSET and returns NOW,
    `sh.wait(30)` is the bounded poll loop written once in the engine, `sh.type(\"y\")`
    types into the pty and `sh.stop()` kills the tree. There are no id-taking verbs to
    re-type an id into; re-issuing a LIVE id gives the same handle back.
@@ -603,6 +605,20 @@
    "exit" nil
    "duration_ms" nil
    "uptime_ms" nil
+   ;; WHEN, in epoch milliseconds, so a caller can say how long ago a shell started
+   ;; and whether it has finished at all. `finished_at` nil IS "still running" —
+   ;; the same fact `exit` nil carries, spelled on the clock.
+   "started_at" nil
+   "finished_at" nil
+   ;; WHERE the bytes are ON THIS MACHINE. The log is an ordinary file, so `cat`,
+   ;; `grep` and a human's editor reach it without going through a handle at all.
+   "log_path" nil
+   ;; LIVE cost of the process TREE, sampled at the moment this result was built:
+   ;; nil once the child is gone, because usage is a measurement and there is
+   ;; nothing left to measure.
+   "cpu_ms" nil
+   "cpu_percent" nil
+   "rss_bytes" nil
    "timed_out" false
    "timeout_secs" nil
    ;; OUTPUT, under one name everywhere: what a foreground run captured, and what a
@@ -767,6 +783,8 @@
                                    "stderr" (lf (:text err))
                                    "exit" exit
                                    "duration_ms" (- t1 t0)
+                                   "started_at" t0
+                                   "finished_at" (when finished? t1)
                                    "timed_out" (not finished?)
                                    ;; 0 exactly when nothing was dropped, so no truncation flag is owed
                                    ;; beside it.
@@ -1099,6 +1117,103 @@
     (.setDaemon true)
     (.start)))
 
+(defn- tree-handles
+  "This process and every descendant of it that is still alive. A shell's cost is
+   the cost of the TREE it started — the `bash -lc` line is nearly free, the
+   compiler it launched is not — so nothing here reports the wrapper alone."
+  [pid]
+  (when pid
+    (when-let [^ProcessHandle h (.orElse (ProcessHandle/of (long pid)) nil)]
+      (into [h] (.toList (.descendants h))))))
+
+(defn- tree-cpu-ms
+  "Total CPU time the tree has burned, in milliseconds, or nil when the platform
+   will not say. This is CPU CONSUMED, not wall time: a shell asleep for an hour
+   reports single-digit milliseconds, which is exactly how \"is it working or is it
+   stuck\" is answered."
+  [handles]
+  (let
+    [ms (keep (fn [^ProcessHandle h]
+                (some-> ^java.time.Duration (.orElse (.totalCpuDuration (.info h)) nil)
+                        (.toMillis)))
+              handles)]
+    (when (seq ms) (reduce + ms))))
+
+(defn- cpu-time->ms
+  "One `ps` CPU-time cell as milliseconds: `[[DD-]HH:]MM:SS[.ss]`. `ps` is the only
+   portable source of a CHILD's CPU time — the JDK's `totalCpuDuration` is empty
+   for a process this JVM did not measure — so the parse lives here rather than
+   the number being dropped."
+  [^String cell]
+  (try (let
+         [[days rest]
+          (if (str/includes? cell "-") (str/split cell #"-" 2) [nil cell])
+
+          parts
+          (mapv #(Double/parseDouble %) (str/split rest #":"))
+
+          secs
+          (reduce (fn [acc p]
+                    (+ (* 60.0 (double acc)) (double p)))
+                  0.0
+                  parts)]
+
+         (long (* 1000.0 (+ (double secs) (* 86400.0 (double (if days (Long/parseLong days) 0)))))))
+       (catch Exception _ nil)))
+
+(defn- tree-ps-usage
+  "Resident memory, CPU share and CPU time of the tree, read from `ps`. The JDK
+   exposes neither RSS nor a child's CPU time, and RSS is the number a human means
+   by \"how much RAM is this using\". Best effort by construction: a pid that exited
+   between the listing and the read simply contributes nothing, and a platform
+   without `ps` answers nil rather than failing the stage that asked."
+  [pids]
+  (when (seq pids)
+    (try (let
+           [p
+            (.start (doto (ProcessBuilder.
+                            ^java.util.List
+                            (vector "ps" "-o" "rss=,pcpu=,time=" "-p" (str/join "," pids)))
+                      (.redirectErrorStream true)))
+
+            out
+            (with-open [r (io/reader (.getInputStream p))]
+              (slurp r))
+
+            _
+            (.waitFor p 2 TimeUnit/SECONDS)
+
+            rows
+            (keep (fn [line]
+                    (let [cells (str/split (str/trim line) #"\s+")]
+                      (when (= 3 (count cells))
+                        (try [(Long/parseLong (first cells)) (Double/parseDouble (second cells))
+                              (cpu-time->ms (nth cells 2))]
+                             (catch Exception _ nil)))))
+                  (str/split-lines out))]
+
+           (when (seq rows)
+             {"rss_bytes" (* 1024 (long (reduce + (map first rows))))
+              ;; One decimal: `ps` reports hundredths of a percent that mean nothing and
+              ;; make two consecutive samples look different when they are not.
+              "cpu_percent" (/ (Math/round (* 10.0 (double (reduce + (map second rows))))) 10.0)
+              "cpu_ms" (reduce + (keep #(nth % 2) rows))}))
+         (catch Throwable _ nil))))
+
+(defn- process-usage
+  "`cpu_ms` / `cpu_percent` / `rss_bytes` for a LIVE process tree, sampled now. An
+   exited shell answers nil for all three — usage is a measurement, and a result
+   that kept reporting the last sample would be claiming a process that no longer
+   exists is still costing something."
+  [pid]
+  (when-let [handles (seq (tree-handles pid))]
+    (merge {"cpu_ms" (tree-cpu-ms handles)}
+           (into {}
+                 (remove (comp nil? val))
+                 (tree-ps-usage (mapv (fn [^ProcessHandle h]
+                                        (.pid h))
+                                      handles))))))
+
 (defn- bg-core
   "Identity keys shared by EVERY background stage of `shell`, merged onto the
    TOTAL base. `op` names the stage that produced the result, so the card renderer
@@ -1119,33 +1234,47 @@
      bridge
      (:bridge entry)]
 
-    (shell-result op
-                  {"id" id
-                   "command" (:command entry)
-                   "cwd" (:dir entry)
-                   "pid" (:pid (:proc entry))
-                   "started" true
-                   "status" (if (some? exit) "exited" "running")
-                   "exit" exit
-                   ;; A LIVE shell's log is never complete: `is_eof` says "there is
-                   ;; nothing more to read", and while the child runs there always may
-                   ;; be. A read stage overrides this with what its own chunk saw.
-                   "is_eof" (some? exit)
-                   ;; LIFETIME, not the age of this read: it stops at the ending an
-                   ;; earlier stage stamped, so a job that ran 3s never reports the ten
-                   ;; minutes that passed before someone came back to read its logs.
-                   "uptime_ms" (let
-                                 [t0
-                                  (long (or (:started-at entry) (now-ms)))
+    (shell-result
+      op
+      (merge
+        ;; Live cost of the tree, sampled HERE so every stage reports the same
+        ;; three numbers the same way. Skipped once the child is gone: there is
+        ;; nothing to sample, and a stale sample would be a lie.
+        (when (nil? exit) (process-usage (:pid (:proc entry))))
+        {"id" id
+         "command" (:command entry)
+         "cwd" (:dir entry)
+         "pid" (:pid (:proc entry))
+         "started" true
+         "status" (if (some? exit) "exited" "running")
+         "exit" exit
+         ;; A LIVE shell's log is never complete: `is_eof` says "there is
+         ;; nothing more to read", and while the child runs there always may
+         ;; be. A read stage overrides this with what its own chunk saw.
+         "is_eof" (some? exit)
+         ;; LIFETIME, not the age of this read: it stops at the ending an
+         ;; earlier stage stamped, so a job that ran 3s never reports the ten
+         ;; minutes that passed before someone came back to read its logs.
+         "uptime_ms" (let
+                       [t0
+                        (long (or (:started-at entry) (now-ms)))
 
-                                  t1
-                                  (long (or (some-> (:exited-at entry)
-                                                    deref)
-                                            (now-ms)))]
+                        t1
+                        (long (or (some-> (:exited-at entry)
+                                          deref)
+                                  (now-ms)))]
 
-                                 (max 0 (- t1 t0)))
-                   "attach" (when bridge (str "vis-agent extension shell attach " id))
-                   "socket" (:path bridge)})))
+                       (max 0 (- t1 t0)))
+         ;; The clock, in epoch ms: when it started, and when it ended — nil
+         ;; while it has not.
+         "started_at" (:started-at entry)
+         "finished_at" (some-> (:exited-at entry)
+                               deref)
+         ;; The log FILE, by absolute path: readable with `cat`/`grep` by a
+         ;; human, with no handle and no session in hand.
+         "log_path" (:log-path entry)
+         "attach" (when bridge (str "vis-agent extension shell attach " id))
+         "socket" (:path bridge)}))))
 
 (defn- shell-bg-spawn!
   "Spawn a NEW background PTY under `id`. Callers guarantee no LIVE entry holds
@@ -1268,6 +1397,7 @@
          :command script
          :script script
          :dir (.getPath dir)
+         :log-path (:path sink)
          :origin (env-origin env)
          :started-at t0})
       (resources/register! session
@@ -1664,14 +1794,17 @@
      ended
      (get row "ended_at")]
 
-    (assoc (shell-result "logs"
-                         {"id" id
-                          "command" (get row "command")
-                          "cwd" (get row "dir")
-                          "started" true
-                          "exit" (get row "exit")
-                          "uptime_ms" (when (and started ended)
-                                        (max 0 (- (long ended) (long started))))})
+    (assoc (shell-result
+             "logs"
+             {"id" id
+              "command" (get row "command")
+              "cwd" (get row "dir")
+              "started" true
+              "exit" (get row "exit")
+              "started_at" started
+              "finished_at" ended
+              "log_path" (or (get row "log_path") (.getPath (shell-log/log-file session id)))
+              "uptime_ms" (when (and started ended) (max 0 (- (long ended) (long started))))})
       ;; The process is gone by construction: this stage reads a FILE, never a child.
       "status" "exited")))
 
@@ -1736,6 +1869,48 @@
                     "is_truncated" (:is-truncated chunk))
           :op :_shell-logs
           :metadata {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}})))))
+
+(defn- shell-status-impl
+  "`sh.status()` — WHAT IS THIS SHELL DOING, with no bytes moved and no cursor
+   touched. Every field is already in [[shell-result-base]]; this stage is the one
+   that exists purely to REFRESH them, so asking \"has it finished\" never costs a
+   log read and never advances someone else's offset.
+
+   It answers `status` (`running` / `exited` / `stopped`), `exit` (nil exactly
+   while there is no exit code yet), `started_at` / `finished_at` / `uptime_ms`,
+   `log_path` — where the bytes are on this machine — and, while the child lives,
+   `cpu_ms` / `cpu_percent` / `rss_bytes` for the whole process TREE.
+
+   A shell whose registry entry is retired still answers, from its log index row:
+   a finished run's outcome outlives its process."
+  [env id]
+  (let
+    [session
+     (:session-id env)
+
+     id
+     (str id)
+
+     entry
+     (bg-entry session id)
+
+     ^java.io.File file
+     (shell-log/log-file session id)
+
+     t
+     (now-ms)]
+
+    (authorize-origin! env session id)
+    (when-not (or entry (.isFile file))
+      (throw (ex-info (str "No shell '" id
+                           "' in this session — every run and every background start"
+                           " answers with its own id; live ids are listed in resources.")
+                      {:type ::unknown-bg-id :id id})))
+    (extension/success {:result (if entry
+                                  (bg-core "status" id entry)
+                                  (assoc (retired-log-core env session id) "stage" "status"))
+                        :op :_shell-status
+                        :metadata {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}})))
 
 (def ^:private wait-poll-ms
   "Idle sleep between reads inside a host-side wait. Only reached when the log is
@@ -1987,7 +2162,8 @@
    caller authors an options map by hand and therefore genuinely needs an `op`
    discriminator. The MODEL never reaches this: it calls `shell` — one tool
    whose `wait` decides whether it blocks — and drives what came back through the
-   HANDLE's own methods (`sh.logs()`, `sh.wait()`, `sh.type()`, `sh.stop()`), so one
+   HANDLE's own methods (`sh.status()`, `sh.logs()`, `sh.wait()`, `sh.type()`,
+   `sh.stop()`), so one
    schema with five mutually-exclusive shapes is never presented as a contract to
    disambiguate."
   [env opts]
@@ -2108,6 +2284,12 @@
                          valid-command
                          opts))
 
+      "status"
+      ;; NO bytes, NO cursor: the one stage that only ever REPORTS. Reading a log to
+      ;; find out whether a command finished moved someone else's offset and cost a
+      ;; file read for a question the registry already knew the answer to.
+      (do (reject-command) (reject-text) (shell-status-impl env (need-id)))
+
       "logs"
       (do (reject-command)
           (reject-text)
@@ -2128,9 +2310,10 @@
       "stop"
       (do (reject-command) (reject-text) (shell-stop-impl env (need-id)))
 
-      (throw (ex-info (str "Unknown shell op " (pr-str op)
-                           " — use \"run\" (default), \"background\", \"logs\", \"wait\", \"send\""
-                           " or \"stop\".")
+      (throw (ex-info (str
+                        "Unknown shell op " (pr-str op)
+                        " — use \"run\" (default), \"background\", \"status\", \"logs\", \"wait\","
+                        " \"send\" or \"stop\".")
                       {:type ::unknown-op :op op})))))
 
 (defn run-argv
@@ -2333,7 +2516,8 @@
 (defn shell
   "`sh = await shell(\"npm test\")` — spawn ONE bash line under a pty and return
    the HANDLE now. Every run is a background run; waiting is `sh.wait(secs)`, the
-   only wait there is. The handle also reads (`sh.logs(offset=0)`), types
+   only wait there is. The handle also reports (`sh.status()`), reads
+   (`sh.logs(offset=0)`), types
    (`sh.type(text)`) and kills (`sh.stop()`), and its log file outlives the call,
    so nothing is ever lost to a deadline or to a call that already returned."
   {:arglists '([command] [command opts])}
@@ -2348,6 +2532,14 @@
   {:arglists '([id] [id opts])}
   [env & args]
   (shell-dispatch env (assoc (shell-call-opts ["id"] args) "op" "logs")))
+
+(defn shell-status
+  "`sh.status()` — WHAT is this shell doing, right now, without reading a byte.
+   Answers `status`/`exit`, `started_at`/`finished_at`/`uptime_ms`, `log_path` and,
+   while it lives, `cpu_ms`/`cpu_percent`/`rss_bytes` for the whole process tree."
+  {:arglists '([id] [id opts])}
+  [env & args]
+  (shell-dispatch env (assoc (shell-call-opts ["id"] args) "op" "status")))
 
 (defn shell-wait
   "`sh.wait(secs)` — the ONLY wait there is. Block until the shell exits or the
@@ -2844,14 +3036,16 @@
      :result
      (str "A HANDLE: ONE result shape for every shell answer and for `git` — `{stage, id, cwd, "
           "command, status, exit, stdout, stderr, duration_ms, timed_out, offset, next_offset, "
-          "is_eof, note, …}`, `stage` naming the producer — WITH the methods `sh.wait(secs)`, "
-          "`sh.logs(offset=0)`, `sh.type(text)`, `sh.stop()` on it. A fresh run has no `exit` "
+          "is_eof, started_at, finished_at, log_path, cpu_ms, cpu_percent, rss_bytes, note, …}`, "
+          "WITH the methods `sh.wait(secs)`, `sh.status()`, "
+          "`sh.logs(offset=0)`, `sh.type(text)`, `sh.stop()`. A fresh run has no `exit` "
           "yet: `sh.wait` fills it. Nonzero exit is data.")
      :description
      (str "Spawn ONE `bash -lc` command under a real pty and return its HANDLE NOW — every run "
           "is a background run, so there is no wait knob and no second mode. Chain with `&&`; run "
           "independent work as separate calls. Drive it through the handle the call returned: "
           "`sh.wait(secs)` (the ONLY wait; `timed_out` means the WAIT expired, not the process), "
+          "`sh.status()` (state, clock, `log_path`, live cpu/rss), "
           "`sh.logs(offset=0)`, `sh.type(text)`, `sh.stop()` — never a rerun. Re-issuing a live "
           "`id` returns THAT shell, and a shell keeps its log by id for the session. "
           "`print((await shell(\"npm test\")).wait(300)[\"stdout\"])`.")
@@ -2901,6 +3095,30 @@
      :inject-env? true
      :tag :observation
      :on-error-fn (shell-on-error :_shell-logs)}))
+
+(def shell-status-symbol
+  (vis/symbol
+    #'shell-status
+    {:symbol '_shell-status
+     :native-tool? false
+     :name "_shell_status"
+     :result
+     (str "The same shell result shape (`stage` \"status\"): `status` running/exited/stopped, "
+          "`exit` nil exactly while there is none yet, `started_at`/`finished_at`/`uptime_ms`, "
+          "`log_path` for the bytes on disk, and `cpu_ms`/`cpu_percent`/`rss_bytes` while the "
+          "process tree is alive.")
+     :description
+     (str "TRANSPORT for `sh.status()` — call the HANDLE the shell result already is, not this. "
+          "Refreshes one shell's state without reading its log or moving any cursor.")
+     :render-finish-call-fn render-shell-run-result
+     :render-start-call-fn (shell-start-renderer "status")
+     :schema {:type "object"
+              :properties {"id" {:type "string" :minLength 1 :description "Background handle."}}
+              :required ["id"]
+              :additionalProperties false}
+     :inject-env? true
+     :tag :observation
+     :on-error-fn (shell-on-error :_shell-status)}))
 
 (def shell-wait-symbol
   (vis/symbol
@@ -2975,10 +3193,11 @@
   ;; ONE native tool for the whole family, and ONE object to drive what it starts.
   ;; `_shell_logs` / `_shell_type` / `_shell_stop` are PRIVATE sandbox transport
   ;; (`:native-tool? false`, underscore-prefixed so `apropos` never lists them):
-  ;; the model calls the handle's own `sh.logs()` / `sh.wait()` / `sh.type()` /
-  ;; `sh.stop()`, because operations on an object the caller already holds are
+  ;; the model calls the handle's own `sh.status()` / `sh.logs()` / `sh.wait()` /
+  ;; `sh.type()` / `sh.stop()`, because operations on an object the caller already holds are
   ;; control flow, not four more schemas to disambiguate before running a command.
-  [shell-symbol shell-logs-symbol shell-wait-symbol shell-type-symbol shell-stop-symbol])
+  [shell-symbol shell-status-symbol shell-logs-symbol shell-wait-symbol shell-type-symbol
+   shell-stop-symbol])
 
 (defn shell-attach-command
   "`vis-agent extension shell attach <id>` — the human-side passthrough: join a live
@@ -3021,10 +3240,10 @@
 (vis/register-toggle! {:id "shell"
                        :label "Shell commands"
                        :description
-                       (str "Expose `shell` — one tool whose `wait` decides whether the "
-                            "caller blocks — and the live handle it hands back (`sh.logs()` / "
-                            "`sh.wait()` / `sh.type()` / `sh.stop()`). When OFF none is bound. "
-                            "Contained by the OS process jail whenever it is ON.")
+                       (str "Expose `shell` — one tool that spawns ONE command under a pty "
+                            "and answers with the live handle that drives it (`sh.status()` / "
+                            "`sh.logs()` / `sh.wait()` / `sh.type()` / `sh.stop()`). When OFF "
+                            "none is bound. " "Contained by the OS process jail whenever it is ON.")
                        :default true
                        :owner :vis
                        :persist? true
@@ -3034,7 +3253,7 @@
   (vis/extension
     {:ext/name "foundation-shell"
      :ext/description
-     "One shell tool: `shell`, whose `wait` decides whether the caller blocks — 0 does not wait at all — answering with a live handle (`sh.logs()` / `sh.wait()` / `sh.type()` / `sh.stop()`); `resource_stop` also stops PTYs. Default-on behind the `shell` toggle and OS process jail."
+     "One shell tool: `shell` spawns ONE command under a pty and answers with a live handle (`sh.status()` / `sh.logs()` / `sh.wait()` / `sh.type()` / `sh.stop()`); `resource_stop` also stops PTYs. Default-on behind the `shell` toggle and OS process jail."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

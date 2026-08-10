@@ -121,8 +121,9 @@ shell analogue of `/slash`, and works the same way in the **TUI** and the
 - Both are the SAME tool call. In `python_execution` every shell run is a
   background run and the result is a HANDLE:
   `sh = await shell({"command": "npm run dev", "id": "dev"})`, then
-  `sh.wait(30)` (the only wait there is), `sh.logs(offset=0)`, `sh.type("y")`,
-  `sh.stop()`. There is no `wait` knob on the request — a request cannot select a
+  `sh.wait(30)` (the only wait there is), `sh.status()` (running or exited, since
+  when, its `log_path`, and the live `cpu_ms`/`cpu_percent`/`rss_bytes` of its
+  process tree), `sh.logs(offset=0)`, `sh.type("y")`, `sh.stop()`. There is no `wait` knob on the request — a request cannot select a
   mode. Every shell keeps its log by id for the session, so a finished run is
   still readable a turn later.
 - A bare `!` (or `!&`) with no command is ordinary prose and runs as a normal

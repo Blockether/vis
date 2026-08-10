@@ -589,7 +589,14 @@ class __VisShell__(__VisResult__):
     # `apropos`), and re-issuing a live `id` through `shell` hands the SAME handle back,
     # which is how a later block re-acquires one.
     __vis_shell_ops__ = frozenset(
-        ("shell", "_shell_logs", "_shell_wait", "_shell_type", "_shell_stop")
+        (
+            "shell",
+            "_shell_status",
+            "_shell_logs",
+            "_shell_wait",
+            "_shell_type",
+            "_shell_stop",
+        )
     )
 
     def __vis_op__(self, __vis_name__, __vis_args__):
@@ -600,6 +607,14 @@ class __VisShell__(__VisResult__):
                 "cannot be driven. Turn on 'Shell commands' in the settings dialog."
             )
         return __vis_settle__(fn(__vis_args__))
+
+    def status(self):
+        # WHAT is it doing — with no bytes read and no cursor moved. `status`/`exit`
+        # say whether it finished, `started_at`/`finished_at`/`uptime_ms` say when,
+        # `log_path` says where the bytes are on this machine, and `cpu_ms` /
+        # `cpu_percent` / `rss_bytes` say what the process TREE is costing while it
+        # lives. Asking "is it done yet" must never consume someone's log offset.
+        return self.__vis_op__("_shell_status", {"id": self["id"]})
 
     def logs(self, offset=None, limit=None):
         # Read the log and return NOW — nothing blocks on the caller's behalf.

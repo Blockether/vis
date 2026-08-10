@@ -1449,7 +1449,7 @@ vis.extension(
     ;; `{"op": "logs", "id": …}` grammar that the handle object replaced.
     (with-loaded
       {"jail.py"
-       "import vis\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell({'command': 'echo hi', 'id': 'h'})\n    return [sh['id'], sh.logs(offset=0)['stage'], sh.wait(5)['stage'], sh.type('y')['stage'], sh.stop()['stage']]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
+       "import vis\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell({'command': 'echo hi', 'id': 'h'})\n    return [sh['id'], sh.status()['stage'], sh.logs(offset=0)['stage'], sh.wait(5)['stage'], sh.type('y')['stage'], sh.stop()['stage']]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
       (fn [_ _]
         (let
           [run
@@ -1467,7 +1467,7 @@ vis.extension(
             (binding [extension/*current-environment* env]
               ;; Every op reaches the ONE dispatch grammar, and every answer is
               ;; itself a handle.
-              (expect (= ["h" "logs" "wait" "send" "stop"] (:result (run))))))))))
+              (expect (= ["h" "status" "logs" "wait" "send" "stop"] (:result (run))))))))))
   (it
     "raises a failing host tool envelope instead of handing Python the envelope"
     (with-loaded

@@ -3,8 +3,8 @@
 # The agent sandbox is deny-by-default (no native access), so CPython's real
 # `subprocess` / `os.system` cannot spawn — they fail with an opaque error.
 # This shim replaces them with a thin layer that DELEGATES to the vis shell
-# TOOL `shell` and its private handle transports (`_shell_logs`, `_shell_wait`,
-# `_shell_type`, `_shell_stop`), so the
+# TOOL `shell` and its private handle transports (`_shell_status`, `_shell_logs`,
+# `_shell_wait`, `_shell_type`, `_shell_stop`), so the
 # model's ordinary Python (`subprocess.run([...])`, `os.system(...)`) just works
 # and still rides the workspace-cwd containment, timeout,
 # process-tree kill, output bounding, render badge, and trace recording.

@@ -593,6 +593,51 @@ admits, exactly as `logs` / `send` / `stop` are.
 
 **Unknowns.** None.
 
+## Phase 14 — The handle REPORTS: status, clock, log path and live cost
+
+**Rationale.** Without it the handle can read a process's bytes and kill it but cannot SAY what it
+is doing. "Has it finished?" costs a `sh.logs()` call — a log read that moves a cursor to answer a
+question about the process, not about the bytes — and "where are the bytes on this machine",
+"when did it start", "how long has it been running" and "what is it costing in CPU and RAM" have
+no answer at all: `shell-log/log-file` is deterministic but never surfaced, `:started-at` and
+`:exited-at` live only inside `bg-procs`, and nothing samples the process tree.
+
+**Data.** Yes — `shell-result-base`
+(`src/com/blockether/vis/internal/foundation/shell.clj`) is the result map that crosses to the
+Python sandbox, the extension boundary and the card renderers, and it gains six keys:
+
+```clojure
+(s/def :shell/started_at (s/nilable nat-int?))    ;; epoch ms, stamped at spawn
+(s/def :shell/finished_at (s/nilable nat-int?))   ;; epoch ms; nil IS "still running"
+(s/def :shell/log_path (s/nilable string?))       ;; absolute path of the log file
+(s/def :shell/cpu_ms (s/nilable nat-int?))        ;; CPU consumed by the whole tree
+(s/def :shell/cpu_percent (s/nilable (s/and number? #(<= 0 %))))
+(s/def :shell/rss_bytes (s/nilable nat-int?))     ;; resident memory of the whole tree
+```
+
+Every key is nilable and present on EVERY stage, so the one-shape rule holds: the three cost keys
+are nil exactly when there is no live process to sample, which is a measurement's honest answer
+and not a missing key.
+
+**Acceptance criteria.**
+- `src/com/blockether/vis/internal/foundation/shell.clj` — the six keys on `shell-result-base`;
+  `tree-handles` / `cpu-time->ms` / `tree-ps-usage` / `process-usage` sample the process TREE;
+  `bg-core`, `retired-log-core` and the sync run fill the clock, the log path and the cost;
+  `shell-status-impl` + dispatch op `status` + private transport symbol `_shell-status`; the
+  registry entry carries `:log-path`.
+- `resources/vis-python/async_runtime.py`, `resources/vis-python/extension_bootstrap.py` —
+  `sh.status()` on both handle classes, one call to the host op.
+- `resources/vis-docs/context-and-prompts.md`, `src/com/blockether/vis/internal/prompt.clj` — the
+  handle's verbs name `sh.status()`.
+- Test: `shell-status-test` proves a running shell reports `running` / no `exit` / no
+  `finished_at` / its real `log_path` on disk / a positive `rss_bytes`, that a finished one
+  reports `exit` and a stopped clock with the cost keys nil, that a retired entry still answers,
+  and that an unknown id and a foreign trust origin are refused by name; `shell-one-shape-test`
+  pins `status` into the identical key set and stage sequence; the sandbox and extension handles
+  are each driven through `sh.status()` end to end.
+
+**Unknowns.** None.
+
 ## State of the plan
 
 **DONE.**
@@ -690,6 +735,10 @@ Done:
 - Phase 13, ONE wait — `0fcb2b524`. The bounded poll loop is host code (`shell-wait-impl`, transport
   `_shell_wait`); the sandbox handle, an extension's handle, `subprocess.Popen` and the tests all
   call it, and a wait now bounds MEMORY as well as time (a runaway printer measured ~1 MB/s).
+- Phase 14, the handle REPORTS — `c6ecf7b18`. `sh.status()` (transport `_shell_status`) answers
+  `status`/`exit`, `started_at`/`finished_at`/`uptime_ms`, `log_path` and the live
+  `cpu_ms`/`cpu_percent`/`rss_bytes` of the process TREE, without reading a byte or moving a
+  cursor.
 
 TODO, in order: nothing. The plan is DONE.
 
