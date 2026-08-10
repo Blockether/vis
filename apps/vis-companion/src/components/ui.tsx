@@ -1426,19 +1426,22 @@ export function UnreadBadge({ count }: { count: number }) {
  * one never pays it.
  */
 /**
- * The band that STARTS a machine: 24px of that machine's own hue, full bleed, with
- * its name in the page's paper ink.
+ * The TAG that starts a machine: its name in a small block of its own hue, hung on
+ * the list's own paper, closed by a hairline.
  *
- * A whole computer is not a project boundary, so it is not drawn like one. The
- * empty gap that used to separate two machines said "something ended" and never
- * said what began; this says WHOSE the projects below it are, in the same colour
- * as that machine's rail and its scope chip, and it costs 24px instead of 12px of
- * nothing. It is charged only to a fleet: one machine paired renders no banner,
- * because then every project on screen is already its own.
+ * A full-bleed bar of hue was a second loud band competing with the project header
+ * directly under it, and it only answered "whose" for as long as it stayed on
+ * screen. The colour that ANSWERS ownership is the machine's spine (`MachineRail`,
+ * 4px down every project and session it owns), so the band itself only has to NAME
+ * the machine and report for the block — which is why it wears paper, the smallest
+ * type on the screen, and hue in one chip. It is charged only to a fleet: one
+ * machine paired renders no banner, because then every project on screen is already
+ * its own.
  *
  * It does not stick. The band that follows the reader down the list is the project
  * header — the level being acted on — and two sticky strips one hairline apart
- * would only ever cover each other.
+ * would only ever cover each other; the spine keeps answering after this scrolls
+ * away.
  */
 export function MachineBanner({
   color,
@@ -1452,10 +1455,14 @@ export function MachineBanner({
 }) {
   return (
     <div
-      className={`flex min-h-6 w-full items-center gap-2 font-mono text-chip font-bold uppercase tracking-[0.18em] text-ink ${LIST_EDGE} ${LIST_EDGE_END} ${color ? color.dot : 'bg-edge-strong'}`}
+      className={`flex min-h-6 w-full items-center gap-2 border-b border-dialog-edge bg-panel-2 font-mono text-chip ${LIST_EDGE} ${LIST_EDGE_END}`}
     >
-      <span className="min-w-0 truncate">{name}</span>
-      {meta ? <span className="ml-auto shrink-0 font-normal tracking-normal">{meta}</span> : null}
+      <span
+        className={`min-w-0 shrink-0 truncate px-1.5 font-bold uppercase tracking-[0.14em] text-ink ${color ? color.dot : 'bg-edge-strong'}`}
+      >
+        {name}
+      </span>
+      {meta ? <span className="ml-auto shrink-0 truncate text-muted">{meta}</span> : null}
     </div>
   );
 }
@@ -2044,19 +2051,21 @@ export function LiveCount({ count }: { count: number }) {
 }
 
 /**
- * The rail that CONTAINS a machine: 2px of its own hue down everything it owns,
- * banner included. A project boundary is a hairline and a machine boundary is a
- * colour change, so where one computer ends is seen before it is read.
+ * THE SPINE OF A MACHINE: 4px of its own hue down everything it owns, banner
+ * included. A project boundary is a hairline and a machine boundary is a colour
+ * change, so where one computer ends is seen before it is read — and, unlike the
+ * band at the top of the block, the spine is still on screen once the reader has
+ * scrolled past it, which is the whole reason ownership lives here.
  *
  * It is the card's LEFT FRAME, not a line inside it — see `LIST_FRAME`. That is the
  * whole difference from the version that had to be removed: it doubled the card's
- * own border and, being a border, pushed every railed row 2px deeper than its own
- * trailing edge stopped. Now the frame is 2px on both sides and the rail simply
- * colours the one on the left.
+ * own border and, being a border, pushed every railed row deeper than its own
+ * trailing edge stopped. Now one border paints the left side, and a machine simply
+ * makes it wider and coloured; without a hue it falls back to the grey 2px frame.
  */
 export function MachineRail({ color, children }: { color?: MachineColor; children: ReactNode }) {
   return (
-    <div className={color ? `border-l-2 ${color.rail}` : LIST_FRAME}>{children}</div>
+    <div className={color ? `border-l-4 ${color.rail}` : LIST_FRAME}>{children}</div>
   );
 }
 

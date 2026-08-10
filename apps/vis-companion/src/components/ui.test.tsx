@@ -168,7 +168,7 @@ describe("UnreadBadge", () => {
 // The band that STARTS a machine. It replaced an empty 12px gap that said something
 // had ended and never said what began.
 describe("MachineBanner", () => {
-  it("is 24px of the machine's own hue, carrying its name", () => {
+  it("names the machine in a tag of its own hue, on the list's paper", () => {
     const html = renderToStaticMarkup(
       <MachineBanner color={MACHINE_COLORS[0]!} name="tower" meta="2 projects" />,
     );
@@ -177,6 +177,17 @@ describe("MachineBanner", () => {
     expect(html).toContain(MACHINE_COLORS[0]!.dot);
     expect(html).toContain("tower");
     expect(html).toContain("2 projects");
+  });
+
+  // The hue that ANSWERS ownership is the spine; a full-bleed bar of it here was a
+  // second loud band fighting the project header one hairline below.
+  it("paints the band itself in paper, not in the machine colour", () => {
+    const html = renderToStaticMarkup(
+      <MachineBanner color={MACHINE_COLORS[0]!} name="tower" />,
+    );
+
+    expect(html).toContain("bg-panel-2");
+    expect(html).toContain("border-b border-dialog-edge");
   });
 
   // Machine, project and session must not be three sizes of the same voice: the
@@ -259,7 +270,7 @@ describe("MachineRail", () => {
     const html = renderToStaticMarkup(
       <MachineRail color={MACHINE_COLORS[3]!}>rows</MachineRail>,
     );
-    expect(html).toContain("border-l-2");
+    expect(html).toContain("border-l-4");
     expect(html).toContain(MACHINE_COLORS[3]!.rail);
     expect(html).toContain("rows");
   });

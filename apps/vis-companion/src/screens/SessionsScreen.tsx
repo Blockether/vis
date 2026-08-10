@@ -1316,10 +1316,11 @@ export function SessionsScreen({
                   {/* Every machine keeps its own named panel and landmark, even when it is
                       the only machine in the fleet. */}
                   {/* A machine boundary is not a project boundary, so it is not drawn with
-                      the same hairline: 24px of that machine's own hue, carrying its name,
-                      says WHOSE the projects below are before any of them is read. A solo
-                      fleet renders no banner at all — the strip, like the scope chips and
-                      the machine landmark, costs a single-machine user nothing. */}
+                      the same hairline: its name sits in a tag of its own hue on the list's
+                      paper, and the same hue runs down the block as a 4px spine, so ownership
+                      is still answered after this band scrolls away. A solo fleet renders no
+                      banner at all — it, like the scope chips and the machine landmark, costs
+                      a single-machine user nothing. */}
                   {sections.length > 1 && (
                     <MachineBanner
                       color={machineColor(machineColors, key)}
