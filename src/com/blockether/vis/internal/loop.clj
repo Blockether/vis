@@ -2345,9 +2345,10 @@
 
    svar decides this, not Vis: `:reasoning-effort?` is stamped on every model
    the router normalizes, from the WIRE that model rides. `:reasoning?` only
-   says the model thinks — GitHub Copilot's Claude/Gemini/Grok tiers think but
-   are `:server-managed`, and Z.ai GLM thinking is binary, so neither accepts a
-   depth and neither may show a depth control."
+   says the model thinks — GitHub Copilot's Gemini/Grok tiers think but are
+   `:server-managed` on the OpenAI-compatible wire, and Z.ai GLM thinking is
+   binary, so neither accepts a depth and neither may show a depth control.
+   Copilot's Claude tier rides the native Anthropic wire and DOES take one."
   [resolved-model]
   (boolean (:reasoning-effort? resolved-model)))
 
