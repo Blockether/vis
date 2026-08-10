@@ -757,15 +757,6 @@ from the model's sandbox:
 | Network / env vars / subprocess | gateway policy / restricted | **real, inherited, unrestricted** |
 | Lifetime | per session | process (rebuilt on `/reload`) |
 
-**A file only starts running when you say so.** Dropping a `.py` into an
-extension directory does not run it: loading a file executes its top level in
-the trusted context above, so the two acts that may admit new or changed bytes
-are **`/reload`** and **starting the gateway**. Everything else — a new session,
-a sub-agent's environment, an environment recycle, a config-policy change — keeps
-running what was already admitted and reports the rest as pending (`vis-agent
-doctor`, and `/reload` names what it just admitted). This is what stops a file
-that merely appeared on disk from earning extension trust.
-
 This is an intentional trust decision, not a missing sandbox feature. Extension
 contexts allow full IO, process creation, threads, sockets, and inherited
 environment variables because they are user-installed plugins. They still deny
@@ -882,12 +873,8 @@ Ship real Python tests next to the code and run them with Vis's built-in
 
 - Test files are `test_*.py` or `*_test.py`, at any depth under an extension
   directory. They are **never loaded as extensions** (excluded from the scan).
-- Each test file runs in its own **untrusted** GraalPy context and imports the
-  extension's package through the same `sys.path` sugar the entry file gets. A
-  test is not an extension: nobody admitted it with `/reload`, so it runs
-  *beside* your extension's code rather than inside its trust — `vis.shell`,
-  `vis.jailed_shell` and `subprocess` all refuse there. Put the command in the
-  extension and call it from the test.
+- Each test file runs in its own trusted GraalPy context and imports the
+  extension's package through the same `sys.path` sugar the entry file gets.
 
 ```python
 # ~/.vis/extensions/my_ext/test_core.py

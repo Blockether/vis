@@ -623,7 +623,6 @@
 (import-vars [load-python-extensions! python-extensions/load-python-extensions!]
              [reload-python-extensions! python-extensions/reload-python-extensions!]
              [python-extension-load-failures python-extensions/load-failures]
-             [pending-python-extensions python-extensions/pending-extensions]
              [loaded-python-extensions python-extensions/loaded-python-extensions]
              [add-python-extension-change-listener! python-extensions/add-change-listener!]
              [remove-python-extension-change-listener! python-extensions/remove-change-listener!]

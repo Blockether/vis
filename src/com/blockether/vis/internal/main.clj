@@ -4424,10 +4424,7 @@
    for an entire session."
   []
   (extension/discover-extensions!)
-  ;; Process start is one of the two acts that may ADMIT extension bytes into a
-  ;; trusted context; the other is `/reload`. Every automatic caller of the
-  ;; loader refuses by default — see `python-extensions/load-python-extensions!`.
-  (python-extensions/load-python-extensions! {:on-change :adopt})
+  (python-extensions/load-python-extensions!)
   (print-extension-load-failures!)
   nil)
 
