@@ -164,27 +164,35 @@
     pp))
 
 (defn- write-opts?
-  "True when the open options request a WRITE/APPEND (⇒ the sandbox is producing
-   the file, so an outbox tap fires on close)."
+  "True when the open options request a WRITE/APPEND (⇒ the channel is write-CAPABLE,
+   so the outbox tap is wrapped around it; it only FIRES if bytes are written)."
   [opts]
   (boolean (and opts
                 (or (.contains ^java.util.Set opts StandardOpenOption/WRITE)
                     (.contains ^java.util.Set opts StandardOpenOption/APPEND)))))
 
 (defn- tap-write-channel
-  "Wrap a write `SeekableByteChannel` so that, once the sandbox CLOSES it, `on-close`
-   is invoked with `path` (the just-written file, now flushed). Every other channel
-   method delegates straight to `inner`; `on-close` is best-effort — a failure there
-   never propagates to the sandbox."
+  "Wrap a write-capable `SeekableByteChannel` so that, once the sandbox CLOSES it,
+   `on-close` is invoked with `path` (the just-written file, now flushed) — but ONLY
+   when the sandbox actually PRODUCED bytes through it. A write-capable mode is not
+   a write: `open(p, \"r+\")`, `sqlite3.connect`, and any library that opens a file
+   read-write to read it hand us WRITE in the open options while touching nothing,
+   and capturing those re-attached a file the sandbox merely READ. So the tap arms
+   itself on the first `write`/`truncate` and stays disarmed otherwise. Every other
+   channel method delegates straight to `inner`; `on-close` is best-effort — a
+   failure there never propagates to the sandbox."
   ^SeekableByteChannel [^SeekableByteChannel inner ^Path path on-close]
-  (proxy [SeekableByteChannel] []
-    (read [dst] (.read inner dst))
-    (write [src] (.write inner src))
-    (position ([] (.position inner)) ([n] (.position inner (long n)) this))
-    (truncate [n] (.truncate inner (long n)) this)
-    (size [] (.size inner))
-    (isOpen [] (.isOpen inner))
-    (close [] (.close inner) (try (when on-close (on-close path)) (catch Throwable _ nil)))))
+  (let [wrote? (java.util.concurrent.atomic.AtomicBoolean. false)]
+    (proxy [SeekableByteChannel] []
+      (read [dst] (.read inner dst))
+      (write [src] (.set wrote? true) (.write inner src))
+      (position ([] (.position inner)) ([n] (.position inner (long n)) this))
+      (truncate [n] (.set wrote? true) (.truncate inner (long n)) this)
+      (size [] (.size inner))
+      (isOpen [] (.isOpen inner))
+      (close []
+        (.close inner)
+        (try (when (and on-close (.get wrote?)) (on-close path)) (catch Throwable _ nil))))))
 
 (defn confined-filesystem
   "A GraalPy `FileSystem` confined to the filesystem roots returned by `roots-fn`

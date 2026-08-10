@@ -297,6 +297,53 @@
         (expect (= "text/csv" (:media-type att)))
         (expect (= "file" (:kind att)))))))
 
+;; Regression: a file the sandbox merely READ through a write-CAPABLE channel
+;; (`open(p, "r+")`, `sqlite3.connect`, any library that opens read-write to read)
+;; was captured again as a session attachment, because the tap fired on close for
+;; any channel opened with WRITE in its options.
+(defdescribe
+  temp-root-read-tap-test
+  (it
+    "does NOT capture a write-capable channel that only READ"
+    (let
+      [outdir
+       (Files/createTempDirectory "vis-tmptap-readonly" (make-array FileAttribute 0))
+
+       sink
+       (atom [])
+
+       seen
+       (atom #{})
+
+       fs
+       (sfs/confined-filesystem (fn []
+                                  ["/no/such/workspace/root"])
+                                {:dir (str outdir)
+                                 :on-close (fn [p]
+                                             (mc/record-file! p))})
+
+       probe
+       (str (System/getProperty "java.io.tmpdir") "/vis-tmptap-rw-" (System/nanoTime) ".csv")]
+
+      (binding
+        [mc/*attachment-sink*
+         sink
+
+         mc/*outbox-seen*
+         seen]
+
+        (write-channel! fs (p probe) "a,b\n1,2\n")
+        (expect (= 1 (count @sink)))
+        ;; READ+WRITE open, nothing written: the tap stays disarmed.
+        (let
+          [ch (.newByteChannel fs
+                               (p probe)
+                               #{StandardOpenOption/READ StandardOpenOption/WRITE}
+                               (make-array FileAttribute 0))]
+          (.read ch (java.nio.ByteBuffer/allocate 8))
+          (.close ch))
+        (expect (= 1 (count @sink)))))))
+
 (defdescribe
   confined-fs-temp-roots-test
   (it "ALWAYS allows the system temp dirs (/tmp, $TMPDIR) even when outside configured roots"
