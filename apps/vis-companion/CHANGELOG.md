@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.34 (3854) — 2026-08-09
+<!-- commit: 4f9983d232c5914655f847615b1587018880dff3 -->
+
+- PLAN: name Phase 5 by its commit
+- Make every run a handle: a timeout is a wait that expired
+- Stop forcing deferred work at namespace load, which native-image runs on the builder
+- PLAN: name Phase 4 by its commit
+- Give a background shell a log FILE and a byte OFFSET cursor
+- Page a project from the list on screen, not the gateway's own window
+- Delete the project-wide rename
+- Ask the :fs/access gate from struct_rename too
+- Record what a host map actually looks like in the sandbox
+- Release v0.1.34
+- Refuse toolchain output at the incidental capture tap
+- Stop capturing the temp file nobody named
+- PLAN: record Phase 3 as done
+- Replace the `ls` native tool with a sandbox `ls()` helper
+- Invent the provider the native suite talks to
+- Companion: measure the "Latest" offer instead of remembering it
+- Prove the native binary from its own suite, not from a docker build
+- Companion: let an artifact tile show its own note, and keep its controls legible
+- Companion: one Settings dialog, this device beside the machines
+- Record Phase 2 in the plan
+
 ## 0.1.33 (3824) — 2026-08-09
 <!-- commit: 5c0bcda60cac8388413d4fc55d088c0c5df9d621 -->
 

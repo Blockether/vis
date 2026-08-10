@@ -139,6 +139,35 @@
               "soup = BeautifulSoup('<p>x</p>', 'html.parser')\n"
               "isinstance(CData('x'), str) and isinstance(Doctype('html'), str) and SoupStrainer('p').search(soup.p) is soup.p")))))))
 
+;; Regression, issue #135: any `features=` value (lxml, html5lib, xml, or a
+;; nonsense name) was silently honored with the html.parser builder, so callers
+;; got a differently shaped tree instead of the FeatureNotFound upstream raises.
+(defdescribe
+  bs4-feature-request-test
+  (it
+    "raises FeatureNotFound for parsers this shim does not ship"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            (str
+              "from bs4 import BeautifulSoup, FeatureNotFound\n" "def _refuses(feature):\n"
+              "    try:\n" "        BeautifulSoup('<p>x</p>', feature)\n"
+              "    except FeatureNotFound as exc:\n" "        return feature in str(exc)\n"
+              "    return False\n"
+              "all(_refuses(f) for f in ['lxml', 'html5lib', 'xml', 'lxml-xml', 'totally-bogus'])"))))))
+  (it "still builds with every feature the one html.parser builder registers"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "from bs4 import BeautifulSoup\n" "import warnings\n"
+                                "with warnings.catch_warnings():\n"
+                                "    warnings.simplefilter('ignore')\n"
+                                "    _default = BeautifulSoup('<p>x</p>').get_text()\n"
+                                "_named = [BeautifulSoup('<p>x</p>', f).get_text()\n"
+                                "          for f in ['html.parser', 'html', 'strict']]\n"
+                                "_default == 'x' and _named == ['x', 'x', 'x']")))))))
+
 (defdescribe
   bs4-filter-test
   (it "filters by regex, list, callable and True"

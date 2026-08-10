@@ -28,8 +28,9 @@
    upstream. Differentially tested against real beautifulsoup4 4.12.3 + soupsieve
    2.5 over 200+ probes with zero output mismatches outside documented
    divergences. A deliberate subset of full bs4 (no lxml or html5lib parsers —
-   another `features` argument is honored leniently rather than raising
-   `FeatureNotFound` — and generic CSS syntax errors carry a simpler message).
+   another `features` argument raises `FeatureNotFound` the way upstream does
+   when the parser library is missing — and generic CSS syntax errors carry a
+   simpler message).
 
    Like `shim-requests` there are NO `:shim/bindings`: the shim is a
    self-contained Python preamble with zero host callables. It publishes `bs4`
@@ -63,7 +64,7 @@
             "serialization, plus PageElement/ResultSet/SoupStrainer, `soup.builder`, formatters "
             "and `bs4.dammit` encoding detection) via stdlib `html.parser`, with a bundled "
             "soupsieve-compatible engine (`soupsieve` 2.5, `soup.css`, `:has()`, namespace and "
-            "custom selectors). No lxml/html5lib parsers.")
+            "custom selectors). No lxml/html5lib parsers: requesting one raises `FeatureNotFound`.")
        :shim/source "vis-shims/bs4.py"}]}))
 
 (vis/register-extension! vis-extension)

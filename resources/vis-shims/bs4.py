@@ -47,8 +47,9 @@
 #
 # Known deliberate divergences from upstream: the tree is built only by html.parser
 # (no lxml/html5lib, so no implied-tag recovery beyond html.parser's, and asking
-# for another parser is honored leniently instead of raising FeatureNotFound, since
-# the sandbox cannot install one); html.parser corner cases (unterminated comments,
+# for another parser -- `lxml`, `html5lib`, `xml`, `lxml-xml` or an unknown name --
+# raises `FeatureNotFound` the way upstream does when the library is missing);
+# html.parser corner cases (unterminated comments,
 # raw comment events) track the sandbox's own Python version rather than any fixed
 # CPython release; a generic SelectorSyntaxError carries "Invalid CSS selector: %r"
 # instead of soupsieve's multi-line positional text (this engine matches fragment by
@@ -3385,11 +3386,28 @@ def __vis_install_bs4__():
             self.element_classes = element_classes or {}
             # Resolve the TreeBuilder the way bs4 does: a class is instantiated
             # with whatever keyword arguments are left over, an instance is used
-            # as-is and makes those arguments a warning instead. Unlike bs4 this
-            # shim has only one builder, so `features` never selects another one.
+            # as-is and makes those arguments a warning instead. This shim ships
+            # one builder, so a `features` request the registry cannot satisfy
+            # (`lxml`, `html5lib`, `xml`, `lxml-xml`, anything unknown) raises
+            # `FeatureNotFound` exactly as upstream does when the parser library
+            # is not installed -- silently substituting html.parser would hand
+            # back a different tree with no signal.
             builder_class = HTMLParserTreeBuilder
             if isinstance(builder, type):
                 builder_class, builder = builder, None
+            elif builder is None:
+                wanted = features
+                if isinstance(wanted, str):
+                    wanted = [wanted]
+                if not wanted:
+                    wanted = self.DEFAULT_BUILDER_FEATURES
+                builder_class = builder_mod.builder_registry.lookup(*wanted)
+                if builder_class is None:
+                    raise FeatureNotFound(
+                        "Couldn't find a tree builder with the features you"
+                        " requested: %s. Do you need to install a parser library?"
+                        % ",".join(wanted)
+                    )
             if builder is None:
                 builder = builder_class(**kwargs)
             elif kwargs:
