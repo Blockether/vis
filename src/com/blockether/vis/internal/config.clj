@@ -26,6 +26,8 @@
             [com.blockether.vis.internal.credential-command :as cred]
             [com.blockether.vis.internal.registry :as registry]
             [taoensso.telemere :as tel]
+            [taoensso.trove :as trove]
+            [taoensso.trove.telemere :as trove-telemere]
             [yamlstar.core :as yamlstar])
   (:import (java.io ByteArrayOutputStream FileInputStream FileOutputStream OutputStream)
            (java.nio.charset StandardCharsets)
@@ -156,6 +158,21 @@
    Context so guest `sys.stderr` reaches the terminal instead of vis.log."
   System/err)
 
+(defn route-svar-logs!
+  "Point svar's Trove facade at Telemere so library logs reach `vis.log`
+   and the `:db` handler like every vis signal.
+
+   Trove's DEFAULT backend is `taoensso.trove.console`, which writes to
+   `*out*`. `init!` / `init-cli!` rebind `*out*` to a BUFFERED
+   `io/writer` over the log file, so a console-backed signal sits in
+   that buffer and is never flushed - svar logged nothing at all,
+   including its SSE stream trace (`-Dsvar.stream.trace=true`, the one
+   instrument that says whether a `thinking_delta` reached
+   `reasoning-acc`). Idempotent; call before anything talks to a
+   provider."
+  []
+  (trove/set-log-fn! (trove-telemere/get-log-fn)))
+
 (defn init!
   "Redirect System/out and System/err to the log file. Lanterna uses
    tty-in / tty-out for terminal I/O. Call from the TUI entry point."
@@ -180,6 +197,9 @@
     (System/setErr log-stream))
   (alter-var-root #'*out* (constantly (io/writer (log-path) :append true)))
   (alter-var-root #'*err* (constantly (io/writer (log-path) :append true)))
+  ;; svar logs through Trove; its console default would write into the
+  ;; buffered `*out*` above and never be flushed. See `route-svar-logs!`.
+  (route-svar-logs!)
   (tel/remove-handler! :default/console)
   ;; `main/configure-logging!` may have already installed a `:file`
   ;; handler that points at the same `vis.log` path. Without this
@@ -222,6 +242,9 @@
     (System/setErr log-stream))
   (alter-var-root #'*out* (constantly (io/writer (log-path) :append true)))
   (alter-var-root #'*err* (constantly (io/writer (log-path) :append true)))
+  ;; Mirror `init!`: svar's Trove logs must reach Telemere, not the
+  ;; buffered console writer. See `route-svar-logs!`.
+  (route-svar-logs!)
   (tel/remove-handler! :default/console)
   ;; Mirror `init!`: `main/configure-logging!` already installed a
   ;; `:file` handler pointing at the same path. Leaving it alive

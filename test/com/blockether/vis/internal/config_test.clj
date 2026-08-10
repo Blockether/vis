@@ -7,7 +7,9 @@
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.registry :as registry]
-            [lazytest.core :refer [defdescribe it expect]]))
+            [lazytest.core :refer [defdescribe it expect]]
+            [taoensso.telemere :as tel]
+            [taoensso.trove :as trove]))
 
 (defdescribe
   router-opts-test
@@ -798,3 +800,31 @@
                (expect (= {:name "VIS_TEST_MASKED" :source :unset :value nil}
                           (config/extension-env-status "VIS_TEST_MASKED"))))
              (finally (.delete (io/file env-path)) (.delete (io/file local-path)))))))
+
+(defdescribe
+  route-svar-logs-test
+  "`route-svar-logs!` points svar's Trove facade at Telemere.
+
+   Before this, Trove kept its default console backend, which writes to
+   `*out*` — and `init!`/`init-cli!` rebind `*out*` to a BUFFERED writer
+   over `vis.log` that is never flushed. Every svar log, including the
+   `-Dsvar.stream.trace=true` SSE trace, was swallowed: `vis.log` held
+   zero svar signals."
+  (it "delivers a Trove signal to Telemere"
+      ;; Trove's default: a console fn that never reaches Telemere.
+      (expect (nil? (tel/with-signal (binding
+                                       [trove/*log-fn* ((requiring-resolve
+                                                          'taoensso.trove.console/get-log-fn))]
+                                       (trove/log! {:level :info :id ::console :msg "sse line"})))))
+      (config/route-svar-logs!)
+      (let
+        [signal (tel/with-signal (trove/log! {:level :info
+                                              :id ::stream-line-trace
+                                              :data {:reasoning-acc-len 13}
+                                              :msg "sse line"}))]
+        (expect (some? signal))
+        (expect (= "sse line" (force (:msg_ signal))))
+        (expect (= 13
+                   (-> signal
+                       :data
+                       :reasoning-acc-len))))))
