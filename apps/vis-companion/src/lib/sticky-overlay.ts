@@ -60,7 +60,9 @@ export function useStickyOverlay(
   // unmount only — a key that changes under a live row is a new artifact, not a
   // handover.
   const latest = useRef({ key, open });
-  latest.current = { key, open };
+  useLayoutEffect(() => {
+    latest.current = { key, open };
+  });
 
   useLayoutEffect(() => {
     if (claimOverlayHandover(key)) setOpen(true);

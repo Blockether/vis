@@ -284,8 +284,8 @@ export const DocPreview = memo(function DocPreview({
     onNeeded();
   }, [onNeeded]);
 
-  const close = useCallback(() => setOpened(false), []);
-  const open = useCallback(() => setOpened(true), []);
+  const close = useCallback(() => setOpened(false), [setOpened]);
+  const open = useCallback(() => setOpened(true), [setOpened]);
 
   return (
     <>

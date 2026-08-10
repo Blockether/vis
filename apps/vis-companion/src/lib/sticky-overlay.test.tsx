@@ -3,7 +3,11 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ExpandableImage } from "../components/ImageViewer";
-import { dropOverlayHandovers } from "./sticky-overlay";
+import {
+  claimOverlayHandover,
+  dropOverlayHandovers,
+  offerOverlayHandover,
+} from "./sticky-overlay";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -63,19 +67,22 @@ describe("an artifact opened from a live answer", () => {
     expect(viewer()).not.toBeNull();
   });
 
-  it("does not re-open once the transcript that owned it is left", () => {
-    paint(false);
-    act(() =>
-      document
-        .querySelector<HTMLButtonElement>(
-          'button[aria-label="Open chart.png full screen"]',
-        )
-        ?.click(),
-    );
-    expect(viewer()).not.toBeNull();
-
+  it("is handed over only to the row that replaces it, and only at once", () => {
+    // Leaving the session drops every outstanding offer, so re-entering it never
+    // re-opens what the reader walked away from.
+    offerOverlayHandover("image:blob:picture");
     dropOverlayHandovers();
-    paint(true);
-    expect(viewer()).toBeNull();
+    expect(claimOverlayHandover("image:blob:picture")).toBe(false);
+
+    // And an offer nobody claimed inside the swap window is dead of old age.
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2025-01-01T00:00:00Z"));
+      offerOverlayHandover("image:blob:picture");
+      vi.setSystemTime(new Date("2025-01-01T00:00:05Z"));
+      expect(claimOverlayHandover("image:blob:picture")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
