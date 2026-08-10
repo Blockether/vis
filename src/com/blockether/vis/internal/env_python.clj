@@ -1141,15 +1141,47 @@
       "session_fold(target, gist=None) -> str. Collapse SETTLED steps: prior turns and the current turn only through its last completed iteration; live/future steps cannot fold. Targets: step/turn ids or through/from/to/since selectors. Folding changes rendering, not storage; there is no destructive unfold command. `ntr` never stores a `session_fold` receipt. Recover a folded result with its `# saved:` coordinate, `ntr[\"tN/iM/fK\"]`; if absent, use `s = await session_state()` and filter `['transcript']['turns'][...]['iterations'][...]['blocks']`. A broader newer fold supersedes fully covered breadcrumbs; equal scope keeps newer. Partial overlaps remain separate.")))
 
 
+(def PROCESS_SURFACE
+  "THE sentences about this sandbox's process surface — written ONCE, here, and
+   said verbatim by every surface that has to say them:
+
+     - the `sandbox-shims` prompt block (`prompt/sandbox-shims-prompt-block`);
+     - the POSIX refusal (`vis-shims/posix.py`), when `subprocess` / `os.system` /
+       `os.popen` is called;
+     - a live handle that cannot be driven (`__VisShell__.__vis_op__` in
+       `vis-python/async_runtime.py`).
+
+   Three copies of one fact drift, and the copy the model reads at the moment it
+   is blocked is the one that must be right. Composed, never concatenated ad hoc:
+   `ban` is the rule and is all the PROMPT says (invocation grammar belongs to the
+   `shell` symbol's own docs, not to a supplemental block); `ban` + `use` is what a
+   call site says, because there the model is already writing the call; `off` is
+   the toggle state, and it names BOTH doors so silence is never read as
+   \"`subprocess` might still work\".
+
+   Reaches Python as the `__vis_process_surface__` global (see
+   `install-process-surface!`), so neither `.py` file carries a copy."
+  {"ban" (str "`subprocess`, `os.system` and `os.popen` never spawn in the vis sandbox "
+              "— every process starts through the `shell` tool, which owns the jail, "
+              "the log file and the handle.")
+   "use" (str "Use `await shell({'command': 'npm test'})`; the handle it returns drives "
+              "it with `status()`, `logs()`, `wait()`, `type()` and `stop()`.")
+   "off" (str "Shell commands are DISABLED in this vis sandbox: the `shell` tool is "
+              "gone, a live handle cannot be driven, and `subprocess`, `os.system` and "
+              "`os.popen` all raise — nothing here can start a process. Turn on 'Shell "
+              "commands' in the settings dialog.")})
+
 (def ^:private posix-refusal-shim-src
   "Pure-Python source that replaces `subprocess` / `os.system` / `os.popen` with
    ONE refusal that names the `shell` tool. The body lives in the
    `vis-shims/posix.py` CLASSPATH RESOURCE (`resources/vis-shims/posix.py`) -
    real Python in a real `.py` file, never a Clojure string - and is embedded in
    the native image by build.clj's `-H:IncludeResources=vis-shims/.*`.
-   `shell` is looked up in `globals()` at CALL time, so ONE file serves both
-   states: with the shell tools on it names the tool and its invocation; with
-   the toggle off it says the toggle disabled BOTH doors."
+   It carries no wording of its own: the sentences come from `PROCESS_SURFACE`
+   via `__vis_process_surface__`, and `shell` is looked up in `globals()` at CALL
+   time, so ONE file serves both states - with the shell tools on it names the
+   tool and its invocation; with the toggle off it says the toggle disabled BOTH
+   doors."
   (runtime-python-src "vis-shims/posix.py"))
 
 (def AUTO_IMPORTED_PYTHON_NAMES
@@ -1187,16 +1219,25 @@
   [^Context ctx]
   (try (.eval ctx "python" ^String auto-imports-python) (catch Throwable _ nil)))
 
-(defn- install-posix-refusal-shim!
-  "Install the POSIX refusal shim: `subprocess` / `os.system` / `os.popen` raise
-   a message pointing at the `shell` tool. The body is a few dozen lines with no
+(defn- install-process-surface!
+  "Seed `__vis_process_surface__` (the ONE `PROCESS_SURFACE` wording) and install
+   the POSIX refusal shim that raises out of it: `subprocess` / `os.system` /
+   `os.popen` name the `shell` tool instead of spawning, and a handle that cannot
+   be driven says the same thing. The shim body is a few dozen lines with no
    module graph behind it, so it is eval'd EAGERLY - the lazy `meta_path` finder
    it replaced existed only to defer a ~95ms delegation bridge that no longer
    exists. Best-effort: a failure leaves the sandbox without the shim (the spawn
    then fails opaquely), it must never break context creation."
   [^Context ctx]
   (when-let [src posix-refusal-shim-src]
-    (try (.eval ctx "python" ^String src) (catch Throwable _ nil))))
+    (try (let [g (python-globals ctx)]
+           (.putMember g "__vis_process_surface_json__" (json/write-json-str PROCESS_SURFACE))
+           (.eval ctx
+                  "python"
+                  "globals()['__vis_process_surface__'] = json.loads(__vis_process_surface_json__)")
+           (.putMember g "__vis_process_surface_json__" nil)
+           (.eval ctx "python" ^String src))
+         (catch Throwable _ nil))))
 
 (defn- registered-sandbox-shims
   "The Python sandbox shims contributed by the extension registry."
@@ -1940,7 +1981,7 @@
     ;; POSIX refusal: subprocess / os.system / os.popen point at the `shell`
     ;; tool instead of spawning. Eval'd BEFORE the initial-ns-keys snapshot so
     ;; any names it parks are baseline (filtered out of the live-vars view).
-    (install-posix-refusal-shim! ctx)
+    (install-process-surface! ctx)
     ;; SANDBOX SHIMS: install every extension-contributed Python shim (host
     ;; bridge callables wired onto `g`, then the shim's source eval'd). This
     ;; is the GENERIC mechanism — `yaml` (YAMLStar) and `matplotlib` (imaging)

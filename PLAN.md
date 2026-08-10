@@ -669,6 +669,33 @@ wire contract.
 
 **Unknowns.** None.
 
+## Phase 16 — The process surface is said ONCE
+
+**Rationale.** Without it the same fact is worded four times and the copies drift. The ban lived in
+`prompt.clj`'s sandbox-shims block, again in `resources/vis-shims/posix.py` (`_USE_SHELL` /
+`_NO_SHELL`) and a third time in `resources/vis-python/async_runtime.py:606` ("The shell tools are
+not enabled…"), each with its own sentence — so the rule the model READS in the prompt and the rule
+it HITS at the call site were free to disagree, and Phase 15 had to edit three files to change one
+fact.
+
+**Data.** None. Nothing crosses a boundary: the sentences are engine prose seeded into one sandbox
+global, never persisted and never sent over the wire.
+
+**Acceptance criteria.**
+- `src/com/blockether/vis/internal/env_python.clj` — `PROCESS_SURFACE` is the ONE wording, composed
+  rather than concatenated ad hoc: `ban` (the rule), `use` (the invocation, call sites only), `off`
+  (the toggle state, naming BOTH doors). `install-process-surface!` seeds it as the
+  `__vis_process_surface__` sandbox global and then installs the refusal shim.
+- `resources/vis-shims/posix.py` and `resources/vis-python/async_runtime.py` — carry no wording of
+  their own; both raise out of `__vis_process_surface__`.
+- `src/com/blockether/vis/internal/prompt.clj` — the block emits `ban` or `off` verbatim; it never
+  emits `use`, because invocation grammar belongs to the `shell` symbol's own docs.
+- Test: `posix-refusal-shim-test/process-surface-is-said-once-test` proves the prompt block, the
+  `subprocess` refusal (both toggle states) and an undriveable handle return the SAME host strings,
+  and that neither `.py` file contains a literal copy.
+
+**Unknowns.** None.
+
 ## State of the plan
 
 **DONE.**
@@ -773,6 +800,9 @@ Done:
 - Phase 15, ONE door to a process — `fa6251ee9`. `subprocess`, `os.system` and `os.popen` never spawn:
   they raise, naming the `shell` tool when it is on and naming BOTH as disabled when the toggle is
   off. The 313-line delegation bridge and its lazy loader are deleted.
+- Phase 16, the process surface is said ONCE — `PENDING`. `env-python/PROCESS_SURFACE` (`ban` /
+  `use` / `off`) is the only wording; the prompt block, the `subprocess` refusal and an undriveable
+  handle all read it, the second through the `__vis_process_surface__` sandbox global.
 
 TODO, in order: nothing. The plan is DONE.
 

@@ -567,12 +567,14 @@
    seeding is a `doc()` fallback the shim's own Python usually overrides. One line
    per shim, keyed by the very names advertised above it.
 
-   The process surface is stated either way, and it says the SAME thing about
-   `subprocess`: it never spawns. With shell active, point at the tool — the
-   shell symbol's own docs remain the single authority for its invocation
-   grammar. With shell OFF, say plainly that the tool AND `subprocess` /
-   `os.system` / `os.popen` are disabled: silence read as an invitation to try,
-   and the attempt only surfaced as an opaque spawn failure."
+   The process surface is stated either way, and it is NOT worded here: the
+   sentences are `env-python/PROCESS_SURFACE`, the same ones `subprocess` raises
+   and an undriveable handle reports, so the rule the model reads in the prompt
+   and the rule it hits at the call site cannot drift apart. The prompt gets
+   `ban` only — the shell symbol's own docs remain the single authority for its
+   invocation grammar — and with shell OFF it gets `off`, which names the tool
+   AND `subprocess` / `os.system` / `os.popen`: silence read as an invitation to
+   try, and the attempt only surfaced as an opaque spawn failure."
   [active-extensions]
   (let
     [shims
@@ -634,12 +636,8 @@
                   "is its whole supported surface and what it refuses, so trust it over your "
                   "memory of the library and do not reach for an API it does not claim.\n"
                   (str/join "\n" shim-capabilities)))
-           (if shell?
-             (str "\n`subprocess`, `os.system` and `os.popen` NEVER spawn here — they raise. "
-                  "Every process starts through the `shell` tool; use its authoritative contract.")
-             (str "\nShell commands are DISABLED in this sandbox: there is no shell tool, and "
-                  "`subprocess`, `os.system` and `os.popen` raise too — nothing here can start "
-                  "a process. Use the native tools instead of looking for a way around it."))))))
+           "\n"
+           (get env-python/PROCESS_SURFACE (if shell? "ban" "off"))))))
 
 (defn- turn-system-context-block
   "Turn-scoped system context that can be rebuilt/replaced as runtime

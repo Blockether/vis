@@ -5,15 +5,22 @@
    up at CALL time, so the same file also answers the toggle-off state, where it
    must say that BOTH doors are closed rather than offering subprocess as a way
    around a disabled shell."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.internal.env-python :as ep]
+            [com.blockether.vis.internal.prompt :as prompt]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context]))
 
 (defn- raised
-  "The message `code` raises in `ctx`, or nil when it did not raise."
+  "The message `code` raises in `ctx`, or nil when it did not raise. GraalPy
+   prefixes the guest exception type, which is not part of the wording."
   [^Context ctx ^String code]
-  (try (.eval ctx "python" code) nil (catch Throwable t (str (.getMessage t)))))
+  (try (.eval ctx "python" code)
+       nil
+       (catch Throwable t
+         (some-> (.getMessage t)
+                 (str/replace #"^RuntimeError: " "")))))
 
 (defn- shell-bound-context
   "A sandbox context with the `shell` tool present — the shim must STILL refuse."
@@ -70,3 +77,42 @@
                    ;; subprocess lives in sys.modules, not globals; the installer is del'd
                    (expect (not (contains? initial-ns-keys "subprocess")))
                    (expect (not (contains? initial-ns-keys "__vis_install_posix_compat__"))))))
+
+(defdescribe process-surface-is-said-once-test
+             ;; Regression, prompt audit: the same fact about this sandbox's process surface
+             ;; was worded four times - the prompt block, the `subprocess` refusal, the
+             ;; toggle-off refusal and the handle refusal each had their own sentence, so
+             ;; fixing one left the model reading a different rule from the next.
+             (it "gives the prompt, `subprocess` and a live handle the SAME host sentences"
+                 (let
+                   [ban
+                    (get ep/PROCESS_SURFACE "ban")
+
+                    use'
+                    (get ep/PROCESS_SURFACE "use")
+
+                    off
+                    (get ep/PROCESS_SURFACE "off")]
+
+                   ;; The prompt says the rule, never the invocation grammar.
+                   (expect (str/includes? (#'prompt/sandbox-shims-prompt-block
+                                           [{:ext/name "foundation-shell"}])
+                                          ban))
+                   (expect (str/includes? (#'prompt/sandbox-shims-prompt-block []) off))
+                   ;; The call site says the rule AND how to do the work instead.
+                   (let [ctx (shell-bound-context)]
+                     (.eval ctx "python" "import subprocess")
+                     (expect (= (str ban " " use') (raised ctx "subprocess.run('ls')"))))
+                   ;; No shell tool: one sentence for the tool, `subprocess` and the handle.
+                   (let [ctx (:python-context (ep/create-python-context {}))]
+                     (.eval ctx "python" "import subprocess")
+                     (expect (= off (raised ctx "subprocess.run('ls')")))
+                     (expect (= off (raised ctx "__VisShell__({'id': 'p1'}).status()"))))))
+             (it "keeps the wording out of the Python files that say it"
+                 ;; Both read `__vis_process_surface__`; a literal copy in either file is a
+                 ;; second source of truth that drifts on the next edit.
+                 (doseq [f ["vis-shims/posix.py" "vis-python/async_runtime.py"]]
+                   (let [src (slurp (io/resource f))]
+                     (expect (str/includes? src "__vis_process_surface__") f)
+                     (doseq [copy ["never spawn in the vis sandbox" "Shell commands are DISABLED"]]
+                       (expect (not (str/includes? src copy)) (str f " " copy)))))))

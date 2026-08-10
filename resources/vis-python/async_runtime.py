@@ -602,10 +602,10 @@ class __VisShell__(__VisResult__):
     def __vis_op__(self, __vis_name__, __vis_args__):
         fn = globals().get(__vis_name__)
         if fn is None:
-            raise RuntimeError(
-                "The shell tools are not enabled in this vis sandbox, so this handle "
-                "cannot be driven. Turn on 'Shell commands' in the settings dialog."
-            )
+            # The host's ONE wording for a sandbox with no process surface
+            # (`env_python/PROCESS_SURFACE`), the same sentence `subprocess` and
+            # the prompt block say — a handle is just where it is met next.
+            raise RuntimeError(globals()["__vis_process_surface__"]["off"])
         return __vis_settle__(fn(__vis_args__))
 
     def status(self):

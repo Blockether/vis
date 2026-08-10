@@ -1065,10 +1065,13 @@
           (expect (str/includes? src marker) f)
           (expect (not (str/includes? src "time.sleep(poll)")) f)))
       ;; The POSIX shim is not a caller at all: `subprocess` never spawns, so it
-      ;; owns no wait, no cursor and no second copy of the shell contract.
+      ;; owns no wait, no cursor, no second copy of the shell contract and no
+      ;; wording of its own - it raises the host's `PROCESS_SURFACE` sentences.
       (let [src (slurp (io/resource "vis-shims/posix.py"))]
         (expect (not (str/includes? src "_shell_wait")))
-        (expect (str/includes? src "never spawn"))))
+        (expect (str/includes? src "__vis_process_surface__"))
+        (doseq [copy ["never spawn in the vis sandbox" "DISABLED"]]
+          (expect (not (str/includes? src copy)) copy))))
   (it "bounds MEMORY as well as time when a command never stops printing"
       ;; A runaway printer produced ~1 MB/s: an unbounded accumulator turned a long
       ;; wait into a heap problem, so the wait keeps head+tail exactly as a

@@ -8,43 +8,36 @@
 # that, and the model reaches for whichever door it remembers first.
 #
 # Without this shim the attempt dies as an opaque native-access error, so the
-# shim exists ONLY to say where to go instead. WHICH sentence is true depends on
-# the `shell` toggle, which can change between two blocks of one session, so the
-# tool is looked up in globals() (or the `vis` module) at CALL time and never
-# bound at import:
+# shim exists ONLY to say where to go instead — and it says it in the HOST's
+# words: every sentence comes from `__vis_process_surface__`, the Python view of
+# `env_python/PROCESS_SURFACE`, which the prompt block and the handle refusal
+# read too. No wording is spelled twice.
 #
-#   * shell ON  — name the tool and its invocation, because the work is doable.
-#   * shell OFF — say that the toggle turned BOTH doors off, so nothing here
-#     suggests `subprocess` is the way around a disabled shell.
+# WHICH sentence is true depends on the `shell` toggle, which can change between
+# two blocks of one session, so the tool is looked up in globals() (or the `vis`
+# module) at CALL time and never bound at import:
+#
+#   * shell ON  — the rule, then the invocation, because the work is doable.
+#   * shell OFF — the toggle turned BOTH doors off, so nothing here suggests
+#     `subprocess` is the way around a disabled shell.
 #
 # Installed once per sandbox context (main + every `sub_loop` fork) by
-# env_python/build-agent-context, right after the apropos/doc introspection.
+# env_python/install-process-surface!, right after the apropos/doc introspection.
 
 
 def __vis_install_posix_compat__():
     import sys
     import types
 
-    _USE_SHELL = (
-        "`subprocess`, `os.system` and `os.popen` never spawn in the vis "
-        "sandbox — every process starts through the `shell` tool, which owns "
-        "the jail, the log file and the handle. Use "
-        "`await shell({'command': 'npm test'})`; the handle it returns has "
-        "`status()`, `logs()`, `wait()`, `type()` and `stop()`."
-    )
-    _NO_SHELL = (
-        "Shell commands are DISABLED in this vis sandbox, so the `shell` tool, "
-        "`subprocess`, `os.system` and `os.popen` all refuse to run — there is "
-        "no way to start a process here. Turn on 'Shell commands' in the "
-        "settings dialog."
-    )
-
     def _refuse(*args, **kwargs):
         fn = globals().get("shell")
         if fn is None:
             vis = sys.modules.get("vis")
             fn = getattr(vis, "shell", None) if vis is not None else None
-        raise RuntimeError(_USE_SHELL if fn is not None else _NO_SHELL)
+        words = globals()["__vis_process_surface__"]
+        if fn is None:
+            raise RuntimeError(words["off"])
+        raise RuntimeError(words["ban"] + " " + words["use"])
 
     # The exception types stay real classes: `except subprocess.CalledProcessError`
     # must keep working in code that is about to be told to use `shell` instead,

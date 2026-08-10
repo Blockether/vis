@@ -206,9 +206,11 @@
           ;; With no shell layer active the block must SAY the process surface is
           ;; gone: silence read as "maybe try `subprocess`", and every attempt then
           ;; died on an opaque spawn failure instead of being ruled out up front.
+          ;; Verbatim from the ONE source, so the prompt cannot drift from what
+          ;; `subprocess` raises and what an undriveable handle reports.
+          (expect (str/includes? text (get env-python/PROCESS_SURFACE "off")))
           (expect (str/includes? text "Shell commands are DISABLED"))
-          (expect (str/includes? text "raise too"))
-          (expect (str/includes? text "nothing here can start "))
+          (expect (str/includes? text "nothing here can start a process"))
           (doseq [banned ["subprocess" "os.system" "os.popen"]]
             (expect (str/includes? text banned)))
           (expect (not (str/includes? text "route through the active")))
@@ -218,7 +220,8 @@
       ;; Invocation syntax belongs to the shell symbol docs; this supplemental
       ;; block only says that `subprocess` is not a second door to a process.
       (let [text (#'prompt/sandbox-shims-prompt-block [{:ext/name "foundation-shell"}])]
-        (expect (str/includes? text "NEVER spawn"))
+        (expect (str/includes? text (get env-python/PROCESS_SURFACE "ban")))
+        (expect (str/includes? text "never spawn"))
         (expect (str/includes? text "`shell` tool"))
         (expect (not (str/includes? text "DISABLED")))
         (expect (str/includes? text "subprocess"))
