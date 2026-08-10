@@ -580,6 +580,105 @@
           (when-let [running @task]
             (future-cancel running))))))
 
+(defdescribe
+  navigator-search-debounce-test
+  ;; The picker asks the gateway, and the gateway ranks a whole store per
+  ;; query. Typing `stale-proof` must cost ONE lookup, and the answer to a
+  ;; prefix the user has already replaced must never win a race against it.
+  (it
+    "a superseded query never lands on the one the user is looking at"
+    (let
+      [schedule!
+       (var-get #'dlg/schedule-navigator-search!)
+
+       task
+       (atom nil)
+
+       generation
+       (atom 0)
+
+       result
+       (atom nil)
+
+       entered
+       (promise)
+
+       release
+       (promise)
+
+       ;; Blocks like a slow gateway AND survives the cancel, so what is
+       ;; under test is the generation guard rather than the interrupt.
+       stale-fn
+       (fn [_q]
+         (loop []
+
+           (when-not (realized? release)
+             (deliver entered true)
+             (try (Thread/sleep 5) (catch InterruptedException _))
+             (recur)))
+         {"stale" {:kind :reply}})
+
+       first-token
+       (schedule! task generation result "sta" stale-fn)]
+
+      (expect (= true (deref entered 2000 ::timeout)))
+      ;; The user keeps typing while that lookup is in flight.
+      (let
+        [second-token (schedule! task
+                                 generation
+                                 result
+                                 "stale-proof"
+                                 (fn [_q]
+                                   {"fresh" {:kind :title}}))]
+        (expect (< (long first-token) (long second-token))))
+      (loop [attempts 100]
+        (when (and (nil? @result) (pos? attempts)) (Thread/sleep 20) (recur (dec attempts))))
+      (expect (= "stale-proof" (:query @result)))
+      (expect (= {"fresh" {:kind :title}} (:matches @result)))
+      ;; Now let the superseded lookup finish: it is discarded, not painted.
+      (deliver release true)
+      (Thread/sleep 200)
+      (expect (= "stale-proof" (:query @result)))
+      (expect (= {"fresh" {:kind :title}} (:matches @result)))
+      (when-let [running @task]
+        (future-cancel running))))
+  (it
+    "an emptied query cancels the lookup instead of searching for nothing"
+    (let
+      [schedule!
+       (var-get #'dlg/schedule-navigator-search!)
+
+       task
+       (atom nil)
+
+       generation
+       (atom 0)
+
+       result
+       (atom nil)
+
+       asked
+       (atom 0)]
+
+      (schedule! task
+                 generation
+                 result
+                 "needle"
+                 (fn [_q]
+                   (swap! asked inc)
+                   {}))
+      (schedule! task
+                 generation
+                 result
+                 "   "
+                 (fn [_q]
+                   (swap! asked inc)
+                   {}))
+      (expect (nil? @task))
+      (Thread/sleep 300)
+      (expect (zero? @asked))
+      (expect (nil? @result)))))
+
 (defdescribe scrollbar-geometry-test
              (it "scrollbar geometry sanity (canonical primitive)"
                  ;; Canonical primitive: 20 items in a 10-row viewport, scroll=5

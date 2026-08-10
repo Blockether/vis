@@ -2132,26 +2132,10 @@ export class GatewayClient {
     return rows;
   }
 
-  // GET /v1/sessions/actions/search?q= matches user requests + LLM responses in the
-  // transcript store server-side, returning only the matching session ids.
-  async searchSessionIds(
-    query: string,
-    signal?: AbortSignal,
-  ): Promise<string[]> {
-    const q = query.trim();
-    if (!q) return [];
-    const res = await this.request<{ session_ids: string[] }>(
-      "GET",
-      `/v1/sessions/actions/search?q=${encodeURIComponent(q)}`,
-      undefined,
-      signal,
-    );
-    return res.session_ids ?? [];
-  }
-
-  // Like searchSessionIds, but each hit is tagged with WHERE the query landed —
-  // the user's own request vs. the assistant's reply — plus a short snippet of
-  // the matching text so the UI can preview the conversation, not just the id.
+  // GET /v1/sessions/actions/search?q= searches the transcript store AND the session
+  // titles server-side. Each hit carries the gateway's own `rank` band plus a short
+  // snippet of the matching text, so the UI previews the conversation and paints the
+  // order it was given rather than deriving a second one here.
   async searchSessionMatches(
     query: string,
     signal?: AbortSignal,

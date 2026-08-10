@@ -137,6 +137,13 @@ const STALE_POLL_MS = 20_000;
 // unloaded hits is one GET each, so the tail is cut rather than paid for.
 const SEARCH_HYDRATE_MAX = 40;
 
+// Searching is a FLEET round trip — one ranked FTS query per paired machine, and on a
+// large store the gateway spends ~130ms in SQLite before it answers. Firing that per
+// keystroke would queue a search behind every letter of a word and leave the last one
+// racing its own predecessors. `useDeferredValue` keeps the field itself immediate;
+// this pause is what stops the network being asked until typing rests.
+const SEARCH_DEBOUNCE_MS = 200;
+
 // Each project PAGES its own history, a gateway-cut window at a time — so the DOM is
 // bounded without a global window over the fleet.
 
@@ -516,8 +523,11 @@ export function SessionsScreen({
     };
   }, []);
 
-  // Transcript search runs server-side (matches user requests + LLM responses)
-  // and unions its matching ids into the local title/project filter.
+  // Transcript + title search runs server-side and RANKED (see `rank` below); this
+  // effect only asks, and only after typing rests. A superseded query is cancelled
+  // twice over: the sleeping timer is cleared before it ever calls out, and a request
+  // already in flight is aborted, so a slow machine's late answer can never overwrite
+  // the matches of the query the user is actually looking at.
   useEffect(() => {
     const needle = deferredQuery.trim();
     // An empty query has no server matches; `matches` below derives that without
@@ -566,7 +576,7 @@ export function SessionsScreen({
         );
         setSearchHits(new Map(results.map((result) => [result.key, result.rows])));
       });
-    }, 200);
+    }, SEARCH_DEBOUNCE_MS);
     return () => {
       controller.abort();
       window.clearTimeout(timer);
