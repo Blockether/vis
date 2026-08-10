@@ -320,11 +320,13 @@ class Shell(dict):
             last = self.logs(offset=offset, limit=262144)
             chunks.append(last.get('stdout') or '')
             offset = last.get('next_offset', offset)
+            if _time.time() >= deadline:
+                # Bounds EVERY iteration: a command that never stops printing always
+                # has more bytes, so a clock checked only at EOF is never reached.
+                break
             if not last.get('is_eof', True):
                 continue
             if last.get('status') != 'running':
-                break
-            if _time.time() >= deadline:
                 break
             _time.sleep(poll)
         out = dict(last)

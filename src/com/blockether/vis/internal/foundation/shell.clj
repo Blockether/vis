@@ -747,6 +747,12 @@
                                    ;; The child exists: distinct from a command whose launch failed
                                    ;; before it could run.
                                    "started" true
+                                   "pid" (:pid p)
+                                   ;; The SAME vocabulary every other stage answers with: a run that
+                                   ;; finished is "exited", one whose wait expired is still "running"
+                                   ;; — never nil, or "did it work" has no answer on the one stage
+                                   ;; that actually knows.
+                                   "status" (if finished? "exited" "running")
                                    "stdout" (lf (:text out))
                                    "stderr" (lf (:text err))
                                    "exit" exit
@@ -1111,6 +1117,10 @@
                    "started" true
                    "status" (if (some? exit) "exited" "running")
                    "exit" exit
+                   ;; A LIVE shell's log is never complete: `is_eof` says "there is
+                   ;; nothing more to read", and while the child runs there always may
+                   ;; be. A read stage overrides this with what its own chunk saw.
+                   "is_eof" (some? exit)
                    ;; LIFETIME, not the age of this read: it stops at the ending an
                    ;; earlier stage stamped, so a job that ran 3s never reports the ten
                    ;; minutes that passed before someone came back to read its logs.
@@ -1446,24 +1456,23 @@
   "A named run whose shell is ALREADY live: the same run shape, answering with the
    process that exists instead of spawning a second copy of it. Re-issuing an id is
    how a caller re-attaches to work it already started, so this is a success and
-   never a refusal, and `timed_out` is true because nothing was waited for."
+   never a refusal — and `timed_out` is FALSE, because no wait was made and
+   `timed_out` only ever means one that was made expired."
   [id entry]
   (let [t (now-ms)]
-    (extension/success
-      {:result (shell-result "run"
-                             {"id" id
-                              "cwd" (:dir entry)
-                              "command" (:command entry)
-                              "started" true
-                              "exit" nil
-                              "duration_ms" 0
-                              "timed_out" true
-                              "already_running" true
-                              "note" (str "Shell '" id
-                                          "' was ALREADY running — nothing was restarted. Read it"
-                                          " with sh.logs(offset=0) and stop it with sh.stop().")})
-       :op :shell
-       :metadata {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}})))
+    (extension/success {:result (assoc (bg-core "run" id entry)
+                                  "duration_ms" 0
+                                  ;; NOTHING was waited for, so nothing expired. `timed_out` means one
+                                  ;; thing only — a wait ran out — and re-attaching to a live shell
+                                  ;; never made a wait.
+                                  "timed_out" false
+                                  "already_running" true
+                                  "note" (str
+                                           "Shell '" id
+                                           "' was ALREADY running — nothing was restarted. Read it"
+                                           " with sh.logs(offset=0) and stop it with sh.stop()."))
+                        :op :shell
+                        :metadata {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}})))
 
 (defn- run-of-background
   "A background start answered in the RUN shape. Waiting is the ONLY difference
@@ -1474,22 +1483,26 @@
   [r]
   (let [m (:result r)]
     (assoc r
-      :result (shell-result "run"
-                            {"id" (get m "id")
-                             "cwd" (get m "cwd")
-                             "command" (get m "command")
-                             "started" true
-                             "exit" (get m "exit")
-                             "duration_ms" 0
-                             ;; Nothing WAITED, so nothing timed out: `timed_out` only ever
-                             ;; means "the wait expired", and a run has no wait.
-                             "timed_out" false
-                             "note" (or (get m "note")
-                                        (str "Spawned: the shell runs under id '"
-                                             (get m "id")
-                                             "' — read it with sh.logs(offset=0), type at it with"
-                                             " sh.type(text), wait for it with sh.wait(secs), and"
-                                             " stop it with sh.stop()."))})
+      :result (assoc m
+                ;; The background start already answered the TOTAL shape through
+                ;; `bg-core` — `pid`, `status`, `uptime_ms`, `already_running`. Rebuilding
+                ;; the map from scratch dropped exactly those, so a spawn could not say
+                ;; what it had started or that it was running. Only the stage-specific
+                ;; keys are overridden here.
+                "stage" "run"
+                "started" true
+                "duration_ms" 0
+                ;; Nothing WAITED, so nothing timed out: `timed_out` only ever
+                ;; means "the wait expired", and a run has no wait.
+                "timed_out" false
+                ;; `bg-core` writes an explicit nil note, so this is `or`, never
+                ;; `get`'s default: a present-but-nil key would swallow the spawn note.
+                "note" (or (get m "note")
+                           (str "Spawned: the shell runs under id '"
+                                (get m "id")
+                                "' — read it with sh.logs(offset=0), type at it with"
+                                " sh.type(text), wait for it with sh.wait(secs), and"
+                                " stop it with sh.stop().")))
       :op :shell)))
 
 (defn run-blocking

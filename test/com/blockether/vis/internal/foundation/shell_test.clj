@@ -51,6 +51,8 @@
 
 (def ^:private shell-send* @#'shell/shell-send-impl)
 
+(def ^:private shell-stop* @#'shell/shell-stop-impl)
+
 (def ^:private shell* @#'shell/shell-dispatch)
 
 (def ^:private render-shell-run-result @#'shell/render-shell-run-result)
@@ -93,6 +95,24 @@
              (>= i (long tries)) (throw (ex-info "poll exhausted" {:last v}))
              :else (do (Thread/sleep 100) (recur (inc i))))))))
 
+(defn- alive-pid?
+  "Is that OS process still alive? The only honest proof that `stop` killed a
+   grandchild the shell had backgrounded."
+  [pid]
+  (boolean (when pid
+             (let [h (java.lang.ProcessHandle/of (long pid))]
+               (and (.isPresent h) (.isAlive ^java.lang.ProcessHandle (.get h)))))))
+
+(defn- shell-thread-count
+  "How many threads this extension owns right now — pump, PTY reader and attach
+   acceptor are all named `vis-shell-*` / `vis-pty-*`, so a leak is countable."
+  []
+  (->> (Thread/getAllStackTraces)
+       keys
+       (map #(.getName ^Thread %))
+       (filter #(or (str/starts-with? % "vis-shell") (str/starts-with? % "vis-pty")))
+       count))
+
 (defn- wait*
   "`sh.wait(secs)` in Clojure — the engine's own bounded poll loop, written here so
    a test can assert on a finished run without a `wait` knob the request no longer
@@ -119,10 +139,16 @@
        nxt
        (or (get r "next_offset") offset)]
 
-      (cond (not (get r "is_eof")) (recur (long nxt) acc n)
-            (or (not= "running" (get r "status")) (<= 50 n)) (assoc r
-                                                               "stdout" acc
-                                                               "stage" "wait")
+      ;; The bound counts EVERY iteration, exactly as the engine's own loop does: a
+      ;; command that never stops printing always has more bytes, so a limit checked
+      ;; only at EOF is never reached and the wait runs forever.
+      (cond (<= 50 n) (assoc r
+                        "stdout" acc
+                        "stage" "wait")
+            (not (get r "is_eof")) (recur (long nxt) acc (inc n))
+            (not= "running" (get r "status")) (assoc r
+                                                "stdout" acc
+                                                "stage" "wait")
             :else (do (Thread/sleep 100) (recur (long nxt) acc (inc n)))))))
 
 (defdescribe shell-env-injection-test
@@ -1272,9 +1298,28 @@
                   (py
                     c
                     (str
-                      "b = __vis_settle__(shell('echo alive; sleep 30', {'id':'pyjob','wait':0}))\n"
+                      "b = __vis_settle__(shell('echo alive; sleep 30', {'id':'pyjob'}))\n"
                       "l = b.logs(limit=10)\n"
                       "s = b.stop()\n" "[b['stage'], l['stage'], s['stage']]"))))
+             (finally (resources/stop-all! sid)))))
+  (it "bounds sh.wait(secs) even when the command NEVER stops printing"
+      ;; Regression, shell audit: the poll loop only checked its deadline once the log
+      ;; was at EOF, so a command with bytes always available (`yes`, a chatty build)
+      ;; never reached the clock and `sh.wait(1)` ran until the sandbox watchdog.
+      (let
+        [sid
+         (str "py-wait-bound-" (System/nanoTime))
+
+         c
+         (py-ctx {:session-id sid})]
+
+        (try (expect (= [true "running" true]
+                        (py c
+                            (str "import time\n"
+                                 "sh = __vis_settle__(shell('while true; do echo x; done',"
+                                 " {'id':'chatty'}))\n" "t0 = time.time()\n"
+                                 "r = sh.wait(1)\n" "took = time.time() - t0\n"
+                                 "sh.stop()\n" "[bool(r['timed_out']), r['status'], took < 45]"))))
              (finally (resources/stop-all! sid)))))
   (it "answers with a HANDLE whose own methods drive the process"
       ;; Phase 8: the three id-taking verbs are gone from the model's surface. What
@@ -1291,7 +1336,7 @@
             (= [true "__VisShell__" false true "exited" false]
                (py c
                    (str
-                     "sh = __vis_settle__(shell('read x; echo got $x', {'id':'handle','wait':0}))\n"
+                     "sh = __vis_settle__(shell('read x; echo got $x', {'id':'handle'}))\n"
                      "sh.type('ready')\n"
                      "w = sh.wait(30)\n" "sh.stop()\n"
                      "[isinstance(sh, dict), type(sh).__name__, 'shell_logs' in globals(),"
@@ -1362,7 +1407,7 @@
                         "job = "
                         (pr-str sid)
                         "\n"
-                        "b = __vis_settle__(shell(['echo ready; sleep 30'], {'id':job,'wait':0}))\n"
+                        "b = __vis_settle__(shell(['echo ready; sleep 30'], {'id':job}))\n"
                         "l = b.logs(limit=1)\n"
                         "s = b.stop()\n" "[b['stage'], l['stage'], s['stage']]"))))
              (finally (resources/stop-all! sid))))))
@@ -1687,3 +1732,119 @@
                       (mapv :ext.symbol/name))))
       (expect (= ["shell" "_shell_logs" "_shell_type" "_shell_stop"]
                  (mapv :ext.symbol/name shell/shell-symbols)))))
+
+
+(defdescribe
+  shell-failure-visibility-test
+  ;; Regression, shell audit: a command that fails is the COMMON case, and every
+  ;; piece of evidence about it — the exit code, the message the shell printed, the
+  ;; fact that something is still running — has to survive the call that started it.
+  (it "answers 127 and keeps the shell's own complaint when the command does not exist"
+      ;; A misspelled program printed to stderr and died: the code and the sentence
+      ;; explaining it must both be in the log, or a failure reads as an empty result.
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-missing-command"
+               env {:session-id sid}]
+
+              (try (let
+                     [_ (shell* env {"command" "definitely-not-a-real-command-xyz" "id" "nope"})
+                      r (wait* env "nope")]
+
+                     (expect (= 127 (get r "exit")))
+                     (expect (= "exited" (get r "status")))
+                     (expect (str/includes? (get r "stdout") "command not found"))
+                     (expect (false? (get r "timed_out"))))
+                   (finally (resources/stop-all! sid))))))))
+  (it "carries a non-zero exit and the STDERR that explains it"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-exit-code"
+               env {:session-id sid}]
+
+              (try (let
+                     [_ (shell* env {"command" "echo out; echo boom 1>&2; exit 3" "id" "e3"})
+                      r (wait* env "e3")]
+
+                     (expect (= 3 (get r "exit")))
+                     (expect (str/includes? (get r "stdout") "out"))
+                     (expect (str/includes? (get r "stdout") "boom")))
+                   (finally (resources/stop-all! sid))))))))
+  (it "says it is RUNNING, with the pid, the moment it spawns"
+      ;; The run stage rebuilt its map from scratch and dropped `pid`, `status` and
+      ;; `uptime_ms`, so a spawn could not say what it had started; `is_eof` claimed
+      ;; the log of a live shell was already complete.
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-spawn-says-running"
+               env {:session-id sid}]
+
+              (try (let
+                     [r (:result (shell* env {"command" "echo up; sleep 30" "id" "live"}))
+                      again (:result (shell* env {"command" "echo up; sleep 30" "id" "live"}))]
+
+                     (expect (= "running" (get r "status")))
+                     (expect (pos? (long (get r "pid"))))
+                     (expect (false? (get r "is_eof")))
+                     (expect (false? (get r "timed_out")))
+                     (expect (false? (get r "already_running")))
+                     ;; Re-attaching made no wait, so nothing expired.
+                     (expect (true? (get again "already_running")))
+                     (expect (false? (get again "timed_out")))
+                     (expect (= (get r "pid") (get again "pid")))
+                     (expect (= "running" (get again "status"))))
+                   (finally (resources/stop-all! sid))))))))
+  (it "kills the whole process TREE on stop and still answers with the logs"
+      ;; A backgrounded grandchild used to outlive its shell, and the bytes it had
+      ;; already printed had to survive the kill or a stopped job is unexplainable.
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-stop-kills-tree"
+               env {:session-id sid}]
+
+              (try (let
+                     [_ (shell* env {"command" "sleep 300 & echo CHILD=$!; sleep 300" "id" "tree"})
+                      child (poll #(some->> (get (:result (shell-logs* env "tree" {:offset 0}))
+                                                 "stdout")
+                                            (re-find #"CHILD=(\d+)")
+                                            second
+                                            parse-long)
+                                  some?)
+                      parent (get (:result (shell-logs* env "tree" {:offset 0})) "pid")
+                      stopped (:result (shell-stop* env "tree"))]
+
+                     (expect (true? (get stopped "stopped")))
+                     (expect (= "stopped" (get stopped "status")))
+                     (expect (some? (get stopped "exit")))
+                     (expect (nil? (poll #(when (alive-pid? child) :alive) nil? 30)))
+                     (expect (nil? (poll #(when (alive-pid? parent) :alive) nil? 30)))
+                     ;; The log outlives the kill: the id still reads back.
+                     (expect (str/includes? (get (:result (shell-logs* env "tree" {:offset 0}))
+                                                 "stdout")
+                                            "CHILD=")))
+                   (finally (resources/stop-all! sid))))))))
+  (it "leaves no thread of its own behind once the command is gone"
+      ;; Every run owns a pump, a PTY reader and an attach acceptor. They are daemons,
+      ;; so a leak is invisible until a long session has hundreds of them.
+      (with-shell-on (fn []
+                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
+                         (let
+                           [sid "shell-thread-hygiene"
+                            env {:session-id sid}]
+
+                           (try (let [before (shell-thread-count)]
+                                  (doseq [i (range 3)]
+                                    (shell* env {"command" "echo x" "id" (str "t" i)}))
+                                  (expect (pos? (long (poll shell-thread-count pos? 30))))
+                                  (doseq [i (range 3)]
+                                    (wait* env (str "t" i)))
+                                  (expect (= before (poll shell-thread-count #(= before %) 60))))
+                                (finally (resources/stop-all! sid)))))))))

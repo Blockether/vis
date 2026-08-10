@@ -535,6 +535,33 @@ nothing crosses a persisted or wire boundary that did not already.
 
 **Unknowns.** None.
 
+## Phase 12 — A failing shell must be READABLE: status, pid and a bounded wait
+
+**Rationale.** Without it the evidence about a failure is missing exactly where a failure is
+normal. A spawn answered `status` nil, `pid` nil and `is_eof` true, so the one stage that knows a
+child was just started could not say it was running, could not name the process, and claimed its log
+was already complete; a re-attach still reported `timed_out` true, a leftover of the deleted `wait`
+knob. Worse, `sh.wait(secs)` checked its deadline ONLY at EOF, so a command that never stops
+printing (`yes`, a chatty build) always had more bytes available and the "bounded" poll loop ran
+until the sandbox watchdog killed the block.
+
+**Data.** None. No key is added or removed from `shell-result-base`; three producers stop dropping
+keys the shape already declares.
+
+**Acceptance criteria.**
+- `src/com/blockether/vis/internal/foundation/shell.clj` — `run-of-background` keeps the background
+  start's own map (`pid`, `status`, `uptime_ms`) instead of rebuilding it; `live-run-result` answers
+  from `bg-core` with `timed_out` false; a synchronous run carries `pid` and `status`
+  (`exited` / `running`); `bg-core` reports `is_eof` false while the child lives.
+- `resources/vis-python/async_runtime.py`, `resources/vis-python/extension_bootstrap.py` — the poll
+  loop checks its deadline on EVERY iteration, so `sh.wait(1)` is bounded whatever the child prints.
+- Test: `shell-failure-visibility-test` proves exit 127 with "command not found" in the log, a
+  non-zero exit with its stderr, a spawn that says `running` with a pid, `stop` killing the
+  grandchild and keeping the log, and no `vis-shell-*` / `vis-pty-*` thread outliving the command;
+  a Python case pins that `sh.wait(1)` returns from an endless printer.
+
+**Unknowns.** None.
+
 ## State of the plan
 
 **DONE.**
@@ -623,6 +650,12 @@ Done:
   `sh.wait(secs)` is the only wait there is. A run's log is kept by id for the session — retention
   is the product, not a leak — and `logs` normalizes the PTY's CRLF so a line reads the same
   whether the caller waited for it or came back for it.
+
+- Phase 12, a failing shell is readable — `4728e4089`. A spawn now says `running` with its `pid` and
+  an honest `is_eof`, a re-attach no longer claims a wait expired, a synchronous run carries
+  `status`, and the handle's poll loop is bounded on every iteration rather than only at EOF. Proven
+  by measurement, not by reading: exit 127 with the shell's own complaint in the log, `stop` killing
+  a backgrounded grandchild, and the thread count returning to its baseline after every run.
 
 TODO, in order: nothing. The plan is DONE.
 

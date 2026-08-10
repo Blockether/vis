@@ -634,11 +634,15 @@ class __VisShell__(__VisResult__):
             last = self.logs(offset=offset, limit=262144)
             chunks.append(last.get("stdout") or "")
             offset = last.get("next_offset", offset)
+            if __vis_time__.time() >= deadline:
+                # The deadline bounds EVERY iteration, not only the idle one: a
+                # command that never stops printing (`yes`, a chatty build) always
+                # had more bytes available, so a loop that only checked the clock at
+                # EOF could never reach it and `sh.wait(1)` ran forever.
+                break
             if not last.get("is_eof", True):
                 continue
             if last.get("status") != "running":
-                break
-            if __vis_time__.time() >= deadline:
                 break
             __vis_time__.sleep(poll)
         out = dict(last)
