@@ -800,7 +800,7 @@ Done:
 - Phase 15, ONE door to a process — `fa6251ee9`. `subprocess`, `os.system` and `os.popen` never spawn:
   they raise, naming the `shell` tool when it is on and naming BOTH as disabled when the toggle is
   off. The 313-line delegation bridge and its lazy loader are deleted.
-- Phase 16, the process surface is said ONCE — `PENDING`. `env-python/PROCESS_SURFACE` (`ban` /
+- Phase 16, the process surface is said ONCE — `cf7b47c58`. `env-python/PROCESS_SURFACE` (`ban` /
   `use` / `off`) is the only wording; the prompt block, the `subprocess` refusal and an undriveable
   handle all read it, the second through the `__vis_process_surface__` sandbox global.
 

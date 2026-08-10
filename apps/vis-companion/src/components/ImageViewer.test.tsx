@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ExpandableImage, ImageViewer } from "./ImageViewer";
+import { MediaGrid, MediaTile } from "./Media";
 
 // The viewer is now a COMPOSITION: the geometry comes from `lib/zoom-pan`, the
 // strokes from `AnnotationLayer`, the sheets from `lib/image-share`. These
@@ -437,4 +438,149 @@ it("zooms with Safari's own trackpad pinch", () => {
     surface.dispatchEvent(gesture("gestureend", 2));
   });
   expect(control("Reset zoom").textContent).toBe("200%");
+});
+
+// Regression, user report ("when I click the image I cannot jump to the next
+// one with the arrows left/right"): a gallery opened one picture at a time —
+// the viewer showed only what was tapped and the arrow keys did nothing, so
+// reading a contact sheet cost one close-and-tap per image.
+describe("a gallery in the viewer", () => {
+  const pictures = [
+    { src: "blob:one", name: "one.png" },
+    { src: "blob:two", name: "two.png" },
+    { src: "blob:three", name: "three.png" },
+  ];
+
+  const open = (at: number, shown = pictures) =>
+    act(() =>
+      root.render(
+        <ImageViewer
+          src={shown[at].src}
+          name={shown[at].name}
+          pictures={shown}
+          at={at}
+          onClose={() => undefined}
+        />,
+      ),
+    );
+
+  const title = () => document.querySelector('[role="dialog"] h2')?.textContent;
+  const shownSrc = () =>
+    document.querySelector('[role="dialog"] img')?.getAttribute("src");
+  const press = (key: string) =>
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key }));
+    });
+
+  it("walks to the next and previous picture with the arrow keys", () => {
+    open(1);
+    expect(title()).toBe("two.png");
+
+    press("ArrowRight");
+    expect(title()).toBe("three.png");
+    expect(shownSrc()).toBe("blob:three");
+
+    press("ArrowLeft");
+    press("ArrowLeft");
+    expect(title()).toBe("one.png");
+    expect(shownSrc()).toBe("blob:one");
+  });
+
+  it("walks with its own two buttons, for a reader with no keyboard", () => {
+    open(0);
+    act(() => control("Next image").click());
+    expect(title()).toBe("two.png");
+    act(() => control("Previous image").click());
+    expect(title()).toBe("one.png");
+  });
+
+  it("stops at both ends instead of wrapping", () => {
+    open(0);
+    press("ArrowLeft");
+    expect(title()).toBe("one.png");
+    expect(control("Previous image").disabled).toBe(true);
+
+    press("ArrowRight");
+    press("ArrowRight");
+    press("ArrowRight");
+    expect(title()).toBe("three.png");
+    expect(control("Next image").disabled).toBe(true);
+  });
+
+  it("says where the reader stands and how to move", () => {
+    open(0);
+    expect(
+      document.querySelector('[aria-label="Gallery controls"]')?.textContent,
+    ).toContain("1 / 3");
+    expect(document.querySelector('[aria-live="polite"]')?.textContent).toContain(
+      "press ← and →",
+    );
+  });
+
+  // A viewer with nowhere to step must not offer to step.
+  it("offers no stepper to a picture that is alone", () => {
+    open(0, [pictures[0]]);
+    expect(
+      document.querySelector('[aria-label="Gallery controls"]'),
+    ).toBeNull();
+  });
+});
+
+describe("the grid is the gallery", () => {
+  it("hands a tapped tile the pictures laid out beside it", () => {
+    act(() =>
+      root.render(
+        <MediaGrid summary="2 images · 16B">
+          {[0, 1].map((at) => (
+            <MediaTile key={at}>
+              <ExpandableImage
+                src={`blob:pic-${at}`}
+                alt={`pic-${at}.png`}
+                className="size-8"
+                galleryAt={at}
+              />
+            </MediaTile>
+          ))}
+        </MediaGrid>,
+      ),
+    );
+
+    act(() => control("Open pic-0.png full screen").click());
+    expect(
+      document.querySelector('[aria-label="Gallery controls"]')?.textContent,
+    ).toContain("1 / 2");
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight" }));
+    });
+    expect(document.querySelector('[role="dialog"] h2')?.textContent).toBe(
+      "pic-1.png",
+    );
+  });
+
+  // The viewer hands the flattened result back to the slot the trigger owns, so
+  // an editable picture that had walked to a neighbour would replace the wrong
+  // attachment: it stays a single-picture viewer.
+  it("does not step an editable picture", () => {
+    act(() =>
+      root.render(
+        <MediaGrid summary="2 images · 16B">
+          {[0, 1].map((at) => (
+            <MediaTile key={at}>
+              <ExpandableImage
+                src={`blob:edit-${at}`}
+                alt={`edit-${at}.png`}
+                className="size-8"
+                galleryAt={at}
+                onApply={() => undefined}
+              />
+            </MediaTile>
+          ))}
+        </MediaGrid>,
+      ),
+    );
+
+    act(() => control("Open edit-0.png full screen").click());
+    expect(document.querySelector('[aria-label="Gallery controls"]')).toBeNull();
+  });
 });

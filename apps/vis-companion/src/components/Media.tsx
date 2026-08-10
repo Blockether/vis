@@ -7,6 +7,7 @@ import {
   mediaGridClass,
   mediaTileFrameClass,
 } from "../lib/media-frame";
+import { ImageGallery } from "../lib/gallery";
 
 /**
  * ONE picture on its own plate: the reserved frame from `lib/media-frame` with
@@ -54,6 +55,10 @@ export function MediaPlate({
  * per tile is two rows of chrome around a 183px thumbnail, and the name of each
  * picture is already in the viewer that a tap opens. The line says what the
  * whole group is instead — `3 images · 1.2MB`.
+ *
+ * The grid is also the GALLERY: every picture in it registers with
+ * {@link ImageGallery}, so opening one tile can walk to the others with the
+ * arrow keys instead of closing the viewer once per picture.
  */
 export function MediaGrid({
   summary,
@@ -64,7 +69,9 @@ export function MediaGrid({
 }) {
   return (
     <div className="mt-2.5 min-w-0">
-      <div className={mediaGridClass}>{children}</div>
+      <div className={mediaGridClass}>
+        <ImageGallery>{children}</ImageGallery>
+      </div>
       {summary ? (
         <p className="mt-1 min-w-0 truncate font-mono text-chip text-footer-muted">
           {summary}

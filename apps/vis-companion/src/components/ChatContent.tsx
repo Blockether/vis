@@ -1548,6 +1548,7 @@ const AttachmentTile = memo(function AttachmentTile({
   sid,
   attachment,
   layout,
+  galleryAt,
 }: {
   client: GatewayClient;
   sid: string;
@@ -1555,6 +1556,9 @@ const AttachmentTile = memo(function AttachmentTile({
   // A lone artifact is a PLATE with its own caption; from the second one the
   // rail is a gallery and this is one square tile in it (`mediaGroupLayout`).
   layout: MediaLayout;
+  // Where this picture sits in the rail's gallery, so the viewer it opens can
+  // step to the ones beside it.
+  galleryAt?: number;
 }) {
   const [url, setUrl] = useState<string | null>(null);
   // Bumped when the browser refuses the URL we handed it — the client's object
@@ -1638,6 +1642,7 @@ const AttachmentTile = memo(function AttachmentTile({
     <ExpandableImage
       src={url}
       alt={name}
+      galleryAt={galleryAt}
       loading="lazy"
       decoding="async"
       frameClassName="h-full w-full"
@@ -1783,13 +1788,14 @@ export const AttachmentRail = memo(function AttachmentRail({
   const clips = playable.filter(attachmentIsVideo);
   const pictures = playable.filter((entry) => !attachmentIsVideo(entry));
   const layout = mediaGroupLayout(pictures.length);
-  const gallery = pictures.map((attachment) => (
+  const gallery = pictures.map((attachment, at) => (
     <AttachmentTile
       key={`${attachment.iteration_id ?? "iter"}-${attachment.index}`}
       client={client}
       sid={sid}
       attachment={attachment}
       layout={layout}
+      galleryAt={at}
     />
   ));
   // A tile with no iteration to fetch from paints nothing, so it must not count
@@ -2440,6 +2446,7 @@ export const UserMessage = memo(function UserMessage({
       key={att.id ?? `pic-${index}`}
       src={attachmentSrc(att)}
       alt={att.filename ?? "attachment"}
+      galleryAt={index}
       frameClassName="h-full w-full"
       className={fill ? mediaTileContentClass : mediaContentClass}
     />

@@ -31,6 +31,7 @@ import {
   type AnnotationSurface,
 } from "./AnnotationLayer";
 import { Button, DialogHeader } from "./ui";
+import { useGalleryStep, type GalleryPicture } from "../lib/gallery";
 import { useStickyOverlay } from "../lib/sticky-overlay";
 
 interface ExpandableImageProps {
@@ -49,6 +50,12 @@ interface ExpandableImageProps {
    * That is what makes a not-yet-sent attachment editable rather than read-only.
    */
   onApply?: (edited: Blob) => void | Promise<void>;
+  /**
+   * Where this picture sits in the gallery its call site laid out. Given, and
+   * inside an {@link ImageGallery}, the viewer it opens can walk to its
+   * neighbours; without one the picture is alone on screen.
+   */
+  galleryAt?: number;
 }
 
 interface ImageViewerProps {
@@ -63,6 +70,14 @@ interface ImageViewerProps {
    * has to match what actually happens.
    */
   applyLabel?: string;
+  /**
+   * The gallery this picture belongs to, in reading order, and `at` is where
+   * `src` sits in it. Given two or more, the viewer steps through them with the
+   * arrow keys and its own two buttons, so a contact sheet is read in the
+   * viewer instead of one close-and-tap per picture.
+   */
+  pictures?: GalleryPicture[];
+  at?: number;
 }
 
 export function ExpandableImage({
@@ -75,11 +90,20 @@ export function ExpandableImage({
   decoding = "async",
   onError,
   onApply,
+  galleryAt,
 }: ExpandableImageProps) {
   // The picture is identified by its BYTES, not by this instance: when a turn
   // settles, the transcript re-mounts the row that owns this trigger, and a
   // reader looking at the picture must not be dropped back onto the answer.
   const [open, setOpen] = useStickyOverlay(`image:${src}`);
+  // A picture laid out in a grid is one step of that grid's gallery. An
+  // EDITABLE one is not: `onApply` hands the flattened result back to the slot
+  // THIS trigger owns, so a viewer that had walked to a neighbour would send
+  // the wrong picture back to it.
+  const step = useGalleryStep(onApply ? undefined : galleryAt, {
+    src,
+    name: alt,
+  });
 
   return (
     <>
@@ -105,6 +129,8 @@ export function ExpandableImage({
         <ImageViewer
           src={src}
           name={alt}
+          pictures={step?.pictures}
+          at={step?.at}
           onApply={onApply}
           onClose={() => setOpen(false)}
         />
@@ -141,6 +167,8 @@ export function ImageViewer({
   onClose,
   onApply,
   applyLabel = "Use edit",
+  pictures,
+  at,
 }: ImageViewerProps) {
   const imageRef = useRef<HTMLImageElement | null>(null);
   const transformedRef = useRef<HTMLDivElement | null>(null);
@@ -157,6 +185,21 @@ export function ImageViewer({
   // Probed once per open: the sheet cannot appear or disappear mid-viewer.
   const [shareAction] = useState(shareVerb);
   const [status, setStatus] = useState("");
+  // A gallery of one is not a gallery: nothing to step to, so no stepper, no
+  // arrow keys and no position to report.
+  const gallery = pictures && pictures.length > 1 ? pictures : null;
+  // Where the reader stands is remembered by the picture's BYTES, never by an
+  // index: the gallery is discovered as its tiles land, so a neighbour that
+  // arrives late renumbers the list under an open viewer. Holding the src keeps
+  // the reader on the picture being read; holding a number would slide them off
+  // it. Until this picture is registered the props are the whole gallery of one
+  // the viewer can show.
+  const [shownSrc, setShownSrc] = useState(src);
+  const found = gallery
+    ? gallery.findIndex((picture) => picture.src === shownSrc)
+    : -1;
+  const step = found < 0 ? (at ?? 0) : found;
+  const shown = (found < 0 ? undefined : gallery?.[found]) ?? { src, name };
 
   // The transform is written to style rather than to state: a pinch that
   // re-rendered React on every frame would stutter on exactly the devices that
@@ -177,18 +220,44 @@ export function ImageViewer({
     applyTransform({ ...NO_TRANSFORM });
   }, [applyTransform]);
 
+  /**
+   * Walk to another picture of the same gallery.
+   *
+   * A step lands on a NEW picture, so it starts the way an opened one does:
+   * fitted, unzoomed, and without the previous picture's strokes floating over
+   * bytes they were never drawn on. Drawing therefore holds the viewer still —
+   * an arrow key mid-sketch would throw the sketch away.
+   */
+  const stepTo = useCallback(
+    (next: number) => {
+      if (!gallery || drawing) return;
+      const target = Math.min(Math.max(next, 0), gallery.length - 1);
+      if (target === step) return;
+      annotationRef.current?.clear();
+      resetTransform();
+      setStatus("");
+      setShownSrc(gallery[target].src);
+    },
+    [gallery, drawing, step, resetTransform],
+  );
+
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    // Left and right are what a reader already presses in front of a gallery,
+    // on a phone keyboard as much as on a desktop one, so the viewer answers
+    // them instead of making the reader close it once per picture.
     const keyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
+      if (event.key === "ArrowLeft") stepTo(step - 1);
+      if (event.key === "ArrowRight") stepTo(step + 1);
     };
     window.addEventListener("keydown", keyDown);
     return () => {
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", keyDown);
     };
-  }, [onClose]);
+  }, [onClose, stepTo, step]);
 
   function fitAnnotations() {
     const image = imageRef.current;
@@ -419,13 +488,13 @@ export function ImageViewer({
       className="fixed inset-0 z-[100] isolate bg-ink text-white"
       role="dialog"
       aria-modal="true"
-      aria-label={`${name} image viewer`}
+      aria-label={`${shown.name} image viewer`}
     >
       {/* The picture's own title bar is the app's one dialog band — it only has to
           float over the image and clear the notch. */}
       <DialogHeader
-        title={name}
-        closeLabel={`Close ${name}`}
+        title={shown.name}
+        closeLabel={`Close ${shown.name}`}
         onClose={onClose}
         isUnderNotch
         className="absolute inset-x-0 top-0 z-20"
@@ -446,8 +515,8 @@ export function ImageViewer({
         >
           <img
             ref={imageRef}
-            src={src}
-            alt={name}
+            src={shown.src}
+            alt={shown.name}
             draggable={false}
             onLoad={fitAnnotations}
             className={`block max-w-[calc(100vw-2rem)] select-none object-contain ${drawing ? "max-h-[calc(100dvh-13rem)]" : "max-h-[calc(100dvh-10rem)]"}`}
@@ -494,6 +563,33 @@ export function ImageViewer({
             </Button>
           </div>
 
+          {gallery && (
+            <div
+              className="flex shrink-0 items-center gap-2"
+              aria-label="Gallery controls"
+            >
+              <Button
+                variant="secondary"
+                onClick={() => stepTo(step - 1)}
+                disabled={drawing || step === 0}
+                aria-label="Previous image"
+              >
+                ‹
+              </Button>
+              <span className="shrink-0 font-mono text-chip text-dialog-hint">
+                {step + 1} / {gallery.length}
+              </span>
+              <Button
+                variant="secondary"
+                onClick={() => stepTo(step + 1)}
+                disabled={drawing || step === gallery.length - 1}
+                aria-label="Next image"
+              >
+                ›
+              </Button>
+            </div>
+          )}
+
           <Button
             variant={drawing ? "primary" : "secondary"}
             onClick={() => {
@@ -511,7 +607,7 @@ export function ImageViewer({
               variant="secondary"
               onClick={() =>
                 run("copy", "Could not copy image", (blob) =>
-                  copyImage(blob, name),
+                  copyImage(blob, shown.name),
                 )
               }
               disabled={busy !== null}
@@ -524,7 +620,7 @@ export function ImageViewer({
               variant={onApply ? "secondary" : "primary"}
               onClick={() =>
                 run("share", "Could not share image", (blob) =>
-                  shareImage(blob, name),
+                  shareImage(blob, shown.name),
                 )
               }
               disabled={busy !== null}
@@ -573,7 +669,9 @@ export function ImageViewer({
               ? onApply
                 ? "Draw on the image, then use the edit in your message."
                 : "Draw on the image, then copy or share it."
-              : "Pinch, scroll, or double-click to zoom.")}
+              : gallery
+                ? `${step + 1} of ${gallery.length} · press ← and → for the next image.`
+                : "Pinch, scroll, or double-click to zoom.")}
         </div>
       </div>
     </div>
