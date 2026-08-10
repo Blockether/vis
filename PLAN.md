@@ -505,6 +505,36 @@ the log file name is a local path.
 
 **Unknowns.** None.
 
+## Phase 11 — Every run is a BACKGROUND run: delete `wait` from the request
+
+**Rationale.** Without it a number on the request still selects a MODE. `wait: 0` meant
+"background", `wait: 0.4` rounded into it and `wait: -5` clamped into a fake timeout (Phase 10 had
+to refuse both at the boundary — a refusal that only exists because the knob does). Phase 8 already
+killed the argument for it: `(await shell({"command": …})).wait(300)` is the SAME round trip inside
+one `python_execution` block, so `wait` buys nothing the handle does not give and costs a second
+meaning for one call. The log a run leaves behind is the FEATURE, not the reason to keep two modes:
+"what did that build print" stays answerable by id for as long as the session lives.
+
+**Data.** None. The request loses a property and the result keeps `shell-result-base` verbatim;
+nothing crosses a persisted or wire boundary that did not already.
+
+**Acceptance criteria.**
+- `src/com/blockether/vis/internal/foundation/shell.clj` — the `run` op always spawns under a PTY
+  and answers immediately (`timed_out` false, `exit` nil); the schema is `{command, id?, cwd?}`;
+  `shell-run-call` becomes the INTERNAL `run-blocking`; `logs` normalizes the PTY's CRLF so text has
+  one spelling of a newline.
+- `src/com/blockether/vis/internal/loop.clj` — the `!cmd` bang path calls `run-blocking` directly
+  instead of passing a request flag.
+- `resources/vis-shims/posix.py` — `subprocess.run` is a spawn plus `Popen.communicate`, so the shim
+  has ONE waiting idiom.
+- `resources/vis-docs/context-and-prompts.md` — the bang section documents the handle, not the
+  removed `op: "wait"`/`until` grammar.
+- Test: `no-wait-knob-test` proves a run returns at once with no exit, that `wait` is not in the
+  schema, and that `sh.wait` is what fills `exit`/`stdout`; `run-is-a-handle-test` proves the log
+  outlives the process.
+
+**Unknowns.** None.
+
 ## State of the plan
 
 **DONE.**
@@ -587,6 +617,12 @@ Done:
 - Phase 10, a handle is OWNED, NAMED and honestly identified — `bcf56c59f`. Distinct ids never share a log file, a re-issue that names different work is refused instead
   of silently succeeding, a handle cannot be driven across a trust origin, a nonsense `wait` is
   refused rather than rounded, and `vis.Shell` gives extensions the sandbox's handle object.
+
+- Phase 11, every run is a background run — `451ef4637`. `wait` is gone from the request: `shell`
+  takes `{command, id?, cwd?}`, always spawns under a PTY and returns the handle NOW, and
+  `sh.wait(secs)` is the only wait there is. A run's log is kept by id for the session — retention
+  is the product, not a leak — and `logs` normalizes the PTY's CRLF so a line reads the same
+  whether the caller waited for it or came back for it.
 
 TODO, in order: nothing. The plan is DONE.
 

@@ -4687,7 +4687,7 @@
      "natives, then print only needed output. State persists; project packages need a project REPL. "
      "Only `print` returns; bare expressions drop and errors surface. Native results return inline and stay "
      "at their `# saved:` coordinate (`ntr[\"t5/i1/f2\"]`); engine-bound natives are bare snake_case, "
-     "native-only ones absent. A background shell is WATCHED here: `shell` with `wait=0`, then a BOUNDED "
+     "native-only ones absent. A shell is WATCHED here: `sh = await shell(...)`, then a BOUNDED "
      "loop that calls `sh.logs()` on the handle it got back and breaks on what it read (an error line, "
      "a parsed port); `sh.wait(secs)` is that loop already written — no tool "
      "waits for you. Close what you open (`with open(...)`): a dropped file handle is "
@@ -9270,13 +9270,20 @@
 
      envelope
      (when enabled?
-       (try (let [shell-fn (requiring-resolve 'com.blockether.vis.internal.foundation.shell/shell)]
+       (try (let [shell-fn (requiring-resolve
+                             (if (= kind :bg)
+                               'com.blockether.vis.internal.foundation.shell/shell
+                               ;; A `!cmd` bang PRINTS the command's output, so it is the one
+                               ;; caller that genuinely blocks. The tool no longer takes a wait
+                               ;; knob — waiting is a handle method — so the bang path calls the
+                               ;; INTERNAL blocking runner directly instead of a request flag.
+                               'com.blockether.vis.internal.foundation.shell/run-blocking))]
               ;; Calling the shell var directly skips the symbol-call seam, so the
               ;; workspace view stays unbound and `resolve-dir` falls back to the
               ;; PROCESS cwd — a bang inside a draft would then run on trunk.
               (extension/with-context
                 {:env env}
-                (if (= kind :bg) (shell-fn env cmd {"id" id "wait" 0}) (shell-fn env cmd))))
+                (if (= kind :bg) (shell-fn env cmd {"id" id}) (shell-fn env cmd {}))))
             (catch Throwable t
               (tel/log! {:level :warn :id ::bang-run-threw :data {:cmd cmd :error (ex-message t)}})
               {:result nil :error {:message (or (ex-message t) (str t))}})))

@@ -9,44 +9,62 @@
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context]))
 
-(defn- fake-shell
-  "Records one-options-map shell calls and returns lifecycle-shaped results."
-  [calls]
-  (fn [& args]
-    (let
-      [[command opts]
-       (if (map? (first args)) [nil (first args)] [(first args) (second args)])
+(defn- fake-tools
+  "The sandbox tool trio the shim actually speaks to, recording every call.
 
-       opts
-       (or opts {})
+   Every shell run is a BACKGROUND run now — the request has no wait knob — so a
+   blocking `subprocess.run` is a spawn plus the same log poll `Popen.wait` does.
+   The fake therefore has to answer `_shell_logs` too: one spawn, one exited read."
+  [calls lifecycle]
+  {'shell (fn [& args]
+            (let
+              [[command opts]
+               (if (map? (first args)) [nil (first args)] [(first args) (second args)])
 
-       cmd
-       (or command (get opts "command") (get opts :command))
+               opts
+               (or opts {})
 
-       op
-       (or (get opts "op") (get opts :op))]
+               cmd
+               (or command (get opts "command") (get opts :command))]
 
-      (swap! calls conj {:cmd cmd :opts opts})
-      (case op
-        "logs"
-        {"status" "running" "exit" nil "lines" []}
+              (swap! calls conj {:cmd cmd :opts opts})
+              {"stage" "run"
+               "id" (get opts "id")
+               "command" cmd
+               "status" "running"
+               "exit" nil
+               "timed_out" false}))
+   '_shell-logs (fn [opts]
+                  (let
+                    [id
+                     (get opts "id")
 
-        "stop"
-        {"status" "stopped" "stopped" true}
+                     cmd
+                     (->> @calls
+                          (filter #(= id (get (:opts %) "id")))
+                          last
+                          :cmd
+                          str)
 
-        (let [failed? (str/includes? (str cmd) "boom")]
-          (cond->
-            {"timeout_secs" 120
-             "command" cmd
-             "exit" (if failed? 7 0)
-             "stdout" (if failed? "partial\n" "hello\n")
-             "stderr" (if failed? "boom!\n" "")
-             "duration_ms" (if failed? 3 2)
-             "timed_out" false
-             "stdout_omitted_chars" 0
-             "stderr_omitted_chars" 0}
-            (nil? cmd)
-            (assoc "exit" nil)))))))
+                     failed?
+                     (str/includes? cmd "boom")]
+
+                    (swap! lifecycle conj [:logs id opts])
+                    {"stage" "logs"
+                     "id" id
+                     "command" cmd
+                     "status" "exited"
+                     "exit" (if failed? 7 0)
+                     "stdout" (if (zero? (long (or (get opts "offset") 0)))
+                                (if failed? "partial\n" "hello\n")
+                                "")
+                     "stderr" ""
+                     "next_offset" 6
+                     "is_eof" true
+                     "timed_out" false}))
+   '_shell-stop (fn [opts]
+                  (swap! lifecycle conj [:stop (get opts "id")])
+                  {"stage" "stop" "status" "stopped" "stopped" true})})
 
 (defn- ev [^Context c code] (ep/->clj (.eval c "python" code)))
 
@@ -59,7 +77,7 @@
        (atom [])
 
        {:keys [^Context python-context]}
-       (ep/create-python-context {'shell (fake-shell calls)})]
+       (ep/create-python-context (fake-tools calls (atom [])))]
 
       (.eval python-context "python" "import subprocess")
       (expect
@@ -72,6 +90,9 @@
       (expect (= "echo hi" (:cmd (last @calls))))))
   (it
     "passes run options and drives Popen through the shell handle verbs"
+    ;; Regression, Phase 11: `run` used to carry `timeout_secs` and `Popen` a
+    ;; `wait: 0` — one request selecting two modes. Both are spawns now, and the
+    ;; waiting is the shim's own bounded poll over `_shell_logs`.
     (let
       [calls
        (atom [])
@@ -80,22 +101,15 @@
        (atom [])
 
        {:keys [^Context python-context]}
-       (ep/create-python-context {'shell (fake-shell calls)
-                                  '_shell-logs (fn [opts]
-                                                 (swap! lifecycle conj [:logs (get opts "id") opts])
-                                                 {"status" "running" "exit" nil "text" ""})
-                                  '_shell-stop (fn [opts]
-                                                 (swap! lifecycle conj [:stop (get opts "id")])
-                                                 {"status" "stopped"})})]
+       (ep/create-python-context (fake-tools calls lifecycle))]
 
       (.eval python-context "python" "import subprocess")
       (.eval python-context "python" "subprocess.run('sleep 1', shell=True, timeout=30, cwd='src')")
-      (expect (= 30 (get (:opts (last @calls)) "timeout_secs")))
       (expect (= "src" (get (:opts (last @calls)) "cwd")))
+      (expect (not (contains? (:opts (last @calls)) "wait")))
       (.eval python-context "python" "p = subprocess.Popen('sleep 1', shell=True, cwd='src')")
       (let [popen-id (get (:opts (last @calls)) "id")]
-        ;; A background start is a `wait` 0 run, not a second op.
-        (expect (= 0 (get (:opts (last @calls)) "wait")))
+        (expect (not (contains? (:opts (last @calls)) "wait")))
         (expect (= "src" (get (:opts (last @calls)) "cwd")))
         (expect (some? popen-id))
         (.eval python-context "python" "p.poll()")
@@ -109,7 +123,7 @@
          (atom [])
 
          {:keys [^Context python-context]}
-         (ep/create-python-context {'shell (fake-shell calls)})]
+         (ep/create-python-context (fake-tools calls (atom [])))]
 
         (.eval python-context "python" "import subprocess")
         (expect (= "hello\n" (ev python-context "subprocess.check_output('echo hi', shell=True)")))
@@ -121,12 +135,8 @@
           (expect (str/includes? (str msg) "non-zero")))))
   (it "os.system returns the exit code"
       (let
-        [calls
-         (atom [])
-
-         {:keys [^Context python-context]}
-         (ep/create-python-context {'shell (fake-shell calls)})]
-
+        [{:keys [^Context python-context]} (ep/create-python-context (fake-tools (atom [])
+                                                                                 (atom [])))]
         (expect (= 7 (ev python-context "import os\nos.system('boom')"))))))
 
 (defdescribe subprocess-gate-test

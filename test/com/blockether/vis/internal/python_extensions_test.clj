@@ -1304,6 +1304,26 @@ vis.extension(
 
 ;; Regression, issue #113: ordinary extension process calls from process-level
 ;; provider callbacks were redirected into the session-only jail and returned nil.
+(defn- jail-wait
+  "`sh.wait(secs)` for a jailed-shell handle: every extension shell is a background
+   shell now, so a test that asserts on OUTPUT reads the log through the same jailed
+   entry point (and therefore the same trust origin) until the process is gone."
+  [started]
+  (let [id (get started "id")]
+    (loop
+      [offset 0
+       acc ""
+       n 0]
+
+      (let
+        [r (:result (shell/jailed-shell nil {"op" "logs" "id" id "offset" offset}))
+         acc (str acc (get r "stdout"))
+         nxt (or (get r "next_offset") offset)]
+
+        (cond (not (get r "is_eof")) (recur (long nxt) acc n)
+              (or (not= "running" (get r "status")) (<= 50 n)) (assoc r "stdout" acc)
+              :else (do (Thread/sleep 100) (recur (long nxt) acc (inc n))))))))
+
 (defdescribe
   python-extension-process-boundary-test
   (it
@@ -1318,7 +1338,7 @@ vis.extension(
     "keeps vis.shell unrestricted even while the invoking session jail is enabled"
     (with-loaded
       {"shell_provider.py"
-       "import vis\ndef detect():\n    result = vis.shell({'command': 'printf regular-shell'})\n    return {'token': result['stdout'], 'source': 'shell'}\nvis.extension(name='shell-provider', description='shell provider', providers=[vis.provider(id='shell-provider', label='Shell provider', detect_fn=detect)])"}
+       "import vis\ndef detect():\n    result = vis.shell({'command': 'printf regular-shell'}).wait(20)\n    return {'token': result['stdout'], 'source': 'shell'}\nvis.extension(name='shell-provider', description='shell provider', providers=[vis.provider(id='shell-provider', label='Shell provider', detect_fn=detect)])"}
       (fn [_ _]
         (let
           [detect
@@ -1367,7 +1387,7 @@ vis.extension(
                                                          "command" "printf must-not-run"}))
                            (catch Throwable t {"note" (ex-message t)}))]
 
-          (expect (= "latest-policy" (get first-run "stdout")))
+          (expect (= "latest-policy" (get (jail-wait first-run) "stdout")))
           ;; The SECOND spawn re-reads config and finds it invalid, so it refuses.
           (expect (not= "must-not-run" (get second-run "stdout")))
           (expect (re-find #"Invalid Vis configuration" (str (get second-run "note"))))
@@ -1376,7 +1396,7 @@ vis.extension(
     "keeps the latest and session-snapshot jail APIs distinct"
     (with-loaded
       {"jail.py"
-       "import vis\ndef latest():\n    \"Use the latest jail.\"\n    return vis.jailed_shell({'command':'echo latest'})['stdout']\ndef session():\n    \"Use the session jail.\"\n    return vis.jailed_shell_session({'command':'echo session'})['stdout']\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(latest), vis.symbol(session)])"}
+       "import vis\ndef latest():\n    \"Use the latest jail.\"\n    return vis.jailed_shell({'command':'echo latest'})['stdout']\ndef session():\n    \"Use the session jail.\"\n    return vis.jailed_shell_session({'command':'echo session'}).wait(20)['stdout']\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(latest), vis.symbol(session)])"}
       (fn [_ _]
         (let
           [ext

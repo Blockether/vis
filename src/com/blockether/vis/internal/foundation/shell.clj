@@ -5,28 +5,27 @@
    to drop the tools). The OS process jail is the containment layer while active.
 
    ONE model-facing tool — `shell` — bound BARE in the flat Python sandbox
-   next to `git` / `cat` / `grep`. `wait` says how long the CALLER waits, and it
-   is the only difference there has ever been between a \"run\" and a \"background\"
-   shell, so there is one verb with one schema and one result shape. ONE call runs
-   ONE command: an ordered batch was a second budget, a second result shape and a
-   second failure mode for what `&&` already says.
+   next to `git` / `cat` / `grep`. EVERY run is a background run: the call spawns
+   under a real pty and returns the HANDLE now, so there is no `wait` on the
+   request and no number that can select a second mode. ONE call runs ONE command:
+   an ordered batch was a second budget, a second result shape and a second failure
+   mode for what `&&` already says.
 
-   1. `await shell(\"ls\")` — `bash -lc` in the workspace root, waited for up
-      to 120s. Output is bounded at READ time to a head+tail budget per stream, so
-      only the MIDDLE of a huge stream is dropped, never its start or end (a
-      chatty-then-killed command cannot balloon the heap). A non-zero exit is DATA
-      the model reads, not an error.
+   1. `sh = await shell(\"ls\")` — `bash -lc` in the workspace root, spawned under
+      a REAL pty, its merged output streamed verbatim to a log FILE and registered
+      as a session RESOURCE. `sh.wait(30)` is what fills `exit`/`stdout`. Output is
+      bounded at READ time to a head+tail budget per stream, so only the MIDDLE of a
+      huge stream is dropped, never its start or end. A non-zero exit is DATA the
+      model reads, not an error.
 
-   2. `await shell(\"npm run dev\", {\"wait\": 0, \"id\": \"dev\"})` — the wait
-      that expires immediately: spawned under a REAL pty, its merged output
-      streamed verbatim to a log FILE, registered as a session RESOURCE, and
-      answered in the same run shape with `timed_out` true. Prefer it for servers,
-      watchers, long builds and interactive commands. Re-issuing a LIVE id returns
-      that shell instead of a second copy of it.
+   2. A server, watcher or long build is the SAME call — you simply do not wait for
+      it, or you wait for less than it takes. A wait that expires is never a lost
+      process: it keeps running under its id and its log keeps filling.
 
-   3. A run that outstays a non-zero wait is not lost either: the process keeps
-      running under the id the call already answered with, and its log keeps
-      filling — a wait expiring is never a lost process.
+   3. The log OUTLIVES the run. Every shell keeps its log file and its index row by
+      id for as long as the session does, so \"what did that build print\" is
+      answerable a turn later from the id alone. That retention is the feature, not
+      a leak to reap.
 
    The result IS the HANDLE: every shell answer is a dict-with-methods in the
    sandbox, so the process is driven on the object the call already returned —
@@ -211,10 +210,9 @@
    typed error. nil passes through (caller supplies the default).
 
    Rounding a fraction and clamping a negative are both silent MODE CHANGES, not
-   conveniences: `wait: 0.4` rounded to 0, which is the background start, and
-   `wait: -5` clamped to a one-second wait that reported a real command as timed
-   out. A number the caller cannot have meant is refused at the boundary, where the
-   message can still name the option."
+   conveniences: an `offset: 0.4` rounded to a different byte and a `limit: -5`
+   clamped to a real read. A number the caller cannot have meant is refused at the
+   boundary, where the message can still name the option."
   [x what]
   (cond (nil? x) nil
         (number? x)
@@ -224,12 +222,12 @@
                                 {:type ::bad-option :option what :value x}))
                 (neg? d) (throw (ex-info (str what " must not be negative, got " (pr-str x) ".")
                                          {:type ::bad-option :option what :value x}))
-                (not= d (Math/rint d))
-                (throw (ex-info (str what
-                                     " must be a whole number, got " (pr-str x)
-                                     " — a fraction rounds into a different mode (0 is the"
-                                     " background start).")
-                                {:type ::bad-option :option what :value x}))
+                (not= d (Math/rint d)) (throw (ex-info
+                                                (str what
+                                                     " must be a whole number, got "
+                                                     (pr-str x)
+                                                     " — a fraction rounds into a different value.")
+                                                {:type ::bad-option :option what :value x}))
                 :else (long d)))
         :else (throw (ex-info (str what " must be a number, got " (pr-str x) ".")
                               {:type ::bad-option :option what :value x}))))
@@ -552,7 +550,7 @@
   nil)
 
 ;; =============================================================================
-;; SYNC run — Python sandbox: `await shell({"command": "ls"})`
+;; BLOCKING runner — INTERNAL only (`run-blocking`, `run-argv`, the bang path)
 ;; =============================================================================
 
 (defn- clamp-timeout-secs
@@ -807,7 +805,7 @@
 
 
 ;; =============================================================================
-;; BACKGROUND — Python sandbox: `await shell({"command": "npm run dev", "wait": 0, "id": "dev"})`
+;; BACKGROUND — Python sandbox: `await shell({"command": "npm run dev", "id": "dev"})`
 ;; =============================================================================
 
 (defonce ^:private bg-procs
@@ -1311,7 +1309,7 @@
          {:command script :pid (:pid p) :started-at-ms t0 :finished-at-ms t0 :duration-ms 0}}))))
 
 (defn- shell-bg-impl
-  "`await shell(\"npm run dev\", {\"wait\": 0, \"id\": id})` — IDEMPOTENT on a live id.
+  "`await shell(\"npm run dev\", {\"id\": id})` — IDEMPOTENT on a live id.
 
    Re-using an id whose process is still running used to THROW. That reads as a
    plain tool failure: a model that already started the shell (or that lost the
@@ -1468,12 +1466,11 @@
        :metadata {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}})))
 
 (defn- run-of-background
-  "A `wait=0` start answered in the RUN shape. The wait is the ONLY difference
+  "A background start answered in the RUN shape. Waiting is the ONLY difference
    between a run and a background shell, so the two must not answer with two
-   different maps: `id`, `command` and `timed_out` are read the same way whether
-   the caller waited two minutes or none at all. `timed_out` is true because that
-   is literally what happened — the wait expired at once — and `exit` is nil
-   because nothing was waited for."
+   different maps: `id`, `command` and `status` are read the same way on every
+   stage. `timed_out` is FALSE — no wait was made, so none expired — and `exit` is
+   nil until `sh.wait(secs)` fills it."
   [r]
   (let [m (:result r)]
     (assoc r
@@ -1484,18 +1481,19 @@
                              "started" true
                              "exit" (get m "exit")
                              "duration_ms" 0
-                             "timed_out" true
-                             "timeout_secs" 0
+                             ;; Nothing WAITED, so nothing timed out: `timed_out` only ever
+                             ;; means "the wait expired", and a run has no wait.
+                             "timed_out" false
                              "note" (or (get m "note")
-                                        (str "Started without waiting: the shell runs under id '"
+                                        (str "Spawned: the shell runs under id '"
                                              (get m "id")
                                              "' — read it with sh.logs(offset=0), type at it with"
                                              " sh.type(text), wait for it with sh.wait(secs), and"
                                              " stop it with sh.stop()."))})
       :op :shell)))
 
-(defn- shell-run-call
-  "Run ONE bounded foreground command and answer the tool's own total result: the
+(defn run-blocking
+  "INTERNAL blocking runner — NOT the tool. Run ONE bounded foreground command and answer the tool's own total result: the
    command's own `run`-stage map with the handle's identity merged on, so `r[\"exit\"]`,
    `r[\"stdout\"]` and `r[\"command\"]` are read at the top level and there is no
    entry to index into. One call is one command — an ordered batch is what `&&`
@@ -1703,7 +1701,12 @@
          ;; — the SAME key a foreground run puts its bytes under, so "what did it
          ;; print" is one field whether the call waited or came back for it later.
          {:result (assoc (if entry (bg-core "logs" id entry) (retired-log-core env session id))
-                    "stdout" (:text chunk)
+                    ;; Every shell is a PTY now, and a PTY terminates lines with CRLF.
+                    ;; The model reads TEXT, not a terminal stream, so the carriage
+                    ;; returns are normalized away here — one read path, one spelling of
+                    ;; a newline, whatever the child wrote.
+                    "stdout" (some-> (:text chunk)
+                                     (str/replace "\r\n" "\n"))
                     "offset" (:offset chunk)
                     "next_offset" (:next-offset chunk)
                     "is_eof" (:is-eof chunk)
@@ -1953,17 +1956,16 @@
 
     (case op
       "run"
-      ;; `wait` is the ONE knob: it says how long the CALLER waits, and nothing else.
-      ;; `wait=0` is not a mode — it is the wait that expires immediately, which is
-      ;; exactly what "background" meant, so it spawns under a real PTY (stdin stays
-      ;; writable for `sh.type`) and answers in the same run shape.
+      ;; There is no `wait` on the REQUEST. A run ALWAYS spawns under a real PTY and
+      ;; returns NOW with its handle, so one call has one meaning and a number can
+      ;; never select a second mode. Waiting is `sh.wait(secs)` on the handle — the
+      ;; one place that can also read, type and stop — and the log file every run
+      ;; leaves behind is the FEATURE: "what did that build print" stays answerable
+      ;; by id for as long as the session lives.
       (do (reject-text)
           (let
             [cmd
              (need-command)
-
-             wait
-             (->pos-long (opt opts :wait) "wait")
 
              session
              (:session-id env)
@@ -1976,13 +1978,7 @@
 
             (if-let [live (reissue-live-entry env session run-id cmd (opt opts :cwd))]
               (live-run-result run-id live)
-              (if (and wait (zero? (long wait)))
-                (run-of-background (shell-bg-impl env run-id cmd opts))
-                (shell-run-call env
-                                cmd
-                                (cond-> opts
-                                  wait
-                                  (assoc "timeout_secs" wait)))))))
+              (run-of-background (shell-bg-impl env run-id cmd opts)))))
 
       "background"
       ;; A start is the one background stage with no prior handle: derive the id from
@@ -2214,11 +2210,11 @@
             more)))
 
 (defn shell
-  "`await shell(\"git status\")` — run ONE bash line and return its output at the
-   top level. `wait` is how long the CALLER waits (default 120s): the call returns
-   EARLY with the exit code when the command finishes first, and `wait=0` returns
-   at once with the shell running under a pty. Either way the result carries an
-   `id`, so nothing is ever lost to a deadline."
+  "`sh = await shell(\"npm test\")` — spawn ONE bash line under a pty and return
+   the HANDLE now. Every run is a background run; waiting is `sh.wait(secs)`, the
+   only wait there is. The handle also reads (`sh.logs(offset=0)`), types
+   (`sh.type(text)`) and kills (`sh.stop()`), and its log file outlives the call,
+   so nothing is ever lost to a deadline or to a call that already returned."
   {:arglists '([command] [command opts])}
   [env & args]
   (shell-dispatch env (assoc (shell-call-opts ["command"] args) "op" "run")))
@@ -2719,33 +2715,27 @@
      :result
      (str "A HANDLE: ONE result shape for every shell answer and for `git` — `{stage, id, cwd, "
           "command, status, exit, stdout, stderr, duration_ms, timed_out, offset, next_offset, "
-          "is_eof, note, …}`, `stage` naming the producer — WITH the methods "
-          "`sh.logs(offset=0)`, `sh.wait(secs)`, `sh.type(text)`, `sh.stop()` on it. Nonzero "
-          "exit is data; `timed_out` means the WAIT expired, not the process.")
+          "is_eof, note, …}`, `stage` naming the producer — WITH the methods `sh.wait(secs)`, "
+          "`sh.logs(offset=0)`, `sh.type(text)`, `sh.stop()` on it. A fresh run has no `exit` "
+          "yet: `sh.wait` fills it. Nonzero exit is data.")
      :description
-     (str "Run ONE `bash -lc` command; chain with `&&` and run independent work as separate calls. "
-          "`wait` is the ONLY knob — how long YOU wait, not a mode; "
-          "`wait=0` returns at once under a real pty, which is how a server, watcher or "
-          "interactive command starts. The result is ALWAYS a handle: `timed_out` means the WAIT "
-          "expired and the command still RUNS, so resume through the HANDLE the call returned — "
-          "`sh.logs(offset=0)`, `sh.wait(secs)`, `sh.type(text)`, `sh.stop()` — never a rerun; "
-          "re-issuing a live `id` returns THAT shell. "
-          "Drive it from `python_execution`: read `r[\"stdout\"]`, print only what you need.")
+     (str "Spawn ONE `bash -lc` command under a real pty and return its HANDLE NOW — every run "
+          "is a background run, so there is no wait knob and no second mode. Chain with `&&`; run "
+          "independent work as separate calls. Drive it through the handle the call returned: "
+          "`sh.wait(secs)` (the ONLY wait; `timed_out` means the WAIT expired, not the process), "
+          "`sh.logs(offset=0)`, `sh.type(text)`, `sh.stop()` — never a rerun. Re-issuing a live "
+          "`id` returns THAT shell, and a shell keeps its log by id for the session. "
+          "`print((await shell(\"npm test\")).wait(300)[\"stdout\"])`.")
      :render-finish-call-fn render-shell-run-result
      :render-start-call-fn (shell-start-renderer "run")
      :schema {:type "object"
-              :properties
-              {"command" {:type "string" :minLength 1 :description "ONE `bash -lc` line."}
-               "wait" {:type "integer"
-                       :minimum 0
-                       :maximum 600
-                       :description (str "Seconds to wait, default 120; 0 returns immediately with "
-                                         "the shell still running.")}
-               "id" {:type "string"
-                     :minLength 1
-                     :description "Handle; derived from the program name when omitted."}
-               "cwd" {:type "string"
-                      :description "Dir under allowed root; relative uses workspace."}}
+              :properties {"command"
+                           {:type "string" :minLength 1 :description "ONE `bash -lc` line."}
+                           "id" {:type "string"
+                                 :minLength 1
+                                 :description "Handle; derived from the program name when omitted."}
+                           "cwd" {:type "string"
+                                  :description "Dir under allowed root; relative uses workspace."}}
               :required ["command"]
               :additionalProperties false}
      :inject-env? true

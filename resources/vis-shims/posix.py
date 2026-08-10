@@ -122,14 +122,18 @@ def __vis_install_posix_compat__():
         # `text`/`universal_newlines` decide bytes-vs-str on the returned
         # streams; capture_output/stdout/stderr are accepted but the shell tool
         # always captures, so they only affect whether we surface the text.
-        sr = _tool("shell")
+        # Every shell run is a background run now — there is no wait knob on the
+        # request — so a BLOCKING `subprocess.run` is a spawn plus the same bounded
+        # poll loop `Popen.wait`/`communicate` already own. One waiting idiom, not two.
         cmd = _to_cmd(args, shell)
-        opts = {}
-        if timeout is not None:
-            opts["timeout_secs"] = int(timeout)
-        if cwd is not None:
-            opts["cwd"] = str(cwd)
-        c = sr(cmd, opts) or {}
+        p = Popen(cmd, shell=False, cwd=cwd)
+        p.args = args
+        try:
+            out, _ = p.communicate(timeout=timeout)
+        except TimeoutExpired:
+            p.terminate()
+            raise TimeoutExpired(cmd, timeout, "", "")
+        c = {"exit": p.returncode, "stdout": out, "stderr": ""}
         # ONE call is ONE command, so its stdout/stderr/exit are the result's own
         # top-level keys — there is no entry to unwrap.
         if c.get("timed_out"):
@@ -178,9 +182,8 @@ def __vis_install_posix_compat__():
         return getstatusoutput(cmd)[1]
 
     class Popen(object):
-        # Background process backed by `shell` with `wait` 0 — the wait that
-        # expires immediately, which is what "background" always meant (a session
-        # resource under a pty). Auto picks an id; terminate/kill stop the shell,
+        # Background process backed by `shell` — every run is a background run
+        # under a session-resource pty, so there is nothing to opt into. Auto picks an id; terminate/kill stop the shell,
         # poll/wait read its log status, and communicate walks the log from offset 0.
         # This bridge speaks the PRIVATE transports directly rather than the sandbox
         # handle methods, because it must also work inside extension contexts, where
@@ -192,7 +195,7 @@ def __vis_install_posix_compat__():
             Popen._counter[0] += 1
             self._id = "popen_" + str(Popen._counter[0])
             self.args = args
-            opts = {"id": self._id, "wait": 0}
+            opts = {"id": self._id}
             if cwd is not None:
                 opts["cwd"] = str(cwd)
             reg = sr(_to_cmd(args, shell), opts)

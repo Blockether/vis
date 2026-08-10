@@ -109,29 +109,22 @@ shell analogue of `/slash`, and works the same way in the **TUI** and the
 **companion** app:
 
 ```
-!git status            # run synchronously, foreground (shell)
-!&npm run dev          # run in the background (shell op "background"), returns immediately
+!git status            # run and print its output (blocks)
+!&npm run dev          # spawn and return immediately, under a resource id
 ```
 
-- `!<cmd>` invokes the run operation, equivalent to Python
-  `await shell({"command": "<cmd>"})`, and blocks until the command exits.
-  Use it for short bounded commands.
-- `!&<cmd>` invokes
-  `await shell({"command": "<cmd>", "op": "background", "id": …})` under an
-  auto-generated resource id (`background-<hex>`) and returns right away. Prefer it
-  for commands that may take a while: builds, test suites, servers, watchers, and
-  interactive processes. `logs` is an immediate snapshot of output:
-  `await shell({"op": "logs", "id": id})`. To wait, use
-  `await shell({"op": "wait", "id": id, "until": "Local:.*http"})`. `until` is a
-  **required** regex over the log lines: the wait returns the moment one matches
-  — that line in `result["matched"]`, `result["is_matched"]` true, the process
-  still running — so servers and watchers that never exit are waited on properly.
-  A process that dies also ends the wait, and `timeout_secs` is only the backstop;
-  a wait timeout leaves the process running. A command that merely has to *finish*
-  is a plain `run`. Wait for independent jobs concurrently with
-  `await gather(*(shell(op="wait", id=i, until=pattern) for i in ids))` — do not
-  sleep or poll in `python_execution`. Stop a job with
-  `await shell({"op": "stop", "id": id})`.
+- `!<cmd>` runs the command and blocks until it exits, printing its output. Use
+  it for short bounded commands.
+- `!&<cmd>` spawns under an auto-generated resource id (`background-<hex>`) and
+  returns right away. Prefer it for commands that may take a while: builds, test
+  suites, servers, watchers, and interactive processes.
+- Both are the SAME tool call. In `python_execution` every shell run is a
+  background run and the result is a HANDLE:
+  `sh = await shell({"command": "npm run dev", "id": "dev"})`, then
+  `sh.wait(30)` (the only wait there is), `sh.logs(offset=0)`, `sh.type("y")`,
+  `sh.stop()`. There is no `wait` knob on the request — a request cannot select a
+  mode. Every shell keeps its log by id for the session, so a finished run is
+  still readable a turn later.
 - A bare `!` (or `!&`) with no command is ordinary prose and runs as a normal
   LLM turn.
 

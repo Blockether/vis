@@ -3752,7 +3752,7 @@
                  "errors surface"
                  ;; The sleep/poll prohibition lives HERE and nowhere else: the core
                  ;; prompt deliberately dropped its duplicate copy.
-                 "`sh.logs()`" "`wait=0`" "no tool waits for you"
+                 "`sh.logs()`" "no tool waits for you"
                  ;; Sandbox Python does NOT close a dropped file handle, so an
                  ;; unclosed `open(...)` leaks a PROCESS descriptor until a GC —
                  ;; enough of them and no `shell`/`git` child can be spawned at
