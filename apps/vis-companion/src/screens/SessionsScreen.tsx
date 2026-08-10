@@ -96,6 +96,8 @@ import {
   scopedConns,
   scopedMachines,
   scopeError,
+  searchOrder,
+  searchRank,
   searchTally,
   sessionIsListed,
   sessionIsLive,
@@ -597,28 +599,45 @@ export function SessionsScreen({
       // Server-side transcript hits this machine had not paged in are part of the
       // list a query filters: without them search only finds what is on screen.
       const hits = needle ? (searchHits.get(machineKey(machine.conn)) ?? []) : [];
+      const titleHit = (session: Session) =>
+        needle.length > 0 && (session.title ?? '').toLowerCase().includes(needle);
+      // A dirty row has no title and no transcript: what waits in its composer —
+      // the words AND the names of the files staged with them — is the only thing
+      // a query could match it on.
+      const metaHit = (session: Session) =>
+        needle.length > 0 &&
+        (sessionSearchText(session).includes(needle) ||
+          draftSearchText(draftFor(session)).includes(needle));
       const sessions = withSearchHits(machine.sessions ?? [], hits).filter((session) => {
-        const draft = draftFor(session);
         const listed = sessionIsListed(session, {
-          hasDraftMessage: draftMessageHasUnsent(draft),
+          hasDraftMessage: draftMessageHasUnsent(draftFor(session)),
           isFavorite: rankFor(session) !== null,
         });
         if (!listed) return false;
         return (
-          !needle ||
-          sessionSearchText(session).includes(needle) ||
-          // A dirty row has no title and no transcript: what waits in its composer
-          // — the words AND the names of the files staged with them — is the only
-          // thing a query could match it on.
-          draftSearchText(draft).includes(needle) ||
-          matches?.has(session.id) === true
+          !needle || titleHit(session) || metaHit(session) || matches?.has(session.id) === true
         );
       });
+      // A query RE-RANKS what it matched: the session's own name first, then its
+      // other local facts, then the user's own words, then the assistant's reply
+      // (`searchRank`). Without it a title hit sank under transcript hits that
+      // merely happened to be newer.
+      const ranked = needle
+        ? searchOrder(sessions, (session) => {
+            const match = matches?.get(session.id);
+            return searchRank({
+              isInTitle: titleHit(session),
+              isInMeta: metaHit(session),
+              isInRequest: match?.inRequest === true,
+              isInReply: match?.inReply === true,
+            });
+          })
+        : sessions;
       // Starred rows first, then unsent work, and with them the project group that
       // owns them: see `sessionOrder`.
       return {
         machine,
-        sessions: sessionOrder(sessions, {
+        sessions: sessionOrder(ranked, {
           favoriteRank: rankFor,
           hasDraftMessage: (session) => draftMessageHasUnsent(draftFor(session)),
         }),

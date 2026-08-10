@@ -1428,11 +1428,24 @@
             {:sid (:sid row) :side side :at (:at row) :snippet (get snippets (:rid row))})
           kept)))
 
+(defn- transcript-hit-side-rank
+  "Ordering band of ONE transcript hit: what the USER wrote outranks what the
+   assistant replied. Someone searching a transcript is looking for their own
+   words back — the request they typed is the thing they remember typing, the
+   reply is only what it caused."
+  [side]
+  (if (= :request side) 0 1))
+
 (defn- transcript-rows->sessions
-  "Fold per-row hits into one entry per session soul: newest hits first, capped
-   at `transcript-hits-per-session`, sessions ordered by their newest hit.
+  "Fold per-row hits into one entry per session soul.
+
+   RANKED, not merely recent: inside a session the user's own request hits come
+   first (newest first within each side) and the per-session cap
+   (`transcript-hits-per-session`) therefore keeps the user's words before the
+   assistant's; across sessions, a session whose REQUEST matched sorts above one
+   that only matched in a reply, each band ordered by its newest hit.
    `:request-snippet`/`:reply-snippet` stay as the FIRST hit of each side so
-   older single-snippet callers keep working."
+   single-snippet callers keep working."
   [rows]
   (->> rows
        (filter :snippet)
@@ -1440,8 +1453,12 @@
        (mapv
          (fn [[sid hits]]
            (let
-             [ordered
-              (vec (sort-by (comp - long #(or (:at %) 0)) hits))
+             [at
+              (fn [h]
+                (long (or (:at h) 0)))
+
+              ordered
+              (vec (sort-by (juxt (comp transcript-hit-side-rank :side) (comp - at)) hits))
 
               kept
               (vec (take transcript-hits-per-session ordered))
@@ -1451,7 +1468,7 @@
                 (some #(when (= side (:side %)) (:snippet %)) ordered))]
 
              {:id (->uuid sid)
-              :newest (long (or (:at (first ordered)) 0))
+              :newest (reduce max 0 (map at ordered))
               :in-request? (boolean (some #(= :request (:side %)) ordered))
               :in-reply? (boolean (some #(= :reply (:side %)) ordered))
               :request-snippet (side-snip :request)
@@ -1459,7 +1476,7 @@
               :hits (mapv (fn [h]
                             {:side (:side h) :snippet (:snippet h) :at (->date (:at h))})
                           kept)})))
-       (sort-by :newest >)
+       (sort-by (juxt #(if (:in-request? %) 0 1) (comp - long :newest)))
        (mapv #(dissoc % :newest))))
 
 (defn db-search-session-matches

@@ -4563,7 +4563,10 @@
    (wire-shaped: snake_case string-ish keys, `is_<foo>` flags). Same SERVER-side
    deep search as `search-session-ids` — the assistant text never crosses the wire,
    only these snippet windows. `:is_in_request` = the user's own request matched;
-   `:is_in_reply` = assistant reply text matched. Blank query → []."
+   `:is_in_reply` = assistant reply text matched. RANKED, not merely recent:
+   sessions whose REQUEST matched lead the reply-only ones, and inside a session
+   the user's own hits come first — what someone searches for is their own words.
+   Blank query → []."
   ([query] (search-session-matches :all query))
   ([channel query]
    (let [db (try (lp/db-info) (catch Throwable _ nil))]

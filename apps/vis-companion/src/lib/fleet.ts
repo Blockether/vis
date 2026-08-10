@@ -181,6 +181,63 @@ export function searchTally(
   return { matches, machines };
 }
 
+/**
+ * Bands a live query sorts its results into, best first. Every matched row is in
+ * exactly one.
+ */
+export const SEARCH_TITLE_BAND = 0;
+export const SEARCH_META_BAND = 1;
+export const SEARCH_REQUEST_BAND = 2;
+export const SEARCH_REPLY_BAND = 3;
+
+/** Where the query hit one session — the whole input to `searchRank`. */
+export interface SearchHit {
+  /** The query matched the session's own NAME. */
+  isInTitle: boolean;
+  /** It matched the row's other local facts: project, workspace, status, unsent draft. */
+  isInMeta: boolean;
+  /** The gateway found it in the user's own request. */
+  isInRequest: boolean;
+  /** The gateway found it in what the assistant replied. */
+  isInReply: boolean;
+}
+
+/**
+ * How well one row answers the query, lower first.
+ *
+ * A search is someone looking for a SESSION, and its title is the one line a
+ * human wrote to name it: a name hit outranks anything found inside the chat,
+ * however deep or recent that is. Inside the chat the words the USER typed
+ * outrank the assistant's reply — what someone remembers is their own ask, and
+ * the reply is only what it caused.
+ */
+export function searchRank(hit: SearchHit): number {
+  if (hit.isInTitle) return SEARCH_TITLE_BAND;
+  if (hit.isInMeta) return SEARCH_META_BAND;
+  if (hit.isInRequest) return SEARCH_REQUEST_BAND;
+  if (hit.isInReply) return SEARCH_REPLY_BAND;
+  return SEARCH_META_BAND;
+}
+
+/**
+ * Rank the rows a query matched, keeping the incoming order inside a band, so
+ * relevance decides between rows and the gateway's own ordering still decides
+ * between equally relevant ones. Bands the list paints itself (`sessionOrder`)
+ * are applied AFTER this, so a starred row stays on top of its own search.
+ */
+export function searchOrder(
+  sessions: Session[],
+  rankOf: (session: Session) => number,
+): Session[] {
+  const rows = sessions.map((session, index) => ({
+    session,
+    index,
+    rank: rankOf(session),
+  }));
+  rows.sort((a, b) => (a.rank !== b.rank ? a.rank - b.rank : a.index - b.index));
+  return rows.map((row) => row.session);
+}
+
 /** A turn is running in this session right now. */
 export function sessionIsLive(session: Session): boolean {
   return session.live ?? session.status === 'running';

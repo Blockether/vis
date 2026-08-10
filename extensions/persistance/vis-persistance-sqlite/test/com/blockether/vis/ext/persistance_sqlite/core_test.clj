@@ -1231,34 +1231,63 @@
         ;; both: a snippet from each side
         (expect (str/includes? (:request-snippet (get by-id both)) "NEEDLE"))
         (expect (str/includes? (:reply-snippet (get by-id both)) "NEEDLE")))))
-  (it "returns SEVERAL hits per session, newest first — not one collapsed line"
+  (it
+    "returns SEVERAL hits per session — the user's own words first, then newest"
+    (let
+      [s
+       (h/store)
+
+       cid
+       (h/store-session! s {:channel :tui :title "Many"})]
+
+      ;; Five turns, each mentioning the needle: the old GROUP BY + MAX shape
+      ;; could physically carry only ONE request + ONE reply snippet per
+      ;; session, so the picker showed a single arbitrary line.
+      (dotimes [i 5]
+        (let
+          [tid (vis/db-store-session-turn!
+                 s
+                 {:parent-session-id cid :user-request (str "needle ask number " i) :status :done})]
+          (h/store-iteration! s
+                              {:session-turn-id tid
+                               :assistant-prose (str "needle answer number " i)
+                               :code "x"
+                               :result 1})))
+      (let [m (first (vis/db-search-session-matches s :all "needle"))]
+        (expect (<= 4 (count (:hits m))))
+        (expect (every? #(str/includes? (:snippet %) "needle") (:hits m)))
+        ;; What the USER asked outranks what the assistant answered, and each
+        ;; side is newest-first inside its own band.
+        (expect (= (sort-by (juxt #(if (= :request (:side %)) 0 1) (comp - inst-ms :at)) (:hits m))
+                   (:hits m))))))
+  (it "ranks a REQUEST match above a reply-only match, however new the reply is"
       (let
         [s
          (h/store)
 
-         cid
-         (h/store-session! s {:channel :tui :title "Many"})]
+         replied
+         (h/store-session! s {:channel :tui :title "Replied"})
 
-        ;; Five turns, each mentioning the needle: the old GROUP BY + MAX shape
-        ;; could physically carry only ONE request + ONE reply snippet per
-        ;; session, so the picker showed a single arbitrary line.
-        (dotimes [i 5]
-          (let
-            [tid (vis/db-store-session-turn! s
-                                             {:parent-session-id cid
-                                              :user-request (str "needle ask number " i)
-                                              :status :done})]
-            (h/store-iteration! s
-                                {:session-turn-id tid
-                                 :assistant-prose (str "needle answer number " i)
-                                 :code "x"
-                                 :result 1})))
-        (let [m (first (vis/db-search-session-matches s :all "needle"))]
-          (expect (<= 4 (count (:hits m))))
-          (expect (every? #(str/includes? (:snippet %) "needle") (:hits m)))
-          (expect (= #{:request :reply} (set (map :side (:hits m)))))
-          ;; Newest first.
-          (expect (= (sort-by (comp - inst-ms :at) (:hits m)) (:hits m))))))
+         asked
+         (h/store-session! s {:channel :tui :title "Asked"})]
+
+        ;; The request match is written FIRST and the reply-only match LAST, so the
+        ;; reply-only session owns the NEWEST hit in the store. Under a pure
+        ;; newest-first order it led the results.
+        (let
+          [tid (vis/db-store-session-turn!
+                 s
+                 {:parent-session-id asked :user-request "needle in the ask" :status :done})]
+          (h/store-iteration! s
+                              {:session-turn-id tid :assistant-prose "plain" :code "x" :result 1}))
+        (let
+          [tid (vis/db-store-session-turn!
+                 s
+                 {:parent-session-id replied :user-request "plain ask" :status :done})]
+          (h/store-iteration!
+            s
+            {:session-turn-id tid :assistant-prose "needle in the reply" :code "x" :result 1}))
+        (expect (= [asked replied] (vis/db-search-session-ids s :all "needle")))))
   (it
     "caps hits PER SESSION, so an older session is not starved by a newer one"
     (let

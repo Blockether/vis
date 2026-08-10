@@ -17,6 +17,8 @@ import {
   scopedMachines,
   scopeError,
   scopedConns,
+  searchOrder,
+  searchRank,
   searchTally,
   scopedSessions,
   sessionIsEmpty,
@@ -263,6 +265,36 @@ describe('search across the fleet', () => {
     ];
     expect(searchTally(filtered)).toEqual({ matches: 2, machines: 2 });
     expect(searchTally([])).toEqual({ matches: 0, machines: 0 });
+  });
+
+  // A hit in the session's NAME is the human's own word for it, so it leads;
+  // inside the transcript what the user asked leads what the assistant replied.
+  it('ranks a title hit above metadata, the user request, and the reply', () => {
+    const at = (hit: Partial<Parameters<typeof searchRank>[0]>) =>
+      searchRank({
+        isInTitle: false,
+        isInMeta: false,
+        isInRequest: false,
+        isInReply: false,
+        ...hit,
+      });
+    expect(at({ isInTitle: true, isInReply: true })).toBeLessThan(at({ isInMeta: true }));
+    expect(at({ isInMeta: true })).toBeLessThan(at({ isInRequest: true }));
+    expect(at({ isInRequest: true })).toBeLessThan(at({ isInReply: true }));
+    // A row that matched on nothing the ranker was told about still sorts with
+    // the local facts rather than below the assistant's text.
+    expect(at({})).toBe(at({ isInMeta: true }));
+  });
+
+  it('re-orders matched rows by rank, keeping the gateway order inside a band', () => {
+    const rows = [session('reply'), session('ask'), session('named'), session('other')];
+    const rank: Record<string, number> = { reply: 3, ask: 2, named: 0, other: 2 };
+    expect(searchOrder(rows, (row) => rank[row.id] ?? 9).map((row) => row.id)).toEqual([
+      'named',
+      'ask',
+      'other',
+      'reply',
+    ]);
   });
 });
 

@@ -5681,51 +5681,86 @@
         (some #(str/includes? (str/lower-case (str (get row % ""))) needle)
               [:title :session :draft :dir :work-dir :status]))))
 
+(defn- navigator-search-rank
+  "Where a matched row sits under a live query, best first.
+
+   A search is someone looking for a SESSION, and its title is the one line a
+   human wrote to name it — a name hit therefore outranks anything found inside
+   the chat. Inside the chat, the words the USER typed outrank the assistant's
+   reply: what someone remembers is their own ask. The focused row keeps the top
+   of its project, and with no query every row is level so the list keeps the
+   order it was built in."
+  [row query match]
+  (let
+    [needle
+     (str/lower-case (str/trim (or query "")))
+
+     hit?
+     (fn [k]
+       (str/includes? (str/lower-case (str (get row k ""))) needle))
+
+     kind
+     (when (map? match) (:kind match))]
+
+    (cond (empty? needle) 0
+          (:focused? row) 0
+          (hit? :title) 1
+          (some hit? [:session :draft :dir :work-dir :status]) 2
+          (= :reply kind) 4
+          (some? match) 3
+          :else 2)))
+
 (defn- navigator-visible-rows
-  "Union instant local metadata matches with async transcript matches, then tag
-   the first visible row of each project so rendering can emit one group header."
+  "Union instant local metadata matches with async transcript matches, rank them
+   inside each project (`navigator-search-rank`), then tag the first visible row
+   of each project so rendering can emit one group header."
   [rows query transcript-ids]
   (let
     [q
      (str/trim (or query ""))
 
      matched
-     (keep (fn [row]
-             (let
-               [local-hit?
-                (navigator-row-matches? row query)
+     (keep
+       (fn [row]
+         (let
+           [local-hit?
+            (navigator-row-matches? row query)
 
-                match
-                (get transcript-ids (str (:id (:target row))))
+            match
+            (get transcript-ids (str (:id (:target row))))
 
-                body-hit?
-                (some? match)
+            body-hit?
+            (some? match)
 
-                hits
-                (when (and body-hit? (map? match) (seq q)) (assoc match :title (:title row)))]
+            hits
+            (when (and body-hit? (map? match) (seq q)) (assoc match :title (:title row)))
 
-               (cond (and body-hit? (not local-hit?) (seq q) (not (:focused? row)))
-                     (assoc row
-                       :transcript-match? true
-                       :transcript-match hits
-                       :status (case (:kind match)
-                                 :request
-                                 "in request"
+            rank
+            (navigator-search-rank row query match)]
 
-                                 :reply
-                                 "in reply"
+           (cond (and body-hit? (not local-hit?) (seq q) (not (:focused? row)))
+                 (assoc row
+                   :transcript-match? true
+                   :transcript-match hits
+                   :search-rank rank
+                   :status (case (:kind match)
+                             :request
+                             "in request"
 
-                                 "in chat"))
-                     (or local-hit? body-hit?) (cond-> row
-                                                 hits
-                                                 (assoc :transcript-match hits))
-                     :else nil)))
-           rows)]
+                             :reply
+                             "in reply"
+
+                             "in chat"))
+                 (or local-hit? body-hit?) (cond-> (assoc row :search-rank rank)
+                                             hits
+                                             (assoc :transcript-match hits))
+                 :else nil)))
+       rows)]
 
     (vec (mapcat (fn [group]
                    (let
                      [group
-                      (vec group)
+                      (vec (sort-by :search-rank (vec group)))
 
                       n
                       (count group)]
