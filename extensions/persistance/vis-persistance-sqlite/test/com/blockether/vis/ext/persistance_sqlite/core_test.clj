@@ -1413,38 +1413,32 @@
         (expect (= 2 (count by-id)))
         (expect (<= 4 (long (get by-id older))))
         (expect (= (get by-id older) (get by-id newer))))))
-  (it
-    "ranks hits off the FTS index itself, never through a temp B-tree sort"
-    ;; The ranking query used to ORDER BY the JOINED result, which makes SQLite
-    ;; spool EVERY match into a temp B-tree and sort it before the LIMIT can
-    ;; apply: a stop word paid for all of its hits to hand back the newest few,
-    ;; ~240ms of a ~300ms search on a real store. The DESC walk belongs to the
-    ;; FTS subquery, and this plan is the only place that stays honest about it.
-    (let
-      [s
-       (h/store)
+  (it "ranks hits off the FTS index itself, never through a temp B-tree sort"
+      ;; The ranking query used to ORDER BY the JOINED result, which makes SQLite
+      ;; spool EVERY match into a temp B-tree and sort it before the LIMIT can
+      ;; apply: a stop word paid for all of its hits to hand back the newest few,
+      ;; ~240ms of a ~300ms search on a real store. The DESC walk belongs to the
+      ;; FTS subquery, and this plan is the only place that stays honest about it.
+      (let
+        [s
+         (h/store)
 
-       cid
-       (h/store-session! s {:channel :tui :title "Plan"})]
+         cid
+         (h/store-session! s {:channel :tui :title "Plan"})]
 
-      (vis/db-store-session-turn!
-        s
-        {:parent-session-id cid :user-request "needle ask" :status :done})
-      (doseq
-        [side
-         [:request :reply]]
-
-        (let
-          [plan
-           (mapv :detail
-                 ((private-core-fn "raw-query!")
-                  s
-                  [(str "EXPLAIN QUERY PLAN "
-                        ((private-core-fn "transcript-hit-rank-sql") side ""))
-                   "\"needle\"*"]))]
-
-          (expect (seq plan))
-          (expect (not-any? #(re-find #"TEMP B-TREE" (str %)) plan))))))
+        (vis/db-store-session-turn!
+          s
+          {:parent-session-id cid :user-request "needle ask" :status :done})
+        (doseq [side [:request :reply]]
+          (let
+            [plan (mapv :detail
+                        ((private-core-fn "raw-query!")
+                          s
+                          [(str "EXPLAIN QUERY PLAN "
+                                ((private-core-fn "transcript-hit-rank-sql") side ""))
+                           "\"needle\"*"]))]
+            (expect (seq plan))
+            (expect (not-any? #(re-find #"TEMP B-TREE" (str %)) plan))))))
   (it "matches a PREFIX so search is useful mid-typing (`dia` finds `dialogs`)"
       (let
         [s

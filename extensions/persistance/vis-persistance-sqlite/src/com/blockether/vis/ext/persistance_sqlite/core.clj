@@ -1353,31 +1353,50 @@
    than after: beyond `transcript-hit-scan-limit` newest hits the tail is a
    depth heuristic either way, and the per-session cap decides what is shown."
   [side chan-sql]
-  (let [fts (case side
-              :request "transcript_request_fts"
-              :reply "transcript_reply_fts")
+  (let
+    [fts
+     (case side
+       :request
+       "transcript_request_fts"
 
-        joins (case side
-                :request
-                (str "JOIN session_turn_soul ts ON ts.rowid = f.rid "
-                     "JOIN session_state s ON s.id = ts.session_state_id ")
+       :reply
+       "transcript_reply_fts")
 
-                :reply
-                (str "JOIN session_turn_iteration it ON it.rowid = f.rid "
-                     "JOIN session_turn_state tst ON tst.id = it.session_turn_state_id "
-                     "JOIN session_turn_soul ts ON ts.id = tst.session_turn_soul_id "
-                     "JOIN session_state s ON s.id = ts.session_state_id "))
+     joins
+     (case side
+       :request
+       (str "JOIN session_turn_soul ts ON ts.rowid = f.rid "
+            "JOIN session_state s ON s.id = ts.session_state_id ")
 
-        at (case side
-             :request "ts.created_at"
-             :reply "it.created_at")]
+       :reply
+       (str "JOIN session_turn_iteration it ON it.rowid = f.rid "
+            "JOIN session_turn_state tst ON tst.id = it.session_turn_state_id "
+            "JOIN session_turn_soul ts ON ts.id = tst.session_turn_soul_id "
+            "JOIN session_state s ON s.id = ts.session_state_id "))
 
-    (str "SELECT cs.id AS sid, f.rid AS rid, " at " AS at "
-         "FROM (SELECT rowid AS rid FROM " fts " WHERE " fts " MATCH ? "
-         "ORDER BY rowid DESC LIMIT " transcript-hit-scan-limit ") f "
+     at
+     (case side
+       :request
+       "ts.created_at"
+
+       :reply
+       "it.created_at")]
+
+    (str "SELECT cs.id AS sid, f.rid AS rid, "
+         at
+         " AS at "
+         "FROM (SELECT rowid AS rid FROM "
+         fts
+         " WHERE "
+         fts
+         " MATCH ? "
+         "ORDER BY rowid DESC LIMIT "
+         transcript-hit-scan-limit
+         ") f "
          joins
          "JOIN session_soul cs ON cs.id = s.session_soul_id "
-         "WHERE cs.parent_state_id IS NULL AND cs.claimed_at IS NOT NULL" chan-sql
+         "WHERE cs.parent_state_id IS NULL AND cs.claimed_at IS NOT NULL"
+         chan-sql
          " ORDER BY f.rid DESC")))
 
 (defn- transcript-snippet-sql
