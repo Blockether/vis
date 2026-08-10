@@ -645,13 +645,13 @@ Done:
   of silently succeeding, a handle cannot be driven across a trust origin, a nonsense `wait` is
   refused rather than rounded, and `vis.Shell` gives extensions the sandbox's handle object.
 
-- Phase 11, every run is a background run — `451ef4637`. `wait` is gone from the request: `shell`
+- Phase 11, every run is a background run — `f2b7ce9e8`. `wait` is gone from the request: `shell`
   takes `{command, id?, cwd?}`, always spawns under a PTY and returns the handle NOW, and
   `sh.wait(secs)` is the only wait there is. A run's log is kept by id for the session — retention
   is the product, not a leak — and `logs` normalizes the PTY's CRLF so a line reads the same
   whether the caller waited for it or came back for it.
 
-- Phase 12, a failing shell is readable — `4728e4089`. A spawn now says `running` with its `pid` and
+- Phase 12, a failing shell is readable — `f17636374`. A spawn now says `running` with its `pid` and
   an honest `is_eof`, a re-attach no longer claims a wait expired, a synchronous run carries
   `status`, and the handle's poll loop is bounded on every iteration rather than only at EOF. Proven
   by measurement, not by reading: exit 127 with the shell's own complaint in the log, `stop` killing
