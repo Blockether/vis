@@ -1149,18 +1149,24 @@
      - the POSIX refusal (`vis-shims/posix.py`), when `subprocess` / `os.system` /
        `os.popen` is called;
      - a live handle that cannot be driven (`__VisShell__.__vis_op__` in
-       `vis-python/async_runtime.py`).
+       `vis-python/async_runtime.py`);
+     - the `apropos` table (`vis-python/apropos_table.py`), when the shell tools are
+       off and a shell-shaped query would otherwise answer with silence.
 
-   Three copies of one fact drift, and the copy the model reads at the moment it
+   Every copy of one fact drifts, and the copy the model reads at the moment it
    is blocked is the one that must be right. Composed, never concatenated ad hoc:
    `ban` is the rule and is all the PROMPT says (invocation grammar belongs to the
    `shell` symbol's own docs, not to a supplemental block); `ban` + `use` is what a
    call site says, because there the model is already writing the call; `off` is
    the toggle state, and it names BOTH doors so silence is never read as
-   \"`subprocess` might still work\".
+   \"`subprocess` might still work\"; `off` + `extension` is what DISCOVERY says,
+   because a model that reads `off` alone concludes nothing in this product can
+   start a process. The toggle closes the MODEL's door only: an installed Python
+   extension's `vis.shell` is wired unconditionally in
+   `python-extensions/build-context` and no toggle gates it.
 
    Reaches Python as the `__vis_process_surface__` global (see
-   `install-process-surface!`), so neither `.py` file carries a copy."
+   `install-process-surface!`), so no `.py` file carries a copy."
   {"ban" (str "`subprocess`, `os.system` and `os.popen` never spawn in the vis sandbox "
               "— every process starts through the `shell` tool, which owns the jail, "
               "the log file and the handle.")
@@ -1169,7 +1175,11 @@
    "off" (str "Shell commands are DISABLED in this vis sandbox: the `shell` tool is "
               "gone, a live handle cannot be driven, and `subprocess`, `os.system` and "
               "`os.popen` all raise — nothing here can start a process. Turn on 'Shell "
-              "commands' in the settings dialog.")})
+              "commands' in the settings dialog.")
+   "extension" (str
+                 "That toggle closes the MODEL's door only: an installed Python extension "
+                 "keeps its own trusted process boundary, so `vis.shell({'command': 'npm test'})` "
+                 "in extension code still spawns and answers the same handle.")})
 
 (def ^:private posix-refusal-shim-src
   "Pure-Python source that replaces `subprocess` / `os.system` / `os.popen` with
