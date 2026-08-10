@@ -770,7 +770,7 @@ Done:
   `status`/`exit`, `started_at`/`finished_at`/`uptime_ms`, `log_path` and the live
   `cpu_ms`/`cpu_percent`/`rss_bytes` of the process TREE, without reading a byte or moving a
   cursor.
-- Phase 15, ONE door to a process — `149dff594`. `subprocess`, `os.system` and `os.popen` never spawn:
+- Phase 15, ONE door to a process — `fa6251ee9`. `subprocess`, `os.system` and `os.popen` never spawn:
   they raise, naming the `shell` tool when it is on and naming BOTH as disabled when the toggle is
   off. The 313-line delegation bridge and its lazy loader are deleted.
 
