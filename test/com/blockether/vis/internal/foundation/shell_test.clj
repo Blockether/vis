@@ -1005,11 +1005,11 @@
 
 (defdescribe shell-one-shape-test
              ;; Regression, one-shape refactor: `run` answered `stdout`, `logs` answered
-             ;; `text`, `send`/`stop` carried their own stage-scoped subsets and `git` built a
+             ;; `text`, `send`/`stop` carried their own stage-scoped subsets and an argv run built a
              ;; map of its own with an extra `args` — so a caller had to learn which shape a
              ;; call came back in, and reading the wrong name was a KeyError.
              (it
-               "answers the SAME key set from EVERY stage and from git"
+               "answers the SAME key set from EVERY stage and from an argv run"
                (with-shell-on
                  (fn []
                    (binding [workspace/*workspace-root* (workspace/trunk-root)]
@@ -1289,7 +1289,7 @@
       (expect (threw? #(shell* {} {"command" ""})))
       (expect (threw? #(shell* {} ["printf first"]))))
   (it "coerces an argv array into one quoted bash line"
-      ;; The habitual `git`-shaped spelling: tokens instead of a line.
+      ;; The habitual argv spelling: tokens instead of a line.
       ;; Each token stays ONE argument, so spaces survive quoting.
       (binding [workspace/*workspace-root* (workspace/trunk-root)]
         (let [r (:result (shell* {} {"command" ["printf" "%s" "two words"]}))]
@@ -1297,7 +1297,7 @@
           (expect (= "two words" (str/trim (get (wait* {} (get r "id")) "stdout"))))))))
 
 (defdescribe shell-mistaken-shape-test
-             ;; Both of these were got wrong by a caller mid-task, not imagined: the `git`
+             ;; Both of these were got wrong by a caller mid-task, not imagined: the argv
              ;; habit put this call's OWN options inside `command`. A wrong shape has to say
              ;; where the argument belongs — restating its type is what makes the tool look broken.
              (it "names the top-level lifecycle arguments when an options map lands in `command`"
@@ -1345,13 +1345,25 @@
   (it "points the shell verbs at the HANDLE that replaced a blocking wait"
       (expect (str/includes? (:ext.symbol/description shell/shell-symbol) "HANDLE"))
       (expect (str/includes? (:ext.symbol/description shell/shell-symbol) "sh.wait(secs)"))
-      (expect (str/includes? (:ext.symbol/description shell/shell-logs-symbol) "sh.logs("))))
+      (expect (str/includes? (:ext.symbol/description shell/shell-logs-symbol) "sh.logs(")))
+  ;; Regression, handle audit: the description taught the SHAPE of a run but not what to put
+  ;; IN it, so commands arrived pre-trimmed - `| tail -50`, `| grep foo`, `2>/dev/null` - which
+  ;; threw away bytes the handle already keeps whole and hid a nonzero exit behind the
+  ;; pipeline's last stage.
+  (it "teaches that trimming belongs on the HANDLE, never inside the command"
+      (let [text (:ext.symbol/description shell/shell-symbol)]
+        (doseq
+          [needle ["| head" "| tail" "| grep" "2>/dev/null" "> file" "sh.logs(offset=…, limit=…)"
+                   "log_path"]]
+          (expect (str/includes? text needle) needle))
+        ;; The reason, not only the prohibition: a pipeline reports the LAST stage's exit.
+        (expect (str/includes? text "LAST stage")))))
 
 (defdescribe shell-extension-shape-test
              (it "is a registered builtin extension exposing the ONE bare `shell` symbol"
                  (expect (= "foundation-shell" (:ext/name shell/vis-extension)))
                  ;; No engine alias any more: `shell` is bound BARE in the flat sandbox
-                 ;; next to git / cat / grep, so there is no `shell.run(…)` namespace.
+                 ;; next to cat / grep, so there is no `shell.run(…)` namespace.
                  (expect (true? (get-in shell/vis-extension [:ext/engine :ext.engine/builtin?])))
                  (expect (nil? (get-in shell/vis-extension [:ext/engine :ext.engine/alias])))
                  (expect (= '[shell _shell-status _shell-logs _shell-wait _shell-type _shell-stop]
@@ -1699,7 +1711,7 @@
         (expect (fd-exhaustion? (ex-cause e))))))
 
 ;; The process-group detacher lives in `process-jail` (every spawner shares it:
-;; shell/git children AND managed language processes), reached by var here.
+;; shell children AND managed language processes), reached by var here.
 (def ^:private path-executable @#'process-jail/path-executable)
 
 (def ^:private execs-in-place? @#'process-jail/execs-in-place?)

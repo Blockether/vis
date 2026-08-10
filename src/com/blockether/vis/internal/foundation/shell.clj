@@ -5,7 +5,7 @@
    to drop the tools). The OS process jail is the containment layer while active.
 
    ONE model-facing tool — `shell` — bound BARE in the flat Python sandbox
-   next to `git` / `cat` / `grep`. EVERY run is a background run: the call spawns
+   next to `cat` / `grep`. EVERY run is a background run: the call spawns
    under a real pty and returns the HANDLE now, so there is no `wait` on the
    request and no number that can select a second mode. ONE call runs ONE command:
    an ordered batch was a second budget, a second result shape and a second failure
@@ -39,7 +39,7 @@
    `shell-dispatch` survives as the INTERNAL grammar the Python-extension entry
    points use, since those hand-author an options map and genuinely need an `op`.
 
-   EVERY result of EVERY stage — and of `git`, which runs through the same runner
+   EVERY result of EVERY stage — including an argv run, which uses the same runner
    — is the one [[shell-result-base]] key set: `stage` names the producer and is
    the only thing that varies. A key a stage has nothing to say about is nil /
    false / 0 instead of absent, so model Python indexes any of them without a
@@ -413,7 +413,7 @@
 
    A leaked descriptor is held by an unreachable object, so a GC + finalization
    pass genuinely returns it; without this, one leaky sandbox block wedges EVERY
-   later `shell`/`git` call for the rest of the session. A persistent failure is
+   later `shell` call for the rest of the session. A persistent failure is
    rethrown as a typed `ex-info` carrying the real diagnosis, cause attached."
   [spawn]
   (try (spawn)
@@ -442,7 +442,7 @@
     (let
       [^java.util.List args
        ;; A STRING is ONE `bash -lc` line. A SEQUENTIAL is a literal argv run with no
-       ;; shell at all — nothing to quote, nothing to interpret — which is how `git`
+       ;; shell at all — nothing to quote, nothing to interpret — which is how an argv run
        ;; rides this same spawn/jail/capture machinery.
        ;; The detach prefix (when the platform has one) goes OUTSIDE the jail wrapper:
        ;; it only setpgid()s and execs, so everything that actually RUNS is still jailed.
@@ -577,7 +577,7 @@
   "The ONE result shape of the whole shell family — every stage, every tool.
 
    `shell` itself, each handle op (`sh.logs`, `sh.type`, `sh.stop`, `sh.wait`) and
-   `git` all answer THIS key set, so a caller reads `r[\"exit\"]`, `r[\"stdout\"]`,
+   an argv run all answer THIS key set, so a caller reads `r[\"exit\"]`, `r[\"stdout\"]`,
    `r[\"command\"]` and `r[\"status\"]` the same way whatever produced the map and no
    key can KeyError. `stage` NAMES the producer (`run` / `background` / `logs` /
    `send` / `stop`) — it is the only thing that varies, and it varies as DATA, not
@@ -666,13 +666,13 @@
    identity onto it, so a command's line and output have exactly one home.
 
    `cmd` is either one bash line (a string) or a literal argv (a sequential,
-   used by `git`). The echoed `cmd` is always the display string.
+   used by an argv run). The echoed `cmd` is always the display string.
 
    `handle` is what makes the run a HANDLE: `:sink` is the log file every captured
    byte is teed into, and `:on-spawn` is handed the live process the moment it
    exists, so the registry knows what is running before the wait even begins. A
    handled run that outstays its wait is NOT killed — the wait expired, the process
-   did not, and the caller comes back to it by id — while a handle-less run (`git`)
+   did not, and the caller comes back to it by id — while a handle-less run
    still dies on its deadline, because nothing could ever read it again."
   ([env cmd] (shell-run-impl env cmd nil nil))
   ([env cmd opts] (shell-run-impl env cmd opts nil))
@@ -805,7 +805,7 @@
 
 (defn- command-line
   "ONE bash line from the caller's `command`. A string IS the line. An array of tokens —
-   the argv spelling `git` takes, and the shape a caller reaches for out of habit
+   the argv spelling a caller may take, and the shape a caller reaches for out of habit
    — is coerced by quoting each token and joining, instead of failing the call;
    a `java.util.List` from the Python surface is that same array.
 
@@ -2321,11 +2321,11 @@
    command with: cwd authorization, process-jail policy, head+tail capped
    capture, timeout and kill-tree. Returns that command's own total entry — the
    SAME [[shell-result-base]] map `shell` itself answers a foreground call with,
-   carrying the request's `:dir`/`:timeout-secs` as metadata, so `git` and `shell`
+   carrying the request's `:dir`/`:timeout-secs` as metadata, so an argv run and `shell`
    have ONE result shape and there is no envelope to unwrap.
 
    No shell is involved — each element reaches the process verbatim, so nothing
-   needs quoting. The `git` tool is a USER of this: every git command is a
+   needs quoting. An argv caller is a USER of this: every argv command is a
    bounded shell command, so both tools share one runner, one jail and one
    capture policy."
   ([env argv] (run-argv env argv nil))
@@ -2940,7 +2940,7 @@
 
 ;; =============================================================================
 ;; Symbols + prompt + extension. ONE builtin symbol — `shell` — bound bare in the
-;; flat Python sandbox next to `git` / `cat` / `grep`.
+;; flat Python sandbox next to `cat` / `grep`.
 ;; =============================================================================
 
 (defn- live-bg-script
@@ -3034,33 +3034,31 @@
      :native-tool? true
      :name "shell"
      :result
-     (str "A HANDLE: ONE result shape for every shell answer and for `git` — `{stage, id, cwd, "
-          "command, status, exit, stdout, stderr, duration_ms, timed_out, offset, next_offset, "
-          "is_eof, started_at, finished_at, log_path, cpu_ms, cpu_percent, rss_bytes, note, …}`, "
-          "WITH the methods `sh.wait(secs)`, `sh.status()`, "
-          "`sh.logs(offset=0)`, `sh.type(text)`, `sh.stop()`. A fresh run has no `exit` "
-          "yet: `sh.wait` fills it. Nonzero exit is data.")
+     (str "A HANDLE: ONE result shape for every shell answer — `{stage, id, cwd, command, "
+          "status, exit, stdout, stderr, duration_ms, timed_out, offset, next_offset, is_eof, "
+          "started_at, finished_at, log_path, cpu_ms, cpu_percent, rss_bytes, note, …}` plus the "
+          "methods below. A fresh run has no `exit`; nonzero exit is data.")
      :description
      (str "Spawn ONE `bash -lc` command under a real pty and return its HANDLE NOW — every run "
-          "is a background run, so there is no wait knob and no second mode. Chain with `&&`; run "
-          "independent work as separate calls. Drive it through the handle the call returned: "
-          "`sh.wait(secs)` (the ONLY wait; `timed_out` means the WAIT expired, not the process), "
-          "`sh.status()` (state, clock, `log_path`, live cpu/rss), "
-          "`sh.logs(offset=0)`, `sh.type(text)`, `sh.stop()` — never a rerun. Re-issuing a live "
-          "`id` returns THAT shell, and a shell keeps its log by id for the session. "
+          "is a background run. Chain with `&&`; run independent work as separate calls. Drive "
+          "it through the handle: `sh.wait(secs)` (the ONLY wait; `timed_out` means the WAIT "
+          "expired, not the process), `sh.status()` (state, clock, `log_path`, live cpu/rss), "
+          "`sh.logs(offset=…, limit=…)`, `sh.type(text)`, `sh.stop()` — never a rerun; "
+          "re-issuing a live `id` returns THAT shell. NEVER trim inside the command: `| head`, "
+          "`| tail`, `| grep`, `2>/dev/null`, `> file` discard bytes the handle keeps whole, and "
+          "a pipeline's exit is its LAST stage's, so a failed build looks green — run it plain, "
+          "then slice on the handle or filter `log_path` in Python. "
           "`print((await shell(\"npm test\")).wait(300)[\"stdout\"])`.")
      :render-finish-call-fn render-shell-run-result
      :render-start-call-fn (shell-start-renderer "run")
-     :schema {:type "object"
-              :properties {"command"
-                           {:type "string" :minLength 1 :description "ONE `bash -lc` line."}
-                           "id" {:type "string"
-                                 :minLength 1
-                                 :description "Handle; derived from the program name when omitted."}
-                           "cwd" {:type "string"
-                                  :description "Dir under allowed root; relative uses workspace."}}
-              :required ["command"]
-              :additionalProperties false}
+     :schema
+     {:type "object"
+      :properties
+      {"command" {:type "string" :minLength 1 :description "ONE `bash -lc` line."}
+       "id" {:type "string" :minLength 1 :description "Handle; from the program name when omitted."}
+       "cwd" {:type "string" :description "Dir under allowed root; relative uses workspace."}}
+      :required ["command"]
+      :additionalProperties false}
      :inject-env? true
      :tag :mutation
      :on-error-fn (shell-on-error :shell)}))
