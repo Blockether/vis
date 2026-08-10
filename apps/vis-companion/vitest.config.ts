@@ -13,6 +13,10 @@ export default defineConfig({
     // `scripts/` holds the release plumbing; only its side-effect-free helpers
     // are importable, and those are exactly the ones worth pinning down.
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'scripts/**/*.test.mjs'],
+    // Testing Library's matchers and its unmount-between-tests, for the files
+    // that opted into a DOM. `src/test-setup.ts` no-ops in the `node`
+    // environment, so the logic suite pays nothing for it.
+    setupFiles: ['./src/test-setup.ts'],
   },
   // `compat.ts` reads the release string the app build injects; the tests need
   // the SAME source of truth, not a hand-written stand-in.

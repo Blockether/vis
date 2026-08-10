@@ -47,11 +47,10 @@ import { menuPosition } from '../lib/anchored-menu';
 import {
   applyListScroll,
   forgetListScroll,
-  markListScroll,
   parkedListScroll,
-  rememberListScroll,
   rowOffset,
   topVisibleRow,
+  useListScrollPark,
   type ListAnchor,
 } from '../lib/list-scroll';
 import { SwipeActions } from '../components/SwipeActions';
@@ -504,24 +503,10 @@ export function SessionsScreen({
     }
   });
 
-  useLayoutEffect(() => {
-    const viewport = listRef.current;
-    if (!viewport) return;
-    // The reader scrolling is the reader deciding: stop trying to restore.
-    const abandon = () => {
-      restoredRef.current = true;
-      forgetListScroll();
-    };
-    viewport.addEventListener('wheel', abandon, { passive: true });
-    viewport.addEventListener('touchstart', abandon, { passive: true });
-    return () => {
-      viewport.removeEventListener('wheel', abandon);
-      viewport.removeEventListener('touchstart', abandon);
-      // A layout cleanup still runs against the live DOM, which is the last
-      // moment this scroller can be measured at all.
-      if (viewport.isConnected) rememberListScroll(markListScroll(viewport, topVisibleRow(viewport)));
-    };
-  }, []);
+  // The reader scrolling is the reader deciding: stop trying to restore.
+  useListScrollPark(listRef, () => {
+    restoredRef.current = true;
+  });
 
   // Transcript + title search runs server-side and RANKED (see `rank` below); this
   // effect only asks, and only after typing rests. A superseded query is cancelled
@@ -1196,9 +1181,9 @@ export function SessionsScreen({
                   human owns the word. Same box editing or resting — no jump.
 
                   It wears the machine's own hue as a TAG (`machineTagFace`) rather than
-                  plain white ink: this word and the 4px spine down the list are the two
-                  places a machine is visible at all, and they have to be visibly the
-                  same machine. */}
+                  plain white ink: the hue rides the tag's leading edge, the same 2px
+                  spine that runs down the list below it, so the two places a machine is
+                  visible at all are visibly the same machine. */}
               {scopeChrome && onRenameMachine ? (
                 <EditableName
                   face={machineTagFace(chromeColor)}

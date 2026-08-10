@@ -14,9 +14,14 @@
  * A reader who was AT the bottom parks nothing: the newest turn is their place,
  * and reopening must land there.
  *
- * Memory only, keyed by session id: it dies with the JavaScript context, which
- * is exactly right — a cold start has no reading position to honour.
+ * The place outlives the screen in a module map and outlives a RELOAD in
+ * `sessionStorage` (see `lib/parked`): reload runs no cleanup and unmounts
+ * nothing, so a place kept only in memory was lost by the one gesture a reader
+ * repeats all day. It still dies with the visit, which is right — a cold start
+ * has no reading position to honour.
  */
+
+import { readParked, writeParked } from './parked';
 
 /** Minimal view of a scroll container; a real element satisfies it. */
 export interface ScrollBox {
@@ -29,7 +34,33 @@ export interface ScrollBox {
 // reader is at the bottom and has no position worth restoring.
 const AT_BOTTOM_PX = 64;
 
-const parked = new Map<string, number>();
+const PARKED_KEY = 'vis.readingPositions';
+
+function revivePlaces(raw: unknown): Map<string, number> | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const places = new Map<string, number>();
+  for (const [sid, distance] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof distance === 'number' && Number.isFinite(distance)) places.set(sid, distance);
+  }
+  return places;
+}
+
+// Read on first ASK, never at import: a module that touches storage while it is
+// being loaded runs before a test (or a webview) has one.
+let parked = new Map<string, number>();
+let hydrated = false;
+
+function places(): Map<string, number> {
+  if (!hydrated) {
+    hydrated = true;
+    parked = revivePlaces(readParked(PARKED_KEY, (raw) => raw)) ?? new Map();
+  }
+  return parked;
+}
+
+function persist(): void {
+  writeParked(PARKED_KEY, Object.fromEntries(places()));
+}
 
 function distanceFromEnd(box: ScrollBox): number {
   return box.scrollHeight - box.scrollTop - box.clientHeight;
@@ -48,16 +79,18 @@ export function markReadingPosition(box: ScrollBox | null): number | null {
 }
 
 export function rememberReadingPosition(sid: string, distance: number | null): void {
-  if (distance === null) parked.delete(sid);
-  else parked.set(sid, distance);
+  if (distance === null) places().delete(sid);
+  else places().set(sid, distance);
+  persist();
 }
 
 export function parkedReadingPosition(sid: string): number | null {
-  return parked.get(sid) ?? null;
+  return places().get(sid) ?? null;
 }
 
 export function forgetReadingPosition(sid: string): void {
-  parked.delete(sid);
+  places().delete(sid);
+  persist();
 }
 
 /**
@@ -72,6 +105,21 @@ export function applyReadingPosition(box: ScrollBox, distance: number): boolean 
   if (maximum <= 0) return false;
   box.scrollTop = Math.max(0, maximum - distance);
   return maximum >= distance;
+}
+
+/**
+ * Put the END of `box` back under the reader.
+ *
+ * The answer for someone following the newest turn is ABSOLUTE — the bottom —
+ * so however much height just arrived, and however many callers ask in the same
+ * frame, the growth is billed exactly once and a scroller already there does not
+ * move. Returns whether it had to move at all.
+ */
+export function followEnd(box: ScrollBox): boolean {
+  const bottom = Math.max(0, box.scrollHeight - box.clientHeight);
+  if (Math.abs(box.scrollTop - bottom) < 1) return false;
+  box.scrollTop = bottom;
+  return true;
 }
 
 /**
