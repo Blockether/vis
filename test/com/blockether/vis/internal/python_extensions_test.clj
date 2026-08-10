@@ -1311,6 +1311,11 @@ vis.extension(
   [started]
   (:result (shell/jailed-shell nil {"op" "wait" "id" (get started "id") "seconds" 20})))
 
+(def ^:private shell-provider-py
+  "The ONE shelling-provider fixture. Both process-boundary cases load it — the
+   session jail and the user's `shell` toggle — so the two cannot drift apart."
+  "import vis\ndef detect():\n    result = vis.shell({'command': 'printf regular-shell'}).wait(20)\n    return {'token': result['stdout'], 'source': 'shell'}\nvis.extension(name='shell-provider', description='shell provider', providers=[vis.provider(id='shell-provider', label='Shell provider', detect_fn=detect)])")
+
 (defdescribe
   python-extension-process-boundary-test
   (it
@@ -1321,25 +1326,42 @@ vis.extension(
       (fn [_ _]
         (expect (= {:token "extension-native" :source :subprocess}
                    ((:provider/detect-fn (registry/provider-by-id :process-provider))))))))
-  (it
-    "keeps vis.shell unrestricted even while the invoking session jail is enabled"
-    (with-loaded
-      {"shell_provider.py"
-       "import vis\ndef detect():\n    result = vis.shell({'command': 'printf regular-shell'}).wait(20)\n    return {'token': result['stdout'], 'source': 'shell'}\nvis.extension(name='shell-provider', description='shell provider', providers=[vis.provider(id='shell-provider', label='Shell provider', detect_fn=detect)])"}
-      (fn [_ _]
-        (let
-          [detect
-           (:provider/detect-fn (registry/provider-by-id :shell-provider))
+  (it "keeps vis.shell unrestricted even while the invoking session jail is enabled"
+      (with-loaded {"shell_provider.py" shell-provider-py}
+                   (fn [_ _]
+                     (let
+                       [detect
+                        (:provider/detect-fn (registry/provider-by-id :shell-provider))
 
-           env
-           {:session-id "jailed-session"
-            :security-policy {:sandbox true}
-            :jail-policy-fn (fn []
-                              (throw (ex-info "the regular extension shell touched the jail" {})))}]
+                        env
+                        {:session-id "jailed-session"
+                         :security-policy {:sandbox true}
+                         :jail-policy-fn
+                         (fn []
+                           (throw (ex-info "the regular extension shell touched the jail" {})))}]
 
-          (expect (= {:token "regular-shell" :source :shell} (detect)))
-          (binding [extension/*current-environment* env]
-            (expect (= {:token "regular-shell" :source :shell} (detect))))))))
+                       (expect (= {:token "regular-shell" :source :shell} (detect)))
+                       (binding [extension/*current-environment* env]
+                         (expect (= {:token "regular-shell" :source :shell} (detect))))))))
+  ;; Regression, toggle audit: the user-owned `shell` toggle unbinds the MODEL's
+  ;; `shell` tool in the sandbox. An installed extension is a separate trust
+  ;; layer with its own process door (`vis.shell`, and plain `subprocess` in its
+  ;; own context), so flipping the toggle must not silently break an extension
+  ;; that shells out.
+  (it "keeps an extension's vis.shell working while the user's shell toggle is OFF"
+      (with-loaded {"shell_provider.py" shell-provider-py}
+                   (fn [_ _]
+                     (let
+                       [detect
+                        (:provider/detect-fn (registry/provider-by-id :shell-provider))
+
+                        before
+                        (toggles/enabled? "shell")]
+
+                       (try (toggles/set-enabled! "shell" false)
+                            (expect (false? (toggles/enabled? "shell")))
+                            (expect (= {:token "regular-shell" :source :shell} (detect)))
+                            (finally (toggles/set-enabled! "shell" before)))))))
   (it
     "reads and validates the latest merged config for every jailed_shell spawn"
     (let

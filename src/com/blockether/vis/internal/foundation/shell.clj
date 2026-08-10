@@ -3340,17 +3340,20 @@
                      "vis-agent extension shell attach dev-server"]
       :cmd/run-fn #'shell-attach-command}]}])
 
-(vis/register-toggle! {:id "shell"
-                       :label "Shell commands"
-                       :description
-                       (str "Expose `shell` — one tool that spawns ONE command under a pty "
-                            "and answers with the live handle that drives it (`sh.status()` / "
-                            "`sh.logs()` / `sh.wait()` / `sh.type()` / `sh.stop()`). When OFF "
-                            "none is bound. " "Contained by the OS process jail whenever it is ON.")
-                       :default true
-                       :owner :vis
-                       :persist? true
-                       :group :sandbox})
+(vis/register-toggle!
+  {:id "shell"
+   :label "Shell commands"
+   :description
+   (str "Expose `shell` — one tool that spawns ONE command under a pty "
+        "and answers with the live handle that drives it (`sh.status()` / "
+        "`sh.logs()` / `sh.wait()` / `sh.type()` / `sh.stop()`). When OFF " "none is bound. "
+        "Contained by the OS process jail whenever it is ON. "
+        "This is the MODEL's door: an installed extension keeps its own "
+        "trusted process boundary (`vis.shell`, `subprocess`), which this " "toggle does not gate.")
+   :default true
+   :owner :vis
+   :persist? true
+   :group :sandbox})
 
 (def vis-extension
   (vis/extension
