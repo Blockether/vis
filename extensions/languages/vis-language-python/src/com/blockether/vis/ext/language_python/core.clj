@@ -249,6 +249,40 @@
              "sandbox. Re-run with {\"environment\": \"project\"} to use the project's "
              "interpreter and installed dependencies.")))))
 
+(defn- pytest-counts
+  "Outcome counts read off pytest's own summary line, as `{\"passed\" n \"failed\" n
+   \"errored\" n \"skipped\" n}` — nil when that run printed no summary at all (a
+   usage error, a crash), where the exit status is the only verdict there is.
+
+   pytest NAMES only the outcomes that HAPPENED: an all-green run says `12 passed`
+   and nothing else. Reading each absent word as UNKNOWN left an ordinary green
+   run with no `total` and no `fail`, so its run_tests headline could report
+   nothing but a duration. Once pytest reported ANY outcome, the words it left out
+   are ZERO."
+  [s]
+  (let [n
+        (fn [re]
+          (some-> (second (re-find re (str s)))
+                  parse-long))
+
+        passed
+        (n #"(?m)(\d+) passed")
+
+        failed
+        (n #"(?m)(\d+) failed")
+
+        errored
+        (n #"(?m)(\d+) error(?:ed|s)?\b")
+
+        skipped
+        (n #"(?m)(\d+) skipped")]
+
+    (when (or passed failed errored skipped)
+      {"passed" (or passed 0)
+       "failed" (or failed 0)
+       "errored" (or errored 0)
+       "skipped" (or skipped 0)})))
+
 (defn- project-test
   "Escape-hatch backend: shell the project interpreter's pytest (uv / poetry /
    .venv / python3 `-m pytest <paths>`) in `cwd` so installed deps are visible."
@@ -287,30 +321,19 @@
       [s
        (str @out)
 
-       [_ passed]
-       (re-find #"(?m)(\d+) passed" s)
+          counts
+          (pytest-counts s)]
 
-       [_ failed]
-       (re-find #"(?m)(\d+) failed" s)
-
-       [_ errored]
-       (re-find #"(?m)(\d+) error(?:ed|s)?\b" s)]
-
-      {"runner" "project"
-       "mode" "cli"
-       "framework" "pytest"
-       "tool" "pytest"
-       "cmd" (vec cmd)
-       "cwd" dir
-       "exit" (when done? (.exitValue p))
-       "timed_out" (not done?)
-       "passed" (some-> passed
-                        parse-long)
-       "failed" (some-> failed
-                        parse-long)
-       "errored" (some-> errored
-                         parse-long)
-       "output" (tail-str s 8000)})))
+      (merge {"runner" "project"
+              "mode" "cli"
+              "framework" "pytest"
+              "tool" "pytest"
+              "cmd" (vec cmd)
+              "cwd" dir
+              "exit" (when done? (.exitValue p))
+              "timed_out" (not done?)
+              "output" (tail-str s 8000)}
+             counts))))
 
 (defn- select-runner
   "Which backend a `run_tests` call uses, in precedence order: an explicit

@@ -626,61 +626,129 @@
 
     (md-table headers rows)))
 
+(def ^:private repl-form-inline-max
+  "Display-width budget for the evaluated FORM on the collapsed chip. A form wider
+   than this (or any multi-line form) is too long to ride inline, so it's clipped
+   on the chip and promoted to its own FORM section when expanded."
+  56)
+
+(defn- clip-chip
+  "Clip `s` to `n` display chars with a trailing ellipsis, so one long form or value
+   never blows out the single-line collapsed summary."
+  [s n]
+  (let [s (str s)]
+    (if (> (count s) (long n)) (str (subs s 0 (max 0 (dec (long n)))) "…") s)))
+
+(defn- input-list
+  "Comma-joined non-blank entries of list-ish call key `k`, else nil — how a
+   multi-value selection reads on one line."
+  [input k]
+  (some->> (get input k)
+           (keep #(some-> %
+                          str
+                          str/trim
+                          not-empty))
+           seq
+           (str/join ", ")))
+
+(defn- input-str
+  "Trimmed non-blank scalar call key `k`, else nil."
+  [input k]
+  (some-> (get input k)
+          str
+          str/trim
+          not-empty))
+
+(defn- test-target
+  "WHAT a run_tests call selected, as one line: `only` > `namespaces` > `paths` >
+   `filter: <q>`, else the whole suite. The pending card and the finished headline
+   read the SAME string off the call, because a runner reports only what it RAN —
+   two runs that selected different tests must never render the same summary."
+  [input]
+  (or (input-list input "only")
+      (input-list input "namespaces")
+      (input-list input "paths")
+      (some->> (input-str input "filter")
+               (str "filter: "))
+      "full suite"))
+
 (defn- render-test-result
-  "run_tests → `<ns> — pass/total (Nms)` headline (the RUN_TESTS badge already
-   names the tool, so no redundant `tests` word or success glyph — only a
-   leading `✗` flags a failure). Many namespaces collapse to `<first> +N more`
-   so the headline stays one tidy line, and the CLI-fallback `:note` rides
-   after a ` · ` instead of being fused into the run detail; the run output on
-   failure, or the error text when the run itself could not produce a result. A
-   failing run NEVER renders blank — with neither output nor error we surface
-   the raw result so the user always sees *something* went wrong, never an
-   empty card."
+  "run_tests → `<what ran> — pass/total (Nms)` headline (the RUN_TESTS badge already
+   names the tool, so no redundant `tests` word or success glyph — only a leading
+   `✗` flags a failure). The headline NAMES the run: the pack's `ns` when it reports
+   one, else the `target` the call selected, and the target rides after a ` · ` when
+   it says something the namespace does not (one var out of a namespace) — two runs
+   that ran different tests must never render the same line. Many namespaces
+   collapse to `<first> +N more` so the headline stays one tidy line. A runner that
+   reported no counts still states its VERDICT — `timed out`, `failed (exit 1)` —
+   because a bare duration says nothing about whether the suite passed. The
+   CLI-fallback `:note` rides after a ` · ` instead of being fused into the run
+   detail; the body carries the run output on failure, or the error text when the
+   run itself could not produce a result. A failing run NEVER renders blank — with
+   neither output nor error we surface the raw result so the user always sees
+   *something* went wrong, never an empty card."
   [r]
-  (let
-    [pass
-     (get r "pass")
+  (let [pass
+        (get r "pass")
 
-     fail
-     (get r "fail")
+        fail
+        (get r "fail")
 
-     total
-     (get r "total")
+        total
+        (get r "total")
 
-     error
-     (get r "error")
+        error
+        (get r "error")
 
-     ok
-     (and (not error)
-          (cond (number? fail) (zero? (long fail))
-                (some? (get r "is_pass")) (boolean (get r "is_pass")) ; CLI fallback: exit-code verdict
-                :else (boolean (get r "pass"))))
+        exit
+        (get r "exit")
 
-     parts
-     (some-> (get r "ns")
-             str
-             str/trim
-             not-empty
-             (str/split #"\s+"))
+        ok
+        (and (not error)
+             (cond (number? fail) (zero? (long fail))
+                   (some? (get r "is_pass")) (boolean (get r "is_pass")) ; CLI fallback: exit-code verdict
+                   :else (boolean (get r "pass"))))
 
-     ns-disp
-     (cond (empty? parts) nil
-           (> (count parts) 1) (str (first parts) " +" (dec (count parts)) " more")
-           :else (first parts))
+        parts
+        (some-> (get r "ns")
+                str
+                str/trim
+                not-empty
+                (str/split #"\s+"))
 
-     detail
-     (or (not-empty (str (get r "output")))
-         (not-empty (str error))
-         (when-not ok (str "no test result returned — " (pr-str r))))]
+        ns-disp
+        (cond (empty? parts) nil
+              (> (count parts) 1) (str (first parts) " +" (dec (count parts)) " more")
+              :else (first parts))
+
+        target
+        (some-> (get r "target")
+                str
+                str/trim
+                not-empty)
+
+        ;; The whole suite adds nothing beside a namespace the pack already named.
+        target-chip
+        (when (and ns-disp target (not= target ns-disp) (not= target "full suite")) target)
+
+        verdict
+        (cond total (str pass
+                         "/" total
+                         " passed" (when (and (number? fail) (pos? (long fail)))
+                                     (str ", " fail " failed")))
+              (get r "timed_out") "timed out"
+              (number? exit) (str (if ok "passed" "failed") " (exit " exit ")")
+              (not ok) "error")
+
+        detail
+        (or (not-empty (str (get r "output")))
+            (not-empty (str error))
+            (when-not ok (str "no test result returned — " (pr-str r))))]
 
     {:summary (str (when-not ok "✗ ")
-                   ns-disp
-                   (when total
-                     (str " — " pass
-                          "/" total
-                          " passed" (when (and (number? fail) (pos? (long fail)))
-                                      (str ", " fail " failed"))))
-                   (when (and (not ok) (not total)) " — error")
+                   (clip-chip (or ns-disp target "tests") repl-form-inline-max)
+                   (when verdict (str " — " verdict))
+                   (when target-chip (str " · " (clip-chip target-chip repl-form-inline-max)))
                    (when-let [ms (get r "ms")]
                      (str " (" ms "ms)"))
                    (when (get r "note") (str " · " (get r "note"))))
@@ -711,24 +779,11 @@
 
     (subs cls 0 (min 60 (count cls)))))
 
-(def ^:private repl-form-inline-max
-  "Display-width budget for the evaluated FORM on the collapsed chip. A form wider
-   than this (or any multi-line form) is too long to ride inline, so it's clipped
-   on the chip and promoted to its own FORM section when expanded."
-  56)
-
 (defn- one-line
   "Collapse `s` to a single trimmed line — every run of whitespace (incl. newlines)
    becomes one space. nil/blank → nil."
   [s]
   (not-empty (str/trim (str/replace (str s) #"\s+" " "))))
-
-(defn- clip-chip
-  "Clip `s` to `n` display chars with a trailing ellipsis, so one long form or value
-   never blows out the single-line collapsed summary."
-  [s n]
-  (let [s (str s)]
-    (if (> (count s) (long n)) (str (subs s 0 (max 0 (dec (long n)))) "…") s)))
 
 (defn- sect
   "One labeled body SECTION — a bold uppercase header over a fenced monospace block,
@@ -745,55 +800,34 @@
    reasoning line on screen for the whole run. This is descriptive selection data,
    never an invented shell command: each language pack owns how its tests execute."
   [input]
-  (let
-    [many
-     (fn [k]
-       (some->> (get input k)
-                (keep #(some-> %
-                               str
-                               str/trim
-                               not-empty))
-                seq
-                (str/join ", ")))
+  (let [language
+        (or (input-str input "language") "auto")
 
-     present
-     (fn [k]
-       (some-> (get input k)
-               str
-               str/trim
-               not-empty))
+        namespaces
+        (input-list input "namespaces")
 
-     language
-     (or (present "language") "auto")
+        paths
+        (input-list input "paths")
 
-     namespaces
-     (many "namespaces")
+        only
+        (input-list input "only")
 
-     paths
-     (many "paths")
+        filter*
+        (input-str input "filter")
 
-     only
-     (many "only")
+        ;; The SAME selection the finished headline reports, so the card that opens
+        ;; a run and the card that closes it name one run.
+        scope
+        (test-target input)
 
-     filter*
-     (present "filter")
-
-     scope
-     (or only
-         namespaces
-         paths
-         (some-> filter*
-                 (str "filter: "))
-         "full suite")
-
-     detail
-     (->> [["language" language] ["scope" scope] ["cwd" (present "cwd")]
-           ["environment" (present "environment")] ["namespaces" namespaces] ["paths" paths]
-           ["only" only] ["filter" filter*] ["include" (many "include")]
-           ["exclude" (many "exclude")]]
-          (keep (fn [[label value]]
-                  (when value (str label ": " value))))
-          (str/join "\n"))]
+        detail
+        (->> [["language" language] ["scope" scope] ["cwd" (input-str input "cwd")]
+              ["environment" (input-str input "environment")] ["namespaces" namespaces]
+              ["paths" paths] ["only" only] ["filter" filter*]
+              ["include" (input-list input "include")] ["exclude" (input-list input "exclude")]]
+             (keep (fn [[label value]]
+                     (when value (str label ": " value))))
+             (str/join "\n"))]
 
     {:summary (str (if (= "full suite" scope)
                      (str language " — full suite")
@@ -984,25 +1018,34 @@
   "Run through a pack: `run_tests(language,arg)`. `arg` is a module string or map: `namespaces`/`paths` choose loading/discovery; `only`, `include`, `exclude`, and `filter` narrow tests; `cwd` chooses the project; `runner` picks a pack backend (python: `graalpy` default, or `project` for the project interpreter's own pytest). List selectors stay lists, even one. Omit `arg` for all tests."
   [env & args]
   ;; Park outside the generic 30s native wall. Language packs own the test budget.
-  (let [started-at (System/nanoTime)]
+  (let [started-at
+        (System/nanoTime)
+
+        ;; A pack reports what it RAN; only the CALL knows what was ASKED FOR, so
+        ;; stamp the selection here or the headline cannot tell two runs apart.
+        target
+        (test-target (or (first (filter map? args)) {}))]
+
     (extension/run-outside-tool-wall
       env
-      #(dispatch!
-         env
-         :test-fn
-         args
-         (fn [handler envelope]
-           ;; Language handlers return extension envelopes. Complete and time
-           ;; the PUBLIC payload; metadata added beside :result gets unwrapped.
-           (if (and (map? envelope) (contains? envelope :result))
-             (update envelope
-                     :result
-                     (fn [result]
-                       (let [completed (contract/complete-test-result (:language handler) result)]
-                         (if (map? completed)
-                           (assoc completed "ms" (quot (- (System/nanoTime) started-at) 1000000))
-                           completed))))
-             envelope))))))
+      #(dispatch! env
+                  :test-fn
+                  args
+                  (fn [handler envelope]
+                    ;; Language handlers return extension envelopes. Complete and time
+                    ;; the PUBLIC payload; metadata added beside :result gets unwrapped.
+                    (if (and (map? envelope) (contains? envelope :result))
+                      (update envelope
+                              :result
+                              (fn [result]
+                                (let [completed (contract/complete-test-result (:language handler)
+                                                                               result)]
+                                  (if (map? completed)
+                                    (assoc completed
+                                      "target" (or (get result "target") target)
+                                      "ms" (quot (- (System/nanoTime) started-at) 1000000))
+                                    completed))))
+                      envelope))))))
 
 (defn repl-eval
   "Eval in an already-running project REPL: `repl_eval(language,arg)`. Pass `language` first; `arg` may set `id`/`repl_id`, `cwd` (root default), and `timeout_ms`."

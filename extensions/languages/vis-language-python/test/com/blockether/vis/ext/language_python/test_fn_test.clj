@@ -269,3 +269,18 @@
                                               {"runner" "graalpy"}))]
                (expect (nil? (get res "warning"))))
              (finally (cleanup root))))))
+
+(def ^:private pytest-counts @#'core/pytest-counts)
+
+;; Regression, issue #132: an all-green project run reported only "12 passed", so
+;; every other count stayed UNKNOWN, `total` was never derived and the run_tests
+;; headline shrank to a bare " (16484ms)".
+(defdescribe pytest-counts-test
+             (it "zero-fills the outcomes pytest left out of its summary"
+                 (expect (= {"passed" 12 "failed" 0 "errored" 0 "skipped" 0}
+                            (pytest-counts "==== 12 passed in 3.21s ====")))
+                 (expect (= {"passed" 10 "failed" 2 "errored" 1 "skipped" 3}
+                            (pytest-counts "= 2 failed, 10 passed, 3 skipped, 1 error in 4.5s ="))))
+             (it "reports nothing when the run printed no summary at all"
+                 (expect (nil? (pytest-counts "")))
+                 (expect (nil? (pytest-counts "ERROR: file or directory not found: nope.py")))))

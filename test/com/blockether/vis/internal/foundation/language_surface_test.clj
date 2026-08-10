@@ -380,7 +380,59 @@
         (doseq [r [{} {"ns" nil "output" ""} {"mode" "repl" "port" 7888}]]
           (let [{:keys [summary body]} (render r)]
             (expect (str/starts-with? summary "✗"))
-            (expect (seq body)))))))
+            (expect (seq body)))))
+    ;; Regression, issue #133: the headline named only the pack's own `ns`, so a
+    ;; pack that reports none rendered a bare " (16484ms)", and two runs that
+    ;; picked different tests out of one namespace rendered the very same line.
+    (it "names the selected target when the pack reports no namespace"
+        (expect (= "tests/unit — 16/16 passed (16484ms)"
+                   (:summary (render
+                               {"target" "tests/unit" "pass" 16 "total" 16 "fail" 0 "ms" 16484})))))
+    (it "keeps the target beside the namespace when it says more than the namespace does"
+        (expect (= "foo-test — 1/1 passed · foo-test/my-test (12ms)"
+                   (:summary (render {"ns" "foo-test"
+                                      "target" "foo-test/my-test"
+                                      "pass" 1
+                                      "total" 1
+                                      "fail" 0
+                                      "ms" 12})))))
+    (it "drops a target that only repeats the namespace, and the whole-suite target"
+        (expect (= "foo-test — 1/1 passed"
+                   (:summary (render
+                               {"ns" "foo-test" "target" "foo-test" "pass" 1 "total" 1 "fail" 0}))))
+        (expect (= "foo-test — 1/1 passed"
+                   (:summary
+                     (render
+                       {"ns" "foo-test" "target" "full suite" "pass" 1 "total" 1 "fail" 0})))))
+    ;; Regression, issue #132: a CLI pack that reported no counts collapsed the
+    ;; whole headline to " (16484ms)" — no pass/fail, no exit status, no verdict.
+    (it "states the exit verdict when the runner reported no counts"
+        (expect
+          (=
+            "✗ tests — failed (exit 1) (20ms)"
+            (:summary
+              (render
+                {"target" "tests" "mode" "cli" "exit" 1 "is_pass" false "output" "boom" "ms" 20}))))
+        (expect (= "tests — passed (exit 0) (20ms)"
+                   (:summary (render
+                               {"target" "tests" "mode" "cli" "exit" 0 "is_pass" true "ms" 20}))))
+        (expect (str/includes? (:summary (render {"target" "tests" "mode" "cli" "timed_out" true}))
+                               "timed out")))))
+
+;; Regression, issue #133: the finished headline had no notion of what the CALL
+;; asked for, so it could not tell two runs apart.
+(defdescribe test-target-test
+             (let [target #'language-surface/test-target]
+               (it "reports the narrowest selection the call made"
+                   (expect (= "foo-test/a, foo-test/b"
+                              (target {"only" ["foo-test/a" "foo-test/b"]
+                                       "namespaces" ["foo-test"]})))
+                   (expect (= "foo-test" (target {"namespaces" ["foo-test"] "paths" ["test"]})))
+                   (expect (= "test/foo" (target {"paths" ["test/foo"]})))
+                   (expect (= "filter: slow" (target {"filter" "slow"}))))
+               (it "falls back to the whole suite when nothing narrows the run"
+                   (expect (= "full suite" (target {})))
+                   (expect (= "full suite" (target {"paths" [] "only" [nil ""] "filter" "   "}))))))
 
 ;; Regression, session d92fe644-0519-44a7-8225-2be882542566: a full run_tests call
 ;; stayed invisible behind the last planning line until the whole suite returned.
@@ -621,12 +673,50 @@
 (defdescribe
   language-process-jail-refresh-test
   (it "refreshes the session jail before a test handler launches a process"
-      (let
-        [env
-         (fake-env [{:language "clojure"
-                     :test-fn (fn [handler-env _]
-                                {:success? true
-                                 :result {:launch? (boolean (seq (:argv (vis/session-process-launch
+      (let [env
+            (fake-env [{:language "clojure"
+                        :test-fn (fn [handler-env _]
+                                   {:success? true
+                                    :result {:launch? (boolean (seq (:argv
+                                                                      (vis/session-process-launch
+                                                                        (:session-id handler-env)
+                                                                        ["clojure"
+                                                                         "-Sdescribe"]))))}})}])
+
+            session-id
+            (:session-id env)
+
+            result
+            (try (language-surface/run-tests env {})
+                 (finally (process-jail/unregister-session-jail! session-id)))]
+
+        (expect (true? (get-in result [:result :launch?])))))
+  (it "refreshes the session jail before repl_eval can auto-start a REPL"
+      (let [env
+            (fake-env [{:language "clojure"
+                        :repl-eval-fn (fn [handler-env _]
+                                        {:success? true
+                                         :result {:launch? (boolean
+                                                             (seq (:argv (vis/session-process-launch
+                                                                           (:session-id handler-env)
+                                                                           ["clojure"
+                                                                            "-Sdescribe"]))))}})}])
+
+            session-id
+            (:session-id env)
+
+            result
+            (try (language-surface/repl-eval env "(+ 1 1)")
+                 (finally (process-jail/unregister-session-jail! session-id)))]
+
+        (expect (true? (get-in result [:result :launch?])))))
+  (it "refreshes the session jail before starting a REPL"
+      (let [env
+            (fake-env [{:language "clojure"
+                        :start-repl-fn (fn [handler-env _ _]
+                                         {:success? true
+                                          :result {:launch?
+                                                   (boolean (seq (:argv (vis/session-process-launch
                                                                           (:session-id handler-env)
                                                                           ["clojure"
                                                                            "-Sdescribe"]))))}})}])
@@ -634,47 +724,9 @@
          session-id
          (:session-id env)
 
-         result
-         (try (language-surface/run-tests env {})
-              (finally (process-jail/unregister-session-jail! session-id)))]
-
-        (expect (true? (get-in result [:result :launch?])))))
-  (it "refreshes the session jail before repl_eval can auto-start a REPL"
-      (let
-        [env
-         (fake-env [{:language "clojure"
-                     :repl-eval-fn
-                     (fn [handler-env _]
-                       {:success? true
-                        :result {:launch? (boolean (seq (:argv (vis/session-process-launch
-                                                                 (:session-id handler-env)
-                                                                 ["clojure" "-Sdescribe"]))))}})}])
-
-         session-id
-         (:session-id env)
-
-         result
-         (try (language-surface/repl-eval env "(+ 1 1)")
-              (finally (process-jail/unregister-session-jail! session-id)))]
-
-        (expect (true? (get-in result [:result :launch?])))))
-  (it "refreshes the session jail before starting a REPL"
-      (let
-        [env
-         (fake-env [{:language "clojure"
-                     :start-repl-fn
-                     (fn [handler-env _ _]
-                       {:success? true
-                        :result {:launch? (boolean (seq (:argv (vis/session-process-launch
-                                                                 (:session-id handler-env)
-                                                                 ["clojure" "-Sdescribe"]))))}})}])
-
-         session-id
-         (:session-id env)
-
-         result
-         (try (language-surface/start-repl env "start")
-              (finally (process-jail/unregister-session-jail! session-id)))]
+            result
+            (try (language-surface/start-repl env "start")
+                 (finally (process-jail/unregister-session-jail! session-id)))]
 
         (expect (true? (get-in result [:result :launch?]))))))
 

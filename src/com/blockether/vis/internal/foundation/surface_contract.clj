@@ -114,6 +114,7 @@
          #(contains? #{"repl" "cli"} (get % "mode"))
          #(string? (get % "language"))
          (opt "ns" string?)
+         (opt "target" string?)
          (opt "framework" string?)
          (opt "tool" string?)
          (opt "port" nat-int?)
@@ -151,6 +152,10 @@
    "command" nil
    "cwd" nil
    "ns" nil
+   ;; WHAT THE CALL SELECTED (`only`/`namespaces`/`paths`/`filter`, else the whole
+   ;; suite) — a runner reports what it RAN, never what was ASKED FOR, so without
+   ;; this two different selections render the same headline.
+   "target" nil
    "port" nil
    "exit" nil
    "ms" nil

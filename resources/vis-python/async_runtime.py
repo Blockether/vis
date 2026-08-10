@@ -645,8 +645,8 @@ class __VisShell__(__VisResult__):
 
 
 class __VisResultList__(list):
-    # A native tool result whose TOP-LEVEL shape is a LIST (patch / struct_patch /
-    # write return one row per file; some tools return a list of hits). It stays a
+    # A native tool result whose TOP-LEVEL shape is a LIST (patch / struct_patch
+    # return one row per file; some tools return a list of hits). It stays a
     # REAL list — index / iterate / len / json.dumps / {**_}-free code all behave —
     # but ALSO answers the dict probes (.get/.keys/.items/.values) so a uniform
     # `for _id, res in ntr.items(): res.get('op')` sweep NEVER trips on it. A list has
@@ -859,7 +859,7 @@ def __vis_settle__(v):
     if isinstance(v, __vis_Call__):
         # TOP-LEVEL tool result: re-type a list/str payload to the probeable
         # subclass, exactly as a stored ntr[...] read does. Without this a
-        # `patch`/`write`/`struct_patch` return was a PLAIN list, so the documented
+        # `patch`/`struct_patch` return was a PLAIN list, so the documented
         # uniform `res.get('op')` probe blew up with `'list' object has no attribute
         # 'get'` and the print-capture below could not recognise it as a result.
         return __vis_as_result__(__vis_pyify__(__vis_exec_call__(v)))
@@ -1768,6 +1768,62 @@ def __vis_strip_protected_imports__(src):
     return __vis_ast__.unparse(tree)
 
 
+def __vis_body_awaits__(fn):
+    # Does THIS function's own body await? Walks the body but stops at every
+    # nested function scope (`def`, `async def`, `lambda`), whose awaits belong to
+    # that scope, not this one. A comprehension is NOT a stop: `[await f(x) for x
+    # in xs]` is exactly what makes the enclosing function async.
+    stack = list(fn.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(
+            node,
+            (
+                __vis_ast__.FunctionDef,
+                __vis_ast__.AsyncFunctionDef,
+                __vis_ast__.Lambda,
+            ),
+        ):
+            continue
+        if isinstance(
+            node,
+            (__vis_ast__.Await, __vis_ast__.AsyncFor, __vis_ast__.AsyncWith),
+        ):
+            return True
+        stack.extend(__vis_ast__.iter_child_nodes(node))
+    return False
+
+
+class __vis_AsyncDefFix__(__vis_ast__.NodeTransformer):
+    # PROMOTE a plain `def` that awaits to `async def`. The block itself already
+    # runs as a coroutine (top-level `await` is the normal way to call a tool), so
+    # a model factoring those same lines into the helper the system prompt asks
+    # for hit a bare `SyntaxError: 'await' outside async function` — the ONE
+    # keyword the sandbox exists to make ordinary, refused the moment it moved
+    # inside a function. Promotion is the same answer the top level already gets:
+    # the helper is awaited at its call site, like any coroutine.
+    #
+    # `visit` is depth-first, so a nested `def` is promoted before its parent is
+    # judged, and an await that belongs to the inner helper never drags the outer
+    # one along.
+    def visit_FunctionDef(self, node):
+        self.generic_visit(node)
+        if not __vis_body_awaits__(node):
+            return node
+        promoted = __vis_ast__.AsyncFunctionDef(
+            name=node.name,
+            args=node.args,
+            body=node.body,
+            decorator_list=node.decorator_list,
+            returns=node.returns,
+            type_comment=getattr(node, "type_comment", None),
+        )
+        type_params = getattr(node, "type_params", None)
+        if type_params is not None:
+            promoted.type_params = type_params
+        return __vis_ast__.copy_location(promoted, node)
+
+
 class __vis_AwaitFix__(__vis_ast__.NodeTransformer):
     # Wrap the operand of every `await EXPR` as `await __vis_awaitable__(EXPR)`
     # so awaiting a value that is NOT a real awaitable (a tool result that
@@ -1826,6 +1882,7 @@ def __vis_run_async__(src):
     __vis_flags__ = __vis_future_flags__(tree)
     __vis_check_module_scope__(tree, src)
     __vis_check_compile_traps__(tree, src)
+    tree = __vis_AsyncDefFix__().visit(tree)
     tree = __vis_AwaitFix__().visit(tree)
     tree = __vis_StarImportFix__().visit(tree)
     tree = __vis_AnnFix__(
@@ -1974,7 +2031,7 @@ def __vis_kwargs_direct_tools__():
             g[__vis_n__] = __vis_direct_kwargs__(g[__vis_n__], __vis_n__)
 
 
-# ── echo-diff strip for a printed edit result: a patch/write/struct_patch result
+# ── echo-diff strip for a printed edit result: a patch/struct_patch result
 # printed to stdout merely re-describes the bytes the model just authored, so drop
 # each file summary's redundant 'diff' for DISPLAY only. The captured original is
 # untouched, so the host op-card still renders the full diff.
@@ -2031,7 +2088,7 @@ def __vis_print__(*__vis_a__, **__vis_kw__):
     )
     if __vis_kw__.get("file") is None:
         for __vis_x__ in __vis_a__:
-            # A LIST-shaped result (patch / write / struct_patch: one row per file)
+            # A LIST-shaped result (patch / struct_patch: one row per file)
             # is a tool result too — `__VisResultList__` is its unforgeable marker.
             # Missing it made a printed edit BOTH card-less and a card-killer: the
             # block no longer counted as results-ONLY, so every OTHER printed card in it

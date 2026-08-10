@@ -580,6 +580,40 @@ await patch({'path': css})" "t1/i1")]
         (expect (str/includes? msg "'await' outside async function"))
         (expect (not (str/includes? msg "NullPointerException")))
         (expect (= :python/syntax (:phase (:data (:error r)))))))
+  ;; Regression, issue #134: a helper factored out of working top-level code died
+  ;; with `SyntaxError: 'await' outside async function` — the block already runs as
+  ;; a coroutine, so only the `def` line stood between the model and its helper.
+  (it "a plain `def` that awaits is promoted to `async def`, not a SyntaxError"
+      (let [ctx
+            (tpc/context ::ctx)
+
+            r
+            (ep/run-python-block ctx
+                                 (str "async def fetch(n):\n" "    return n * 2\n"
+                                      "def show(n):\n" "    v = await fetch(n)\n"
+                                      "    print('got', v)\n" "await show(21)")
+                                 "t1/i1")]
+
+        (expect (nil? (:error r)))
+        (expect (= "got 42" (str/trim (str (:stdout r)))))))
+  ;; The promotion is per-function: an `await` that belongs to a nested helper must
+  ;; not drag the enclosing plain `def` into async.
+  (it "promotes only the function whose OWN body awaits"
+      (let [ctx
+            (tpc/context ::ctx)
+
+            r
+            (ep/run-python-block
+              ctx
+              (str "import inspect\n" "async def one():\n"
+                   "    return 1\n" "def outer():\n"
+                   "    def inner():\n" "        return await one()\n"
+                   "    return inner\n" "print(inspect.iscoroutinefunction(outer),"
+                   " inspect.iscoroutinefunction(outer()))\n" "print(await outer()())")
+              "t1/i2")]
+
+        (expect (nil? (:error r)))
+        (expect (= "False True\n1" (str/trim (str (:stdout r)))))))
   ;; Same class of trap: a bare starred target died with a raw
   ;; `UnsupportedOperationException: StoreVisitor: Starred`.
   (it "a bare starred assignment target is a SyntaxError, not a host fault"
@@ -604,12 +638,11 @@ await patch({'path': css})" "t1/i1")]
   ;; must come from the exception itself — otherwise the boundary reports a
   ;; preamble line the user never wrote.
   (it "a compile-phase SyntaxError points at the USER's line"
-      (let
-        [r (ep/run-python-block (:python-context (ep/create-python-context {}))
-                                "x = 1\ndef f():\n    return await g()"
-                                "t1/i1")]
+      (let [r (ep/run-python-block (:python-context (ep/create-python-context {}))
+                                   "x = 1\ny = 2\nf(a=1, a=2)"
+                                   "t1/i1")]
         (expect (= 3 (:line (:data (:error r)))))
-        (expect (str/includes? (str (:message (:error r))) "3:     return await g()"))))
+        (expect (str/includes? (str (:message (:error r))) "3: f(a=1, a=2)"))))
   ;; `globals().clear()` (or deleting an engine-owned name) is legal Python and
   ;; used to KILL the session: the host then called a null `__vis_run_async__` and
   ;; every later block died with a bare NullPointerException.
