@@ -5681,42 +5681,34 @@
         (some #(str/includes? (str/lower-case (str (get row % ""))) needle)
               [:title :session :draft :dir :work-dir :status]))))
 
+(def ^:private navigator-local-only-rank
+  "Band of a row only the LOCAL list could match — its project path, its work dir,
+   its status, an unsent draft. The gateway ranks everything it can see, so these
+   sit after every ranked row instead of competing on a relevance this side is in
+   no position to judge."
+  100)
+
 (defn- navigator-search-rank
-  "Where a matched row sits under a live query, best first.
+  "Where a matched row sits under a live query, best first — the GATEWAY decided.
 
-   A search is someone looking for a SESSION, and its title is the one line a
-   human wrote to name it — a name hit therefore outranks anything found inside
-   the chat. Inside the chat, the words the USER typed outrank the assistant's
-   answer, and the answer outranks the assistant's THINKING: what someone
-   remembers is their own ask, and a reasoning aside is what neither of them
-   said. The focused row keeps the top
-   of its project, and with no query every row is level so the list keeps the
-   order it was built in."
+   Session search is ranked ONCE, on the server (`db-search-session-matches`), and
+   every surface paints that one order: `:rank` is 0 for a hit in the session's own
+   TITLE, 1 for the words the USER typed, 2 for the assistant's ANSWER, 3 for its
+   THINKING. The picker adds only the two facts a server cannot know — the row the
+   keyboard is already on keeps the top of its project, and a row only local
+   metadata matched sits last (`navigator-local-only-rank`). With no query every
+   row is level, so the list keeps the order it was built in."
   [row query match]
-  (let
-    [needle
-     (str/lower-case (str/trim (or query "")))
-
-     hit?
-     (fn [k]
-       (str/includes? (str/lower-case (str (get row k ""))) needle))
-
-     kind
-     (when (map? match) (:kind match))]
-
-    (cond (empty? needle) 0
-          (:focused? row) 0
-          (hit? :title) 1
-          (some hit? [:session :draft :dir :work-dir :status]) 2
-          (= :thinking kind) 5
-          (= :reply kind) 4
-          (some? match) 3
-          :else 2)))
+  (cond (str/blank? (str query)) 0
+        (:focused? row) -1
+        (some? (:rank match)) (long (:rank match))
+        :else navigator-local-only-rank))
 
 (defn- navigator-visible-rows
-  "Union instant local metadata matches with async transcript matches, rank them
-   inside each project (`navigator-search-rank`), then tag the first visible row
-   of each project so rendering can emit one group header."
+  "Union instant local metadata matches with the gateway's async transcript
+   matches, order them inside each project by the RANK the gateway sent
+   (`navigator-search-rank`), then tag the first visible row of each project so
+   rendering can emit one group header."
   [rows query transcript-ids]
   (let
     [q

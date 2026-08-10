@@ -5698,18 +5698,23 @@
                                                                          (fn [q]
                                                                            (try
                                                                              (into {}
-                                                                                   (map (fn [{:keys [id in-request? in-reply? in-thinking? request-snippet reply-snippet hits]}]
-                                                                                          [id {:kind (cond (and in-request? in-reply?) :both
-                                                                                                           in-request? :request
-                                                                                                           in-reply? :reply
-                                                                                                           in-thinking? :thinking
-                                                                                                           :else :both)
-                                                                                               :request-snippet request-snippet
-                                                                                               :reply-snippet reply-snippet
-                                                                                               ;; Every hit the server sent, newest
-                                                                                               ;; first — the picker previews several
-                                                                                               ;; per session, not one.
-                                                                                               :hits hits}]))
+                    (map (fn [{:keys [id rank in-title? in-request? in-reply? in-thinking?
+                                      request-snippet reply-snippet hits]}]
+                           [id {;; The gateway RANKED this row (0 title, 1 request, 2 reply,
+                                ;; 3 thinking) — the picker paints that order and never
+                                ;; invents one of its own.
+                                :rank rank
+                                :kind (cond in-title? :title
+                                            (and in-request? in-reply?) :both
+                                            in-request? :request
+                                            in-reply? :reply
+                                            in-thinking? :thinking
+                                            :else :both)
+                                :request-snippet request-snippet
+                                :reply-snippet reply-snippet
+                                ;; Every hit the server sent, newest first — the
+                                ;; picker previews several per session, not one.
+                                :hits hits}]))
                                                                                    (vis/gateway-search-session-matches q))
                                                                              (catch Throwable _ nil)))}))]
                       (switch-session! choice)

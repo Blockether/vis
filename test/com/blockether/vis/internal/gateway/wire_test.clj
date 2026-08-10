@@ -89,6 +89,10 @@
       (let
         [match
          {:session_id "abc"
+          ;; The gateway's own relevance band travels with the match: clients
+          ;; paint this order, they do not re-derive one from the flags.
+          :rank 1
+          :is_in_title false
           :is_in_request true
           :is_in_reply false
           :is_in_thinking false
@@ -105,8 +109,8 @@
              (get "hits")
              first)]
 
-        (expect (= #{"session_id" "is_in_request" "is_in_reply" "is_in_thinking" "request_snippet"
-                     "reply_snippet" "hits"}
+        (expect (= #{"session_id" "rank" "is_in_title" "is_in_request" "is_in_reply"
+                     "is_in_thinking" "request_snippet" "reply_snippet" "hits"}
                    (set (keys (first w)))))
         (expect (= #{"side" "snippet" "at"} (set (keys hit))))
         ;; The SIDE tag is a plain string on the wire — a keyword here would

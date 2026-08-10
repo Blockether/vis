@@ -17,8 +17,8 @@ import {
   scopedMachines,
   scopeError,
   scopedConns,
+  SEARCH_LOCAL_ONLY_RANK,
   searchOrder,
-  searchRank,
   searchTally,
   scopedSessions,
   sessionIsEmpty,
@@ -267,27 +267,9 @@ describe('search across the fleet', () => {
     expect(searchTally([])).toEqual({ matches: 0, machines: 0 });
   });
 
-  // A hit in the session's NAME is the human's own word for it, so it leads;
-  // inside the transcript what the user asked leads what the assistant answered,
-  // and the answer leads what it merely thought.
-  it('ranks title above metadata, the request, the reply, and the thinking', () => {
-    const at = (hit: Partial<Parameters<typeof searchRank>[0]>) =>
-      searchRank({
-        isInTitle: false,
-        isInMeta: false,
-        isInRequest: false,
-        isInReply: false,
-        isInThinking: false,
-        ...hit,
-      });
-    expect(at({ isInTitle: true, isInReply: true })).toBeLessThan(at({ isInMeta: true }));
-    expect(at({ isInMeta: true })).toBeLessThan(at({ isInRequest: true }));
-    expect(at({ isInRequest: true })).toBeLessThan(at({ isInReply: true }));
-    expect(at({ isInReply: true })).toBeLessThan(at({ isInThinking: true }));
-    // A row that matched on nothing the ranker was told about still sorts with
-    // the local facts rather than below the assistant's text.
-    expect(at({})).toBe(at({ isInMeta: true }));
-  });
+  // Relevance is the GATEWAY's answer: it ranks a hit in the session's NAME above
+  // the user's own words, those above the assistant's answer, and that above what
+  // it merely thought. The app sorts by that number and never recomputes it.
 
   it('re-orders matched rows by rank, keeping the gateway order inside a band', () => {
     const rows = [session('reply'), session('ask'), session('named'), session('other')];
@@ -298,6 +280,15 @@ describe('search across the fleet', () => {
       'other',
       'reply',
     ]);
+  });
+
+  it('sorts a row the gateway could not rank after every ranked one', () => {
+    const rows = [session('draft-only'), session('thinking')];
+    const rank: Record<string, number> = { thinking: 3 };
+    expect(
+      searchOrder(rows, (row) => rank[row.id] ?? SEARCH_LOCAL_ONLY_RANK).map((row) => row.id),
+    ).toEqual(['thinking', 'draft-only']);
+    expect(SEARCH_LOCAL_ONLY_RANK).toBeGreaterThan(3);
   });
 });
 

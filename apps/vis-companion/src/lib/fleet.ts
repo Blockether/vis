@@ -182,51 +182,20 @@ export function searchTally(
 }
 
 /**
- * Bands a live query sorts its results into, best first. Every matched row is in
- * exactly one.
- */
-export const SEARCH_TITLE_BAND = 0;
-export const SEARCH_META_BAND = 1;
-export const SEARCH_REQUEST_BAND = 2;
-export const SEARCH_REPLY_BAND = 3;
-export const SEARCH_THINKING_BAND = 4;
-
-/** Where the query hit one session — the whole input to `searchRank`. */
-export interface SearchHit {
-  /** The query matched the session's own NAME. */
-  isInTitle: boolean;
-  /** It matched the row's other local facts: project, workspace, status, unsent draft. */
-  isInMeta: boolean;
-  /** The gateway found it in the user's own request. */
-  isInRequest: boolean;
-  /** The gateway found it in the assistant's ANSWER. */
-  isInReply: boolean;
-  /** The gateway found it only in the assistant's reasoning aside. */
-  isInThinking: boolean;
-}
-
-/**
- * How well one row answers the query, lower first.
+ * Where a row the gateway could not rank sits: after every ranked one.
  *
- * A search is someone looking for a SESSION, and its title is the one line a
- * human wrote to name it: a name hit outranks anything found inside the chat,
- * however deep or recent that is. Inside the chat the words the USER typed
- * outrank the assistant's answer, and the answer outranks the assistant's
- * thinking — what someone remembers is their own ask, the answer is only what it
- * caused, and a reasoning aside is what neither of them said.
+ * Relevance is the SERVER's answer (`SessionMatch.rank` — title, then the user's
+ * own words, then the assistant's answer, then its thinking), decided once for
+ * every client. What is left over is what no gateway can see: an unsent draft in
+ * this device's composer, and the local metadata of a row the search endpoint did
+ * not return. Those sort last rather than competing on a relevance this side is
+ * in no position to judge.
  */
-export function searchRank(hit: SearchHit): number {
-  if (hit.isInTitle) return SEARCH_TITLE_BAND;
-  if (hit.isInMeta) return SEARCH_META_BAND;
-  if (hit.isInRequest) return SEARCH_REQUEST_BAND;
-  if (hit.isInReply) return SEARCH_REPLY_BAND;
-  if (hit.isInThinking) return SEARCH_THINKING_BAND;
-  return SEARCH_META_BAND;
-}
+export const SEARCH_LOCAL_ONLY_RANK = 100;
 
 /**
- * Rank the rows a query matched, keeping the incoming order inside a band, so
- * relevance decides between rows and the gateway's own ordering still decides
+ * Order the rows a query matched by the rank the GATEWAY gave them, keeping the
+ * incoming order inside a band so the gateway's own ordering still decides
  * between equally relevant ones. Bands the list paints itself (`sessionOrder`)
  * are applied AFTER this, so a starred row stays on top of its own search.
  */

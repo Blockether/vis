@@ -1328,6 +1328,55 @@
         (expect (= [:thinking] (mapv :side (:hits (get by-id mused)))))
         (expect (= [:reply] (mapv :side (:hits (get by-id answered))))))))
   (it
+    "ranks a TITLE match above every transcript match, and says so in `:rank`"
+    (let
+      [s
+       (h/store)
+
+       named
+       (h/store-session! s {:channel :tui :title "Needle by name"})
+
+       asked
+       (h/store-session! s {:channel :tui :title "Asked"})
+
+       answered
+       (h/store-session! s {:channel :tui :title "Answered"})
+
+       turn!
+       (fn [sid request iteration]
+         (let
+           [tid (vis/db-store-session-turn!
+                  s
+                  {:parent-session-id sid :user-request request :status :done})]
+           (h/store-iteration! s (merge {:session-turn-id tid :code "x" :result 1} iteration))))]
+
+      ;; The named session is written FIRST and its transcript never says
+      ;; "needle", so only the band can lift it over two newer body matches.
+      (turn! named "plain ask" {:assistant-prose "plain"})
+      (turn! answered "plain ask" {:assistant-prose "needle in the answer"})
+      (turn! asked "needle in the ask" {:assistant-prose "plain"})
+      (expect (= [named asked answered] (vis/db-search-session-ids s :all "needle")))
+      (let
+        [by-id (into {} (map (juxt :id identity)) (vis/db-search-session-matches s :all "needle"))]
+        (expect (= {:rank 0 :in-title? true :in-request? false :in-reply? false}
+                   (select-keys (get by-id named) [:rank :in-title? :in-request? :in-reply?])))
+        (expect (= 1 (:rank (get by-id asked))))
+        (expect (= 2 (:rank (get by-id answered))))
+        ;; A title hit is not a chat line: it lifts the session, it does not
+        ;; fake a transcript snippet.
+        (expect (= [] (:hits (get by-id named))))
+        (expect (= false (:in-title? (get by-id asked)))))))
+  (it "matches a title by SUBSTRING, so a query the transcript index cannot tokenize still finds it"
+      (let
+        [s
+         (h/store)
+
+         cid
+         (h/store-session! s {:channel :tui :title "Refactor the Navigator"})]
+
+        (expect (= [cid] (vis/db-search-session-ids s :all "avigat")))
+        (expect (= [] (vis/db-search-session-ids s :all "zzz")))))
+  (it
     "caps hits PER SESSION, so an older session is not starved by a newer one"
     (let
       [s

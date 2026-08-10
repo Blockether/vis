@@ -1452,25 +1452,64 @@
               {:sid (:sid row) :side (:side hit side) :at (:at row) :snippet (:snippet hit)}))
           kept)))
 
+(defn- title-hit-rows
+  "Sessions whose own TITLE contains `needle`, shaped exactly like
+   `transcript-hit-rows` so a name and a transcript line rank in ONE table.
+
+   SUBSTRING, case-insensitive (`instr`), not the FTS prefix match the transcript
+   uses: a title is one short line a human wrote, and someone hunting for it types
+   the middle of a word as readily as its start. `instr` also needs no `LIKE`
+   escaping, so a query holding `%` or `_` means itself.
+
+   The title travels as the hit's snippet only to carry the match; the caller
+   keeps title hits out of the snippet list, which is about transcript text."
+  [db-info ch needle]
+  (let
+    [sql
+     (str "SELECT cs.id AS sid, s.title AS title, cs.created_at AS at " "FROM session_soul cs "
+          "JOIN session_state s ON s.session_soul_id = cs.id "
+          "WHERE cs.parent_state_id IS NULL AND cs.claimed_at IS NOT NULL "
+          "AND s.title IS NOT NULL AND instr(lower(s.title), ?) > 0 "
+          "AND s.version = (SELECT MAX(s2.version) FROM session_state s2 "
+          "WHERE s2.session_soul_id = cs.id)" (if ch " AND cs.channel = ?" "")
+          " ORDER BY cs.created_at DESC LIMIT " transcript-hit-sessions-limit)
+
+     params
+     (cond-> [(str/lower-case (str needle))]
+       ch
+       (conj ch))]
+
+    (mapv (fn [row]
+            {:sid (str (:sid row)) :side :title :at (:at row) :snippet (:title row)})
+          (raw-query! db-info (into [sql] params)))))
+
 (def ^:private transcript-hit-side-rank
-  "Ordering band of ONE transcript hit, best first: what the USER wrote outranks
-   the assistant's ANSWER, and the answer outranks the assistant's THINKING.
-   Someone searching a transcript is looking for their own words back — the
-   request they typed is the thing they remember typing, the answer is what it
-   caused, and the reasoning aside is not what either of them said."
-  {:request 0 :reply 1 :thinking 2})
+  "Ordering band of ONE search hit, best first — the ONE table every surface is
+   ranked by, computed here and shipped to clients as `:rank`.
 
-(defn- transcript-rows->sessions
-  "Fold per-row hits into one entry per session soul.
+   A search is someone looking for a SESSION, and its TITLE is the one line a
+   human wrote to name it, so a name hit outranks anything found inside the chat.
+   Inside the chat what the USER wrote outranks the assistant's ANSWER, and the
+   answer outranks its THINKING: the request is the thing they remember typing,
+   the answer is what it caused, and the reasoning aside is not what either of
+   them said."
+  {:title 0 :request 1 :reply 2 :thinking 3})
 
-   RANKED, not merely recent: inside a session the user's own request hits come
-   first, then the assistant's answers, then its thinking (newest first within
-   each band), so the per-session cap (`transcript-hits-per-session`) keeps the
-   user's words before the assistant's and the reasoning aside last; across
-   sessions the same three bands decide, a session ranking by its BEST hit, each
-   band ordered by its newest hit. `:request-snippet`/`:reply-snippet` stay as
-   the FIRST hit of each side so single-snippet callers keep working — the reply
-   snippet falls back to a thinking hit when that is all there was."
+(defn- search-rows->sessions
+  "Fold per-row hits into one RANKED entry per session soul.
+
+   Ranking happens HERE, on the server, and travels as `:rank` so no client ever
+   invents an order of its own: a session's rank is its BEST hit's band
+   (`transcript-hit-side-rank` — title, then request, then reply, then thinking),
+   and equal bands are broken by the newest hit. Inside a session the same bands
+   order the hits, so the per-session cap (`transcript-hits-per-session`) keeps
+   the user's words before the assistant's and the reasoning aside last.
+
+   `:hits` carries TRANSCRIPT snippets only — a title hit is reported by
+   `:in-title?` and by the rank, not as a fake chat line. `:request-snippet` /
+   `:reply-snippet` stay as the FIRST hit of each side so single-snippet callers
+   keep working, the reply snippet falling back to a thinking hit when that is
+   all there was."
   [rows]
   (->> rows
        (filter :snippet)
@@ -1484,13 +1523,13 @@
 
               band
               (fn [h]
-                (long (get transcript-hit-side-rank (:side h) 1)))
+                (long (get transcript-hit-side-rank (:side h) 2)))
 
               ordered
               (vec (sort-by (juxt band (comp - at)) hits))
 
               kept
-              (vec (take transcript-hits-per-session ordered))
+              (vec (take transcript-hits-per-session (remove #(= :title (:side %)) ordered)))
 
               side?
               (fn [& sides]
@@ -1502,7 +1541,8 @@
 
              {:id (->uuid sid)
               :newest (reduce max 0 (map at ordered))
-              :band (reduce min 9 (map band ordered))
+              :rank (reduce min 9 (map band ordered))
+              :in-title? (side? :title)
               :in-request? (side? :request)
               :in-reply? (side? :reply)
               :in-thinking? (side? :thinking)
@@ -1511,31 +1551,38 @@
               :hits (mapv (fn [h]
                             {:side (:side h) :snippet (:snippet h) :at (->date (:at h))})
                           kept)})))
-       (sort-by (juxt (comp long :band) (comp - long :newest)))
-       (mapv #(dissoc % :newest :band))))
+       (sort-by (juxt (comp long :rank) (comp - long :newest)))
+       (mapv #(dissoc % :newest))))
 
 (defn db-search-session-matches
-  "Sessions whose TRANSCRIPT text matches `query`, each carrying WHERE it hit and
-   up to `transcript-hits-per-session` MATCH SNIPPETS:
+  "Sessions whose TITLE or TRANSCRIPT text matches `query`, RANKED, each carrying
+   WHERE it hit and up to `transcript-hits-per-session` MATCH SNIPPETS:
 
-   `{:id uuid :in-request? bool :in-reply? bool :in-thinking? bool
-     :request-snippet str-or-nil :reply-snippet str-or-nil
+   `{:id uuid :rank 0-3 :in-title? bool :in-request? bool :in-reply? bool
+     :in-thinking? bool :request-snippet str-or-nil :reply-snippet str-or-nil
      :hits [{:side :request|:reply|:thinking :snippet str :at Date}]}`
 
+   `:in-title?` = the session's own name matched (`title-hit-rows`, substring);
    `:in-request?` = the user's request (`session_turn_soul.user_request`) matched;
    `:in-reply?` = the assistant's ANSWER (`llm_assistant_prose`) matched;
    `:in-thinking?` = its reasoning aside (`llm_thinking`) matched — the weakest
    band, since it is what neither of them said. The raw provider envelope
    (`llm_assistant_message`) is deliberately NOT searched: it is wire JSON, not
-   what was said. Any of the three can be true together.
+   what was said. Any of the four can be true together.
 
-   Served by the V1 FTS5 indexes (`transcript_request_fts` / `transcript_reply_fts`)
-   — single-digit milliseconds instead of the ~400ms full `LIKE '%q%'` scan of the
-   whole corpus, which is what made TUI/app session search feel frozen. Matching is
-   token PREFIX (`dia` finds `dialogs`); a query with NO alphanumeric token at all
-   (`???`) matches nothing. Newest hits first, sessions ordered by their newest hit.
+   The RESULT ORDER IS THE ANSWER: best band first, newest first inside a band,
+   with `:rank` spelled out so every surface — TUI, companion, CLI, the next
+   client nobody has written — paints one order instead of re-deciding relevance
+   from flags it happens to hold. See `transcript-hit-side-rank`.
 
-   This is the SERVER-side half of transcript search: the assistant text never
+   Transcript matching is served by the V1 FTS5 indexes (`transcript_request_fts` /
+   `transcript_reply_fts`) — single-digit milliseconds instead of the ~400ms full
+   `LIKE '%q%'` scan of the whole corpus, which is what made TUI/app session search
+   feel frozen. It is token PREFIX matching (`dia` finds `dialogs`); a query with
+   NO alphanumeric token at all (`???`) still searches TITLES, which are matched
+   as a plain substring.
+
+   This is the SERVER-side half of session search: the assistant text never
    crosses the wire, only these snippet windows. `channel` filters like
    `db-list-sessions` (`:all`/nil = cross-channel). Blank query returns `[]`."
   [db-info channel query]
@@ -1552,10 +1599,12 @@
          ch (when-not (or (nil? ch) (= "all" ch)) ch)
          match (fts-match-expr q)]
 
-        (if match
-          (transcript-rows->sessions (into (transcript-hit-rows db-info :request ch match)
-                                           (transcript-hit-rows db-info :reply ch match)))
-          [])))))
+        (search-rows->sessions (cond-> (title-hit-rows db-info ch q)
+                                 match
+                                 (into (transcript-hit-rows db-info :request ch match))
+
+                                 match
+                                 (into (transcript-hit-rows db-info :reply ch match))))))))
 
 (defn db-search-session-ids
   "Soul ids whose TRANSCRIPT text matches `query`.

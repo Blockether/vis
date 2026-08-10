@@ -519,12 +519,15 @@
 
 (defn search-session-matches
   "GET /v1/sessions/actions/search?q= — like `search-session-ids` but each hit is
-   TAGGED with WHERE it matched and carries up to a handful of snippets:
-   `[{:id str :in-request? bool :in-reply? bool :in-thinking? bool
-      :request-snippet str :reply-snippet str
+   TAGGED with WHERE it matched, RANKED by the server, and carries up to a handful
+   of snippets:
+   `[{:id str :rank 0-3 :in-title? bool :in-request? bool :in-reply? bool
+      :in-thinking? bool :request-snippet str :reply-snippet str
       :hits [{:side :request|:reply|:thinking :snippet str :at ms}]}]`.
-   `:in-request?` = the user's own request matched; `:in-reply?` = the assistant's
-   answer; `:in-thinking?` = only its reasoning aside. Blank query → []. Heavy
+   `:in-title?` = the session's own name matched; `:in-request?` = the user's own
+   request; `:in-reply?` = the assistant's answer; `:in-thinking?` = only its
+   reasoning aside. The vector arrives in the gateway's RANK order (`:rank`, 0
+   best) and is painted in it — a surface never re-ranks. Blank query → []. Heavy
    assistant text never crosses the wire."
   [query]
   (let
@@ -536,6 +539,8 @@
       (->> (get (send-json! "GET" (str "/v1/sessions/actions/search?q=" (enc q))) "matches")
            (mapv (fn [m]
                    {:id (get m "session_id")
+                    :rank (long (or (get m "rank") 0))
+                    :in-title? (boolean (get m "is_in_title"))
                     :in-request? (boolean (get m "is_in_request"))
                     :in-reply? (boolean (get m "is_in_reply"))
                     :in-thinking? (boolean (get m "is_in_thinking"))

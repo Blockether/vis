@@ -96,8 +96,8 @@ import {
   scopedConns,
   scopedMachines,
   scopeError,
+  SEARCH_LOCAL_ONLY_RANK,
   searchOrder,
-  searchRank,
   searchTally,
   sessionIsListed,
   sessionIsLive,
@@ -618,21 +618,16 @@ export function SessionsScreen({
           !needle || titleHit(session) || metaHit(session) || matches?.has(session.id) === true
         );
       });
-      // A query RE-RANKS what it matched: the session's own name first, then its
-      // other local facts, then the user's own words, then the assistant's answer,
-      // and last its thinking (`searchRank`). Without it a title hit sank under
-      // transcript hits that merely happened to be newer.
+      // A query RE-RANKS what it matched, and the GATEWAY decides how: `rank` is
+      // the server's band (title, then the user's own words, then the assistant's
+      // answer, then its thinking), the same order the TUI and every future client
+      // paints. Rows the gateway did not rank — an unsent draft in this device's
+      // composer, local metadata — fall in behind them.
       const ranked = needle
-        ? searchOrder(sessions, (session) => {
-            const match = matches?.get(session.id);
-            return searchRank({
-              isInTitle: titleHit(session),
-              isInMeta: metaHit(session),
-              isInRequest: match?.inRequest === true,
-              isInReply: match?.inReply === true,
-              isInThinking: match?.inThinking === true,
-            });
-          })
+        ? searchOrder(
+            sessions,
+            (session) => matches?.get(session.id)?.rank ?? SEARCH_LOCAL_ONLY_RANK,
+          )
         : sessions;
       // Starred rows first, then unsent work, and with them the project group that
       // owns them: see `sessionOrder`.

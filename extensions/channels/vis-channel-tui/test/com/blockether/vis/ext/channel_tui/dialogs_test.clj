@@ -415,33 +415,45 @@
           (expect (= ["newest reply" "older ask" "oldest reply"] (mapv :text (preview-entries m))))
           ;; A hit-less match (older gateway) still renders the legacy pair.
           (expect (= ["You" "Vis"] (mapv :label (preview-entries (dissoc m :hits)))))))
-    (it "a live query ranks NAME, then the ask, then the reply, then the thinking"
-        (let
-          [all-rows (var-get #'dlg/navigator-all-rows)
-           visible-rows (var-get #'dlg/navigator-visible-rows)
-           ;; Listed newest-first by the gateway: the thinking-only session leads.
-           rows (all-rows
-                  {:active-session-id "none"
-                   :sessions
-                   [{"id" "muse" "title" "Muse hit" "turn_count" 4 "created_at" 0 "modified_at" 4}
-                    {"id" "reply" "title" "Reply hit" "turn_count" 3 "created_at" 0 "modified_at" 3}
-                    {"id" "ask" "title" "Ask hit" "turn_count" 2 "created_at" 0 "modified_at" 2}
-                    {"id" "named"
-                     "title" "Needle in the name"
-                     "turn_count" 1
-                     "created_at" 0
-                     "modified_at" 1}]})
-           matches {"muse" {:kind :thinking :reply-snippet "…needle…"}
-                    "reply" {:kind :reply :reply-snippet "…needle…"}
-                    "ask" {:kind :request :request-snippet "…needle…"}}
-           vis (visible-rows rows "needle" matches)]
+    (it
+      "a live query paints the GATEWAY's rank: name, ask, reply, thinking"
+      (let
+        [all-rows (var-get #'dlg/navigator-all-rows)
+         visible-rows (var-get #'dlg/navigator-visible-rows)
+         ;; Listed newest-first by the gateway: the thinking-only session leads.
+         rows (all-rows
+                {:active-session-id "none"
+                 :sessions
+                 [{"id" "muse" "title" "Muse hit" "turn_count" 4 "created_at" 0 "modified_at" 4}
+                  {"id" "reply" "title" "Reply hit" "turn_count" 3 "created_at" 0 "modified_at" 3}
+                  {"id" "ask" "title" "Ask hit" "turn_count" 2 "created_at" 0 "modified_at" 2}
+                  {"id" "named"
+                   "title" "Needle in the name"
+                   "turn_count" 1
+                   "created_at" 0
+                   "modified_at" 1}]})
+         ;; The bands are the SERVER's (`:rank`): 0 title, 1 request, 2 reply,
+         ;; 3 thinking. The picker sorts by them and invents nothing.
+         matches {"muse" {:rank 3 :kind :thinking :reply-snippet "…needle…"}
+                  "reply" {:rank 2 :kind :reply :reply-snippet "…needle…"}
+                  "ask" {:rank 1 :kind :request :request-snippet "…needle…"}
+                  "named" {:rank 0 :kind :title}}
+         vis (visible-rows rows "needle" matches)
+         ;; Same rows, gateway ranks turned around: the picker follows the
+         ;; server even when its OWN title cell matched the query.
+         flipped (visible-rows rows
+                               "needle"
+                               (assoc matches
+                                 "named" {:rank 3 :kind :title}
+                                 "muse" {:rank 0 :kind :thinking :reply-snippet "…needle…"}))]
 
-          ;; The name a human typed beats anything said in the chat; what the user
-          ;; asked beats what the assistant answered; the assistant's reasoning
-          ;; aside comes last. Recency decides only between equals.
-          (expect (= ["named" "ask" "reply" "muse"] (mapv (comp str :id :target) vis)))
-          (expect (= "in thinking"
-                     (:status (first (filter #(= "muse" (str (:id (:target %)))) vis)))))))
+        ;; The name a human typed beats anything said in the chat; what the user
+        ;; asked beats what the assistant answered; the assistant's reasoning
+        ;; aside comes last. Recency decides only between equals.
+        (expect (= ["named" "ask" "reply" "muse"] (mapv (comp str :id :target) vis)))
+        (expect (= ["muse" "ask" "reply" "named"] (mapv (comp str :id :target) flipped)))
+        (expect (= "in thinking"
+                   (:status (first (filter #(= "muse" (str (:id (:target %)))) vis)))))))
     (it "every matching row carries its own snippets, inline, like the app"
         (let
           [all-rows (var-get #'dlg/navigator-all-rows)

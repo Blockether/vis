@@ -4555,26 +4555,34 @@
      (if db (mapv str (persistance/db-search-session-ids db channel query)) []))))
 
 (defn search-session-matches
-  "Soul-id STRINGS whose TRANSCRIPT matches `query`, each TAGGED with WHERE it hit
-   and carrying up to a handful of MATCH SNIPPETS:
-   `[{:session_id str :is_in_request bool :is_in_reply bool :is_in_thinking bool
+  "Soul-id STRINGS whose TITLE or TRANSCRIPT matches `query`, each TAGGED with
+   WHERE it hit, RANKED by the server, and carrying up to a handful of MATCH
+   SNIPPETS:
+   `[{:session_id str :rank 0-3 :is_in_title bool :is_in_request bool
+      :is_in_reply bool :is_in_thinking bool
       :request_snippet str :reply_snippet str
       :hits [{:side \"request\"|\"reply\"|\"thinking\" :snippet str :at ms}]}]`
    (wire-shaped: snake_case string-ish keys, `is_<foo>` flags). Same SERVER-side
    deep search as `search-session-ids` — the assistant text never crosses the wire,
-   only these snippet windows. `:is_in_request` = the user's own request matched;
-   `:is_in_reply` = the assistant's answer matched; `:is_in_thinking` = only its
-   reasoning aside did. RANKED, not merely recent: sessions whose REQUEST matched
-   lead the answer matches, which lead the thinking-only ones, and inside a session
-   the same order holds — what someone searches for is their own words.
+   only these snippet windows. `:is_in_title` = the session's own name matched;
+   `:is_in_request` = the user's own request matched; `:is_in_reply` = the
+   assistant's answer; `:is_in_thinking` = only its reasoning aside.
+
+   RELEVANCE IS DECIDED HERE, once, for every client: the vector arrives in rank
+   order and each row spells its band out in `:rank` (0 title, 1 request, 2 reply,
+   3 thinking; newest first within a band). A surface paints this order — it does
+   not re-rank from the flags.
    Blank query → []."
   ([query] (search-session-matches :all query))
   ([channel query]
    (let [db (try (lp/db-info) (catch Throwable _ nil))]
      (if db
        (mapv (fn
-               [{:keys [id in-request? in-reply? in-thinking? request-snippet reply-snippet hits]}]
+               [{:keys [id rank in-title? in-request? in-reply? in-thinking? request-snippet
+                        reply-snippet hits]}]
                {:session_id (str id)
+                :rank (long (or rank 0))
+                :is_in_title (boolean in-title?)
                 :is_in_request (boolean in-request?)
                 :is_in_reply (boolean in-reply?)
                 :is_in_thinking (boolean in-thinking?)

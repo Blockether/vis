@@ -100,8 +100,15 @@ export interface SessionMatchHit {
 // preview snippets. Only those small windows travel — never the conversation.
 // `requestSnippet`/`replySnippet` are the first hit of each side, kept for
 // callers that want a single line.
+//
+// `rank` is the gateway's own relevance band — 0 the session's TITLE, 1 the
+// user's own words, 2 the assistant's answer, 3 its thinking — and the array
+// arrives in that order. Search relevance is decided once, on the server, for
+// every client; this app paints that order rather than re-deriving one.
 export interface SessionMatch {
   sessionId: string;
+  rank: number;
+  inTitle: boolean;
   inRequest: boolean;
   inReply: boolean;
   inThinking: boolean;
@@ -112,6 +119,8 @@ export interface SessionMatch {
 
 interface RawSessionMatch {
   session_id: string;
+  rank?: number;
+  is_in_title?: boolean;
   is_in_request?: boolean;
   is_in_reply?: boolean;
   is_in_thinking?: boolean;
@@ -2157,6 +2166,8 @@ export class GatewayClient {
     );
     return (res.matches ?? []).map((m) => ({
       sessionId: m.session_id,
+      rank: Number(m.rank ?? 0),
+      inTitle: Boolean(m.is_in_title),
       inRequest: Boolean(m.is_in_request),
       inReply: Boolean(m.is_in_reply),
       inThinking: Boolean(m.is_in_thinking),
