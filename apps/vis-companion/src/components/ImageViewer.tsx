@@ -31,6 +31,7 @@ import {
   type AnnotationSurface,
 } from "./AnnotationLayer";
 import { Button, DialogHeader } from "./ui";
+import { ChevronIcon } from "./icons";
 import { useGalleryStep, type GalleryPicture } from "../lib/gallery";
 import { useStickyOverlay } from "../lib/sticky-overlay";
 
@@ -574,7 +575,7 @@ export function ImageViewer({
                 disabled={drawing || step === 0}
                 aria-label="Previous image"
               >
-                ‹
+                <ChevronIcon back className="size-3" />
               </Button>
               <span className="shrink-0 font-mono text-chip text-dialog-hint">
                 {step + 1} / {gallery.length}
@@ -585,7 +586,7 @@ export function ImageViewer({
                 disabled={drawing || step === gallery.length - 1}
                 aria-label="Next image"
               >
-                ›
+                <ChevronIcon className="size-3" />
               </Button>
             </div>
           )}

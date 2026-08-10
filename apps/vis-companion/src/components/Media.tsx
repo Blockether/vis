@@ -32,7 +32,11 @@ export function MediaPlate({
   children: ReactNode;
 }) {
   return (
-    <figure className="mt-2.5 min-w-0">
+    // The gap over a picture is the transcript's own rhythm, spelled ONCE: the
+    // block that opens a step takes the stack's gap and adds none of its own,
+    // or the whitespace above a gallery and the whitespace below it stop
+    // matching.
+    <figure className="mt-2.5 min-w-0 first:mt-0">
       <div className={mediaFrameClass}>{children}</div>
       {name ? (
         <figcaption className={mediaCaptionClass}>
@@ -68,7 +72,7 @@ export function MediaGrid({
   children: ReactNode;
 }) {
   return (
-    <div className="mt-2.5 min-w-0">
+    <div className="mt-2.5 min-w-0 first:mt-0">
       <div className={mediaGridClass}>
         <ImageGallery>{children}</ImageGallery>
       </div>

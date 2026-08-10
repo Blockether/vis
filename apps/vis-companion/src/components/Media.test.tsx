@@ -75,6 +75,40 @@ describe("MediaGrid", () => {
   });
 });
 
+// Regression, user report ("margin bottom from this component is not the same
+// like margin top"): a media block sits in the transcript's own `gap-2.5` stack,
+// and it used to spell a gap on BOTH edges — so the picture had 10px above it and
+// 18-20px below, and the block read as if it belonged to the paragraph under it.
+// The stack owns the trailing gap; the block only tops itself up to it, and never
+// on the very first row.
+describe("a media block's own edges", () => {
+  const root = (html: string) => /^<\w+ class="([^"]*)"/u.exec(html)?.[1] ?? "";
+
+  const edges = [
+    ["MediaPlate", renderToStaticMarkup(<MediaPlate><div /></MediaPlate>)],
+    [
+      "MediaGrid",
+      renderToStaticMarkup(
+        <MediaGrid summary="1 image · 8B">
+          <MediaTile>
+            <div />
+          </MediaTile>
+        </MediaGrid>,
+      ),
+    ],
+  ] as const;
+
+  for (const [name, html] of edges) {
+    it(`tops ${name} up to the stack's gap and never pads under it`, () => {
+      const classes = root(html).split(/\s+/u);
+
+      expect(classes).toContain("mt-2.5");
+      expect(classes).toContain("first:mt-0");
+      expect(classes.filter((one) => /^m[by]?-/u.test(one))).toEqual([]);
+    });
+  }
+});
+
 describe("the gallery's own line", () => {
   it("counts what it holds", () => {
     expect(mediaSummary([{ size: 1 }])).toBe("1 image · 1B");

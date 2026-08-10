@@ -1513,7 +1513,11 @@ export const ThinkingBand = memo(function ThinkingBand({
   const collapsible = hiddenRows >= REASONING_COLLAPSE_MIN_HIDDEN;
 
   return (
-    <section className="my-2 min-w-0 bg-thinking-surface px-3 py-2 text-ui text-thinking">
+    // A band never pushes ITSELF down: when it opens a step it is the first
+    // block of that section and the transcript stack has already spaced it.
+    // Spelling the gap twice is what made the whitespace under a picture wider
+    // than the whitespace over it.
+    <section className="my-2 min-w-0 bg-thinking-surface px-3 py-2 text-ui text-thinking first:mt-0">
       {collapsible && (
         <Disclosure
           isOpen={expanded}
@@ -2057,7 +2061,10 @@ const TraceSegment = memo(function TraceSegment({
         <ThinkingBand>{segment.head.thinking}</ThinkingBand>
       )}
       {segment.head.prose && (
-        <div className="my-2.5 text-ui text-vis-message">
+        // Same rhythm as every other block in the stack: the gap above this
+        // prose is the stack's, so neither the block nor its first paragraph
+        // adds one of its own on top of it.
+        <div className="mb-2.5 text-ui text-vis-message [&>:first-child]:mt-0">
           <Markdown>{segment.head.prose}</Markdown>
         </div>
       )}
@@ -2500,7 +2507,7 @@ export const UserMessage = memo(function UserMessage({
         )}
       </div>
       {mediaAttachments.length > 0 && (
-        <div className="min-w-0">
+        <div className="mt-2.5 min-w-0">
           {/* The clip the user sent replays from the SAME DB-owned bytes as a
               picture, so it survives a restart after the source file is gone. */}
           {clips.map((att, index) => (
