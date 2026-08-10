@@ -72,7 +72,7 @@
     (let [n (name wire-name)]
       (or (label-overrides n) (str/upper-case n)))))
 
-(def ^:private compact-path-summary-tools #{"patch" "struct_patch" "write"})
+(def ^:private compact-path-summary-tools #{"patch" "struct_patch"})
 
 (defn- compact-tool-summary
   "Remove mutation verbs made redundant by the tool badge. This also normalizes

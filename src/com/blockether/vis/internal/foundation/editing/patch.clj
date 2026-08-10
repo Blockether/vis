@@ -361,7 +361,7 @@
                     (if (empty? matches)
                       ;; 5. content is gone — refuse, re-read. Carry the CURRENT anchor at
                       ;;    the stated line so the caller can recover in ONE step (the
-                      ;;    common stale-after-`write` case) instead of a separate `cat`.
+                      ;;    common stale-after-edit case) instead of a separate `cat`.
                       {:error {:reason :hashline-not-found
                                :which which
                                :hash hash

@@ -894,7 +894,7 @@
    answers are plain prose (no control-flow verb), so no core head
    remains.
 
-   Extension tools (`patch`, `write`, `git_commit`, anything an extension
+   Extension tools (`patch`, `struct_patch`, `git_commit`, anything an extension
    ships) are NOT here. Extensions declare their own observation / mutation
    tag at registration time; the integration layer reaches that tag through
    `extension/op-tag` and passes it to `classify-form-tag` as an optional

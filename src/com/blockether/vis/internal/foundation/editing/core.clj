@@ -59,7 +59,7 @@
            (com.github.difflib.patch AbstractDelta Chunk Patch)
            (java.io File)))
 
-;; Tools in this namespace (cat/patch/write/move/…) can execute DEFERRED on a
+;; Tools in this namespace (cat/patch/struct_patch/move/…) can execute DEFERRED on a
 ;; virtual thread that has entered the GraalPy polyglot Context — e.g. inside
 ;; `await gather(cat(a), cat(b))`. While on a context-entered thread, GraalVM's
 ;; HostAccess DENIES reflective Java calls (clojure.lang.Reflector → "Cannot
@@ -809,8 +809,8 @@
 
     (keep #(when (map? %) (get % "path")) edits)))
 
-(defn- write-arg-paths
-  "Every path a write-side call touches: the lone `path`, plus every path an
+(defn- struct-arg-paths
+  "Every path a struct_patch call touches: the lone `path`, plus every path an
    `edits` BATCH entry carries (struct_patch batches one file or many)."
   [args]
   (let [a (first args)]
@@ -906,8 +906,8 @@
       {:env env :fn f :args args})))
 
 (defn- mutation-atomic?
-  "True when a write/patch args vector carries the documented `atomic` escape
-   flag - on the write opts map, or on ANY patch edit map."
+  "True when a patch/struct_patch args vector carries the documented `atomic`
+   escape flag - on the lone edit map, or on ANY edit in the batch."
   [args]
   (let [a (first args)]
     (boolean (cond (map? a) (get a "atomic")
@@ -934,7 +934,7 @@
                                 :paths paths}})))
 
 (defn- plan-gated-before-fn
-  "Write-intent gate for patch / write / struct_patch. The `:fs/access` gate runs
+  "Write-intent gate for patch / struct_patch. The `:fs/access` gate runs
    FIRST (an extension's boundary always wins); only AFTER it clears does this
    consult the env's OPTIONAL `:mutation-gate`. The gate receives
    `{:op :paths :atomic?}` and returns a refusal string to short-circuit with a
@@ -1616,8 +1616,8 @@
    from `:truncated?` which only fires when the window byte cap chopped
    the window short mid-file).
    `:mtime` and `:size` mirror `File.lastModified` / `File.length`. Pass
-   `:mtime` as `write`'s `:expected_mtime` guard before a whole-file overwrite;
-   anchored `patch` edits verify their target content instead.
+   `:mtime` and `:size` are staleness evidence for the caller; anchored `patch`
+   edits verify their target content instead.
    Each call's `:lines` payload is bounded by `max-cat-window-bytes`; that
    is also the persistence-blob ceiling (one Nippy row per call).
    Streaming: never slurps the whole file. Lines outside the window are
@@ -3777,11 +3777,12 @@
                :checks checks}))))))
 
 ;; =============================================================================
-;; write — whole-file write primitive (create or overwrite)
+;; write-safe — whole-file write primitive (create or overwrite)
 ;;
-;; patch is great for surgical edits but awkward for full-file rewrites:
-;; the model would otherwise have to anchor and replace every line. write
-;; makes the common case ergonomic: one tool, one map, atomic semantics.
+;; INTERNAL: no native tool maps onto it. `struct_patch` reaches for it when a
+;; structural edit rewrote the whole buffer, and Python owns whole-file writes
+;; on the model-facing side (`Path.write_text`, `open(p, "w")`), which pass the
+;; same `:fs/access` gate.
 ;;
 ;; Shape (parity with patch result):
 ;;   {:success? true
@@ -4735,7 +4736,7 @@
    numbers, bounded hunk-wise. Only a change too expensive to diff (a full
    rewrite of a very large file) drops to the linear bounded preview.
 
-   A WHOLE-FILE REWRITE (`write` replacing a file, a full-body `struct_patch` —
+   A WHOLE-FILE REWRITE (a full-body `struct_patch`, a Python whole-file write —
    nothing of the old content survives) renders ONE side only: the new content
    as `+` lines under a `--- (replaced, N line(s))` marker. Both sides there
    printed the file twice on every renderer (TUI and companion app read this
@@ -4760,7 +4761,7 @@
                                                 (compact-diff-lines a b))))))))
 
 (def ^:private fresh-anchor-max-lines
-  "Cap on how many post-edit lines a patch/write result hands back as fresh
+  "Cap on how many post-edit lines a patch/struct_patch result hands back as fresh
    `lineno:hash` anchors. A surgical edit rewrites a handful of lines, and
    mirroring them back lets the SAME file be edited again with no second read.
    A whole-file rewrite is not worth mirroring (the caller already holds what it
@@ -4871,7 +4872,7 @@
 
 (defn- patch-result-file-summary
   "Build a per-file summary map that lives on `:result` of `patch` /
-   `write`.
+   `struct_patch`.
 
    Minimal shape — every key is necessary signal, no redundant counters:
 
@@ -4887,7 +4888,7 @@
    diff is capped hunk-wise and the model wire strips it entirely, so the counts
    are the only thing that always states how big the edit was."
   [{:keys [op path before after]}]
-  ;; Model-facing per-file summary (patch/write/struct_patch result) — string
+  ;; Model-facing per-file summary (patch/struct_patch result) — string
   ;; keys, enum values stringified to snake_case.
   (let
     [diff-text
@@ -5024,81 +5025,7 @@
                     (some? (:loop-hint result))
                     (assoc :loop-hint (:loop-hint result)))})))))
 
-(defn- normalize-write-args
-  "Accept write args EITHER as a single options map
-   (`await write({\"path\": P, \"content\": S})`) OR positionally
-   (`await write(P, S)` / `await write(P, S, {opts})`). Returns the
-   canonical options map for `write-safe`."
-  [args]
-  (cond
-    ;; single map → already canonical (also covers Clojure trailing-kwargs)
-    (and (= 1 (count args)) (map? (first args))) (first args)
-    ;; positional: path, content, optional trailing opts map
-    (and (>= (count args) 2) (string? (first args)) (string? (second args)))
-    (merge {"path" (first args) "content" (second args)}
-           (let [extra (nth args 2 nil)]
-             (when (map? extra) extra)))
-    ;; legacy Clojure-style trailing kwargs (even k/v count)
-    (and (pos? (count args)) (even? (count args))) (apply hash-map args)
-    :else (throw (ex-info "write expects (path, content) or a single options map"
-                          {:type :ext.foundation.editing/invalid-write-args
-                           :got (mapv type args)}))))
 
-(defn- write-tool
-  "Write a whole file — create or overwrite.
-     await write(P, S)                                  # positional path, content
-     await write({\"path\": P, \"content\": S})
-     await write({\"path\": P, \"content\": S, \"is_overwrite\": False})   # fail if exists
-     await write({\"path\": P, \"content\": S, \"expected_mtime\": MS})   # staleness guard
-
-   Returns [{\"path\": P, \"op\": \"add\"|\"update\", \"changed\": bool, \"diff\": str}]
-   (same per-file shape as patch, always one element).
-   Gotcha: overwrites the whole file — use patch for surgical anchor edits.
-   REFUSED on a file with uncommitted changes (:reason \"dirty\") — a whole-file
-   write would clobber edits already in flight (e.g. a truncated reconstruction).
-   For an existing file you're changing use patch(...)/struct_patch(...); write is
-   for NEW files and clean overwrites. Override with is_dirty_ok=True."
-  [& args]
-  (let [result (write-safe (normalize-write-args args))]
-    (if (:success? result)
-      (let
-        [plan (:plan result)
-         summary (patch-result-file-summary plan)]
-
-        (tool-success {:op :write
-                       :path (:path plan)
-                       :kind :file
-                       :result [summary]
-                       :metadata {:mode :write
-                                  :file-count 1
-                                  :changed-count (if (get summary "changed") 1 0)
-                                  :op (:op plan)
-                                  :file-befores [(select-keys plan [:path :before])]}}))
-      (let
-        [first-failure (first (:failures result))
-         other-checks (non-failure-checks (:checks result) (:failures result))]
-
-        (extension/failure
-          {:result nil
-           :op :write
-           :metadata {:target {:requested (str (or (:path first-failure) (:path args) "."))
-                               :resolved nil
-                               :absolute nil
-                               :kind :file}
-                      :mode :write
-                      :started-at-ms (now-ms)
-                      :finished-at-ms (now-ms)
-                      :duration-ms 0}
-           :error (cond->
-                    {:message (:message result)
-                     :reason (:reason first-failure)
-                     :failures (:failures result)
-                     :mode :write}
-                    (seq other-checks)
-                    (assoc :checks other-checks)
-
-                    (some? (:loop-hint result))
-                    (assoc :loop-hint (:loop-hint result)))})))))
 
 ;; =============================================================================
 ;; Symbol declarations
@@ -5697,7 +5624,7 @@
         rows))))
 
 (defn- render-patch-result
-  "patch/write/struct_patch → `{:summary :body}`. The badge already states the
+  "patch/struct_patch → `{:summary :body}`. The badge already states the
    operation, so the compact headline contains only affected paths and the SIZE
    of each change (`` `a.clj` +12 -3 ~4 ``) — added, removed and modified lines,
    each part omitted when zero and the whole suffix omitted on a no-op. Large
@@ -6446,33 +6373,6 @@
      :tag :mutation
      :on-error-fn (tool-failure-on-error :patch :file nil)}))
 
-(def write-symbol
-  ;; write reuses the patch channel renderer because its `:result`
-  ;; shape is the same single-file summary (just always 1-file long).
-  (vis/symbol
-    #'write-tool
-    {:symbol 'write
-     :native-tool? true
-     :result
-     "One-row array: `path`, `op`, `changed`, `diff`, plus optional small-region `anchors` (`{\"lineno:hash\":{\"text\":line}}`) reusable as the next `from_anchor`."
-     :description "Create or wholly replace a clean file; dirty targets require `is_dirty_ok`."
-     :replay {:elide-args {"content" 8192}}
-     :render-finish-call-fn render-patch-result
-     :schema
-     {:type "object"
-      :properties
-      {"path" {:type "string" :description "Target file path."}
-       "content" {:type "string" :description "Complete file content."}
-       "is_overwrite" {:type "boolean"
-                       :description "Replace an existing target (default true); false refuses it."}
-       "is_dirty_ok" {:type "boolean" :description "Permit overwrite with uncommitted changes."}
-       "expected_mtime" {:type "integer"
-                         :description "Write only when the target mtime equals this."}}
-      :required ["path" "content"]
-      :additionalProperties false}
-     :before-fn (plan-gated-before-fn :write :file write-arg-paths)
-     :tag :mutation
-     :on-error-fn (tool-failure-on-error :write :file nil)}))
 
 (def ^:private struct-op->kw
   "Bounded snake_case op string (as the model writes it) → the internal kebab
@@ -6584,7 +6484,7 @@
      {find:\"text\"} {find_kind:\"if_statement\"}. Navigate with struct_nodes(...) first,
      then edit the same path here.
    Locate targets with struct_index(paths) / struct_nodes(nodes).
-   Returns the [{\"path\", \"op\", \"changed\", \"diff\"}] shape as write."
+   Returns the [{\"path\", \"op\", \"changed\", \"diff\"}] shape as patch."
   [args]
   (let
     [path
@@ -6743,7 +6643,7 @@
                                 :anchor (get args "anchor")}))
 
      ;; is_dirty_ok: a re-parsed structural edit is SAFE on a file with
-     ;; uncommitted changes — the dirty-guard only blocks the raw `write`.
+     ;; uncommitted changes — the dirty-guard only blocks a blind whole-file write.
      result
      (write-safe {"path" path "content" new-content "is_dirty_ok" true})]
 
@@ -6889,7 +6789,7 @@
        "nav" {:type "array" :description "Relative zipper moves after `at` (strings/maps)."}}
       ;; Either a lone `path`+`op` edit or an `edits` batch — validated in the tool.
       :additionalProperties false}
-     :before-fn (plan-gated-before-fn :struct_patch :file write-arg-paths)
+     :before-fn (plan-gated-before-fn :struct_patch :file struct-arg-paths)
      :tag :mutation
      :on-error-fn (tool-failure-on-error :struct_patch :file nil)}))
 
@@ -7246,7 +7146,7 @@
 
 (defn available-editing-symbols
   []
-  [index-symbol cat-symbol grep-symbol patch-symbol write-symbol struct-patch-symbol nodes-symbol])
+  [index-symbol cat-symbol grep-symbol patch-symbol struct-patch-symbol nodes-symbol])
 
 (defn available-editing-prompt
   "No separate editing prompt: active native descriptions own routing and their

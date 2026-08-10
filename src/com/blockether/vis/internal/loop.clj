@@ -807,7 +807,7 @@
 ;; (`__vis_par_isolated__`) instead of serially. I/O-bound reads/greps overlap;
 ;; the ORDERED result list is re-split so result[i] still pairs to the i-th
 ;; tool_use_id, exactly as the serial path does. A single mutation
-;; (patch/write/…) or python_execution in the iteration → the WHOLE iteration
+;; (patch/struct_patch/…) or python_execution in the iteration → the WHOLE iteration
 ;; stays serial + ordered (mutations are NEVER reordered or parallelized).
 ;; ---------------------------------------------------------------------------
 
@@ -3682,7 +3682,7 @@
         (str "\nhint: " hint)))))
 
 (defn- patch-file-summary?
-  "True when `m` is a patch/write/struct_patch PER-FILE summary — the
+  "True when `m` is a patch/struct_patch PER-FILE summary — the
    `{\"path\" \"op\" \"changed\" …}` shape `patch-result-file-summary` emits. Used to
    recognise an edit result at the model-wire crossing without touching any other
    tool's `:result`."
@@ -3697,7 +3697,7 @@
   (dissoc m "diff"))
 
 (defn- strip-echo-diffs
-  "Model-wire compaction for a patch/write/struct_patch `:result`: strip each
+  "Model-wire compaction for a patch/struct_patch `:result`: strip each
    byte-exact file summary's redundant `\"diff\"` (see `strip-echo-diff`). A no-op
    for any non-edit `:result` (only touched when EVERY element is a file summary)."
   [result]
@@ -3710,9 +3710,9 @@
   "The op-STRING that resolves a PRINTED tool result's renderer.
 
    A map result carries its origin under `\"op\"` (the engine stamps it). A
-   LIST-shaped result cannot — `patch` / `write` / `struct_patch` return one
+   LIST-shaped result cannot — `patch` / `struct_patch` return one
    per-file summary row, and the `\"op\"` on a ROW is the per-file edit verb
-   (`\"add\"`/`\"update\"`), never the tool. Those three share ONE renderer
+   (`\"add\"`/`\"update\"`), never the tool. Both share ONE renderer
    (`render-patch-result`), so a list of per-file summaries resolves to
    `\"patch\"` — the card paints the edit rows instead of silently vanishing."
   [pr]
@@ -11332,7 +11332,7 @@
 
      ;; The `:fs/access` gate, pushed down into the sandbox filesystem: a path an
      ;; extension's gate hook refuses is refused for `open(..., "w")`,
-     ;; `shutil.move` and `Path.unlink` exactly as it is for `write` / `patch`.
+     ;; `shutil.move` and `Path.unlink` exactly as it is for `patch` / `struct_patch`.
      sandbox-gate-fn
      (when sandbox-roots-fn
        (extension/fs-access-gate (fn []

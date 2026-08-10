@@ -107,7 +107,7 @@
                                 s
                                 "sess-round"]
 
-                               (rw/record-pre! (ctx s 1 :write) [(abs f)])
+                               (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                                (spit f "WRECKED")
                                (let [r (rw/restore! s 1)]
                                  (expect (= "ORIGINAL" (slurp f)))
@@ -126,7 +126,7 @@
                                 s
                                 "sess-utf8"]
 
-                               (rw/record-pre! (ctx s 1 :write) [(abs f)])
+                               (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                                (spit f "")
                                (rw/restore! s 1)
                                (expect (= content (slurp f))))))
@@ -139,7 +139,7 @@
                                 s
                                 "sess-empty"]
 
-                               (rw/record-pre! (ctx s 1 :write) [(abs f)])
+                               (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                                (spit f "no longer empty")
                                (rw/restore! s 1)
                                (expect (= "" (slurp f)))
@@ -154,7 +154,7 @@
                                 "sess-created"]
 
                                (expect (not (.exists f)))
-                               (rw/record-pre! (ctx s 1 :write) [(abs f)])
+                               (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                                (put! f "brand new")
                                (let [r (rw/restore! s 1)]
                                  (expect (not (.exists f)))
@@ -185,7 +185,7 @@
                                 s
                                 "sess-idem"]
 
-                               (rw/record-pre! (ctx s 1 :write) [(abs f)])
+                               (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                                (spit f "WRECKED")
                                (rw/restore! s 1)
                                (rw/restore! s 1)
@@ -207,7 +207,7 @@
                      "sess-first-wins"
 
                      c
-                     (ctx s 1 :write)]
+                     (ctx s 1 :patch)]
 
                     (rw/record-pre! c [(abs f)])
                     (spit f "V2")
@@ -229,9 +229,9 @@
                      s
                      "sess-multi"]
 
-                    (rw/record-pre! (ctx s 1 :write) [(abs a)])
+                    (rw/record-pre! (ctx s 1 :patch) [(abs a)])
                     (spit a "A2")
-                    (rw/record-pre! (ctx s 2 :write) [(abs b)])
+                    (rw/record-pre! (ctx s 2 :patch) [(abs b)])
                     (spit b "B2")
                     (rw/restore! s 2)
                     (expect (= "A2" (slurp a)) "turn 1's change survives a rewind to turn 2")
@@ -247,11 +247,11 @@
                      s
                      "sess-earliest"]
 
-                    (rw/record-pre! (ctx s 1 :write) [(abs f)])
+                    (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                     (spit f "T2")
-                    (rw/record-pre! (ctx s 2 :write) [(abs f)])
+                    (rw/record-pre! (ctx s 2 :patch) [(abs f)])
                     (spit f "T3")
-                    (rw/record-pre! (ctx s 3 :write) [(abs f)])
+                    (rw/record-pre! (ctx s 3 :patch) [(abs f)])
                     (spit f "T4")
                     ;; Exactly ONE restore entry per path, and it is the EARLIEST at/after
                     ;; the target turn.
@@ -271,18 +271,18 @@
                      s
                      "sess-points"]
 
-                    (rw/record-pre! (ctx s 1 :write) [(abs a)])
+                    (rw/record-pre! (ctx s 1 :patch) [(abs a)])
                     (rw/record-pre! (ctx s 2 :patch) [(abs a) (abs b)])
                     (let [ps (rw/points s)]
                       (expect (= [1 2] (mapv #(get % "turn") ps)))
                       (expect (= [1 2] (mapv #(get % "files") ps)))
-                      (expect (= ["write"] (get (first ps) "ops")))
+                      (expect (= ["patch"] (get (first ps) "ops")))
                       (expect (= ["patch"] (get (second ps) "ops")))
                       (expect (= "prompt for turn 2" (get (second ps) "user_request")))))))
   (it "keeps no rewind point for a turn that touched nothing"
       (with-store [_ _work]
                   (let [s "sess-noop"]
-                    (rw/record-pre! (ctx s 1 :write) [])
+                    (rw/record-pre! (ctx s 1 :patch) [])
                     (expect (= [] (rw/points s))))))
   (it "does not leak the memo across turns of the same session"
       (with-store [_ work]
@@ -293,10 +293,10 @@
                      s
                      "sess-memo"]
 
-                    (rw/record-pre! (ctx s 1 :write) [(abs f)])
+                    (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                     (spit f "V2")
                     ;; A new turn must pre-image the SAME path again.
-                    (rw/record-pre! (ctx s 2 :write) [(abs f)])
+                    (rw/record-pre! (ctx s 2 :patch) [(abs f)])
                     (expect (= 2 (count (filter #(= "pre" (get % "kind")) (rw/journal s)))))))))
 
 ;; =============================================================================
@@ -310,7 +310,7 @@
                   (let [s "sess-dedup"]
                     (doseq [n ["a.txt" "b.txt" "c.txt"]]
                       (put! (wfile work n) "same bytes everywhere"))
-                    (rw/record-pre! (ctx s 1 :write)
+                    (rw/record-pre! (ctx s 1 :patch)
                                     (mapv #(abs (wfile work %)) ["a.txt" "b.txt" "c.txt"]))
                     (expect (= 1 (count (objects s)))))))
   (it "survives a corrupt journal tail — a crashed append cannot brick history"
@@ -322,7 +322,7 @@
                      s
                      "sess-corrupt"]
 
-                    (rw/record-pre! (ctx s 1 :write) [(abs f)])
+                    (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                     (append-raw! s "{\"kind\": \"pre\", trunc")
                     (append-raw! s "")
                     (append-raw! s "null")
@@ -362,7 +362,7 @@
                      s
                      "sess-lost-blob"]
 
-                    (rw/record-pre! (ctx s 1 :write) [(abs f)])
+                    (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                     (spit f "WRECKED")
                     (doseq [o (objects s)]
                       (io/delete-file o))
@@ -387,7 +387,7 @@
                      s
                      "sess-immutable"]
 
-                    (rw/record-pre! (ctx s 1 :write) [(abs f)])
+                    (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                     (let
                       [o
                        (first (objects s))
@@ -396,7 +396,7 @@
                        (.lastModified ^File o)]
 
                       (spit f "STABLE")
-                      (rw/record-pre! (ctx s 2 :write) [(abs f)])
+                      (rw/record-pre! (ctx s 2 :patch) [(abs f)])
                       (expect (= 1 (count (objects s))))
                       (expect (= before (.lastModified ^File o))))))))
 
@@ -516,7 +516,7 @@
                       [f (put! (wfile work "big.bin") (apply str (repeat 1000 "x")))
                        s "sess-big"]
 
-                      (rw/record-pre! (ctx s 1 :write) [(abs f)])
+                      (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                       (let
                         [e (first (rw/journal s))
                          pl (rw/plan s 1)]
@@ -533,7 +533,7 @@
                       [f (put! (wfile work "big.bin") (apply str (repeat 1000 "x")))
                        s "sess-big-points"]
 
-                      (rw/record-pre! (ctx s 1 :write) [(abs f)])
+                      (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                       (expect (= 1 (get (first (rw/points s)) "uncovered"))))))))
 
 ;; =============================================================================
@@ -553,7 +553,7 @@
                                 s
                                 "sess-dry"]
 
-                               (rw/record-pre! (ctx s 1 :write) [(abs f) (abs gone)])
+                               (rw/record-pre! (ctx s 1 :patch) [(abs f) (abs gone)])
                                (spit f "WRECKED")
                                (put! gone "new")
                                (let [r (rw/restore! s 1 {:is-dry-run true})]
@@ -590,7 +590,7 @@
 
                      out
                      (rw/around-hook (env-for s 1)
-                                     :write
+                                     :patch
                                      args
                                      (fn [a]
                                        {:echo a :ok true}))]
@@ -606,7 +606,7 @@
                      "sess-hook-capture"]
 
                     (rw/around-hook (env-for s 3)
-                                    :write
+                                    :patch
                                     {:path (abs f)}
                                     (fn [_]
                                       (spit f "WRECKED")
@@ -625,7 +625,7 @@
 
                      thrown
                      (try (rw/around-hook (env-for s 1)
-                                          :write
+                                          :patch
                                           {:path (abs f)}
                                           (fn [_]
                                             (spit f "HALF")
@@ -648,7 +648,7 @@
                     (binding [rw/*enabled?* false]
                       (expect (= :ok
                                  (rw/around-hook (env-for s 1)
-                                                 :write
+                                                 :patch
                                                  {:path (abs f)}
                                                  (fn [_]
                                                    :ok)))))
@@ -666,7 +666,7 @@
                     (binding [rw/*store-root* blocker]
                       (expect (= :ok
                                  (rw/around-hook (env-for "sess-broken-store" 1)
-                                                 :write
+                                                 :patch
                                                  {:path (abs f)}
                                                  (fn [_]
                                                    :ok))))))))
@@ -699,7 +699,7 @@
             (expect (contains? paths (abs b)))
             (expect (contains? paths (abs c)))))))
   (it "hooks every mutating op and the shell sweep"
-      (expect (= #{:write :patch :struct_patch :fs :format_code} rw/mutation-ops))
+      (expect (= #{:patch :struct_patch :fs :format_code} rw/mutation-ops))
       (expect (contains? rw/sweep-ops :shell))
       (let [hooked (set (map :op rw/op-hooks))]
         (expect (every? hooked rw/mutation-ops))
@@ -728,7 +728,7 @@
 
                     (->> files
                          (mapv (fn [f]
-                                 (future (rw/record-pre! (ctx s 1 :write) [(abs f)]))))
+                                 (future (rw/record-pre! (ctx s 1 :patch) [(abs f)]))))
                          (run! deref))
                     (let
                       [lines
@@ -751,7 +751,7 @@
 
                     (->> (range 40)
                          (mapv (fn [_]
-                                 (future (rw/record-pre! (ctx s 1 :write) [(abs f)]))))
+                                 (future (rw/record-pre! (ctx s 1 :patch) [(abs f)]))))
                          (run! deref))
                     (spit f "WRECKED")
                     (rw/restore! s 1)
@@ -815,7 +815,7 @@
                      s
                      "sess-render"]
 
-                    (rw/record-pre! (ctx s 1 :write) [(abs a)])
+                    (rw/record-pre! (ctx s 1 :patch) [(abs a)])
                     (spit a "A2")
                     (let
                       [r
@@ -828,7 +828,7 @@
                       (expect (= "| Turn | Files | Ops | What you asked |" (first ls)))
                       (expect (str/starts-with? (second ls) "| ---"))
                       (expect (str/includes? (nth ls 2) "| 1 "))
-                      (expect (str/includes? (nth ls 2) "write"))
+                      (expect (str/includes? (nth ls 2) "patch"))
                       (expect (str/includes? (nth ls 2) "prompt for turn 1"))
                       (expect (str/includes? (:slash/body r) "`/rewind 1`")
                               "the body names the exact next command")
@@ -843,7 +843,7 @@
            s
            "sess-pipe"]
 
-          (rw/record-pre! (assoc (ctx s 1 :write) :user-request "run a | b\nand pipe it") [(abs a)])
+          (rw/record-pre! (assoc (ctx s 1 :patch) :user-request "run a | b\nand pipe it") [(abs a)])
           (spit a "A2")
           (let
             [ls
@@ -867,7 +867,7 @@
                      s
                      "sess-plan"]
 
-                    (rw/record-pre! (ctx s 1 :write) [(abs a) (abs (wfile work "src" "new.clj"))])
+                    (rw/record-pre! (ctx s 1 :patch) [(abs a) (abs (wfile work "src" "new.clj"))])
                     (spit a "A2")
                     (put! (wfile work "src" "new.clj") "NEW")
                     (let
@@ -899,7 +899,7 @@
                      s
                      "sess-apply"]
 
-                    (rw/record-pre! (ctx s 1 :write) [(abs a)])
+                    (rw/record-pre! (ctx s 1 :patch) [(abs a)])
                     (spit a "A2")
                     (let [r (run-rewind s work ["1"])]
                       (expect (= :ok (:slash/status r)))
@@ -944,7 +944,7 @@
          s
          "sess-ctx-list"]
 
-        (rw/record-pre! (ctx s 1 :write) [(abs a)])
+        (rw/record-pre! (ctx s 1 :patch) [(abs a)])
         (spit a "A2")
         (let
           [r
@@ -980,7 +980,7 @@
                      s
                      "sess-ctx-down"]
 
-                    (rw/record-pre! (ctx s 1 :write) [(abs a)])
+                    (rw/record-pre! (ctx s 1 :patch) [(abs a)])
                     (spit a "A2")
                     (let
                       [r
@@ -1008,7 +1008,7 @@
            s
            "sess-ctx-plan"]
 
-          (rw/record-pre! (ctx s 1 :write) [(abs a)])
+          (rw/record-pre! (ctx s 1 :patch) [(abs a)])
           (spit a "A2")
           (let
             [r
@@ -1040,7 +1040,7 @@
            s
            "sess-ctx-applied"]
 
-          (rw/record-pre! (ctx s 1 :write) [(abs a)])
+          (rw/record-pre! (ctx s 1 :patch) [(abs a)])
           (spit a "A2")
           (let
             [r
@@ -1073,7 +1073,7 @@
                                 s
                                 "sess-invented"]
 
-                               (rw/record-pre! (ctx s 1 :write) [(abs f)])
+                               (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                                (put! f "created by the turn")
                                (expect (.isFile f))
                                (rw/restore! s 1)
@@ -1093,7 +1093,7 @@
                                 s
                                 "sess-invented-keep"]
 
-                               (rw/record-pre! (ctx s 1 :write) [(abs f)])
+                               (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                                (put! f "created by the turn")
                                (rw/restore! s 1)
                                (expect (not (.exists f)))
@@ -1112,7 +1112,7 @@
                                 s
                                 "sess-invented-sibling"]
 
-                               (rw/record-pre! (ctx s 1 :write) [(abs f)])
+                               (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                                (put! f "created by the turn")
                                (put! sibling "the turn also wrote this, unnamed")
                                (rw/restore! s 1)
@@ -1133,7 +1133,7 @@
   (it "does not let one session rewind another session's files"
       (with-store [_ work]
                   (let [f (put! (wfile work "a.txt") "ORIGINAL")]
-                    (rw/record-pre! (ctx "proj/main" 1 :write) [(abs f)])
+                    (rw/record-pre! (ctx "proj/main" 1 :patch) [(abs f)])
                     (spit f "WRECKED")
                     (expect (empty? (rw/points "proj:main")))
                     (expect (empty? (get (rw/restore! "proj:main" 1) "restore")))
@@ -1155,7 +1155,7 @@
                      s
                      "sess-hostile-types"]
 
-                    (rw/record-pre! (ctx s 1 :write) [(abs f)])
+                    (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                     (spit f "WRECKED")
                     (append-raw!
                       s
@@ -1181,7 +1181,7 @@
          s
          "sess-hostile-missing-turn"]
 
-        (rw/record-pre! (ctx s 1 :write) [(abs f)])
+        (rw/record-pre! (ctx s 1 :patch) [(abs f)])
         (append-raw! s "{\"kind\":\"pre\",\"state\":\"absent\",\"path\":\"/nope/never.txt\"}")
         (append-raw!
           s
@@ -1211,7 +1211,7 @@
                      "sess-symlink"]
 
                     (Files/createSymbolicLink (.toPath l) (.toPath t) (make-array FileAttribute 0))
-                    (rw/record-pre! (ctx s 1 :write) [(abs l)])
+                    (rw/record-pre! (ctx s 1 :patch) [(abs l)])
                     ;; Every write tool follows the link, so the bytes destroyed
                     ;; are the TARGET's — restoring only the link loses them.
                     (spit l "WRECKED")
@@ -1240,7 +1240,7 @@
                                               (make-array FileAttribute 0))
                     (Files/createSymbolicLink (.toPath a) (.toPath b) (make-array FileAttribute 0))
                     (Files/createSymbolicLink (.toPath b) (.toPath a) (make-array FileAttribute 0))
-                    (rw/record-pre! (ctx s 1 :write) [(abs dangling) (abs a)])
+                    (rw/record-pre! (ctx s 1 :patch) [(abs dangling) (abs a)])
                     (let [r (rw/restore! s 1)]
                       (expect (= [] (get r "failed")))
                       (expect (= #{"symlink"} (set (map #(get % "action") (get r "applied")))))
@@ -1271,13 +1271,13 @@
                      s
                      "sess-plan-dedup"]
 
-                    (rw/record-pre! (ctx s 1 :write) [(abs f)])
+                    (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                     ;; Turn 2 finds the SAME file grown past the blob limit, so it
                     ;; journals an `uncovered` entry for a path turn 1's image still
                     ;; rewinds perfectly.
                     (spit f (apply str (repeat 1000 "y")))
                     (binding [rw/*max-blob-bytes* 8]
-                      (rw/record-pre! (ctx s 2 :write) [(abs f) (abs g)]))
+                      (rw/record-pre! (ctx s 2 :patch) [(abs f) (abs g)]))
                     (expect (some #(and (= (abs f) (get % "path")) (= "uncovered" (get % "kind")))
                                   (rw/journal s)))
                     (let [pl (rw/plan s 1)]
@@ -1292,10 +1292,10 @@
                      s
                      "sess-plan-dedup-complete"]
 
-                    (rw/record-pre! (ctx s 1 :write) [(abs f)])
+                    (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                     (spit f (apply str (repeat 1000 "y")))
                     (binding [rw/*max-blob-bytes* 8]
-                      (rw/record-pre! (ctx s 2 :write) [(abs f)]))
+                      (rw/record-pre! (ctx s 2 :patch) [(abs f)]))
                     (let [pl (rw/plan s 1)]
                       (expect (= [] (get pl "uncovered")))
                       (expect (= "complete" (get pl "coverage"))))))))

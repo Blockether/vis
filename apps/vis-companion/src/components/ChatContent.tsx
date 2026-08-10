@@ -1008,7 +1008,7 @@ function toolCards(form: TranscriptForm): TranscriptForm[] {
 }
 
 function compactToolSummary(name: string | undefined, summary: string): string {
-  if (!name || !["patch", "struct_patch", "write"].includes(name))
+  if (!name || !["patch", "struct_patch"].includes(name))
     return summary;
 
   return summary

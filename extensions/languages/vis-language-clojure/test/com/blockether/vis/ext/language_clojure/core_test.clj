@@ -120,8 +120,7 @@
                     ops
                     (set (map (juxt :op :phase) hooks))]
 
-                   (expect (= 3 (count hooks)))
-                   (expect (contains? ops [:write :after]))
+                   (expect (= 2 (count hooks)))
                    (expect (contains? ops [:struct_patch :around]))
                    (expect (contains? ops [:patch :around]))
                    ;; every entry names a real fn — no imperative register-op-hook! at load
@@ -430,134 +429,6 @@
       (let [dir (tmp-dir)]
         (try (expect (nil? (fmt/cljfmt-opts-for (.getPath dir)))) (finally (cleanup dir))))))
 
-(defdescribe
-  edit-repair-hook-test
-  (it "the :after hook repairs+formats a .clj file in place after a successful edit"
-      (let
-        [dir
-         (tmp-dir)
-
-         f
-         (io/file dir "x.clj")]
-
-        (try (spit f "(defn f [x]\n        (+ x 1))\n") ; valid but mis-indented
-             (let
-               [res
-                (core/clj-edit-repair-hook {:workspace/root (.getPath dir)}
-                                           :struct_patch
-                                           [{"path" "x.clj"}]
-                                           {:success? true})
-
-                after
-                (slurp f)]
-
-               (expect (= {:success? true} res)) ; result passes through
-               (expect (not= "(defn f [x]\n        (+ x 1))\n" after)) ; reformatted
-               (expect (re-find #"\(defn f \[x\]" after)))
-             (finally (cleanup dir)))))
-  (it "leaves a non-Clojure file untouched"
-      (let
-        [dir
-         (tmp-dir)
-
-         f
-         (io/file dir "x.py")]
-
-        (try (spit f "def g( ):\n  pass\n")
-             (core/clj-edit-repair-hook {:workspace/root (.getPath dir)}
-                                        :patch
-                                        [{"path" "x.py"}]
-                                        {:success? true})
-             (expect (= "def g( ):\n  pass\n" (slurp f)))
-             (finally (cleanup dir)))))
-  (it
-    "re-diffs the summary against FINAL disk bytes (truthful diff, no false structural flag)"
-    (let
-      [dir
-       (tmp-dir)
-
-       f
-       (io/file dir "x.clj")
-
-       before
-       "(defn f [x]\n  (+ x 1))\n"]
-
-      (try
-        ;; the raw edit wrote a mis-indented body to disk; the summary's diff
-        ;; still shows that col-0 INTENT (the bug this fixes).
-        (spit f "(defn f [x]\n(+ x 2))\n")
-        (let
-          [result
-           {:success? true
-            :result [{"path" "x.clj" "op" "update" "changed" true "diff" "STALE"}]
-            :metadata {:file-befores [{:path "x.clj" :before before}]}}
-
-           out
-           (core/clj-edit-repair-hook {:workspace/root (.getPath dir)}
-                                      :patch
-                                      [{"path" "x.clj"}]
-                                      result)
-
-           summ
-           (first (:result out))]
-
-          ;; cljfmt re-indented the body on disk ...
-          (expect (re-find #"\n  \(\+ x 2\)\)" (slurp f)))
-          ;; ... and the returned diff now reflects THAT, not the col-0 intent.
-          (expect (re-find #"\+  \(\+ x 2\)\)" (get summ "diff")))
-          (expect (not (contains? summ "repaired"))))
-        (finally (cleanup dir)))))
-  (it
-    "flags a parinfer STRUCTURAL repair loudly on the summary"
-    (let
-      [dir
-       (tmp-dir)
-
-       f
-       (io/file dir "x.clj")
-
-       before
-       "(defn f [x]\n  (inc x))\n"]
-
-      (try
-        ;; raw edit left an unbalanced delimiter (missing final closer) on disk
-        (spit f "(defn g [x]\n  (when x\n    (inc x))\n")
-        (let
-          [result
-           {:success? true
-            :result [{"path" "x.clj" "op" "update" "changed" true "diff" "STALE"}]
-            :metadata {:file-befores [{:path "x.clj" :before before}]}}
-
-           out
-           (core/clj-edit-repair-hook {:workspace/root (.getPath dir)}
-                                      :patch
-                                      [{"path" "x.clj"}]
-                                      result)
-
-           summ
-           (first (:result out))]
-
-          ;; parinfer balanced the file ...
-          (expect (re-find #"\(inc x\)\)\)" (slurp f)))
-          ;; ... and the summary is loudly flagged so a scope shift can't hide.
-          (expect (= true (get summ "repaired")))
-          (expect (re-find #"CHANGED STRUCTURE" (get summ "note"))))
-        (finally (cleanup dir)))))
-  (it "is a no-op when the edit did NOT succeed"
-      (let
-        [dir
-         (tmp-dir)
-
-         f
-         (io/file dir "x.clj")]
-
-        (try (spit f "(defn f [x]\n        (+ x 1))\n")
-             (core/clj-edit-repair-hook {:workspace/root (.getPath dir)}
-                                        :struct_patch
-                                        [{"path" "x.clj"}]
-                                        {:success? false})
-             (expect (= "(defn f [x]\n        (+ x 1))\n" (slurp f)))
-             (finally (cleanup dir))))))
 
 (defdescribe test-runner-timeout-test
              (it "defaults run_tests to just under the 5 minute native tool budget"

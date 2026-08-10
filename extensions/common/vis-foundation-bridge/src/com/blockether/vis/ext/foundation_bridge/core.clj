@@ -460,7 +460,7 @@
 (defn- bridge-fs-access-gate
   "`:fs/access` GATE hook — the Bridge's path sandbox, asked for EVERY path the
    engine's editors and the Python interpreter touch, so `open(p, \"w\")` and
-   `write` are refused by the same rule. FIRST match wins, nested project before
+   `patch` are refused by the same rule. FIRST match wins, nested project before
    ancestor and policy order within a project, so a policy's own exception still
    reads as an exception; the rule's hint is the refusal sentence, nil allows."
   [env _op {:keys [operation path]}]

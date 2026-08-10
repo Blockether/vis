@@ -4,9 +4,9 @@
    Format/test/REPL are exposed through the generic language facade
    (`format`, `test`, `repl_eval`, `repl`, `repl_stop`) —
    `format` here does parinfer delimiter repair + cljfmt. The pack also registers
-   a cross-cutting op-hook that auto repairs+formats `.clj` files after the
-   foundation's struct_patch / patch / write, so no separate repair step is
-   needed."
+   cross-cutting op-hooks that parinfer-repair `.clj` source rejected by the
+   foundation's struct_patch / patch, so unbalanced delimiters never fail an
+   edit."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.set :as set]
@@ -928,100 +928,12 @@
                                                       (seq targets)
                                                       (assoc "targets" (vec targets))))})))))
 
-;; ── Auto-repair hook: keep .clj source tidy after a generic edit op ──────────
-
-(defn- edit-arg-paths
-  "Edited file path(s) from a struct_patch/write call (a map with \"path\") or a
-   patch call (a seq of such maps). Model-supplied args are STRING-keyed
-   (strings-only boundary)."
-  [args]
-  (let [a (first args)]
-    (cond (map? a) (when-let [p (get a "path")]
-                     [p])
-          (sequential? a) (keep #(when (map? %) (get % "path")) a)
-          (string? a) [a]
-          :else nil)))
+;; ── Shared helper for the delimiter-repair middlewares ──────────────────────
 
 (defn- resolve-under-root
   ^java.io.File [env path]
   (let [f (io/file (str path))]
     (if (.isAbsolute f) f (io/file (or (:workspace/root env) ".") (str path)))))
-
-(defn- repair-clj-file!
-  "Re-tidy a just-edited Clojure file IN PLACE (paren-repair + cljfmt), writing
-   back ONLY when the content actually changes — a clean file is a no-op so
-   nothing churns. Returns `{:changed? bool :structural? bool}` describing the
-   rewrite (`:structural?` = parinfer MOVED/added/removed delimiters, i.e. NOT
-   a whitespace-only cljfmt reflow — the case that can silently re-nest code),
-   or nil when `path` is not an existing Clojure file."
-  [env path]
-  (let [f (resolve-under-root env path)]
-    (when (and (clj-source-file? path) (.isFile f))
-      (let
-        [code (slurp f)
-         fixed (repair/fix-delimiters code)
-         structural (and (string? fixed) (not= fixed code))
-         out (clj-repair+format code f)
-         changed (and (string? out) (not= out code))]
-
-        (when changed (spit f out))
-        {:changed? changed :structural? structural}))))
-
-(defn clj-edit-repair-hook
-  "An :after op-hook (registered on struct_patch / patch / write): after a
-   SUCCESSFUL edit, paren-repair + cljfmt every Clojure file it touched, so the
-   model never needs a separate repair/format step and a raw `patch` that left
-   delimiters unbalanced is auto-corrected.
-
-   It then makes the RESULT TRUTHFUL: the foundation rendered each file's
-   `diff` from what the raw edit wrote, BEFORE this repair/format rewrote the
-   bytes on disk, so without this the model would be shown its INTENT, not the
-   file. Using the pre-edit content the foundation stashes on
-   `:metadata :file-befores`, we re-diff every touched summary against the
-   FINAL on-disk bytes, and when parinfer CHANGED STRUCTURE (moved delimiters,
-   which can silently re-nest code) we flag the summary loudly
-   (`repaired`/`note`) so a scope shift can never hide behind a stale diff.
-
-   A throwing repair is caught + logged by the op-hook runner, never breaking
-   the underlying edit."
-  [env _op-kw args result]
-  (if-not (:success? result)
-    result
-    (let [befores (get-in result [:metadata :file-befores])]
-      (if-not (seq befores)
-        ;; No pre-edit content stashed (e.g. a pack :around already committed
-        ;; and built its own result) -- just tidy the files, result unchanged.
-        (do (doseq [p (edit-arg-paths args)]
-              (repair-clj-file! env p))
-            result)
-        ;; Repair each touched file, then RE-DIFF the model-facing summaries
-        ;; against the final disk bytes and flag any structural repair.
-        (let
-          [reports (into {}
-                         (keep (fn [{:keys [path before]}]
-                                 (when-let [r (repair-clj-file! env path)]
-                                   [path (assoc r :before before)]))
-                               befores))]
-          (update result
-                  :result
-                  (fn [summaries]
-                    (mapv (fn [s]
-                            (if-let [{:keys [before structural?]} (get reports (get s "path"))]
-                              (let
-                                [f (resolve-under-root env (get s "path"))
-                                 after (when (.isFile f) (slurp f))
-                                 s' (if after (editing/refresh-file-summary s before after) s)]
-
-                                (cond-> s'
-                                  structural?
-                                  (assoc "repaired"
-                                    true "note"
-                                    (str "parinfer paren-repair CHANGED STRUCTURE "
-                                         "(moved/added/removed delimiters); the diff "
-                                         "shows the FINAL on-disk result -- verify the "
-                                         "nesting is what you intended."))))
-                              s))
-                          summaries))))))))
 
 (defn clj-struct-patch-no-fail-around
   "MIDDLEWARE (:around) on struct_patch so a Clojure structural edit does NOT
@@ -1223,16 +1135,12 @@
                            :start-repl-fn (fn [env op opts]
                                             (repl-start-fn env op opts))}]
      ;; Declarative cross-cutting op-hooks — registered/unregistered WITH this
-     ;; extension's lifecycle (no imperative side effects at ns load). They keep
-     ;; Clojure source tidy after the foundation's WRITE only (an :after
-     ;; repair+format — patch/struct_patch are deliberately NOT reformatted),
-     ;; and make struct_patch AND patch NOT fail on
-     ;; unbalanced delimiters (struct_patch: an :around that repairs the :code
-     ;; + retries; patch: an :around that WHOLE-SOURCE-repairs the refusal's
-     ;; candidate plans and commits the batch). :owner is set to this
-     ;; extension automatically.
-     :ext/op-hooks [{:op :write :phase :after :fn clj-edit-repair-hook}
-                    {:op :struct_patch :phase :around :fn clj-struct-patch-no-fail-around}
+     ;; extension's lifecycle (no imperative side effects at ns load). They make
+     ;; struct_patch AND patch NOT fail on unbalanced delimiters (struct_patch:
+     ;; an :around that repairs the :code + retries; patch: an :around that
+     ;; WHOLE-SOURCE-repairs the refusal's candidate plans and commits the
+     ;; batch). :owner is set to this extension automatically.
+     :ext/op-hooks [{:op :struct_patch :phase :around :fn clj-struct-patch-no-fail-around}
                     {:op :patch :phase :around :fn clj-patch-no-fail-around}]
      :ext/kind "language"}))
 

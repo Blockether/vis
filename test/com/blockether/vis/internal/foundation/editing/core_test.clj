@@ -100,7 +100,7 @@
        (get-in find-files-tool [:schema :properties "include"])]
 
       ;; `ls` is NOT here: the listing left the tool layer for the sandbox shim.
-      (expect (<= 7 (count ents)))          ;; cat grep patch write struct_index struct_nodes struct_patch
+      (expect (= 6 (count ents)))           ;; cat grep patch struct_index struct_nodes struct_patch
       (expect (contains? names "cat"))
       (expect (not (contains? names "rg"))) ;; rg folded into grep
       ;; The filesystem MUTATION verbs are gone: create/copy/move/delete/exists are
@@ -327,6 +327,24 @@
                                        "bash-symbol"))))
         (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
                                        "run-bash-safe"))))))
+  (it "write tool fully removed: no symbol, no tool, no arg normalizer"
+      ;; The whole-file write is Python's job now (`Path.write_text`, `open(p, "w")`),
+      ;; which crosses the SAME `:fs/access` gate. `write-safe` survives only as the
+      ;; internal primitive `struct_patch` uses to commit a whole-buffer rewrite.
+      (let
+        [symbols
+         (map :ext.symbol/symbol (editing/available-editing-symbols))
+
+         private-var
+         (fn [n]
+           (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" n)))]
+
+        (expect (not-any? #{'write} symbols))
+        (expect (nil? (private-var "write-symbol")))
+        (expect (nil? (private-var "write-tool")))
+        (expect (nil? (private-var "normalize-write-args")))
+        ;; the primitive stays: struct_patch commits through it
+        (expect (some? (private-var "write-safe")))))
   (it "every editing symbol carries a non-blank :doc and an :arglists vector"
       (doseq
         [s
@@ -495,12 +513,15 @@
                      (fn []
                        (let
                          [before
-                          (:ext.symbol/before-fn (private-fn "write-symbol"))
+                          (:ext.symbol/before-fn (private-fn "struct-patch-symbol"))
 
                           out
                           (before {:extensions (atom [])}
                                   (constantly :ok)
-                                  [{"path" "target/editing-test/a.clj" "content" "x"}])]
+                                  [{"path" "target/editing-test/a.clj"
+                                    "op" "replace"
+                                    "target" "f"
+                                    "code" "x"}])]
 
                          (expect (= :ext.foundation.editing/path-protected
                                     (-> out
@@ -515,10 +536,10 @@
   (it "no gate registered: the op passes through with its args untouched"
       (let
         [before
-         (:ext.symbol/before-fn (private-fn "write-symbol"))
+         (:ext.symbol/before-fn (private-fn "struct-patch-symbol"))
 
          args
-         [{"path" "target/editing-test/a.clj" "content" "x"}]
+         [{"path" "target/editing-test/a.clj" "op" "replace" "target" "f" "code" "x"}]
 
          out
          (before {:extensions (atom [])} (constantly :ok) args)]
@@ -546,14 +567,17 @@
                      (fn []
                        (let
                          [before
-                          (:ext.symbol/before-fn (private-fn "write-symbol"))
+                          (:ext.symbol/before-fn (private-fn "struct-patch-symbol"))
 
                           out
                           (before {:extensions (atom [])
                                    :mutation-gate (fn [_]
                                                     (throw (ex-info "gate must not run" {})))}
                                   (constantly :ok)
-                                  [{"path" "target/editing-test/protected/x.clj" "content" "x"}])]
+                                  [{"path" "target/editing-test/protected/x.clj"
+                                    "op" "replace"
+                                    "target" "f"
+                                    "code" "x"}])]
 
                          (expect (= :ext.foundation.editing/path-protected
                                     (-> out
@@ -566,12 +590,12 @@
          (atom nil)
 
          before
-         (:ext.symbol/before-fn (private-fn "write-symbol"))
+         (:ext.symbol/before-fn (private-fn "struct-patch-symbol"))
 
          out
          (before (gate-env seen! "Write a PLAN.md first.")
                  (constantly :ok)
-                 [{"path" "target/editing-test/a.clj" "content" "x"}])]
+                 [{"path" "target/editing-test/a.clj" "op" "replace" "target" "f" "code" "x"}])]
 
         (expect (= :ext.foundation.editing/plan-required
                    (-> out
@@ -583,7 +607,7 @@
                        :result
                        :error
                        :hint)))
-        (expect (= :write (:op @seen!)))
+        (expect (= :struct_patch (:op @seen!)))
         (expect (= ["target/editing-test/a.clj"] (:paths @seen!)))
         (expect (false? (:atomic? @seen!)))))
   (it "a nil :mutation-gate answer passes the op through"
@@ -592,12 +616,12 @@
          (atom nil)
 
          before
-         (:ext.symbol/before-fn (private-fn "write-symbol"))
+         (:ext.symbol/before-fn (private-fn "struct-patch-symbol"))
 
          out
          (before (gate-env seen! nil)
                  (constantly :ok)
-                 [{"path" "target/editing-test/a.clj" "content" "x"}])]
+                 [{"path" "target/editing-test/a.clj" "op" "replace" "target" "f" "code" "x"}])]
 
         (expect (not (contains? out :result)))
         (expect (some? @seen!)))))

@@ -251,7 +251,7 @@ vis.err(title, body=None, data=None)
 vis.op_hook(ops, fn, phase="before")
 ```
 
-- `ops` — sandbox tool names to hook: `"write"`, `"patch"`,
+- `ops` — sandbox tool names to hook: `"patch"`,
   `"struct_patch"`, `"shell"`, `"python_execution"`, … or a GATE op
   (below), which is a different shape and may not share a hook with them.
 - `phase="before"` — `fn(call)` receives `{"op", "args"}` **before** the op
@@ -262,8 +262,8 @@ vis.op_hook(ops, fn, phase="before")
 
 **Gate ops.** `"fs_access"` is not a tool: it is asked for every path the
 engine's editors AND the Python interpreter touch, so `open(p, "w")`,
-`Path.unlink` and `shutil.move` are refused by the same rule as `write` and
-`patch` — a guard cannot be routed around by picking another tool or another
+`Path.unlink` and `shutil.move` are refused by the same rule as `patch` and
+`struct_patch` — a guard cannot be routed around by picking another tool or another
 language. `fn(access)` receives `{"operation": "file-read" | "file-write",
 "path": <absolute path>}`, returns `vis.block(reason)` to refuse or `None` to
 allow, and `phase` says nothing (the operation has not run yet, so declaring

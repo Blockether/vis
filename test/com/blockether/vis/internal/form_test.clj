@@ -111,7 +111,7 @@
       (doseq
         [[tool summary expected] [["patch" "update `a.clj` · add `b.clj`" "`a.clj`, `b.clj`"]
                                   ["struct_patch" "update `src/app.clj`" "`src/app.clj`"]
-                                  ["write" "(no change) `README.md`" "`README.md`"]
+                                  ["struct_patch" "(no change) `README.md`" "`README.md`"]
                                   ["cat" "update `literal.txt`" "update `literal.txt`"]]]
         (expect (= expected
                    (:summary (form/result-card {:vis/tool-name tool :result-summary summary}))))))

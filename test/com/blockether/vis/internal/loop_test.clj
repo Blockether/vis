@@ -1797,24 +1797,24 @@
         (expect (str/includes? (:content (last messages)) "item_count")))))
 
 (defdescribe
-  large-write-replay-compaction-test
+  large-arg-replay-compaction-test
   (let [payload (apply str (repeat 9000 "x"))
-        id "write-big-1"
+        id "py-big-1"
         tc {:id id
-            :name "write"
-            :input {"path" "src/generated.clj" "content" payload}}
-        policies {"write" {:elide-args {"content" 8192}}}
+            :name "python_execution"
+            :input {"code" payload}}
+        policies {"python_execution" {:elide-args {"code" 8192}}}
         target {:provider :lmstudio :model "google/gemma-4-12b-qat"}
         entry (fn [form]
                 [1
                  {:assistant-message
                   {:role "assistant"
                    :content [{:type "thinking"
-                              :thinking "large write"
+                              :thinking "large program"
                               :thinking-signature "sig"}
                              {:type "tool_use"
                               :id id
-                              :name "write"
+                              :name "python_execution"
                               :input (:input tc)}]}
                   :llm-provider (:provider target)
                   :llm-model (:model target)
@@ -1823,11 +1823,9 @@
                   :forms-vec [(assoc form
                                      :scope "t1/i1/f1"
                                      :svar/tool-call-id id)]}])]
-    (it "replaces a successful oversized write protocol pair with a hashed textual receipt"
+    (it "replaces a successful oversized call's protocol pair with a hashed textual receipt"
         (let [suffix (conversation-suffix
-                       [(entry {:result [{"path" "src/generated.clj"
-                                          "op" "update"
-                                          "changed" true}]})]
+                       [(entry {:result {"ok" true}})]
                        target
                        policies)
               wire (pr-str suffix)]
@@ -1836,10 +1834,10 @@
           (expect (str/includes? (get-in suffix [0 :content 0 :text]) "9000 chars"))
           (expect (not (str/includes? wire payload)))
           (expect (not (str/includes? wire "tool_use")))))
-    (it "keeps every failed oversized write verbatim"
-        (doseq [reason [:dirty :stale]]
+    (it "keeps every failed oversized call verbatim"
+        (doseq [reason [:timeout :exception]]
           (let [suffix (conversation-suffix
-                         [(entry {:error {:type :editing/write-failed
+                         [(entry {:error {:type :python/execution-failed
                                           :data {:reason reason}}})]
                          target
                          policies)
@@ -3638,19 +3636,19 @@
 
 (defdescribe
   strip-echo-diffs-test
-  ;; A patch/write/struct_patch result carries a per-file unified `"diff"`. On a
+  ;; A patch/struct_patch result carries a per-file unified `"diff"`. On a
   ;; successful edit that diff merely re-describes the bytes the model supplied,
   ;; so it is stripped from the MODEL wire. The human card keeps it.
   (let [strip @#'lp/strip-echo-diffs]
     (it "drops the diff from a byte-exact edit summary"
         (expect (= [{"path" "a.clj" "op" "update" "changed" true}]
                    (strip [{"path" "a.clj" "op" "update" "changed" true "diff" "--- x"}]))))
-    (it "strips a single-map (write) summary too"
+    (it "strips a single-map summary too"
         (expect (= {"path" "a.clj" "op" "add" "changed" true}
                    (strip {"path" "a.clj" "op" "add" "changed" true "diff" "--- x"}))))
     ;; Drive the shared summary builder so struct_patch cannot silently diverge.
     (it
-      "strips the diff from a real struct_patch/write summary"
+      "strips the diff from a real struct_patch summary"
       (let
         [summary ((deref #'ed/patch-result-file-summary)
                    {:path "a.clj"
@@ -3676,7 +3674,7 @@
 
 (defdescribe printed-result-op-test
              ;; Which renderer a PRINTED tool result resolves to. A map answers with its
-             ;; stamped `"op"`; a patch/write/struct_patch return is a LIST of per-file rows
+             ;; stamped `"op"`; a patch/struct_patch return is a LIST of per-file rows
              ;; with no top-level op — it must still resolve (they share ONE renderer), or
              ;; a printed edit silently loses its card.
              (let [op @#'lp/printed-result-op]
@@ -3961,7 +3959,6 @@
       "ls" :observation
       "struct_nodes" :observation
       "patch" :mutation
-      "write" :mutation
       "struct_patch" :mutation}
 
      obs
@@ -5895,10 +5892,10 @@
         (expect (= {"edits" [{"path" "a.clj" "from_anchor" "1:aa"}]} (:input tc)))))
     (it "lets downstream consumers read string keys only — no keyword fallback"
       (let [payload (apply str (repeat 20 "x"))
-            [tc] (#'lp/normalize-tool-calls [{:id "w" :name "write"
-                                              :input {:path "a.clj" :content payload}}])
-            receipts (#'lp/oversized-arg-receipts tc {:elide-args {"content" 8}})]
-        (expect (= ["content"] (mapv :arg receipts)))
+            [tc] (#'lp/normalize-tool-calls [{:id "w" :name "python_execution"
+                                              :input {:code payload}}])
+            receipts (#'lp/oversized-arg-receipts tc {:elide-args {"code" 8}})]
+        (expect (= ["code"] (mapv :arg receipts)))
         (expect (= [20] (mapv :chars receipts)))))
     (it "feeds call synthesis directly, with no second conversion"
       (let [[tc] (#'lp/normalize-tool-calls [{:id "d" :name "doc" :input {:name "struct_patch"}}])]

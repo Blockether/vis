@@ -141,9 +141,8 @@ def run_one(job):
         path=("struct_patch" if "struct_patch" in toolset
               else ("sexpr" if "sexpr" in toolset
                     else ("patch" if "patch" in toolset
-                          else ("write" if "write" in toolset
-                                else ("repl" if (toolset & {"repl_eval","repl_start"})
-                                      else "cat-only")))))
+                          else ("repl" if (toolset & {"repl_eval","repl_start"})
+                                else "cat-only"))))
         if path in ("cat-only","??") or errs or not (done and correct):
             detail.append("tools=" + ",".join(f"{t}×{tools.count(t)}" for t in sorted(toolset)))
         return dict(id=sc["id"], lang=sc["lang"], model=model, converged=done, correct=correct,
@@ -183,7 +182,7 @@ def main():
     # CROSS-VALIDATION GATE: a scenario passes only if EVERY model converged,
     # produced correct output, and had no loop/tool errors. `STRUCTURAL(fast)`
     # remains a performance/adherence metric because some language surfaces
-    # legitimately fall back to patch/write.
+    # legitimately fall back to patch.
     by_scn={}
     for r in results:
         by_scn.setdefault(r["id"], []).append(r["converged"] and r["correct"] and r["errors"]==0)

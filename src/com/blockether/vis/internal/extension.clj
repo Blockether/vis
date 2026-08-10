@@ -2319,7 +2319,7 @@
    `:fs/access` is asked for EVERY path the Python sandbox's filesystem touches
    (`internal/sandbox-fs`) and for every path the model-driven editors touch
    (`foundation/editing/core`), with `{:operation :path}` — so ONE rule covers
-   `open(p, \"w\")`, `shutil.move`, `Path.unlink` and `write`/`patch`/`struct_patch`
+   `open(p, \"w\")`, `shutil.move`, `Path.unlink` and `patch`/`struct_patch`
    alike, and \"protected\" can never mean \"protected from Python only\"."
   {:fs/access "fs_access"})
 
@@ -2335,7 +2335,7 @@
 ;; ── Cross-cutting operation hooks ────────────────────────────────────────────
 ;; A generic, op-keyword-keyed hook registry so ANY extension can decorate an
 ;; operation it does NOT own — e.g. the Clojure pack repairs `.clj` files after
-;; the foundation's `struct_patch`/`patch`/`write`. Distinct from a symbol's own
+;; the foundation's `struct_patch`/`patch`. Distinct from a symbol's own
 ;; `:before-fn`/`:after-fn` (which only its DEFINER can set): these compose ON TOP
 ;; at the single `invoke-symbol-wrapper` chokepoint, so the hook is wired ONCE and
 ;; applies wherever that op is called. Before/after hooks are best-effort;
@@ -3611,7 +3611,7 @@
                            ls, exists?, locators, rg, env
                            queries, registry lookups
 
-     :mutation      mutates state — patch, write, append,
+     :mutation      mutates state — patch, struct_patch, append,
                            mkdir, touch, delete, move, copy.
 
    Channels that want to color tools by tag look it up themselves;

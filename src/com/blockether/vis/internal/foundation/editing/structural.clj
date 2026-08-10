@@ -39,7 +39,7 @@
     (if (str/includes? m "No definition named")
       (str m
            " (Re-check the name/`kind` against struct_index(path); or edit with"
-           " write(path, content) or patch(...).)")
+           " patch(...) or struct_patch(...).)")
       m)))
 
 (defn- split-keep-lines
@@ -147,7 +147,7 @@
     [language (or (index/detect-language path)
                   (throw
                     (ex-info
-                      (str "Unknown language for " path " — use patch(...) or write(...) instead.")
+                      (str "Unknown language for " path " — use patch(...) instead.")
                       {:type :ext.foundation.editing/struct-unknown-language :path path})))]
     (try
       (case op
