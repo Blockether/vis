@@ -28,12 +28,12 @@
       running under the id the call already answered with, and its log keeps
       filling — a wait expiring is never a lost process.
 
-   `shell_logs` / `shell_type` / `shell_stop` are bare sandbox verbs, NOT native
-   tools: they operate on a handle the caller already holds, which is control flow,
-   and control flow belongs in a bounded `python_execution` loop that can break on
-   what it actually read. `await shell_logs(\"dev\")` reads the log from a byte
-   OFFSET and returns NOW, `await shell_type(\"dev\", \"y\")` types into the pty,
-   `await shell_stop(\"dev\")` kills the tree. NOTHING blocks on the model's behalf.
+   The result IS the HANDLE: every shell answer is a dict-with-methods in the
+   sandbox, so the process is driven on the object the call already returned —
+   `sh.logs(offset=0)` reads the log from a byte OFFSET and returns NOW,
+   `sh.wait(30)` is the bounded poll loop written once in the engine, `sh.type(\"y\")`
+   types into the pty and `sh.stop()` kills the tree. There are no id-taking verbs to
+   re-type an id into; re-issuing a LIVE id gives the same handle back.
 
    `shell-dispatch` survives as the INTERNAL grammar the Python-extension entry
    points use, since those hand-author an options map and genuinely need an `op`.
@@ -380,7 +380,7 @@
        "descriptors held by unreachable objects. Usual cause: sandbox Python that "
        "opened files without closing them — a dropped file object is NOT closed "
        "there, so always `with open(...) as f:` — or many live background shells "
-       "(`shell_stop`). Free them and retry."))
+       "(`sh.stop()`). Free them and retry."))
 
 (defn- spawn-retrying-fds
   "Run `spawn` (a thunk that starts an OS process) and, ONLY when it failed
@@ -1270,14 +1270,9 @@
           (extension/success
             {:result (assoc (bg-core "background" id live)
                        "already_running" true
-                       "note" (str "Background shell '"
-                                   id
+                       "note" (str "Background shell '" id
                                    "' was ALREADY running — nothing was restarted. Read its output "
-                                   "with await shell_logs(\""
-                                   id
-                                   "\"). To start a fresh process, first run await shell_stop(\""
-                                   id
-                                   "\")."))
+                                   "with sh.logs(). To start a fresh process, first sh.stop()."))
              :op :shell
              :metadata {:command (:script live)
                         :pid (:pid (:proc live))
@@ -1403,14 +1398,9 @@
                               "exit" nil
                               "duration_ms" 0
                               "timed_out" true
-                              "note" (str "Shell '"
-                                          id
+                              "note" (str "Shell '" id
                                           "' was ALREADY running — nothing was restarted. Read it"
-                                          " with await shell_logs(\""
-                                          id
-                                          "\", offset=0) and stop it with await shell_stop(\""
-                                          id
-                                          "\").")})
+                                          " with sh.logs(offset=0) and stop it with sh.stop().")})
        :op :shell
        :metadata {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}})))
 
@@ -1436,9 +1426,9 @@
                              "note" (or (get m "note")
                                         (str "Started without waiting: the shell runs under id '"
                                              (get m "id")
-                                             "' — read it with await shell_logs(\"" (get m "id")
-                                             "\", offset=0), type at it with await shell_type, and"
-                                             " stop it with await shell_stop."))})
+                                             "' — read it with sh.logs(offset=0), type at it with"
+                                             " sh.type(text), wait for it with sh.wait(secs), and"
+                                             " stop it with sh.stop()."))})
       :op :shell)))
 
 (defn- shell-run-call
@@ -1452,8 +1442,8 @@
    EVERY run IS a handle. It claims its `id` and its log file BEFORE it waits, so
    the result carries that id whether the command finished or not, and a wait that
    expires is no longer a lost process: it keeps running under its id,
-   `shell_logs(id, offset=0)` reads everything the timed-out call never saw, and
-   `shell_stop(id)` ends it. A command that finished inside its wait drops the
+   `sh.logs(offset=0)` reads everything the timed-out call never saw, and
+   `sh.stop()` ends it. A command that finished inside its wait drops the
    registry entry — there is no live process to account for — while its log file
    stays readable by id for as long as the session does."
   [env command opts]
@@ -1564,13 +1554,9 @@
                          "timeout_secs" wait-secs
                          "note" (if timed-out
                                   (str "The WAIT expired, not the process: it is still running as"
-                                       " shell '"
-                                       id
-                                       "' — read everything it printed with await shell_logs(\""
-                                       id
-                                       "\", offset=0), and stop it with await shell_stop(\""
-                                       id
-                                       "\").")
+                                       " shell '" id
+                                       "\" — read everything it printed with sh.logs(offset=0),"
+                                       " and stop it with sh.stop().")
                                   (get r "note"))}))
        :op :shell})))
 
@@ -1656,7 +1642,7 @@
                     "next_offset" (:next-offset chunk)
                     "is_eof" (:is-eof chunk)
                     "is_truncated" (:is-truncated chunk))
-          :op :shell-logs
+          :op :_shell-logs
           :metadata {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}})))))
 
 (def ^:private terminal-escape-re
@@ -1702,7 +1688,7 @@
    true) a trailing newline SUBMITS the line — exactly what an interactive prompt
    (password, `read`, a REPL, a y/N confirm) waits for. The send-keys equivalent:
    the agent drives an interactive program whose output the pump captured. Read the
-   response with `await shell_logs(id)`. Returns the total shell result."
+   response with `sh.logs()`. Returns the total shell result."
   ([env id text] (shell-send-impl env id text nil))
   ([env id text opts]
    (let
@@ -1744,7 +1730,7 @@
                                        "sent" (count payload)
                                        "text" payload
                                        "keys" (keys-label payload))
-                             :op :shell-type
+                             :op :_shell-type
                              :metadata
                              {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}}))))))
 
@@ -1767,7 +1753,7 @@
       (if (nil? v) (get opts (keyword k)) v))))
 
 (defn- shell-stop-impl
-  "`await shell_stop(id)` — the TERMINAL lifecycle stage. Stopping used to be
+  "`sh.stop()` — the TERMINAL lifecycle stage. Stopping used to be
    reachable only through `resource_stop`, a sandbox builtin absent from the native
    tool list, so the end of a background shell's life was undiscoverable from the
    schema; it is now a tool of its own. Routes through
@@ -1804,7 +1790,7 @@
                                   "stopped" true)
                         ;; Tagged with its OWN tool: each of the five verbs is a
                         ;; registered symbol op carrying its own observation/mutation tag.
-                        :op :shell-stop
+                        :op :_shell-stop
                         :metadata
                         {:id id :started-at-ms t :finished-at-ms (now-ms) :duration-ms 0}})))
 
@@ -1813,9 +1799,9 @@
    (`trusted-extension-shell`, `jailed-shell`, `session-jailed-shell`) whose
    caller authors an options map by hand and therefore genuinely needs an `op`
    discriminator. The MODEL never reaches this: it calls `shell` — one tool
-   whose `wait` decides whether it blocks — and the bare verbs `shell_logs`,
-   `shell_type` and `shell_stop` on the id it already holds, so one schema with
-   five mutually-exclusive shapes is never presented as a contract to
+   whose `wait` decides whether it blocks — and drives what came back through the
+   HANDLE's own methods (`sh.logs()`, `sh.wait()`, `sh.type()`, `sh.stop()`), so one
+   schema with five mutually-exclusive shapes is never presented as a contract to
    disambiguate."
   [env opts]
   (when-not (opts-arg? opts)
@@ -1902,7 +1888,7 @@
       ;; `wait` is the ONE knob: it says how long the CALLER waits, and nothing else.
       ;; `wait=0` is not a mode — it is the wait that expires immediately, which is
       ;; exactly what "background" meant, so it spawns under a real PTY (stdin stays
-      ;; writable for `shell_type`) and answers in the same run shape.
+      ;; writable for `sh.type`) and answers in the same run shape.
       (do (reject-text)
           (let
             [cmd
@@ -2099,7 +2085,7 @@
 ;; =============================================================================
 
 (defn- op-label
-  "Human call name from a registered op keyword: :shell-logs -> \"shell_logs\"."
+  "Human call name from a registered op keyword: :_shell-logs -> \"_shell_logs\"."
   [op]
   (str/replace (if (namespace op) (str (namespace op) "_" (name op)) (name op)) "-" "_"))
 
@@ -2168,7 +2154,7 @@
 
 
 (defn shell-logs
-  "`await shell_logs(\"dev\")` — read a background shell's log from a byte offset
+  "`sh.logs()` — read a background shell's log from a byte offset
    and return NOW. Nothing blocks on your behalf: a wait is a bounded loop you
    write in `python_execution` and break on what you actually read."
   {:arglists '([id] [id opts])}
@@ -2176,15 +2162,15 @@
   (shell-dispatch env (assoc (shell-call-opts ["id"] args) "op" "logs")))
 
 (defn shell-type
-  "`await shell_type(\"dev\", \"y\")` — type keystrokes at a background shell's stdin.
+  "`sh.type(\"y\")` — type keystrokes at a background shell's stdin.
    `is_enter` (default true) submits the line, which is what an interactive prompt
-   waits for; read the response with `shell_logs`."
+   waits for; read the response with `sh.logs()`."
   {:arglists '([id text] [id text opts])}
   [env & args]
   (shell-dispatch env (assoc (shell-call-opts ["id" "text"] args) "op" "send")))
 
 (defn shell-stop
-  "`await shell_stop(\"dev\")` — kill the process tree and drop the retained logs and
+  "`sh.stop()` — kill the process tree and drop the retained logs and
    session resource."
   {:arglists '([id])}
   [env & args]
@@ -2659,19 +2645,19 @@
     {:symbol 'shell
      :native-tool? true
      :name "shell"
-     :result (str
-               "Flat: `{id, cwd, command, stdout, stderr, exit, duration_ms, timed_out, note}` "
-               "(`*_omitted_chars` says what a huge stream lost) — no `commands` array to index. "
-               "Nonzero exit is data. `id` is ALWAYS a handle: `timed_out` means the WAIT expired, "
-               "not the process.")
+     :result
+     (str "A HANDLE: the dict `{id, cwd, command, stdout, stderr, exit, duration_ms, "
+          "timed_out, note}` (`*_omitted_chars` says what a huge stream lost) WITH the methods "
+          "`sh.logs(offset=0)`, `sh.wait(secs)`, `sh.type(text)`, `sh.stop()` on it. Nonzero "
+          "exit is data; `timed_out` means the WAIT expired, not the process.")
      :description
      (str "Run ONE `bash -lc` command; chain with `&&` and run independent work as separate calls. "
           "`wait` is the ONLY knob — how long YOU wait, not a mode; "
           "`wait=0` returns at once under a real pty, which is how a server, watcher or "
           "interactive command starts. The result is ALWAYS a handle: `timed_out` means the WAIT "
-          "expired and the command still RUNS under `id`, so resume with `shell_logs(id, "
-          "offset=0)` / `shell_type(id, text)` / `shell_stop(id)` (contracts: "
-          "`doc(\"shell_logs\")`), never a rerun; re-issuing a live `id` returns THAT shell. "
+          "expired and the command still RUNS, so resume through the HANDLE the call returned — "
+          "`sh.logs(offset=0)`, `sh.wait(secs)`, `sh.type(text)`, `sh.stop()` — never a rerun; "
+          "re-issuing a live `id` returns THAT shell. "
           "Drive it from `python_execution`: read `r[\"stdout\"]`, print only what you need.")
      :render-finish-call-fn render-shell-run-result
      :render-start-call-fn (shell-start-renderer "run")
@@ -2698,18 +2684,17 @@
 (def shell-logs-symbol
   (vis/symbol
     #'shell-logs
-    {:symbol 'shell-logs
+    {:symbol '_shell-logs
      :native-tool? false
-     :name "shell_logs"
+     :name "_shell_logs"
      :result
      (str "`{id, text, offset, next_offset, is_eof, is_truncated, status, exit}` — always the same "
           "keys. `text` is the window this read returned; feed `next_offset` back to continue, and "
           "`is_eof` false means read again now.")
      :description
-     (str "Read a background shell's log from a byte offset and return NOW; nothing blocks on your "
-          "behalf — a wait is a bounded loop you write in `python_execution` and break on what you "
-          "read. No offset reads the TAIL; `offset=0` starts at the beginning. Live ids: "
-          "`session[\"resources\"]`.")
+     (str "TRANSPORT for `sh.logs(offset=…, limit=…)` — call the HANDLE the shell result already "
+          "is, not this. Reads a background shell's log from a byte offset and returns NOW. No "
+          "offset reads the TAIL; `offset=0` starts at the beginning.")
      :render-finish-call-fn render-shell-logs-result
      :render-start-call-fn (shell-start-renderer "logs")
      :schema {:type "object"
@@ -2724,17 +2709,17 @@
               :additionalProperties false}
      :inject-env? true
      :tag :observation
-     :on-error-fn (shell-on-error :shell-logs)}))
+     :on-error-fn (shell-on-error :_shell-logs)}))
 
 (def shell-type-symbol
   (vis/symbol
     #'shell-type
-    {:symbol 'shell-type
+    {:symbol '_shell-type
      :native-tool? false
-     :name "shell_type"
+     :name "_shell_type"
      :result "`{id, text, is_enter, status}`."
      :description
-     "Type keystrokes at a background shell's stdin; `is_enter` (default true) submits the line."
+     "TRANSPORT for `sh.type(text, is_enter=True)` — call the handle. Writes keystrokes to a background shell's stdin."
      :render-finish-call-fn render-shell-send-result
      :render-start-call-fn (shell-start-renderer "send")
      :schema {:type "object"
@@ -2746,16 +2731,17 @@
               :additionalProperties false}
      :inject-env? true
      :tag :mutation
-     :on-error-fn (shell-on-error :shell-type)}))
+     :on-error-fn (shell-on-error :_shell-type)}))
 
 (def shell-stop-symbol
   (vis/symbol
     #'shell-stop
-    {:symbol 'shell-stop
+    {:symbol '_shell-stop
      :native-tool? false
-     :name "shell_stop"
+     :name "_shell_stop"
      :result "`{id, status, exit, note}`."
-     :description "Kill a background shell's process tree and drop its retained logs and resource."
+     :description
+     "TRANSPORT for `sh.stop()` — call the handle. Kills a background shell's process tree and drops its retained logs and resource."
      :render-finish-call-fn render-shell-stop-result
      :render-start-call-fn (shell-start-renderer "stop")
      :schema {:type "object"
@@ -2764,14 +2750,15 @@
               :additionalProperties false}
      :inject-env? true
      :tag :mutation
-     :on-error-fn (shell-on-error :shell-stop)}))
+     :on-error-fn (shell-on-error :_shell-stop)}))
 
 (def shell-symbols
-  ;; ONE native tool for the whole family. `shell_logs` / `shell_type` /
-  ;; `shell_stop` stay bare Python verbs in the sandbox (`:native-tool? false`),
-  ;; because operations on an object the caller already holds are control flow,
-  ;; and control flow belongs in `python_execution` — not in four more schemas the
-  ;; model has to disambiguate before it can run one command.
+  ;; ONE native tool for the whole family, and ONE object to drive what it starts.
+  ;; `_shell_logs` / `_shell_type` / `_shell_stop` are PRIVATE sandbox transport
+  ;; (`:native-tool? false`, underscore-prefixed so `apropos` never lists them):
+  ;; the model calls the handle's own `sh.logs()` / `sh.wait()` / `sh.type()` /
+  ;; `sh.stop()`, because operations on an object the caller already holds are
+  ;; control flow, not four more schemas to disambiguate before running a command.
   [shell-symbol shell-logs-symbol shell-type-symbol shell-stop-symbol])
 
 (defn shell-attach-command
@@ -2816,8 +2803,8 @@
                        :label "Shell commands"
                        :description
                        (str "Expose `shell` — one tool whose `wait` decides whether the "
-                            "caller blocks — plus the handle verbs it hands back (`shell_logs` "
-                            "/ `shell_type` / `shell_stop`). When OFF none of them is bound. "
+                            "caller blocks — and the live handle it hands back (`sh.logs()` / "
+                            "`sh.wait()` / `sh.type()` / `sh.stop()`). When OFF none is bound. "
                             "Contained by the OS process jail whenever it is ON.")
                        :default true
                        :owner :vis
@@ -2828,7 +2815,7 @@
   (vis/extension
     {:ext/name "foundation-shell"
      :ext/description
-     "One shell tool: `shell`, whose `wait` decides whether the caller blocks — 0 does not wait at all — plus the handle verbs `shell_logs` / `shell_type` / `shell_stop`; `resource_stop` also stops PTYs. Default-on behind the `shell` toggle and OS process jail."
+     "One shell tool: `shell`, whose `wait` decides whether the caller blocks — 0 does not wait at all — answering with a live handle (`sh.logs()` / `sh.wait()` / `sh.type()` / `sh.stop()`); `resource_stop` also stops PTYs. Default-on behind the `shell` toggle and OS process jail."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

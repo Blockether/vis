@@ -3542,7 +3542,7 @@
      #'render/form-fingerprint
 
      base
-     {:code "shell_logs({\"id\": \"verify\"})" :vis/tool-name "shell_logs"}]
+     {:code "_shell_logs({\"id\": \"verify\"})" :vis/tool-name "_shell_logs"}]
 
     (it "display-code busts the fingerprint"
         (expect (not= (fp base) (fp (assoc base :display-code "# shell logs verify"))))

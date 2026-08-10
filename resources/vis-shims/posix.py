@@ -3,8 +3,8 @@
 # The agent sandbox is deny-by-default (no native access), so CPython's real
 # `subprocess` / `os.system` cannot spawn — they fail with an opaque error.
 # This shim replaces them with a thin layer that DELEGATES to the vis shell
-# TOOL `shell` and its sandbox verbs (`shell_logs`, `shell_type`,
-# `shell_stop`), so the
+# TOOL `shell` and its private handle transports (`_shell_logs`, `_shell_type`,
+# `_shell_stop`), so the
 # model's ordinary Python (`subprocess.run([...])`, `os.system(...)`) just works
 # and still rides the workspace-cwd containment, timeout,
 # process-tree kill, output bounding, render badge, and trace recording.
@@ -180,9 +180,11 @@ def __vis_install_posix_compat__():
     class Popen(object):
         # Background process backed by `shell` with `wait` 0 — the wait that
         # expires immediately, which is what "background" always meant (a session
-        # resource under a pty). Auto picks an id; terminate/kill use
-        # `shell_stop`, poll/wait read `shell_logs` status, and communicate walks
-        # the log from offset 0.
+        # resource under a pty). Auto picks an id; terminate/kill stop the shell,
+        # poll/wait read its log status, and communicate walks the log from offset 0.
+        # This bridge speaks the PRIVATE transports directly rather than the sandbox
+        # handle methods, because it must also work inside extension contexts, where
+        # the tools are `vis._shell_*` members and no handle type is installed.
         _counter = [0]
 
         def __init__(self, args, shell=False, cwd=None, **kwargs):
@@ -198,10 +200,10 @@ def __vis_install_posix_compat__():
             self.returncode = None
 
         def _logs(self):
-            return _tool("shell_logs")(self._id, {"limit": 1})
+            return _tool("_shell_logs")({"id": self._id, "limit": 1})
 
         def _read(self, offset):
-            return _tool("shell_logs")(self._id, {"offset": offset, "limit": 262144})
+            return _tool("_shell_logs")({"id": self._id, "offset": offset, "limit": 262144})
 
         def poll(self):
             r = self._logs()
@@ -231,7 +233,7 @@ def __vis_install_posix_compat__():
             return (out, "")
 
         def terminate(self):
-            _tool("shell_stop")(self._id)
+            _tool("_shell_stop")({"id": self._id})
             self.returncode = self.returncode if self.returncode is not None else -15
 
         kill = terminate

@@ -429,9 +429,32 @@ not repeat them.
 **Unknowns.** Does any client rendering key off the `git` TOOL name rather than `::program`,
 and does the companion transcript need a migration for that?
 
+## Phase 8 — The result IS the handle
+
+**Rationale.** Without it the request is one shape but its continuation is three: `shell` answers
+with an `id`, and driving that process means re-typing the id into `shell_logs` / `shell_type` /
+`shell_stop` — three more names in the sandbox surface, three more schemas to read, and a poll loop
+every caller rewrites by hand (and gets wrong by sleeping blindly).
+
+**Data.** None. Nothing crosses a boundary: the wire result keys are unchanged, and the handle is a
+sandbox-side TYPE over the same dict.
+
+**Acceptance criteria.**
+- `resources/vis-python/async_runtime.py` — `__VisShell__(__VisResult__)`: a shell result is a dict
+  WITH `logs()`, `wait()`, `type()`, `stop()`; `__vis_pyify__` types it by the engine-stamped `op`.
+- `src/com/blockether/vis/internal/foundation/shell.clj` — the three verbs become PRIVATE transport
+  (`_shell-logs` / `_shell-type` / `_shell-stop`, underscore = filtered out of `apropos`), and every
+  note/description points at the handle.
+- `resources/vis-shims/posix.py`, `internal/prompt.clj`, `internal/loop.clj` — followers.
+- Proof: `shell-test` "answers with a HANDLE whose own methods drive the process" starts a shell,
+  `sh.type("ready")`, `sh.wait(30)` and asserts the text, the `exited` status and that `shell_logs`
+  is NOT a global.
+
+**Unknowns.** None.
+
 ## State of the plan
 
-**ACCEPTED.**
+**DONE.**
 
 Done:
 
@@ -495,9 +518,14 @@ Done:
   as `:call {:pos ["command"]}`), and the `git.md` docs page is deleted — the tool's own
   description and result contract are the documentation.
 
-TODO, in order:
+- Phase 8, the result IS the handle — `PENDING-COMMIT`. `shell` answers with `__VisShell__`, a dict
+  that carries `sh.logs(offset=…)`, `sh.wait(secs)`, `sh.type(text)` and `sh.stop()`, so a process is
+  driven on the object the call already returned. `shell_logs` / `shell_type` / `shell_stop` are gone
+  from the model's surface: they survive only as the private `_shell_*` transport the handle calls,
+  underscore-prefixed so `apropos` never lists them. `sh.wait(secs)` is the bounded poll loop written
+  ONCE in the engine — read, keep reading while bytes remain, sleep only at EOF while the process
+  lives, stop at the deadline — which is what makes "never sleep blindly" a rule with a tool behind it.
 
-1. Phase 8 — the handle OBJECT (`sh.logs()`, `sh.wait(s)`, `sh.stop()`) replacing the three
-   id-taking Python symbols.
+TODO, in order: nothing. The plan is DONE.
 
 Each step ships as one commit with its own tests, lint-clean and formatted, per `AGENTS.md`.

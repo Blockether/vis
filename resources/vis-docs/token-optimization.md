@@ -13,7 +13,7 @@ apropos("struct")      # name substring
 doc("struct_patch")    # description + raw result + params
 ```
 
-A group is the extension that owns the capability, so a newly registered extension is groupable the moment it binds. `doc` states the raw-result shape for bare sandbox verbs too (`doc("shell_logs")`), which have no provider schema in front of them.
+A group is the extension that owns the capability, so a newly registered extension is groupable the moment it binds. `doc` states the raw-result shape for bare sandbox verbs too (`doc("resource_stop")`), which have no provider schema in front of them.
 
 Use them before inventing a tool name or call shape. They read the same live registry that generates native tool descriptions, so extensions appear immediately and copied catalogs cannot go stale.
 

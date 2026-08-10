@@ -219,7 +219,7 @@
     "- Direct native tools: single operations, simple edits, small fixed call sets. Batch independent\n"
     "  work via plural args; `await gather(...)` only for independent calls in `python_execution`.\n"
     "- `python_execution`: default for most Python/data work, YAML/JSON/TOML/CSV; prefer over shell.\n"
-    "- Nothing blocks for you: `shell` with `wait=0`, then poll `shell_logs` in `python_execution`.\n"
+    "- Nothing blocks for you: `shell` returns a HANDLE: `sh.logs()`, `sh.wait(secs)`, `sh.stop()`.\n"
     "- In `python_execution`, define once and reuse a small higher-order helper (functions that accept or return\n"
     "  callables): NEVER paste a near-identical loop or block twice; on the second occurrence factor it out and call it.\n"
     "- Native results are raw data, not rendered text. Use `ntr[key]` for data-bearing native calls, never a\n"

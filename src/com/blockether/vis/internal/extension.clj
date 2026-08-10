@@ -3805,8 +3805,8 @@
        (or (:ext.symbol/description entry) (:ext.symbol/doc entry)))
 
      ;; The raw-result contract belongs to EVERY doc-bearing symbol, native or
-     ;; not: a bare sandbox verb like `shell_logs` is called from Python without
-     ;; a provider schema in front of it, so `doc("shell_logs")` is the only
+     ;; not: a bare sandbox verb like `resource_stop` is called from Python without
+     ;; a provider schema in front of it, so `doc("resource_stop")` is the only
      ;; place its result keys are ever stated.
      result
      (:ext.symbol/result entry)

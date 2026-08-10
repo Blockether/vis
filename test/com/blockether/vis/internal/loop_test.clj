@@ -3752,7 +3752,7 @@
                  "errors surface"
                  ;; The sleep/poll prohibition lives HERE and nowhere else: the core
                  ;; prompt deliberately dropped its duplicate copy.
-                 "`shell_logs`" "`wait=0`" "no tool waits for you"
+                 "`sh.logs()`" "`wait=0`" "no tool waits for you"
                  ;; Sandbox Python does NOT close a dropped file handle, so an
                  ;; unclosed `open(...)` leaks a PROCESS descriptor until a GC —
                  ;; enough of them and no `shell`/`git` child can be spawned at
@@ -3840,7 +3840,7 @@
         ;; lint_code takes a whole dict → it declares NO :call and uses the default.
         (expect (nil? (get real-call-shapes "lint_code")))
         ;; Every shell verb is a one-map call; none may grow a positional shape.
-        (doseq [n ["shell" "shell_logs" "shell_type" "shell_stop"]]
+        (doseq [n ["shell" "_shell_logs" "_shell_type" "_shell_stop"]]
           (expect (nil? (get real-call-shapes n))))
         ;; Git is the argv itself, so it projects `command` positionally.
         (expect (= {:pos ["command"]} (get real-call-shapes "git"))))
@@ -3897,10 +3897,10 @@
         ;; Every shell verb receives its complete request as one map.
         (expect (= "shell({\"id\": \"x\", \"command\": \"sleep 1\"})"
                    (synth {:name "shell" :input {"id" "x" "command" "sleep 1"}})))
-        (expect (= "shell_logs({\"id\": \"x\", \"offset\": 4096})"
-                   (synth {:name "shell_logs" :input {"id" "x" "offset" 4096}})))
-        (expect (= "shell_stop({\"id\": \"x\"})"
-                   (synth {:name "shell_stop" :input {"id" "x"}}))))
+        (expect (= "_shell_logs({\"id\": \"x\", \"offset\": 4096})"
+                   (synth {:name "_shell_logs" :input {"id" "x" "offset" 4096}})))
+        (expect (= "_shell_stop({\"id\": \"x\"})"
+                   (synth {:name "_shell_stop" :input {"id" "x"}}))))
     (it "patch projects its one native shape to the edits vector"
         (expect (= "patch([{\"path\": \"a.clj\", \"from_anchor\": \"1:a\"}])"
                    (synth {:name "patch"

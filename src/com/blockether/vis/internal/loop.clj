@@ -4688,7 +4688,8 @@
      "Only `print` returns; bare expressions drop and errors surface. Native results return inline and stay "
      "at their `# saved:` coordinate (`ntr[\"t5/i1/f2\"]`); engine-bound natives are bare snake_case, "
      "native-only ones absent. A background shell is WATCHED here: `shell` with `wait=0`, then a BOUNDED "
-     "loop that calls `shell_logs` and breaks on what it read (an error line, a parsed port) — no tool "
+     "loop that calls `sh.logs()` on the handle it got back and breaks on what it read (an error line, "
+     "a parsed port); `sh.wait(secs)` is that loop already written — no tool "
      "waits for you. Close what you open (`with open(...)`): a dropped file handle is "
      "NOT auto-closed here, so the sandbox reclaims leaked descriptors and refuses more than 512 held at "
      "once (`VIS_PY_MAX_OPEN_FILES`) — leaked descriptors stop the process spawning `shell`/`git` children."
@@ -4768,7 +4769,7 @@
    "Read a discovered capability's authoritative contract; never preflight visible tools."
    :result (str
              "Authoritative docs string: the capability's contract, its raw-result shape and its "
-             "params block — for bare sandbox verbs (`shell_logs`, `shell_stop`) this is the only "
+             "params block — for a bare sandbox verb this is the only "
              "place the result keys are stated.")
    :schema {:type "object"
             :properties {"name" {:type "string" :description "Exact capability name from apropos."}}

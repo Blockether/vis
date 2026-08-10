@@ -578,6 +578,72 @@ class __VisResult__(__VisDict__):
     pass
 
 
+class __VisShell__(__VisResult__):
+    # A SHELL RESULT IS A LIVE HANDLE. Every answer from the shell family (`shell`
+    # itself, and each handle op) comes back as this dict-with-METHODS, so a process
+    # is driven on the object the call already returned instead of by re-typing its id
+    # into three loose verbs: `sh.logs(offset=0)`, `sh.wait(30)`, `sh.type("y")`,
+    # `sh.stop()`. It IS a dict — `sh["exit"]`, `json.dumps(sh)`, `{**sh}` behave — so
+    # nothing about reading a result changed; only driving it got shorter. The
+    # underlying `_shell_*` transports stay private (underscore = absent from
+    # `apropos`), and re-issuing a live `id` through `shell` hands the SAME handle back,
+    # which is how a later block re-acquires one.
+    __vis_shell_ops__ = frozenset(("shell", "_shell_logs", "_shell_type", "_shell_stop"))
+
+    def __vis_op__(self, __vis_name__, __vis_args__):
+        fn = globals().get(__vis_name__)
+        if fn is None:
+            raise RuntimeError(
+                "The shell tools are not enabled in this vis sandbox, so this handle "
+                "cannot be driven. Turn on 'Shell commands' in the settings dialog."
+            )
+        return __vis_settle__(fn(__vis_args__))
+
+    def logs(self, offset=None, limit=None):
+        # Read the log and return NOW — nothing blocks on the caller's behalf.
+        args = {"id": self["id"]}
+        if offset is not None:
+            args["offset"] = int(offset)
+        if limit is not None:
+            args["limit"] = int(limit)
+        return self.__vis_op__("_shell_logs", args)
+
+    def type(self, text, is_enter=True):
+        return self.__vis_op__(
+            "_shell_type", {"id": self["id"], "text": str(text), "is_enter": bool(is_enter)}
+        )
+
+    def stop(self):
+        return self.__vis_op__("_shell_stop", {"id": self["id"]})
+
+    def wait(self, seconds=120, poll=0.25):
+        # The bounded poll loop, written ONCE in the engine instead of once per model
+        # block: read from where the last read stopped, keep reading while bytes are
+        # still available, sleep only when the log is at EOF and the process is alive,
+        # and give up at the deadline. `timed_out` says which of the two ended it, and
+        # `text` is everything printed since this handle's own cursor.
+        import time as __vis_time__
+
+        deadline = __vis_time__.time() + float(seconds)
+        offset, chunks, last = 0, [], None
+        while True:
+            last = self.logs(offset=offset, limit=262144)
+            chunks.append(last.get("text") or "")
+            offset = last.get("next_offset", offset)
+            if not last.get("is_eof", True):
+                continue
+            if last.get("status") != "running":
+                break
+            if __vis_time__.time() >= deadline:
+                break
+            __vis_time__.sleep(poll)
+        out = dict(last)
+        out["offset"] = 0
+        out["text"] = "".join(chunks)
+        out["timed_out"] = out.get("status") == "running"
+        return __VisShell__(out)
+
+
 class __VisResultList__(list):
     # A native tool result whose TOP-LEVEL shape is a LIST (patch / struct_patch /
     # write return one row per file; some tools return a list of hits). It stays a
@@ -706,7 +772,14 @@ def __vis_pyify__(x):
                         pass
             except Exception:
                 d = {}
-        return __VisResult__(d) if "op" in d else __VisDict__(d)
+        if "op" in d:
+            # A shell answer is a HANDLE (see __VisShell__): same dict, plus the methods
+            # that drive the process it names. `op` is stamped by the engine on results
+            # only, so a model-built dict can never impersonate one.
+            if d.get("op") in __VisShell__.__vis_shell_ops__ and "id" in d:
+                return __VisShell__(d)
+            return __VisResult__(d)
+        return __VisDict__(d)
     try:
         return [__vis_pyify__(__e__) for __e__ in x]
     except Exception:

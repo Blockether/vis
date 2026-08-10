@@ -112,7 +112,7 @@
              (it "exposes grep as grep/find_files/find and unaliased tools as themselves"
                  (expect (= ["grep" "find_files" "find"] (ep/python-binding-names 'grep)))
                  (expect (= ["shell"] (ep/python-binding-names 'shell)))
-                 (expect (= ["shell_logs"] (ep/python-binding-names 'shell-logs))))
+                 (expect (= ["_shell_logs"] (ep/python-binding-names '_shell-logs))))
              (it "routes every alias to the SAME tool in a live context"
                  (let
                    [ctx
@@ -960,7 +960,7 @@
 
 
 ;; Groups make `apropos` answerable without knowing a single tool name, and a
-;; BARE sandbox verb (`shell_logs`) is called from Python with no provider schema
+;; BARE sandbox verb (`_shell_logs`) is called from Python with no provider schema
 ;; in front of it — so `doc(name)` is the only place its result keys are stated.
 (defdescribe
   apropos-groups-and-bare-verb-docs-test
@@ -981,12 +981,14 @@
 
     (it "every bound tool is filed under a group"
         (let
-          [out (run (str "g = __vis_groups__\n"
-                         "print('shell='+g.get('shell','?'))\n"
-                         "print('shell_logs='+g.get('shell_logs','?'))\n"
+          [out (run (str "g = __vis_groups__\n" "print('shell='+g.get('shell','?'))\n"
+                         "print('logs='+g.get('_shell_logs','?'))\n"
+                         "print('hidden='+str('_shell_logs' in apropos('')))\n"
                          "print('cat='+g.get('cat','?'))\n" "print('yaml='+g.get('yaml','?'))"))]
           (expect (str/includes? out "shell=shell"))
-          (expect (str/includes? out "shell_logs=shell"))
+          (expect (str/includes? out "logs=shell"))
+          ;; Phase 8: the handle transports are PRIVATE — grouped, never listed.
+          (expect (str/includes? out "hidden=False"))
           (expect (str/includes? out "cat=filesystem"))
           (expect (str/includes? out "yaml=shims"))))
     ;; "filesystem" is nowhere in a tool NAME, so a hit proves the query matched
@@ -1000,8 +1002,8 @@
           (expect (str/includes? out "Groups: `filesystem`."))))
     (it "the handle verbs carry their raw-result contract in doc"
         (let
-          [out (run (str "print('LOGS<'+doc('shell_logs')+'>')\n"
-                         "print('STOP<'+doc('shell_stop')+'>')"))]
+          [out (run (str "print('LOGS<'+doc('_shell_logs')+'>')\n"
+                         "print('STOP<'+doc('_shell_stop')+'>')"))]
           (expect (str/includes? out "Raw result: `{id, text, offset"))
           (expect (str/includes? out "Raw result: `{id, status, exit, note}`"))
           (expect (str/includes? out "params:"))))))

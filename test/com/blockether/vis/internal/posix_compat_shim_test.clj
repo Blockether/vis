@@ -81,12 +81,12 @@
 
        {:keys [^Context python-context]}
        (ep/create-python-context {'shell (fake-shell calls)
-                                  'shell-logs (fn [id & [opts]]
-                                                (swap! lifecycle conj [:logs id opts])
-                                                {"status" "running" "exit" nil "text" ""})
-                                  'shell-stop (fn [id & _]
-                                                (swap! lifecycle conj [:stop id])
-                                                {"status" "stopped"})})]
+                                  '_shell-logs (fn [opts]
+                                                 (swap! lifecycle conj [:logs (get opts "id") opts])
+                                                 {"status" "running" "exit" nil "text" ""})
+                                  '_shell-stop (fn [opts]
+                                                 (swap! lifecycle conj [:stop (get opts "id")])
+                                                 {"status" "stopped"})})]
 
       (.eval python-context "python" "import subprocess")
       (.eval python-context "python" "subprocess.run('sleep 1', shell=True, timeout=30, cwd='src')")
