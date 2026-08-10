@@ -123,6 +123,23 @@ export function followEnd(box: ScrollBox): boolean {
 }
 
 /**
+ * Is this scroll event the ECHO of a correction this screen just made?
+ *
+ * Nothing the corrector does is a reader gesture, and the pixel it left behind is
+ * the only honest witness: a scroller sitting exactly where the last correction
+ * put it has not been touched, however much the transcript grew underneath it in
+ * the meantime. Re-measuring "am I following the end" there answers a question
+ * about the GROWTH, not about the reader — while a session opens, history lands
+ * every frame, so a scroller pinned to the end one frame ago now measures far
+ * from it, and a screen that believes that measurement stops chasing and strands
+ * the reader above the newest turn.
+ */
+export function isCorrectionEcho(box: ScrollBox, correctedTop: number): boolean {
+  if (correctedTop < 0) return false;
+  return Math.abs(box.scrollTop - correctedTop) < 1;
+}
+
+/**
  * Whether the "↓ Latest" offer has anything to offer.
  *
  * Two facts, and either one alone withdraws it: the transcript is already

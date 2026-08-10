@@ -372,3 +372,29 @@ export function DotsIcon({ className }: { className?: string }) {
     </Icon>
   );
 }
+
+/**
+ * COPY. Two sheets, one over the other — the mark every clipboard control in
+ * the world wears, so it needs no label to be understood.
+ *
+ * It replaces the `#` that used to lead the session id: `#` says "this is an
+ * identifier", never "press me and it lands on your clipboard", and a chip whose
+ * whole verb is copying must SHOW that verb.
+ */
+export function CopyIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <path d="M15 9.75V6.75a1.5 1.5 0 0 0 -1.5 -1.5H6.75A1.5 1.5 0 0 0 5.25 6.75v6.5a1.5 1.5 0 0 0 1.5 1.5h3" />
+      <rect x="9.75" y="9.75" width="9" height="9" rx="1.5" />
+    </Icon>
+  );
+}
+
+/** DONE. The tick that answers a press — the copy chip's second face. */
+export function CheckIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <path d="M4.75 12.75l5 5L19.25 5.75" />
+    </Icon>
+  );
+}

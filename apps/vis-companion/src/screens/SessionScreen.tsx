@@ -106,7 +106,9 @@ import {
 import { readerOwnsScroll } from "../lib/reader-gesture";
 import {
   applyReadingPosition,
+  followEnd,
   isAtBottom,
+  isCorrectionEcho,
   markReadingPosition,
   parkedReadingPosition,
   rememberReadingPosition,
@@ -251,6 +253,15 @@ const FIRST_PAINT_TURNS = 2;
 // of markdown. A small ramp leaves input focus, keyboard animation, and scrolling
 // a chance to paint between batches.
 const HYDRATE_TURNS_PER_FRAME = 2;
+// How long the opening veil may wait for that ramp to FINISH. Every chunk it
+// hydrates grows the transcript by thousands of pixels and the corrector's
+// re-pin is a frame behind the growth, so a transcript revealed after its first
+// two turns paints a different slice of the conversation on each of the ramp's
+// frames — measured on a 48 000 px session, 12 frames over ~340ms — which is
+// the flicker a reader sees when a session opens. Hold the veil across the ramp
+// instead, and cap the wait so a device dropping frames still gets its
+// transcript well before the last-resort watchdog below.
+const OPENING_RAMP_MAX_MS = 800;
 // Last-resort reveal for the loading veil. The veil is dropped by whoever
 // finishes first — the transcript read, or the scroll effect one animation
 // frame after the first paint — and BOTH can be lost on mobile: a webview that
@@ -873,7 +884,6 @@ function CopyableId({ id, className }: { id: string; className: string }) {
       value={id}
       label="Copy session id"
       title={`Copy session id\n${id}`}
-      mark="#"
       className={className}
     >
       {short}
@@ -1273,7 +1283,6 @@ export function SessionScreen({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recordingRef = useRef<WavRecording | null>(null);
   const pasteCounterRef = useRef(peekDraftMessage(draftMessageId).counter);
-  const resizeScrollFrameRef = useRef<number | null>(null);
   const disclosureScrollFrameRef = useRef<number | null>(null);
   const scrollMetricsFrameRef = useRef<number | null>(null);
   // A rotation has one terminal scroll write: keep observers and stale scroll
@@ -1643,11 +1652,20 @@ export function SessionScreen({
     setShowJump(offer);
   }, []);
 
+  // Where the corrector last left `scrollTop`. Every correction below records it,
+  // because a scroll event that finds the scroller on this pixel is the echo of
+  // that correction and carries no reader intent at all.
+  const correctedTopRef = useRef(-1);
+  // Where `handleScroll` last SAW the scroller. A scroll event that finds it on
+  // this pixel reports growth underneath a position this screen already owns.
+  const seenTopRef = useRef(-1);
+
   const scrollToEnd = useCallback((behavior: ScrollBehavior = "auto") => {
     const viewport = scrollRef.current;
     if (!viewport) return;
     viewport.scrollTo({ top: viewport.scrollHeight, behavior });
     followingRef.current = true;
+    correctedTopRef.current = viewport.scrollTop;
     syncJump();
   }, [syncJump]);
 
@@ -1670,8 +1688,6 @@ export function SessionScreen({
   // the turn at the top edge before the flip and put it back after, or simply
   // stay pinned to the bottom when that is where the reader was.
   const scrollAnchorRef = useRef<ScrollAnchor | null>(null);
-  // Where the corrector below last left `scrollTop`.
-  const correctedTopRef = useRef(-1);
 
   const captureScrollAnchor = useCallback(() => {
     const viewport = scrollRef.current;
@@ -1685,7 +1701,7 @@ export function SessionScreen({
     // billed. Measured, it leaked 14 477 px of a 33 425 px "↑ Load earlier".
     if (
       scrollAnchorRef.current?.el.isConnected &&
-      Math.abs(viewport.scrollTop - correctedTopRef.current) < 1
+      isCorrectionEcho(viewport, correctedTopRef.current)
     ) {
       return;
     }
@@ -1730,9 +1746,19 @@ export function SessionScreen({
     const observer = new ResizeObserver(() => {
       if (busy()) return;
       // The end is its own anchor, and a hand on the glass owns the scroller: in
-      // The end is its own anchor, and a hand on the glass owns the scroller: in
       // both cases the reader's line is wherever they just put it, so re-read it.
       if (followingRef.current || readerOwnsScroll()) {
+        // For a reader following the end, the end IS the anchor — and this
+        // callback is the one place that sees the growth before it paints, so
+        // re-seat it here instead of leaving the last chunk under the composer
+        // until some later effect happens to fire. Measured, the opening ramp's
+        // final 402 px stayed below the fold with "↓ Latest" offered to a reader
+        // who had not scrolled at all.
+        if (followingRef.current && !readerOwnsScroll()) {
+          followEnd(viewport);
+          correctedTopRef.current = viewport.scrollTop;
+          syncJump();
+        }
         captureScrollAnchor();
         return;
       }
@@ -1755,7 +1781,7 @@ export function SessionScreen({
       viewport.removeEventListener("scroll", handleViewportScroll);
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
-  }, [captureScrollAnchor]);
+  }, [captureScrollAnchor, syncJump]);
 
   // Rotation is one transaction: snapshot before intermediate reflows, then wait
   // two paint frames after the final viewport measurement before restoring once.
@@ -3075,15 +3101,19 @@ export function SessionScreen({
         )
           return;
         followingRef.current = false;
+        // This IS a correction: the scroll events it echoes back while history
+        // keeps landing are not the reader changing their mind.
+        correctedTopRef.current = viewport.scrollTop;
         syncJump();
       } else {
         pinToEnd();
       }
       initialScrollPendingRef.current = false;
-      // The first paint window is the whole opening contract. Reveal one frame
-      // after it is placed; older turns continue hydrating above the viewport
-      // instead of keeping an already-readable transcript behind a veil.
-      requestAnimationFrame(() => setLoading(false));
+      // Reveal one frame after the opening window is placed — but only when it
+      // is already WHOLE. A session whose ramp is still running is revealed by
+      // the effect below, once it stops repainting itself (OPENING_RAMP_MAX_MS).
+      if (hydratedTurnCount >= Math.min(visibleTurnCount, turns.length))
+        requestAnimationFrame(() => setLoading(false));
       return;
     }
     // Not while the reader is dragging. `followingRef` is a measurement from the
@@ -3117,6 +3147,22 @@ export function SessionScreen({
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
   }, [hydratedTurnCount, visibleTurnCount]);
+
+  // The opening ramp repaints the transcript on every frame it hydrates; the
+  // reader should meet it settled, not mid-whip. Reveal when the window this
+  // screen opened with is fully hydrated, and no later than OPENING_RAMP_MAX_MS.
+  useEffect(() => {
+    if (!loading || initialScrollPendingRef.current) return;
+    if (hydratedTurnCount >= Math.min(visibleTurnCount, turns.length)) {
+      const frame = window.requestAnimationFrame(() => setLoading(false));
+      return () => window.cancelAnimationFrame(frame);
+    }
+    const timer = window.setTimeout(
+      () => setLoading(false),
+      OPENING_RAMP_MAX_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [loading, hydratedTurnCount, visibleTurnCount, turns.length]);
 
   // The veil must DISSOLVE, not vanish. Unmounting it the instant the transcript
   // is ready swaps a full-bleed `bg-ink` sheet for the whole transcript inside a
@@ -3202,12 +3248,12 @@ export function SessionScreen({
             // Pin in THIS callback, not in the frame after it. A
             // `ResizeObserver` still runs before the browser paints, so writing
             // the end here lands in the very frame the keyboard shrank the
-            // shell. Handing this case to the `requestAnimationFrame` catch-up
-            // below paints one frame of the OLD `scrollTop` against the NEW
+            // shell. Deferring it to the next animation frame paints one frame
+            // of the OLD `scrollTop` against the NEW
             // height — the newest turn sitting a keyboard's height above the
             // bottom — and then snaps it down: the small jump a reader sees
             // every time the composer is tapped (measured on iOS: 274 px).
-            box.scrollTop = Math.max(0, box.scrollHeight - height);
+            followEnd(box);
           } else if (!followingRef.current) {
             const limit = Math.max(0, box.scrollHeight - height);
             box.scrollTop = Math.max(
@@ -3218,23 +3264,26 @@ export function SessionScreen({
         }
       }
       if (composerOnly || !followingRef.current || readerOwnsScroll()) return;
-      if (resizeScrollFrameRef.current !== null) return;
-      resizeScrollFrameRef.current = window.requestAnimationFrame(() => {
-        resizeScrollFrameRef.current = null;
-        // Re-checked here, not just above: the finger can land in the frame this
-        // catch-up was waiting for.
-        if (followingRef.current && !readerOwnsScroll()) scrollToEnd("auto");
-      });
+      // The opening correction owns the scroller until it has placed its first
+      // paint window, and a reader with a parked position is not following the
+      // end even while the flag still says so.
+      if (initialScrollPendingRef.current || !box) return;
+      // Everything else that grows the transcript in this frame — a hydrated
+      // chunk of history, an image or a code block that finished measuring, a
+      // trace that expanded — lands ABOVE the fold, and this callback still runs
+      // before the browser paints. Write the end HERE. Handing it to the next
+      // animation frame paints one frame of the old `scrollTop` against the new
+      // height, which is a screenful of OLDER history flashed under the reader
+      // and snapped away again — once per growth, for the whole opening ramp.
+      // Measured on a 47 189 px session: 12 painted frames in 135 ms, each one
+      // showing a different part of the transcript. That is the flicker.
+      followEnd(box);
     });
     observer.observe(transcript);
     if (viewport) observer.observe(viewport);
 
     return () => {
       observer.disconnect();
-      if (resizeScrollFrameRef.current !== null) {
-        window.cancelAnimationFrame(resizeScrollFrameRef.current);
-        resizeScrollFrameRef.current = null;
-      }
       if (disclosureScrollFrameRef.current !== null) {
         window.cancelAnimationFrame(disclosureScrollFrameRef.current);
         disclosureScrollFrameRef.current = null;
@@ -3244,7 +3293,7 @@ export function SessionScreen({
         scrollMetricsFrameRef.current = null;
       }
     };
-  }, [scrollToEnd, sid]);
+  }, [sid]);
 
   // Autosize the composer WITHOUT thrashing layout. The naive pattern
   // (`height='auto'` then read `scrollHeight` on every keystroke) invalidates
@@ -4037,8 +4086,25 @@ export function SessionScreen({
       // the snapshot while that transaction is pending.
       if (isViewportRotating() || rotationRestorePendingRef.current) return;
       // The one opening correction has already happened; subsequent scroll events
-      // belong to the reader and are measured normally.
-      followingRef.current = isAtBottom(viewport);
+      // belong to the reader and are measured normally — but only the ones that
+      // MOVED the scroller. A scroll event that finds it on the same pixel as the
+      // last one reports the transcript growing underneath a position this screen
+      // already owns, and while a session opens history lands every frame: the
+      // measurement then answers "not at the bottom" about a scroller our own pin
+      // put at the end, drops `followingRef` and vetoes every later catch-up.
+      // Measured on a 46 373 px transcript, the session opened 6 917 px above its
+      // newest turn with "↓ Latest" painted over the composer.
+      const settled = isCorrectionEcho(viewport, seenTopRef.current);
+      seenTopRef.current = viewport.scrollTop;
+      if (settled) return;
+      // Being at the end IS following; leaving it is only ever the reader's own
+      // doing. `reader-gesture.ts` is the one place that knows the difference,
+      // and a scroll event raised by growth, by a clamp or by one of this
+      // screen's own catch-ups carries no intent: measuring it cleared the
+      // follow on a scroller our own pin had put at the end, and from then on
+      // every later catch-up was vetoed.
+      if (isAtBottom(viewport)) followingRef.current = true;
+      else if (readerOwnsScroll()) followingRef.current = false;
       // The reader's place, kept for the next time this session is opened.
       rememberReadingPosition(sid, markReadingPosition(viewport));
       syncJump();

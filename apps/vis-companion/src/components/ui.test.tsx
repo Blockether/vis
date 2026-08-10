@@ -1475,7 +1475,7 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
   describe("CopyChip", () => {
     const html = () =>
       renderToStaticMarkup(
-        <CopyChip value="abc" label="Copy session id" mark="#">
+        <CopyChip value="abc" label="Copy session id">
           abc12345
         </CopyChip>,
       );
@@ -1483,6 +1483,14 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
     it("is one box wide enough for 'Copied', so it never jumps", () => {
       expect(first(html())).toContain("min-w-[6ch]");
       expect(first(html())).toContain("h-6");
+    });
+
+    // Regression, reported as "remove the # for copy and use the real icon": the
+    // session id chip led with a `#` glyph, which names an identifier and says
+    // nothing about pressing it.
+    it("leads with the copy icon, never a glyph", () => {
+      expect(html()).toContain("<svg");
+      expect(html()).not.toContain("#");
     });
 
     it("carries a name and, when there is more to say, a title", () => {

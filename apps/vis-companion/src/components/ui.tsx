@@ -14,8 +14,10 @@ import { createPortal } from 'react-dom';
 
 import {
   ArrowDownIcon,
+  CheckIcon,
   ChevronIcon,
   CloseIcon,
+  CopyIcon,
   DotsIcon,
   DraftIcon,
   SearchIcon,
@@ -385,7 +387,6 @@ export function CopyChip({
   value,
   label,
   title,
-  mark,
   className = '',
   children,
 }: {
@@ -395,8 +396,6 @@ export function CopyChip({
   label: string;
   /** Hover text, when there is more to say than the label — the full id. */
   title?: string;
-  /** An optional leading glyph — the `#` in front of a session id. */
-  mark?: ReactNode;
   /** Placement only; the chip's own face is fixed. */
   className?: string;
   /** What it reads at rest. */
@@ -426,14 +425,11 @@ export function CopyChip({
         isCopied ? 'border-ok text-ok' : 'border-dialog-edge text-button-foreground'
       } ${className}`}
     >
-      {mark ? (
-        <span
-          aria-hidden="true"
-          className="opacity-50 transition-opacity group-hover:opacity-100"
-        >
-          {mark}
-        </span>
-      ) : null}
+      {isCopied ? (
+        <CheckIcon className="size-3 text-ok" />
+      ) : (
+        <CopyIcon className="size-3 opacity-60 transition-opacity group-hover:opacity-100" />
+      )}
       <span className="min-w-0 truncate">{isCopied ? 'Copied' : children}</span>
     </button>
   );
