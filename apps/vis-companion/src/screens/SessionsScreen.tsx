@@ -90,6 +90,7 @@ import {
   machineLabel,
   newSessionTarget,
   projectDelete,
+  projectLabel,
   projectPage,
   reconcileMachines,
   scopedConns,
@@ -741,7 +742,7 @@ export function SessionsScreen({
       null,
     [targetMachine, draftRoot],
   );
-  const draftRepo = draftProbe ? projectLabel(draftProbe) : '';
+  const draftRepo = draftProbe ? projectLabel([draftProbe]) : '';
   // Where that machine is working RIGHT NOW: the root of its most recent session.
   // "New session" needs no question because of this — the machine has been somewhere.
   const project = useMemo(() => machineProject(targetMachine), [targetMachine]);
@@ -1072,7 +1073,7 @@ export function SessionsScreen({
   const managedProjects = useCallback(
     (machine: FleetMachine): ManagedProject[] =>
       groupByWorkDir(machine.sessions ?? []).map(([, sessions]) => ({
-        name: projectLabel(sessions[0]!),
+        name: projectLabel(sessions),
         root: projectRoot(sessions),
         count: sessions.length,
         live: sessions.filter(sessionIsLive).length,
@@ -1371,7 +1372,7 @@ export function SessionsScreen({
                     : groups.map(([groupRoot, projectSessions]) => (
                         <ProjectGroup
                           key={`${key}\u0000${groupRoot}`}
-                          project={projectLabel(projectSessions[0]!)}
+                          project={projectLabel(projectSessions)}
                           sessions={projectSessions}
                           conn={machine.conn}
                           matches={matches}
@@ -2439,18 +2440,6 @@ function reconcileSessions(current: Session[] | null, incoming: Session[]): Sess
 
 function shortId(id: string): string {
   return id.split('-')[0]?.slice(0, 8) || id.slice(0, 8);
-}
-
-function projectLabel(session: Session): string {
-  // NEVER `workspace.label` for a draft: that is the DRAFT's name, and using it
-  // as the grouping key gave every draft its own bogus top-level "project".
-  const named =
-    session.project_name?.trim() ||
-    (isDraftWorkspace(session) ? '' : session.workspace?.label?.trim());
-  if (named) return homeifyPath(named);
-  const root = projectPath(session);
-  if (root) return root.split('/').pop() || homeifyPath(root);
-  return 'No project';
 }
 
 function projectRoot(sessions: Session[]): string {

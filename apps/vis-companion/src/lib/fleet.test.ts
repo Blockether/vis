@@ -12,6 +12,7 @@ import {
   machineLabel,
   newSessionTarget,
   projectDelete,
+  projectLabel,
   projectPage,
   reconcileMachines,
   scopedMachines,
@@ -82,15 +83,124 @@ describe('groupByWorkDir', () => {
   // Regression, issue #session-list-work-dir: project names used to split one working directory into separate groups.
   it('groups sessions by workspace root even when their project names differ', () => {
     const rows = [
-      session('a', { project_name: 'first-name', workspace: { root: '/Users/me/vis' } }),
-      session('b', { project_name: 'second-name', workspace: { root: '/Users/me/vis' } }),
-      session('c', { project_name: 'other', workspace: { root: '/Users/me/other' } }),
+      session('a', {
+        project_name: 'first-name',
+        modified_at: '2024-05-01T10:00:00Z',
+        workspace: { root: '/Users/me/vis' },
+      }),
+      session('b', {
+        project_name: 'second-name',
+        modified_at: '2024-04-01T10:00:00Z',
+        workspace: { root: '/Users/me/vis' },
+      }),
+      session('c', {
+        project_name: 'other',
+        modified_at: '2024-03-01T10:00:00Z',
+        workspace: { root: '/Users/me/other' },
+      }),
     ];
 
     expect(groupByWorkDir(rows)).toEqual([
       ['/Users/me/vis', [rows[0], rows[1]]],
       ['/Users/me/other', [rows[2]]],
     ]);
+  });
+
+  // Regression, user report ("the way we sort the projects is non-deterministic"): the groups came
+  // back in the order the Map happened to be filled, so a project sat wherever its best-ranked
+  // SESSION sat. One row starred on this device, one unsent draft, or one turn starting anywhere in
+  // the fleet teleported the whole project header — and two devices paired to the same machine
+  // painted the projects in two different orders from identical data.
+  const roots = (rows: Session[]) => groupByWorkDir(rows).map(([root]) => root);
+
+  it('orders projects by their own recency, whatever order the rows arrive in', () => {
+    const old = session('old', {
+      modified_at: '2024-01-01T00:00:00Z',
+      workspace: { root: '/Users/me/old' },
+    });
+    const fresh = session('fresh', {
+      modified_at: '2024-06-01T00:00:00Z',
+      workspace: { root: '/Users/me/fresh' },
+    });
+
+    expect(roots([old, fresh])).toEqual(['/Users/me/fresh', '/Users/me/old']);
+    expect(roots([fresh, old])).toEqual(['/Users/me/fresh', '/Users/me/old']);
+  });
+
+  it('reads a project’s recency from its newest session, not its first row', () => {
+    const stale = session('stale', {
+      modified_at: '2024-01-01T00:00:00Z',
+      workspace: { root: '/Users/me/busy' },
+    });
+    const newest = session('newest', {
+      modified_at: '2024-09-01T00:00:00Z',
+      workspace: { root: '/Users/me/busy' },
+    });
+    const other = session('other', {
+      modified_at: '2024-06-01T00:00:00Z',
+      workspace: { root: '/Users/me/quiet' },
+    });
+
+    expect(roots([stale, other, newest])).toEqual(['/Users/me/busy', '/Users/me/quiet']);
+  });
+
+  it('puts a project with work running above a more recent idle one', () => {
+    const running = session('running', {
+      live: true,
+      modified_at: '2024-01-01T00:00:00Z',
+      workspace: { root: '/Users/me/running' },
+    });
+    const idle = session('idle', {
+      modified_at: '2024-06-01T00:00:00Z',
+      workspace: { root: '/Users/me/idle' },
+    });
+
+    expect(roots([idle, running])).toEqual(['/Users/me/running', '/Users/me/idle']);
+  });
+
+  it('breaks a tie on the workspace root, so the order is total', () => {
+    const at = '2024-06-01T00:00:00Z';
+    const b = session('b', { modified_at: at, workspace: { root: '/Users/me/b' } });
+    const a = session('a', { modified_at: at, workspace: { root: '/Users/me/a' } });
+
+    expect(roots([b, a])).toEqual(['/Users/me/a', '/Users/me/b']);
+    expect(roots([a, b])).toEqual(['/Users/me/a', '/Users/me/b']);
+  });
+});
+
+describe('projectLabel', () => {
+  // Regression, user report ("the way we sort the projects is non-deterministic"): the header read
+  // its name off `sessions[0]`, so a group whose rows disagree renamed itself whenever the row order
+  // moved. A name the whole group does not agree on is not the project's name — the folder is.
+  it('uses a name only when every session in the group agrees on it', () => {
+    const rows = [
+      session('a', { project_name: 'first-name', workspace: { root: '/Users/me/vis' } }),
+      session('b', { project_name: 'second-name', workspace: { root: '/Users/me/vis' } }),
+    ];
+
+    expect(projectLabel(rows)).toBe('vis');
+    expect(projectLabel([rows[1]!, rows[0]!])).toBe('vis');
+    expect(projectLabel([rows[0]!])).toBe('first-name');
+  });
+
+  it('names an unnamed group after its folder, and a rootless one at all', () => {
+    expect(projectLabel([session('a', { workspace: { root: '/Users/me/vis' } })])).toBe('vis');
+    expect(projectLabel([session('a')])).toBe('No project');
+    expect(projectLabel([])).toBe('No project');
+  });
+
+  // A draft's `workspace.label` is the DRAFT's name; using it as the project name gave every draft
+  // its own bogus top-level project.
+  it('never takes its name from a draft workspace label', () => {
+    const draft = session('a', {
+      workspace: {
+        root: '/Users/me/.vis/drafts/vis/wire',
+        repo_root: '/Users/me/vis',
+        label: 'wire',
+      },
+    });
+
+    expect(projectLabel([draft])).toBe('vis');
   });
 });
 

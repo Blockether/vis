@@ -1,5 +1,6 @@
 import type { MenuPosition } from './anchored-menu';
 import { hostOf } from './endpoints';
+import { homeifyPath } from './path';
 import type { GatewayConn, Session } from './types';
 
 /**
@@ -445,7 +446,51 @@ export function projectPath(session: Session): string {
   return path?.replace(/\/+$/, '') || '';
 }
 
-/** Group sessions by working directory, never by their optional project name. */
+/**
+ * The name a project header wears: the name its sessions AGREE on, else its folder.
+ *
+ * A group is a working directory, and the rows in it are free to disagree about the optional
+ * `project_name` the gateway carried — so reading the name off `sessions[0]` made the header
+ * rename itself every time the row order moved (a turn starting, a star, an unsent draft). A name
+ * only one row claims is not the project's name; the folder is, and it never moves. Same unanimity
+ * rule `projectDelete` uses before it dares call a group a project.
+ *
+ * NEVER `workspace.label` for a draft: that is the DRAFT's name, and using it gave every draft its
+ * own bogus top-level project.
+ */
+export function projectLabel(sessions: Session[]): string {
+  const named = new Set(
+    sessions.map(
+      (session) =>
+        session.project_name?.trim() ||
+        (isDraftWorkspace(session) ? '' : session.workspace?.label?.trim()) ||
+        '',
+    ),
+  );
+  const agreed = named.size === 1 ? [...named][0] : '';
+  if (agreed) return homeifyPath(agreed);
+  const root = sessions.map(projectPath).find(Boolean) ?? '';
+  if (root) return root.split('/').pop() || homeifyPath(root);
+  return 'No project';
+}
+
+/**
+ * Group sessions by working directory, never by their optional project name, and put the groups in
+ * an order the PROJECT owns.
+ *
+ * The order used to be whatever order the Map was filled in — that is, a project sat wherever its
+ * best-ranked session sat. Nothing about a project decided where its header went: `sessionOrder`
+ * lifts a starred or unsent row to the front of the machine's list and dragged its whole project
+ * with it, the gateway floats every live session to the top of the fleet, and both are per-row
+ * facts. So one turn starting moved a header the user was reading, a star saved on THIS device
+ * reordered the screen against every other device, and the same data painted two ways.
+ *
+ * The key is the project's own: work RUNNING first (the gateway's own navigator rule, one level
+ * up), then the project's most recent activity, then the workspace root. Total and data-only, so
+ * every device paints identical projects in an identical order, and only a real change to a project
+ * moves it. Stars and drafts still lift rows INSIDE the group, which is where a per-device
+ * preference belongs.
+ */
 export function groupByWorkDir(sessions: Session[]): Array<[string, Session[]]> {
   const groups = new Map<string, Session[]>();
   for (const session of sessions) {
@@ -454,7 +499,18 @@ export function groupByWorkDir(sessions: Session[]): Array<[string, Session[]]> 
     group.push(session);
     groups.set(key, group);
   }
-  return [...groups.entries()];
+  return [...groups.entries()].sort(([leftRoot, left], [rightRoot, right]) => {
+    const live = Number(!left.some(sessionIsLive)) - Number(!right.some(sessionIsLive));
+    if (live !== 0) return live;
+    const recency = projectMillis(right) - projectMillis(left);
+    if (recency !== 0) return recency;
+    return leftRoot < rightRoot ? -1 : leftRoot > rightRoot ? 1 : 0;
+  });
+}
+
+/** When a PROJECT last moved: the newest of its sessions. */
+function projectMillis(sessions: Session[]): number {
+  return sessions.reduce((newest, session) => Math.max(newest, sessionMillis(session)), 0);
 }
 
 /**

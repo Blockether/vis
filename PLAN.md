@@ -694,6 +694,39 @@ global, never persisted and never sent over the wire.
 
 **Unknowns.** None.
 
+## Phase 17 — A wait ANSWERS: no idle tail, and the ticker says what it waits for
+
+**Rationale.** Without it a wait looks stuck twice over. `shell-wait-impl` polled on a flat 50 ms
+sleep, so a command that had ALREADY exited still cost its caller ~120-154 ms of measured wait
+(the sleep, paid once before the exit was seen and once more to confirm the log had drained) —
+a 200 ms `echo` answered in ~340 ms. And while any wait ran, the TUI ticker read
+`Vis is running: _shell-wait tt`: a private transport name the caller never typed and an opaque
+id, naming neither the command nor the budget. Together they made an HONEST wait — session
+`2cd3c95b`, a genuinely 50.7 s `grep -rln`, reproduced at 50.7 s — read as a wait hung on nothing.
+
+**Data.** None. `phrase` rides the existing in-process activity map and the gateway's live-activity
+payload beside `op`/`label`; it is UI prose, never persisted and never replayed as a contract.
+
+**Acceptance criteria.**
+- `src/com/blockether/vis/internal/foundation/shell.clj` — `wait-idle-poll-ms` is a ladder
+  (2 ms while a finish is plausible, 10 ms, then 50 ms once it clearly is not) driven by an idle
+  counter in the wait loop, and `wait-drain-poll-ms` (5 ms) charges the shortest sleep to a
+  command that is already done. `shell-ticker` builds one phrase from the id, the budget and the
+  live script; `:ext.symbol/ticker-fn` is declared on `shell-{wait,status,logs,type,stop}-symbol`.
+- `src/com/blockether/vis/internal/extension.clj` — `:ext.symbol/ticker-fn` is a symbol option with
+  its spec and its doc line; `tool-start-phrase` calls it and `tool-start-event` carries the result.
+- `src/com/blockether/vis/internal/progress.clj` and
+  `src/com/blockether/vis/internal/gateway/state.clj` — `:tool/phrase` on the iteration, `phrase` on
+  the live-activity payload, so both channels read one sentence instead of assembling their own.
+- `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj` and
+  `apps/vis-companion/src/screens/SessionScreen.tsx` — print it verbatim after `Vis is `; a tool
+  with no ticker keeps the `op` + `label` default.
+- Test: `shell-test/shell-wait-answers-test` pins the poll ladder, that a finished command's wait
+  returns within 100 ms of its own `finished_at`, and the phrase for every shell transport;
+  `render-test` pins that `:tool/phrase` replaces `_shell-wait tt` in the bubble.
+
+**Unknowns.** None.
+
 ## State of the plan
 
 **DONE.**
@@ -798,6 +831,10 @@ Done:
 - Phase 16, the process surface is said ONCE — `cf7b47c58`. `env-python/PROCESS_SURFACE` (`ban` /
   `use` / `off`) is the only wording; the prompt block, the `subprocess` refusal and an undriveable
   handle all read it, the second through the `__vis_process_surface__` sandbox global.
+- Phase 17, a wait ANSWERS — `bd3774d8b`. The idle poll is a 2/10/50 ms ladder with a 5 ms drain, so a
+  finished command's wait returns 9-17 ms after its exit instead of 120-154 ms; a tool declares its
+  own ticker sentence (`:ext.symbol/ticker-fn`), so the bubble reads
+  `Vis is waiting for tt (up to 60s): npm test` instead of `Vis is running: _shell-wait tt`.
 
 TODO, in order: nothing. The plan is DONE.
 
