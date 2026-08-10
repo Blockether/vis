@@ -7044,7 +7044,7 @@
                                   (state/dispatch [:cycle-reasoning-level])
 
                                   :cycle-verbosity
-                                  (state/dispatch [:cycle-codex-verbosity])
+                                  (state/dispatch [:cycle-verbosity])
 
                                   :search-open
                                   (state/dispatch [:search-open])
@@ -7326,7 +7326,7 @@
                          (do (state/dispatch [:cycle-reasoning-level]) (recur))
 
                          :cycle-verbosity
-                         (do (state/dispatch [:cycle-codex-verbosity]) (recur))
+                         (do (state/dispatch [:cycle-verbosity]) (recur))
 
                          :cycle-model
                          (do (state/dispatch [:cycle-model]) (recur))

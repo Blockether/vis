@@ -5,6 +5,7 @@
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
+            [com.blockether.vis.core :as vis]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- fixture-seg?
@@ -502,35 +503,84 @@
             (expect (empty? (->> (build-limits-segments {:messages [] :settings {}} 0)
                                  (filter #(= :right (:region %)))
                                  (mapv :text))))))))
-  (it "hides the Codex verbosity knob when the session routes through non-Codex"
-      ;; Verbosity is Codex-only. Even when the GLOBAL router default is Codex,
-      ;; a session that picked Claude must NOT show `verbosity:` in the footer.
+  (it "hides the verbosity knob when the session's model rejects the field"
+      ;; Regression: the chip was gated on the provider being `:openai-codex`, so a
+      ;; Claude session inherited the knob whenever the GLOBAL router default
+      ;; happened to be Codex, and a Copilot GPT session never got it at all.
       (let [build-segments @#'footer/build-segments]
-        (with-redefs-fn {#'footer/chosen-model-info (fn []
-                                                      {:name "gpt-5.5" :provider :openai-codex})}
+        (with-redefs-fn {#'footer/session-model-info (fn [_]
+                                                       {:name "claude-opus-4-8"
+                                                        :provider :github-copilot})}
           (fn []
             (let
               [texts (->> (build-segments {:messages []
-                                           :settings {:openai-codex-verbosity "high"}
-                                           :session-model-pref {:provider "anthropic-coding-plan"
+                                           :settings {:verbosity "high"}
+                                           :session-model-pref {:provider "github-copilot"
                                                                 :model "claude-opus-4-8"}}
                                           0)
                           (mapv :text))]
               (expect (not-any? #(str/starts-with? % "verbosity:") texts)))))))
-  (it "shows the Codex verbosity knob when the session routes through Codex"
+  (it "shows the verbosity knob whenever svar stamped a verbosity style"
       (let [build-segments @#'footer/build-segments]
-        (with-redefs-fn {#'footer/chosen-model-info (fn []
-                                                      {:name "claude-opus-4-8"
-                                                       :provider :anthropic-coding-plan})}
+        (with-redefs-fn {#'footer/session-model-info (fn [_]
+                                                       {:name "gpt-5.6-sol"
+                                                        :provider :github-copilot
+                                                        :verbosity-style :openai-text})}
           (fn []
             (let
               [texts (->> (build-segments {:messages []
-                                           :settings {:openai-codex-verbosity "high"}
-                                           :session-model-pref {:provider "openai-codex"
-                                                                :model "gpt-5.5"}}
+                                           :settings {:verbosity "high"}
+                                           :session-model-pref {:provider "github-copilot"
+                                                                :model "gpt-5.6-sol"}}
                                           0)
                           (mapv :text))]
               (expect (some #(= "verbosity: high" %) texts)))))))
+  (it "reads capability off the SESSION's model, not the global router default"
+      ;; Regression: opening a GitHub Copilot session offered no way to change
+      ;; reasoning, because the footer asked the router's DEFAULT model instead
+      ;; of the model this session routes to.
+      (let [build-segments @#'footer/build-segments]
+        (with-redefs-fn {#'footer/session-model-info
+                         (fn [_]
+                           {:name "gpt-5.6-sol"
+                            :provider :github-copilot
+                            :reasoning? true
+                            :reasoning-style :openai-effort
+                            :reasoning-effort? true
+                            :verbosity-style :openai-text})}
+          (fn []
+            (let
+              [texts (->> (build-segments {:messages []
+                                           :settings {:reasoning-level "deep"
+                                                      :verbosity "medium"}
+                                           :session-model-pref {:provider "github-copilot"
+                                                                :model "gpt-5.6-sol"}}
+                                          0)
+                          (mapv :text))]
+              (expect (some #(= "reasoning: deep" %) texts))
+              (expect (some #(= "verbosity: medium" %) texts)))))))
+  (it "resolves the SESSION's model, falling back to the router root without a pick"
+      ;; The plumbing under the chips: the same GitHub Copilot provider serves an
+      ;; Anthropic wire for Claude and a Responses wire for GPT, so asking the
+      ;; router's DEFAULT model answers about a model this session never uses.
+      (let [session-model-info @#'footer/session-model-info
+            default-model {:name "glm-4.7" :provider :zai}
+            copilot-gpt {:name "gpt-5.6-sol" :provider :github-copilot}]
+        (with-redefs-fn {#'vis/get-router (constantly :router)
+                         #'vis/gateway-session-model-cached (constantly nil)
+                         #'vis/resolve-effective-model (constantly default-model)
+                         #'vis/resolve-model-info (fn [_ provider _model]
+                                                   (if (= "github-copilot" provider)
+                                                     copilot-gpt
+                                                     default-model))}
+          (fn []
+            (expect (= copilot-gpt
+                       (session-model-info
+                         {:session {:id "s1"}
+                          :session-model-pref {:provider "github-copilot"
+                                               :model "gpt-5.6-sol"}})))
+            (expect (= default-model
+                       (session-model-info {:session {:id "s1"}})))))))
   (it "joins shortcuts to their labels without separator dots"
       (let [spans-width @#'footer/spans-width]
         (expect (= (count "model (C-x m) / reasoning: deep (C-x r)")

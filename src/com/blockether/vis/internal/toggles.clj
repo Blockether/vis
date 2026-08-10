@@ -233,10 +233,10 @@
 
 (defn visible-toggles
   "`registered-toggles` filtered to what settings UIs should SHOW —
-   provider-specific knobs declare a `:visible-fn` so e.g. the OpenAI
-   Codex verbosity cycle only appears when a Codex provider is actually
-   configured, and `:settings? false` toggles (e.g. reasoning-effort, which
-   has its own Ctrl+R control) stay out of the Settings dialog entirely.
+   provider-specific knobs declare a `:visible-fn` so a knob only appears when
+   the provider that owns it is actually configured, and `:settings? false`
+   toggles (e.g. reasoning-effort and verbosity, which have their own Ctrl+R /
+   Ctrl+X controls) stay out of the Settings dialog entirely.
    State ops always work on the FULL registry; visibility is a presentation
    concern only."
   []
@@ -570,8 +570,21 @@
                        :owner :vis
                        :group :provider
                        :persist? true})
-    ;; NOTE: provider-specific knobs (e.g. "openai_codex_verbosity")
-    ;; are registered by their PROVIDER EXTENSIONS, not here — a knob
-    ;; belongs next to the backend it tunes, and its `:visible-fn`
-    ;; keeps it out of Settings until that provider is configured.
+    ;; Verbosity is a WIRE knob (`text.verbosity` on the OpenAI Responses
+    ;; endpoint), not a vendor's: OpenAI Codex and GitHub Copilot's GPT tier
+    ;; both accept it, so it is registered once HERE rather than by one
+    ;; provider extension. Channels offer it only when svar stamped
+    ;; `:verbosity-style` on the model the session routes to
+    ;; (`loop/verbosity-configurable?`) — never when a provider id matches.
+    (register-toggle! {:id "verbosity"
+                       :label "Verbosity"
+                       :description "Answer-length hint passed to models whose wire accepts one."
+                       :type :enum
+                       :choices ["low" "medium" "high"]
+                       ;; Own control (TUI Ctrl+X l, footer), like reasoning_level.
+                       :settings? false
+                       :default "low"
+                       :owner :vis
+                       :group :provider
+                       :persist? true})
     true))

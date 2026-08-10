@@ -3659,7 +3659,7 @@
   "Old extension setting rows now owned by registry toggles. Drop them rather
    than aliasing or rendering duplicates. These are extension-setting keys,
    not toggle ids."
-  #{:reasoning-level :openai-codex-verbosity})
+  #{:reasoning-level :verbosity})
 
 (defn- extension-setting-declarations
   []

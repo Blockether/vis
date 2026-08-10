@@ -1003,6 +1003,72 @@
                                           "different trust origin"))
                    (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid)))))))))
 
+(defdescribe
+  shell-wait-answers-test
+  ;; Regression, wait audit: a command that had ALREADY finished still cost its
+  ;; caller ~130 ms of `wait` (a flat 50 ms poll, paid twice), and while it ran the
+  ;; ticker said `_shell-wait tt` — a private op name and an opaque id — so a wait
+  ;; doing exactly what it was asked read as a wait stuck on nothing.
+  (it "returns within a few ms of the exit it was waiting for"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-wait-latency"
+               env {:session-id sid}]
+
+              (try (dotimes [i 3]
+                     (let
+                       [id (str "fast" i)
+                        _ (shell* env {"command" "echo hi" "id" id})
+                        w (wait* env id 30)
+                        back (System/currentTimeMillis)
+                        st (:result (shell* env {"op" "status" "id" id}))]
+
+                       (expect (= 0 (get w "exit")))
+                       (expect (false? (get w "timed_out")))
+                       (expect (str/includes? (str (get w "stdout")) "hi"))
+                       ;; The bytes are all there AND the caller is not held past the
+                       ;; exit: everything after `finished_at` is pure wait overhead.
+                       (expect (< (- back (long (get st "finished_at"))) 100))))
+                   (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))))
+  (it "backs its idle cadence off along the idle count instead of a flat 50 ms"
+      (let [poll @#'shell/wait-idle-poll-ms]
+        ;; Near-instant while a finish is plausible, cheap once it clearly is not.
+        (expect (= 2 (poll 0)))
+        (expect (= 2 (poll 3)))
+        (expect (= 10 (poll 4)))
+        (expect (= 50 (poll 10)))
+        (expect (= 50 (poll 10000)))
+        ;; Confirming an exited child's log is quiet is charged to a command that is
+        ;; already done, so it is the shortest sleep in the loop.
+        (expect (< @#'shell/wait-drain-poll-ms (poll 10000)))))
+  (it "tells the ticker WHAT it waits for — the command and the budget, not the op"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-wait-ticker"
+               env {:session-id sid}
+               ticker-of #(:ext.symbol/ticker-fn %)]
+
+              (try (shell* env {"command" "sleep 30" "id" "dev"})
+                   ;; The live phrase names the id, the budget and the real command —
+                   ;; every shell transport, because `_shell-logs dev` answers as little
+                   ;; as `_shell-wait dev` did.
+                   (expect (=
+                             "waiting for dev (up to 60s): sleep 30"
+                             ((ticker-of shell/shell-wait-symbol) env [{"id" "dev" "seconds" 60}])))
+                   (expect (= "waiting for dev (up to 120s): sleep 30"
+                              ((ticker-of shell/shell-wait-symbol) env [{"id" "dev"}])))
+                   (expect (= "stopping dev: sleep 30"
+                              ((ticker-of shell/shell-stop-symbol) env [{"id" "dev"}])))
+                   (expect (= "checking on dev: sleep 30"
+                              ((ticker-of shell/shell-status-symbol) env [{"id" "dev"}])))
+                   (expect (= "reading nobody's log"
+                              ((ticker-of shell/shell-logs-symbol) env [{"id" "nobody"}])))
+                   (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid)))))))))
+
 (defdescribe shell-one-shape-test
              ;; Regression, one-shape refactor: `run` answered `stdout`, `logs` answered
              ;; `text`, `send`/`stop` carried their own stage-scoped subsets and an argv run built a

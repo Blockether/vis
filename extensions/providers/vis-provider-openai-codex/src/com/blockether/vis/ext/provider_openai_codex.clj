@@ -606,22 +606,11 @@
 ;; `DEFAULT_CONTEXT_LIMIT`. gpt-5.6-terra now rides as a BARE name — svar's
 ;; catalog (>= 0.7.59) supplies its 272k window, so no inline `:context` needed.
 
-;; Provider-specific Settings knob — registered HERE, next to the
-;; backend it tunes (not in internal/toggles.clj), and visible in the
-;; settings dialogs only while a Codex provider is actually configured.
-(vis/register-toggle! {:id "openai_codex_verbosity"
-                       :label "Verbosity"
-                       :description "Output detail hint passed to the OpenAI Codex backend."
-                       :type :enum
-                       :choices ["low" "medium" "high"]
-                       :default "low"
-                       :owner :vis
-                       :group :provider
-                       :persist? true
-                       ;; Cycled on its own control (TUI keymap 'l'), not the Settings dialog.
-                       :settings? false
-                       :visible-fn (fn []
-                                     (boolean (vis/has-provider? :openai-codex)))})
+;; NOTE: verbosity is NOT registered here. `text.verbosity` is a knob of the
+;; OpenAI RESPONSES wire, and Codex is one of several providers that ride it
+;; (GitHub Copilot's GPT tier is another), so the toggle lives in
+;; `internal/toggles.clj` and its visibility follows svar's `:verbosity-style`
+;; capability instead of this provider's id.
 
 (vis/register-extension!
   (vis/extension

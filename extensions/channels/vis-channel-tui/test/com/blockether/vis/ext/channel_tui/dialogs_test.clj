@@ -797,10 +797,10 @@
                    (apply-settings-option
                      {:reasoning-level :deep}
                      {:key :reasoning-level :type :choice :choices [:quick :balanced :deep]})))
-        (expect (= {:openai-codex-verbosity :high}
+        (expect (= {:verbosity :high}
                    (apply-settings-option
-                     {:openai-codex-verbosity :medium}
-                     {:key :openai-codex-verbosity :type :choice :choices [:low :medium :high]})))))
+                     {:verbosity :medium}
+                     {:key :verbosity :type :choice :choices [:low :medium :high]})))))
   (it "choice labels surface the live value"
       (let [settings-option-label (var-get #'dlg/settings-option-label)]
         (expect (= "Reasoning effort: deep"
@@ -810,11 +810,11 @@
                                            :label "Reasoning effort"}
                                           {:reasoning-level :deep})))
         (expect (= "Verbosity: high"
-                   (settings-option-label {:key :openai-codex-verbosity
+                   (settings-option-label {:key :verbosity
                                            :type :choice
                                            :choices [:low :medium :high]
                                            :label "Verbosity"}
-                                          {:openai-codex-verbosity :high})))))
+                                          {:verbosity :high})))))
   (it "choice labels do not crash when row also carries a nil name field"
       (let [settings-option-label (var-get #'dlg/settings-option-label)]
         (expect (= "Reasoning effort: quick"
@@ -1009,10 +1009,10 @@
              :ext/settings [{:key :voice/tui-auto-read? :type :toggle :label "TUI auto-read"}]}
             {:ext/name "provider-openai-codex"
              :ext/providers [{:provider/id :openai-codex :provider/label "OpenAI Codex"}]
-             :ext/settings [{:key :openai-codex-verbosity
+             :ext/settings [{:key :verbosity
                              :type :choice
                              :choices [:low :medium :high]
-                             :label "Codex verbosity"}]}])]
+                             :label "Verbosity"}]}])]
 
         (let
           [rows (settings-rows)
@@ -1022,15 +1022,15 @@
           ;; Reasoning-effort has its OWN control (Ctrl+R) — `:settings? false`
           ;; keeps it registered but out of the Settings dialog.
           (expect (not (contains? toggles "reasoning_level")))
-          ;; Provider-specific knob: its `:visible-fn` hides it from
-          ;; Settings unless a Codex provider is CONFIGURED — this test
-          ;; env has none, so it must NOT appear in the rows even
-          ;; though it stays registered.
-          (expect (not (contains? toggles "openai_codex_verbosity")))
+          ;; Verbosity has its OWN control too (Ctrl+X l and the footer chip),
+          ;; so it is `:settings? false` for the same reason and must not appear
+          ;; here — nor may a provider extension's legacy declaration of the
+          ;; same key smuggle a second copy of it back in.
+          (expect (not (contains? toggles "verbosity")))
           (expect (contains? ids [:extension-setting "voice" :voice/tui-auto-read?]))
           (expect (not (contains? ids
                                   [:extension-setting "provider-openai-codex"
-                                   :openai-codex-verbosity])))))))
+                                   :verbosity])))))))
   (it "provider-declared legacy settings are ignored"
       (let [settings-rows (var-get #'dlg/settings-rows)]
         (with-redefs
@@ -1040,15 +1040,15 @@
                                          :ext/providers [{:provider/id :openai-codex
                                                           :provider/label
                                                           "OpenAI Codex (ChatGPT OAuth)"}]
-                                         :ext/settings [{:key :openai-codex-verbosity
+                                         :ext/settings [{:key :verbosity
                                                          :type :choice
                                                          :choices [:low :medium :high]
-                                                         :label "Codex verbosity"
+                                                         :label "Verbosity"
                                                          :description "Output detail."}]}])]
 
           (let [rows (settings-rows)]
             (expect (not-any? #(= [:extension-setting "provider-openai-codex"
-                                   :openai-codex-verbosity]
+                                   :verbosity]
                                   (:id %))
                               rows))))))
   (it "active Z.ai hides reasoning effort and Codex-only provider settings"
@@ -1066,10 +1066,10 @@
                                          :ext/providers [{:provider/id :openai-codex
                                                           :provider/label
                                                           "OpenAI Codex (ChatGPT OAuth)"}]
-                                         :ext/settings [{:key :openai-codex-verbosity
+                                         :ext/settings [{:key :verbosity
                                                          :type :choice
                                                          :choices [:low :medium :high]
-                                                         :label "Codex verbosity"
+                                                         :label "Verbosity"
                                                          :description "Output detail."}]}])]
 
           (let [rows (settings-rows)]
@@ -1077,7 +1077,7 @@
             ;; (own controls); no "unavailable" placeholder either.
             (expect (not-any? #(= :reasoning-level (:key %)) rows))
             (expect (not-any? #(= "Reasoning effort unavailable" (:label %)) rows))
-            (expect (not-any? #(= :openai-codex-verbosity (:key %)) rows))))))
+            (expect (not-any? #(= :verbosity (:key %)) rows))))))
   (it "channel-declared settings render under Channel Settings, once, in the flat list"
       (let [settings-rows (var-get #'dlg/settings-rows)]
         (with-redefs

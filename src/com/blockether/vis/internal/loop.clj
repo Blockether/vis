@@ -2340,18 +2340,25 @@
             (some? reasoning)
             (assoc :output-tokens-details {:reasoning (long reasoning)}))))))
 
-(defn- reasoning-effort-configurable?
-  "True when a model accepts a caller-selected reasoning effort.
+(defn reasoning-effort-configurable?
+  "True when a model accepts a CALLER-selected reasoning effort.
 
-   `:reasoning?` means the model can produce reasoning/thinking text.
-   It does NOT imply that Vis may tune that thinking depth. Z.ai GLM
-   binary thinking is preserved-thinking only, so keep the stream visible
-   but do not send abstract `:reasoning` levels to svar. Provider-native
-   `:reasoning-effort` is validated separately against catalog metadata."
+   svar decides this, not Vis: `:reasoning-effort?` is stamped on every model
+   the router normalizes, from the WIRE that model rides. `:reasoning?` only
+   says the model thinks — GitHub Copilot's Claude/Gemini/Grok tiers think but
+   are `:server-managed`, and Z.ai GLM thinking is binary, so neither accepts a
+   depth and neither may show a depth control."
   [resolved-model]
-  (and (boolean (:reasoning? resolved-model))
-       (not= false (:reasoning-effort? resolved-model))
-       (not= :zai-thinking (:reasoning-style resolved-model))))
+  (boolean (:reasoning-effort? resolved-model)))
+
+(defn verbosity-configurable?
+  "True when a model accepts a caller-selected answer verbosity.
+
+   Also svar's call: `:verbosity-style` is stamped from the wire, so every
+   provider on the OpenAI Responses endpoint (Codex AND GitHub Copilot's GPT
+   tier) gets the knob and nothing else does. Never test a provider id here."
+  [resolved-model]
+  (some? (:verbosity-style resolved-model)))
 
 (defn- ^:private replay-reasoning-chars
   "Total `:thinking-signature` (or `:thinking` fallback) char count for
@@ -7010,6 +7017,33 @@
          (:id provider)
          (assoc :provider (:id provider))))))
   ([router _routing-overrides] (resolve-effective-model router)))
+
+(defn resolve-model-info
+  "Resolved model map for the model a SESSION actually routes to.
+
+   `resolve-effective-model` answers a different question — the router's GLOBAL
+   root — and a channel that asks it about a session's capabilities describes
+   the wrong model whenever the session picked something else (which is the
+   normal case: Ctrl+T and the web picker both write a per-session preference).
+   `provider-id`/`model-name` come from that preference; either may be nil, and
+   the first provider/model that matches what IS given wins. Falls back to the
+   root model so a session with no preference still gets an answer."
+  [router provider-id model-name]
+  (let
+    [provider-id (some-> provider-id name not-empty keyword)
+
+     hit
+     (first
+       (for [provider (:providers router)
+             :when (or (nil? provider-id) (= provider-id (:id provider)))
+             model (:models provider)
+             :let [model (if (map? model) model {:name (str model)})]
+             :when (or (nil? model-name) (= (str model-name) (str (:name model))))]
+         (cond-> model
+           (:id provider)
+           (assoc :provider (:id provider)))))]
+
+    (or hit (resolve-effective-model router))))
 
 (defn router-for-model
   "Return a router variant whose provider/model ORDER reflects a model PREFERENCE,

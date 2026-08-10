@@ -9,23 +9,10 @@
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [lazytest.core :refer [defdescribe expect it]]))
 
-;; The `"openai_codex_verbosity"` enum toggle is registered by the OpenAI Codex
-;; PROVIDER extension in production (it lives next to the backend it tunes), a
-;; module this channel-tui test suite does not load. Register it here so the
-;; `:settings` projection and the verbosity-cycle events resolve against a real
-;; `:enum` toggle, mirroring production.
-(vis/register-toggle! {:id "openai_codex_verbosity"
-                       :label "Verbosity"
-                       :description "Output detail hint passed to the OpenAI Codex backend."
-                       :type :enum
-                       :choices ["low" "medium" "high"]
-                       :default "low"
-                       :owner :vis
-                       :group :provider
-                       :persist? true
-                       :settings? false
-                       :visible-fn (fn []
-                                     (boolean (vis/has-provider? :openai-codex)))})
+;; `"verbosity"` is a BUILTIN toggle (`internal/toggles.clj`), not a provider
+;; extension's, because `text.verbosity` belongs to the OpenAI Responses WIRE
+;; rather than to one vendor. Nothing is registered here: these events resolve
+;; against the very registry production uses.
 
 (defn- await-enqueue!
   "Gateway queue effects post on the FIFO gateway-queue thread and hand back that
@@ -42,34 +29,42 @@
                      :flushed))))
 
 (defdescribe turn-extra-body-test
-             (it "omits OpenAI verbosity when the session selects Claude"
+             ;; Regression: verbosity was gated on `(= :openai-codex provider)`, so a
+             ;; GitHub Copilot GPT session — the SAME `/v1/responses` wire — was denied
+             ;; a field its endpoint accepts, while the chip stayed hidden. The gate is
+             ;; now svar's `:verbosity-style` on the model the SESSION routes to.
+             (it "omits verbosity when the session's model rides a wire that rejects it"
                  (with-redefs
                    [vis/get-router
                     (constantly :router)
 
-                    vis/resolve-effective-model
-                    (fn [_]
-                      {:provider :openai-codex :name "gpt-5.6-sol"})]
+                    vis/resolve-model-info
+                    (fn [_ _provider _model]
+                      {:provider :github-copilot :name "claude-sonnet-4-6"})]
 
                    (expect (nil? (#'state/turn-extra-body
                                   {:session {:id "s1"}
-                                   :session-model-pref {:provider "anthropic-coding-plan"
+                                   :session-model-pref {:provider "github-copilot"
                                                         :model "claude-sonnet-4-6"}
-                                   :settings {:openai-codex-verbosity "high"}})))))
-             (it "includes verbosity when the session selects OpenAI Codex"
-                 (with-redefs
-                   [vis/get-router
-                    (constantly :router)
+                                   :settings {:verbosity "high"}})))))
+             (it "includes verbosity for every model svar stamped with a verbosity style"
+                 (doseq [provider [:openai-codex :github-copilot]]
+                   (with-redefs
+                     [vis/get-router
+                      (constantly :router)
 
-                    vis/resolve-effective-model
-                    (fn [_]
-                      {:provider :anthropic-coding-plan :name "claude-sonnet-4-6"})]
+                      vis/resolve-model-info
+                      (fn [_ _provider _model]
+                        {:provider provider
+                         :name "gpt-5.6-sol"
+                         :verbosity-style :openai-text})]
 
-                   (expect (= {:text {:verbosity "high"}}
-                              (#'state/turn-extra-body
-                               {:session {:id "s1"}
-                                :session-model-pref {:provider "openai-codex" :model "gpt-5.6-sol"}
-                                :settings {:openai-codex-verbosity "high"}}))))))
+                     (expect (= {:text {:verbosity "high"}}
+                                (#'state/turn-extra-body
+                                 {:session {:id "s1"}
+                                  :session-model-pref {:provider (name provider)
+                                                       :model "gpt-5.6-sol"}
+                                  :settings {:verbosity "high"}})))))))
 
 (defdescribe always-on-display-test
              (it "thinking, full trace, silent calls, and timestamps are ALWAYS shown"
@@ -548,7 +543,7 @@
                                {})]
         (state/init!)
         (expect (= "balanced" (get-in @state/app-db [:settings :reasoning-level])))
-        (expect (= "low" (get-in @state/app-db [:settings :openai-codex-verbosity])))
+        (expect (= "low" (get-in @state/app-db [:settings :verbosity])))
         (expect (= :blockether-light (get-in @state/app-db [:settings :theme-name])))
         (expect (not (contains? (:settings @state/app-db) :differentiate-turns)))
         (expect (true? (get-in @state/app-db [:settings :mouse-selection-copy])))))
@@ -585,28 +580,28 @@
              (state/dispatch [:resync-toggle-settings]) ;; the fix
              (expect (= "quick" (get-in @state/app-db [:settings :reasoning-level]))))
            (finally (vis/toggle-reset-to-default! "reasoning_level"))))
-  (it "hydrates Codex verbosity from the toggles registry"
-      (vis/toggles-hydrate-from-config! {:toggles {"openai_codex_verbosity" :medium}})
+  (it "hydrates verbosity from the toggles registry"
+      (vis/toggles-hydrate-from-config! {:toggles {"verbosity" :medium}})
       (try (with-redefs
              [vis/load-config-raw (fn []
                                     {})]
              (state/init!)
-             (expect (= "medium" (get-in @state/app-db [:settings :openai-codex-verbosity]))))
-           (finally (vis/toggle-reset-to-default! "openai_codex_verbosity"))))
+             (expect (= "medium" (get-in @state/app-db [:settings :verbosity]))))
+           (finally (vis/toggle-reset-to-default! "verbosity"))))
   (it "drops invalid persisted enum values back to registered defaults"
       ;; `hydrate-from-config!` routes through `set-value!` which
       ;; validates against `:choices`. Invalid entries are silently
       ;; skipped — the registered default stands.
       (vis/toggles-hydrate-from-config! {:toggles {"reasoning_level" :turbo
-                                                   "openai_codex_verbosity" :loud}})
+                                                   "verbosity" :loud}})
       (try (with-redefs
              [vis/load-config-raw (fn []
                                     {})]
              (state/init!)
              (expect (= "balanced" (get-in @state/app-db [:settings :reasoning-level])))
-             (expect (= "low" (get-in @state/app-db [:settings :openai-codex-verbosity]))))
+             (expect (= "low" (get-in @state/app-db [:settings :verbosity]))))
            (finally (vis/toggle-reset-to-default! "reasoning_level")
-                    (vis/toggle-reset-to-default! "openai_codex_verbosity")))))
+                    (vis/toggle-reset-to-default! "verbosity")))))
 
 (defdescribe
   settings-shortcut-test
@@ -629,13 +624,13 @@
 
               vis/resolve-effective-model
               (fn [_]
-                {:provider :openai :name "gpt-5" :reasoning? true})
+                {:provider :openai :name "gpt-5" :reasoning? true :reasoning-effort? true})
 
               vis/notify!
               (fn [& _]
                 (state/dispatch [:bump-render-version]))]
 
-             (reset! state/app-db {:settings {:reasoning-level "deep" :openai-codex-verbosity "low"}
+             (reset! state/app-db {:settings {:reasoning-level "deep" :verbosity "low"}
                                    :render-version 0})
              (let [result (future (state/dispatch [:cycle-reasoning-level]) :done)]
                (expect (= :done (deref result 1000 :timeout)))
@@ -662,7 +657,8 @@
                 vis/save-config! (fn [_])
                 vis/get-router (constantly :router)
                 vis/resolve-effective-model (fn [_]
-                                              {:provider :openai :name "gpt-5" :reasoning? true})
+                                              {:provider :openai :name "gpt-5"
+                                               :reasoning? true :reasoning-effort? true})
                 vis/notify! (fn [& _])]
 
                (reset! state/app-db {:settings {:reasoning-level "quick"} :render-version 0})
@@ -686,12 +682,12 @@
 
               vis/resolve-effective-model
               (fn [_]
-                {:provider :openai :name "gpt-5" :reasoning? true})
+                {:provider :openai :name "gpt-5" :reasoning? true :reasoning-effort? true})
 
               vis/notify!
               (fn [& _])]
 
-             (reset! state/app-db {:settings {:reasoning-level "deep" :openai-codex-verbosity "low"}
+             (reset! state/app-db {:settings {:reasoning-level "deep" :verbosity "low"}
                                    :render-version 0})
              (state/dispatch [:cycle-reasoning-level])
              (expect (= "quick" (vis/toggle-value "reasoning_level")))
@@ -710,32 +706,34 @@
            vis/notify! (fn [text & kvs]
                          (reset! notified [text kvs]))]
 
-          (reset! state/app-db {:settings {:reasoning-level "deep" :openai-codex-verbosity "low"}
+          (reset! state/app-db {:settings {:reasoning-level "deep" :verbosity "low"}
                                 :render-version 0})
           (state/dispatch [:cycle-reasoning-level])
           (expect (= "deep" (get-in @state/app-db [:settings :reasoning-level])))
           (expect (= ["Reasoning effort is not configurable for this model"
                       [:level :warn :ttl-ms 1500]]
                      @notified)))))
-  (it "leaves Codex verbosity unchanged for non-Codex providers"
+  (it "leaves verbosity unchanged when the session's model rejects the field"
       (let [notified (atom nil)]
         (with-redefs
           [vis/get-router (constantly :router)
-           vis/resolve-effective-model (fn [_]
-                                         {:provider :zai :name "glm-4.7"})
+           vis/resolve-model-info (fn [_ _provider _model]
+                                    {:provider :zai :name "glm-4.7"})
            vis/notify! (fn [text & kvs]
                          (reset! notified [text kvs]))]
 
           (reset! state/app-db {:settings {:reasoning-level "balanced"
-                                           :openai-codex-verbosity "high"}
+                                           :verbosity "high"}
                                 :render-version 0})
-          (state/dispatch [:cycle-codex-verbosity])
-          (expect (= "high" (get-in @state/app-db [:settings :openai-codex-verbosity])))
-          (expect (= ["Codex verbosity is only available for OpenAI Codex"
+          (state/dispatch [:cycle-verbosity])
+          (expect (= "high" (get-in @state/app-db [:settings :verbosity])))
+          (expect (= ["Answer length is not configurable for this model"
                       [:level :warn :ttl-ms 1500]]
                      @notified)))))
   (it
-    "cycles Codex verbosity low -> medium -> high -> low"
+    "cycles verbosity low -> medium -> high -> low on a GitHub Copilot GPT session"
+    ;; The reported gap: Copilot rides `/v1/responses` exactly as Codex does, so
+    ;; the cycle must work there without the provider being named anywhere.
     (with-redefs
       [vis/load-config-raw
        (fn []
@@ -747,9 +745,21 @@
        vis/get-router
        (constantly :router)
 
+       vis/resolve-model-info
+       (fn [_ _provider _model]
+         {:provider :github-copilot
+          :name "gpt-5.6-sol"
+          :reasoning? true
+          :reasoning-effort? true
+          :verbosity-style :openai-text})
+
        vis/resolve-effective-model
        (fn [_]
-         {:provider :openai-codex :name "gpt-5.5" :reasoning? true})
+         {:provider :github-copilot
+          :name "gpt-5.6-sol"
+          :reasoning? true
+          :reasoning-effort? true
+          :verbosity-style :openai-text})
 
        vis/notify!
        (fn [& _])]
@@ -757,17 +767,17 @@
       ;; The cycle advances the GLOBAL toggles registry, not app-db — pin it
       ;; to its :low default so a value another test left in the shared
       ;; registry can't shift where the first step lands (order-dependent flake).
-      (vis/toggle-reset-to-default! "openai_codex_verbosity")
+      (vis/toggle-reset-to-default! "verbosity")
       (try (reset! state/app-db {:settings {:reasoning-level "balanced"
-                                            :openai-codex-verbosity "low"}
+                                            :verbosity "low"}
                                  :render-version 0})
-           (state/dispatch [:cycle-codex-verbosity])
-           (expect (= "medium" (get-in @state/app-db [:settings :openai-codex-verbosity])))
-           (state/dispatch [:cycle-codex-verbosity])
-           (expect (= "high" (get-in @state/app-db [:settings :openai-codex-verbosity])))
-           (state/dispatch [:cycle-codex-verbosity])
-           (expect (= "low" (get-in @state/app-db [:settings :openai-codex-verbosity])))
-           (finally (vis/toggle-reset-to-default! "openai_codex_verbosity"))))))
+           (state/dispatch [:cycle-verbosity])
+           (expect (= "medium" (get-in @state/app-db [:settings :verbosity])))
+           (state/dispatch [:cycle-verbosity])
+           (expect (= "high" (get-in @state/app-db [:settings :verbosity])))
+           (state/dispatch [:cycle-verbosity])
+           (expect (= "low" (get-in @state/app-db [:settings :verbosity])))
+           (finally (vis/toggle-reset-to-default! "verbosity"))))))
 
 (defdescribe session-model-pref-scope-test
              ;; The footer chip PREFERS the optimistic `:session-model-pref` over the
@@ -1144,7 +1154,7 @@
                :messages []
                :input-history []
                :scroll {:mode :at :offset 80 :pos 80}
-               :settings {:reasoning-level "balanced" :openai-codex-verbosity "low"}
+               :settings {:reasoning-level "balanced" :verbosity "low"}
                :pastes {}}]
 
           (with-redefs
@@ -2244,7 +2254,7 @@
         :messages []
         :messages-scroll 0
         :input-history []
-        :settings {:reasoning-level "deep" :openai-codex-verbosity "high"}
+        :settings {:reasoning-level "deep" :verbosity "high"}
         :pastes {}}]
 
       (with-redefs
@@ -2375,7 +2385,7 @@
         :input-history ["prior"]
         :input-history-index nil
         :input-history-draft nil
-        :settings {:reasoning-level "balanced" :openai-codex-verbosity "low"}
+        :settings {:reasoning-level "balanced" :verbosity "low"}
         :pastes {1 {:id 1 :content "hello"}}
         :paste-counter 1}]
 

@@ -348,7 +348,11 @@
       :activity :tool-call
       :tool/op (some-> (:op (:tool-event chunk))
                        name)
-      :tool/label (:label (:tool-event chunk)))
+      :tool/label (:label (:tool-event chunk))
+      ;; The TOOL's own sentence for the ticker, when it declared one
+      ;; (`:ticker-fn`): a private transport's op+id says nothing a human can act
+      ;; on, so the renderer prefers this and prints it verbatim.
+      :tool/phrase (:phrase (:tool-event chunk)))
 
     :response-parse
     (if (= :done (:status chunk))

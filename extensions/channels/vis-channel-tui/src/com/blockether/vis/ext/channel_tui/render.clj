@@ -5861,7 +5861,18 @@
        [s (some-> (:tool/label last-iteration)
                   str
                   str/trim)]
-       (when-not (str/blank? (or s "")) (if (> (count s) 64) (str (subs s 0 61) "\u2026") s)))
+       (when-not (str/blank? (or s "")) (if (> (count s) 64) (str (subs s 0 61) "…") s)))
+
+     ;; The TOOL's own sentence when it declared one (`:ticker-fn`) — printed
+     ;; verbatim after `Vis is `. A private transport's op+id (`_shell-wait tt`)
+     ;; names neither the command nor the budget, so a wait doing exactly what it
+     ;; was asked reads as a wait stuck on nothing.
+     tool-phrase
+     (let
+       [s (some-> (:tool/phrase last-iteration)
+                  str
+                  str/trim)]
+       (when-not (str/blank? (or s "")) s))
 
      errored?
      (some? err)
@@ -5911,12 +5922,14 @@
 
             (str "Vis is calling the provider (iter " n ")"))
           (= :response-parse activity) (str "Vis is parsing model response (iter " n ")")
-          (= :tool-call activity) (str "Vis is running: "
-                                       (or tool-op "tool")
-                                       (when tool-label (str " " tool-label))
-                                       " (iter "
-                                       n
-                                       ")")
+          (= :tool-call activity) (if tool-phrase
+                                    (str "Vis is " tool-phrase " (iter " n ")")
+                                    (str "Vis is running: "
+                                         (or tool-op "tool")
+                                         (when tool-label (str " " tool-label))
+                                         " (iter "
+                                         n
+                                         ")"))
           thinking? (str "Vis is thinking (iter " n ")")
           executing? (str "Vis is running code (iter " n ")")
           :else (str "Vis is working (iter " n ")"))))

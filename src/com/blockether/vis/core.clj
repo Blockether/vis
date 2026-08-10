@@ -729,6 +729,12 @@
              [router-initialized? lp/router-initialized?]
              [rebuild-router! lp/rebuild-router!]
              [resolve-effective-model lp/resolve-effective-model]
+             ;; Model CAPABILITY, as svar stamped it from the wire — what a
+             ;; channel asks before offering a reasoning-depth or verbosity
+             ;; control, instead of testing a provider id.
+             [resolve-model-info lp/resolve-model-info]
+             [reasoning-effort-configurable? lp/reasoning-effort-configurable?]
+             [verbosity-configurable? lp/verbosity-configurable?]
              [model-routing-status lp/model-routing-status]
              [set-provider! lp/set-provider!])
 

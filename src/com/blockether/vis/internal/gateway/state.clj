@@ -1165,6 +1165,12 @@
        label
        (:label (:tool-event chunk))
 
+       ;; The tool's OWN sentence, when it declared a `:ticker-fn`. Channels print
+       ;; it verbatim instead of assembling `op` + `label` themselves, so the
+       ;; terminal and the app say the same thing about the same call.
+       phrase
+       (:phrase (:tool-event chunk))
+
        activity
        (if (= phase :tool-start) "tool" (name phase))]
 
@@ -1182,6 +1188,9 @@
 
          (some? op)
          (assoc :op op)
+
+         (some? phrase)
+         (assoc :phrase (str phrase))
 
          (some? label)
          (assoc :label (str label)))])))

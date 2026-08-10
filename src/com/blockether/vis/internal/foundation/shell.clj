@@ -1912,10 +1912,24 @@
                         :op :_shell-status
                         :metadata {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}})))
 
-(def ^:private wait-poll-ms
-  "Idle sleep between reads inside a host-side wait. Only reached when the log is
-   at EOF and the child is still alive, so a chatty command never pays it."
-  50)
+(defn- wait-idle-poll-ms
+  "Idle sleep before the next read while the child is ALIVE and its log is at EOF,
+   as a function of how many idle reads came before it. It is pure LATENCY on a
+   command that is about to finish — a flat 50 ms cadence made a 5 ms `echo` cost
+   130 ms and looked, correctly, like a wait waiting for nothing — so the first
+   reads are near-instant and only a command that keeps running settles on the
+   cheap cadence a `npm run dev` deserves."
+  [^long idle]
+  (cond (< idle 4) 2
+        (< idle 10) 10
+        :else 50))
+
+(def ^:private wait-drain-poll-ms
+  "Sleep between the reads that confirm an EXITED child's log has gone quiet. It
+   only has to outlast the pump's handoff of bytes written just before the exit,
+   so it is short: every millisecond here is charged to a command that is already
+   finished."
+  5)
 
 (def ^:private wait-chunk-limit
   "Bytes one wait iteration reads. Large enough that a build's output is drained in
@@ -1982,6 +1996,11 @@
       [off
        start
 
+       ;; Consecutive reads that brought no bytes — the poll cadence backs off
+       ;; along this counter, so a fast command is noticed in single-digit ms.
+       idle
+       0
+
        quiet
        0]
 
@@ -1993,17 +2012,21 @@
          (or (get res "stdout") "")
 
          nxt
-         (long (or (get res "next_offset") off))]
+         (long (or (get res "next_offset") off))
+
+         idle
+         (if (= "" text) idle 0)]
 
         ((:append! acc) text)
         (cond (>= (now-ms) deadline) (finish res nxt)
-              (not (get res "is_eof")) (recur nxt 0)
-              (= "running" (get res "status")) (do (Thread/sleep (long wait-poll-ms)) (recur nxt 0))
+              (not (get res "is_eof")) (recur nxt 0 0)
+              (= "running" (get res "status")) (do (Thread/sleep (long (wait-idle-poll-ms idle)))
+                                                   (recur nxt (inc idle) 0))
               ;; Exited: one confirming quiet read before reporting, so bytes the pump
               ;; flushed between the exit and this read still reach the caller.
               (and (= "" text) (pos? quiet)) (finish res nxt)
-              :else (do (Thread/sleep (long wait-poll-ms))
-                        (recur nxt (if (= "" text) (inc quiet) 0))))))))
+              :else (do (Thread/sleep (long wait-drain-poll-ms))
+                        (recur nxt (inc idle) (if (= "" text) (inc quiet) 0))))))))
 
 (def ^:private terminal-escape-re
   ;; ANSI/VT sequences a PTY-attached tool emits. Stripped both when MATCHING a
@@ -3020,6 +3043,61 @@
         (seq body)
         (assoc :render body)))))
 
+(defn- shell-ticker
+  "LIVE-TICKER phrase for one shell transport — what the bubble says while the call
+   is still in flight, completing `Vis is …`.
+
+   A private transport's own name answers nothing: `_shell-wait tt` names neither
+   the command nor the budget, which is exactly how a wait that is doing its job
+   reads as a wait stuck on nothing. The tool that KNOWS says it instead —
+   `waiting for tt (up to 60s): npm test` — and the command comes from the live
+   registry, so `wait`/`logs`/`stop`, which run no command of their own, still name
+   the one they act on."
+  [op]
+  (fn [_env args]
+    (let
+      [input
+       (first args)
+
+       id
+       (or (some-> (opt input :id)
+                   str
+                   str/trim
+                   not-empty)
+           "the shell")
+
+       secs
+       (or (some-> (opt input :seconds)
+                   str
+                   str/trim
+                   not-empty)
+           "120")
+
+       script
+       (some-> (live-bg-script id)
+               shell-one-line)
+
+       verb
+       (case op
+         "wait"
+         (str "waiting for " id " (up to " secs "s)")
+
+         "logs"
+         (str "reading " id "'s log")
+
+         "status"
+         (str "checking on " id)
+
+         "send"
+         (str "typing into " id)
+
+         "stop"
+         (str "stopping " id)
+
+         (str op " " id))]
+
+      (str verb (when (seq script) (str ": " (clip-chip script shell-chip-max)))))))
+
 (defn- shell-start-renderer
   "Pending-card renderer for ONE shell tool: the verb is fixed by the tool, so the
    arguments never have to carry it."
@@ -3092,6 +3170,7 @@
               :additionalProperties false}
      :inject-env? true
      :tag :observation
+     :ticker-fn (shell-ticker "logs")
      :on-error-fn (shell-on-error :_shell-logs)}))
 
 (def shell-status-symbol
@@ -3116,6 +3195,7 @@
               :additionalProperties false}
      :inject-env? true
      :tag :observation
+     :ticker-fn (shell-ticker "status")
      :on-error-fn (shell-on-error :_shell-status)}))
 
 (def shell-wait-symbol
@@ -3144,6 +3224,7 @@
       :additionalProperties false}
      :inject-env? true
      :tag :observation
+     :ticker-fn (shell-ticker "wait")
      :on-error-fn (shell-on-error :_shell-wait)}))
 
 (def shell-type-symbol
@@ -3166,6 +3247,7 @@
               :additionalProperties false}
      :inject-env? true
      :tag :mutation
+     :ticker-fn (shell-ticker "send")
      :on-error-fn (shell-on-error :_shell-type)}))
 
 (def shell-stop-symbol
@@ -3185,6 +3267,7 @@
               :additionalProperties false}
      :inject-env? true
      :tag :mutation
+     :ticker-fn (shell-ticker "stop")
      :on-error-fn (shell-on-error :_shell-stop)}))
 
 (def shell-symbols

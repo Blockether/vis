@@ -774,7 +774,7 @@
    Every other former settings key (`:show-thinking`,
    `:show-iterations`, `:show-silent`, `:show-timestamps`,
    `:mouse-selection-copy`,
-   `:reasoning-level`, `:openai-codex-verbosity`) now lives in the
+   `:reasoning-level`, `:verbosity`) now lives in the
    toggles registry. The `:settings` map in app-db is a cached
    projection of (registry + these two locals); a listener wired in
    `init!` keeps the projection in sync."
@@ -804,7 +804,7 @@
    :show-timestamps true
    :mouse-selection-copy true
    :reasoning-level (vis/toggle-value "reasoning_level")
-   :openai-codex-verbosity (vis/toggle-value "openai_codex_verbosity")})
+   :verbosity (vis/toggle-value "verbosity")})
 
 (def default-settings
   "Per-user TUI settings. Persisted to `~/.vis/state.yml` under
@@ -823,8 +823,9 @@
          models. Default `:balanced`; users can cycle it via
          Ctrl+K -> Settings -> Providers & Models.
 
-     openai-codex-verbosity - Codex-only output detail knob.
-         Default `:low`; users can cycle it via Ctrl+K -> Settings -> Providers & Models.
+     verbosity - answer-length hint, offered only for models whose wire
+         accepts one (svar's `:verbosity-style`). Default `:low`; cycled from
+         the footer control.
 
      show-timestamps - chrome control. Default OFF because timestamps
          duplicate info already on screen.
@@ -982,12 +983,23 @@
       (when-let [sid (get-in db [:session :id])]
         (try (vis/gateway-session-model-cached sid) (catch Throwable _ nil)))))
 
-(defn- current-provider-id
-  "Provider selected for this session, falling back to the router default."
+
+(defn- session-model-info
+  "Resolved model map for the model THIS SESSION routes to.
+
+   `current-model-info` answers about the router's GLOBAL root model, which is
+   a different model as soon as the session picked one (Ctrl+T, the web picker,
+   another client). Every capability question — may this model take a reasoning
+   depth, does its wire accept a verbosity — has to be asked of the model that
+   will actually receive the turn, or the footer offers a knob the request drops
+   and hides one the request would have honoured."
   [db]
-  (some-> (or (:provider (session-model-pref db)) (:provider (current-model-info)))
-          name
-          keyword))
+  (when-let [router (try (vis/get-router) (catch Throwable _ nil))]
+    (let [pref (session-model-pref db)]
+      (try (if (or (:provider pref) (:model pref))
+             (vis/resolve-model-info router (:provider pref) (:model pref))
+             (vis/resolve-effective-model router))
+           (catch Throwable _ nil)))))
 
 (def ^:private ^:const max-tabs 8)
 
@@ -1192,12 +1204,25 @@
             (:tabs db))))
 
 (defn- reasoning-effort-configurable?
-  []
-  (let [info (current-model-info)]
-    (or (nil? info)
-        (and (boolean (:reasoning? info))
-             (not= false (:reasoning-effort? info))
-             (not= :zai-thinking (:reasoning-style info))))))
+  "True when the session's model takes a caller-chosen reasoning depth.
+
+   svar owns the answer (`:reasoning-effort?`, stamped from the wire); an
+   unresolvable router fails OPEN so a transient lookup failure never hides a
+   control the user needs."
+  [db]
+  (let [info (session-model-info db)]
+    (or (nil? info) (vis/reasoning-effort-configurable? info))))
+
+(defn- verbosity-configurable?
+  "True when the session's model's WIRE accepts `text.verbosity`.
+
+   Also svar's answer (`:verbosity-style`), so OpenAI Codex and GitHub
+   Copilot's GPT tier both get it and neither is named here. Fails CLOSED:
+   with no resolved model, offering a knob almost every wire rejects would
+   promise something the turn cannot deliver."
+  [db]
+  (boolean (some-> (session-model-info db)
+                   vis/verbosity-configurable?)))
 
 (defn init!
   "Initialize app-db with default state. The persisted layer now
@@ -1294,7 +1319,7 @@
    transcript falls back to estimates and the view visibly jumps while the
    background re-warm lands. Cycling reasoning effort with Ctrl+X r must not
    repaint history."
-  #{"reasoning_level" "openai_codex_verbosity"})
+  #{"reasoning_level" "verbosity"})
 
 (reg-event-db
   :resync-toggle-settings
@@ -1360,7 +1385,7 @@
 
 (reg-event-fx :cycle-reasoning-level
               (fn [db _]
-                (if-not (reasoning-effort-configurable?)
+                (if-not (reasoning-effort-configurable? db)
                   {:db db
                    :fx [[:notify "Reasoning effort is not configurable for this model" :warn
                          settings-notification-ttl-ms]]}
@@ -1376,14 +1401,14 @@
                   ;; levels forever instead of advancing by one.
                   {:db db :fx [[:cycle-toggle "reasoning_level" "Reasoning"]]})))
 
-(reg-event-fx :cycle-codex-verbosity
+(reg-event-fx :cycle-verbosity
               (fn [db _]
-                (if-not (= :openai-codex (current-provider-id db))
+                (if-not (verbosity-configurable? db)
                   {:db db
-                   :fx [[:notify "Codex verbosity is only available for OpenAI Codex" :warn
+                   :fx [[:notify "Answer length is not configurable for this model" :warn
                          settings-notification-ttl-ms]]}
                   ;; Effect, not an in-swap mutation - see :cycle-reasoning-level.
-                  {:db db :fx [[:cycle-toggle "openai_codex_verbosity" "Codex verbosity"]]})))
+                  {:db db :fx [[:cycle-toggle "verbosity" "Verbosity"]]})))
 
 (reg-event-fx :cycle-model
               ;; Ctrl+T cycles the ACTIVE SESSION's model preference — the SAME unified,
@@ -3348,9 +3373,11 @@
                     (assoc db :scroll (scroll/to-y offset max-s))))))
 
 (defn- turn-extra-body
+  "Per-turn wire extras for the model THIS SESSION routes to. `text.verbosity` is
+   a field of the OpenAI Responses wire, so it rides only when svar stamped the
+   model with a `:verbosity-style` — never because a provider id matched."
   [{:keys [settings] :as db}]
-  (when (= :openai-codex (current-provider-id db))
-    {:text {:verbosity (name (or (:openai-codex-verbosity settings) "low"))}}))
+  (when (verbosity-configurable? db) {:text {:verbosity (name (or (:verbosity settings) "low"))}}))
 
 (defonce ^:private process-submission-id (str (java.util.UUID/randomUUID)))
 
@@ -3524,7 +3551,7 @@
          gw-fx
          (when gateway?
            [[:gateway-enqueue workspace-id session entry
-             (when (reasoning-effort-configurable?) (get-in db [:settings :reasoning-level]))
+             (when (reasoning-effort-configurable? db) (get-in db [:settings :reasoning-level]))
              (turn-extra-body source-db) {} workspace]])]
 
         {:db (update-tab db
@@ -3600,7 +3627,7 @@
                {}
 
                reasoning-level
-               (when (reasoning-effort-configurable?) (get-in db [:settings :reasoning-level]))
+               (when (reasoning-effort-configurable? db) (get-in db [:settings :reasoning-level]))
 
                client-turn-id
                (str (java.util.UUID/randomUUID))]

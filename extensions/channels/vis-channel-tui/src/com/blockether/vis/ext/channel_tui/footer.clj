@@ -52,7 +52,7 @@
 ;;; ── Data extraction from app-db ────────────────────────────────────────────
 (def ^:private default-reasoning-level "balanced")
 
-(def ^:private default-codex-verbosity "low")
+(def ^:private default-verbosity "low")
 
 (defn- chosen-model-info
   "Resolved model map for the configured root model, or nil."
@@ -60,30 +60,56 @@
   (when-let [r (try (lp/get-router) (catch Throwable _ nil))]
     (try (lp/resolve-effective-model r) (catch Throwable _ nil))))
 
+(defn- session-model-pref
+  "The SESSION's own model pick — the optimistic `:session-model-pref` this tab
+   wrote, else the gateway's persisted session model. nil when it never chose."
+  [db]
+  (or (:session-model-pref db)
+      (when-let [sid (get-in db [:session :id])]
+        (try (lp/gateway-session-model-cached sid) (catch Throwable _ nil)))))
+
+(defn- session-model-info
+  "Resolved model map for the model THIS SESSION routes to, falling back to the
+   router root when the session made no pick. Every capability chip asks THIS,
+   never `chosen-model-info`: the GLOBAL default leaks one model's knobs onto a
+   session routed elsewhere, and hides a knob the session's own model accepts."
+  [db]
+  (when-let [r (try (lp/get-router) (catch Throwable _ nil))]
+    (let [pref (session-model-pref db)]
+      (try (if (or (:provider pref) (:model pref))
+             (lp/resolve-model-info r (:provider pref) (:model pref))
+             (lp/resolve-effective-model r))
+           (catch Throwable _ nil)))))
+
 (defn- session-effective-provider
   "Provider keyword the SESSION actually routes through — the per-session pick
    (`:session-model-pref` / gateway session model) first, falling back to the
-   GLOBAL router default only when the session made no explicit choice. Codex-only
-   footer knobs (e.g. verbosity) must gate on THIS, not on `chosen-model-info`,
-   or they leak onto Claude/other sessions whenever the router default is Codex."
+   GLOBAL router default only when the session made no explicit choice. Provider
+   USAGE/limits gate on THIS; model CAPABILITY gates on `session-model-info`."
   [db]
-  (or (some-> (:session-model-pref db)
+  (or (some-> (session-model-pref db)
               :provider
+              str
               not-empty
               keyword)
-      (when-let [sid (get-in db [:session :id])]
-        (some-> (lp/gateway-session-model-cached sid)
-                :provider
-                not-empty
-                keyword))
       (some-> (chosen-model-info)
               :provider)))
 
 (defn- reasoning-effort-configurable?
+  "True when the session's model takes a CALLER-chosen reasoning depth. svar owns
+   the answer (`:reasoning-effort?`, stamped from the wire that model rides); an
+   unresolved model fails OPEN so a transient router hiccup never hides a control
+   that works."
   [info]
-  (and (boolean (:reasoning? info))
-       (not= false (:reasoning-effort? info))
-       (not= :zai-thinking (:reasoning-style info))))
+  (or (nil? info) (lp/reasoning-effort-configurable? info)))
+
+(defn- verbosity-configurable?
+  "True when the session's model's WIRE accepts `text.verbosity` (svar's
+   `:verbosity-style`), so OpenAI Codex and GitHub Copilot's GPT tier both get
+   the chip and neither is named here. Fails CLOSED: with no resolved model,
+   advertising a knob almost every wire rejects would promise a turn nothing."
+  [info]
+  (boolean (some-> info lp/verbosity-configurable?)))
 
 (def ^:private git-label "git")
 
@@ -558,7 +584,7 @@
      db
 
      info
-     (chosen-model-info)
+     (session-model-info db)
 
      reasoning?
      (reasoning-effort-configurable? info)
@@ -566,14 +592,16 @@
      reasoning-level
      (or (:reasoning-level settings) default-reasoning-level)
 
-     ;; Verbosity is a Codex-only knob: gate on the provider the SESSION routes
-     ;; through, not `chosen-model-info` (the global router default), or it leaks
-     ;; onto Claude/other sessions whenever the router default happens to be Codex.
-     codex-provider?
-     (= :openai-codex (session-effective-provider db))
+     ;; Verbosity is a WIRE capability, not a vendor: svar stamps
+     ;; `:verbosity-style` on every model whose wire takes `text.verbosity`, so
+     ;; Codex and Copilot's GPT tier both earn the chip and no provider is named
+     ;; here. Read the SESSION's model, never the global router default, or the
+     ;; chip leaks onto a session routed somewhere that rejects the field.
+     verbosity?
+     (verbosity-configurable? info)
 
-     codex-verbosity
-     (or (:openai-codex-verbosity settings) default-codex-verbosity)
+     verbosity
+     (or (:verbosity settings) default-verbosity)
 
      ws
      (:workspace db)
@@ -620,14 +648,14 @@
              :region :left
              :priority 5})
 
-      codex-provider?
-      (conj {:text (str "verbosity: " (name codex-verbosity))
+      verbosity?
+      (conj {:text (str "verbosity: " (name verbosity))
              :fg t/footer-fg-muted
              :bold? false
              :region :left
              :priority 3})
 
-      codex-provider?
+      verbosity?
       (conj {:text (str "(" (keymap/label-for :cycle-verbosity) ")")
              :join-left? true
              :fg t/footer-fg-muted
@@ -677,17 +705,7 @@
   ;; router default only when the session has no explicit pick.
   (let
     [provider
-     (or (some-> (:session-model-pref db)
-                 :provider
-                 not-empty
-                 keyword)
-         (when-let [sid (get-in db [:session :id])]
-           (some-> (lp/gateway-session-model-cached sid)
-                   :provider
-                   not-empty
-                   keyword))
-         (some-> (chosen-model-info)
-                 :provider))
+     (session-effective-provider db)
 
      text
      (when provider (generic-limits-footer-text db provider now-ms))]

@@ -392,6 +392,11 @@
 (s/def :ext.symbol/after-fn fn?)
 ;; Error decorator: (fn [err env f args] -> map). Called when :fn throws.
 (s/def :ext.symbol/on-error-fn fn?)
+;; Live-ticker phrase: (fn [env args] -> string) completing "Vis is …" while the
+;; call is in flight. The TOOL owns it because only the tool knows what a private
+;; transport is actually doing — `_shell-wait tt` answers nothing, `waiting for tt
+;; (up to 60s): npm test` answers everything.
+(s/def :ext.symbol/ticker-fn fn?)
 ;; Op classification carried INLINE on the symbol entry — every
 ;; observed tool declares its tag right on `vis/symbol`'s opts map,
 ;; and `register-extension!` walks the symbol vec to populate the
@@ -491,10 +496,10 @@
           :opt [:ext.symbol/raw? :ext.symbol/hidden? :ext.symbol/tag :ext.symbol/batch-hint
                 :ext.symbol/before-fn :ext.symbol/engine-bound? :ext.symbol/active-fn
                 :ext.symbol/inject-env? :ext.symbol/after-fn :ext.symbol/on-error-fn
-                :ext.symbol/source :ext.symbol/native-tool? :ext.symbol/schema :ext.symbol/name
-                :ext.symbol/call :ext.symbol/handler :ext.symbol/description :ext.symbol/result
-                :ext.symbol/render-start-call-fn :ext.symbol/render-finish-call-fn
-                :ext.symbol/replay]))
+                :ext.symbol/ticker-fn :ext.symbol/source :ext.symbol/native-tool? :ext.symbol/schema
+                :ext.symbol/name :ext.symbol/call :ext.symbol/handler :ext.symbol/description
+                :ext.symbol/result :ext.symbol/render-start-call-fn
+                :ext.symbol/render-finish-call-fn :ext.symbol/replay]))
 
 (s/def ::val-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/val :ext.symbol/doc] :opt [:ext.symbol/source]))
@@ -1480,6 +1485,9 @@
        (:after-fn opts)
        (assoc :ext.symbol/after-fn (:after-fn opts))
 
+       (:ticker-fn opts)
+       (assoc :ext.symbol/ticker-fn (:ticker-fn opts))
+
        (:on-error-fn opts)
        (assoc :ext.symbol/on-error-fn (:on-error-fn opts)))]
 
@@ -1571,7 +1579,7 @@
      :raw?        - true for plain composable helpers.
      :tag         - REQUIRED `:observation | :mutation` for observed
                     tools (unless `:raw? true`).
-     :before-fn :after-fn :on-error-fn
+     :before-fn :after-fn :on-error-fn :ticker-fn
 
    Observed tool functions return canonical internal envelope maps. The
    wrapper records the envelope, then returns only its payload to Python; failure
@@ -2038,14 +2046,34 @@
     (when-not (str/blank? (or line ""))
       (if (> (count line) 64) (str (subs line 0 61) "\u2026") line))))
 
+(defn- tool-start-phrase
+  "The tool's OWN live-ticker phrase for this call, completing `Vis is …`. A tool
+   declares it with `:ticker-fn`; nothing else supplies one, so the generic
+   `<op> <label>` sentence stays the default. Best-effort — a ticker that throws
+   or answers blank simply leaves the default in place. First line, 96 chars."
+  [sym-entry env args]
+  (when-let [f (:ext.symbol/ticker-fn sym-entry)]
+    (let
+      [line (try (some-> (f env args)
+                         str
+                         str/split-lines
+                         first
+                         str/trim)
+                 (catch Throwable _ nil))]
+      (when-not (str/blank? (or line ""))
+        (if (> (count line) 96) (str (subs line 0 93) "…") line)))))
+
 (defn- tool-start-event
-  [ext sym-entry args started-at-ms]
+  [ext sym-entry args started-at-ms env]
   (let
     [sym
      (:ext.symbol/symbol sym-entry)
 
      label
-     (tool-start-label args)]
+     (tool-start-label args)
+
+     phrase
+     (tool-start-phrase sym-entry env args)]
 
     (cond->
       {:phase :tool-start
@@ -2055,7 +2083,10 @@
        :symbol sym
        :started-at-ms (long started-at-ms)}
       label
-      (assoc :label label))))
+      (assoc :label label)
+
+      phrase
+      (assoc :phrase phrase))))
 
 (defn- default-tool-op-keyword
   [ext sym-entry]
@@ -2647,7 +2678,8 @@
               call-started-at-ms
               (now-ms)]
 
-             (record-tool-event! (tool-start-event ext sym-entry clean-args call-started-at-ms))
+             (record-tool-event!
+               (tool-start-event ext sym-entry clean-args call-started-at-ms call-env))
              (try (let
                     [r
                      (invoke-operation op-kw call-env f call-args)
@@ -3688,8 +3720,7 @@
        registers unconditionally and its `:ext/sandbox-shims` autoloads into
        every sandbox (`import yaml` / `import matplotlib.pyplot` / `import requests` just work). They
        only sit in this list because it's how a built-in ns gets `require`d."
-  '[com.blockether.vis.internal.foundation.core
-    com.blockether.vis.internal.foundation.introspection
+  '[com.blockether.vis.internal.foundation.core com.blockether.vis.internal.foundation.introspection
     com.blockether.vis.internal.foundation.shell com.blockether.vis.internal.foundation.shim-yaml
     com.blockether.vis.internal.foundation.shim-matplotlib
     com.blockether.vis.internal.foundation.shim-requests
