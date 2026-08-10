@@ -179,6 +179,48 @@
         ;; The surviving final byte of `ESC =` / `ESC >` was the whole artifact.
         (expect (nil? (re-find #"[=>]" cleaned))))))
 
+;; Regression: a `git push` came back as 28 lines of `Counting objects: N%` and 11
+;; more of `Compressing objects: N%`, because every bare carriage return was expanded
+;; into a newline. The animation filled the capped capture window, so the rendered
+;; card cut the answer the caller actually wanted — mid-word.
+(defdescribe
+  shell-pty-progress-test
+  (it "resolves a redrawn progress line to the ONE frame the terminal was showing"
+      (let
+        [lf
+         @#'shell/lf
+
+         ;; Byte-for-byte what git writes down a pty while pushing.
+         pushed
+         (lf (str "Enumerating objects: 28, done.\r\n"
+                  "Counting objects:   3% (1/28)\r"
+                  "Counting objects:  82% (23/28)\r"
+                  "Counting objects: 100% (28/28), done.\r\n"
+                  "Delta compression using up to 14 threads\r\n"))]
+
+        (expect (= (str "Enumerating objects: 28, done.\n"
+                        "Counting objects: 100% (28/28), done.\n"
+                        "Delta compression using up to 14 threads\n")
+                   pushed))))
+  (it "keeps the last frame when the capture ends on a bare carriage return"
+      (let [lf @#'shell/lf]
+        (expect (= "Receiving objects:  40% (12/28)"
+                   (lf "Receiving objects:  40% (12/28)\r")))
+        ;; A CR that only homes the cursor is a move, not a blank frame.
+        (expect (= "--- status ---" (lf "\r--- status ---")))))
+  (it "renders one progress line on the card instead of the whole animation"
+      (let
+        [card
+         (render-shell-run-result
+           {"command" "git push"
+            "exit" 0
+            "stdout" (str "Compressing objects:   9% (1/11)\r"
+                          "Compressing objects: 100% (11/11), done.\r\n"
+                          "To github.com:example/repo.git\r\n")})]
+
+        (expect (str/includes? (:body card) "Compressing objects: 100% (11/11), done."))
+        (expect (not (str/includes? (:body card) "9% (1/11)"))))))
+
 (defdescribe
   shell-run-sync-test
   (it "returns a TOTAL result: every key present, flags real booleans"
@@ -896,7 +938,10 @@
                                     "stdout" "\u001b]0;title\u0007\u001b[31mready\u001b[0m"})]
 
         (expect (= stdout (get result "stdout")))
-        (expect (str/includes? (:body run-card) "✓ PASS\nnext!"))
+        ;; The CR REDREW the line, so the frame the terminal was left showing is the
+        ;; only one a reader is owed.
+        (expect (str/includes? (:body run-card) "next!"))
+        (expect (not (str/includes? (:body run-card) "PASS")))
         (expect (not (str/includes? (:body run-card) "\u001b")))
         (expect (not (str/includes? (:body run-card) "[0;32m")))
         (expect (str/includes? (:body logs-card) "ready"))

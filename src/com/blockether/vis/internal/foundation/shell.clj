@@ -339,10 +339,26 @@
                    :roots root-paths}))
               :else dir)))))
 
+(defn- last-redraw
+  "The one frame of `line` a terminal would still be showing. A bare CR sends the
+   cursor home and the text after it REDRAWS the line, so only the final non-empty
+   segment was ever on screen; the empty segments a leading or trailing CR leaves
+   behind are cursor moves, not blank frames."
+  ^String [^String line]
+  (or (last (remove empty? (str/split line #"\r" -1))) ""))
+
 (defn- lf
-  "Normalize CRLF to LF so captured output is byte-identical on every OS."
+  "Plain text from a PTY stream: CRLF to LF so captured output is byte-identical on
+   every OS, and every bare CR resolved to the frame it left standing. A progress
+   writer redraws ONE line — git sends 28 `Counting objects: N%` frames separated
+   by CR — and a stream that keeps them all is 28 lines of noise that pushes the
+   result the caller asked for out of the capped window."
   ^String [^String s]
-  (when s (.replace s "\r\n" "\n")))
+  (when s
+    (let [s (.replace s "\r\n" "\n")]
+      (if (neg? (.indexOf s "\r"))
+        s
+        (str/join "\n" (map last-redraw (str/split s #"\n" -1)))))))
 
 (defn- bash-command
   "Bash executable to run commands with — bash on EVERY platform, so the model
@@ -1879,12 +1895,12 @@
          ;; — the SAME key a foreground run puts its bytes under, so "what did it
          ;; print" is one field whether the call waited or came back for it later.
          {:result (assoc (if entry (bg-core "logs" id entry) (retired-log-core env session id))
-                    ;; Every shell is a PTY now, and a PTY terminates lines with CRLF.
-                    ;; The model reads TEXT, not a terminal stream, so the carriage
-                    ;; returns are normalized away here — one read path, one spelling of
-                    ;; a newline, whatever the child wrote.
-                    "stdout" (some-> (:text chunk)
-                                     (str/replace "\r\n" "\n"))
+                    ;; Every shell is a PTY now, and a PTY terminates lines with CRLF
+                    ;; and redraws progress lines with a bare CR. The model reads TEXT,
+                    ;; not a terminal stream, so both are resolved here — one read path,
+                    ;; one spelling of a newline, one frame per redrawn line. The raw
+                    ;; bytes stay on disk at `log_path` for anyone who wants the stream.
+                    "stdout" (lf (:text chunk))
                     "offset" (:offset chunk)
                     "next_offset" (:next-offset chunk)
                     "is_eof" (:is-eof chunk)
@@ -2813,15 +2829,17 @@
 (defn- normalize-terminal-output
   "Make captured terminal text safe and stable for Markdown renderers. Removes
    ANSI/VT escape sequences and non-printing controls, while preserving tabs and
-   line feeds. Bare carriage returns become line feeds instead of leaking terminal
-   overwrite behavior into the TUI or companion app."
+   line feeds, and resolves a redrawn line to the ONE frame the terminal was left
+   showing — a card that expands every carriage return into its own line reprints
+   a progress writer's whole animation at the reader."
   [s]
   (when (some? s)
     (-> (str s)
         (str/replace terminal-escape-re "")
-        (str/replace "\r\n" "\n")
-        (str/replace \return \newline)
-        (str/replace non-printing-control-re ""))))
+        ;; Controls go before the redraws collapse: an erase or a backspace is not a
+        ;; frame, and leaving it in would make an empty segment look like one.
+        (str/replace non-printing-control-re "")
+        (lf))))
 
 (defn- fence
   "Wrap normalized terminal text `s` in a code fence, or nil when blank."
