@@ -1818,7 +1818,7 @@
            (first (filter #(str/includes? % needle) frames)))
 
          picker
-         (frame-with "a Ollama")
+         (frame-with "a  Ollama")
 
          setup
          (frame-with "Ollama — setup")

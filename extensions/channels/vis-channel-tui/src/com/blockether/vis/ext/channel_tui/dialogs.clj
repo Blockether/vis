@@ -6471,15 +6471,45 @@
                                          (embed-transient! screen g region spec))]
                                (f {:screen screen :g g :region region :result result}))))))
 
+(defn- pointer-drift?
+  "Is `key` pure POINTER TRAFFIC — a move, a drag or a wheel notch — rather than
+   an answer to a chord?
+
+   With SGR mouse reporting on, the terminal sends a MouseAction for every cell
+   the cursor crosses. A band that treats one of those as its second key is a
+   band that vanishes when the hand on the desk nudges the mouse."
+  [key]
+  (and (instance? MouseAction key)
+       (let [a (.getActionType ^MouseAction key)]
+         (or (= a MouseActionType/MOVE)
+             (= a MouseActionType/DRAG)
+             (= a MouseActionType/SCROLL_UP)
+             (= a MouseActionType/SCROLL_DOWN)))))
+
+(defn- read-chord-key!
+  "The next event that can ANSWER a chord: keep reading past pointer drift.
+
+   `read-modal-key!` hands back whatever the terminal sent, wheel notches
+   included. `input/resolve-prefix-key` reads anything that is not a key it
+   knows as an abort, so one mouse MOVE used to close the band mid-chord."
+  ^KeyStroke [^TerminalScreen screen]
+  (loop []
+    (let [key (read-modal-key! screen)]
+      (if (pointer-drift? key) (recur) key))))
+
 (defn prefix-band!
-  "The C-x HYDRA: paint `spec` as a band in the LIVE SESSION frame, read exactly
-   ONE keystroke, restore the frame and hand that keystroke BACK raw.
+  "The C-x HYDRA: paint `spec` as a band in the LIVE SESSION frame, read the ONE
+   keystroke that answers the chord, restore the frame and hand it BACK raw.
 
    Same band instance as `session-band!` (`session-band-instance!`), but
    deliberately not a `tr/run!`: the band advertises the chord, it does not own
    it. `input/resolve-prefix-key` still decides what the second key means, so
    C-x TAB, C-x ←/→ and C-x 1…9 keep working even though no row lists them, and a
    verb can never be reachable in the band but dead from the keyboard.
+
+   POINTER DRIFT IS NOT AN ANSWER: the band waits through moves, drags and wheel
+   notches (`read-chord-key!`) instead of letting the resolver read them as an
+   abort. A CLICK still is one — that is a gesture, and it dismisses the band.
 
    Returns the `KeyStroke` (Esc included — the resolver reads it as an abort), or
    nil when the terminal had nothing to give."
@@ -6488,7 +6518,7 @@
                           anchor
                           (fn [g region]
                             (band-frame! screen g region spec)
-                            (read-modal-key! screen))))
+                            (read-chord-key! screen))))
 
 ;;; ── Questions a band asks on its OWN hint row ───────────────────────────────
 ;; `ctx` is what `session-band!` hands its `f`: the screen, its graphics and the

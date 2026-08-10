@@ -1859,7 +1859,7 @@
                                  :groups [{:title "G"
                                            :items
                                            [{:key "x" :type :action :id :ex :label "Ex"}]}]}))))
-          (expect (some #(str/starts-with? % "  │ x Ex") (term/grid terminal)))
+          (expect (some #(str/starts-with? % "  │  x  Ex") (term/grid terminal)))
           ;; And the `:read-option` an OPTION item hands `tr/run!`, bound to
           ;; the same hint row.
           (feed! \z \z :enter)

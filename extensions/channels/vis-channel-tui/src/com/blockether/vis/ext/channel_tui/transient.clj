@@ -157,14 +157,41 @@
           v (str "(" v ")")
           :else nil)))
 
-(defn columns
-  "PURE: `{:key-w :label-w}` column widths for the transient grid. Every group's
-   items share one key column and one description column, so flags and commands
-   line up as a grid exactly like magit's popup."
-  [spec]
-  (let [items (mapcat :items (:groups spec))]
+(def pane-lead
+  "Columns between a pane's left edge and the first ink in it. The heading starts
+   here, and so does the pane's own grid."
+  2)
+
+(def item-indent
+  "Columns an item row steps RIGHT of the heading above it. A heading NAMES a
+   column and the verbs under it are its content, so they are indented under it
+   exactly like magit's; flush left, the key letter collided with the first
+   letter of the heading and the two read as one ragged column."
+  1)
+
+(def key-gap
+  "Columns between the key column and the description column. One space beside a
+   one-letter key read as a typo; two make the keys a COLUMN the eye can run
+   down."
+  2)
+
+(defn pane-columns
+  "PURE: `{:key-w :label-w}` for ONE pane's display rows — that pane's OWN grid.
+
+   A pane measures ITSELF: a category of long verbs never forces its label
+   column onto the narrow category beside it, which is what left a wide band
+   packed into its left half with every pane the width of the worst label on
+   the screen."
+  [pane]
+  (let [items (keep :item pane)]
     {:key-w (reduce max 0 (map #(long (p/display-width (key-glyph %))) items))
      :label-w (reduce max 0 (map #(long (p/display-width (str (:label %)))) items))}))
+
+(defn columns
+  "PURE: `{:key-w :label-w}` for the whole spec — the single column's grid, and
+   what a one-pane band is measured with."
+  [spec]
+  (pane-columns (map (fn [it] {:item it}) (mapcat :items (:groups spec)))))
 
 (def band-body-pad
   "Blank display rows of BREATHING SPACE at the TOP and BOTTOM of every pane: the
@@ -263,52 +290,83 @@
             (into pane (repeat (- h (count pane)) {:kind :blank})))
           padded)))
 
+(defn pane-natural
+  "PURE: the columns ONE pane needs for its own content — the lead, its widest
+   heading, and its own key/label grid with the indent and gutter it is painted
+   with. Measuring the PANE (not the spec) is what lets a band stand a narrow
+   category beside a wide one."
+  ^long [pane]
+  (let
+    [{:keys [key-w label-w]}
+     (pane-columns pane)
+
+     head-w
+     (reduce max
+             0
+             (map #(long (p/display-width (str (:text %))))
+                  (filter #(= :header (:kind %)) pane)))]
+
+    (max (+ (long pane-lead) (long item-indent) (long key-w) (long key-gap) (long label-w))
+         (+ (long pane-lead) (long head-w)))))
+
+(defn- panes-fit?
+  "PURE: do `ps` stand side by side inside `inner-w`, gaps included?"
+  [ps ^long inner-w]
+  (<= (+ (long (reduce + 0 (map pane-natural ps)))
+         (* (long pane-gap) (dec (count ps))))
+      inner-w))
+
 (defn pane-count
   "PURE: how many side-by-side panes `spec` is dealt into inside `region`.
 
    EVERY CATEGORY GETS ITS OWN COLUMN: as many panes as the spec has groups, so
    a heading is never stacked under another heading while the terminal is wide
-   enough to stand them side by side. The only bound is the width one pane needs
-   for its own key and label columns; when the groups outnumber that capacity the
-   leftovers are packed by [[panes]]. No region ⇒ one column."
+   enough to stand them side by side. The bound is what those panes ACTUALLY
+   measure ([[pane-natural]]) rather than the widest label anywhere in the spec
+   — one long verb in one category used to shrink the whole grid. When the
+   groups outnumber the room the leftovers are packed by [[panes]]. No region ⇒
+   one column."
   ^long [spec region]
   (if (or (nil? region) (not (:is-sideless region)))
     1
-    (let
-      [{:keys [key-w label-w]}
-       (columns spec)
+    (let [inner-w (long (or (:inner-w region) 0))]
+      (loop [n (max 1 (count (:groups spec)))]
+        (if (or (= n 1) (panes-fit? (panes spec n) inner-w)) n (recur (dec n)))))))
 
-       natural
-       (+ 3 (long key-w) (long label-w))
+(defn pane-widths
+  "PURE: the columns EACH of `ps` gets inside `region`'s inner width, the gaps
+   between them already paid for.
 
-       inner-w
-       (long (or (:inner-w region) 0))
-
-       capacity
-       (max 1 (quot (+ inner-w (long pane-gap)) (+ natural (long pane-gap))))]
-
-      (max 1 (min (count (:groups spec)) capacity)))))
-
-(defn pane-width
-  "PURE: the columns ONE of `n` panes gets inside `region`'s inner width, the
-   gaps between them already paid for.
-
-   A pane is only as wide as its own grid needs — gutter, key column, label — so
-   the columns sit BESIDE each other like which-key's, instead of one heading
-   floating alone at the far edge of a wide terminal. The even split is the
-   ceiling, never the target."
-  ^long [region spec ^long n]
+   Every pane starts from its OWN [[pane-natural]] and the slack the band has
+   left over is shared evenly between them, so the grid FLEXES to the width it
+   was given instead of hugging the left edge with an empty third to its right
+   — and a pane still never falls below what its own verbs need. When the panes
+   cannot all have their natural width (a single column holding a very long
+   label) the band is split evenly, which for one pane IS the whole width."
+  [region ps]
   (let
-    [{:keys [key-w label-w]}
-     (columns spec)
-
-     inner-w
+    [inner-w
      (long (or (:inner-w region) 0))
 
-     share
-     (max 1 (quot (- inner-w (* (long pane-gap) (dec n))) n))]
+     n
+     (max 1 (count ps))
 
-    (if (= 1 n) share (max 1 (min share (+ 4 (long key-w) (long label-w)))))))
+     nats
+     (mapv pane-natural ps)
+
+     gaps
+     (* (long pane-gap) (dec n))
+
+     slack
+     (- inner-w (long (reduce + 0 nats)) gaps)]
+
+    (if (neg? slack)
+      (vec (repeat n (max 1 (quot (- inner-w gaps) n))))
+      (let [each (quot slack n)
+            extra (rem slack n)]
+        (into []
+              (map-indexed (fn [^long i ^long w] (+ w each (if (< i extra) 1 0))))
+              nats)))))
 
 (def ^:private chrome-rows
   "Rows of the popup's OWN chrome above its body: the opening separator, and
@@ -497,7 +555,8 @@
      {:rows (rows spec)
       :panes ps
       :pane-count (count ps)
-      :pane-w (if region (pane-width region spec (count ps)) 0)
+      :pane-ws (when region (pane-widths region ps))
+      :pane-cols (mapv pane-columns ps)
       :row-count pane-h
       :columns (columns spec)
       :hint-pairs (hint-pairs spec)
@@ -524,11 +583,14 @@
      argtxt
      (item-arg it value)
 
+     ;; The key column steps in past the heading above it, and the description
+     ;; column clears the key by [[key-gap]] — the two are COLUMNS, not a
+     ;; sentence with a letter in front of it.
      x
-     (+ (long left) 2)
+     (+ (long left) (long pane-lead) (long item-indent))
 
      lx
-     (+ (long x) (long key-w) 1)
+     (+ (long x) (long key-w) (long key-gap))
 
      right
      (+ (long left) (long inner-w))
@@ -654,7 +716,8 @@
   "Paint ONE frame of an already-computed [[layout]] at `state`. Everything the
    spec decides is decided in [[layout]]; this fn only puts cells on a screen.
 
-   The body is a GRID: pane `j` starts [[pane-width]] + [[pane-gap]] columns
+   The body is a GRID: pane `j` is [[pane-widths]] wide and starts one
+   [[pane-gap]] after the pane before it ended
    after pane `j-1`, and the gap is EMPTY — a sibling column is told by its own
    bold heading and by the space, never by a rule down the body.
 
@@ -673,7 +736,8 @@
    rides INSIDE that box, on the row directly above the closing rule, under its
    OWN rule, so the footer is fenced off from the commands it explains."
   [{:keys [g hint-bar!]} {:keys [left inner-w restore!] :as region}
-   {panes :panes n :row-count pane-w :pane-w grid :columns hints :hint-pairs title :title} state]
+   {panes :panes n :row-count pane-ws :pane-ws pane-cols :pane-cols hints :hint-pairs title :title}
+   state]
   (binding [t/dialog-bg (if (:is-sideless region) t/terminal-bg t/dialog-bg)]
     (let
       [{:keys [sep-row body-top foot-rule-row foot-row wipe-top visible top-limit]}
@@ -690,7 +754,10 @@
        visible (long (if sideless? (max 1 (dec (long visible))) visible))
        left (long left)
        inner-w (long inner-w)
-       pane-w (long (if (pos? (long (or pane-w 0))) pane-w inner-w))
+       ;; Each pane owns its own width, so pane `j` starts where every pane
+       ;; before it ended plus one gap — never at a fixed stride.
+       widths (vec (if (seq pane-ws) pane-ws (repeat (count panes) inner-w)))
+       lefts (vec (reductions (fn [^long x ^long w] (+ x w (long pane-gap))) left widths))
        clear-row! (fn [row]
                     (clear-rows! g region row row))]
 
@@ -717,7 +784,8 @@
           (clear-row! row)
           (dotimes [j (count panes)]
             (let
-              [pane-left (+ left (* (long j) (+ pane-w (long pane-gap))))
+              [pane-left (long (nth lefts j))
+               pane-w (long (nth widths j))
                r (nth (nth panes j) i)]
 
               (case (:kind r)
@@ -726,9 +794,10 @@
                     (p/styled g
                               [p/BOLD]
                               (p/put-str! g
-                                          (+ pane-left 2)
+                                          (+ pane-left (long pane-lead))
                                           row
-                                          (p/ellipsize (str (:text r)) (max 1 (- pane-w 2))))))
+                                          (p/ellipsize (str (:text r))
+                                                       (max 1 (- pane-w (long pane-lead)))))))
 
                 :blank
                 nil
@@ -741,7 +810,7 @@
                                         (and is-flag (contains? (:switches state) id))))
                    value (when is-valued (get (:options state) id))]
 
-                  (draw-item! g pane-left row pane-w grid it active? value)))))))
+                  (draw-item! g pane-left row pane-w (nth pane-cols j) it active? value)))))))
       (when (and sideless? (>= hint-at (long top-limit))) (clear-row! hint-at))
       (hint-bar! g left hint-at inner-w hints)
       ;; The band's own BORDER: corner-capped rules with a `│` down both edge

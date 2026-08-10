@@ -10,7 +10,9 @@
             [com.blockether.vis.ext.channel-tui.terminals :as term]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.channel-tui.transient :as tr])
-  (:import [com.googlecode.lanterna.screen TerminalScreen]
+  (:import [com.googlecode.lanterna TerminalPosition]
+           [com.googlecode.lanterna.input MouseAction MouseActionType]
+           [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
 
 (def ^:private commit-transient-spec
@@ -148,12 +150,14 @@
          command
          (row-with rows "Commit staged")]
 
-        (expect (str/includes? (:text flag) "-h Disable hooks"))
+        (expect (str/includes? (:text flag) "-h  Disable hooks"))
         (expect (str/includes? (:text flag) "(--no-verify)"))
         ;; A flag starts OFF: dim, nothing bold.
         (expect (str/blank? (:bold flag)))
         ;; A command is a BOLD key plus its description — never dim.
-        (expect (str/includes? (:text command) "c  Commit staged"))
+        ;; The key column is as wide as the widest key in the pane (`-h` here), so
+        ;; a one-letter key is padded to it before the [[key-gap]] gutter.
+        (expect (str/includes? (:text command) "c   Commit staged"))
         (expect (= "c" (:bold command)))))
   (it
     ;; Regression, issue: the hydra band spent its two top rows on a title and a
@@ -496,8 +500,16 @@
                    (map (fn [pane]
                           (count (filter #(= :header (:kind %)) pane)))
                         (:panes lay))))
-        ;; and the panes share the width, the `│` gaps already paid for
-        (expect (<= (+ (* n (:pane-w lay)) (* 3 (dec n))) 100))))
+        ;; and the panes FILL the width between them, the `│` gaps already paid
+        ;; for: no empty third at the trailing edge
+        (expect (= 100 (+ (reduce + 0 (:pane-ws lay)) (* 3 (dec n)))))
+        ;; each pane still holds its own grid: nobody is squeezed under a
+        ;; neighbour's widest label
+        (expect (every? true?
+                        (map (fn [w pane]
+                               (>= (long w) (tr/pane-natural pane)))
+                             (:pane-ws lay)
+                             (:panes lay))))))
   (it "width is the only bound: a narrow band packs categories together"
       (expect (< (tr/pane-count leader-spec (assoc leader-band-region :inner-w 40))
                  (count (:groups leader-spec)))))
@@ -507,6 +519,47 @@
   (it "a short band still gets one column per category"
       (expect (= (count (:groups commit-transient-spec))
                  (tr/pane-count commit-transient-spec leader-band-region)))))
+
+;; Regression, issue #C-x d columns: the verbs started in the SAME column as the
+;; heading above them and their descriptions sat one space off a one-letter key,
+;; so the band read as a ragged list instead of a grid; and every pane was as
+;; wide as the widest label in the WHOLE spec, which packed a wide band's columns
+;; into its left half and left the trailing third empty.
+(defdescribe
+  transient-column-grid-test
+  (it
+    "verbs are INDENTED under their heading and the description clears the key"
+    (let
+      [grid
+       (transient-grid! commit-transient-spec 0 78 28)
+
+       head
+       (some #(when (str/includes? % "Commands") %) grid)
+
+       row
+       (some #(when (str/includes? % "Commit staged") %) grid)]
+
+      (expect (= (+ (long (str/index-of head "Commands")) (long tr/item-indent))
+                 (str/index-of row "c")))
+      (expect (= (+ (long (str/index-of row "c"))
+                    (long (:key-w (tr/columns commit-transient-spec)))
+                    (long tr/key-gap))
+                 (str/index-of row "Commit staged")))))
+  (it
+    "a pane measures ITSELF, so a narrow category is not padded to a wide one"
+    (let
+      [narrow
+       {:groups [{:title "A" :items [{:key "a" :type :action :id :a :label "go"}]}
+                 {:title "B"
+                  :items [{:key "b"
+                           :type :action
+                           :id :b
+                           :label "a very much longer verb indeed"}]}]}
+
+       [w0 w1]
+       (:pane-ws (tr/layout narrow leader-band-region))]
+
+      (expect (< (long w0) (long w1))))))
 
 (defdescribe
   transient-contract-test
@@ -607,6 +660,28 @@
                            (.getCursorPosition screen))))]
 
                    (expect (nil? seen)))))
+
+;; Regression, issue #C-x band pointer: the hydra band vanished as soon as the
+;; mouse moved — one MOVE report was taken as the chord's second key and the
+;; resolver read it as an abort, so C-x could not survive a nudged cursor.
+(defdescribe
+  band-pointer-drift-test
+  (it
+    "pointer drift never answers the chord: the band waits for a real key"
+    (let
+      [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+       (term/virtual-screen)
+
+       drift
+       [MouseActionType/MOVE MouseActionType/DRAG MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN]]
+
+      (doseq [^MouseActionType a drift]
+        (.addInput terminal (MouseAction. a 1 (TerminalPosition. 4 4))))
+      (.addInput terminal (term/keystroke \d))
+      (expect (= \d
+                 (.getCharacter (dlg/prefix-band! screen
+                                                  {:content-top 1 :prompt-h 3}
+                                                  leader-spec)))))))
 
 ;; Regression, issue #C-x band width: the band washed its paper across the WHOLE
 ;; terminal width, so its background ran past both of its own rules to the screen
