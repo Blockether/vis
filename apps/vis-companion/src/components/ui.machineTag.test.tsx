@@ -42,7 +42,7 @@ describe("the machine tag", () => {
 
   it("hugs the name instead of growing into a bar", () => {
     // A tag as wide as its column is the full-bleed banner again, which is the
-    // exact thing the 4px spine down the list replaced.
+    // exact thing the 2px spine down the list replaced.
     const face = machineTagFace(MACHINE_COLORS[0]!);
     expect(face).toContain("w-fit");
     expect(face).toContain("truncate");

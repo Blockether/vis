@@ -133,14 +133,6 @@
 /* Tailwind utilities resolve directly to the gateway's shared TUI palette. */
 @theme inline {
   --color-ink: var(--bg);
-  /* The ink for a machine's own NAME TAG, and it is a filled block's ink, not the
-     page's. The machine palette sits at one lightness (oklch L 0.62) because it was
-     tuned as INK on a page, so painting the page's own background (--color-ink) on
-     top of a hue gives a 3.2:1 name on the light theme — the one word that says
-     which computer you are looking at, below AA. --primary-fg is the dark ink every
-     FILLED block in this app already wears (light #261e00, dark #0f1117); on an
-     L 0.62 hue it is ~4.2:1 and it does not flip with the theme. */
-  --color-machine-ink: var(--primary-fg);
   --color-white: var(--fg);
   --color-box: var(--box-bg);
   --color-box-foreground: var(--box-fg);

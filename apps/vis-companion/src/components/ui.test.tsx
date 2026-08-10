@@ -170,14 +170,17 @@ describe("UnreadBadge", () => {
 // every machine on screen kept the plain white name it always had. The tag is a face on
 // the chrome that actually renders now.
 describe("machineTagFace", () => {
-  it("names the machine in a block of its own hue, in ink", () => {
+  // Regression, user report ("the foreground is black and it doesn't look good"): the
+  // tag was a FILLED block of hue, which at L 0.62 can only carry dark ink, so the
+  // machine's name was the only black word on the screen. Hue is the edge now.
+  it("names the machine with its own hue on the leading edge, in the page's ink", () => {
     const face = machineTagFace(MACHINE_COLORS[0]!);
 
-    expect(face).toContain(MACHINE_COLORS[0]!.dot);
-    // A filled block's ink, never the page's: the palette is one lightness and was
-    // tuned as INK, so the page colour on top of a hue is a 3.2:1 machine name.
-    expect(face).toContain("text-machine-ink");
-    expect(face).not.toContain("text-ink ");
+    expect(face).toContain(MACHINE_COLORS[0]!.rail);
+    expect(face).toContain("border-l-2");
+    expect(face).toContain("text-white");
+    expect(face).not.toContain("text-machine-ink");
+    expect(face).not.toContain(MACHINE_COLORS[0]!.dot);
     expect(face).toContain("px-1.5");
   });
 
@@ -199,8 +202,9 @@ describe("machineTagFace", () => {
 
   // Without a hue it still has to read as a tag: an unpainted name is the white ink
   // this replaced.
-  it("falls back to a painted block rather than bare ink", () => {
-    expect(machineTagFace()).toContain("bg-edge-strong");
+  it("falls back to the grey edge rather than bare ink", () => {
+    expect(machineTagFace()).toContain("border-dialog-edge");
+    expect(machineTagFace()).toContain("bg-level-machine");
   });
 
   // The machine's name is also its RENAME control, and the field it becomes used to
@@ -216,7 +220,7 @@ describe("machineTagFace", () => {
       />,
     );
 
-    expect(html).toContain(MACHINE_COLORS[0]!.dot);
+    expect(html).toContain(MACHINE_COLORS[0]!.rail);
     expect(html).toContain("px-1.5");
   });
 });
@@ -276,7 +280,7 @@ describe("MachineRail", () => {
     const html = renderToStaticMarkup(
       <MachineRail color={MACHINE_COLORS[3]!}>rows</MachineRail>,
     );
-    expect(html).toContain("border-l-4");
+    expect(html).toContain("border-l-2");
     expect(html).toContain(MACHINE_COLORS[3]!.rail);
     expect(html).toContain("rows");
   });

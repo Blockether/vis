@@ -1428,14 +1428,22 @@ export function UnreadBadge({ count }: { count: number }) {
  *
  * A full-bleed bar of hue was a second loud band competing with the project header
  * under it, and it only answered "whose" for as long as it stayed on screen. The colour
- * that ANSWERS ownership is the machine's spine (`MachineRail`, 4px down every project
- * and session it owns); the name only has to NAME, so it wears hue as a small block of
- * paper and nothing else does.
+ * that ANSWERS ownership is the machine's spine (`MachineRail`, 2px down every project
+ * and session it owns); the name only has to NAME, so it wears the hue on its own
+ * leading edge and nothing else does.
+ *
+ * THE HUE IS THE TAG'S EDGE, NEVER ITS FILL. A hue at L 0.62 filled behind a word can
+ * only carry dark ink — the page's own paper on top of it is a 3.2:1 name — so the one
+ * word that says which computer you are looking at was black type on orange paper, the
+ * only black ink on a screen where every other word is the page's. The tag is the
+ * page's own paper and ink now, with 2px of hue down its leading side: the SAME rule
+ * `MachineRail` paints under it, at the same width and on the same side, so the name
+ * and the block it heads are one machine and the word keeps ordinary ink's contrast.
  */
 export function machineTagFace(color?: MachineColor): string {
-  // `w-fit` so the block of hue hugs the NAME: a tag as wide as the column it sits in
+  // `w-fit` so the tag hugs the NAME: a tag as wide as the column it sits in
   // is a bar again, which is the exact thing the spine replaced.
-  return `w-fit max-w-full truncate px-1.5 font-mono text-ui font-bold text-machine-ink ${color ? color.dot : 'bg-edge-strong'}`;
+  return `w-fit max-w-full truncate border-l-2 bg-level-machine px-1.5 font-mono text-ui font-bold text-white ${color ? color.rail : 'border-dialog-edge'}`;
 }
 
 /**
@@ -2024,7 +2032,7 @@ export function LiveCount({ count }: { count: number }) {
 }
 
 /**
- * THE SPINE OF A MACHINE: 4px of its own hue down everything it owns, banner
+ * THE SPINE OF A MACHINE: 2px of its own hue down everything it owns, banner
  * included. A project boundary is a hairline and a machine boundary is a colour
  * change, so where one computer ends is seen before it is read — and, unlike the
  * band at the top of the block, the spine is still on screen once the reader has
@@ -2033,12 +2041,13 @@ export function LiveCount({ count }: { count: number }) {
  * It is the card's LEFT FRAME, not a line inside it — see `LIST_FRAME`. That is the
  * whole difference from the version that had to be removed: it doubled the card's
  * own border and, being a border, pushed every railed row deeper than its own
- * trailing edge stopped. Now one border paints the left side, and a machine simply
- * makes it wider and coloured; without a hue it falls back to the grey 2px frame.
+ * trailing edge stopped. Now one border paints the left side and a machine simply
+ * COLOURS it — same 2px as the grey frame it falls back to, and as the leading edge of
+ * the tag that names it, so nothing on this side of the list is wider than the rest.
  */
 export function MachineRail({ color, children }: { color?: MachineColor; children: ReactNode }) {
   return (
-    <div className={color ? `border-l-4 ${color.rail}` : LIST_FRAME}>{children}</div>
+    <div className={color ? `border-l-2 ${color.rail}` : LIST_FRAME}>{children}</div>
   );
 }
 
