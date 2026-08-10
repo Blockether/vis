@@ -360,6 +360,36 @@
         s
         (str/join "\n" (map last-redraw (str/split s #"\n" -1)))))))
 
+(def ^:private terminal-escape-re
+  ;; ANSI/VT sequences a PTY-attached tool emits. Stripped both when MATCHING a
+  ;; `wait` predicate and on every capture a caller reads, so the two agree.
+  ;; The bare-ESC alternative ends at `[0-~]`, not `[@-~]`: the two-byte private
+  ;; escapes `ESC =` / `ESC >` (keypad mode, written by `less` and every other
+  ;; full-screen tool) end in 0x3D/0x3E, so a `@-~` final left their last byte
+  ;; behind as a literal `=` or `>` in otherwise clean output. `ESC 7` / `ESC 8`
+  ;; (save/restore cursor) were escaping the same way.
+  #"(?s)(?:\u001B\].*?(?:\u0007|\u001B\\)|(?:\u001B\[|\u009B)[0-?]*[ -/]*[@-~]|\u001B[ -/]*[0-~])")
+
+(def ^:private non-printing-control-re #"[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]")
+
+(defn- normalize-terminal-output
+  "The ONE reading of a PTY capture, shared by every consumer: ANSI/VT escapes and
+   non-printing controls removed, tabs and line feeds kept, and a redrawn line
+   resolved to the frame the terminal was left showing. What a human sitting at
+   that terminal SAW is what `stdout`/`stderr` carries and what the card prints —
+   a colour reset git wrote ONLY because our pty made isatty() true is invisible
+   to a human and a literal `[m` to everyone reading the string, and half-cleaning
+   it left the two readings disagreeing. The raw stream stays whole on disk at
+   `log_path` for anyone who wants the bytes."
+  [s]
+  (when (some? s)
+    (-> (str s)
+        (str/replace terminal-escape-re "")
+        ;; Controls go before the redraws collapse: an erase or a backspace is not a
+        ;; frame, and leaving it in would make an empty segment look like one.
+        (str/replace non-printing-control-re "")
+        (lf))))
+
 (defn- bash-command
   "Bash executable to run commands with — bash on EVERY platform, so the model
    writes one command dialect everywhere. Under WSL the JVM reports
@@ -817,8 +847,10 @@
                                    ;; — never nil, or "did it work" has no answer on the one stage
                                    ;; that actually knows.
                                    "status" (if finished? "exited" "running")
-                                   "stdout" (lf (:text out))
-                                   "stderr" (lf (:text err))
+                                   ;; What the terminal SHOWED, not the control stream that
+                                   ;; painted it: `log_path` still holds every byte.
+                                   "stdout" (normalize-terminal-output (:text out))
+                                   "stderr" (normalize-terminal-output (:text err))
                                    "exit" exit
                                    "duration_ms" (- t1 t0)
                                    "started_at" t0
@@ -1895,12 +1927,12 @@
          ;; — the SAME key a foreground run puts its bytes under, so "what did it
          ;; print" is one field whether the call waited or came back for it later.
          {:result (assoc (if entry (bg-core "logs" id entry) (retired-log-core env session id))
-                    ;; Every shell is a PTY now, and a PTY terminates lines with CRLF
-                    ;; and redraws progress lines with a bare CR. The model reads TEXT,
-                    ;; not a terminal stream, so both are resolved here — one read path,
-                    ;; one spelling of a newline, one frame per redrawn line. The raw
-                    ;; bytes stay on disk at `log_path` for anyone who wants the stream.
-                    "stdout" (lf (:text chunk))
+                    ;; Every shell is a PTY, so a tool writes for a SCREEN: CRLF line ends,
+                    ;; progress redrawn with a bare CR, colour and keypad escapes it only
+                    ;; sent because isatty() was true. The model reads TEXT, so this window
+                    ;; is the terminal's own reading of those bytes — the raw stream stays
+                    ;; whole on disk at `log_path` for anyone who wants it.
+                    "stdout" (normalize-terminal-output (:text chunk))
                     "offset" (:offset chunk)
                     "next_offset" (:next-offset chunk)
                     "is_eof" (:is-eof chunk)
@@ -2065,17 +2097,6 @@
               (and (= "" text) (pos? quiet)) (finish res nxt)
               :else (do (Thread/sleep (long wait-drain-poll-ms))
                         (recur nxt (inc idle) (if (= "" text) (inc quiet) 0))))))))
-
-(def ^:private terminal-escape-re
-  ;; ANSI/VT sequences a PTY-attached tool emits. Stripped both when MATCHING a
-  ;; `wait` predicate and when rendering captured output, so the two agree.
-  ;; The bare-ESC alternative ends at `[0-~]`, not `[@-~]`: the two-byte private
-  ;; escapes `ESC =` / `ESC >` (keypad mode, written by `less` and every other
-  ;; full-screen tool) end in 0x3D/0x3E, so a `@-~` final left their last byte
-  ;; behind as a literal `=` or `>` in otherwise clean output. `ESC 7` / `ESC 8`
-  ;; (save/restore cursor) were escaping the same way.
-  #"(?s)(?:\u001B\].*?(?:\u0007|\u001B\\)|(?:\u001B\[|\u009B)[0-?]*[ -/]*[@-~]|\u001B[ -/]*[0-~])")
-
 
 
 (def ^:private control-key-names
@@ -2823,23 +2844,6 @@
             (and (zero? depth) (= c \;)) (do (.append sb ";\n")
                                              (recur (skip-inline-space s (inc i) n) sq dq depth))
             :else (do (.append sb c) (recur (inc i) sq dq depth))))))))
-
-(def ^:private non-printing-control-re #"[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]")
-
-(defn- normalize-terminal-output
-  "Make captured terminal text safe and stable for Markdown renderers. Removes
-   ANSI/VT escape sequences and non-printing controls, while preserving tabs and
-   line feeds, and resolves a redrawn line to the ONE frame the terminal was left
-   showing — a card that expands every carriage return into its own line reprints
-   a progress writer's whole animation at the reader."
-  [s]
-  (when (some? s)
-    (-> (str s)
-        (str/replace terminal-escape-re "")
-        ;; Controls go before the redraws collapse: an erase or a backspace is not a
-        ;; frame, and leaving it in would make an empty segment look like one.
-        (str/replace non-printing-control-re "")
-        (lf))))
 
 (defn- fence
   "Wrap normalized terminal text `s` in a code fence, or nil when blank."

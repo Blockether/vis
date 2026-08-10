@@ -177,7 +177,17 @@
         (expect (str/includes? cleaned "stash@{0}: WIP"))
         (expect (str/includes? cleaned "--- status ---"))
         ;; The surviving final byte of `ESC =` / `ESC >` was the whole artifact.
-        (expect (nil? (re-find #"[=>]" cleaned))))))
+        (expect (nil? (re-find #"[=>]" cleaned)))))
+  (it "hands the CALLER the text a human saw, not the escapes that painted it"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let [r (shell-run* {} "printf '\\033[33mcoloured\\033[m\\n'; printf 'first\\rlast\\n'")]
+              ;; A tool colours and redraws ONLY because our pty makes isatty() true.
+              ;; Stripping that on the card alone left the escapes in the `stdout` the
+              ;; caller actually prints, which is where the artifact was reported.
+              (expect (= "coloured\nlast" (str/trim (get r "stdout"))))
+              (expect (not (str/includes? (get r "stdout") "\u001b")))))))))
 
 ;; Regression: a `git push` came back as 28 lines of `Counting objects: N%` and 11
 ;; more of `Compressing objects: N%`, because every bare carriage return was expanded
