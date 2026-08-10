@@ -14,7 +14,7 @@ import {
   LIST_FRAME,
   LiveCount,
   EditableName,
-  MachineBanner,
+  machineTagFace,
   MachineMark,
   MachineRail,
   MachineSwitcher,
@@ -698,6 +698,12 @@ export function SessionsScreen({
     [machines],
   );
 
+  // The hue of the machine the chrome speaks for, so the name it carries is the same
+  // machine the spine down the list is drawn in.
+  const chromeColor = scopeChrome
+    ? machineColor(machineColors, machineKey(scopeChrome.conn))
+    : undefined;
+
   // A scope narrowed to a dead machine is not an empty machine: with the rest of
   // the fleet hidden, that machine's failure IS the screen.
   const scopedError = scopeError(machines, scope);
@@ -1177,16 +1183,21 @@ export function SessionsScreen({
             <div className="min-w-0">
               {/* The machine in scope is NAMED here, once, and the name is the rename
                   control: the band that used to carry it is gone, so this is where a
-                  human owns the word. Same box editing or resting — no jump. */}
+                  human owns the word. Same box editing or resting — no jump.
+
+                  It wears the machine's own hue as a TAG (`machineTagFace`) rather than
+                  plain white ink: this word and the 4px spine down the list are the two
+                  places a machine is visible at all, and they have to be visibly the
+                  same machine. */}
               {scopeChrome && onRenameMachine ? (
                 <EditableName
-                  face="truncate font-mono text-ui font-bold text-white"
+                  face={machineTagFace(chromeColor)}
                   label={`Rename ${machineLabel(scopeChrome.conn)}`}
                   value={machineLabel(scopeChrome.conn)}
                   onCommit={(next) => onRenameMachine(scopeChrome.conn, next)}
                 />
               ) : (
-                <p className="truncate font-mono text-ui font-bold text-white">
+                <p className={machineTagFace(chromeColor)}>
                   {scopeChrome ? machineLabel(scopeChrome.conn) : 'Fleet'}
                 </p>
               )}
@@ -1325,30 +1336,10 @@ export function SessionsScreen({
           <div>
             {sections.map(({ machine, groups }) => {
               const key = machineKey(machine.conn);
-              const machineLive = (machine.sessions ?? []).filter(sessionIsLive).length;
               return (
                 <section key={key} aria-label={`${machineLabel(machine.conn)} projects`}>
                   {/* Every machine keeps its own named panel and landmark, even when it is
                       the only machine in the fleet. */}
-                  {/* A machine boundary is not a project boundary, so it is not drawn with
-                      the same hairline: its name sits in a tag of its own hue on the list's
-                      paper, and the same hue runs down the block as a 4px spine, so ownership
-                      is still answered after this band scrolls away. A solo fleet renders no
-                      banner at all — it, like the scope chips and the machine landmark, costs
-                      a single-machine user nothing. */}
-                  {sections.length > 1 && (
-                    <MachineBanner
-                      color={machineColor(machineColors, key)}
-                      name={machineLabel(machine.conn)}
-                      meta={
-                        machine.error
-                          ? 'not answering'
-                          : `${groups.length} ${groups.length === 1 ? 'project' : 'projects'}${
-                              machineLive > 0 ? ` · ${machineLive} live` : ''
-                            }`
-                      }
-                    />
-                  )}
                   {/* Everything one machine owns hangs off ITS rail, and that rail IS
                       the card's left frame here — a project boundary is a hairline, a
                       machine boundary is a colour change, so where `tower` ends is seen

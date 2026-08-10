@@ -22,6 +22,7 @@ import connectSource from "../screens/ConnectScreen.tsx?raw";
 import { MACHINE_COLORS } from "../lib/machine-colors";
 import {
   BackButton,
+  EditableName,
   Button,
   Chip,
   ChoiceCell,
@@ -44,8 +45,7 @@ import {
   LoadMore,
   LiveTally,
   LIST_EDGE,
-  LIST_EDGE_END,
-  MachineBanner,
+  machineTagFace,
   MachineMark,
   MachineRail,
   MachineSwitcher,
@@ -165,53 +165,59 @@ describe("UnreadBadge", () => {
   });
 });
 
-// The band that STARTS a machine. It replaced an empty 12px gap that said something
-// had ended and never said what began.
-describe("MachineBanner", () => {
-  it("names the machine in a tag of its own hue, on the list's paper", () => {
+// Regression, user report ("the machine is not updated"): the machine tag shipped as a
+// banner INSIDE the list, gated on a fleet section count this screen can never reach, so
+// every machine on screen kept the plain white name it always had. The tag is a face on
+// the chrome that actually renders now.
+describe("machineTagFace", () => {
+  it("names the machine in a block of its own hue, in ink", () => {
+    const face = machineTagFace(MACHINE_COLORS[0]!);
+
+    expect(face).toContain(MACHINE_COLORS[0]!.dot);
+    // A filled block's ink, never the page's: the palette is one lightness and was
+    // tuned as INK, so the page colour on top of a hue is a 3.2:1 machine name.
+    expect(face).toContain("text-machine-ink");
+    expect(face).not.toContain("text-ink ");
+    expect(face).toContain("px-1.5");
+  });
+
+  // A tag as wide as its column is the full-bleed bar again, which is what the spine
+  // replaced; and a long name must truncate rather than push the machine's verbs off.
+  it("hugs the name and truncates instead of growing", () => {
+    const face = machineTagFace(MACHINE_COLORS[0]!);
+
+    expect(face).toContain("w-fit");
+    expect(face).toContain("max-w-full");
+    expect(face).toContain("truncate");
+  });
+
+  it("gives two machines two different tags", () => {
+    expect(machineTagFace(MACHINE_COLORS[0]!)).not.toBe(
+      machineTagFace(MACHINE_COLORS[1]!),
+    );
+  });
+
+  // Without a hue it still has to read as a tag: an unpainted name is the white ink
+  // this replaced.
+  it("falls back to a painted block rather than bare ink", () => {
+    expect(machineTagFace()).toContain("bg-edge-strong");
+  });
+
+  // The machine's name is also its RENAME control, and the field it becomes used to
+  // wear `bg-transparent p-0` spelled inside `EditableName` — so the tag lost its hue
+  // and its padding the moment a caret arrived. Paper belongs to the face.
+  it("survives being the rename control", () => {
     const html = renderToStaticMarkup(
-      <MachineBanner color={MACHINE_COLORS[0]!} name="tower" meta="2 projects" />,
+      <EditableName
+        face={machineTagFace(MACHINE_COLORS[0]!)}
+        label="Rename tower"
+        value="tower"
+        onCommit={() => {}}
+      />,
     );
 
-    expect(html).toContain("min-h-6");
     expect(html).toContain(MACHINE_COLORS[0]!.dot);
-    expect(html).toContain("tower");
-    expect(html).toContain("2 projects");
-  });
-
-  // The hue that ANSWERS ownership is the spine; a full-bleed bar of it here was a
-  // second loud band fighting the project header one hairline below.
-  it("paints the band itself in paper, not in the machine colour", () => {
-    const html = renderToStaticMarkup(
-      <MachineBanner color={MACHINE_COLORS[0]!} name="tower" />,
-    );
-
-    expect(html).toContain("bg-panel-2");
-    expect(html).toContain("border-b border-dialog-edge");
-  });
-
-  // Machine, project and session must not be three sizes of the same voice: the
-  // machine is the SHORTEST band and the only one that wears a colour as paper.
-  it("speaks in the smallest type on the screen, and is not a header band", () => {
-    const html = renderToStaticMarkup(<MachineBanner name="tower" />);
-
-    expect(html).toContain("text-chip");
-    expect(html).toContain("uppercase");
-    expect(html).not.toContain("min-h-13");
-    expect(html).not.toContain("sticky");
-  });
-
-  it("starts and ends on the list's one leading and trailing edge", () => {
-    const html = renderToStaticMarkup(<MachineBanner name="tower" />);
-
-    expect(html).toContain(LIST_EDGE);
-    expect(html).toContain(LIST_EDGE_END);
-  });
-
-  it("says nothing about what it does not report", () => {
-    expect(renderToStaticMarkup(<MachineBanner name="tower" />)).not.toContain(
-      "ml-auto",
-    );
+    expect(html).toContain("px-1.5");
   });
 });
 

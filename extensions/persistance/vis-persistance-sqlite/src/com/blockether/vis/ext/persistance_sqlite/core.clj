@@ -1338,29 +1338,47 @@
    `:reply` from assistant prose/thinking): session soul id, FTS rowid and the
    row's `created_at`, newest first.
 
-   Ordered by `rowid DESC` — insertion order, i.e. newest first — deliberately
-   NOT by `created_at`: ordering on a non-indexed column would force a sort of
-   every match (0.4s on a big store) instead of a cheap index walk."
-  [side chan-sql]
-  (case side
-    :request
-    (str "SELECT cs.id AS sid, ts.rowid AS rid, ts.created_at AS at " "FROM transcript_request_fts "
-         "JOIN session_turn_soul ts ON ts.rowid = transcript_request_fts.rowid "
-         "JOIN session_state s ON s.id = ts.session_state_id "
-         "JOIN session_soul cs ON cs.id = s.session_soul_id "
-         "WHERE transcript_request_fts MATCH ? "
-         "AND cs.parent_state_id IS NULL AND cs.claimed_at IS NOT NULL" chan-sql
-         " ORDER BY ts.rowid DESC LIMIT " transcript-hit-scan-limit)
+   Newest-first is `rowid DESC` — insertion order — deliberately NOT `created_at`:
+   ordering on a non-indexed column would force a sort of every match.
 
-    :reply
-    (str "SELECT cs.id AS sid, it.rowid AS rid, it.created_at AS at " "FROM transcript_reply_fts "
-         "JOIN session_turn_iteration it ON it.rowid = transcript_reply_fts.rowid "
-         "JOIN session_turn_state tst ON tst.id = it.session_turn_state_id "
-         "JOIN session_turn_soul ts ON ts.id = tst.session_turn_soul_id "
-         "JOIN session_state s ON s.id = ts.session_state_id "
-         "JOIN session_soul cs ON cs.id = s.session_soul_id " "WHERE transcript_reply_fts MATCH ? "
-         "AND cs.parent_state_id IS NULL AND cs.claimed_at IS NOT NULL" chan-sql
-         " ORDER BY it.rowid DESC LIMIT " transcript-hit-scan-limit)))
+   The DESC walk and the scan cap live in a SUBQUERY over the FTS table ALONE,
+   before any join. FTS5 can only serve `ORDER BY rowid DESC` from its own index
+   when nothing else is in the query; ordering the joined result instead made
+   SQLite spool EVERY match into a temp B-tree and sort it (`USE TEMP B-TREE FOR
+   ORDER BY`), so a stop word paid for all 75k of its hits to hand back 20k —
+   240ms of a 300ms search. Ranking first and joining only the survivors is the
+   same rows in the same order for a third of the time.
+
+   The cap therefore counts matches BEFORE the claimed/unforked filter rather
+   than after: beyond `transcript-hit-scan-limit` newest hits the tail is a
+   depth heuristic either way, and the per-session cap decides what is shown."
+  [side chan-sql]
+  (let [fts (case side
+              :request "transcript_request_fts"
+              :reply "transcript_reply_fts")
+
+        joins (case side
+                :request
+                (str "JOIN session_turn_soul ts ON ts.rowid = f.rid "
+                     "JOIN session_state s ON s.id = ts.session_state_id ")
+
+                :reply
+                (str "JOIN session_turn_iteration it ON it.rowid = f.rid "
+                     "JOIN session_turn_state tst ON tst.id = it.session_turn_state_id "
+                     "JOIN session_turn_soul ts ON ts.id = tst.session_turn_soul_id "
+                     "JOIN session_state s ON s.id = ts.session_state_id "))
+
+        at (case side
+             :request "ts.created_at"
+             :reply "it.created_at")]
+
+    (str "SELECT cs.id AS sid, f.rid AS rid, " at " AS at "
+         "FROM (SELECT rowid AS rid FROM " fts " WHERE " fts " MATCH ? "
+         "ORDER BY rowid DESC LIMIT " transcript-hit-scan-limit ") f "
+         joins
+         "JOIN session_soul cs ON cs.id = s.session_soul_id "
+         "WHERE cs.parent_state_id IS NULL AND cs.claimed_at IS NOT NULL" chan-sql
+         " ORDER BY f.rid DESC")))
 
 (defn- transcript-snippet-sql
   "`snippet()` windows for an EXPLICIT set of FTS rowids on one side. `snippet()`

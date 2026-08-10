@@ -207,18 +207,19 @@
           ;; gone: silence read as "maybe try `subprocess`", and every attempt then
           ;; died on an opaque spawn failure instead of being ruled out up front.
           (expect (str/includes? text "Shell commands are DISABLED"))
-          (expect (str/includes? text "NOT allowed"))
-          (expect (str/includes? text "No external process can run here"))
+          (expect (str/includes? text "raise too"))
+          (expect (str/includes? text "nothing here can start "))
           (doseq [banned ["subprocess" "os.system" "os.popen"]]
             (expect (str/includes? text banned)))
           (expect (not (str/includes? text "route through the active")))
           (doseq [name env-python/AUTO_IMPORTED_PYTHON_NAMES]
             (expect (str/includes? text (str "`" name "`"))))))))
-  (it "names POSIX routing without duplicating the shell contract"
+  (it "bans subprocess even with shell active, without duplicating the shell contract"
       ;; Invocation syntax belongs to the shell symbol docs; this supplemental
-      ;; block only exposes otherwise-undiscoverable compatibility routing.
+      ;; block only says that `subprocess` is not a second door to a process.
       (let [text (#'prompt/sandbox-shims-prompt-block [{:ext/name "foundation-shell"}])]
-        (expect (str/includes? text "active `shell` tool"))
+        (expect (str/includes? text "NEVER spawn"))
+        (expect (str/includes? text "`shell` tool"))
         (expect (not (str/includes? text "DISABLED")))
         (expect (str/includes? text "subprocess"))
         (expect (str/includes? text "os.system"))

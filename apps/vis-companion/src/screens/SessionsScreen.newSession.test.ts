@@ -212,11 +212,11 @@ describe('where "New session" lives', () => {
     // alone, so on a 390px phone it had no top edge for the tab to join into and its
     // right rule sat at x=388..390, off the glass.
     expect(source).not.toContain("sm:border-y sm:border-r-2");
-    // The empty 12px gap between two machines said something had ENDED and never
-    // said what began. A 24px strip in the machine's own hue says whose the projects
-    // below it are, and a solo fleet renders none at all.
-    expect(source).toContain("{sections.length > 1 && (");
-    expect(source).toContain("<MachineBanner");
+    // Regression, user report ("the machine is not updated"): the machine tag was a
+    // band inside the list, gated on a section count a screen with one scope can never
+    // reach, so it never drew. The chrome that NAMES the machine wears the tag.
+    expect(source).not.toContain("<MachineBanner");
+    expect(source).toContain("machineTagFace(chromeColor)");
     expect(source).not.toContain("<MachineGap />");
     expect(source).not.toContain("showMachineHeaders");
   });
@@ -387,15 +387,15 @@ describe("the machine header's own verbs", () => {
 // Regression, user report ("there is no much difference visually between the machine
 // and the project"): the list carried TWO bands one hairline apart, both starting at
 // the same x and both ending in the same trailing cluster, so nothing said the second
-// was inside the first. A machine is not a header any more: it is a 24px strip of its
-// own hue with its name in the smallest type on the screen, and the project header
-// stays the only header BAND in the list.
+// was inside the first. A machine is not a header any more: it is a tag of its own hue
+// on the chrome above the list plus the spine down everything it owns, and the project
+// header stays the only header BAND in the list.
 describe("machine, project and session are three different shapes", () => {
   it("keeps exactly one header band inside the list", () => {
     expect(source).not.toContain('tone="machine"');
     // The hue says which computer owns a block twice over, and neither is a band:
-    // the strip that opens it and the rail that contains it.
-    expect(source).toContain("<MachineBanner");
+    // the tag that names it and the rail that contains it.
+    expect(source).toContain("machineTagFace(chromeColor)");
     expect(source).toContain(
       "<MachineRail color={machineColor(machineColors, key)}>",
     );

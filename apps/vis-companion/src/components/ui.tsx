@@ -1419,52 +1419,23 @@ export function UnreadBadge({ count }: { count: number }) {
 }
 
 /**
- * The band that ENDS a machine. A project boundary is a hairline; a whole
- * computer is not, so this is space — the page's own ink showing through the
- * panel, closed top and bottom by the strong rule — read before any label.
- * Render it only BETWEEN machines: the first block starts flush and a fleet of
- * one never pays it.
- */
-/**
- * The TAG that starts a machine: its name in a small block of its own hue, hung on
- * the list's own paper, closed by a hairline.
+ * THE MACHINE'S NAME IS A TAG IN ITS OWN HUE, and this is that tag's face.
+ *
+ * A machine is named exactly once on this screen — in the chrome above the list, which
+ * is also where it is renamed — so the tag has to be one face worn by both the resting
+ * name and the field it becomes (`EditableName`), or the header changes shape when a
+ * caret arrives. It is a FACE rather than a component for that reason alone.
  *
  * A full-bleed bar of hue was a second loud band competing with the project header
- * directly under it, and it only answered "whose" for as long as it stayed on
- * screen. The colour that ANSWERS ownership is the machine's spine (`MachineRail`,
- * 4px down every project and session it owns), so the band itself only has to NAME
- * the machine and report for the block — which is why it wears paper, the smallest
- * type on the screen, and hue in one chip. It is charged only to a fleet: one
- * machine paired renders no banner, because then every project on screen is already
- * its own.
- *
- * It does not stick. The band that follows the reader down the list is the project
- * header — the level being acted on — and two sticky strips one hairline apart
- * would only ever cover each other; the spine keeps answering after this scrolls
- * away.
+ * under it, and it only answered "whose" for as long as it stayed on screen. The colour
+ * that ANSWERS ownership is the machine's spine (`MachineRail`, 4px down every project
+ * and session it owns); the name only has to NAME, so it wears hue as a small block of
+ * paper and nothing else does.
  */
-export function MachineBanner({
-  color,
-  name,
-  meta,
-}: {
-  color?: MachineColor;
-  name: ReactNode;
-  /** What the machine reports for the whole block: its projects, what is live. */
-  meta?: ReactNode;
-}) {
-  return (
-    <div
-      className={`flex min-h-6 w-full items-center gap-2 border-b border-dialog-edge bg-panel-2 font-mono text-chip ${LIST_EDGE} ${LIST_EDGE_END}`}
-    >
-      <span
-        className={`min-w-0 shrink-0 truncate px-1.5 font-bold uppercase tracking-[0.14em] text-ink ${color ? color.dot : 'bg-edge-strong'}`}
-      >
-        {name}
-      </span>
-      {meta ? <span className="ml-auto shrink-0 truncate text-muted">{meta}</span> : null}
-    </div>
-  );
+export function machineTagFace(color?: MachineColor): string {
+  // `w-fit` so the block of hue hugs the NAME: a tag as wide as the column it sits in
+  // is a bar again, which is the exact thing the spine replaced.
+  return `w-fit max-w-full truncate px-1.5 font-mono text-ui font-bold text-machine-ink ${color ? color.dot : 'bg-edge-strong'}`;
 }
 
 /**
@@ -1637,8 +1608,10 @@ export function SectionHeader({
  * A name that edits IN PLACE, and does not move when it does.
  *
  * The resting name and the field it becomes are the same box: the same class list,
- * and a field stripped of every browser default it would otherwise bring (`border-0
- * bg-transparent p-0`, no ring), sized by `size` in CHARACTERS — the header is a mono
+ * and a field stripped of the browser defaults the FACE does not speak (`border-0`, no
+ * ring, no native appearance) — paper and padding belong to the face, or a name that is
+ * a coloured tag loses its colour the moment a caret arrives — sized by `size` in
+ * CHARACTERS — the header is a mono
  * face, so one character is one column and the field is exactly as wide as the word it
  * replaced. Anything width-guessing (a `w-full` field, a measured span) shifts the
  * qualifier beside it the moment the caret arrives, which is the jump this exists to
@@ -1693,7 +1666,7 @@ export function EditableName({
         if (event.key === 'Enter') commit();
         if (event.key === 'Escape') setDraft(null);
       }}
-      className={`${face} border-0 bg-transparent p-0 focus:outline-none`}
+      className={`${face} appearance-none border-0 focus:outline-none`}
     />
   );
 }
@@ -1746,7 +1719,7 @@ export function HeaderTitle({
       <span className="flex min-w-0 items-baseline gap-2">
         {onRename ? (
           <EditableName
-            face={`shrink-0 truncate font-mono font-bold text-white ${qualifier ? 'max-w-[60%]' : 'min-w-0'} ${HEADER_TYPE}`}
+            face={`shrink-0 truncate bg-transparent p-0 font-mono font-bold text-white ${qualifier ? 'max-w-[60%]' : 'min-w-0'} ${HEADER_TYPE}`}
             label={renameLabel ?? 'Rename'}
             value={typeof name === 'string' ? name : ''}
             onCommit={onRename}
