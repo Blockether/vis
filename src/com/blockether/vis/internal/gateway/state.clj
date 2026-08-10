@@ -4557,24 +4557,27 @@
 (defn search-session-matches
   "Soul-id STRINGS whose TRANSCRIPT matches `query`, each TAGGED with WHERE it hit
    and carrying up to a handful of MATCH SNIPPETS:
-   `[{:session_id str :is_in_request bool :is_in_reply bool
+   `[{:session_id str :is_in_request bool :is_in_reply bool :is_in_thinking bool
       :request_snippet str :reply_snippet str
-      :hits [{:side \"request\"|\"reply\" :snippet str :at ms}]}]`
+      :hits [{:side \"request\"|\"reply\"|\"thinking\" :snippet str :at ms}]}]`
    (wire-shaped: snake_case string-ish keys, `is_<foo>` flags). Same SERVER-side
    deep search as `search-session-ids` — the assistant text never crosses the wire,
    only these snippet windows. `:is_in_request` = the user's own request matched;
-   `:is_in_reply` = assistant reply text matched. RANKED, not merely recent:
-   sessions whose REQUEST matched lead the reply-only ones, and inside a session
-   the user's own hits come first — what someone searches for is their own words.
+   `:is_in_reply` = the assistant's answer matched; `:is_in_thinking` = only its
+   reasoning aside did. RANKED, not merely recent: sessions whose REQUEST matched
+   lead the answer matches, which lead the thinking-only ones, and inside a session
+   the same order holds — what someone searches for is their own words.
    Blank query → []."
   ([query] (search-session-matches :all query))
   ([channel query]
    (let [db (try (lp/db-info) (catch Throwable _ nil))]
      (if db
-       (mapv (fn [{:keys [id in-request? in-reply? request-snippet reply-snippet hits]}]
+       (mapv (fn
+               [{:keys [id in-request? in-reply? in-thinking? request-snippet reply-snippet hits]}]
                {:session_id (str id)
                 :is_in_request (boolean in-request?)
                 :is_in_reply (boolean in-reply?)
+                :is_in_thinking (boolean in-thinking?)
                 :request_snippet request-snippet
                 :reply_snippet reply-snippet
                 :hits (mapv (fn [h]

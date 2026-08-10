@@ -1289,6 +1289,45 @@
             {:session-turn-id tid :assistant-prose "needle in the reply" :code "x" :result 1}))
         (expect (= [asked replied] (vis/db-search-session-ids s :all "needle")))))
   (it
+    "ranks THINKING last: request, then the answer, then the reasoning aside"
+    (let
+      [s
+       (h/store)
+
+       asked
+       (h/store-session! s {:channel :tui :title "Asked"})
+
+       answered
+       (h/store-session! s {:channel :tui :title "Answered"})
+
+       mused
+       (h/store-session! s {:channel :tui :title "Mused"})
+
+       turn!
+       (fn [sid request iteration]
+         (let
+           [tid (vis/db-store-session-turn!
+                  s
+                  {:parent-session-id sid :user-request request :status :done})]
+           (h/store-iteration! s (merge {:session-turn-id tid :code "x" :result 1} iteration))))]
+
+      ;; Written weakest-band FIRST, so the thinking-only session owns the NEWEST
+      ;; hit: only the banding can put it last.
+      (turn! mused "plain ask" {:assistant-prose "plain" :thinking "needle while reasoning"})
+      (turn! answered "plain ask" {:assistant-prose "needle in the answer"})
+      (turn! asked "needle in the ask" {:assistant-prose "plain"})
+      (expect (= [asked answered mused] (vis/db-search-session-ids s :all "needle")))
+      (let
+        [by-id (into {} (map (juxt :id identity)) (vis/db-search-session-matches s :all "needle"))]
+        (expect (= {:in-request? false :in-reply? false :in-thinking? true}
+                   (select-keys (get by-id mused) [:in-request? :in-reply? :in-thinking?])))
+        (expect (= {:in-request? false :in-reply? true :in-thinking? false}
+                   (select-keys (get by-id answered) [:in-request? :in-reply? :in-thinking?])))
+        ;; A thinking-only match still previews: the reply snippet falls back to it.
+        (expect (str/includes? (:reply-snippet (get by-id mused)) "needle"))
+        (expect (= [:thinking] (mapv :side (:hits (get by-id mused)))))
+        (expect (= [:reply] (mapv :side (:hits (get by-id answered))))))))
+  (it
     "caps hits PER SESSION, so an older session is not starved by a newer one"
     (let
       [s

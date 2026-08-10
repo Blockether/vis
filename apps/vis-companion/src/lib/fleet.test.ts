@@ -268,19 +268,22 @@ describe('search across the fleet', () => {
   });
 
   // A hit in the session's NAME is the human's own word for it, so it leads;
-  // inside the transcript what the user asked leads what the assistant replied.
-  it('ranks a title hit above metadata, the user request, and the reply', () => {
+  // inside the transcript what the user asked leads what the assistant answered,
+  // and the answer leads what it merely thought.
+  it('ranks title above metadata, the request, the reply, and the thinking', () => {
     const at = (hit: Partial<Parameters<typeof searchRank>[0]>) =>
       searchRank({
         isInTitle: false,
         isInMeta: false,
         isInRequest: false,
         isInReply: false,
+        isInThinking: false,
         ...hit,
       });
     expect(at({ isInTitle: true, isInReply: true })).toBeLessThan(at({ isInMeta: true }));
     expect(at({ isInMeta: true })).toBeLessThan(at({ isInRequest: true }));
     expect(at({ isInRequest: true })).toBeLessThan(at({ isInReply: true }));
+    expect(at({ isInReply: true })).toBeLessThan(at({ isInThinking: true }));
     // A row that matched on nothing the ranker was told about still sorts with
     // the local facts rather than below the assistant's text.
     expect(at({})).toBe(at({ isInMeta: true }));

@@ -91,6 +91,7 @@
          {:session_id "abc"
           :is_in_request true
           :is_in_reply false
+          :is_in_thinking false
           :request_snippet "…needle…"
           :reply_snippet nil
           :hits [{:side "request" :snippet "…needle…" :at 1700000000000}]}
@@ -104,8 +105,8 @@
              (get "hits")
              first)]
 
-        (expect (= #{"session_id" "is_in_request" "is_in_reply" "request_snippet" "reply_snippet"
-                     "hits"}
+        (expect (= #{"session_id" "is_in_request" "is_in_reply" "is_in_thinking" "request_snippet"
+                     "reply_snippet" "hits"}
                    (set (keys (first w)))))
         (expect (= #{"side" "snippet" "at"} (set (keys hit))))
         ;; The SIDE tag is a plain string on the wire — a keyword here would

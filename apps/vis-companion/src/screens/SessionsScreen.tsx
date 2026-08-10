@@ -619,9 +619,9 @@ export function SessionsScreen({
         );
       });
       // A query RE-RANKS what it matched: the session's own name first, then its
-      // other local facts, then the user's own words, then the assistant's reply
-      // (`searchRank`). Without it a title hit sank under transcript hits that
-      // merely happened to be newer.
+      // other local facts, then the user's own words, then the assistant's answer,
+      // and last its thinking (`searchRank`). Without it a title hit sank under
+      // transcript hits that merely happened to be newer.
       const ranked = needle
         ? searchOrder(sessions, (session) => {
             const match = matches?.get(session.id);
@@ -630,6 +630,7 @@ export function SessionsScreen({
               isInMeta: metaHit(session),
               isInRequest: match?.inRequest === true,
               isInReply: match?.inReply === true,
+              isInThinking: match?.inThinking === true,
             });
           })
         : sessions;

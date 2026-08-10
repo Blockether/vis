@@ -87,10 +87,11 @@ export class GatewayError extends Error {
 }
 
 // One transcript-search hit inside a session: which SIDE it landed on (the
-// user's own request vs. the assistant's reply), a short preview snippet, and
-// when it happened. Several travel per session, newest first.
+// user's own request, the assistant's answer, or the reasoning aside it thought
+// out loud), a short preview snippet, and when it happened. Several travel per
+// session, best band first.
 export interface SessionMatchHit {
-  side: "request" | "reply";
+  side: "request" | "reply" | "thinking";
   snippet: string;
   at: number | null;
 }
@@ -103,6 +104,7 @@ export interface SessionMatch {
   sessionId: string;
   inRequest: boolean;
   inReply: boolean;
+  inThinking: boolean;
   requestSnippet: string | null;
   replySnippet: string | null;
   hits: SessionMatchHit[];
@@ -112,6 +114,7 @@ interface RawSessionMatch {
   session_id: string;
   is_in_request?: boolean;
   is_in_reply?: boolean;
+  is_in_thinking?: boolean;
   request_snippet?: string | null;
   reply_snippet?: string | null;
   hits?: { side?: string; snippet?: string | null; at?: number | null }[];
@@ -2156,13 +2159,18 @@ export class GatewayClient {
       sessionId: m.session_id,
       inRequest: Boolean(m.is_in_request),
       inReply: Boolean(m.is_in_reply),
+      inThinking: Boolean(m.is_in_thinking),
       requestSnippet: m.request_snippet ?? null,
       replySnippet: m.reply_snippet ?? null,
       hits: (m.hits ?? [])
         .filter((h) => Boolean(h.snippet?.trim()))
         .map((h) => ({
           side:
-            h.side === "request" ? ("request" as const) : ("reply" as const),
+            h.side === "request"
+              ? ("request" as const)
+              : h.side === "thinking"
+                ? ("thinking" as const)
+                : ("reply" as const),
           snippet: h.snippet as string,
           at: h.at ?? null,
         })),

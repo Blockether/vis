@@ -189,6 +189,7 @@ export const SEARCH_TITLE_BAND = 0;
 export const SEARCH_META_BAND = 1;
 export const SEARCH_REQUEST_BAND = 2;
 export const SEARCH_REPLY_BAND = 3;
+export const SEARCH_THINKING_BAND = 4;
 
 /** Where the query hit one session — the whole input to `searchRank`. */
 export interface SearchHit {
@@ -198,8 +199,10 @@ export interface SearchHit {
   isInMeta: boolean;
   /** The gateway found it in the user's own request. */
   isInRequest: boolean;
-  /** The gateway found it in what the assistant replied. */
+  /** The gateway found it in the assistant's ANSWER. */
   isInReply: boolean;
+  /** The gateway found it only in the assistant's reasoning aside. */
+  isInThinking: boolean;
 }
 
 /**
@@ -208,14 +211,16 @@ export interface SearchHit {
  * A search is someone looking for a SESSION, and its title is the one line a
  * human wrote to name it: a name hit outranks anything found inside the chat,
  * however deep or recent that is. Inside the chat the words the USER typed
- * outrank the assistant's reply — what someone remembers is their own ask, and
- * the reply is only what it caused.
+ * outrank the assistant's answer, and the answer outranks the assistant's
+ * thinking — what someone remembers is their own ask, the answer is only what it
+ * caused, and a reasoning aside is what neither of them said.
  */
 export function searchRank(hit: SearchHit): number {
   if (hit.isInTitle) return SEARCH_TITLE_BAND;
   if (hit.isInMeta) return SEARCH_META_BAND;
   if (hit.isInRequest) return SEARCH_REQUEST_BAND;
   if (hit.isInReply) return SEARCH_REPLY_BAND;
+  if (hit.isInThinking) return SEARCH_THINKING_BAND;
   return SEARCH_META_BAND;
 }
 

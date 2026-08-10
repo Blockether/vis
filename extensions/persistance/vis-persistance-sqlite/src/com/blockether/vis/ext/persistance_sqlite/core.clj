@@ -1298,19 +1298,40 @@
    leading text — `snippet()` happily returns the head of an unmatched column."
   "\u0001")
 
-(defn- pick-snippet
-  "The snippet to SHOW for a hit row. The reply side asks SQLite for one snippet
-   per indexed column and keeps the first that actually matched, in human order:
-   assistant prose, then thinking. Without this a term present in both columns
-   could render the reasoning aside instead of the answer the user remembers.
-   Marker stripped, blank → nil."
-  [row]
-  (let [candidates (if (contains? row :snip) [(:snip row)] [(:s0 row) (:s1 row)])]
-    (some-> (or (some #(when (and % (str/includes? % snippet-hit-marker)) %) candidates)
-                (first (filter some? candidates)))
-            (str/replace snippet-hit-marker "")
-            str/trim
-            not-empty)))
+(defn- hit-snippet
+  "The snippet to SHOW for a hit row, WITH the band that snippet came from:
+   `{:side :request|:reply|:thinking :snippet str-or-nil}`.
+
+   The reply side asks SQLite for one snippet per indexed column — assistant
+   prose (0) then thinking (1) — and the FIRST column that really matched wins,
+   so a term present in both renders the answer rather than the reasoning aside,
+   and a term found ONLY in the reasoning is tagged `:thinking` and ranks below
+   every answer. Marker stripped, blank → nil."
+  [side row]
+  (let
+    [request?
+     (= :request side)
+
+     bands
+     (if request? [:request] [:reply :thinking])
+
+     cols
+     (if request? [(:snip row)] [(:s0 row) (:s1 row)])
+
+     matched
+     (fn [pred]
+       (first (keep-indexed (fn [i c]
+                              (when (pred c) i))
+                            cols)))
+
+     idx
+     (or (matched #(and % (str/includes? % snippet-hit-marker))) (matched some?) 0)]
+
+    {:side (nth bands idx side)
+     :snippet (some-> (nth cols idx nil)
+                      (str/replace snippet-hit-marker "")
+                      str/trim
+                      not-empty)}))
 
 (defn- transcript-hit-rank-sql
   "Id-only FTS ranking query for ONE side (`:request` from the user's own text,
@@ -1376,7 +1397,9 @@
    sessions down to a single snippet.
 
    Two passes: an id-only ranking query (cheap even for a stop word), then one
-   `snippet()` query over just the rowids that survived the per-session cap."
+   `snippet()` query over just the rowids that survived the per-session cap. The
+   snippet pass is also what SPLITS the reply side into `:reply` (the answer) and
+   `:thinking` (the reasoning aside) — see `hit-snippet`."
   [db-info side ch match]
   (let
     [chan-sql
@@ -1417,7 +1440,7 @@
      snippets
      (into {}
            (mapcat (fn [batch]
-                     (map (juxt :rid pick-snippet)
+                     (map (juxt :rid #(hit-snippet side %))
                           (raw-query! db-info
                                       (into [(transcript-snippet-sql side (count batch)) match]
                                             (map :rid)
@@ -1425,27 +1448,29 @@
            (partition-all transcript-snippet-batch kept))]
 
     (mapv (fn [row]
-            {:sid (:sid row) :side side :at (:at row) :snippet (get snippets (:rid row))})
+            (let [hit (get snippets (:rid row))]
+              {:sid (:sid row) :side (:side hit side) :at (:at row) :snippet (:snippet hit)}))
           kept)))
 
-(defn- transcript-hit-side-rank
-  "Ordering band of ONE transcript hit: what the USER wrote outranks what the
-   assistant replied. Someone searching a transcript is looking for their own
-   words back — the request they typed is the thing they remember typing, the
-   reply is only what it caused."
-  [side]
-  (if (= :request side) 0 1))
+(def ^:private transcript-hit-side-rank
+  "Ordering band of ONE transcript hit, best first: what the USER wrote outranks
+   the assistant's ANSWER, and the answer outranks the assistant's THINKING.
+   Someone searching a transcript is looking for their own words back — the
+   request they typed is the thing they remember typing, the answer is what it
+   caused, and the reasoning aside is not what either of them said."
+  {:request 0 :reply 1 :thinking 2})
 
 (defn- transcript-rows->sessions
   "Fold per-row hits into one entry per session soul.
 
    RANKED, not merely recent: inside a session the user's own request hits come
-   first (newest first within each side) and the per-session cap
-   (`transcript-hits-per-session`) therefore keeps the user's words before the
-   assistant's; across sessions, a session whose REQUEST matched sorts above one
-   that only matched in a reply, each band ordered by its newest hit.
-   `:request-snippet`/`:reply-snippet` stay as the FIRST hit of each side so
-   single-snippet callers keep working."
+   first, then the assistant's answers, then its thinking (newest first within
+   each band), so the per-session cap (`transcript-hits-per-session`) keeps the
+   user's words before the assistant's and the reasoning aside last; across
+   sessions the same three bands decide, a session ranking by its BEST hit, each
+   band ordered by its newest hit. `:request-snippet`/`:reply-snippet` stay as
+   the FIRST hit of each side so single-snippet callers keep working — the reply
+   snippet falls back to a thinking hit when that is all there was."
   [rows]
   (->> rows
        (filter :snippet)
@@ -1457,40 +1482,52 @@
               (fn [h]
                 (long (or (:at h) 0)))
 
+              band
+              (fn [h]
+                (long (get transcript-hit-side-rank (:side h) 1)))
+
               ordered
-              (vec (sort-by (juxt (comp transcript-hit-side-rank :side) (comp - at)) hits))
+              (vec (sort-by (juxt band (comp - at)) hits))
 
               kept
               (vec (take transcript-hits-per-session ordered))
 
+              side?
+              (fn [& sides]
+                (boolean (some (comp (set sides) :side) ordered)))
+
               side-snip
-              (fn [side]
-                (some #(when (= side (:side %)) (:snippet %)) ordered))]
+              (fn [& sides]
+                (some #(when ((set sides) (:side %)) (:snippet %)) ordered))]
 
              {:id (->uuid sid)
               :newest (reduce max 0 (map at ordered))
-              :in-request? (boolean (some #(= :request (:side %)) ordered))
-              :in-reply? (boolean (some #(= :reply (:side %)) ordered))
+              :band (reduce min 9 (map band ordered))
+              :in-request? (side? :request)
+              :in-reply? (side? :reply)
+              :in-thinking? (side? :thinking)
               :request-snippet (side-snip :request)
-              :reply-snippet (side-snip :reply)
+              :reply-snippet (side-snip :reply :thinking)
               :hits (mapv (fn [h]
                             {:side (:side h) :snippet (:snippet h) :at (->date (:at h))})
                           kept)})))
-       (sort-by (juxt #(if (:in-request? %) 0 1) (comp - long :newest)))
-       (mapv #(dissoc % :newest))))
+       (sort-by (juxt (comp long :band) (comp - long :newest)))
+       (mapv #(dissoc % :newest :band))))
 
 (defn db-search-session-matches
   "Sessions whose TRANSCRIPT text matches `query`, each carrying WHERE it hit and
    up to `transcript-hits-per-session` MATCH SNIPPETS:
 
-   `{:id uuid :in-request? bool :in-reply? bool
+   `{:id uuid :in-request? bool :in-reply? bool :in-thinking? bool
      :request-snippet str-or-nil :reply-snippet str-or-nil
-     :hits [{:side :request|:reply :snippet str :at Date}]}`
+     :hits [{:side :request|:reply|:thinking :snippet str :at Date}]}`
 
    `:in-request?` = the user's request (`session_turn_soul.user_request`) matched;
-   `:in-reply?` = assistant iteration text matched (`llm_assistant_prose` /
-   `llm_thinking`). The raw provider envelope (`llm_assistant_message`) is
-   deliberately NOT searched — it is wire JSON, not what was said. Both can be true.
+   `:in-reply?` = the assistant's ANSWER (`llm_assistant_prose`) matched;
+   `:in-thinking?` = its reasoning aside (`llm_thinking`) matched — the weakest
+   band, since it is what neither of them said. The raw provider envelope
+   (`llm_assistant_message`) is deliberately NOT searched: it is wire JSON, not
+   what was said. Any of the three can be true together.
 
    Served by the V1 FTS5 indexes (`transcript_request_fts` / `transcript_reply_fts`)
    — single-digit milliseconds instead of the ~400ms full `LIKE '%q%'` scan of the

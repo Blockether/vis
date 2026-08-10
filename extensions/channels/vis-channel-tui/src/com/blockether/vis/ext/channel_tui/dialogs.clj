@@ -5687,7 +5687,9 @@
    A search is someone looking for a SESSION, and its title is the one line a
    human wrote to name it — a name hit therefore outranks anything found inside
    the chat. Inside the chat, the words the USER typed outrank the assistant's
-   reply: what someone remembers is their own ask. The focused row keeps the top
+   answer, and the answer outranks the assistant's THINKING: what someone
+   remembers is their own ask, and a reasoning aside is what neither of them
+   said. The focused row keeps the top
    of its project, and with no query every row is level so the list keeps the
    order it was built in."
   [row query match]
@@ -5706,6 +5708,7 @@
           (:focused? row) 0
           (hit? :title) 1
           (some hit? [:session :draft :dir :work-dir :status]) 2
+          (= :thinking kind) 5
           (= :reply kind) 4
           (some? match) 3
           :else 2)))
@@ -5749,6 +5752,9 @@
 
                              :reply
                              "in reply"
+
+                             :thinking
+                             "in thinking"
 
                              "in chat"))
                  (or local-hit? body-hit?) (cond-> (assoc row :search-rank rank)

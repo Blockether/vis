@@ -520,10 +520,12 @@
 (defn search-session-matches
   "GET /v1/sessions/actions/search?q= — like `search-session-ids` but each hit is
    TAGGED with WHERE it matched and carries up to a handful of snippets:
-   `[{:id str :in-request? bool :in-reply? bool :request-snippet str
-      :reply-snippet str :hits [{:side :request|:reply :snippet str :at ms}]}]`.
-   `:in-request?` = the user's own request matched; `:in-reply?` = assistant reply
-   text matched. Blank query → []. Heavy assistant text never crosses the wire."
+   `[{:id str :in-request? bool :in-reply? bool :in-thinking? bool
+      :request-snippet str :reply-snippet str
+      :hits [{:side :request|:reply|:thinking :snippet str :at ms}]}]`.
+   `:in-request?` = the user's own request matched; `:in-reply?` = the assistant's
+   answer; `:in-thinking?` = only its reasoning aside. Blank query → []. Heavy
+   assistant text never crosses the wire."
   [query]
   (let
     [q (some-> query
@@ -536,6 +538,7 @@
                    {:id (get m "session_id")
                     :in-request? (boolean (get m "is_in_request"))
                     :in-reply? (boolean (get m "is_in_reply"))
+                    :in-thinking? (boolean (get m "is_in_thinking"))
                     :request-snippet (get m "request_snippet")
                     :reply-snippet (get m "reply_snippet")
                     :hits (mapv (fn [h]

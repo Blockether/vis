@@ -5698,10 +5698,11 @@
                                                                          (fn [q]
                                                                            (try
                                                                              (into {}
-                                                                                   (map (fn [{:keys [id in-request? in-reply? request-snippet reply-snippet hits]}]
+                                                                                   (map (fn [{:keys [id in-request? in-reply? in-thinking? request-snippet reply-snippet hits]}]
                                                                                           [id {:kind (cond (and in-request? in-reply?) :both
                                                                                                            in-request? :request
                                                                                                            in-reply? :reply
+                                                                                                           in-thinking? :thinking
                                                                                                            :else :both)
                                                                                                :request-snippet request-snippet
                                                                                                :reply-snippet reply-snippet
