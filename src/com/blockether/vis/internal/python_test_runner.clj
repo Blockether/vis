@@ -1,11 +1,19 @@
 (ns com.blockether.vis.internal.python-test-runner
   "Runs an extension author's Python tests (`test_*.py` / `*_test.py`) through
-   the built-in `pytest`-compat shim, each in its own TRUSTED GraalPy context
-   (same trust level as the extension it covers). Tests import the extension's
-   own package through the SAME `sys.path` sugar the loader gives `extension.py`,
-   so an author ships real Python tests next to the code and runs them with the
-   project's own tooling. Pure Python end to end — the shim is stdlib-only, no
-   host bridge, no pip.
+   the built-in `pytest`-compat shim, each in its own GraalPy context.
+
+   A test runs BESIDE the extension's code, never inside its trust. Test files
+   are bytes nobody admitted: they reach this process as a PATH IN A TOOL CALL
+   (`run_tests`, `/test`, `vis-agent extension test`), they are skipped by the
+   loader's scan on purpose, and no `/reload` ever saw them. So the context is
+   built with `:trust :none` — no subprocess boundary — and `vis.shell` /
+   `vis.jailed_shell` refuse (`pyx/bind-untrusted-host!`). Everything an
+   author's test legitimately needs stays bound.
+
+   Tests import the extension's own package through the SAME `sys.path` sugar
+   the loader gives `extension.py`, so an author ships real Python tests next to
+   the code and runs them with the project's own tooling. Pure Python end to
+   end — the shim is stdlib-only, no host bridge, no pip.
 
    Split out of `python-extensions` (which owns loading/registration) so the
    runner is a single, testable responsibility. It depends on that namespace's
@@ -161,12 +169,15 @@
 (defn- failing? [tests] (boolean (some (comp #{:failed :errored} :outcome) tests)))
 
 (defn- run-test-file!
-  "Run ONE test file in a fresh trusted context: bootstrap the `vis` module,
+  "Run ONE test file in a fresh UNTRUSTED context: bootstrap the `vis` module,
    install the pytest shim, then drive `run-test-src`. `sys-path` is the extra
    import roots the project declares (a `src` layout), added below the test's
    own dirs. Returns `{:file :rc :ok? :output :tests}` where `:tests` is the
    per-test record list. Never throws — a broken test file is one `:errored`
-   result, never a host crash."
+   result, never a host crash.
+
+   The context carries no process boundary and no host shell: a test file is
+   bytes that never passed the loader, and running one is not an admission."
   [^String shim-src sys-path ^File scan-dir ^File test-file]
   (let
     [path
@@ -179,9 +190,9 @@
      (test-sys-path scan-dir test-file sys-path)
 
      ^Context ctx
-     (pyx/build-context)]
+     (pyx/build-context {:trust :none})]
 
-    (try (pyx/bind-host! ctx (.getName test-file))
+    (try (pyx/bind-untrusted-host! ctx (.getName test-file))
          (locking ctx
            (.eval ctx "python" ^String pyx/bootstrap-python)
            (.eval ctx "python" shim-src)
@@ -208,9 +219,10 @@
 (defn test-python-extensions!
   "Discover and run every Python test (`test_*.py` / `*_test.py`) across the
    extension dirs (default: `~/.vis/extensions` and `<cwd>/.vis/extensions`),
-   each in its own TRUSTED GraalPy context via the built-in `pytest`-compat
-   shim. Tests import the extension's own package through the `sys.path` sugar,
-   exactly like `extension.py` does.
+   each in its own UNTRUSTED GraalPy context via the built-in `pytest`-compat
+   shim: a test runs beside the extension's code, not inside its trust, so
+   `vis.shell` and `subprocess` refuse. Tests import the extension's own package
+   through the `sys.path` sugar, exactly like `extension.py` does.
 
    Returns `{:files n :ok? bool :passed n :failed n :errored n :skipped n
    :tests [{:file :nodeid :outcome :message}] :results [{:file :ok? :tests …}]}`.

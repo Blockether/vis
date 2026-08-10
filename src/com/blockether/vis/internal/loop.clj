@@ -11466,8 +11466,12 @@
     (extension/discover-extensions!)
     ;; Project-local Python extensions (`.vis/extensions/*.py`) load after
     ;; classpath discovery so they land in the same registry walk below.
-    ;; Idempotent by content fingerprint — a no-op when nothing changed.
-    (python-extensions/load-python-extensions!)
+    ;; Building an environment is NOT a human act — it happens on an env cache
+    ;; miss, on recycle, on a policy-epoch change and for the `sub_loop` child
+    ;; env the model asks for inside its own turn. So it may keep the admitted
+    ;; extensions running and must REFUSE bytes that appeared or changed since:
+    ;; only `/reload` and the gateway's own start admit.
+    (python-extensions/load-python-extensions! {:on-change :refuse})
     (extension/register-extensions! env install-extension!)
     env))
 

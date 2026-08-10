@@ -257,21 +257,30 @@
           names)))
 
 (defn ^:no-doc build-context
-  "Build one trusted extension context on the shared Engine. Extensions have
-   real filesystem, network, environment, thread, and subprocess access; only
-   arbitrary host interop remains unavailable. Use `vis.jailed_shell` when a
-   command should instead run under the current session's jail policy."
-  ^Context []
-  (-> (Context/newBuilder (into-array String ["python"]))
-      (.engine ^Engine @env/shared-engine)
-      (.allowAllAccess false)
-      (.allowIO IOAccess/ALL)
-      (.allowCreateThread true)
-      (.allowCreateProcess true)
-      (.allowNativeAccess false)
-      (.allowPolyglotAccess PolyglotAccess/NONE)
-      (.allowEnvironmentAccess EnvironmentAccess/INHERIT)
-      (.build)))
+  "Build one Python context on the shared Engine.
+
+   `:trust :full` (the default) is the EXTENSION's context: real filesystem,
+   network, environment, thread and subprocess access; only arbitrary host
+   interop remains unavailable. Use `vis.jailed_shell` when a command should
+   instead run under the current session's jail policy.
+
+   `:trust :none` is for bytes nobody admitted — an extension author's test
+   file, which reaches this process as a PATH IN A TOOL CALL and never passes
+   the loader. It keeps IO, because a test reads its own fixtures, and drops the
+   process boundary, so `subprocess` refuses inside the context exactly as the
+   host shell callbacks refuse outside it (see [[bind-untrusted-host!]])."
+  (^Context [] (build-context nil))
+  (^Context [{:keys [trust]}]
+   (-> (Context/newBuilder (into-array String ["python"]))
+       (.engine ^Engine @env/shared-engine)
+       (.allowAllAccess false)
+       (.allowIO IOAccess/ALL)
+       (.allowCreateThread true)
+       (.allowCreateProcess (boolean (not= :none trust)))
+       (.allowNativeAccess false)
+       (.allowPolyglotAccess PolyglotAccess/NONE)
+       (.allowEnvironmentAccess EnvironmentAccess/INHERIT)
+       (.build))))
 
 ;; Python hands LEVEL as a string; the boundary is strings-only, so the
 ;; lookup maps string -> the INTERNAL telemere/notification level keyword.
@@ -431,6 +440,48 @@
                                            (str/join ", " (sort (keys resolved)))
                                            " resolved")})
                       (json/write-json-str resolved)))))))
+
+(def ^:no-doc untrusted-shell-refusal
+  (str "A Python test does not run inside its extension's trust: vis.shell, "
+       "vis.jailed_shell and subprocess are unavailable here. Put the command in "
+       "the extension itself and admit it with /reload — `vis-agent extension test` "
+       "then runs the suite the same way."))
+
+(defn ^:no-doc bind-untrusted-host!
+  "Bind the host callbacks for bytes NOBODY ADMITTED — an extension author's
+   test file, which arrives as a path in a tool call and never passes the
+   loader's fingerprint gate. Everything an author's test legitimately needs
+   (state, log, notify, human input) stays bound; the three shell doors are
+   overwritten with a refusal, so a test runs BESIDE the extension's code and
+   not inside its trust.
+
+   The bootstrap reads every `__vis_host_*` name at module scope, so a refusal
+   has to be a bound callable that throws — never a missing global, which would
+   break the `vis` module before a test could run at all. It throws a PYTHON
+   `PermissionError`: a host exception is not a `BaseException`, so `except
+   Exception` in the pytest shim would not catch it and one refusing call would
+   abort the whole file instead of failing its own test."
+  [^Context ctx label]
+  (bind-host! ctx label)
+  (let
+    [g
+     (.getBindings ctx "python")
+
+     refuse
+     (do (.eval ctx
+                "python"
+                ^String
+                (str "def __vis_untrusted_refusal__(*args, **kwargs):\n"
+                     "    raise PermissionError("
+                     (pr-str untrusted-shell-refusal)
+                     ")\n"))
+         (.getMember g "__vis_untrusted_refusal__"))]
+
+    (doseq
+      [member ["__vis_host_shell__" "__vis_host_jailed_shell__"
+               "__vis_host_jailed_shell_session__"]]
+      (.putMember g member refuse))
+    nil))
 
 (def ^:no-doc host-member-names
   "Every `__vis_host_*` global the bootstrap reads out of a context's bindings.
@@ -1350,8 +1401,21 @@
   ;; canonical path -> {:sha :ext-name :context}
   (atom {}))
 
+(defonce ^:private admitted
+  ;; canonical path -> sha of the bytes a HUMAN act admitted (executed) in this
+  ;; process: the gateway starting, or `/reload`. Deliberately NOT `loaded` — a
+  ;; file whose top level threw was still admitted, and re-offering it as
+  ;; pending forever would bury the real failure under an approval prompt.
+  (atom {}))
+
 (defonce ^:private failures
-  ;; [{:file :error}] from the most recent scan.
+  ;; [{:file :error}] from the most recent admitted scan.
+  (atom []))
+
+(defonce ^:private pending
+  ;; [{:file :error}] — bytes on disk that are NEW or CHANGED since the last
+  ;; admission and were therefore NOT executed. Same row shape as `failures`, so
+  ;; every surface that already prints a load failure prints these too.
   (atom []))
 
 (defonce ^:private last-fingerprint (atom nil))
@@ -1394,6 +1458,14 @@
    `[{:file <path> :error <message>} ...]`."
   []
   @failures)
+
+(defn pending-extensions
+  "Python extension files that are on disk but NOT admitted: new or changed
+   since the last `/reload` (or since this process started), and therefore never
+   executed. `[{:file <path> :error <why, and that `/reload` admits it>} ...]` —
+   the same row shape as [[load-failures]]."
+  []
+  @pending)
 
 (defn loaded-python-extensions
   "Snapshot of the currently loaded Python extensions:
@@ -1535,15 +1607,22 @@
         [entry
          (if-not (or (identical? dead-ctx (:context entry)) (context-dead? (:context entry)))
            entry
-           (let [rebuilt (load-file! (io/file path))]
-             (swap! loaded assoc path (dissoc rebuilt :path))
-             (try (.close ^Context dead-ctx true) (catch Throwable _))
-             (tel/log! {:level :info
-                        :id ::context-rebuilt
-                        :data {:extension ext-name :file path :symbol (str sym)}
-                        :msg (str "Rebuilt torn-down context for Python extension '" ext-name "'")})
-             (notify-change-listeners! {:extensions (vec (keep :ext (vals @loaded))) :removed []})
-             rebuilt))]
+           ;; Healing RE-EXECUTES the file, so it may only ever re-run the bytes
+           ;; that were admitted. A torn-down context is not an admission: when
+           ;; the file changed on disk since, refuse the heal and let the caller
+           ;; report the original failure. `/reload` is the only door for new
+           ;; bytes, including this one.
+           (when (= (:sha entry) (try (extension/sha256-hex (slurp path)) (catch Throwable _ nil)))
+             (let [rebuilt (load-file! (io/file path))]
+               (swap! loaded assoc path (dissoc rebuilt :path))
+               (try (.close ^Context dead-ctx true) (catch Throwable _))
+               (tel/log! {:level :info
+                          :id ::context-rebuilt
+                          :data {:extension ext-name :file path :symbol (str sym)}
+                          :msg
+                          (str "Rebuilt torn-down context for Python extension '" ext-name "'")})
+               (notify-change-listeners! {:extensions (vec (keep :ext (vals @loaded))) :removed []})
+               rebuilt)))]
         (some (fn [e]
                 (when (= sym (:ext.symbol/symbol e)) (:ext.symbol/fn e)))
               (get-in (:ext entry) [:ext/engine :ext.engine/symbols]))))
@@ -1558,113 +1637,191 @@
 
 (defn load-python-extensions!
   "Scan the Python extension dirs (default: `~/.vis/extensions` and
-   `<cwd>/.vis/extensions`) and (re)load every `*.py` file. Idempotent:
-   when no file changed since the last scan this is a cheap no-op. On any
-   change the whole set is torn down and rebuilt (contexts are ~40ms warm
-   on the shared engine) — deterministic ordering, no partial states.
+   `<cwd>/.vis/extensions`) and run the extensions whose bytes were ADMITTED.
+
+   Loading a file EXECUTES its top level in a trusted context — real filesystem,
+   network and subprocess access, and `vis.shell` on the host's own process
+   boundary. Admission therefore cannot live at a call site or in the symbol
+   registry: by the time a symbol exists the file has already run. This function
+   is the ONE place that decides, and `:on-change` is how a caller says which
+   act it is:
+
+     - `:refuse` (DEFAULT) — keep the already-admitted set running exactly as it
+       is, execute no new or changed bytes, and report them through
+       [[pending-extensions]]. Every automatic caller takes this one: the
+       session env build (including the `sub_loop` CHILD env), env recycle, the
+       policy-epoch rebuild, and any library consumer that names nothing.
+     - `:adopt` — execute and register what changed. Exactly two acts pass it:
+       the gateway process starting (`main/discover-all!`) and `/reload`
+       (through [[reload-python-extensions!]]).
+
+   `:refuse` is the default because both loader Vars are public API: a caller
+   that names neither must get the safe one.
+
+   Idempotent: when no file changed since the last admitted scan this is a cheap
+   no-op. On an adopted change the whole set is torn down and rebuilt (contexts
+   are ~40ms warm on the shared engine) — deterministic ordering, no partial
+   states. A `:refuse` call tears nothing down and builds nothing, so a pending
+   file costs one sha per scan and never re-runs an admitted extension's top
+   level.
 
    A file that fails to load is recorded in `load-failures` (and surfaced
    by `vis-agent doctor`) — it never crashes the host.
 
-   Returns `{:loaded n :failed n :changed? bool}`."
+   Returns `{:loaded n :failed n :pending n :changed? bool}`, plus `:admitted
+   {:new [] :changed [] :unchanged [] :removed []}` (canonical paths) on an
+   adopted change."
   ([] (load-python-extensions! nil))
-  ([{:keys [dirs]}]
+  ([{:keys [dirs on-change]}]
    (register-loader-extension!)
    (let
-     [dirs
+     [mode
+      (or on-change :refuse)
+
+      dirs
       (or dirs (default-extension-dirs))
 
       files
       (scan dirs)
 
+      sha-of
+      (into {}
+            (map (fn [^File f]
+                   [(.getCanonicalPath f) (extension/sha256-hex (slurp f))]))
+            files)
+
       fp
       (mapv (fn [^File f]
-              [(.getCanonicalPath f) (extension/sha256-hex (slurp f))])
-            files)]
+              (let [p (.getCanonicalPath f)]
+                [p (sha-of p)]))
+            files)
 
-     (if (= fp @last-fingerprint)
-       {:loaded (count @loaded) :failed (count @failures) :changed? false}
+      prior
+      @admitted]
+
+     (cond
+       ;; Not an admitting act: the live surface is whatever a human already
+       ;; admitted, and everything else is reported, never executed.
+       (not= :adopt mode)
        (let
-         [old-loaded
-          @loaded
+         [pend (into []
+                     (keep (fn [[p sha]]
+                             (when (not= sha (get prior p))
+                               {:file p
+                                :error
+                                (if (contains? prior p)
+                                  "Changed since it was admitted — `/reload` admits the new bytes."
+                                  "Never admitted — `/reload` admits it.")})))
+                     fp)]
+         (reset! pending pend)
+         {:loaded (count @loaded) :failed (count @failures) :pending (count pend) :changed? false})
+       (= fp @last-fingerprint)
+       (do (reset! pending [])
+           {:loaded (count @loaded) :failed (count @failures) :pending 0 :changed? false})
+       :else (let
+               [old-loaded
+                @loaded
 
-          old-names
-          (set (map :ext-name (vals old-loaded)))
+                old-names
+                (set (map :ext-name (vals old-loaded)))
 
-          scanned
-          (set (map (fn [^File f]
-                      (.getCanonicalPath f))
-                    files))]
+                scanned
+                (set (map (fn [^File f]
+                            (.getCanonicalPath f))
+                          files))]
 
-         (reset! failures [])
-         ;; Build-then-swap, file by file. A file that reloads cleanly swaps in
-         ;; (its PREVIOUS context is closed only after the new one is live); a
-         ;; file that FAILS keeps its last-good entry — still registered, context
-         ;; still open — untouched. So a failed reload never leaves the stale
-         ;; old+dead mix issue #44 reported (old symbols bound to a CLOSED
-         ;; context → "Context execution was cancelled", new symbols missing):
-         ;; the live surface holds the working last-good module wholesale.
-         ;; `vis-agent doctor` (a fresh process, no last-good) and a live `/reload`
-         ;; run the SAME loader and diverge only in the fallback for a failed
-         ;; load — nothing to fall back to vs. the retained last-good.
-         (doseq [^File f files]
-           (let
-             [path (.getCanonicalPath f)
-              prev-ctx (get-in @loaded [path :context])]
+               (reset! failures [])
+               ;; Build-then-swap, file by file. A file that reloads cleanly swaps in
+               ;; (its PREVIOUS context is closed only after the new one is live); a
+               ;; file that FAILS keeps its last-good entry — still registered, context
+               ;; still open — untouched. So a failed reload never leaves the stale
+               ;; old+dead mix issue #44 reported (old symbols bound to a CLOSED
+               ;; context → "Context execution was cancelled", new symbols missing):
+               ;; the live surface holds the working last-good module wholesale.
+               ;; `vis-agent doctor` (a fresh process, no last-good) and a live `/reload`
+               ;; run the SAME loader and diverge only in the fallback for a failed
+               ;; load — nothing to fall back to vs. the retained last-good.
+               (doseq [^File f files]
+                 (let
+                   [path (.getCanonicalPath f)
+                    prev-ctx (get-in @loaded [path :context])]
 
-             (try (let [{:keys [ext-name] :as entry} (load-file! f)]
-                    ;; A later file (project dir) registering the same extension
-                    ;; name supersedes an earlier one at a DIFFERENT path — the
-                    ;; registry already swapped the registration; close the
-                    ;; superseded context so its adapters can't linger.
-                    (doseq
-                      [[opath {oname :ext-name ^Context octx :context}] @loaded
-                       :when (and (= oname ext-name) (not= opath path))]
+                   (try (let [{:keys [ext-name] :as entry} (load-file! f)]
+                          ;; A later file (project dir) registering the same extension
+                          ;; name supersedes an earlier one at a DIFFERENT path — the
+                          ;; registry already swapped the registration; close the
+                          ;; superseded context so its adapters can't linger.
+                          (doseq
+                            [[opath {oname :ext-name ^Context octx :context}] @loaded
+                             :when (and (= oname ext-name) (not= opath path))]
 
-                      (try (.close octx true) (catch Throwable _))
-                      (swap! loaded dissoc opath))
-                    (swap! loaded assoc path (dissoc entry :path))
-                    (when prev-ctx (try (.close ^Context prev-ctx true) (catch Throwable _))))
-                  (catch Throwable t
-                    (tel/log! {:level :warn
-                               :id ::load-failed
-                               :data {:file (str f) :error (ex-message t)}
-                               :msg (str "Python extension failed to load: " f
-                                         " — " (ex-message t))})
-                    (swap! failures conj {:file (str f) :error (ex-message t)})))))
-         ;; Files that vanished from disk since the last scan (deleted / renamed)
-         ;; have no entry to retain — deregister and close so they don't linger.
-         (doseq
-           [[opath {:keys [ext-name] :as e}]
-            @loaded
+                            (try (.close octx true) (catch Throwable _))
+                            (swap! loaded dissoc opath))
+                          (swap! loaded assoc path (dissoc entry :path))
+                          (when prev-ctx (try (.close ^Context prev-ctx true) (catch Throwable _))))
+                        (catch Throwable t
+                          (tel/log! {:level :warn
+                                     :id ::load-failed
+                                     :data {:file (str f) :error (ex-message t)}
+                                     :msg (str "Python extension failed to load: " f
+                                               " — " (ex-message t))})
+                          (swap! failures conj {:file (str f) :error (ex-message t)})))))
+               ;; Files that vanished from disk since the last scan (deleted / renamed)
+               ;; have no entry to retain — deregister and close so they don't linger.
+               (doseq
+                 [[opath {:keys [ext-name] :as e}]
+                  @loaded
 
-            :when (not (scanned opath))]
+                  :when (not (scanned opath))]
 
-           (try (extension/deregister-extension! ext-name) (catch Throwable _))
-           (try (.close ^Context (:context e) true) (catch Throwable _))
-           (swap! loaded dissoc opath))
-         (reset! last-fingerprint fp)
-         ;; Propagate to live surfaces (cached session envs, TUI slash
-         ;; palette). Without this a /reload only updates the GLOBAL
-         ;; registry: new extensions stay invisible to running sessions
-         ;; and stale env rows keep calling into the closed contexts.
-         (let
-           [entries
-            (vals @loaded)
+                 (try (extension/deregister-extension! ext-name) (catch Throwable _))
+                 (try (.close ^Context (:context e) true) (catch Throwable _))
+                 (swap! loaded dissoc opath))
+               (reset! last-fingerprint fp)
+               ;; Every scanned file just RAN, so every scanned file is admitted —
+               ;; including one whose top level threw, which is a load failure and not
+               ;; a pending approval.
+               (reset! admitted (into {} fp))
+               (reset! pending [])
+               ;; Propagate to live surfaces (cached session envs, TUI slash
+               ;; palette). Without this a /reload only updates the GLOBAL
+               ;; registry: new extensions stay invisible to running sessions
+               ;; and stale env rows keep calling into the closed contexts.
+               (let
+                 [entries
+                  (vals @loaded)
 
-            new-names
-            (set (map :ext-name entries))]
+                  new-names
+                  (set (map :ext-name entries))]
 
-           (notify-change-listeners! {:extensions (vec (keep :ext entries))
-                                      :removed (vec (sort (remove new-names old-names)))}))
-         {:loaded (count @loaded) :failed (count @failures) :changed? true})))))
+                 (notify-change-listeners! {:extensions (vec (keep :ext entries))
+                                            :removed (vec (sort (remove new-names old-names)))}))
+               {:loaded (count @loaded)
+                :failed (count @failures)
+                :pending 0
+                :changed? true
+                :admitted {:new (vec (sort (remove #(contains? prior %) scanned)))
+                           :changed (vec (sort (filter (fn [p]
+                                                         (and (contains? prior p)
+                                                              (not= (sha-of p) (get prior p))))
+                                                       scanned)))
+                           :unchanged (vec (sort (filter (fn [p]
+                                                           (= (sha-of p) (get prior p)))
+                                                         scanned)))
+                           :removed (vec (sort (remove scanned (keys prior))))}})))))
 
 (defn reload-python-extensions!
-  "Force a full reload of every Python extension (even when no file
-   changed). Same return shape as `load-python-extensions!`. Live
-   sessions pick the new tool bindings up at the next turn boundary."
+  "Force a full reload of every Python extension (even when no file changed) and
+   ADMIT whatever is on disk right now.
+
+   This is the `/reload` door, and `/reload` — with the gateway process starting
+   — is the only act that may put NEW extension bytes into a trusted context, so
+   this Var passes `:on-change :adopt` while [[load-python-extensions!]] refuses
+   by default. Call THIS one only from an act a human performed; every automatic
+   path wants the other Var. Same return shape as [[load-python-extensions!]].
+   Live sessions pick the new tool bindings up at the next turn boundary."
   ([] (reload-python-extensions! nil))
-  ([opts] (reset! last-fingerprint nil) (load-python-extensions! opts)))
+  ([opts] (reset! last-fingerprint nil) (load-python-extensions! (assoc opts :on-change :adopt))))
 
 ;; =============================================================================
 ;; The loader's own host extension: `/reload` + doctor surface
@@ -1687,6 +1844,28 @@
                   diffed-config-keys)]
     (when (seq tokens) (str/join ", " tokens))))
 
+(defn- admitted-summary
+  "What a `/reload` just did to the extension set, counts first so the line
+   survives a narrow terminal, then the file names. `/reload` is the only act
+   that may start new extension bytes running, so it says which ones it started."
+  [{:keys [new changed unchanged removed]}]
+  (let
+    [part (fn [label paths]
+            (when (seq paths)
+              (str (count paths)
+                   " "
+                   label
+                   " ("
+                   (str/join ", "
+                             (map (fn [p]
+                                    (.getName (io/file ^String p)))
+                                  paths))
+                   ")")))]
+    (str/join ", "
+              (keep identity
+                    [(part "admitted" new) (part "re-admitted" changed) (part "unchanged" unchanged)
+                     (part "removed" removed)]))))
+
 (defn- reload-slash
   [_ctx]
   ;; One user-facing reload for EVERY hot-reloadable resource: configuration,
@@ -1694,8 +1873,11 @@
   ;; templates, and any extension-owned discovery cache registered as a
   ;; reload hook (harness skills/agents).
   (let
-    [{:keys [loaded failed]}
+    [{:keys [loaded failed admitted]}
      (reload-python-extensions!)
+
+     admitted-text
+     (admitted-summary admitted)
 
      old-config
      (config/current-config)
@@ -1733,22 +1915,26 @@
      (try (count (prompt-templates/reload!)) (catch Throwable _ nil))]
 
     {:slash/status (if (or (pos? (long failed)) (seq failed-hooks) guidance) :error :ok)
-     :slash/title
-     (str "Reloaded — configuration" (when cfg-changes (str " (" cfg-changes ")"))
-          "; Python extensions: " loaded
-          " loaded" (when (pos? (long failed))
-                      (str ", "
-                           failed
-                           " failed (last-good kept): "
-                           (str/join "; "
-                                     (map (fn [{:keys [file error]}]
-                                            (str (.getName (io/file ^String file)) " — " error))
-                                          (load-failures)))
-                           " — see `vis-agent doctor`"))
-          "; skills/agents, prompt templates" (when template-cnt (str " (" template-cnt ")"))
-          ", and context files rescanned" (when (seq failed-hooks)
-                                            (str " — hook failures: "
-                                                 (str/join ", " (map str failed-hooks)))))}))
+     :slash/title (str "Reloaded — configuration"
+                       (when cfg-changes (str " (" cfg-changes ")"))
+                       "; Python extensions: "
+                       loaded
+                       " loaded"
+                       (when (seq admitted-text) (str " — " admitted-text))
+                       (when (pos? (long failed))
+                         (str ", "
+                              failed
+                              " failed (last-good kept): "
+                              (str/join "; "
+                                        (map (fn [{:keys [file error]}]
+                                               (str (.getName (io/file ^String file)) " — " error))
+                                             (load-failures)))
+                              " — see `vis-agent doctor`"))
+                       "; skills/agents, prompt templates" (when template-cnt
+                                                             (str " (" template-cnt ")"))
+                       ", and context files rescanned"
+                       (when (seq failed-hooks)
+                         (str " — hook failures: " (str/join ", " (map str failed-hooks)))))}))
 
 (def ^:private http-methods
   #{"GET" "HEAD" "POST" "PUT" "PATCH" "DELETE" "OPTIONS" "TRACE" "CONNECT"})
@@ -1921,15 +2107,24 @@
 
 (defn- doctor-fn
   [_env]
-  (vec (concat (for [{:keys [file error]} @failures]
-                 {:level :error
-                  :check-id ::load
-                  :message (str "Python extension failed to load: " file)
-                  :remediation error})
-               (for [[path {:keys [ext-name]}] @loaded]
-                 {:level :info
-                  :check-id ::load
-                  :message (str "Python extension '" ext-name "' loaded from " path)}))))
+  (vec
+    (concat (for [{:keys [file error]} @failures]
+              {:level :error
+               :check-id ::load
+               :message (str "Python extension failed to load: " file)
+               :remediation error})
+            ;; Bytes on disk that no human act admitted. Not an error — the
+            ;; file is simply not running, and `/reload` is the one thing
+            ;; that starts it.
+            (for [{:keys [file error]} @pending]
+              {:level :warn
+               :check-id ::pending
+               :message (str "Python extension NOT admitted, so not running: " file)
+               :remediation error})
+            (for [[path {:keys [ext-name]}] @loaded]
+              {:level :info
+               :check-id ::load
+               :message (str "Python extension '" ext-name "' loaded from " path)}))))
 
 (defonce ^:private loader-registered? (atom false))
 
@@ -1940,7 +2135,13 @@
     ;; Resolve them lazily so THIS loader ns carries no compile-time dependency
     ;; on the runner (which itself depends on this ns's trusted-context builder
     ;; — the one seam that would otherwise be a require cycle).
-    (let [test-cli! (requiring-resolve 'com.blockether.vis.internal.python-test-runner/test-cli!)]
+    (let
+      [test-cli!
+       (requiring-resolve 'com.blockether.vis.internal.python-test-runner/test-cli!)
+
+       test-slash
+       (requiring-resolve 'com.blockether.vis.internal.python-test-runner/test-slash)]
+
       (extension/register-extension!
         {:ext/name "python-extensions"
          :ext/description
@@ -1952,6 +2153,11 @@
            :slash/doc
            "Reload configuration, Python extensions, skills/agents, prompt templates, and context files."
            :slash/run-fn reload-slash}
+          {:slash/name "test"
+           :slash/doc
+           "Run every Python extension test (test_*.py / *_test.py) in its own untrusted GraalPy context."
+           :slash/usage "/test"
+           :slash/run-fn test-slash}
           {:slash/name "net-probe"
            :slash/doc
            "Debug network filters: run the host allow/deny gate + every registered network_filter over a synthetic request, showing each verdict and any Python traceback."
@@ -1961,7 +2167,7 @@
          [{:cmd/name "test"
            :cmd/internal? true
            :cmd/doc
-           "Run every Python extension test (test_*.py / *_test.py) in a trusted GraalPy context."
+           "Run every Python extension test (test_*.py / *_test.py) in its own untrusted GraalPy context."
            :cmd/usage "vis-agent extension test"
            :cmd/examples ["vis-agent extension test"]
            :cmd/run-fn test-cli!}]

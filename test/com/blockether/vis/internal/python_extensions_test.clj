@@ -168,31 +168,32 @@ vis.extension(
 (defdescribe
   load-and-register-test
   (it "loads a file, registers the extension, and strips the alias prefix from symbol names"
-      (with-loaded {"counter.py" counter-py}
-                   (fn [result _]
-                     (expect (= {:loaded 1 :failed 0 :changed? true} result))
-                     (let [ext (registered "counter")]
-                       (expect (some? ext))
-                       (expect (= 'counter (get-in ext [:ext/engine :ext.engine/alias])))
-                       (expect (= '[bump read boom]
-                                  (mapv :ext.symbol/symbol
-                                        (get-in ext [:ext/engine :ext.engine/symbols]))))
-                       ;; docstring became the model-facing doc; arglists carry the
-                       ;; real Python parameter names
-                       (let [bump (first (get-in ext [:ext/engine :ext.engine/symbols]))]
-                         (expect (str/includes? (:ext.symbol/doc bump) "bump the counter"))
-                         (expect (= ['[by]] (:ext.symbol/arglists bump)))
-                         (expect (= :mutation (:ext.symbol/tag bump))))
-                       ;; is_hidden=True -> the :ext.symbol/hidden? predicate key
-                       (let [boom (last (get-in ext [:ext/engine :ext.engine/symbols]))]
-                         (expect (= 'boom (:ext.symbol/symbol boom)))
-                         (expect (true? (:ext.symbol/hidden? boom))))))))
+      (with-loaded
+        {"counter.py" counter-py}
+        (fn [result _]
+          (expect (= {:loaded 1 :failed 0 :pending 0 :changed? true} (dissoc result :admitted)))
+          (let [ext (registered "counter")]
+            (expect (some? ext))
+            (expect (= 'counter (get-in ext [:ext/engine :ext.engine/alias])))
+            (expect (= '[bump read boom]
+                       (mapv :ext.symbol/symbol (get-in ext [:ext/engine :ext.engine/symbols]))))
+            ;; docstring became the model-facing doc; arglists carry the
+            ;; real Python parameter names
+            (let [bump (first (get-in ext [:ext/engine :ext.engine/symbols]))]
+              (expect (str/includes? (:ext.symbol/doc bump) "bump the counter"))
+              (expect (= ['[by]] (:ext.symbol/arglists bump)))
+              (expect (= :mutation (:ext.symbol/tag bump))))
+            ;; is_hidden=True -> the :ext.symbol/hidden? predicate key
+            (let [boom (last (get-in ext [:ext/engine :ext.engine/symbols]))]
+              (expect (= 'boom (:ext.symbol/symbol boom)))
+              (expect (true? (:ext.symbol/hidden? boom))))))))
   (it "is idempotent: an unchanged scan is a no-op"
-      (with-loaded {"counter.py" counter-py}
-                   (fn [_ {:keys [ext-dir]}]
-                     (let [again (pyx/load-python-extensions! {:dirs [(str ext-dir)]})]
-                       (expect (= false (:changed? again)))
-                       (expect (= 1 (:loaded again))))))))
+      (with-loaded
+        {"counter.py" counter-py}
+        (fn [_ {:keys [ext-dir]}]
+          (let [again (pyx/load-python-extensions! {:dirs [(str ext-dir)] :on-change :adopt})]
+            (expect (= false (:changed? again)))
+            (expect (= 1 (:loaded again))))))))
 
 ;; =============================================================================
 ;; Tool adapter — envelope semantics
@@ -341,7 +342,8 @@ vis.extension(name=\"env-bad\", description=\"bad env fixture.\", env=\"PATH\")
   (it "accepts env=, injects declared vars, and registers :ext/env"
       (with-loaded {"env_allowlist.py" env-py}
                    (fn [result _]
-                     (expect (= {:loaded 1 :failed 0 :changed? true} result))
+                     (expect (= {:loaded 1 :failed 0 :pending 0 :changed? true}
+                                (dissoc result :admitted)))
                      (let [ext (registered "env-allowlist")]
                        (expect (some? ext))
                        (expect (= [{:name "PATH" :required? true}
@@ -767,7 +769,7 @@ vis.extension(
                        ext-dir
                        "counter.py"
                        (str/replace counter-py "Counter fixture extension." "Counter v2."))
-                     (pyx/load-python-extensions! {:dirs [(str ext-dir)]})
+                     (pyx/load-python-extensions! {:dirs [(str ext-dir)] :on-change :adopt})
                      (expect (= "Counter v2." (:ext/description (registered "counter")))))))
   (it "a failed reload keeps the last-good module (never a stale old+dead mix) — #44"
       (with-loaded
@@ -775,7 +777,7 @@ vis.extension(
         (fn [_ {:keys [ext-dir]}]
           (expect (= 0 (get-in ((symbol-fn (registered "counter") 'read)) [:result "count"])))
           (write-ext! ext-dir "counter.py" (str "BOOM = _vis_undefined_ + 1\n" counter-py))
-          (let [result (pyx/load-python-extensions! {:dirs [(str ext-dir)]})]
+          (let [result (pyx/load-python-extensions! {:dirs [(str ext-dir)] :on-change :adopt})]
             (expect (= 1 (:loaded result)))
             (expect (= 1 (:failed result)))
             (expect (str/includes? (:error (first (pyx/load-failures))) "_vis_undefined_"))
@@ -798,7 +800,7 @@ vis.extension(
                  (write-ext! ext-dir
                              "counter.py"
                              (str/replace counter-py "Counter fixture extension." "Counter v2."))
-                 (pyx/load-python-extensions! {:dirs [(str ext-dir)]})
+                 (pyx/load-python-extensions! {:dirs [(str ext-dir)] :on-change :adopt})
                  (let [{:keys [extensions removed]} (last @events)]
                    (expect (= "Counter v2." (:ext/description (first extensions))))
                    (expect (= [] removed)))))
@@ -864,7 +866,8 @@ vis.extension(
                    (fn [result _]
                      ;; only the top-level pkgext.py is scanned as an extension;
                      ;; the package files under mypkg/ are NOT loaded as extensions
-                     (expect (= {:loaded 1 :failed 0 :changed? true} result))
+                     (expect (= {:loaded 1 :failed 0 :pending 0 :changed? true}
+                                (dissoc result :admitted)))
                      (let [ext (registered "pkgext")]
                        (expect (some? ext))
                        (let
@@ -897,7 +900,7 @@ vis.extension(
         (fn [result _]
           ;; the package dir contributes exactly ONE extension; the
           ;; modules under mypkg/ and the test file are NOT loaded
-          (expect (= {:loaded 1 :failed 0 :changed? true} result))
+          (expect (= {:loaded 1 :failed 0 :pending 0 :changed? true} (dissoc result :admitted)))
           (let [ext (registered "myext")]
             (expect (some? ext))
             (let [add (symbol-fn ext 'add)]
@@ -2308,3 +2311,193 @@ vis.extension(
                                   (expect (nil? (:stale? status)))
                                   (expect (true? (:is-hidden (:provider/preset p))))
                                   (expect (nil? (:hidden? (:provider/preset p)))))))))
+
+;; =============================================================================
+;; Admission — only `/reload` (and the gateway's own start) may run new bytes
+;; =============================================================================
+
+(defn- admission-probe-py
+  "An extension that ESCALATES on load: its top level APPENDS `tag` to `marker`,
+   so the file merely executing is visible even when no symbol is ever called,
+   and its one symbol reports which bytes are live."
+  [marker tag]
+  (str "\"\"\"Admission probe fixture.\"\"\"\n"
+       "import vis\n"
+       "\n"
+       "with open("
+       (pr-str (str marker))
+       ", \"a\") as fh:\n"
+       "    fh.write("
+       (pr-str (str tag "\n"))
+       ")\n"
+       "\n"
+       "\n"
+       "def probe_tag():\n"
+       "    \"\"\"await probe_tag() -> {\\\"tag\\\"} - which bytes are running.\"\"\"\n"
+       "    return {\"tag\": "
+       (pr-str tag)
+       "}\n"
+       "\n" "\n"
+       "vis.extension(\n" "    name=\"admission-probe\",\n"
+       "    description=\"Admission probe.\",\n" "    version=\"0.1.0\",\n"
+       "    kind=\"integration\",\n" "    alias=\"probe\",\n"
+       "    symbols=[vis.symbol(probe_tag, tag=\"observation\")],\n" ")\n"))
+
+(defn- with-admission-probe
+  "Own the whole load for an admission test: a fresh temp dir nothing else
+   reuses, a throwaway state DB, and a teardown that unloads everything. `f`
+   receives `{:dir :marker :path}` — `:path` is the canonical path the loader
+   reports."
+  [f]
+  (reset! live-load nil)
+  ;; Every admission assertion is about THIS dir's bytes, and the loader's
+  ;; admitted/failure state is process-wide: start from an empty admitted set so
+  ;; a fixture an earlier test admitted cannot show up as `:failed` or `:removed`.
+  (pyx/reload-python-extensions! {:dirs []})
+  (let
+    [dir
+     (temp-dir)
+
+     store
+     (ps/db-create-connection! :memory)]
+
+    (binding [extension/*current-environment* {:db-info store}]
+      (try (f {:dir dir
+               :marker (io/file dir "top-level-ran.txt")
+               :path (.getCanonicalPath (io/file dir "probe.py"))})
+           (finally (reset! live-load nil)
+                    (pyx/reload-python-extensions! {:dirs []})
+                    (ps/db-dispose-connection! store))))))
+
+(defn- probe-tag [] (get-in ((symbol-fn (registered "admission-probe") 'tag)) [:result "tag"]))
+
+(defn- ran-tags [marker] (if (.exists ^java.io.File marker) (str/split-lines (slurp marker)) []))
+
+(defdescribe
+  admission-test
+  ;; The escalation the gate exists for: bytes appear in an extension dir, and
+  ;; then something that is NOT a human act builds an environment — a child
+  ;; `sub_loop` env, an env-cache miss, a recycle, a policy-epoch rebuild.
+  (it "refuses bytes nobody admitted: the top level never runs, `/reload` runs it"
+      (with-admission-probe
+        (fn [{:keys [dir marker path]}]
+          (write-ext! dir "probe.py" (admission-probe-py marker "V1"))
+          (let [refused (pyx/load-python-extensions! {:dirs [(str dir)] :on-change :refuse})]
+            (expect (= {:loaded 0 :failed 0 :pending 1 :changed? false} refused))
+            ;; No symbol was needed: loading a file EXECUTES its top level, so
+            ;; "did it run" is the only question that matters.
+            (expect (= [] (ran-tags marker)))
+            (expect (nil? (registered "admission-probe")))
+            (expect (= [path] (mapv :file (pyx/pending-extensions))))
+            (expect (str/includes? (:error (first (pyx/pending-extensions))) "/reload")))
+          ;; A second automatic build changes nothing either.
+          (pyx/load-python-extensions! {:dirs [(str dir)] :on-change :refuse})
+          (expect (= [] (ran-tags marker)))
+          ;; The human act.
+          (let [admitted (pyx/reload-python-extensions! {:dirs [(str dir)]})]
+            (expect (= 1 (:loaded admitted)))
+            (expect (= 0 (:pending admitted)))
+            (expect (= [] (pyx/pending-extensions)))
+            (expect (= [path] (get-in admitted [:admitted :new])))
+            (expect (= ["V1"] (ran-tags marker)))
+            (expect (= "V1" (probe-tag)))))))
+  (it "an edit after admission keeps serving the admitted version until `/reload`"
+      (with-admission-probe
+        (fn [{:keys [dir marker path]}]
+          (write-ext! dir "probe.py" (admission-probe-py marker "V1"))
+          (pyx/reload-python-extensions! {:dirs [(str dir)]})
+          (expect (= "V1" (probe-tag)))
+          (write-ext! dir "probe.py" (admission-probe-py marker "V2"))
+          (let [refused (pyx/load-python-extensions! {:dirs [(str dir)] :on-change :refuse})]
+            (expect (= 1 (:pending refused)))
+            (expect (= 1 (:loaded refused)))
+            (expect (str/includes? (:error (first (pyx/pending-extensions))) "Changed"))
+            ;; V2's top level never ran, and V1 is still the live surface.
+            (expect (= ["V1"] (ran-tags marker)))
+            (expect (= "V1" (probe-tag))))
+          ;; Refusing must not re-execute the ADMITTED file either: a pending
+          ;; file that kept re-running every admitted extension on every child
+          ;; env would be its own bug.
+          (pyx/load-python-extensions! {:dirs [(str dir)] :on-change :refuse})
+          (expect (= ["V1"] (ran-tags marker)))
+          (let [admitted (pyx/reload-python-extensions! {:dirs [(str dir)]})]
+            (expect (= [path] (get-in admitted [:admitted :changed])))
+            (expect (= ["V1" "V2"] (ran-tags marker)))
+            (expect (= "V2" (probe-tag)))))))
+  (it "a caller that names no `:on-change` gets the safe one"
+      (with-admission-probe (fn [{:keys [dir marker]}]
+                              (write-ext! dir "probe.py" (admission-probe-py marker "V1"))
+                              (expect
+                                (= 1 (:pending (pyx/load-python-extensions! {:dirs [(str dir)]}))))
+                              (expect (= [] (ran-tags marker)))
+                              (expect (nil? (registered "admission-probe"))))))
+  (it "`/reload` says what it admitted, re-admitted, left alone and removed"
+      (with-admission-probe
+        (fn [{:keys [dir marker path]}]
+          (write-ext! dir "probe.py" (admission-probe-py marker "V1"))
+          (let [{:keys [admitted]} (pyx/reload-python-extensions! {:dirs [(str dir)]})]
+            (expect (= {:new [path] :changed [] :unchanged [] :removed []} admitted)))
+          (let [{:keys [admitted]} (pyx/reload-python-extensions! {:dirs [(str dir)]})]
+            (expect (= {:new [] :changed [] :unchanged [path] :removed []} admitted)))
+          (write-ext! dir "probe.py" (admission-probe-py marker "V2"))
+          (let [{:keys [admitted]} (pyx/reload-python-extensions! {:dirs [(str dir)]})]
+            (expect (= {:new [] :changed [path] :unchanged [] :removed []} admitted)))
+          (.delete (io/file dir "probe.py"))
+          (let [{:keys [admitted]} (pyx/reload-python-extensions! {:dirs [(str dir)]})]
+            (expect (= {:new [] :changed [] :unchanged [] :removed [path]} admitted))))))
+  (it "a pending file is a doctor WARNING that names `/reload`, never an error"
+      (with-admission-probe (fn [{:keys [dir marker path]}]
+                              (write-ext! dir "probe.py" (admission-probe-py marker "V1"))
+                              (pyx/load-python-extensions! {:dirs [(str dir)] :on-change :refuse})
+                              (let
+                                [rows
+                                 ((:ext/doctor-fn (registered "python-extensions")) nil)
+
+                                 row
+                                 (first (filter #(= :warn (:level %)) rows))]
+
+                                (expect (some? row))
+                                (expect (str/includes? (:message row) path))
+                                (expect (str/includes? (:remediation row) "/reload")))))))
+
+;; =============================================================================
+;; A Python test runs BESIDE the extension's code, never inside its trust
+;; =============================================================================
+
+(defdescribe
+  untrusted-test-context-test
+  (it "vis.shell, vis.jailed_shell and subprocess all refuse inside a test file"
+      (reset! live-load nil)
+      (let
+        [dir
+         (temp-dir)
+
+         store
+         (ps/db-create-connection! :memory)]
+
+        (binding [extension/*current-environment* {:db-info store}]
+          (try (write-ext! dir
+                           "test_trust.py"
+                           (str "import vis\n"
+                                "\n" "\n"
+                                "def test_shell_refuses():\n"
+                                "    vis.shell({\"command\": \"echo escalated\"})\n"
+                                "\n" "\n"
+                                "def test_jailed_shell_refuses():\n"
+                                "    vis.jailed_shell({\"command\": \"echo escalated\"})\n"
+                                "\n" "\n"
+                                "def test_subprocess_refuses():\n" "    import subprocess\n"
+                                "\n" "    subprocess.run([\"echo\", \"escalated\"])\n"))
+               (let
+                 [res (runner/test-python-extensions! {:dirs [(str dir)]})
+                  by-id (into {} (map (juxt :nodeid :outcome)) (:tests res))
+                  messages (str/join " " (map :message (:tests res)))]
+
+                 (expect (= 1 (:files res)))
+                 (expect (= false (:ok? res)))
+                 (expect (= 3 (count by-id)))
+                 (expect (every? #{:failed :errored} (vals by-id)))
+                 ;; The two host doors say WHY, and where the command belongs.
+                 (expect (str/includes? messages "does not run inside its extension's trust"))
+                 (expect (str/includes? messages "/reload")))
+               (finally (reset! live-load nil) (ps/db-dispose-connection! store)))))))

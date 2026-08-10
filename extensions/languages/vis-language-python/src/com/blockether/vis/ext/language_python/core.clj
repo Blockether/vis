@@ -199,7 +199,9 @@
 
 (defn- graalpy-test
   "Hermetic backend: discover test_*.py / *_test.py under `paths` and run each in
-   a trusted GraalPy context via the built-in stdlib-only pytest shim.
+   an UNTRUSTED GraalPy context via the built-in stdlib-only pytest shim —
+   model-supplied `paths` never buy host trust: a test file is bytes no
+   `/reload` admitted, so `vis.shell` and `subprocess` refuse inside it.
    `sys-path` carries the project's own declared import roots (a `src` layout),
    so a test importing the package under test sees it. Adds a `hint` to switch
    to the project interpreter when a failure smells like a missing third-party
