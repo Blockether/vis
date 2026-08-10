@@ -545,8 +545,12 @@
                     (long (:key-w (tr/columns commit-transient-spec)))
                     (long tr/key-gap))
                  (str/index-of row "Commit staged")))))
+  ;; Regression, issue #C-x band grid: each column was sized in proportion to its
+  ;; own widest verb, so four headings started at four unrelated offsets
+  ;; (37/35/37/38 on a 160-column band) and every column trailed a ragged tail of
+  ;; blanks — full width, and still not a grid.
   (it
-    "a pane measures ITSELF, so a narrow category is not padded to a wide one"
+    "the band is ONE GRID: equal columns, none narrower than its own verbs"
     (let
       [narrow
        {:groups [{:title "A" :items [{:key "a" :type :action :id :a :label "go"}]}
@@ -556,10 +560,53 @@
                            :id :b
                            :label "a very much longer verb indeed"}]}]}
 
-       [w0 w1]
-       (:pane-ws (tr/layout narrow leader-band-region))]
+       ws
+       (:pane-ws (tr/layout narrow leader-band-region))
 
-      (expect (< (long w0) (long w1))))))
+       lay
+       (tr/layout leader-spec leader-band-region)
+
+       lws
+       (:pane-ws lay)]
+
+      ;; a narrow category stands at the SAME stride as a wide one: the cells that
+      ;; do not divide are the only difference between two columns
+      (expect (>= 1 (- (long (apply max ws)) (long (apply min ws)))))
+      (expect (>= 1 (- (long (apply max lws)) (long (apply min lws)))))
+      ;; and no column is ever squeezed under what its own verbs need
+      (expect (every? true?
+                      (map (fn [w pane]
+                             (>= (long w) (tr/pane-natural pane)))
+                           lws
+                           (:panes lay))))
+      (expect (= 100 (+ (long (reduce + 0 lws)) (* 3 (dec (count lws))))))))
+  (it
+    "a pane is wide enough for its OWN widest verb, ellipsis and all"
+    (let
+      [wide
+       {:groups [{:title "A"
+                  :items [{:key "a" :type :action :id :a :label "a verb that fills its column"}]}]}
+
+       grid
+       (transient-grid! wide 0 (+ 2 (tr/pane-natural (first (tr/panes wide 1)))) 28)]
+
+      (expect (some #(str/includes? % "a verb that fills its column") grid))))
+  (it
+    "side by side, the second heading starts exactly one gap past the first column"
+    (let
+      [grid
+       (transient-grid! commit-transient-spec 0 78 28 {:cols 80 :min-row 1 :is-sideless true})
+
+       [w0]
+       (:pane-ws (tr/layout commit-transient-spec
+                            {:left 0 :inner-w 78 :text-w 70 :hint-row 28 :cols 80 :min-row 1
+                             :is-sideless true}))
+
+       head
+       (some #(when (str/includes? % "Arguments") %) grid)]
+
+      (expect (= (+ (long (str/index-of head "Arguments")) (long w0) 3)
+                 (str/index-of head "Commands"))))))
 
 (defdescribe
   transient-contract-test

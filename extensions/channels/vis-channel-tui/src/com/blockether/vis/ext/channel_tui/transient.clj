@@ -175,6 +175,14 @@
    down."
   2)
 
+(def pane-trail
+  "The one column a description keeps CLEAR at its pane's right edge — `draw-item!`
+   ellipsizes one cell short of it, so a full-width label never runs into the
+   column beside it. It is part of what a pane NEEDS ([[pane-natural]]): left out
+   of the measurement, a pane sized to its own widest verb still painted that verb
+   with an ellipsis."
+  1)
+
 (defn pane-columns
   "PURE: `{:key-w :label-w}` for ONE pane's display rows — that pane's OWN grid.
 
@@ -292,9 +300,9 @@
 
 (defn pane-natural
   "PURE: the columns ONE pane needs for its own content — the lead, its widest
-   heading, and its own key/label grid with the indent and gutter it is painted
-   with. Measuring the PANE (not the spec) is what lets a band stand a narrow
-   category beside a wide one."
+   heading, and its own key/label grid with the indent, the gutter and the
+   [[pane-trail]] it is painted with. Measuring the PANE (not the spec) is what
+   lets a band stand a narrow category beside a wide one."
   ^long [pane]
   (let
     [{:keys [key-w label-w]}
@@ -306,7 +314,8 @@
              (map #(long (p/display-width (str (:text %))))
                   (filter #(= :header (:kind %)) pane)))]
 
-    (max (+ (long pane-lead) (long item-indent) (long key-w) (long key-gap) (long label-w))
+    (max (+ (long pane-lead) (long item-indent) (long key-w) (long key-gap)
+            (long label-w) (long pane-trail))
          (+ (long pane-lead) (long head-w)))))
 
 (defn- panes-fit?
@@ -337,12 +346,17 @@
   "PURE: the columns EACH of `ps` gets inside `region`'s inner width, the gaps
    between them already paid for.
 
-   Every pane starts from its OWN [[pane-natural]] and the slack the band has
-   left over is shared evenly between them, so the grid FLEXES to the width it
-   was given instead of hugging the left edge with an empty third to its right
-   — and a pane still never falls below what its own verbs need. When the panes
-   cannot all have their natural width (a single column holding a very long
-   label) the band is split evenly, which for one pane IS the whole width."
+   The band is ONE GRID: every pane is an EQUAL share of the width, widened only
+   where a pane's own [[pane-natural]] needs more, and the cells that do not
+   divide are handed out left to right. So heading `j` and key column `j` stand at
+   the same stride the whole way across, and no category falls below what its own
+   verbs need. Sharing the leftover in PROPORTION to what each pane happened to
+   measure is what put four headings at four unrelated offsets (37/35/37/38 on a
+   160-column band) — full width, and still not a grid.
+
+   When even the naturals do not fit side by side (a column holding a very long
+   label) the width is split evenly and the labels ellipsize — which for one pane
+   IS the whole band."
   [region ps]
   (let
     [inner-w
@@ -354,19 +368,26 @@
      nats
      (mapv pane-natural ps)
 
-     gaps
-     (* (long pane-gap) (dec n))
+     avail
+     (- inner-w (* (long pane-gap) (dec n)))
+
+     share
+     (quot avail n)
+
+     ;; The equal grid, and the panes a long category pushes wider than it.
+     floors
+     (mapv (fn [^long nat] (max share nat)) nats)
 
      slack
-     (- inner-w (long (reduce + 0 nats)) gaps)]
+     (- avail (long (reduce + 0 floors)))]
 
     (if (neg? slack)
-      (vec (repeat n (max 1 (quot (- inner-w gaps) n))))
+      (vec (repeat n (max 1 share)))
       (let [each (quot slack n)
             extra (rem slack n)]
         (into []
               (map-indexed (fn [^long i ^long w] (+ w each (if (< i extra) 1 0))))
-              nats)))))
+              floors)))))
 
 (def ^:private chrome-rows
   "Rows of the popup's OWN chrome above its body: the opening separator, and
@@ -612,11 +633,12 @@
           inline
           (+ (long lx) (long (p/display-width label-txt)) 2)]
 
-         (cond (<= (+ col w) (dec (long right))) col
-               (<= (+ inline w) (dec (long right))) inline)))
+         (cond (<= (+ col w) (- (long right) (long pane-trail))) col
+               (<= (+ inline w) (- (long right) (long pane-trail))) inline)))
 
      shown
-     (p/ellipsize label-txt (max 0 (- (long (or arg-x right)) (long lx) 1)))
+     (p/ellipsize label-txt
+                  (long (max 0 (- (long (or arg-x right)) (long lx) (long pane-trail)))))
 
      fg
      (if (or action? active?) t/dialog-fg t/dialog-hint)]
@@ -661,7 +683,7 @@
      ;; magit's own `── Commit ──`. The first row stays chrome and every row
      ;; below it stays column grid.
      (when-not (str/blank? (str label))
-       (let [txt (str " " (p/ellipsize (str label) (max 0 (- inner-w 6))) " ")]
+       (let [txt (str " " (p/ellipsize (str label) (long (max 0 (- inner-w 6)))) " ")]
          (p/set-colors! g t/dialog-fg t/dialog-bg)
          (p/styled g [p/BOLD] (p/put-str! g (+ left 3) row txt))))
      (p/set-colors! g t/dialog-fg t/dialog-bg))))
@@ -797,7 +819,7 @@
                                           (+ pane-left (long pane-lead))
                                           row
                                           (p/ellipsize (str (:text r))
-                                                       (max 1 (- pane-w (long pane-lead)))))))
+                                                       (long (max 1 (- pane-w (long pane-lead))))))))
 
                 :blank
                 nil
