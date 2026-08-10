@@ -27,10 +27,17 @@
    custom `:--name` selectors, `iselect` and soupsieve's error surface behave like
    upstream. Differentially tested against real beautifulsoup4 4.12.3 + soupsieve
    2.5 over 200+ probes with zero output mismatches outside documented
-   divergences. A deliberate subset of full bs4 (no lxml or html5lib parsers —
-   another `features` argument raises `FeatureNotFound` the way upstream does
-   when the parser library is missing — and generic CSS syntax errors carry a
-   simpler message).
+   divergences. Every parser bs4 names works: `html.parser` (the default),
+   `lxml`/`lxml-html` and `html5lib` — both reimplemented pure-Python recoveries
+   that imply `<html>`/`<body>` around a fragment and end an open `<p>`, `<li>`,
+   `<dt>`, `<td>` or `<tr>` before the next one — and `xml`/`lxml-xml`, a real XML
+   reader (case-sensitive names, `prefix:local` with namespaces, `<a/>` for any
+   childless element, whitespace kept). Deliberate subset of full bs4: the lxml
+   and html5lib trees are not bit-for-bit libxml2/html5lib (no adoption-agency
+   repair, no table foster-parenting), the `html` feature name and a bare
+   `BeautifulSoup(markup)` stay on `html.parser`, an unknown `features` name
+   raises `FeatureNotFound` the way upstream does when the parser library is
+   missing, and generic CSS syntax errors carry a simpler message.
 
    Like `shim-requests` there are NO `:shim/bindings`: the shim is a
    self-contained Python preamble with zero host callables. It publishes `bs4`
@@ -49,8 +56,9 @@
           "find/find_all and the directional finders, CSS select/select_one with sibling "
           "combinators and structural pseudo-classes, get_text, navigation, tree mutation, HTML "
           "serialization, and bs4's introspection surface (PageElement/ResultSet/SoupStrainer, "
-          "builder, formatters, encoding detection). Uses `html.parser`; pairs with requests for "
-          "fetch+parse. No pip/wheel/host bridge.")
+          "builder, formatters, encoding detection). Parsers: html.parser (default), lxml, "
+          "html5lib and xml/lxml-xml, all pure Python; pairs with requests for fetch+parse. "
+          "No pip/wheel/host bridge.")
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

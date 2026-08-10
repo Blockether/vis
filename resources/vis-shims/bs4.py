@@ -1,8 +1,8 @@
 # vis sandbox beautifulsoup4-compat shim.
 #
 # The agent sandbox ships no bs4 wheel. This shim publishes a BeautifulSoup-compatible
-# `bs4` module implemented in PURE Python on the stdlib html.parser (no host/JVM
-# bridge), the natural partner to the requests shim (fetch then parse). It builds a
+# `bs4` module implemented in PURE Python (no host/JVM bridge, no wheel), the
+# natural partner to the requests shim (fetch then parse). It builds a
 # Tag / NavigableString tree with find/find_all, CSS .select, get_text and HTML
 # serialization. Published into sys.modules so `from bs4 import BeautifulSoup` works,
 # and stapled onto builtins.
@@ -45,10 +45,18 @@
 # into itself.", the `<br><br/>` already-closed-empty-element quirk, and
 # TypeError from BeautifulSoup(None) (upstream measures len(markup) first).
 #
-# Known deliberate divergences from upstream: the tree is built only by html.parser
-# (no lxml/html5lib, so no implied-tag recovery beyond html.parser's, and asking
-# for another parser -- `lxml`, `html5lib`, `xml`, `lxml-xml` or an unknown name --
-# raises `FeatureNotFound` the way upstream does when the library is missing);
+# Every parser bs4 names is here, pure Python: `html.parser` (the default),
+# `lxml`/`lxml-html` and `html5lib` -- both of which imply the structure a browser
+# builds, `<html>`/`<body>` around a fragment and an end to an open `<p>`, `<li>`,
+# `<dt>`, `<td>` or `<tr>` before the next one -- and `xml`/`lxml-xml`, a real XML
+# reader with case-sensitive names, namespace prefixes, no void elements and no
+# whitespace collapsing. An unknown name still raises `FeatureNotFound`.
+#
+# Known deliberate divergences from upstream: the lxml and html5lib recoveries are
+# reimplementations, not bindings, so adoption-agency formatting-element repair and
+# table foster-parenting are not performed and the trees are not bit-for-bit
+# libxml2/html5lib; `features="html"` and a bare `BeautifulSoup(markup)` resolve to
+# html.parser here rather than to lxml;
 # html.parser corner cases (unterminated comments,
 # raw comment events) track the sandbox's own Python version rather than any fixed
 # CPython release; a generic SelectorSyntaxError carries "Invalid CSS selector: %r"
@@ -2602,10 +2610,16 @@ def __vis_install_bs4__():
             return chr(39) + v + chr(39)
         return _Q + v + _Q
 
+    def _tag_name(node):
+        # A namespaced XML element prints under the spelling it was written
+        # with: `.prefix` "f" plus `.name` "Item" is `<f:Item>`.
+        prefix = getattr(node, "prefix", None)
+        return prefix + ":" + node.name if prefix else node.name
+
     def _open_tag(node, pad=""):
         void_close, bare_empty = _CUR_FMT[-1][1], _CUR_FMT[-1][2]
         fmt_obj = _CUR_FMT[-1][4]
-        parts = [pad + _LT + node.name]
+        parts = [pad + _LT + _tag_name(node)]
         if fmt_obj is not None:
             items = list(fmt_obj.attributes(node))
         else:
@@ -2661,7 +2675,7 @@ def __vis_install_bs4__():
                 out.append(open_tag)
                 if is_void:
                     continue
-                stack.append((_LT + "/" + cur.name + _GT,))
+                stack.append((_LT + "/" + _tag_name(cur) + _GT,))
             for c in reversed(cur.contents):
                 stack.append(c)
         return "".join(out)
@@ -2690,7 +2704,7 @@ def __vis_install_bs4__():
         open_tag, is_void = _open_tag(node, pad)
         if is_void:
             return open_tag
-        close_tag = _LT + "/" + node.name + _GT
+        close_tag = _LT + "/" + _tag_name(node) + _GT
         if not kids:
             return open_tag + close_tag
         return open_tag + _NL + _NL.join(kids) + _NL + pad + close_tag
@@ -3040,6 +3054,405 @@ def __vis_install_bs4__():
             _hp.HTMLParser.close(self)
             self._flush()
 
+    def _parser_for(builder, on_duplicate_attribute=None):
+        """The parse engine `builder` is built on.
+
+        Every builder in this shim produces bs4 nodes directly; the ENGINE is the
+        whole difference between the parsers. `html.parser` is the flat stdlib
+        token stream, `lxml` and `html5lib` imply the structure a browser would
+        (`_ScaffoldBuilder`), and `xml`/`lxml-xml` is a real XML reader
+        (`_XMLBuilder`).
+        """
+        cls = getattr(builder, "PARSER_CLASS", None) or _Builder
+        return cls(builder=builder, on_duplicate_attribute=on_duplicate_attribute)
+
+    class _ScaffoldBuilder(_Builder):
+        """html.parser's tokens, HTML5-style tree construction.
+
+        html.parser closes nothing it was not told to close, so `<p>a<p>b` nests
+        and a bare `<li>` never ends. lxml (libxml2) and html5lib both IMPLY the
+        structure a browser builds -- `<html>`/`<body>` around a fragment, an end
+        to an open `<p>` before the next block element, an end to `<li>` before
+        the next `<li>` -- which is why the same markup gives three different
+        trees. That implication lives here and is shared by both builders;
+        `ALWAYS_HEAD` is where the two disagree, since html5lib always emits a
+        `<head>` and libxml2 only emits one when something belongs in it.
+        """
+
+        ALWAYS_HEAD = False
+
+        # Elements HTML5 puts in <head> when they appear before any body content.
+        HEAD_ONLY = set(
+            [
+                "base",
+                "basefont",
+                "bgsound",
+                "link",
+                "meta",
+                "noscript",
+                "script",
+                "style",
+                "template",
+                "title",
+            ]
+        )
+
+        # A start tag from this set ends an open <p> (HTML5's "in body" rule).
+        CLOSES_P = set(
+            [
+                "address",
+                "article",
+                "aside",
+                "blockquote",
+                "center",
+                "details",
+                "dialog",
+                "dir",
+                "div",
+                "dl",
+                "fieldset",
+                "figcaption",
+                "figure",
+                "footer",
+                "form",
+                "h1",
+                "h2",
+                "h3",
+                "h4",
+                "h5",
+                "h6",
+                "header",
+                "hgroup",
+                "hr",
+                "li",
+                "main",
+                "menu",
+                "nav",
+                "ol",
+                "p",
+                "pre",
+                "section",
+                "summary",
+                "table",
+                "ul",
+            ]
+        )
+
+        # Which open elements a start tag closes before it opens.
+        IMPLIED_END = {
+            "li": set(["li"]),
+            "dt": set(["dt", "dd"]),
+            "dd": set(["dt", "dd"]),
+            "option": set(["option"]),
+            "optgroup": set(["option", "optgroup"]),
+            "tr": set(["tr", "td", "th"]),
+            "td": set(["td", "th"]),
+            "th": set(["td", "th"]),
+            "tbody": set(["td", "th", "tr", "tbody", "thead", "tfoot"]),
+            "thead": set(["td", "th", "tr", "tbody", "thead", "tfoot"]),
+            "tfoot": set(["td", "th", "tr", "tbody", "thead", "tfoot"]),
+        }
+
+        # An implied end tag never reaches past one of these: `<td><p>a<tr>`
+        # ends the row, not some <p> outside the table.
+        SCOPE_STOPPERS = set(
+            [
+                "applet",
+                "body",
+                "button",
+                "caption",
+                "html",
+                "marquee",
+                "object",
+                "table",
+                "td",
+                "template",
+                "th",
+            ]
+        )
+
+        def __init__(self, **kwargs):
+            _Builder.__init__(self, **kwargs)
+            self._html = None
+            self._head = None
+            self._body = None
+
+        # -- scaffolding -------------------------------------------------
+
+        def _is_one_of(self, node, candidates):
+            # Tag equality in bs4 is structural, so identity is the only safe test.
+            return any(node is candidate for candidate in candidates)
+
+        def _open_scaffold(self, name, parent):
+            t = self._tag_class()(None, self.builder, name, attrs={})
+            parent.append(t)
+            return t
+
+        def _ensure_html(self):
+            if self._html is None:
+                self._html = self._open_scaffold("html", self.root)
+                self.stack = [self.root, self._html]
+                if self.ALWAYS_HEAD:
+                    self._head = self._open_scaffold("head", self._html)
+            return self._html
+
+        def _ensure_head(self):
+            self._ensure_html()
+            if self._head is None:
+                self._head = self._open_scaffold("head", self._html)
+            return self._head
+
+        def _ensure_body(self):
+            self._ensure_html()
+            if self.ALWAYS_HEAD:
+                self._ensure_head()
+            if self._body is None:
+                self._body = self._open_scaffold("body", self._html)
+            return self._body
+
+        def _enter_head(self):
+            self._ensure_head()
+            if self._is_one_of(self._cur(), (self.root, self._html)):
+                self.stack = [self.root, self._html, self._head]
+
+        def _enter_body(self):
+            self._ensure_body()
+            if self._is_one_of(self._cur(), (self.root, self._html, self._head)):
+                self.stack = [self.root, self._html, self._body]
+
+        def _merge_attrs(self, node, attrs):
+            # A repeated <html>/<body> start tag is not a second element; its
+            # attributes land on the one that is already open.
+            for key, value in attrs:
+                if key not in node.attrs:
+                    node.attrs[key] = "" if value is None else value
+
+        def _close_upto(self, names):
+            # The OUTERMOST match in scope is the one that ends: a second `<tr>`
+            # ends the row, not just the `<td>` inside it.
+            target = None
+            for i in range(len(self.stack) - 1, 0, -1):
+                name = self.stack[i].name
+                if name in names:
+                    target = i
+                elif name in self.SCOPE_STOPPERS:
+                    break
+            if target is not None:
+                del self.stack[target:]
+
+        def _imply_end(self, tag):
+            if tag in self.CLOSES_P:
+                self._close_upto(set(["p"]))
+            closers = self.IMPLIED_END.get(tag)
+            if closers:
+                self._close_upto(closers)
+
+        # -- token handling ----------------------------------------------
+
+        def handle_starttag(self, tag, attrs, handle_empty_element=True):
+            # Pending text belongs to the element that is open NOW: implying an
+            # end tag first would move `a` in `<p>a<p>b` out of its paragraph.
+            self._flush()
+            if tag == "html":
+                node = self._ensure_html()
+                self._merge_attrs(node, attrs)
+                return node
+            if tag == "head":
+                node = self._ensure_head()
+                self._merge_attrs(node, attrs)
+                self.stack = [self.root, self._html, node]
+                return node
+            if tag == "body":
+                node = self._ensure_body()
+                self._merge_attrs(node, attrs)
+                self.stack = [self.root, self._html, node]
+                return node
+            if tag in self.HEAD_ONLY and self._body is None:
+                self._enter_head()
+            else:
+                self._enter_body()
+            self._imply_end(tag)
+            return _Builder.handle_starttag(self, tag, attrs, handle_empty_element)
+
+        def handle_data(self, data):
+            if data.strip(_ASCII_SPACES):
+                self._enter_body()
+            elif self._html is None:
+                # Whitespace before the document element is not content.
+                return
+            self._data.append(data)
+
+        def close(self):
+            _Builder.close(self)
+            if self.ALWAYS_HEAD:
+                # html5lib always hands back a complete document, even for "".
+                self._ensure_body()
+
+    class _XMLBuilder(_Builder):
+        """A real XML reader: case-sensitive names, namespace prefixes, no void
+        elements, no HTML recovery, and whitespace kept exactly as written.
+
+        html.parser cannot do XML -- it lowercases every name, closes `<br>` on
+        its own and knows HTML's entity table -- so the `xml`/`lxml-xml` builder
+        tokenizes here instead. Only XML's five predefined entities and numeric
+        character references are resolved; an undeclared entity stays literal
+        rather than being guessed at from HTML's table.
+        """
+
+        TOKEN = _re.compile(
+            r"<!--(?P<comment>.*?)-->"
+            r"|<!\[CDATA\[(?P<cdata>.*?)\]\]>"
+            r"|<\?(?P<pi>.*?)\?>"
+            r"|<!(?P<decl>[^>]*)>"
+            r"|</\s*(?P<end>[^\s>]+)\s*>"
+            r"|<(?P<start>[^\s/>!?]+)(?P<attrs>(?:\"[^\"]*\"|'[^']*'|[^>\"'])*?)"
+            r"(?P<slash>/?)>",
+            _re.S,
+        )
+        ATTR = _re.compile(
+            r"([^\s=/][^\s=]*)\s*(?:=\s*(\"[^\"]*\"|'[^']*'|[^\s\"'>]+))?", _re.S
+        )
+        REF = _re.compile(r"&([^;\s&<]+);")
+        PREDEFINED_ENTITIES = {
+            "lt": _LT,
+            "gt": _GT,
+            "amp": _AMP,
+            "apos": "'",
+            "quot": '"',
+        }
+
+        def __init__(self, **kwargs):
+            _Builder.__init__(self, **kwargs)
+            self._markup = []
+            # One namespace frame per open element, root included.
+            self._ns_stack = [{}]
+
+        def feed(self, markup):
+            self._markup.append(markup)
+
+        def close(self):
+            markup, self._markup = "".join(self._markup), []
+            self._parse(markup)
+            self._flush()
+
+        def _flush(self):
+            # XML has no whitespace collapsing: every character is content.
+            if self._data:
+                text = "".join(self._data)
+                self._data = []
+                if text:
+                    self._cur().append(self._string_container()(text))
+
+        def _reference(self, match):
+            body = match.group(1)
+            if body.startswith("#"):
+                try:
+                    if body[1:2] in ("x", "X"):
+                        return chr(int(body[2:], 16))
+                    return chr(int(body[1:]))
+                except (ValueError, OverflowError):
+                    return match.group(0)
+            return self.PREDEFINED_ENTITIES.get(body, match.group(0))
+
+        def _unescape(self, text):
+            if _AMP not in text:
+                return text
+            return self.REF.sub(self._reference, text)
+
+        def _parse(self, markup):
+            pos = 0
+            for m in self.TOKEN.finditer(markup):
+                if m.start() > pos:
+                    self._data.append(self._unescape(markup[pos : m.start()]))
+                pos = m.end()
+                if m.group("comment") is not None:
+                    self._flush()
+                    self._cur().append(
+                        self._string_container(Comment)(m.group("comment"))
+                    )
+                elif m.group("cdata") is not None:
+                    self._flush()
+                    self._cur().append(self._string_container(CData)(m.group("cdata")))
+                elif m.group("pi") is not None:
+                    self._flush()
+                    self._cur().append(
+                        self._string_container(XMLProcessingInstruction)(m.group("pi"))
+                    )
+                elif m.group("decl") is not None:
+                    self._flush()
+                    decl = m.group("decl")
+                    if decl.lower().startswith("doctype"):
+                        self._cur().append(
+                            self._string_container(Doctype)(decl[7:].strip())
+                        )
+                elif m.group("end") is not None:
+                    self._end(m.group("end"))
+                else:
+                    self._start(
+                        m.group("start"), m.group("attrs"), bool(m.group("slash"))
+                    )
+            if pos < len(markup):
+                self._data.append(self._unescape(markup[pos:]))
+
+        def _attributes(self, raw):
+            pairs = []
+            for m in self.ATTR.finditer(raw or ""):
+                value = m.group(2)
+                if value is None:
+                    value = ""
+                elif value[:1] in ('"', "'"):
+                    value = value[1:-1]
+                pairs.append((m.group(1), self._unescape(value)))
+            return pairs
+
+        def _start(self, rawname, rawattrs, self_closing):
+            self._flush()
+            pairs = self._attributes(rawattrs)
+            declared = dict(self._ns_stack[-1])
+            for key, value in pairs:
+                if key == "xmlns":
+                    declared[""] = value
+                elif key.startswith("xmlns:"):
+                    declared[key[6:]] = value
+            attrs = {}
+            for key, value in pairs:
+                if key == "xmlns":
+                    name = NamespacedAttribute("xmlns", None, value)
+                elif key.startswith("xmlns:"):
+                    name = NamespacedAttribute("xmlns", key[6:], value)
+                elif ":" in key:
+                    aprefix, _, alocal = key.partition(":")
+                    name = NamespacedAttribute(aprefix, alocal, declared.get(aprefix))
+                else:
+                    name = key
+                attrs[name] = value
+            prefix, _, local = rawname.rpartition(":")
+            prefix = prefix or None
+            t = self._tag_class()(
+                None,
+                self.builder,
+                local,
+                declared.get(prefix or ""),
+                prefix,
+                attrs=attrs,
+                namespaces=declared,
+            )
+            self._cur().append(t)
+            if not self_closing:
+                self.stack.append(t)
+                self._ns_stack.append(declared)
+
+        def _end(self, rawname):
+            self._flush()
+            prefix, _, local = rawname.rpartition(":")
+            prefix = prefix or None
+            for i in range(len(self.stack) - 1, 0, -1):
+                node = self.stack[i]
+                if node.name == local and node.prefix == prefix:
+                    del self.stack[i:]
+                    del self._ns_stack[i:]
+                    return
+
     def _strain(root, strainer):
         # parse_only pruning: keep the outermost nodes the strainer accepts and
         # drop everything else, the way bs4 narrows a parsed document.
@@ -3386,12 +3799,12 @@ def __vis_install_bs4__():
             self.element_classes = element_classes or {}
             # Resolve the TreeBuilder the way bs4 does: a class is instantiated
             # with whatever keyword arguments are left over, an instance is used
-            # as-is and makes those arguments a warning instead. This shim ships
-            # one builder, so a `features` request the registry cannot satisfy
-            # (`lxml`, `html5lib`, `xml`, `lxml-xml`, anything unknown) raises
+            # as-is and makes those arguments a warning instead. `features`
+            # selects the parse ENGINE -- `html.parser`, `lxml`, `html5lib`,
+            # `xml`/`lxml-xml` -- and a name the registry cannot satisfy raises
             # `FeatureNotFound` exactly as upstream does when the parser library
-            # is not installed -- silently substituting html.parser would hand
-            # back a different tree with no signal.
+            # is not installed, rather than silently handing back some other
+            # parser's tree.
             builder_class = HTMLParserTreeBuilder
             if isinstance(builder, type):
                 builder_class, builder = builder, None
@@ -3446,8 +3859,8 @@ def __vis_install_bs4__():
                     self.contains_replacement_characters,
                 ) = _decode_markup(markup, from_encoding, exclude_encodings)
             self.builder.initialize_soup(self)
-            b = _Builder(
-                builder=self.builder,
+            b = _parser_for(
+                self.builder,
                 on_duplicate_attribute=self.builder.parser_args[1].get(
                     "on_duplicate_attribute"
                 )
@@ -4146,10 +4559,55 @@ def __vis_install_bs4__():
     class ParserRejectedMarkup(Exception):
         """Raised by bs4 builders that refuse markup; kept for `except` clauses."""
 
-    class HTMLTreeBuilder(TreeBuilder):
+    class _EngineTreeBuilder(TreeBuilder):
+        """A TreeBuilder that owns a parse engine.
+
+        Every builder here differs only in its `PARSER_CLASS` and its feature
+        names, so the constructor arguments bs4 forwards to the parser and the
+        `feed()` that hands finished nodes to the soup live once, in this class.
+        """
+
+        PARSER_CLASS = None
+
+        def __init__(self, parser_args=None, parser_kwargs=None, **kwargs):
+            parser_args = parser_args or []
+            parser_kwargs = parser_kwargs or {}
+            # bs4 moves a few constructor arguments past the builder and into
+            # the parser it creates for each feed().
+            for _arg in ("on_duplicate_attribute",):
+                if _arg in kwargs:
+                    parser_kwargs[_arg] = kwargs.pop(_arg)
+            # bs4 turns entity conversion off and handles references itself.
+            parser_kwargs["convert_charrefs"] = False
+            self.parser_args = (parser_args, parser_kwargs)
+            TreeBuilder.__init__(self, **kwargs)
+
+        def feed(self, markup):
+            """Parse `markup` into the soup this builder is attached to.
+
+            bs4 drives BeautifulSoup's handle_* protocol from inside its
+            html.parser subclass. This shim's parsers build the nodes themselves,
+            so feeding hands each finished node to `object_was_parsed` --
+            the same entry point a custom builder would use.
+            """
+            _args, _kwargs = self.parser_args
+            parser = _parser_for(
+                self, on_duplicate_attribute=_kwargs.get("on_duplicate_attribute")
+            )
+            parser.feed(markup)
+            parser.close()
+            # A finished soup detaches its builder (`builder.soup = None`), so
+            # feeding one of those raises AttributeError here, exactly as bs4's
+            # parser does when it reaches for `self.soup.handle_starttag`.
+            soup = self.soup
+            for node in list(parser.root.contents):
+                node.parent = None
+                soup.object_was_parsed(node)
+
+    class HTMLTreeBuilder(_EngineTreeBuilder):
         """bs4's builder for HTML in general: which tags are void, which preserve
         whitespace, which attributes hold lists, and how a <meta> charset
-        declaration is rewritten. HTMLParserTreeBuilder specializes it.
+        declaration is rewritten. Each HTML parser specializes it.
         """
 
         empty_element_tags = _VOID
@@ -4209,7 +4667,7 @@ def __vis_install_bs4__():
             return bool(_set_up_substitutions(tag))
 
     class HTMLParserTreeBuilder(HTMLTreeBuilder):
-        """The one tree builder this shim has: stdlib html.parser.
+        """The stdlib html.parser builder: tokens in, tree out, nothing implied.
 
         `soup.builder` is how bs4 code asks which parser produced a tree and which
         tags that parser treats as void, whitespace-preserving or list-valued.
@@ -4221,42 +4679,74 @@ def __vis_install_bs4__():
         is_xml = False
         picklable = True
         TRACKS_LINE_NUMBERS = True
+        PARSER_CLASS = _Builder
 
-        def __init__(self, parser_args=None, parser_kwargs=None, **kwargs):
-            parser_args = parser_args or []
-            parser_kwargs = parser_kwargs or {}
-            # bs4 moves a few constructor arguments past the builder and into
-            # the parser it creates for each feed().
-            for _arg in ("on_duplicate_attribute",):
-                if _arg in kwargs:
-                    parser_kwargs[_arg] = kwargs.pop(_arg)
-            # bs4 turns entity conversion off and handles references itself.
-            parser_kwargs["convert_charrefs"] = False
-            self.parser_args = (parser_args, parser_kwargs)
-            TreeBuilder.__init__(self, **kwargs)
+    class _LXMLBuilder(_ScaffoldBuilder):
+        """libxml2's recovery: a fragment gets `<html>`/`<body>`, and `<head>`
+        only when something belongs in it."""
 
-        def feed(self, markup):
-            """Parse `markup` into the soup this builder is attached to.
+        ALWAYS_HEAD = False
 
-            bs4 drives BeautifulSoup's handle_* protocol from inside its
-            html.parser subclass. This shim's parser builds the nodes itself,
-            so feeding hands each finished node to `object_was_parsed` --
-            the same entry point a custom builder would use.
-            """
-            _args, _kwargs = self.parser_args
-            parser = _Builder(
-                builder=self,
-                on_duplicate_attribute=_kwargs.get("on_duplicate_attribute"),
-            )
-            parser.feed(markup)
-            parser.close()
-            # A finished soup detaches its builder (`builder.soup = None`), so
-            # feeding one of those raises AttributeError here, exactly as bs4's
-            # parser does when it reaches for `self.soup.handle_starttag`.
-            soup = self.soup
-            for node in list(parser.root.contents):
-                node.parent = None
-                soup.object_was_parsed(node)
+    class _HTML5Builder(_ScaffoldBuilder):
+        """html5lib's recovery: always a complete document, `<head>` included."""
+
+        ALWAYS_HEAD = True
+
+    class LXMLTreeBuilder(HTMLTreeBuilder):
+        """`features="lxml"`: HTML the way libxml2 recovers it.
+
+        There is no libxml2 in this sandbox, so the recovery is reimplemented
+        rather than bound: implied `<html>`/`<body>`, implied `</p>`, `</li>`,
+        `</dt>`, `</td>`, `</tr>` and friends. That is what makes the lxml tree
+        differ from html.parser's; it is not bit-for-bit libxml2.
+        """
+
+        NAME = "lxml"
+        ALTERNATE_NAMES = ["lxml-html"]
+        features = [NAME, "lxml-html", "html", "fast", "permissive"]
+        is_xml = False
+        picklable = True
+        TRACKS_LINE_NUMBERS = True
+        PARSER_CLASS = _LXMLBuilder
+
+    class HTML5TreeBuilder(HTMLTreeBuilder):
+        """`features="html5lib"`: the same implied structure, always a complete
+        document -- `<html><head></head><body></body></html>` even for empty
+        markup, as html5lib produces.
+        """
+
+        NAME = "html5lib"
+        ALTERNATE_NAMES = ["html5"]
+        features = [NAME, "html5", "html", "permissive"]
+        is_xml = False
+        picklable = True
+        TRACKS_LINE_NUMBERS = True
+        PARSER_CLASS = _HTML5Builder
+
+    class LXMLTreeBuilderForXML(_EngineTreeBuilder):
+        """`features="xml"` / `"lxml-xml"`: XML, not HTML dressed up as XML.
+
+        Names keep their case, `prefix:local` becomes `.prefix` + `.name` with
+        the declared `.namespace`, any childless element serializes as `<a/>`,
+        no tag is void, whitespace is content, and `class="a b"` stays one
+        string because XML has no multi-valued attributes.
+        """
+
+        NAME = "lxml-xml"
+        ALTERNATE_NAMES = ["xml"]
+        features = [NAME, "lxml", "xml", "fast", "permissive"]
+        is_xml = True
+        picklable = True
+        TRACKS_LINE_NUMBERS = False
+        PARSER_CLASS = _XMLBuilder
+        # XML has no void elements and no whitespace-collapsing containers.
+        empty_element_tags = None
+        DEFAULT_CDATA_LIST_ATTRIBUTES = {}
+        DEFAULT_PRESERVE_WHITESPACE_TAGS = set()
+        DEFAULT_STRING_CONTAINERS = {}
+
+        def can_be_empty_element(self, tag_name):
+            return True
 
     xml_encoding = "^\\s*<\\?.*encoding=['\"](.*?)['\"].*\\?>"
     html_meta = "<\\s*meta[^>]+charset\\s*=\\s*[\"']?([^>]*?)[ /;'\">]"
@@ -5190,6 +5680,9 @@ def __vis_install_bs4__():
     builder_mod.TreeBuilder = TreeBuilder
     builder_mod.TreeBuilderRegistry = TreeBuilderRegistry
     builder_mod.HTMLParserTreeBuilder = HTMLParserTreeBuilder
+    builder_mod.LXMLTreeBuilder = LXMLTreeBuilder
+    builder_mod.LXMLTreeBuilderForXML = LXMLTreeBuilderForXML
+    builder_mod.HTML5TreeBuilder = HTML5TreeBuilder
     builder_mod.HTMLTreeBuilder = HTMLTreeBuilder
     builder_mod.ParserRejectedMarkup = ParserRejectedMarkup
     builder_mod.HTML = "html"
@@ -5199,6 +5692,14 @@ def __vis_install_bs4__():
     builder_mod.STRICT = "strict"
     builder_mod.PERMISSIVE = "permissive"
     builder_mod.builder_registry = TreeBuilderRegistry()
+    # Registration order is lookup priority in reverse: the LAST builder
+    # registered for a feature is the one that feature resolves to. html.parser
+    # goes last so a bare `BeautifulSoup(markup)` and `features="html"` keep
+    # building the tree this sandbox has always built, and `lxml`/`html5lib`
+    # have to be asked for by name.
+    builder_mod.builder_registry.register(HTML5TreeBuilder)
+    builder_mod.builder_registry.register(LXMLTreeBuilderForXML)
+    builder_mod.builder_registry.register(LXMLTreeBuilder)
     builder_mod.builder_registry.register(HTMLParserTreeBuilder)
     builder_mod.SAXTreeBuilder = SAXTreeBuilder
     builder_mod.DetectsXMLParsedAsHTML = DetectsXMLParsedAsHTML
@@ -5218,6 +5719,9 @@ def __vis_install_bs4__():
         "TreeBuilder",
         "TreeBuilderRegistry",
         "HTMLParserTreeBuilder",
+        "LXMLTreeBuilderForXML",
+        "LXMLTreeBuilder",
+        "HTML5TreeBuilder",
     ]
 
     def register_treebuilders_from(module):
@@ -5240,8 +5744,8 @@ def __vis_install_bs4__():
         """Print out information helpful for debugging a parse."""
         print("Diagnostic running on vis bs4 shim " + mod.__version__)
         print("Python version " + sys.version)
-        print("Only the pure-Python html.parser tree builder exists in this sandbox;")
-        print("lxml and html5lib are not installed and cannot be selected.")
+        print("Tree builders in this sandbox, all pure Python:")
+        print("  html.parser, lxml, lxml-html, html5lib, xml/lxml-xml")
         if hasattr(data, "read"):
             data = data.read()
         print("Trying to parse your markup with html.parser")
@@ -5333,6 +5837,17 @@ def __vis_install_bs4__():
     hp_mod.HTMLParserTreeBuilder = HTMLParserTreeBuilder
     hp_mod.BeautifulSoupHTMLParser = _Builder
     builder_mod._htmlparser = hp_mod
+
+    lxml_mod = types.ModuleType("bs4.builder._lxml")
+    lxml_mod.LXMLTreeBuilder = LXMLTreeBuilder
+    lxml_mod.LXMLTreeBuilderForXML = LXMLTreeBuilderForXML
+    lxml_mod.__all__ = ["LXMLTreeBuilderForXML", "LXMLTreeBuilder"]
+    builder_mod._lxml = lxml_mod
+
+    html5_mod = types.ModuleType("bs4.builder._html5lib")
+    html5_mod.HTML5TreeBuilder = HTML5TreeBuilder
+    html5_mod.__all__ = ["HTML5TreeBuilder"]
+    builder_mod._html5lib = html5_mod
 
     # Every class above is a local of this installer, so left alone its
     # __module__/__qualname__ would read "__vis_install_bs4__.<locals>.Tag":
@@ -5560,6 +6075,8 @@ def __vis_install_bs4__():
     sys.modules["bs4"] = mod
     sys.modules["bs4.css"] = css_mod
     sys.modules["bs4.builder._htmlparser"] = hp_mod
+    sys.modules["bs4.builder._lxml"] = lxml_mod
+    sys.modules["bs4.builder._html5lib"] = html5_mod
     sys.modules["bs4.element"] = elem
     sys.modules["bs4.formatter"] = fmt_mod
     sys.modules["bs4.builder"] = builder_mod

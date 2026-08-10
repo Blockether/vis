@@ -141,32 +141,74 @@
 
 ;; Regression, issue #135: any `features=` value (lxml, html5lib, xml, or a
 ;; nonsense name) was silently honored with the html.parser builder, so callers
-;; got a differently shaped tree instead of the FeatureNotFound upstream raises.
+;; got a differently shaped tree instead of the parser they asked for.
 (defdescribe
   bs4-feature-request-test
+  (it "resolves every parser bs4 names to its own builder"
+      (with-python-context
+        (expect (true?
+                  (ev python-context
+                      (str
+                        "from bs4 import BeautifulSoup as B\n"
+                        "names = [B('<p>x</p>', f).builder.NAME\n"
+                        "         for f in ['html.parser', 'lxml', 'lxml-html', 'html5lib',\n"
+                        "                   'html5', 'xml', 'lxml-xml']]\n"
+                        "out = (names == ['html.parser', 'lxml', 'lxml', 'html5lib',\n"
+                        "                 'html5lib', 'lxml-xml', 'lxml-xml']\n"
+                        "       and B('<a/>', 'xml').is_xml and not B('<p>x</p>', 'lxml').is_xml)\n"
+                        "out"))))))
   (it
-    "raises FeatureNotFound for parsers this shim does not ship"
+    "lxml and html5lib imply the structure html.parser leaves flat"
     (with-python-context
       (expect
         (true?
           (ev
             python-context
             (str
-              "from bs4 import BeautifulSoup, FeatureNotFound\n" "def _refuses(feature):\n"
-              "    try:\n" "        BeautifulSoup('<p>x</p>', feature)\n"
-              "    except FeatureNotFound as exc:\n" "        return feature in str(exc)\n"
-              "    return False\n"
-              "all(_refuses(f) for f in ['lxml', 'html5lib', 'xml', 'lxml-xml', 'totally-bogus'])"))))))
-  (it "still builds with every feature the one html.parser builder registers"
+              "from bs4 import BeautifulSoup as B\n"
+              "out = (str(B('<p>a<p>b', 'lxml')) == '<html><body><p>a</p><p>b</p></body></html>'\n"
+              "       and str(B('<p>a<p>b', 'html5lib')) == '<html><head></head><body><p>a</p><p>b</p></body></html>'\n"
+              "       and str(B('<p>a<p>b', 'html.parser')) == '<p>a<p>b</p></p>'\n"
+              "       and str(B('<ul><li>a<li>b</ul>', 'lxml')) == '<html><body><ul><li>a</li><li>b</li></ul></body></html>'\n"
+              "       and str(B('<table><tr><td>1<td>2<tr><td>3</table>', 'lxml')) == '<html><body><table><tr><td>1</td><td>2</td></tr><tr><td>3</td></tr></table></body></html>'\n"
+              "       and str(B('<title>T</title><p>x', 'lxml')) == '<html><head><title>T</title></head><body><p>x</p></body></html>'\n"
+              "       and str(B('', 'html5lib')) == '<html><head></head><body></body></html>')\n"
+              "out"))))))
+  (it
+    "the xml parser keeps case, namespaces, empty elements and whitespace"
+    (with-python-context
+      (expect
+        (true?
+          (ev
+            python-context
+            (str
+              "from bs4 import BeautifulSoup as B\n"
+              "m = '<?xml version=\"1.0\"?><Root xmlns:f=\"urn:x\"><f:Item Id=\"1\">a &amp; b</f:Item><Empty/><Keep>  s  </Keep></Root>'\n"
+              "s = B(m, 'xml')\n" "item = s.find('Item')\n"
+              "out = (str(s) == m\n" "       and item.prefix == 'f' and item.namespace == 'urn:x'\n"
+              "       and item.get_text() == 'a & b'\n"
+              "       and s.find('Keep').get_text() == '  s  '\n"
+              "       and s.find('Empty').is_empty_element\n"
+              "       and B('<p class=\"a b\">x</p>', 'xml').p['class'] == 'a b'\n"
+              "       and B('<p class=\"a b\">x</p>', 'lxml').p['class'] == ['a', 'b'])\n"
+              "out"))))))
+  (it "still raises FeatureNotFound for a parser nobody ships"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str "from bs4 import BeautifulSoup, FeatureNotFound\n"
+                                "try:\n" "    BeautifulSoup('<p>x</p>', 'totally-bogus')\n"
+                                "    out = False\n" "except FeatureNotFound as exc:\n"
+                                "    out = 'totally-bogus' in str(exc)\n" "out"))))))
+  (it "leaves the default and the html.parser feature names on html.parser"
       (with-python-context
         (expect (true? (ev python-context
                            (str "from bs4 import BeautifulSoup\n" "import warnings\n"
                                 "with warnings.catch_warnings():\n"
                                 "    warnings.simplefilter('ignore')\n"
-                                "    _default = BeautifulSoup('<p>x</p>').get_text()\n"
-                                "_named = [BeautifulSoup('<p>x</p>', f).get_text()\n"
+                                "    _default = BeautifulSoup('<p>a<p>b').builder.NAME\n"
+                                "_named = [BeautifulSoup('<p>x</p>', f).builder.NAME\n"
                                 "          for f in ['html.parser', 'html', 'strict']]\n"
-                                "_default == 'x' and _named == ['x', 'x', 'x']")))))))
+                                "_default == 'html.parser' and _named == ['html.parser'] * 3")))))))
 
 (defdescribe
   bs4-filter-test
@@ -610,7 +652,7 @@
                   "and b.is_xml is False and b.TRACKS_LINE_NUMBERS is True "
                   "and b.can_be_empty_element('br') and not b.can_be_empty_element('p') "
                   "and builder_registry.lookup('html.parser') is HTMLParserTreeBuilder "
-                  "and builder_registry.lookup('lxml') is None "
+                  "and builder_registry.lookup('lxml').NAME == 'lxml' "
                   "and s.br.is_empty_element and not s.p.is_empty_element "
                   "and s.p.sourceline == 1 and s.hidden == 1 and s.p.hidden is False "
                   "and s.is_xml is False and s.p.namespace is None"))))))

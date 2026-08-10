@@ -207,15 +207,41 @@
            " (`--jq`, `--limit`, `head -c`) or redirect it to a file and read that."))))
 
 (defn- ->pos-long
-  "Coerce a GraalPy-crossed numeric option to a long (floats round), or throw a
-   typed error. nil passes through (caller supplies the default). Rejects
-   strings/other types with a clean message instead of a raw ClassCastException
-   surfacing as an opaque throwable envelope."
+  "Coerce a GraalPy-crossed numeric option to a NON-NEGATIVE WHOLE long, or throw a
+   typed error. nil passes through (caller supplies the default).
+
+   Rounding a fraction and clamping a negative are both silent MODE CHANGES, not
+   conveniences: `wait: 0.4` rounded to 0, which is the background start, and
+   `wait: -5` clamped to a one-second wait that reported a real command as timed
+   out. A number the caller cannot have meant is refused at the boundary, where the
+   message can still name the option."
   [x what]
-  (cond (nil? x) nil
-        (number? x) (long (Math/round (double x)))
-        :else (throw (ex-info (str what " must be a number, got " (pr-str x) ".")
-                              {:type ::bad-option :option what :value x}))))
+  (cond
+    (nil? x) nil
+
+    (number? x)
+    (let [d (double x)]
+      (cond
+        (or (Double/isNaN d) (Double/isInfinite d))
+        (throw (ex-info (str what " must be a finite number, got " (pr-str x) ".")
+                        {:type ::bad-option :option what :value x}))
+
+        (neg? d)
+        (throw (ex-info (str what " must not be negative, got " (pr-str x) ".")
+                        {:type ::bad-option :option what :value x}))
+
+        (not= d (Math/rint d))
+        (throw (ex-info (str what
+                             " must be a whole number, got "
+                             (pr-str x)
+                             " — a fraction rounds into a different mode (0 is the"
+                             " background start).")
+                        {:type ::bad-option :option what :value x}))
+
+        :else (long d)))
+
+    :else (throw (ex-info (str what " must be a number, got " (pr-str x) ".")
+                          {:type ::bad-option :option what :value x}))))
 
 (defn- one-line
   "Collapse a command to a single display line capped at `limit` chars."
@@ -535,7 +561,7 @@
   nil)
 
 ;; =============================================================================
-;; SYNC run — Python sandbox: `await shell(["ls"])`
+;; SYNC run — Python sandbox: `await shell({"command": "ls"})`
 ;; =============================================================================
 
 (defn- clamp-timeout-secs
@@ -790,7 +816,7 @@
 
 
 ;; =============================================================================
-;; BACKGROUND — Python sandbox: `await shell(["npm run dev"], {"wait": 0, "id": "dev"})`
+;; BACKGROUND — Python sandbox: `await shell({"command": "npm run dev", "wait": 0, "id": "dev"})`
 ;; =============================================================================
 
 (defonce ^:private bg-procs
@@ -815,6 +841,33 @@
   (do (try (pty-bridge/sweep-orphans!) (catch Throwable _ nil)) true))
 
 (defn- bg-entry [session id] (get-in @bg-procs [(str session) (str id)]))
+
+(defn- env-origin
+  "The TRUST ORIGIN of the caller reaching the shell family.
+
+   A handle crosses a trust boundary the moment it outlives the spawn: the jail is
+   consulted only when a process is created, while `logs`/`type`/`stop` and a
+   re-issue reach an existing process by id alone. Without an origin a JAILED
+   extension in the same session could read a trusted shell's output, type at its
+   PTY or kill it simply by naming the id. Every entry is stamped with the origin
+   that created it and every later op must present the same one."
+  [env]
+  (str (or (:shell-origin env) "tool")))
+
+(defn- authorize-origin!
+  "Refuse to act on a handle created by a DIFFERENT trust origin. An unknown id is
+   not this function's business — the op's own \"no such shell\" error says that
+   better."
+  [env session id]
+  (when-let [e (bg-entry session (str id))]
+    (let [want (env-origin env)
+          have (str (or (:origin e) want))]
+      (when-not (= want have)
+        (throw (ex-info (str "Shell '" id "' was started by a different trust origin ("
+                             have ", not " want
+                             ") and cannot be read, typed at, stopped or re-issued from"
+                             " here. Start your own shell under your own id.")
+                        {:type ::foreign-shell :id id :origin have :caller want}))))))
 
 (defn- bg-live?
   "True only while `id` still holds a RUNNING process in this session. An entry
@@ -865,15 +918,22 @@
    duplicate start resolves to `already_running` instead of a second dev server;
    otherwise the program name is suffixed until no LIVE shell holds it, so an auto
    id never hijacks an unrelated running process."
-  [session command]
+  [env session command]
   (let
-    [wanted
+    [origin
+     (env-origin env)
+
+     wanted
      (str command)
 
+     ;; Only a shell THIS origin started can be resolved to; a live shell of
+     ;; another origin is skipped by the suffix loop like any other taken id.
      running-same
      (->> (get @bg-procs (str session))
           (filter (fn [[id entry]]
-                    (and (= wanted (:command entry)) (bg-live? session id))))
+                    (and (= wanted (:command entry))
+                         (= origin (str (or (:origin entry) origin)))
+                         (bg-live? session id))))
           ffirst)
 
      base
@@ -1150,6 +1210,7 @@
          :command script
          :script script
          :dir (.getPath dir)
+         :origin (env-origin env)
          :started-at t0})
       (resources/register! session
                            {:id id
@@ -1235,8 +1296,7 @@
     #_{:clj-kondo/ignore [:locking-suspicious-lock]}
     (locking (bg-lifecycle-lock session id)
       (let
-        [live (when-let [existing (bg-entry session id)]
-                (when ((:alive? (:proc existing))) existing))]
+        [live (reissue-live-entry env session id command (get opts "cwd"))]
         (if live
           (extension/success
             {:result (assoc (bg-core "background" id live)
@@ -1353,6 +1413,38 @@
   (when-let [e (bg-entry session id)]
     (when (and (:proc e) ((:alive? (:proc e)))) e)))
 
+(defn- canonical-dir
+  [d]
+  (when-let [d (some-> d str not-empty)]
+    (try (.getCanonicalPath (io/file d)) (catch Throwable _ d))))
+
+(defn- reissue-live-entry
+  "The live entry `id` may be RE-ATTACHED to, or nil when the id is free.
+
+   A re-issue is how a caller picks a shell it already started back up, so it is a
+   success — but ONLY when it names the same work. Identity is (id, command, cwd):
+   handing a live id a DIFFERENT command, or the same command with a different
+   `cwd`, used to answer success for a process that never ran what was asked, in a
+   directory nobody requested. That is a silent no-op, so it is refused."
+  [env session id command cwd]
+  (when-let [e (live-bg-entry session id)]
+    (authorize-origin! env session id)
+    (let
+      [want-cmd (some-> command str not-empty)
+       want-dir (canonical-dir cwd)
+       have-dir (canonical-dir (:dir e))
+       mismatch (cond (and want-cmd (not= want-cmd (str (:command e))))
+                      (str "it is running a different command (" (one-line (:command e) 60) ")")
+
+                      (and want-dir have-dir (not= want-dir have-dir))
+                      (str "it is running in a different directory (" have-dir ")"))]
+      (when mismatch
+        (throw (ex-info (str "Shell '" id "' is already running and " mismatch
+                             " — nothing was started. Stop it first with sh.stop(),"
+                             " or start this command under a different id.")
+                        {:type ::id-in-use :id id})))
+      e)))
+
 (defn- live-run-result
   "A named run whose shell is ALREADY live: the same run shape, answering with the
    process that exists instead of spawning a second copy of it. Re-issuing an id is
@@ -1369,6 +1461,7 @@
                               "exit" nil
                               "duration_ms" 0
                               "timed_out" true
+                              "already_running" true
                               "note" (str "Shell '" id
                                           "' was ALREADY running — nothing was restarted. Read it"
                                           " with sh.logs(offset=0) and stop it with sh.stop().")})
@@ -1431,7 +1524,7 @@
      (or (some-> (or (get opts "id") (get opts :id))
                  str
                  not-empty)
-         (auto-bg-id session command))
+         (auto-bg-id env session command))
 
      ;; The log is a FILE, opened BEFORE the spawn so not one byte of a fast
      ;; command's output can be printed before there is somewhere to keep it.
@@ -1483,6 +1576,7 @@
         :command command
         :script command
         :dir nil
+        :origin (env-origin env)
         :started-at t0})
 
      r
@@ -1591,6 +1685,7 @@
       ^java.io.File file
       (shell-log/log-file session id)]
 
+     (authorize-origin! env session id)
      (when-not (or entry (.isFile file))
        (throw (ex-info (str "No shell '" id
                             "' in this session — every run and every background start"
@@ -1677,11 +1772,12 @@
       (let [e (first (remove nil? (map #(get opts %) ["is_enter" :is_enter "enter" :enter])))]
         (if (nil? e) true (boolean e)))]
 
+     (authorize-origin! env session id)
      (when-not entry
        (throw (ex-info (str "No background shell '"
                             id
                             "' in this session — start one with"
-                            " await shell([\"…\"], {\"wait\": 0, \"id\": id});"
+                            " await shell({\"command\": \"…\", \"wait\": 0, \"id\": id});"
                             " live ids are listed in resources.")
                        {:type ::unknown-bg-id :id id})))
      (when-not ((:alive? (:proc entry)))
@@ -1746,7 +1842,9 @@
      ;; The stop callback re-enters this monitor (JVM monitors are reentrant).
      [entry r]
      #_{:clj-kondo/ignore [:locking-suspicious-lock]}
-     (locking (bg-lifecycle-lock session id) [(bg-entry session id) (resources/stop! session id)])]
+     (locking (bg-lifecycle-lock session id)
+       (authorize-origin! env session id)
+       [(bg-entry session id) (resources/stop! session id)])]
 
     (when (= :unknown (:result r))
       (throw (ex-info (str "No background shell '" id
@@ -1872,12 +1970,12 @@
              (:session-id env)
 
              run-id
-             (or id (auto-bg-id session cmd))
+             (or id (auto-bg-id env session cmd))
 
              opts
              (assoc opts "id" run-id)]
 
-            (if-let [live (live-bg-entry session run-id)]
+            (if-let [live (reissue-live-entry env session run-id cmd (opt opts :cwd))]
               (live-run-result run-id live)
               (if (and wait (zero? (long wait)))
                 (run-of-background (shell-bg-impl env run-id cmd opts))
@@ -1894,7 +1992,7 @@
       (do (reject-text)
           (shell-bg-impl env
                          (if (and (nil? id) valid-command)
-                           (auto-bg-id (:session-id env) valid-command)
+                           (auto-bg-id env (:session-id env) valid-command)
                            (need-id))
                          valid-command
                          opts))
