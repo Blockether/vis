@@ -11466,8 +11466,10 @@
     (extension/discover-extensions!)
     ;; Project-local Python extensions (`.vis/extensions/*.py`) load after
     ;; classpath discovery so they land in the same registry walk below.
-    ;; Idempotent by content fingerprint — a no-op when nothing changed.
-    (python-extensions/load-python-extensions!)
+    ;; Load-once, never adopt: this runs on every env cache miss, every recycle
+    ;; and every `sub_loop` child env, and none of those is a human act. Only
+    ;; this process's own start and `/reload` may pick an edit up.
+    (python-extensions/ensure-python-extensions-loaded!)
     (extension/register-extensions! env install-extension!)
     env))
 

@@ -1523,8 +1523,12 @@
    fingerprint gate sees an unchanged file. Change listeners are notified so the
    other live surfaces pick the fresh rows up as well.
 
-   Returns nil when the extension is gone or the rebuild fails; the caller then
-   reports the original failure."
+   The rebuild runs the bytes THIS PROCESS LOADED and no others: healing is the
+   one re-execution with no human act behind it, so a file edited since the load
+   is refused and waits for `/reload`.
+
+   Returns nil when the extension is gone, its file changed, or the rebuild
+   fails; the caller then reports the original failure."
   [ext-name sym ^Context dead-ctx]
   (try
     (when-let
@@ -1535,15 +1539,29 @@
         [entry
          (if-not (or (identical? dead-ctx (:context entry)) (context-dead? (:context entry)))
            entry
-           (let [rebuilt (load-file! (io/file path))]
-             (swap! loaded assoc path (dissoc rebuilt :path))
-             (try (.close ^Context dead-ctx true) (catch Throwable _))
-             (tel/log! {:level :info
-                        :id ::context-rebuilt
-                        :data {:extension ext-name :file path :symbol (str sym)}
-                        :msg (str "Rebuilt torn-down context for Python extension '" ext-name "'")})
-             (notify-change-listeners! {:extensions (vec (keep :ext (vals @loaded))) :removed []})
-             rebuilt))]
+           ;; The rebuild re-executes the file from DISK, and disk may have moved
+           ;; since this process loaded it — a heal is not a back door for bytes
+           ;; nobody reloaded. A process serves exactly what its own start or the
+           ;; last `/reload` loaded, so an edited file heals into nothing and the
+           ;; caller reports the original failure until the next `/reload`.
+           (if-not (= (:sha entry) (extension/sha256-hex (slurp (io/file path))))
+             (do (tel/log! {:level :warn
+                            :id ::heal-refused
+                            :data {:extension ext-name :file path}
+                            :msg (str "Python extension '" ext-name
+                                      "' changed on disk since it was loaded - not running the"
+                                      " new version; run /reload to pick it up")})
+                 nil)
+             (let [rebuilt (load-file! (io/file path))]
+               (swap! loaded assoc path (dissoc rebuilt :path))
+               (try (.close ^Context dead-ctx true) (catch Throwable _))
+               (tel/log! {:level :info
+                          :id ::context-rebuilt
+                          :data {:extension ext-name :file path :symbol (str sym)}
+                          :msg
+                          (str "Rebuilt torn-down context for Python extension '" ext-name "'")})
+               (notify-change-listeners! {:extensions (vec (keep :ext (vals @loaded))) :removed []})
+               rebuilt)))]
         (some (fn [e]
                 (when (= sym (:ext.symbol/symbol e)) (:ext.symbol/fn e)))
               (get-in (:ext entry) [:ext/engine :ext.engine/symbols]))))
@@ -1658,6 +1676,25 @@
            (notify-change-listeners! {:extensions (vec (keep :ext entries))
                                       :removed (vec (sort (remove new-names old-names)))}))
          {:loaded (count @loaded) :failed (count @failures) :changed? true})))))
+
+(defn ensure-python-extensions-loaded!
+  "Load the Python extension dirs only when this process has not loaded them
+   yet, and NEVER pick an edit up.
+
+   The freshness contract: a running process serves exactly the extension bytes
+   its own start loaded, or the ones the last `/reload` loaded. Editing a `.py`
+   on disk changes nothing until a human reloads. Every implicit load path — a
+   session env cache miss, an env recycle, a `sub_loop` child env — goes through
+   HERE rather than `load-python-extensions!`, whose content fingerprint would
+   otherwise re-execute an edited file's top level at the next cache miss, with
+   no human act anywhere in the chain.
+
+   Same return shape as `load-python-extensions!`."
+  ([] (ensure-python-extensions-loaded! nil))
+  ([opts]
+   (if (nil? @last-fingerprint)
+     (load-python-extensions! opts)
+     {:loaded (count @loaded) :failed (count @failures) :changed? false})))
 
 (defn reload-python-extensions!
   "Force a full reload of every Python extension (even when no file

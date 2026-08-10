@@ -2308,3 +2308,68 @@ vis.extension(
                                   (expect (nil? (:stale? status)))
                                   (expect (true? (:is-hidden (:provider/preset p))))
                                   (expect (nil? (:hidden? (:provider/preset p)))))))))
+
+;; =============================================================================
+;; Freshness — only a process start and `/reload` put new bytes live
+;; =============================================================================
+
+(defdescribe
+  extension-freshness-test
+  (it "an implicit load never adopts an edited file - only /reload does"
+      ;; `ensure-python-extensions-loaded!` is what a session env cache miss, an
+      ;; env recycle and a `sub_loop` child env call. None of them is a human
+      ;; act, so none of them may execute bytes that appeared after the last
+      ;; load: the running process keeps serving the version it admitted.
+      (with-fresh-loaded
+        {"counter.py" counter-py}
+        (fn [_ {:keys [ext-dir]}]
+          (write-ext! ext-dir
+                      "counter.py"
+                      (str/replace counter-py "Counter fixture extension." "Counter v2."))
+          (let [result (pyx/ensure-python-extensions-loaded! {:dirs [(str ext-dir)]})]
+            (expect (false? (:changed? result)))
+            (expect (= 1 (:loaded result)))
+            (expect (= "Counter fixture extension." (:ext/description (registered "counter")))))
+          (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
+          (expect (= "Counter v2." (:ext/description (registered "counter")))))))
+  (it "a process that has loaded nothing yet loads what is on disk"
+      (let
+        [ext-dir
+         (temp-dir)
+
+         store
+         (ps/db-create-connection! :memory)]
+
+        (write-ext! ext-dir "counter.py" counter-py)
+        (reset! live-load nil)
+        (binding [extension/*current-environment* {:db-info store}]
+          (try
+            ;; a freshly started process: nothing loaded here yet
+            (reset! @#'pyx/last-fingerprint nil)
+            (let [result (pyx/ensure-python-extensions-loaded! {:dirs [(str ext-dir)]})]
+              (expect (true? (:changed? result)))
+              (expect (= "Counter fixture extension." (:ext/description (registered "counter")))))
+            (finally (reset! live-load nil)
+                     (pyx/reload-python-extensions! {:dirs []})
+                     (ps/db-dispose-connection! store))))))
+  (it "a torn-down context never heals into edited bytes"
+      ;; The heal path re-executes the file from disk with no human act in the
+      ;; chain, so it may only re-run the bytes this process loaded.
+      (with-fresh-loaded
+        {"rebuilder.py" rebuilder-py}
+        (fn [_ {:keys [ext-dir]}]
+          (let
+            [captured
+             (symbol-fn (registered "rebuilder") 'ping)
+
+             ^Context dead
+             (:context (first (vals @@#'pyx/loaded)))]
+
+            (write-ext! ext-dir "rebuilder.py" (str/replace rebuilder-py "'pong'" "'edited'"))
+            (.close dead true)
+            (let [res (captured)]
+              (expect (not= "edited" (:result res)))
+              (expect (not= "pong" (:result res))))
+            (expect (identical? dead (:context (first (vals @@#'pyx/loaded)))))
+            (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
+            (expect (= "edited" (:result ((symbol-fn (registered "rebuilder") 'ping))))))))))

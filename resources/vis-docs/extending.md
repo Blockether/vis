@@ -794,8 +794,11 @@ per-turn callables (`prompt`, `activation`) fast; tools may take their time.
 - Changes propagate to LIVE sessions immediately: new/changed slash
   commands dispatch right away and reloaded tools rebind into the sandbox
   — no restart, no new session.
-- Startup is fingerprint-checked: unchanged files are a no-op; changed files
-  reload automatically on the next Vis start.
+- A process start and `/reload` are the ONLY things that pick an edit up: a
+  running Vis keeps serving the files its own start (or the last `/reload`)
+  loaded, so editing a `.py` — or anything else editing one — changes nothing
+  until you reload. Unchanged files are fingerprint-checked, so reloading
+  untouched extensions is a no-op.
 - `vis-agent doctor` lists every loaded file and every load failure with its
   Python error.
 
