@@ -204,7 +204,7 @@ export interface ProviderFleet {
    */
   setErr: (text: string | null, providerId?: string | null) => void;
   setNote: (text: string | null, providerId?: string | null) => void;
-  /** `auth:<id>` · `logout:<id>` · `status:<id>` · `auth:complete` · `reload`. */
+  /** `auth:<id>` · `remove:<id>` · `status:<id>` · `auth:complete` · `reload`. */
   pending: string | null;
   setPending: (value: string | null) => void;
   reload: (signal?: AbortSignal, opts?: { force?: boolean }) => Promise<void>;
@@ -218,8 +218,7 @@ export interface ProviderAuth extends ProviderFleet {
   apiKey: string;
   setApiKey: (value: string) => void;
   signIn: (provider: RouterProvider) => Promise<void>;
-  signOut: (provider: RouterProvider) => Promise<void>;
-  recheck: (provider: RouterProvider) => Promise<void>;
+  recheck: (providerId: string) => Promise<void>;
   finishPkce: () => Promise<void>;
   finishApiKey: () => Promise<void>;
   cancelFlow: () => Promise<void>;
@@ -405,60 +404,34 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
   );
 
   /**
-   * Clear the provider's credentials ON THE DAEMON. Nothing is deleted here —
-   * the gateway owns the credential file — and the forced reload makes the
-   * next paint show the real post-logout verdict rather than a guess.
+   * Re-probe ONE provider's auth verdict and quota, live and SILENTLY.
+   *
+   * A card runs this the moment it opens, so what the panel shows is what the
+   * provider says NOW rather than whatever the cached fleet answer carried.
+   * Nothing here was asked for by a tap, so it takes an id (a row identity that
+   * survives every reload) and posts no note — only a failure is worth saying.
    */
-  const signOut = useCallback(
-    async (provider: RouterProvider) => {
-      setPending(`logout:${provider.id}`);
-      setErr(null);
-      setNote(null);
-      try {
-        const verdict = await client.logoutProvider(provider.id);
-        if (verdict.status === 'error') {
-          setErr(verdict.message ?? 'Sign-out failed.', provider.id);
-        } else {
-          setNote(`Signed out of ${provider.label}.`, provider.id);
-        }
-        await reload(undefined, { force: true });
-      } catch (e) {
-        setErr((e as Error).message, provider.id);
-      } finally {
-        setPending(null);
-      }
-    },
-    [client, reload],
-  );
-
-  /** Re-probe ONE provider's auth + limits, live, without re-probing the fleet. */
   const recheck = useCallback(
-    async (provider: RouterProvider) => {
-      setPending(`status:${provider.id}`);
-      setErr(null);
-      setNote(null);
+    async (providerId: string) => {
+      setPending(`status:${providerId}`);
       try {
         const [status, limits] = await Promise.all([
-          client.providerStatus(provider.id),
-          client.providerLimits(provider.id).catch(() => null),
+          client.providerStatus(providerId),
+          client.providerLimits(providerId).catch(() => null),
         ]);
         setProviders(
           (rows) =>
             rows?.map((row) =>
-              row.id === provider.id ? { ...row, status, ...(limits ? { limits } : {}) } : row,
+              row.id === providerId ? { ...row, status, ...(limits ? { limits } : {}) } : row,
             ) ?? rows,
         );
-        setNote(
-          `${provider.label}: ${status.is_authenticated ? 'signed in' : 'signed out'}.`,
-          provider.id,
-        );
       } catch (e) {
-        setErr((e as Error).message, provider.id);
+        setErr((e as Error).message, providerId);
       } finally {
         setPending(null);
       }
     },
-    [client],
+    [client, setErr, setPending, setProviders],
   );
 
   const finishPkce = useCallback(async () => {
@@ -607,7 +580,6 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
     apiKey,
     setApiKey,
     signIn,
-    signOut,
     recheck,
     finishPkce,
     finishApiKey,
@@ -763,57 +735,33 @@ export function ProviderNotice({
 }
 
 /**
- * Sign-out, two-step. It deletes a credential ON THE DAEMON that every client
- * of that gateway shares, so a stray tap on a phone must not be able to drop
- * it — the first press only arms the confirmation.
+ * What this account has LEFT, and never a button.
+ *
+ * Auth and quota are one question — "can this provider still run a turn" — so
+ * opening a card ASKS it live instead of offering a re-check to tap. The line is
+ * always painted: a provider that reports no window says so, because a missing
+ * line reads as a screen that forgot to ask.
  */
-export function ProviderSignOutButton({
+export function ProviderQuota({
   auth,
   provider,
-  className = '',
 }: {
   auth: ProviderAuth;
   provider: RouterProvider;
-  className?: string;
 }) {
-  const [isConfirming, setIsConfirming] = useState(false);
-  const busy = auth.pending === `logout:${provider.id}`;
+  const { recheck } = auth;
+  const providerId = provider.id;
+  const isProbing = auth.pending === `status:${providerId}`;
+  const line = providerLimitsLine(provider);
 
-  if (!isConfirming) {
-    return (
-      <Button
-        variant="secondary"
-        className={className}
-        disabled={busy}
-        onClick={() => setIsConfirming(true)}
-      >
-        {busy ? 'Signing out…' : 'Sign out'}
-      </Button>
-    );
-  }
+  useEffect(() => {
+    void recheck(providerId);
+  }, [providerId, recheck]);
 
   return (
-    <span className={`flex min-w-0 gap-2 ${className}`}>
-      <Button
-        variant="danger"
-        className="min-w-0 flex-1"
-        disabled={busy}
-        onClick={() => {
-          setIsConfirming(false);
-          void auth.signOut(provider);
-        }}
-      >
-        {busy ? 'Signing out…' : 'Yes, sign out'}
-      </Button>
-      <Button
-        variant="secondary"
-        className="min-w-0 flex-1"
-        disabled={busy}
-        onClick={() => setIsConfirming(false)}
-      >
-        Cancel
-      </Button>
-    </span>
+    <p className="break-words font-mono text-meta text-dialog-hint">
+      {line ?? (isProbing ? 'Checking limits…' : 'This provider reports no usage limits.')}
+    </p>
   );
 }
 
@@ -975,9 +923,12 @@ export function AddProviderPanel({
 }
 
 /**
- * Remove, two-step. Unlike sign-out this also deletes the provider from the
- * machine's config — every client of that gateway loses it — so the first press
- * only arms the confirmation.
+ * Remove, two-step, and the ONE way an account leaves a machine.
+ *
+ * The daemon runs the provider's logout AND drops its config entry, so this is
+ * sign-out too — a separate "Sign out" button offered the same destruction under
+ * a gentler word. Every client of that gateway loses the provider, which is why
+ * a stray tap on a phone cannot do it: the first press only arms the second.
  */
 export function ProviderRemoveButton({
   auth,
@@ -993,7 +944,13 @@ export function ProviderRemoveButton({
 
   if (!isConfirming) {
     return (
-      <Button variant="secondary" className={className} disabled={busy} onClick={() => setIsConfirming(true)}>
+      <Button
+        variant="secondary"
+        className={className}
+        disabled={busy}
+        aria-label={`Sign out of ${provider.label} and remove it from this machine`}
+        onClick={() => setIsConfirming(true)}
+      >
         {busy ? 'Removing…' : 'Remove'}
       </Button>
     );
@@ -1010,7 +967,7 @@ export function ProviderRemoveButton({
           void auth.removeProvider(provider);
         }}
       >
-        {busy ? 'Removing…' : 'Yes, remove'}
+        {busy ? 'Removing…' : 'Yes, sign out and remove'}
       </Button>
       <Button variant="secondary" className="min-w-0 flex-1" disabled={busy} onClick={() => setIsConfirming(false)}>
         Cancel

@@ -1611,15 +1611,6 @@ export class GatewayClient {
     );
   }
 
-  async logoutProvider(providerId: string): Promise<AuthVerdict> {
-    const verdict = await this.request<AuthVerdict>(
-      "POST",
-      `/v1/providers/${encodeURIComponent(providerId)}/logout`,
-    );
-    this.invalidateRouter();
-    return verdict;
-  }
-
   /**
    * Re-probe ONE provider's auth state live (`GET /v1/providers/:id/status`).
    *

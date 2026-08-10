@@ -1,12 +1,23 @@
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
-import type { AuthFlow, ProviderPreset, RouterProvider } from '../lib/types';
+import { afterEach, describe, expect, it } from 'vitest';
+import type {
+  AuthFlow,
+  ProviderLimitRow,
+  ProviderPreset,
+  RouterProvider,
+} from '../lib/types';
 import {
   AddProviderPanel,
   ProviderNotice,
+  ProviderQuota,
+  ProviderRemoveButton,
   unscopedMessage,
   type ProviderAuth,
 } from './ProviderAuth';
+
+afterEach(cleanup);
 
 const preset = (id: string): ProviderPreset => ({
   id,
@@ -144,5 +155,63 @@ describe('unscopedMessage', () => {
     const message = { text: 'Removed OLLAMA.', providerId: 'ollama' };
     expect(unscopedMessage(message, rows)).toBe(message);
     expect(unscopedMessage(message, null)).toBe(message);
+  });
+});
+
+// Reported: the provider card carried four account buttons — "Sign in again",
+// "Check status", "Sign out" and "Remove" — where sign-out and remove destroyed
+// the same credential, and the quota only refreshed if the user tapped for it.
+describe('ProviderQuota', () => {
+  const reporting = (rows: ProviderLimitRow[]): RouterProvider => ({
+    ...provider('github-copilot'),
+    limits: { dynamic: { limits: rows } },
+  });
+  const quiet = (): ProviderAuth => state({ recheck: async () => {} });
+
+  it('asks the gateway for the live quota the moment the card opens', () => {
+    const asked: string[] = [];
+    render(
+      <ProviderQuota
+        auth={state({
+          recheck: async (providerId: string) => {
+            asked.push(providerId);
+          },
+        })}
+        provider={provider('github-copilot')}
+      />,
+    );
+    expect(asked).toEqual(['github-copilot']);
+    // The whole point of dropping "Check status": the answer costs no tap.
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  it('reports every window the provider sent', () => {
+    render(
+      <ProviderQuota
+        auth={quiet()}
+        provider={reporting([
+          { label: 'Chat', is_unlimited: true },
+          { label: 'Completions', is_unlimited: true },
+        ])}
+      />,
+    );
+    expect(screen.getByText('Chat unlimited · Completions unlimited')).toBeTruthy();
+  });
+
+  it('says so out loud when a provider reports no window at all', () => {
+    render(<ProviderQuota auth={quiet()} provider={provider('anthropic')} />);
+    expect(screen.getByText('This provider reports no usage limits.')).toBeTruthy();
+  });
+});
+
+describe('ProviderRemoveButton', () => {
+  it('is the one destructive action, and names the sign-out it performs', () => {
+    render(<ProviderRemoveButton auth={state({})} provider={provider('anthropic')} />);
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Sign out of ANTHROPIC and remove it from this machine',
+      }),
+    );
+    expect(screen.getByText('Yes, sign out and remove')).toBeTruthy();
   });
 });

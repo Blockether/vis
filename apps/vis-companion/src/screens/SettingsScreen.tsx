@@ -92,13 +92,12 @@ import {
 import { onWake } from "../lib/wake";
 import {
   ProviderNotice,
-  ProviderSignOutButton,
+  ProviderQuota,
   ProviderRemoveButton,
   AddProviderPanel,
   defaultFirstProviders,
   isProviderAuthed,
   preferredModelFirst,
-  providerLimitsLine,
   providerStatusDot,
   providerStatusLine,
   unscopedMessage,
@@ -1374,8 +1373,8 @@ export function SettingsDialog({
 }
 
 /**
- * Provider accounts ON THIS GATEWAY: live auth status, sign-in, a manual
- * re-check, and sign-out — the whole terminal-free equivalent of
+ * Provider accounts ON THIS GATEWAY: live auth status, the quota each account
+ * has left, sign-in, and removal — the whole terminal-free equivalent of
  * `vis-agent auth login/logout/status`.
  *
  * Every credential lives on the daemon: this panel starts flows, polls them,
@@ -1473,7 +1472,6 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
         {defaultFirstProviders(providers ?? []).map((provider) => {
           const dot = providerStatusDot(provider);
           const authed = isProviderAuthed(provider);
-          const limits = providerLimitsLine(provider);
           const open = expanded === provider.id;
           const orderedModels = preferredModelFirst(
             provider.models,
@@ -1532,11 +1530,7 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
 
               {open && (
                 <div className="space-y-3 border-t border-dialog-edge p-3">
-                  {limits && (
-                    <p className="break-words font-mono text-meta text-dialog-hint">
-                      {limits}
-                    </p>
-                  )}
+                  <ProviderQuota auth={auth} provider={provider} />
                   <p className="break-words font-mono text-chip text-dialog-hint">
                     {provider.id} · {provider.models.length}{" "}
                     {provider.models.length === 1 ? "model" : "models"}{" "}
@@ -1618,34 +1612,16 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
                   </div>
 
                   <div className="flex flex-col gap-2 sm:flex-row">
-                    <Button
-                      className="flex-1"
-                      variant={authed ? "secondary" : "primary"}
-                      disabled={pending === `auth:${provider.id}`}
-                      onClick={() => void auth.signIn(provider)}
-                    >
-                      {pending === `auth:${provider.id}`
-                        ? "Starting…"
-                        : authed
-                          ? "Sign in again"
-                          : "Sign in"}
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      className="flex-1"
-                      disabled={pending === `status:${provider.id}`}
-                      onClick={() => void auth.recheck(provider)}
-                    >
-                      {pending === `status:${provider.id}`
-                        ? "Checking…"
-                        : "Check status"}
-                    </Button>
-                    {authed && (
-                      <ProviderSignOutButton
-                        auth={auth}
-                        provider={provider}
+                    {!authed && (
+                      <Button
                         className="flex-1"
-                      />
+                        disabled={pending === `auth:${provider.id}`}
+                        onClick={() => void auth.signIn(provider)}
+                      >
+                        {pending === `auth:${provider.id}`
+                          ? "Starting…"
+                          : "Sign in"}
+                      </Button>
                     )}
                     <ProviderRemoveButton
                       auth={auth}
