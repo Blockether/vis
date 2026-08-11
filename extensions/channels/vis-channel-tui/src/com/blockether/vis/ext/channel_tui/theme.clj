@@ -59,9 +59,11 @@
 (def ^:dynamic dialog-bg
   "The paper the CURRENT surface paints on. Dynamic because a magit-style BAND is
    the same chrome on DIFFERENT paper: `transient/paint-layout!` and
-   `human-input/paint!` bind it to `band-bg` for the rows they own, so every
-   painter underneath them — rules, labels, toggles, hint bar, `field-resting-bg`
-   — follows in ONE place instead of taking a colour argument each."
+   `human-input/paint!` bind it to `terminal-bg` for the rows they own — a band
+   lies ON the live transcript and takes no tint, so it is its BORDER that says
+   where it is — and every painter underneath them (rules, labels, toggles, hint
+   bar, `field-resting-bg`) follows in ONE place instead of taking a colour
+   argument each."
   (rgb :dialog-bg))
 
 (def dialog-fg (rgb :dialog-fg))
@@ -292,17 +294,6 @@
    seen recedes correctly too."
   []
   (mix-color input-field-bg dialog-bg 0.6))
-
-(defn band-bg
-  "Paper an in-session BAND sits on — a magit transient, the C-x hydra, the
-   human-input form. The terminal's own paper carrying one step of the theme's
-   ink, so the band reads as a surface laid OVER the transcript.
-
-   Derived like `zebra-bg` rather than taken from `dialog-bg`: several themes
-   give `dialog-bg` the very same value as `terminal-bg` (the bundled light one
-   does), and a band painted on that was a dialog with no edges at all."
-  []
-  (mix-color terminal-bg text-fg 0.1))
 
 (defn table-head-bg
   "Background for a table's HEADER row: `bg` driven MOST of the way to the

@@ -199,7 +199,9 @@
   "PURE: `{:key-w :label-w}` for the whole spec — the single column's grid, and
    what a one-pane band is measured with."
   [spec]
-  (pane-columns (map (fn [it] {:item it}) (mapcat :items (:groups spec)))))
+  (pane-columns (map (fn [it]
+                       {:item it})
+                     (mapcat :items (:groups spec)))))
 
 (def band-body-pad
   "Blank display rows of BREATHING SPACE at the TOP and BOTTOM of every pane: the
@@ -280,14 +282,18 @@
   (loop [bs (mapv vec blocks)]
     (if (>= (count bs) n)
       bs
-      (let [i (long (apply max-key #(count (nth bs (long %))) (range (count bs))))
-            b (nth bs i)]
+      (let
+        [i (long (apply max-key #(count (nth bs (long %))) (range (count bs))))
+         b (nth bs i)]
+
         (if (< (count b) (long split-min-rows))
           bs
-          (let [items (subvec b 1)
-                half (long (Math/ceil (/ (double (count items)) 2.0)))
-                head (into [(first b)] (subvec items 0 half))
-                tail (into [{:kind :blank}] (subvec items half))]
+          (let
+            [items (subvec b 1)
+             half (long (Math/ceil (/ (double (count items)) 2.0)))
+             head (into [(first b)] (subvec items 0 half))
+             tail (into [{:kind :blank}] (subvec items half))]
+
             (recur (-> (subvec bs 0 i)
                        (conj head)
                        (conj tail)
@@ -359,19 +365,20 @@
      head-w
      (reduce max
              0
-             (map #(long (p/display-width (str (:text %))))
-                  (filter #(= :header (:kind %)) pane)))]
+             (map #(long (p/display-width (str (:text %)))) (filter #(= :header (:kind %)) pane)))]
 
-    (max (+ (long pane-lead) (long item-indent) (long key-w) (long key-gap)
-            (long label-w) (long pane-trail))
+    (max (+ (long pane-lead)
+            (long item-indent)
+            (long key-w)
+            (long key-gap)
+            (long label-w)
+            (long pane-trail))
          (+ (long pane-lead) (long head-w)))))
 
 (defn- panes-fit?
   "PURE: do `ps` stand side by side inside `inner-w`, gaps included?"
   [ps ^long inner-w]
-  (<= (+ (long (reduce + 0 (map pane-natural ps)))
-         (* (long pane-gap) (dec (count ps))))
-      inner-w))
+  (<= (+ (long (reduce + 0 (map pane-natural ps))) (* (long pane-gap) (dec (count ps)))) inner-w))
 
 (defn pane-count
   "PURE: how many side-by-side panes `spec` is dealt into inside `region`.
@@ -402,9 +409,7 @@
 
       (loop [n want]
         (let [ps (panes spec n)]
-          (if (or (= n 1) (panes-fit? ps inner-w))
-            (count ps)
-            (recur (dec n))))))))
+          (if (or (= n 1) (panes-fit? ps inner-w)) (count ps) (recur (dec n))))))))
 
 (defn pane-widths
   "PURE: the columns EACH of `ps` gets inside `region`'s inner width, the gaps
@@ -440,17 +445,25 @@
 
      ;; The equal grid, and the panes a long category pushes wider than it.
      floors
-     (mapv (fn [^long nat] (max share nat)) nats)
+     (mapv (fn [^long nat]
+             (max share nat))
+           nats)
 
      slack
      (- avail (long (reduce + 0 floors)))]
 
     (if (neg? slack)
       (vec (repeat n (max 1 share)))
-      (let [each (quot slack n)
-            extra (rem slack n)]
+      (let
+        [each
+         (quot slack n)
+
+         extra
+         (rem slack n)]
+
         (into []
-              (map-indexed (fn [^long i ^long w] (+ w each (if (< i extra) 1 0))))
+              (map-indexed (fn [^long i ^long w]
+                             (+ w each (if (< i extra) 1 0))))
               floors)))))
 
 (def ^:private chrome-rows
@@ -701,8 +714,7 @@
                (<= (+ inline w) (- (long right) (long pane-trail))) inline)))
 
      shown
-     (p/ellipsize label-txt
-                  (long (max 0 (- (long (or arg-x right)) (long lx) (long pane-trail)))))
+     (p/ellipsize label-txt (long (max 0 (- (long (or arg-x right)) (long lx) (long pane-trail)))))
 
      fg
      (if (or action? active?) t/dialog-fg t/dialog-hint)]
@@ -798,6 +810,48 @@
               (p/set-char! g left row p/BOX_V)
               (p/set-char! g right row p/BOX_V)))))))
 
+(defn draw-band-border!
+  "The band's own BORDER: corner-capped rules at `sep-row` and `rule-at`, and a
+   `│` down both edge columns of every row between them, so a sideless band is a
+   closed BOX over the transcript — hint bar included — instead of an open slab
+   whose edges only the paper announced.
+
+   Only a SIDELESS band draws it: a framed popup already sits inside the host's
+   own rails, and a second pair beside them is two frames around one box.
+
+   Painted LAST, after the rows: every row painter clears the full inner width,
+   so rails drawn before the body are rails the body wipes. `top-limit` is the
+   region's floor — a band with less room than it wants loses the rails above it
+   rather than climbing over the host's header."
+  [g {:keys [left inner-w is-sideless]} sep-row rule-at top-limit]
+  (when is-sideless
+    (let
+      [left
+       (long left)
+
+       right
+       (+ left (long inner-w) 1)
+
+       sep-row
+       (long sep-row)
+
+       rule-at
+       (long rule-at)
+
+       top-limit
+       (long top-limit)]
+
+      (p/set-colors! g t/border-fg t/dialog-bg)
+      (when (>= sep-row top-limit)
+        (p/set-char! g left sep-row p/BOX_TL)
+        (p/set-char! g right sep-row p/BOX_TR))
+      (doseq [^long r (range (inc sep-row) rule-at)]
+        (when (>= r top-limit) (p/set-char! g left r p/BOX_V) (p/set-char! g right r p/BOX_V)))
+      (when (> rule-at (max sep-row top-limit))
+        (p/set-char! g left rule-at p/BOX_BL)
+        (p/set-char! g right rule-at p/BOX_BR))
+      (p/set-colors! g t/dialog-fg t/dialog-bg))))
+
 (defn- paint-layout!
   "Paint ONE frame of an already-computed [[layout]] at `state`. Everything the
    spec decides is decided in [[layout]]; this fn only puts cells on a screen.
@@ -843,7 +897,10 @@
        ;; Each pane owns its own width, so pane `j` starts where every pane
        ;; before it ended plus one gap — never at a fixed stride.
        widths (vec (if (seq pane-ws) pane-ws (repeat (count panes) inner-w)))
-       lefts (vec (reductions (fn [^long x ^long w] (+ x w (long pane-gap))) left widths))
+       lefts (vec (reductions (fn [^long x ^long w]
+                                (+ x w (long pane-gap)))
+                              left
+                              widths))
        clear-row! (fn [row]
                     (clear-rows! g region row row))]
 
@@ -883,7 +940,8 @@
                                           (+ pane-left (long pane-lead))
                                           row
                                           (p/ellipsize (str (:text r))
-                                                       (long (max 1 (- pane-w (long pane-lead))))))))
+                                                       (long (max 1
+                                                                  (- pane-w (long pane-lead))))))))
 
                 :blank
                 nil
@@ -899,23 +957,9 @@
                   (draw-item! g pane-left row pane-w (nth pane-cols j) it active? value)))))))
       (when (and sideless? (>= hint-at (long top-limit))) (clear-row! hint-at))
       (hint-bar! g left hint-at inner-w hints)
-      ;; The band's own BORDER: corner-capped rules with a `│` down both edge
-      ;; columns, so a sideless transient is a closed box over the transcript —
-      ;; the hint bar included.
-      (when sideless?
-        (let [right (+ left inner-w 1)]
-          (p/set-colors! g t/border-fg t/dialog-bg)
-          (when (>= (long sep-row) (long top-limit))
-            (p/set-char! g left sep-row p/BOX_TL)
-            (p/set-char! g right sep-row p/BOX_TR))
-          (doseq [^long r (range (inc (long sep-row)) rule-at)]
-            (when (>= r (long top-limit))
-              (p/set-char! g left r p/BOX_V)
-              (p/set-char! g right r p/BOX_V)))
-          (when (> rule-at (max (long sep-row) (long top-limit)))
-            (p/set-char! g left rule-at p/BOX_BL)
-            (p/set-char! g right rule-at p/BOX_BR))
-          (p/set-colors! g t/dialog-fg t/dialog-bg))))))
+      ;; The closed box, painted after the rows that would otherwise wipe its
+      ;; rails. The human-input form calls the very same painter.
+      (draw-band-border! g region sep-row rule-at top-limit))))
 
 (defn paint!
   "Paint ONE frame of `spec` at `state` into `region` on `host`. Pure geometry,

@@ -69,16 +69,17 @@
     {:screen screen :g (.newTextGraphics screen)}))
 
 (defn- band-paper
-  "The paper an in-session BAND lays its rows on — darker than the transcript,
-   and the dialog paper every painter inside the band sees."
+  "The paper an in-session BAND lays its rows on — the terminal's own, with no
+   tint at all. A band is told apart from the transcript by its BORDER, the way
+   the C-x hydra is, so every painter inside it sees this."
   []
-  (t/band-bg))
+  t/terminal-bg)
 
 (defn- band-resting-bg
   "`theme/field-resting-bg` as a field inside a BAND wears it: derived from the
    band's own paper, not from the modal dialog's."
   []
-  (binding [t/dialog-bg (t/band-bg)]
+  (binding [t/dialog-bg (band-paper)]
     (t/field-resting-bg)))
 
 (defn- screen-row
@@ -87,6 +88,11 @@
   (str/trimr (apply str
                (for [x (range 80)]
                  (.getCharacterString (.getBackCharacter screen (int x) (int y)))))))
+
+(defn- char-at
+  "The character the back buffer holds at `x`,`y`."
+  [^TerminalScreen screen ^long x ^long y]
+  (.getCharacterString (.getBackCharacter screen (int x) (int y))))
 
 (defn- screen-text
   "The whole back buffer as one string."
@@ -609,6 +615,9 @@
     [{:keys [screen g]}
      (virtual-screen)
 
+     ^TerminalScreen screen
+     screen
+
      _
      (hi/paint! g 80 30 form)
 
@@ -636,10 +645,11 @@
 
 (defn- rule-row?
   "True when a painted row is one of the band's horizontal rules and NOTHING
-   else — no `│` rails and no `├`/`┤` junctions, because the session frame whose
-   chrome the band borrows is sideless."
+   else. The box's own corner caps are part of a rule; a `├`/`┤` junction never
+   is — the session frame the band lies on is sideless, so the band brings its
+   own box instead of joining rails that do not exist."
   [s]
-  (and (str/includes? s "───") (every? #{\space \─} s)))
+  (and (str/includes? s "───") (every? #{\space \─ \┌ \┐ \└ \┘ \│} s)))
 
 (defdescribe
   band-test
@@ -651,7 +661,7 @@
   ;; input box and painted on the very same dialog paper, so a transient (drafts,
   ;; C-x, a HITL form) hid what was being typed and did not read as a layer at
   ;; all.
-  (it "never covers the prompt box, and wears the band's own darker paper"
+  (it "never covers the prompt box, and takes no tint of its own"
       (let
         [{:keys [screen g]}
          (virtual-screen)
@@ -664,17 +674,20 @@
 
         ;; Every row from the prompt's opening rule down belongs to the session.
         (expect (every? #(= "" (screen-row screen %)) (range (inc prompt-top) 30)))
-        (expect (= (band-paper) (:bg (cell-under (hi/init-form (request)) "User"))))
-        (expect (not= t/terminal-bg (band-paper)))))
-  (it "closes with the host's rule directly above its hint bar"
+        ;; The C-x hydra's own paper: a band lies ON the live transcript and is
+        ;; told apart by its BORDER, never by a tint of its own.
+        (expect (= t/terminal-bg (:bg (cell-under (hi/init-form (request)) "User"))))))
+  (it "fences its hint bar INSIDE the box, under its own rule"
       (let [{:keys [screen g]} (virtual-screen)]
         ;; Focus the multiline field so the bar has a chord worth printing at
         ;; all — navigation alone no longer earns a hint pair.
         (hi/paint! g 80 30 (assoc (hi/init-form (request)) :focus 7))
-        ;; The band sits ABOVE the prompt box: its hint bar is the echo row at
-        ;; `rows - prompt-h - 3`, and the rule right above it is the band's foot.
-        (expect (str/includes? (screen-row screen 24) "Enter newline"))
-        (expect (rule-row? (screen-row screen 23)))))
+        ;; The band closes BELOW its footer, exactly like a sideless transient:
+        ;; the hint bar sits on `rows - prompt-h - 4` with a rule above it, and
+        ;; the box's own closing rule takes the echo row underneath.
+        (expect (str/includes? (screen-row screen 23) "Enter newline"))
+        (expect (rule-row? (screen-row screen 22)))
+        (expect (rule-row? (screen-row screen 24)))))
   (it "never swallows the session's bottom chrome"
       (let [{:keys [screen g]} (virtual-screen)]
         (hi/paint! g 80 30 (hi/init-form (request)))
@@ -685,7 +698,7 @@
         (hi/paint! g 80 30 (assoc (hi/init-form (request)) :focus 7) 12)
         (expect (every? #(= "" (screen-row screen %)) (range 12)))
         (expect (str/includes? (screen-text screen) "Deploy"))))
-  (it "frames its title between two rules, the way every transient does"
+  (it "says its name ON the opening rule, the way a magit transient does"
       (let
         [{:keys [screen g]}
          (virtual-screen)
@@ -698,15 +711,22 @@
                                     :fields [{:id "user" :type :plaintext :label "User"}])))
 
          title-y
-         (first (filter #(str/includes? (screen-row screen %) "Deploy") (range 30)))]
+         (first (filter #(str/includes? (screen-row screen %) "Deploy") (range 30)))
 
+         title-row
+         (str/trim (screen-row screen (long title-y)))]
+
+        ;; `┌── Deploy? ──────┐`: chrome and question on ONE row. A title row and
+        ;; a rule of its own were two rows of chrome bought with two rows of form.
         (expect (some? title-y))
-        (expect (rule-row? (screen-row screen (dec title-y))))
-        (expect (rule-row? (screen-row screen (inc title-y))))))
+        (expect (str/starts-with? title-row "┌──"))
+        (expect (str/ends-with? title-row "──┐"))
+        (expect (str/includes? title-row "Deploy"))
+        (expect (not (rule-row? (screen-row screen (inc (long title-y))))))))
   ;; Regression, issue #108: a form taller than the band scrolled its own
   ;; the `Submit` / `Cancel` caps out of sight, so the only visible way to end
   ;; the pause was to guess a key.
-  (it "pins the action bar above the closing rule, however tall the form"
+  (it "pins the action bar above the fenced footer, however tall the form"
       (let
         [{:keys [screen g]}
          (virtual-screen)
@@ -714,13 +734,17 @@
          _
          (hi/paint! g 80 30 (hi/init-form (request)))
 
-         foot-rule-y
-         (dec (long (:hint-row (tr/band-region 80 30 1))))
+         close-y
+         (long (:hint-row (tr/band-region 80 30 1)))
 
          bar
-         (screen-row screen (dec foot-rule-y))]
+         (screen-row screen (- close-y 3))]
 
-        (expect (rule-row? (screen-row screen foot-rule-y)))
+        ;; The box closes on the echo row, its hint bar rides one row above it,
+        ;; and the rule that fences the footer off sits above that — so the caps
+        ;; are the last row of BODY, whatever the form does.
+        (expect (rule-row? (screen-row screen close-y)))
+        (expect (rule-row? (screen-row screen (- close-y 2))))
         ;; Ink pill for Submit, muted pill for Cancel — two filled caps, no rails.
         (expect (str/includes? bar " Submit "))
         (expect (str/includes? bar " Cancel"))
@@ -739,14 +763,14 @@
          _
          (hi/paint! g 80 30 (hi/init-form (request)))
 
-         hint-y
+         close-y
          (long (:hint-row (tr/band-region 80 30 1)))
 
          bar
-         (screen-row screen (- hint-y 2))
+         (screen-row screen (- close-y 3))
 
          hints
-         (str/lower-case (screen-row screen hint-y))
+         (str/lower-case (screen-row screen (dec close-y)))
 
          text
          (screen-text screen)]
@@ -757,7 +781,7 @@
         (expect (not (str/includes? text "Esc")))
         ;; ...and with focus on a plain text field the bar below has nothing to
         ;; say at all — no `move`, and still no submit/cancel.
-        (expect (str/blank? hints))
+        (expect (str/blank? (str/replace hints #"[│└┘─]" "")))
         (expect (not (str/includes? hints "submit")))
         (expect (not (str/includes? hints "cancel")))))
   (it "parks no marker glyph beside a cap — the cap's own colour is the cursor"
@@ -772,7 +796,7 @@
          (fn [f]
            (let [{:keys [screen g]} (virtual-screen)]
              (hi/paint! g 80 30 f)
-             (screen-row screen (- (long (:hint-row (tr/band-region 80 30 1))) 2))))]
+             (screen-row screen (- (long (:hint-row (tr/band-region 80 30 1))) 3))))]
 
         ;; The `•` cursor glyph a LIST row wears has no business on a pill that
         ;; recolours itself when focus arrives, and the gutter it needed had to be
@@ -801,17 +825,31 @@
                    (mapv :action
                          (:buttons (hi/action-bar (hi/init-form (assoc (request)
                                                                   :is-cancellable false)))))))))
-  (it "draws no side rails at all"
-      ;; A form that FITS: the only vertical bar this dialog may ever draw is the
-      ;; scrollbar of a body taller than its band, never a frame rail.
+  ;; The band is the same object the C-x hydra is: a CLOSED BOX laid over the
+  ;; transcript. What it must never draw is a `├`/`┤` junction — the session
+  ;; frame it lies on is sideless, so there are no host rails for one to join.
+  (it "closes as a box: corner caps and a rail down both edge columns"
       (let [{:keys [screen g]} (virtual-screen)]
         (hi/paint! g
                    80
                    30
                    (hi/init-form
                      {:id "r" :title "T" :fields [{:id "a" :type :plaintext :label "A"}]}))
-        (let [text (screen-text screen)]
-          (expect (not (str/includes? text "│")))
+        (let
+          [{:keys [left inner-w]} (tr/band-region 80 30 1)
+           left (long left)
+           right (+ left (long inner-w) 1)
+           top (first (filter #(= "┌" (char-at screen left %)) (range 30)))
+           bottom (long (:hint-row (tr/band-region 80 30 1)))
+           text (screen-text screen)]
+
+          (expect (some? top))
+          (expect (= "┐" (char-at screen right (long top))))
+          (expect (= "└" (char-at screen left bottom)))
+          (expect (= "┘" (char-at screen right bottom)))
+          (expect (every? (fn [y]
+                            (and (= "│" (char-at screen left y)) (= "│" (char-at screen right y))))
+                          (range (inc (long top)) bottom)))
           (expect (not (str/includes? text "├")))
           (expect (not (str/includes? text "┤"))))))
   (it "anchors the band on the prompt's closing rule at any height"
