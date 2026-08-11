@@ -14,9 +14,9 @@ name: Mobile release
 # Repository secrets (Settings ▸ Secrets and variables ▸ Actions):
 #   iOS      VIS_ASC_KEY_ID, VIS_ASC_ISSUER_ID, VIS_ASC_KEY (the .p8 CONTENTS), VIS_IOS_TEAM_ID,
 #            VIS_IOS_DISTRIBUTION_P12 (base64 .p12), VIS_IOS_DISTRIBUTION_P12_PASSWORD,
-#            VIS_IOS_PROVISIONING_PROFILE (base64 .mobileprovision), VIS_IOS_PROVISIONING_PROFILE_NAME,
-#            VIS_IOS_SHARE_PROVISIONING_PROFILE_NAME (optional: the share extension's own profile.
-#            Manual signing is all-or-nothing, so without it the export signs automatically)
+#            Profiles are NOT secrets: release:ios:store asks the App Store Connect API for the
+#            ACTIVE App Store profile of every bundle id on each run and installs it, so a stored
+#            .mobileprovision could only rot and shadow the live one.
 #   Android  VIS_PLAY_SERVICE_ACCOUNT (service-account JSON), VIS_ANDROID_KEYSTORE (base64 .jks),
 #            VIS_ANDROID_KEYSTORE_PASSWORD, VIS_ANDROID_KEY_ALIAS, VIS_ANDROID_KEY_PASSWORD,
 #            VIS_ANDROID_GOOGLE_SERVICES (google-services.json, optional — push only)
@@ -170,29 +170,10 @@ jobs:
           security default-keychain -d user -s "$KEYCHAIN_PATH"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
-      - name: Install the App Store provisioning profile
-        if: steps.creds.outputs.ok == 'true'
-        env:
-          PROFILE_BASE64: ${{ secrets.VIS_IOS_PROVISIONING_PROFILE }}
-        run: |
-          set -euo pipefail
-          test -n "$PROFILE_BASE64" || { echo 'VIS_IOS_PROVISIONING_PROFILE is required' >&2; exit 1; }
-          umask 077
-          PROFILE_PATH="$RUNNER_TEMP/vis-companion.mobileprovision"
-          printf '%s' "$PROFILE_BASE64" | base64 --decode > "$PROFILE_PATH"
-          mkdir -p "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
-          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
-          cp "$PROFILE_PATH" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles/vis-companion.mobileprovision"
-          cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/vis-companion.mobileprovision"
-          security cms -D -i "$PROFILE_PATH" > "$RUNNER_TEMP/vis-companion-profile.plist"
-          /usr/libexec/PlistBuddy -c 'Print :Name' "$RUNNER_TEMP/vis-companion-profile.plist"
-
       - name: Build, upload, distribute
         if: steps.creds.outputs.ok == 'true'
         env:
           VIS_ASC_KEY_ID: ${{ secrets.VIS_ASC_KEY_ID }}
-          VIS_IOS_PROVISIONING_PROFILE_NAME: ${{ secrets.VIS_IOS_PROVISIONING_PROFILE_NAME }}
-          VIS_IOS_SHARE_PROVISIONING_PROFILE_NAME: ${{ secrets.VIS_IOS_SHARE_PROVISIONING_PROFILE_NAME }}
           VIS_ASC_ISSUER_ID: ${{ secrets.VIS_ASC_ISSUER_ID }}
           VIS_IOS_TEAM_ID: ${{ secrets.VIS_IOS_TEAM_ID }}
         run: |
