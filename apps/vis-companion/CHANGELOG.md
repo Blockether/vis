@@ -2,6 +2,35 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.35 (3959) — 2026-08-11
+<!-- commit: 99ccc2b5af2816ee6f6389a8f042355310a42b90 -->
+
+- Rewrite the model-facing prompt for the one-call surface, and measure it
+
+## 0.1.35 (3958) — 2026-08-11
+<!-- commit: 0ebaf1a2829b3f9b0f9ddfb52306f7994195a8dc -->
+
+- Wait for the folder listing before asserting the reuse footer
+- Remove cat/patch and retire the lineno:hash anchor
+- Paint a result from its own data, not from a per-tool renderer
+- Keep a skill live by the iteration that printed its body
+- Retire the native-result store and the fold's recovery half
+- Search every document with apropos, retrieve one whole with doc
+- Ls: decide index-vs-list from the FILE, not the rendered address
+- Title a result card from the value's own op, not from a tool table
+- Trace the provider stream only when asked
+- List a directory outside the workspace instead of indexing it
+- Move the HITL band scrollbar into the dialog gutter lane
+- Stand the band's rails on the prompt's own rule
+- One tool on the wire: delete the native-tool test surface
+- Inset the HITL band's body and stand its caps off the fields
+- Hand a failed prompt back to the composer so Enter retries it
+- Make the human-input band the same box the C-x transient is
+- A held turn shows Paused, not a phantom "calling the provider" spinner
+- Surface the real provider failure, not the canonical-content validation
+- One diagnostic log per process: ~/.vis/logs/vis-<pid>.log
+- Advertise only python_execution: the wire carries one tool
+
 ## 0.1.34 (3854) — 2026-08-09
 <!-- commit: 4f9983d232c5914655f847615b1587018880dff3 -->
 
