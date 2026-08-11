@@ -110,12 +110,11 @@ Targets may be step ids, whole prior turns, or `through` / `from`+`to` / `since`
 Folding changes rendering, not storage. There is no destructive `unfold` command:
 
 - Current conversation: `s = await session_state()`, select `s["transcript"]["turns"]` by numeric `position`, then filter `['iterations'][...]['blocks']` for the raw code/results.
-- One folded native result: its `# saved:` coordinate, `ntr["tN/iM/fK"]`.
 - Another conversation: `await sessions()` to find its id, then `await session_state(id)` and filter the same path.
 
 This recovers evidence without restoring it to the model wire. Filter in `python_execution`; never dump a full transcript back into context.
 
-`session_state` and `sessions` are bound only while the `introspection` toggle is ON (default OFF — enable it in `vis.yml` under `toggles:` or from the settings dialog). Compact token/tool/provider diagnostics live at `session_state()["usage"]`. With introspection OFF, the `# saved:` coordinate (`ntr["tN/iM/fK"]`) remains the recovery path.
+`session_state` and `sessions` are bound only while the `introspection` toggle is ON (default OFF — enable it in `vis.yml` under `toggles:` or from the settings dialog). Compact token/tool/provider diagnostics live at `session_state()["usage"]`. With introspection OFF a folded step is not recoverable at all — the gist is what survives, so write one that carries the finding.
 
 ### The budget stays visible
 

@@ -1792,37 +1792,9 @@
                           (not pressured?)
                           (dissoc "engine_overbudget_hint_turn")))))))
 
-(defn- ntr-entries-of
-  "Recoverable `ntr[<id>]` ENTRIES for ONE iteration record: every result-bearing
-   native call it made, each carrying WHAT it was — the tool that ran plus that
-   call's own op-card summary. A bare accessor says nothing on scroll-back
-   (`ntr[\"toolu_01Tc…\"]` is 24 opaque characters), so an unlabelled breadcrumb
-   forces a fetch just to learn whether a handle is worth fetching at all.
-
-   python_execution PRINTS instead of returning a `:result`, so it stores nothing
-   and contributes no accessor. Distinct, wire order."
-  [rec]
-  (into []
-        (comp (filter (fn [f]
-                        (and (:svar/tool-call-id f)
-                             (some? (:result f))
-                             (not= "session_fold" (:vis/tool-name f)))))
-              (map (fn [f]
-                     (cond-> {"id" (str (:svar/tool-call-id f))}
-                       (not (str/blank? (str (:vis/tool-name f))))
-                       (assoc "tool" (str (:vis/tool-name f)))
-
-                       (not (str/blank? (str (:result-summary f))))
-                       (assoc "gist" (str (:result-summary f))))))
-              (distinct))
-        (or (seq (:forms-vec rec))
-            (mapcat (fn [b]
-                      (or (seq (:forms b)) [b]))
-                    (:blocks rec)))))
-
 (defn- stamp-iter-universe!
-  "Record the raw iteration universe, recoverable native result ids, and live skill
-   activations, while pricing only `wire-iters` — the CURRENT provider-visible
+  "Record the raw iteration universe and live skill activations, while pricing
+   only `wire-iters` — the CURRENT provider-visible
    projection. `wire-iters` defaults to `trailer-iters`. A matching durable skill
    pointer protects its exact scope from a newly recorded fold; stale,
    already-folded, and cross-turn non-replayed activations are discarded."
@@ -1875,15 +1847,6 @@
                                 m))
                             (transient {})
                             (map vector trailer-iters (or wire-iters trailer-iters))))
-
-       ntr
-       (persistent! (reduce (fn [m [_ rec]]
-                              (if-let [sc (scope-of rec)]
-                                (let [ids (ntr-entries-of rec)]
-                                  (if (seq ids) (assoc! m sc (into (vec (get m sc [])) ids)) m))
-                                m))
-                            (transient {})
-                            trailer-iters))
 
        skill-candidates
        (into []
@@ -1947,7 +1910,6 @@
       (swap! ctx-atom assoc
         "engine_iter_universe" uni
         "engine_iter_weights" weights
-        "engine_iter_ntr" ntr
         "engine_live_skill_activations" live-skills
         "engine_protected_iter_scopes" protected-scopes
         "session_active_skills" live-skills))))
@@ -2509,8 +2471,6 @@
     (let [parts (str/split scope #"/")]
       (when (>= (count parts) 2) (str (nth parts 0) "/" (nth parts 1))))))
 
-(declare ntr-recover-hint)
-
 (def ^:private SESSION_REBASE_RECLAIMED_TOKENS 200000)
 
 (defn- rebase-session-context!
@@ -2912,33 +2872,7 @@
                       :else (str " · context " sat "%"))))]
 
            {:note (str saved ctx-pct off-wire-note) :reclaimed-tokens toks})
-         (catch Throwable _ {:note "" :reclaimed-tokens 0})))
-
-     recover-hint
-     (fn [base]
-       (try (let
-              [ctx
-               (some-> ctx-atom
-                       deref)
-
-               universe
-               (get ctx "engine_iter_universe")
-
-               ntr
-               (get ctx "engine_iter_ntr")
-
-               ;; The newest calls are the most useful recovery candidates. Preserve
-               ;; trailer (chronological) order so the tail below really means "last",
-               ;; rather than the lexicographically-last scope id (where t99 > t100).
-               scopes
-               (let
-                 [selected (into #{}
-                                 (mapcat #(get % "scopes"))
-                                 (ctx-engine/expand-through [base] (or universe [])))]
-                 (filterv selected (or universe [])))]
-
-              (ntr-recover-hint (into [] (comp (mapcat #(get ntr %)) (distinct)) scopes)))
-            (catch Throwable _ nil)))]
+         (catch Throwable _ {:note "" :reclaimed-tokens 0})))]
 
     {'session-fold
      (fn session-fold [scopes & [gist]]
@@ -3018,7 +2952,6 @@
                  (str "session_fold: nothing else to fold" kept-note)
                  (let
                    [{:keys [note reclaimed-tokens]} (priced base)
-                    recover (recover-hint base)
                     ;; Stamp the ISSUING turn so `previous-turn-context` never lets
                     ;; a whole-turn fold recorded DURING turn N erase turn N's own
                     ;; Q/A recap next request (the answer is produced after the fold;
@@ -3044,19 +2977,10 @@
                              :pending? (>= (long total) (long SESSION_REBASE_RECLAIMED_TOKENS)))))))
                    (tel/log! {:level :info :id ::session-fold :data {:intent intent}}
                              "model folded scopes")
-                   (str "folded " label note recover kept-note (when g (str " → " g)))))))
+                   (str "folded " label note kept-note (when g (str " → " g)))))))
            (str "session_fold: nothing to fold — pass [\"t1/i2\", …] (a bare \"t1\" folds "
                 "the whole turn), or a selector {\"through\"|\"since\": \"t1/i2\"} / "
                 "{\"from\": \"t1/i2\", \"to\": \"t1/i5\"}"))))}))
-
-
-(defn- ntr-recover-hint
-  "One compact recovery pointer for a folded result set. The receipt deliberately
-   never repeats ids, tool names, or gists: large folds otherwise turn a compact
-   breadcrumb into another transcript. `ntr.describe()` lists labelled results from
-   the latest turn, and `ntr[id]` still retrieves an exact persisted result."
-  [ids]
-  (when (seq (distinct (remove nil? ids))) " · more results: ntr.describe()"))
 
 
 (defn- apply-summaries
@@ -3080,12 +3004,6 @@
       [iter-scope-of
        (fn [rec]
          (some iter-of-scope (keep :scope (:forms-vec rec))))
-
-       ;; NATIVE tool_use accessors a rec's result-bearing calls stored
-       ;; (`ntr[<id>]` resolvable), each LABELLED with the tool + its op-card
-       ;; summary so the breadcrumb says what a handle holds.
-       rec-ntr-ids
-       ntr-entries-of
 
        ;; Turn this trailer belongs to. A fold intent is a POINT-IN-TIME
        ;; statement, but its range cursor is RE-RESOLVED on every later request
@@ -3174,16 +3092,7 @@
                            {:gist (get s "gist")
                             :drop? (get s "drop")
                             :summary-iters (vec (sort (get s "scopes")))
-                            :note (get s "note")
-                            ;; Scope→accessor index carried ON the breadcrumb so a
-                            ;; restart can't strip the recovery handles.
-                            :ntr-ids (into []
-                                           (comp (mapcat (fn [[_ rec]]
-                                                           (when (contains? (set (get s "scopes"))
-                                                                            (iter-scope-of rec))
-                                                             (rec-ntr-ids rec))))
-                                                 (distinct))
-                                           trailer-iters)})
+                            :note (get s "note")})
                    m))
                {}
                summaries)]
@@ -3205,8 +3114,7 @@
                                      :summary-gist (:gist g)
                                      :summary-drop? (:drop? g)
                                      :summary-iters (:summary-iters g)
-                                     :summary-note (:note g)
-                                     :summary-ntr-ids (:ntr-ids g)})
+                                     :summary-note (:note g)})
                                   gists))]
 
                          [pos
@@ -3596,19 +3504,12 @@
                   (:summary-note f)
 
                   g
-                  (:summary-gist f)
-
-                  ;; Fold breadcrumbs carry their OWN `ntr[<id>]` accessors so a
-                  ;; restart (or the collapsed per-call `# saved:` lines) can't
-                  ;; strip the scope→result index. Drops keep no handle.
-                  recover
-                  (when-not (:summary-drop? f) (ntr-recover-hint (:summary-ntr-ids f)))]
+                  (:summary-gist f)]
 
                  (str "# ⋯ "
                       (if (:summary-drop? f) "dropped " "folded ")
                       at
                       note
-                      recover
                       (when g (str " · " g))))))
            forms)
 
@@ -3675,28 +3576,6 @@
      ;; Build the wire body for ONE tool-call from ITS OWN forms, plus the
      ;; iteration-level lines (folds / form-budget / ctx delta) carried on the
      ;; first call only (they describe the whole reply, not a single call).
-     ;; RESULT HANDLE: a NATIVE tool call stores its return value, and the key handed
-     ;; back is the transcript COORDINATE of the form that produced it (`t5/i1/f2`) —
-     ;; the SAME address already printed as this result's header, one `/fK` digit
-     ;; longer. Stamping the provider `tool_use` id instead cost 24 unreadable
-     ;; characters and, on a provider whose wire id is not the key vis stored (OpenAI
-     ;; Responses' composite `call_id|item_id`), was the one handle the model could
-     ;; not have guessed. A form with no coordinate (legacy record) keeps the literal
-     ;; stored id, which still resolves. Emitted only when the call actually produced
-     ;; a stored `:result` (python_execution prints, it doesn't store a return, so it
-     ;; gets no handle).
-     result-handle
-     (fn [tc own]
-       (when (and (:id tc) (not= "session_fold" (:name tc)))
-         (when-let
-           [f (first (filter #(and (some? (:result %)) (= (:id tc) (:svar/tool-call-id %))) own))]
-           (let
-             [scope (:scope f)
-              handle
-              (if (and (string? scope) (not (str/blank? scope))) (str/trim scope) (str (:id tc)))]
-
-             (str "# saved: ntr[" (pr-str handle) "] — re-read without re-running")))))
-
      call-content
      (fn [idx tc]
        (let
@@ -3714,14 +3593,8 @@
           header
           (when (and iscope (seq lines)) (str "# " iscope))
 
-          handle
-          (when (seq lines) (result-handle tc own))
-
           body-ls
-          (concat (when (zero? (long idx)) summary-lines)
-                  (when header [header])
-                  (when handle [handle])
-                  lines)
+          (concat (when (zero? (long idx)) summary-lines) (when header [header]) lines)
 
           body
           (when (seq body-ls) (str/join "\n" body-ls))]
@@ -4135,11 +4008,11 @@
   {:name "python_execution"
    :description
    (str
-     "Run Python in the session sandbox to batch, filter, and chain tool calls: `await gather(...)` independent "
-     "natives, then print only needed output. State persists; project packages need a project REPL. "
-     "Only `print` returns; bare expressions drop and errors surface. Native results return inline and stay "
-     "at their `# saved:` coordinate (`ntr[\"t5/i1/f2\"]`); engine-bound natives are bare snake_case, "
-     "native-only ones absent. A shell is WATCHED here: `sh = await shell(...)`, then a BOUNDED "
+     "Run Python in the session sandbox to batch, filter, and chain capabilities: `await gather(...)` "
+     "independent calls, then print only needed output. State persists; project packages need a project REPL. "
+     "Only `print` returns; bare expressions drop and errors surface. Every capability is a plain Python "
+     "name here, so a result is an ordinary value you keep in a variable — but a value you never printed "
+     "is gone from the transcript once the block ends. A shell is WATCHED here: `sh = await shell(...)`, then a BOUNDED "
      "loop that calls `sh.logs()` on the handle it got back and breaks on what it read (an error line, "
      "a parsed port); `sh.wait(secs)` is that loop already written — no tool "
      "waits for you. Close what you open (`with open(...)`): a dropped file handle is "
@@ -10206,73 +10079,6 @@
        ;; on bounded platform workers).
        compaction
        {(symbol "__vis_par__") gather-fn (symbol "__vis_par_isolated__") par-isolated-fn}
-       ;; ntr[tool_id] host callbacks:
-       ;; retrieve a PRIOR native tool's persisted result by
-       ;; its provider tool_use id (`:svar/tool-call-id`) —
-       ;; NO re-fetch. `prime` is the batched pre-scan load
-       ;; (list of ids → {id → result}); `fetch` is the lazy
-       ;; single-id fallback for a dynamic key. Both close
-       ;; over db-info + the live session id and delegate to
-       ;; the ONE batched persistence query.
-       {(symbol "__vis_native_result_prime__") (fn native-result-prime [ids]
-                                                 (persistance/db-native-results-for-tool-ids
-                                                   db-info
-                                                   session-id
-                                                   (into #{} (filter some?) (or ids []))))
-        (symbol "__vis_native_result_fetch__")
-        (fn native-result-fetch [id]
-          (get (persistance/db-native-results-for-tool-ids db-info session-id #{id}) id))
-        ;; `ids` is the discovery callback: EVERY native tool_use id in the
-        ;; session branch (newest first) so the sandbox can iterate the
-        ;; store (keys/items/values/len) instead of needing ids up front.
-        (symbol "__vis_native_result_ids__")
-        (fn native-result-ids []
-          (vec (persistance/db-native-result-ids-for-session db-info session-id)))
-        ;; `index` is the LABELLED discovery callback behind `ntr.describe()`:
-        ;; {"id" "scope" "tool" "gist"} per latest-turn result, newest first, and NOT
-        ;; one payload is thawed to build it. `scope` is the transcript coordinate the
-        ;; result was printed under, so a listed id can be named the way the model saw
-        ;; it. Exact `ntr[id]` recovery remains session-wide.
-        (symbol "__vis_native_result_index__")
-        (fn native-result-index []
-          (mapv (fn [e]
-                  (cond-> {"id" (str (:id e))}
-                    (:tool e)
-                    (assoc "tool" (str (:tool e)))
-
-                    (:scope e)
-                    (assoc "scope" (str (:scope e)))
-
-                    ;; `form` is the key that addresses THIS call ALONE
-                    ;; (`tN/iM/fK`), which is what an iteration that ran several
-                    ;; native tools needs: one readable key per result.
-                    (:form e)
-                    (assoc "form" (str (:form e)))
-
-                    (:gist e)
-                    (assoc "gist" (str (:gist e)))))
-                (persistance/db-native-result-index-for-latest-turn db-info session-id)))
-        ;; `scope` resolves ONE transcript coordinate (`tN/iM`, the header the model
-        ;; actually reads above a result) to the labelled entries that iteration stored,
-        ;; across the whole branch. Several native calls in one iteration resolve to
-        ;; several entries, each carrying the `form` key (`tN/iM/fK`) that addresses it
-        ;; alone; a coordinate WITH that tail narrows to that one call.
-        (symbol "__vis_native_result_scope__")
-        (fn native-result-scope [scope]
-          (mapv (fn [e]
-                  (cond-> {"id" (str (:id e))}
-                    (:tool e)
-                    (assoc "tool" (str (:tool e)))
-
-                    (:scope e)
-                    (assoc "scope" (str (:scope e)))
-
-                    (:form e)
-                    (assoc "form" (str (:form e)))
-
-                    (:gist e)
-                    (assoc "gist" (str (:gist e)))))
-                (persistance/db-native-result-index-for-scope db-info session-id (str scope))))}
        ;; DELEGATION DISABLED FOR NOW — `#_` discards the whole
        ;; binding map so none of the child-dispatch verbs are
        ;; bound (sub_loop + parallel/sequence/selector/retry).

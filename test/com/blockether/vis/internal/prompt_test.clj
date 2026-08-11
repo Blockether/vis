@@ -119,14 +119,15 @@
           "No shell TOOL" "`sh.logs()`" "`sh.wait(s)`"
           "functions that accept or return\n  callables"
           "NEVER paste a near-identical loop or block twice" "define once and reuse"
-          "second occurrence factor it out and call it" "raw data, not rendered text"
-          "Use `ntr[key]" "# saved:" "`ntr.describe()`" "Inspect shape before indexing"
-          "status only when absent or stale" "tests-only work starts with `run_tests`"
-          "interactive work uses `repl_eval`" "Keep reproduction as a suite test"
-          "rerun after the fix" "unverified until a test covers it" "BATCH every tool"
-          "Write only files the task asked" "Commit, push, publish" "Treat context as a budget"
-          "at most two targeted" "named unresolved decision blocks the edit"
-          "no repeated search/read" "Fold obsolete settled work" "one broad `through`/range fold"
+          "second occurrence factor it out and call it" "ordinary Python value"
+          "An unprinted value costs no context" "gone when the block ends"
+          "Inspect shape before indexing" "status only when absent or stale"
+          "tests-only work starts with `run_tests`" "interactive work uses `repl_eval`"
+          "Keep reproduction as a suite test" "rerun after the fix"
+          "unverified until a test covers it" "BATCH every tool" "Write only files the task asked"
+          "Commit, push, publish" "Treat context as a budget" "at most two targeted"
+          "named unresolved decision blocks the edit" "no repeated search/read"
+          "Fold obsolete settled work" "one broad `through`/range fold"
           "When edit-ready and headroom permits, patch before folding"
           "Before unavoidable folds, checkpoint"
           "paths/symbols, hypothesis, edit/test, and dirty files"
@@ -143,11 +144,11 @@
                    "Confirm destructive actions."]]
         (expect (str/includes? text required)))
       (expect (not (str/includes? text "stop every session resource you started")))
-      ;; Python's native-result retrieval contract belongs in the execution-surface
-      ;; guidance because it controls context shaping across every native tool.
-      (expect (= 1 (count (re-seq #"ntr\[key\]" text))))
+      ;; `ntr` is gone: with `python_execution` the only call, nothing stores a
+      ;; result the model could re-read by coordinate, so the prompt must never
+      ;; promise one again.
       (doseq
-        [surplus ["Keep managed REPLs across turns" "Native results are `ntr[tool_id]`"
+        [surplus ["Keep managed REPLs across turns" "ntr[" "# saved:" "ntr.describe()"
                   "Raise vis bugs/issues" "After 3 failures" "Complete tasks autonomously"
                   "canonical decision table" "anything complicated"
                   ;; schema-owned or removed contracts stay out of the core prompt

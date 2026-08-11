@@ -525,7 +525,7 @@ export const Markdown = memo(function Markdown({
   // the justification: `break-all` on inline `code` and on links gives the breaker a stop at
   // every character, so the atom fills the line to the right margin and the gaps stay at their
   // natural width. Justification is therefore UNCONDITIONAL — a folded receipt's gist and its
-  // `ntr[…]`-carrying metric bullets are all one flush-both-margins column, matching the TUI
+  // Metric bullets are all one flush-both-margins column, matching the TUI
   // (`markdown-layout/justify-line-runs` → lanterna `justifyLine`). The rule itself is
   // `PROSE` in `ui.tsx` — one spelling for every running paragraph in the app.
   const runningText = PROSE;

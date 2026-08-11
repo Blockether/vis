@@ -235,24 +235,25 @@
           (expect (str/includes? out "Keys: 'a'"))       ;; nested map knows its own shape
           (expect (str/includes? out "GET None True")))) ;; .get silent, still a real dict
     (it
-      "ntr store makes EVERY value dict-probeable: a list/str result answers .get without a type guard"
-      ;; A stored native result can be a LIST (patch/struct_patch/write rows) or a
-      ;; bare STRING, not only a dict. __vis_store__ normalizes each so a uniform
-      ;; `for _id, res in ntr.items(): res.get('op')` sweep never trips — while the
-      ;; value keeps its native list/str behaviour (index/iterate/len/concat).
+      "EVERY settled tool value is dict-probeable: a list/str result answers .get without a type guard"
+      ;; A capability return can be a LIST (patch/struct_patch/write rows) or a
+      ;; bare STRING, not only a dict. The TOP-LEVEL settle normalizes each so a
+      ;; uniform `res.get('op')` probe never trips — while the value keeps its
+      ;; native list/str behaviour (index/iterate/len/concat).
       (let
-        [r
-         (ep/run-python-block
-           ctx
-           (str
-             "lst = ntr.__vis_store__('toolu_LST', [{'path': 'a', 'op': 'update'}])\n"
-             "s = ntr.__vis_store__('toolu_STR', 'plain text')\n"
-             "d = ntr.__vis_store__('toolu_DCT', {'op': 'rg', 'hit_count': 2})\n"
-             "ops = [res.get('op') or res.get('tool') for _id, res in ntr.items()]\n"
-             "print(['lst_get', lst.get('op'), 'lst0', lst[0]['op'], 'lst_len', len(lst)])\n"
-             "print(['str_get', s.get('op'), 'str_cat', s + '!'])\n"
-             "print(['dct_get', d.get('op')])\n"
-             "print(['sweep_ok', all(o is None or isinstance(o, str) for o in ops), 'rg_in', 'rg' in ops])"))]
+        [r (ep/run-python-block
+             ctx
+             (str "async def __call(fn, name):\n"
+                  "    return await __vis_deferred__(fn, name)()\n"
+                  "lst = await __call(lambda: [{'path': 'a', 'op': 'update'}], 'patch')\n"
+                  "s = await __call(lambda: 'plain text', 'cat')\n"
+                  "d = await __call(lambda: {'op': 'rg', 'hit_count': 2}, 'grep')\n"
+                  "ops = [res.get('op') for res in (lst, s, d)]\n"
+                  "print(['lst_get', lst.get('op'), 'lst0', lst[0]['op'], 'lst_len', len(lst)])\n"
+                  "print(['str_get', s.get('op'), 'str_cat', s + '!'])\n"
+                  "print(['dct_get', d.get('op')])\n"
+                  "print(['sweep_ok', all(o is None or isinstance(o, str) for o in ops), "
+                  "'rg_in', 'rg' in ops])"))]
         (expect (re-find #"'lst_get', None" (str (:stdout r))))
         (expect (re-find #"'lst0', 'update'" (str (:stdout r))))
         (expect (re-find #"'lst_len', 1" (str (:stdout r))))
@@ -291,7 +292,7 @@
       "a LIST-shaped tool result is dict-probeable AND captured (patch/write/struct_patch rows)"
       ;; `patch`/`write`/`struct_patch` return a LIST of per-file rows. At the
       ;; TOP-LEVEL settle of a tool call that list must be re-typed to
-      ;; `__VisResultList__`, exactly like a stored `ntr[...]` read: otherwise the
+      ;; `__VisResultList__`: otherwise the
       ;; documented uniform `res.get('op')` probe dies with `'list' object has no
       ;; attribute 'get'`, the print-capture cannot recognise the result, and the
       ;; block stops counting as results-only — dropping every OTHER printed card.
@@ -324,6 +325,36 @@
            ctx
            "import json\nprint([isinstance(session, dict), json.dumps(session) is not None, session['workspace']])")]
         (expect (re-find #"\[True, True, '/x'\]" (str (:stdout r))))))))   ;; the text survives (the bug)
+
+(defdescribe
+  ntr-is-gone-test
+  "The native-result store is RETIRED. `python_execution` prints instead of
+   returning a stored `:result`, so there is nothing left to index: every name the
+   old accessor exposed must be absent from the sandbox, and no docstring or
+   description may promise a coordinate to re-read a result by."
+  (let
+    [ctx
+     (:python-context (ep/create-python-context (ext/builtin-sandbox-bindings (fn []
+                                                                                nil))))
+
+     run
+     (fn [code]
+       (ep/run-python-block ctx code))]
+
+    (it "every retired accessor name raises NameError"
+        (doseq
+          [expr ["ntr" "native_tools_results" "ntr.describe" "ntr.at" "__vis_native_result_prime__"
+                 "__vis_native_result_fetch__" "__vis_native_result_ids__"
+                 "__vis_native_result_index__" "__vis_native_result_scope__" "__vis_entries_at__"
+                 "__vis_native_result_scan__"]]
+          (let [r (run (str "print(" expr ")"))]
+            (expect (some? (:error r)))
+            (expect (str/includes? (str (:message (:error r))) "NameError")))))
+    (it "no sandbox doc still advertises a stored-result coordinate"
+        (let [out (str (:stdout (run "print(apropos(''))\nprint(doc('session_fold'))")))]
+          (expect (not (str/includes? out "ntr[")))
+          (expect (not (str/includes? out "ntr.describe")))
+          (expect (not (str/includes? out "# saved:")))))))
 
 (defdescribe
   doc-apropos-surface-test

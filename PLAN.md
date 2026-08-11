@@ -1207,7 +1207,7 @@ about `ntr[…]`-carrying metric bullets).
 
 ## State of the plan
 
-**REQUIRES WORK** — phases 1-4 have LANDED; phases 5-7 are written and unstarted.
+**REQUIRES WORK** — phases 1-5 have LANDED; phases 6-7 are written and unstarted.
 
 **Phase 1 — advertise only `python_execution`: DONE** (commit `118237e6b`).
 `loop.clj/native-tools` takes `caps` alone and returns the one finalized `python_execution` tool;
@@ -1347,6 +1347,40 @@ already listed, plus `loop-test/providers-router-rebuild-hook-wiring-test`, whic
 namespace runs (two loads of `loop.clj` give `identical?` two distinct fn objects) and passes with
 `--var`; verified against a clean `HEAD` worktree, so it is not this phase's.
 
+**Phase 5 — retire `ntr` / `native_tools_results` and the fold's recovery half: DONE.** The store is
+gone at all three layers and so is every promise about it. SANDBOX: `async_runtime.py` lost the whole
+`__VisNativeResults__` class with subscript, `at()`, `describe()`, the coordinate resolver, the AST
+literal-id scanner and the `repr` blurb, plus the pre-scan/prime block inside `__vis_run_async__` (454
+lines); the direct-kwargs list STAYS, because `session_fold(target, gist="…")` still crosses on it.
+HOST: `loop.clj` lost the five `__vis_native_result_*` callbacks — `index` was `describe()`'s backend
+and had no other caller. STORE: `persistance.clj`'s five `defdelegate`s and the sqlite extension's
+entire `ntr[tool_id]` branch-index section (278 lines: the cache atoms, `ntr-entries-of-forms`,
+`ntr-branch-index` and all five `db-native-result-*` fns) are deleted with no compatibility layer; the
+registrar never named them, so nothing else moved.
+
+The FOLD lost its recovery half, which was the point: `ntr-entries-of`, the scope→entries accumulation
+and the `"engine_iter_ntr"` ctx key, `ntr-recover-hint` with the `recover-hint` closure and the
+`(declare)` that forward-referenced it (the AGENTS.md ban made that non-optional), `rec-ntr-ids` /
+`:ntr-ids` / `:summary-ntr-ids` on the breadcrumb, and the `# saved: ntr[…]` STAMP EMITTER. A receipt is
+now `folded <label><note><kept-note> → <gist>` and a breadcrumb `# ⋯ folded t1/i1-i2 · <gist>`. The
+contract in one sentence, and the docs say exactly it: folding changes rendering, not storage; a folded
+step is readable only through `await session_state()`, and with introspection OFF it is not recoverable —
+the gist is what survives.
+
+Tests: −5 describes (`loop_test/native-tools-results-e2e-test`, the four sqlite describes) ≈ 457 lines;
+7 rewritten (both `compaction_verbs_test` receipt claims, three `loop_test` handle `it`s collapsed into
+one absence claim, the advertised-description fact list, the pricing test, `env_python_test`'s
+store-normalization describe — it now drives `__vis_deferred__`, the surviving settle path —
+`env_python_form_eval_test`'s cancelled-context assertion, `prompt_test`'s vectors); +1 added,
+`env_python_test/ntr-is-gone-test`, which pins that `ntr`, `native_tools_results`, `ntr.describe`,
+`ntr.at`, `__vis_entries_at__`, `__vis_native_result_scan__` and all five host callbacks raise
+`NameError`, and that no sandbox doc still advertises a coordinate. One trap worth recording: `ntr` bare
+cannot be a `prompt_test` surplus term — it is a substring of *control*, *contract* and *introspection* —
+so the surplus vector names `ntr[`, `ntr.describe()` and `# saved:`.
+
+Green on a clean JVM (`clojure -M:test`): 6433 cases, SIX failures, all pre-existing and named above.
+`format_code` and `lint_code` clean on every touched file.
+
 TODO — one checkable step per line, in order. Each step names the file, the thing it does to it, and
 the test that flips. A step is done when its own tests are green; a PHASE is done when its whole
 block is green, lint and format are clean, and it is committed with its tests.
@@ -1391,13 +1425,19 @@ block is green, lint and format are clean, and it is committed with its tests.
 
 **Phase 5 — retire `ntr`.**
 
-27. `resources/vis-python/async_runtime.py` — delete `ntr` / `native_tools_results`: prime-on-scan (`:1884-1890`), the mapping + describe/scope/index helpers (`:2103-2550`), `__vis_native_result_scan__` (`:2542`), stored-result dict normalization (`:678, 852`), the print()s nudge (`:2220-2230`) and the `# saved:` sentences (`:2312, 2333, 2527-2530`). KEEP the direct-kwargs list at `:2004-2006` — `session_fold` still takes `gist=`.
-28. `loop.clj:11156-11214` — delete the five `__vis_native_result_*` host callbacks.
-29. `env_python.clj:886, 997-1002, 2117-2122` — drop `ntr` / `native_tools_results` / `__vis_native_result_*` from the protected-name, non-deferred and defer-exclusion sets; `:2696` loses the "re-read stored results with `ntr[…]`" nudge.
-30. `persistance.clj:616-634` — delete the five `defdelegate`s; `vis-persistance-sqlite/.../core.clj:4487-4740` — delete the `ntr[tool_id]` index section, the five `db-native-result-*` fns and the result-body persistence that fed them, columns included (no compatibility layer).
-31. **Fold surgery in `loop.clj`, in this order** (each step leaves the file compiling): delete `ntr-entries-of` (`:2017-2043`) and its caller branch in `stamp-iter-universe!` (`:2104-2105`, docstring `:2046`); delete `(declare ntr-recover-hint)` (`:2734`, AGENTS.md `declare` ban) together with `ntr-recover-hint` (`:3290-3296`) and its two call sites (`:3163`, `:4094`); drop `recover-hint` from the receipt builder (`:3140, 3244, 3270`); delete `code-ntr` (`:3384`), `recover-bullet` (`:3426-3460`) and the `recover `/`more results:` branches in `session-fold-card` (`:3514-3517`), leaving `markup-bullet` = `bold-lead-word`; delete `rec-ntr-ids` / `:summary-ntr-ids` (`:3568-3569, 3660-3665, 3690`) and the `recover` metric in the rendered summary (`:4091-4100`); delete the `# saved:` stamp emitter (`:4187`).
-32. Descriptions and docs: `loop.clj:4775-4777` — `session_fold` says folding changes rendering, not storage, and a folded step is readable only via `await session_state()`; `loop.clj:4748` — `python_execution` loses the `# saved:`/`ntr` clause; `env_python.clj:1141` — sandbox `session_fold` docstring loses both `ntr` sentences; `resources/vis-docs/token-optimization.md:111,116` — delete the coordinate bullet and the introspection-OFF claim; `ChatContent.tsx:534` — reword the comment.
-33. Tests: delete the four sqlite describes (`:2562-2925`), both `env_python_test` `ntr` describes (`:680, 723`), `compaction_verbs_test/session-fold-native-tool-test` (`:574-613`); rewrite the receipt-shape describes without `recover`/`more results:`; ADD `env_python_test/ntr-is-gone-test` (`NameError` for `ntr`, `native_tools_results`, every `__vis_native_result_*`) and `compaction_verbs_test/fold-receipt-has-no-recovery-coordinate-test`. Run `…env-python-test`, `…compaction-verbs-test`, the sqlite namespace. Commit.
+27. DONE — `resources/vis-python/async_runtime.py`: the whole `__VisNativeResults__` class, the `ntr` / `native_tools_results` globals, the AST literal-id scanner `__vis_native_result_scan__`, the pre-scan/prime block inside `__vis_run_async__` and the `repr` blurb are deleted (454 lines); `__vis_as_result__`, `__vis_settle__`, `__VisResultList__` and `__VisResultStr__` keep their normalization and lost only their `ntr` sentences. The direct-kwargs list is KEPT — `session_fold(target, gist="…")` still needs it. File greps zero for `ntr[` / `native_tools_results` / `# saved:`.
+
+28. DONE — `loop.clj`: the five `__vis_native_result_*` host callbacks (prime / fetch / ids / index / scope) are deleted from `env-bindings` with their comment block; `compaction` and `__vis_par__` are untouched.
+
+29. DONE — `env_python.clj`: `ntr` / `native_tools_results` left `protected-baseline-names`; the non-tool filter is now `#{"asyncio"}` alone; the defer-exclusion set is `#{"session_fold" "__vis_par__" "__vis_par_isolated__"}`; the context-cancelled hint no longer tells the model to re-read stored results.
+
+30. DONE — `persistance.clj`: the five `defdelegate`s and their section comment deleted. `vis-persistance-sqlite/.../core.clj`: the whole `ntr[tool_id]` branch-index section (`:4487-4763`, 278 lines — cache atoms, `ntr-entries-of-forms`, `ntr-branch-index`, all five `db-native-result-*` fns) deleted; the usage-tally comment no longer cites it. No compatibility layer, no registrar change (the backend never named these fns).
+
+31. DONE — **fold surgery in `loop.clj`**, in order, each step leaving the file compiling: `ntr-entries-of` deleted with its docstring claim in `stamp-iter-universe!`; the scope→entries accumulation and the `"engine_iter_ntr"` ctx key deleted (universe, weights and skill activations untouched); `(declare ntr-recover-hint)` deleted (AGENTS.md `declare` ban) together with `ntr-recover-hint` and the `recover-hint` closure it backed, so the receipt is now `folded <label><note><kept-note> → <gist>`; `rec-ntr-ids` / `:ntr-ids` / `:summary-ntr-ids` deleted so a breadcrumb carries no accessor index; the breadcrumb is `# ⋯ folded t1/i1-i2 · <gist>`; and the `# saved: ntr[…]` STAMP EMITTER (`result-handle`, with the whole comment explaining coordinate-vs-id) is gone — no result line carries a coordinate again.
+
+32. DONE — descriptions and docs: `python_execution` lost the `# saved:`/`ntr` clause and gained the rule that replaces it (*a value you never printed is gone from the transcript once the block ends*); `env_python.clj` `session_fold` docstring already says folding changes rendering, not storage, and the gist is what survives; `prompt.clj` §2's three `ntr` lines became one value-and-print rule; `resources/vis-docs/token-optimization.md` lost the coordinate bullet and now says a folded step is not recoverable with introspection OFF; the companion comment at `ChatContent.tsx` no longer names `ntr`.
+
+33. DONE — tests: DELETED `loop_test/native-tools-results-e2e-test` (91 lines, 4 `it`s) and the four sqlite describes (`core_test.clj`, 366 lines); REWRITTEN `compaction_verbs_test`'s two receipt describes into `a fold breadcrumb carries no recovery coordinate` / `a fold receipt carries no recovery pointer`, `loop_test`'s three handle `it`s into one `no tool_result carries a result-recovery handle`, `loop_test/only-python-execution-is-advertised-test`'s fact list (`bare snake_case` → `plain Python` + the block-ends rule), `stamp-iter-universe!`'s pricing test (now asserts `engine_iter_ntr` is ABSENT), `env_python_test`'s store-normalization describe (now drives `__vis_deferred__`, not `ntr.__vis_store__`), `env_python_form_eval_test`'s cancelled-context assertion, and `prompt_test`'s required/surplus vectors (`ntr[`, `# saved:`, `ntr.describe()` are now SURPLUS — `ntr` bare cannot be, it is a substring of *control*/*contract*/*introspection*). ADDED `env_python_test/ntr-is-gone-test`: every retired name (`ntr`, `native_tools_results`, `ntr.describe`, `ntr.at`, all five `__vis_native_result_*`, `__vis_entries_at__`, `__vis_native_result_scan__`) raises `NameError`, and no sandbox doc still advertises a coordinate. Clean JVM: `clojure -M:test` = 6433 cases, **6 failures, all pre-existing** (audit-inventory rift pin, gateway fcm ×2, gateway relay, native-image env capture, `providers-router-rebuild-hook-wiring-test`).
 
 
 **Phase 6 — remove `cat` and `patch`.**

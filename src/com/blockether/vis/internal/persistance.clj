@@ -608,31 +608,6 @@
 
 (defdelegate db-load-ctx-history [db-info session-id])
 
-;; --- Native tool result retrieval (`ntr[tool_id]`) ---
-;; Batched read of prior NATIVE tool results by their provider `tool_use_id`
-;; (`:svar/tool-call-id`), scoped to the current session branch. ONE query
-;; loads every iteration's Nippy `:forms`; the matching form's `:result` is
-;; returned. Absent id ⇒ absent key (caller raises a clean miss).
-(defdelegate db-native-results-for-tool-ids [db-info session-id tool-ids])
-
-;; List EVERY native tool_use id persisted in the session branch (newest first,
-;; de-duped) — backs iteration over `ntr` (keys/items/…).
-(defdelegate db-native-result-ids-for-session [db-info session-id])
-
-;; Same branch scan, but LABELLED: [{:id :tool :gist}] newest-first, de-duped —
-;; what each stored result actually holds, with NO payload thaw. Backs full-session
-;; NTR mapping discovery.
-(defdelegate db-native-result-index-for-session [db-info session-id])
-
-;; Labelled index for ONLY the latest turn in this branch. Backs `ntr.describe()`,
-;; keeping browse output local while exact `ntr[id]` recovery remains session-wide.
-(defdelegate db-native-result-index-for-latest-turn [db-info session-id])
-
-;; One transcript COORDINATE (`tN/iM`) → the native results that iteration stored.
-;; The transcript heads every result with its coordinate, so `ntr["t5/i1"]` has to
-;; resolve; several native calls in one iteration yield several entries.
-(defdelegate db-native-result-index-for-scope [db-info session-id scope])
-
 ;; --- Extension aggregate sidecars ---
 (defdelegate db-create-extension-aggregate! [db-info opts])
 

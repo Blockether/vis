@@ -1049,7 +1049,7 @@
           (expect (true? (:collapsed? (second (nth out 0)))))
           (expect (true? (:collapsed? (second (nth out 1)))))
           (expect (nil? (:collapsed? (second (nth out 2)))))))
-    (it "prices only the projected wire while retaining the raw universe and NTR index"
+    (it "prices only the projected wire while retaining the raw universe"
         (let
           [trailer
            [[0
@@ -1065,11 +1065,11 @@
            (apply-summaries trailer (get @ca "session_summaries"))]
 
           (stamp-iter-universe! ca trailer wire)
-          ;; The collapsed payload is still recoverable but no longer contributes
-          ;; its historical 1k-token raw weight to a later broad fold.
+          ;; A collapsed iteration keeps its identity in the universe but no longer
+          ;; contributes its historical 1k-token raw weight to a later broad fold.
           (expect (= ["t1/i1" "t1/i2"] (get @ca "engine_iter_universe")))
           (expect (= {"t1/i1" 0 "t1/i2" 100} (get @ca "engine_iter_weights")))
-          (expect (= {"t1/i1" [{"id" "call-big"}]} (get @ca "engine_iter_ntr")))))
+          (expect (nil? (get @ca "engine_iter_ntr")))))
     ;; Phantom-reclaim regression (session 881eb071…): the FIRST `{"through" …}`
     ;; fold of a new turn sweeps in every prior-turn seed iteration that was never
     ;; explicitly folded. Those seeds emit NOTHING on the wire when their turn
@@ -2317,97 +2317,6 @@
         (finally (try (lp/dispose-environment! environment) (catch Throwable _ nil)))))))
 
 (defdescribe
-  native-tools-results-e2e-test
-  "END-TO-END over the REAL loop path: a real `create-environment` (real embedded
-   GraalPy sandbox + real in-memory SQLite), a native tool result PERSISTED via the
-   same `db-store-iteration!` the loop uses, then a `python_execution` block that
-   reads `ntr[<id>]` and gets back the SAME dict — no re-fetch."
-  (let
-    [store-native! (fn [env id result]
-                     ;; Persist one iteration whose form is a native tool result
-                     ;; keyed by `id` — exactly the shape the loop writes.
-                     (let
-                       [tid (persistance/db-store-session-turn!
-                              (:db-info env)
-                              {:parent-session-id (:session-id env) :user-request "e2e"})]
-                       (persistance/db-store-iteration! (:db-info env)
-                                                        {:session-turn-id tid
-                                                         :code "cat(\"x\")"
-                                                         :forms [{:scope "t1/i1"
-                                                                  :tag :observation
-                                                                  :src "cat(\"x\")"
-                                                                  :svar/tool-call-id id
-                                                                  :vis/tool-name "cat"
-                                                                  :result result}]})))]
-    (it "a later python_execution retrieves a PERSISTED native result by its tool_use id"
-        (let [env (lp/create-environment ::router {:db :memory})]
-          (try (store-native! env "toolu_E2E" {"op" "cat" "path" "x.py" "text" "hello world"})
-               (let
-                 [r (env/run-python-block
-                      (:python-context env)
-                      (str "res = ntr[\"toolu_E2E\"]\n"
-                           "print(res[\"text\"], res[\"path\"], type(res).__name__)")
-                      "t2/i1")]
-                 (expect (nil? (:error r)))
-                 ;; SAME value the native call returned, rehydrated to the __VisResult__
-                 ;; dict shape the model works with.
-                 (expect (= "hello world x.py __VisResult__" (str/trim (str (:stdout r))))))
-               (finally (try (lp/dispose-environment! env) (catch Throwable _ nil))))))
-    (it "an unknown id raises a clean KeyError through the normal op-error path (no crash)"
-        (let [env (lp/create-environment ::router {:db :memory})]
-          (try (let
-                 [r (env/run-python-block (:python-context env)
-                                          "print(ntr[\"toolu_DOES_NOT_EXIST\"])"
-                                          "t2/i1")]
-                 (expect (some? (:error r)))
-                 (expect (= :python/runtime (:phase (:data (:error r)))))
-                 (expect (str/includes? (str (:message (:error r))) "no native tool result")))
-               (finally (try (lp/dispose-environment! env) (catch Throwable _ nil))))))
-    (it "retrieval does NOT re-run the tool (payoff): the native fn is never called"
-        ;; The retrieval reads from the STORE, not the tool. We assert the sandbox
-        ;; never invokes a `cat` binding during retrieval by binding a `cat` that
-        ;; would flip a flag if called — it must stay unflipped.
-        (let
-          [env (lp/create-environment ::router {:db :memory})
-           called (atom false)]
-
-          (try (store-native! env "toolu_NOFETCH" {"op" "cat" "text" "cached body"})
-               ;; Shadow-proof: install a probe `cat` in the sandbox; retrieval must
-               ;; NOT call it (ntr goes straight to the store).
-               (env/bind-and-bump! env
-                                   'cat
-                                   (fn [& _]
-                                     (reset! called true)
-                                     {"op" "cat" "text" "REFETCHED"}))
-               (let
-                 [r (env/run-python-block (:python-context env)
-                                          "print(ntr[\"toolu_NOFETCH\"][\"text\"])"
-                                          "t2/i1")]
-                 (expect (nil? (:error r)))
-                 (expect (= "cached body" (str/trim (str (:stdout r)))))
-                 (expect (false? @called))) ;; the tool was NOT re-run
-               (finally (try (lp/dispose-environment! env) (catch Throwable _ nil))))))
-    (it "iteration DISCOVERS the store: keys/items/values/len/iter over every persisted id"
-        ;; The issue: the proxy only exposed get(). Now it's a read-only mapping —
-        ;; the sandbox can browse ids it never had up front.
-        (let [env (lp/create-environment ::router {:db :memory})]
-          (try (store-native! env "toolu_ONE" {"op" "cat" "text" "one"})
-               (store-native! env "toolu_TWO" {"op" "rg" "text" "two"})
-               (let
-                 [r (env/run-python-block
-                      (:python-context env)
-                      (str "ks = sorted(ntr.keys())\n"
-                           "items = dict(ntr.items())\n"
-                           "ops = sorted(v[\"op\"] for v in ntr.values())\n"
-                           "print(len(ntr), ks,\n" "      items[\"toolu_ONE\"][\"text\"], ops,\n"
-                           "      sorted(list(ntr)) == ks,\n" "      (\"toolu_ONE\" in ntr))")
-                      "t3/i1")]
-                 (expect (nil? (:error r)))
-                 (expect (= "2 ['toolu_ONE', 'toolu_TWO'] one ['cat', 'rg'] True True"
-                            (str/trim (str (:stdout r))))))
-               (finally (try (lp/dispose-environment! env) (catch Throwable _ nil))))))))
-
-(defdescribe
   iteration-summarize-test
   "summarize/drop operate at ITERATION (tN/iN) granularity: a summarized step
    collapses entirely (its assistant+tool_result pair leaves the wire) to one
@@ -2506,51 +2415,23 @@
           (expect (str/includes? (by-id "B") "BBB"))
           ;; python_execution → its PRINTED string
           (expect (str/includes? (by-id "P") "PPP"))))
-    (it "a NATIVE result tool_result carries its ntr[coordinate] handle; python_execution does NOT"
-        ;; MODEL-SEES-IT: each native call's result is retrievable later, and the key
-        ;; we hand back is the transcript COORDINATE of the form that produced it —
-        ;; the SAME address printed as this result's header, one `/fK` digit longer.
-        ;; The opaque `toolu_…` id is never stamped: it is 24 unreadable characters,
-        ;; and on a provider whose wire id is not the key vis stored (OpenAI Responses'
-        ;; composite `call_id|item_id`) it was the only handle the model could not
-        ;; guess. python_execution stores no return → no handle.
+    (it "no tool_result carries a result-recovery handle"
+        ;; Regression guard for the `ntr` removal: nothing stores a call's return
+        ;; any more, so no result may advertise a coordinate to re-read it by — a
+        ;; handle here would promise a store that no longer exists.
         (let
           [m
-           (irm {:tool-calls [{:id "toolu_A" :name "cat"} {:id "call_1|fc_9" :name "rg"}
-                              {:id "P" :name "python_execution"}]
+           (irm {:tool-calls [{:id "toolu_A" :name "cat"} {:id "P" :name "python_execution"}]
                  :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "toolu_A" :result "AAA"}
-                             {:scope "t1/i1/f2" :svar/tool-call-id "call_1|fc_9" :result "BBB"}
-                             {:scope "t1/i1/f3" :svar/tool-call-id "P" :result nil :stdout "PPP"}]})
+                             {:scope "t1/i1/f2" :svar/tool-call-id "P" :result nil :stdout "PPP"}]})
 
-           by-id
-           (into {} (map (juxt :tool_use_id :content)) (:content m))]
+           all
+           (str/join "\n" (map :content (:content m)))]
 
-          ;; native results advertise the COORDINATE of their own form
-          (expect (str/includes? (by-id "toolu_A") "ntr[\"t1/i1/f1\"]"))
-          (expect (str/includes? (by-id "call_1|fc_9") "ntr[\"t1/i1/f2\"]"))
-          ;; …and never the opaque id, composite or not
-          (expect (not (str/includes? (by-id "toolu_A") "ntr[\"toolu_A\"]")))
-          (expect (not (str/includes? (by-id "call_1|fc_9") "ntr[\"call_1|fc_9\"]")))
-          ;; python_execution printed — no stored return, so no handle offered
-          (expect (not (str/includes? (by-id "P") "ntr")))))
-    (it "a stored result whose form carries NO coordinate falls back to its literal id"
-        ;; Legacy/unscoped record: the id still resolves, so the handle is still real.
-        (let
-          [m
-           (irm {:tool-calls [{:id "toolu_L" :name "cat"}]
-                 :forms-vec [{:svar/tool-call-id "toolu_L" :result "AAA"}]})]
-
-          (expect (str/includes? (:content (first (:content m))) "ntr[\"toolu_L\"]"))))
-    (it "an ERRORED native call gets no result handle (nothing was stored)"
-        (let
-          [m
-           (irm {:tool-calls [{:id "bad" :name "cat"}]
-                 :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "bad" :error "No such file"}]})
-
-           c
-           (get-in m [:content 0 :content])]
-
-          (expect (not (str/includes? c "ntr")))))
+          (expect (str/includes? all "AAA"))
+          (expect (str/includes? all "PPP"))
+          (expect (not (str/includes? all "ntr")))
+          (expect (not (str/includes? all "# saved:")))))
     (it "a FAILED call's tool_result is flagged :is_error true; a successful one is not"
         (let
           [m
@@ -3596,7 +3477,10 @@
                   :additionalProperties false}
                  (:schema tool)))
       (doseq
-        [fact ["project packages need a project REPL" "bare snake_case" "errors surface"
+        [fact ["project packages need a project REPL" "plain Python" "errors surface"
+               ;; With no result store left, the description states the one rule that
+               ;; replaces it: what you did not print is gone when the block ends.
+               "gone from the transcript once the block ends"
                ;; The sleep/poll prohibition lives HERE and nowhere else: the core
                ;; prompt deliberately dropped its duplicate copy.
                "`sh.logs()`" "no tool waits for you"

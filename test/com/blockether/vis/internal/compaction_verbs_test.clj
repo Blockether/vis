@@ -1115,55 +1115,46 @@
         (=
           "# ⋯ folded t1/i1 · saved ~12k tokens · ~17% of budget · context 44%→~31% (42k→30k tokens) · big cat dump"
           line))))
-  (it "a fold breadcrumb points to ntr.describe() without carrying result ids"
-      ;; The durable breadcrumb stays short even when a fold covers many calls.
-      ;; `ntr.describe()` is the labelled discovery surface; drops and
-      ;; python_execution-only folds (no stored result) carry no pointer.
-      (let
-        [tr
-         [[1
-           {:forms-vec [{:scope "t1/i1/f1"
-                         :svar/tool-call-id "toolu_A"
-                         :result "a"
-                         :vis/tool-name "grep"
-                         :result-summary "`ntr` · 2 files"}]}]
-          [2
-           {:forms-vec
-            [{:scope "t1/i2/f1" :svar/tool-call-id "toolu_B" :result "b" :vis/tool-name "cat"}]}]]
+  (it
+    "a fold breadcrumb carries no recovery coordinate"
+    ;; Regression guard for the `ntr` removal: `python_execution` PRINTS, so
+    ;; nothing stores a result the breadcrumb could point at. A pointer here
+    ;; would promise a recovery path that cannot exist.
+    (let
+      [tr
+       [[1
+         {:forms-vec
+          [{:scope "t1/i1/f1" :svar/tool-call-id "toolu_A" :result "a" :result-summary "2 files"}]}]
+        [2 {:forms-vec [{:scope "t1/i2/f1" :svar/tool-call-id "toolu_B" :result "b"}]}]]
 
-         folded
-         (apply-summaries tr [{"scopes" #{"t1/i1" "t1/i2"} "gist" "did it"}])
+       folded
+       (apply-summaries tr [{"scopes" #{"t1/i1" "t1/i2"} "gist" "did it"}])
 
-         dropped
-         (apply-summaries tr [{"scopes" #{"t1/i1"} "drop" true "gist" "misread"}])
+       dropped
+       (apply-summaries tr [{"scopes" #{"t1/i1"} "drop" true "gist" "misread"}])
 
-         printed
-         (apply-summaries [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "p"}]}]]
-                          [{"scopes" #{"t1/i1"} "gist" "no store"}])]
+       line
+       (:content (irm (second (first folded))))]
 
-        (expect (= "# ⋯ folded t1/i1-i2 · more results: ntr.describe() · did it"
-                   (:content (irm (second (first folded))))))
-        (expect (= "# ⋯ dropped t1/i1 · misread" (:content (irm (second (first dropped))))))
-        (expect (= "# ⋯ folded t1/i1 · no store" (:content (irm (second (first printed))))))))
+      (expect (= "# ⋯ folded t1/i1-i2 · did it" line))
+      (expect (not (str/includes? line "ntr")))
+      (expect (not (str/includes? line "# saved:")))
+      (expect (= "# ⋯ dropped t1/i1 · misread" (:content (irm (second (first dropped))))))))
   (it "with NO stamped utilization the card degrades to the bare confirmation"
       (let [sf (get (compaction-verbs (atom {"session_turn" 2})) 'session-fold)]
         (expect (= "folded t1/i1 → g" (sf ["t1/i1"] "g")))))
-  (it "a fold points to ntr.describe() without copying result labels into the breadcrumb"
+  (it "a fold receipt carries no recovery pointer"
+      ;; The receipt says what was reclaimed and what the gist was — never how to
+      ;; re-read a folded result, because folding changes rendering, not storage,
+      ;; and there is no per-result accessor left to name.
       (let
-        [entries
-         (mapv (fn [i]
-                 {"id" (str "toolu_" i) "tool" "cat"})
-               (range 26))
-
-         sf
-         (get (compaction-verbs (atom {"session_turn" 2
-                                       "engine_iter_universe" ["t1/i1"]
-                                       "engine_iter_ntr" {"t1/i1" entries}}))
+        [sf
+         (get (compaction-verbs (atom {"session_turn" 2 "engine_iter_universe" ["t1/i1"]}))
               'session-fold)
 
          out
          (sf ["t1/i1"] "g")]
 
-        (expect (= "folded t1/i1 · more results: ntr.describe() → g" out))
-        (expect (not (str/includes? out "toolu_")))
-        (expect (not (str/includes? out "older labelled results"))))))
+        (expect (= "folded t1/i1 → g" out))
+        (expect (not (str/includes? out "ntr")))
+        (expect (not (str/includes? out "more results"))))))

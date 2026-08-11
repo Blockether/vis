@@ -884,8 +884,7 @@
 (def ^:private protected-baseline-names
   "Python globals the agent may CALL but must not rebind. Rebinding a tool or
    parser-helper name would shadow the persistent session substrate."
-  #{"apropos" "doc" "gather" "ntr" "native_tools_results" "__vis_count_forms__"
-    "__vis_banned_name__"})
+  #{"apropos" "doc" "gather" "__vis_count_forms__" "__vis_banned_name__"})
 
 (defn- protected-names-for-bindings
   [custom-bindings]
@@ -1031,12 +1030,10 @@
      ;; Engine DATA-accessors that are baseline globals but NOT callable tools —
      ;; the prompt teaches them directly, so they must NOT clutter the tool
      ;; discovery surface (same spirit as filtering `__vis_*`/dunders).
-     ;; `ntr` / `native_tools_results` are the prior-result mappings the model
-     ;; subscripts; `asyncio` is the async-runtime shim global (`asyncio =
-     ;; __vis_asyncio__`, so `import asyncio`/`asyncio.run(...)` work) — a
-     ;; runtime, not a tool.
+     ;; `asyncio` is the async-runtime shim global (`asyncio = __vis_asyncio__`,
+     ;; so `import asyncio`/`asyncio.run(...)` work) — a runtime, not a tool.
      non-tool-names
-     #{"ntr" "native_tools_results" "asyncio"}
+     #{"asyncio"}
 
      ;; Shim MODULES (yaml, numpy, requests, …) publish via `sys.modules` so
      ;; `import <lib>` works, but many are NOT top-level globals — so they'd
@@ -2133,12 +2130,7 @@
                                   (fn? v)))
                         (mapcat (fn [[sym _]]
                                   (cons (sym->py-name sym) (py-aliases-for-sym sym))))
-                        (remove #{"session_fold" "__vis_par__" "__vis_par_isolated__"
-                                  ;; ntr/native_tools_results host callbacks:
-                                  ;; plain sync lookups, never awaitable thunks.
-                                  "__vis_native_result_prime__" "__vis_native_result_fetch__"
-                                  "__vis_native_result_ids__" "__vis_native_result_index__"
-                                  "__vis_native_result_scope__"})
+                        (remove #{"session_fold" "__vis_par__" "__vis_par_isolated__"})
                         distinct
                         vec)]
       (.putMember g "__vis_defer_names__" (->py defer-names))
@@ -2674,8 +2666,7 @@
 
      ;; A dict-method call on a value GraalPy names by a base type — `str`,
      ;; `list`, etc. From the AttributeError text alone this is INDISTINGUISHABLE
-     ;; between a genuine native value (a `python_execution` result in `ntr` is
-     ;; its printed stdout STRING) and a FOREIGN tool-result row reported by its
+     ;; between a genuine host value and a FOREIGN tool-result row reported by its
      ;; element type (e.g. `await lst()` → a list). Capture [type attr] so the
      ;; steer NAMES the type instead of guessing which reading applies.
      native-nondict
@@ -2711,8 +2702,8 @@
        context-cancelled?
        (str "The Python sandbox CONTEXT was torn down (cancelled or closed) — every import, "
             "variable, and definition from earlier blocks is GONE, so re-running the same "
-            "block keeps failing. Recover in ONE fresh block: re-import what you need, "
-            "re-read stored results with `ntr[\"<tool id>\"]`, and rebuild any state before "
+            "block keeps failing. Recover in ONE fresh block: re-import what you need "
+            "and rebuild any state before "
             "continuing. If it repeats, stop and tell the USER. Original error: ")
        prose-hint prose-hint
        non-ascii? (str "A non-ASCII character leaked into CODE position - it is only "
