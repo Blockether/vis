@@ -2801,17 +2801,25 @@
          needs-input?
          (= :needs-input (:vis/answer-mode answer))
 
+         ;; The REAL cause of a failed turn: an explicit result :error, else the
+         ;; last iteration error in the trace — the provider failure (429 quota,
+         ;; 529 overload, rate-limit, retries exhausted) that actually killed the
+         ;; turn. Used for BOTH the content card AND the headline so neither ever
+         ;; shows the misleading "Final answer must be canonical content or
+         ;; Markdown prose" that a non-answer-shaped fallback would otherwise
+         ;; produce.
+         terminal-error
+         (or (:error result) (some :error (reverse (:trace result))))
+
          content-blocks
          (try (answer-content answer)
               (catch Throwable _
                 ;; answer-content threw — the loop's terminal fallback didn't
-                ;; pass content validation. Build readable content from the
-                ;; result error so the user sees the real provider failure
-                ;; (429, quota exhausted) instead of the misleading
-                ;; "Final answer must be canonical content or Markdown prose".
-                (let [err (or (:error result) (some :error (reverse (:trace result))))]
-                  (or (when (some? err) (seq (provider-error/provider-error-content err)))
-                      [(content/error "turn_failed" "Turn failed" false)]))))
+                ;; pass content validation. Build readable content from the real
+                ;; provider failure instead of the misleading validation string.
+                (or (when (some? terminal-error)
+                      (seq (provider-error/provider-error-content terminal-error)))
+                    [(content/error "turn_failed" "Turn failed" false)])))
 
          stalled?
          (boolean (and stall (:stalled? @stall)))
@@ -2834,7 +2842,16 @@
 
          failure-text
          (cond stalled? (stall-failure-text stall)
-               failure-code (or (some-> (:error result)
+               failure-code (or ;; Prefer the real provider failure's headline
+                                ;; (e.g. "Provider rate-limited") over a raw
+                                ;; result :error, which on a validation-throw
+                                ;; path is the misleading canonical-content
+                                ;; string rather than the actual cause.
+                                (when (some? terminal-error)
+                                  (some-> (provider-error/provider-error-title terminal-error)
+                                          str/trim
+                                          not-empty))
+                                (some-> (:error result)
                                         str
                                         str/trim
                                         not-empty)

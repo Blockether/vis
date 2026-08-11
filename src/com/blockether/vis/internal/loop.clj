@@ -8260,10 +8260,22 @@
          (reset! ca clean)
          clean))
 
+     turn-content
+     ;; A FAILED turn's fallback answer may not be answer-shaped (a
+     ;; provider-exhaustion turn hands back a raw error value, not prose). NEVER
+     ;; let `answer-content` throw here: an unguarded throw propagates out of
+     ;; `send!` and MASKS the real provider failure — the 529/overload or
+     ;; rate-limit that actually killed the turn, preserved in `:trace` — with
+     ;; the misleading "Final answer must be canonical content or Markdown
+     ;; prose". On a throw, persist no content; the gateway rebuilds honest
+     ;; content from the trace error (see gateway/state).
+     (try (content/answer-content (:answer result))
+          (catch Throwable _ []))
+
      _
      (persistance/db-update-session-turn! (:db-info env)
                                           session-turn-id
-                                          {:content (content/answer-content (:answer result))
+                                          {:content turn-content
                                            :iteration-count (:iteration-count result)
                                            :duration-ms (:duration-ms result)
                                            :status (or (:status result) :success)

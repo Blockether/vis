@@ -743,3 +743,36 @@
         (expect (= :auth (:category classification)))
         (expect (:all-attempts-category? classification))
         (expect (= [:a] (perr/auth-failed-provider-ids p))))))
+
+(defdescribe failed-turn-masking-test
+  ;; Regression: a turn that dies on provider exhaustion (Anthropic 529
+  ;; overloaded, retries spent) hands back a NON-answer-shaped fallback. The old
+  ;; path ran that through answer-content, threw "Final answer must be canonical
+  ;; content or Markdown prose", and that misleading string MASKED the real
+  ;; provider failure (which lives as the last error in the turn trace). The fix
+  ;; surfaces the trace's provider error for both the card and the headline.
+  (it "the real 529 provider error surfaces, not the canonical-content string"
+      (let [terminal-error {:message "Provider stream failed (overloaded_error): Overloaded"
+                            :data {:type :svar.core/stream-failed
+                                   :status 529
+                                   :provider-message "Overloaded"}
+                            :status 529}
+            title (perr/provider-error-title terminal-error)
+            card  (first (perr/provider-error-content terminal-error))]
+        ;; classifies as a genuine provider failure, not :generic
+        (expect (not= :generic (perr/provider-error-kind terminal-error)))
+        ;; headline + card never leak the internal validation string
+        (expect (nil? (re-find #"(?i)canonical content" (str title))))
+        (expect (nil? (re-find #"(?i)canonical content" (str (get card "message")))))
+        ;; the card is a real provider_ error block, not a bare turn_failed
+        (expect (= "error" (get card "type")))
+        (expect (str/starts-with? (str (get card "code")) "provider_"))))
+  (it "answer-content still rejects a non-answer-shaped fallback (the masking trigger)"
+      ;; documents WHY the guard exists: a raw non-answer value on the failure
+      ;; path throws here, so the loop must NOT let that throw escape send!.
+      (require 'com.blockether.vis.internal.content)
+      (let [answer-content (resolve 'com.blockether.vis.internal.content/answer-content)
+            outcome (try (answer-content {:overloaded true :status 529})
+                         ::no-throw
+                         (catch clojure.lang.ExceptionInfo _ ::threw))]
+        (expect (= ::threw outcome)))))
