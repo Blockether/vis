@@ -564,14 +564,14 @@ Built-in extensions can expose a toggle under `toggles:` — boolean, or an enum
 toggles:
   # Default: true. Set false to remove the Exa/GitHub/arXiv live-research extension.
   web_search: false
-  # Default: true. Set false to remove the shell command tool, including from sub-agents.
+  # Default: true. Set false to remove the sandbox's `shell(...)` call, including from sub-agents.
   shell: false
   # Default: false. Set true to let the agent read its own session database and
   # gateway event journals (session introspection).
   introspection: true
 ```
 
-After editing `vis.yml`, run `/reload` in the session. With `shell: false`, Vis does not bind the `shell` tool (including for sub-agents), so it cannot launch commands or managed language processes. `jail.enabled` is independent: it confines commands when shell access is enabled.
+After editing `vis.yml`, run `/reload` in the session. With `shell: false`, Vis does not bind `shell` into the Python sandbox (including for sub-agents), so it cannot launch commands or managed language processes. `jail.enabled` is independent: it confines commands when shell access is enabled.
 
 ## Session titling
 

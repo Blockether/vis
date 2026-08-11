@@ -155,14 +155,15 @@
       (with-shell-on
         (fn []
           (binding [workspace/*workspace-root* (workspace/trunk-root)]
-            (let [sid "shell-ext-pager"
-                  env {:session-id sid}]
-              (try (shell-bg* env
-                              "pager"
-                              "printf 'pager=[%s] git=[%s]\\n' \"$PAGER\" \"$GIT_PAGER\"")
-                   (let [out (poll #(log-text env "pager") #(str/includes? % "pager="))]
-                     (expect (str/includes? out "pager=[cat] git=[cat]")))
-                   (finally (resources/stop! sid "pager"))))))))
+            (let
+              [sid "shell-ext-pager"
+               env {:session-id sid}]
+
+              (try
+                (shell-bg* env "pager" "printf 'pager=[%s] git=[%s]\\n' \"$PAGER\" \"$GIT_PAGER\"")
+                (let [out (poll #(log-text env "pager") #(str/includes? % "pager="))]
+                  (expect (str/includes? out "pager=[cat] git=[cat]")))
+                (finally (resources/stop! sid "pager"))))))))
   (it "strips the TWO-BYTE keypad escapes a full-screen tool writes, not only CSI"
       (let
         [normalize
@@ -182,7 +183,8 @@
       (with-shell-on
         (fn []
           (binding [workspace/*workspace-root* (workspace/trunk-root)]
-            (let [r (shell-run* {} "printf '\\033[33mcoloured\\033[m\\n'; printf 'first\\rlast\\n'")]
+            (let
+              [r (shell-run* {} "printf '\\033[33mcoloured\\033[m\\n'; printf 'first\\rlast\\n'")]
               ;; A tool colours and redraws ONLY because our pty makes isatty() true.
               ;; Stripping that on the card alone left the escapes in the `stdout` the
               ;; caller actually prints, which is where the artifact was reported.
@@ -203,8 +205,7 @@
          ;; Byte-for-byte what git writes down a pty while pushing.
          pushed
          (lf (str "Enumerating objects: 28, done.\r\n"
-                  "Counting objects:   3% (1/28)\r"
-                  "Counting objects:  82% (23/28)\r"
+                  "Counting objects:   3% (1/28)\r" "Counting objects:  82% (23/28)\r"
                   "Counting objects: 100% (28/28), done.\r\n"
                   "Delta compression using up to 14 threads\r\n"))]
 
@@ -214,20 +215,16 @@
                    pushed))))
   (it "keeps the last frame when the capture ends on a bare carriage return"
       (let [lf @#'shell/lf]
-        (expect (= "Receiving objects:  40% (12/28)"
-                   (lf "Receiving objects:  40% (12/28)\r")))
+        (expect (= "Receiving objects:  40% (12/28)" (lf "Receiving objects:  40% (12/28)\r")))
         ;; A CR that only homes the cursor is a move, not a blank frame.
         (expect (= "--- status ---" (lf "\r--- status ---")))))
   (it "renders one progress line on the card instead of the whole animation"
       (let
-        [card
-         (render-shell-run-result
-           {"command" "git push"
-            "exit" 0
-            "stdout" (str "Compressing objects:   9% (1/11)\r"
-                          "Compressing objects: 100% (11/11), done.\r\n"
-                          "To github.com:example/repo.git\r\n")})]
-
+        [card (render-shell-run-result {"command" "git push"
+                                        "exit" 0
+                                        "stdout" (str "Compressing objects:   9% (1/11)\r"
+                                                      "Compressing objects: 100% (11/11), done.\r\n"
+                                                      "To github.com:example/repo.git\r\n")})]
         (expect (str/includes? (:body card) "Compressing objects: 100% (11/11), done."))
         (expect (not (str/includes? (:body card) "9% (1/11)"))))))
 
@@ -1021,90 +1018,63 @@
                  (:summary (render-shell-send-result {"id" "ops" "sent" 0})))))))
 
 (defdescribe
-  shell-status-test
-  ;; Regression, handle audit: the handle could read bytes and kill a process but
-  ;; could not simply SAY what it was doing — "has it finished", "since when",
-  ;; "where are the bytes on this machine" and "what is it costing" all required
-  ;; reading the log, which moved a cursor to answer a question about the process.
+  shell-status-on-every-stage-test
+  ;; Regression, status audit: the shell carried a `status` verb of its own, so "has it
+  ;; finished", "since when", "where are the bytes on this machine" and "what is it
+  ;; costing" read as a SEPARATE question — a second call about a shell whose own answer
+  ;; had already said all four.
   (it
-    "reports lifecycle, the log file on disk and live tree cost, reading nothing"
+    "answers every stage with the lifecycle, the log file on disk and live tree cost"
     (with-shell-on
       (fn []
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
           (let
-            [sid "shell-status"
-             env {:session-id sid}
-             status-of #(:result (shell* env {"op" "status" "id" %}))]
+            [sid "shell-status-stages"
+             env {:session-id sid}]
 
             (try (let
                    [started (:result (shell* env {"command" "sleep 30" "id" "st1"}))
-                    st (status-of "st1")]
+                    logs (:result (shell-logs* env "st1"))]
 
-                   ;; RUNNING: no exit code yet, and `finished_at` says the same thing on
-                   ;; the clock.
-                   (expect (= "running" (get st "status")))
-                   (expect (nil? (get st "exit")))
-                   (expect (nil? (get st "finished_at")))
-                   (expect (pos? (long (get st "started_at"))))
-                   (expect (= (get started "started_at") (get st "started_at")))
-                   ;; WHERE the bytes are: an ordinary file a human can `cat`.
-                   (expect (= (.getPath (shell-log/log-file sid "st1")) (get st "log_path")))
-                   (expect (.isFile (io/file ^String (get st "log_path"))))
+                   ;; RUNNING, on the RUN's own answer: no exit code yet, and
+                   ;; `finished_at` says the same thing on the clock.
+                   (expect (= "running" (get started "status")))
+                   (expect (nil? (get started "exit")))
+                   (expect (nil? (get started "finished_at")))
+                   (expect (pos? (long (get started "started_at"))))
+                   ;; WHERE the bytes are: an ordinary file a human can read.
+                   (expect (= (.getPath (shell-log/log-file sid "st1")) (get started "log_path")))
+                   (expect (.isFile (io/file ^String (get started "log_path"))))
                    ;; WHAT it costs, for the whole process TREE, sampled now.
-                   (expect (pos? (long (get st "rss_bytes"))))
-                   (expect (number? (get st "cpu_percent")))
-                   (expect (number? (get st "cpu_ms")))
-                   ;; A status read moves NO cursor: it is not a log read.
-                   (expect (= 0 (get st "next_offset"))))
-                 ;; FINISHED: the exit code is there, the clock stopped, and the sampled
-                 ;; cost is nil rather than a stale number about a process that is gone.
-                 (shell* env {"command" "echo done" "id" "st-done"})
-                 (let [done (poll #(status-of "st-done") #(some? (get % "exit")))]
-                   (expect (= "exited" (get done "status")))
-                   (expect (= 0 (get done "exit")))
-                   (expect (>= (long (get done "finished_at")) (long (get done "started_at"))))
-                   (expect (nil? (get done "rss_bytes")))
-                   (expect (nil? (get done "cpu_percent")))
-                   ;; The log FILE outlives the process, and status still names it.
-                   (expect (.isFile (io/file ^String (get done "log_path")))))
-                 (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))))
-  (it "answers for a shell whose registry entry is already retired"
-      (with-shell-on (fn []
-                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                         (let
-                           [sid "shell-status-retired"
-                            env {:session-id sid}]
+                   (expect (pos? (long (get started "rss_bytes"))))
+                   (expect (number? (get started "cpu_percent")))
+                   (expect (number? (get started "cpu_ms")))
+                   ;; A LOG read says all four again, so nothing has to ask twice.
+                   (expect (= "running" (get logs "status")))
+                   (expect (= (get started "log_path") (get logs "log_path")))
+                   (expect (= (get started "started_at") (get logs "started_at")))
+                   (expect (pos? (long (get logs "rss_bytes")))))
+                 ;; FINISHED: the wait and a later log read agree on the exit code and
+                 ;; the stopped clock, and the sampled cost is nil rather than a stale
+                 ;; number about a process that is gone.
+                 (let
+                   [_started (:result (shell* env {"command" "echo done" "id" "st-done"}))
+                    waited (wait* env "st-done" 10)
+                    later (poll #(:result (shell-logs* env "st-done")) #(some? (get % "exit")))]
 
-                           (try (let
-                                  [r (:result (shell* env {"command" "echo done" "id" "st2"}))
-                                   _ (wait* env "st2" 10)
-                                   _ (resources/stop-all! sid)
-                                   st (:result (shell* env {"op" "status" "id" "st2"}))]
-
-                                  (expect (= "status" (get st "stage")))
-                                  (expect (= "exited" (get st "status")))
-                                  (expect (= (get r "id") (get st "id")))
-                                  (expect (some? (get st "log_path"))))
-                                (finally (resources/stop-all! sid)
-                                         (shell-log/delete-session-logs! sid))))))))
-  (it "refuses an unknown id and a foreign trust origin by name"
-      (with-shell-on
-        (fn []
-          (binding [workspace/*workspace-root* (workspace/trunk-root)]
-            (let
-              [sid "shell-status-refusals"
-               env {:session-id sid}]
-
-              (try (expect (str/includes? (str (throw-message
-                                                 #(shell* env {"op" "status" "id" "nope"})))
-                                          "No shell 'nope'"))
-                   (shell* env {"command" "sleep 30" "id" "st3"})
-                   (expect (str/includes? (str (throw-message #(shell* (assoc env
-                                                                         :shell-origin
-                                                                         "jailed-extension")
-                                                                       {"op" "status" "id" "st3"})))
-                                          "different trust origin"))
-                   (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid)))))))))
+                   (doseq [r [waited later]]
+                     (expect (= "exited" (get r "status")))
+                     (expect (= 0 (get r "exit")))
+                     (expect (>= (long (get r "finished_at")) (long (get r "started_at"))))
+                     (expect (nil? (get r "rss_bytes")))
+                     (expect (nil? (get r "cpu_percent")))
+                     ;; The log FILE outlives the process, and every stage still names it.
+                     (expect (.isFile (io/file ^String (get r "log_path"))))))
+                 ;; STOP is a stage too: it reports the shell it just killed.
+                 (let [stopped (:result (shell* env {"op" "stop" "id" "st1"}))]
+                   (expect (= "stopped" (get stopped "status")))
+                   (expect (some? (get stopped "log_path"))))
+                 (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid)))))))))
 
 (defdescribe
   shell-wait-answers-test
@@ -1127,7 +1097,7 @@
                         _ (shell* env {"command" "echo hi" "id" id})
                         w (wait* env id 30)
                         back (System/currentTimeMillis)
-                        st (:result (shell* env {"op" "status" "id" id}))]
+                        st (:result (shell-logs* env id))]
 
                        (expect (= 0 (get w "exit")))
                        (expect (false? (get w "timed_out")))
@@ -1167,8 +1137,6 @@
                            ((ticker-of shell/shell-wait-symbol) env [{"id" "dev"}])))
                 (expect (= "stopping: sleep 30"
                            ((ticker-of shell/shell-stop-symbol) env [{"id" "dev"}])))
-                (expect (= "checking on: sleep 30"
-                           ((ticker-of shell/shell-status-symbol) env [{"id" "dev"}])))
                 ;; Regression, user report (paraphrased: what is `tt`?): no live
                 ;; shell answers, and the sentence says the generic noun rather
                 ;; than a token only the caller can resolve.
@@ -1196,7 +1164,7 @@
                        (try (let
                               [run (:result (shell* env {"command" "echo hi"}))
                                bg (:result (shell* env {"command" "read x; echo got:$x" "id" "s1"}))
-                               status (:result (shell* env {"op" "status" "id" "s1"}))
+                               logs2 (:result (shell-logs* env "s1"))
                                logs (:result (shell-logs* env "s1"))
                                sent (:result (shell-send* env "s1" "yes"))
                                waited (wait* env (get run "id"))
@@ -1205,16 +1173,16 @@
 
                               (expect (= (ks run)
                                          (ks bg)
-                                         (ks status)
+                                         (ks logs2)
                                          (ks logs)
                                          (ks waited)
                                          (ks sent)
                                          (ks stopped)
                                          (ks git)))
                               ;; `stage` is the ONE thing that varies, and it varies as DATA.
-                              (expect (= ["run" "run" "status" "logs" "wait" "send" "stop" "run"]
+                              (expect (= ["run" "run" "logs" "logs" "wait" "send" "stop" "run"]
                                          (mapv #(get % "stage")
-                                               [run bg status logs waited sent stopped git])))
+                                               [run bg logs2 logs waited sent stopped git])))
                               ;; The bytes have ONE name, whether the call waited for them or
                               ;; came back for them later.
                               (expect (= "hi\n" (get waited "stdout")))
@@ -1494,11 +1462,15 @@
   shell-native-contract-test
   ;; Regression, un-unified shell: ONE `shell` tool with an `op` enum made the model
   ;; disambiguate five mutually-exclusive shapes on every call; five tools then cost
-  ;; five schemas for operations on ONE object.
-  (it "advertises exactly one native shell tool, because a wait is not a lifecycle"
-      (expect (= ["shell"]
-                 (mapv :ext.symbol/name (filter :ext.symbol/native-tool? shell/shell-symbols))))
-      (expect (= 6 (count shell/shell-symbols))))
+  ;; five schemas for operations on ONE object. The end of that line is NO native tool
+  ;; at all — a process starts from Python, the one place that can HOLD the handle the
+  ;; call answers with.
+  (it "advertises no native shell tool, because the wire cannot hold a handle"
+      (expect (= [] (mapv :ext.symbol/name (filter :ext.symbol/native-tool? shell/shell-symbols))))
+      (expect (= 5 (count shell/shell-symbols)))
+      ;; Still the public, documented Python verb — not a private underscore transport.
+      (expect (= "shell" (:ext.symbol/name (first shell/shell-symbols))))
+      (expect (contains? (extension/sandbox-symbol-docs) 'shell)))
   (it "gives each tool a satisfiable schema with no op discriminator and no blocking knobs"
       (doseq [s shell/shell-symbols]
         (let [props (get-in s [:ext.symbol/schema :properties])]
@@ -1528,7 +1500,7 @@
   (it "teaches that trimming belongs on the HANDLE, never inside the command"
       (let [text (:ext.symbol/description shell/shell-symbol)]
         (doseq
-          [needle ["| head" "| tail" "| grep" "2>/dev/null" "> file" "sh.logs(offset=…, limit=…)"
+          [needle ["| head" "| tail" "| grep" "2>/dev/null" "> file" "sh.logs(offset=…)"
                    "log_path"]]
           (expect (str/includes? text needle) needle))
         ;; The reason, not only the prohibition: a pipeline reports the LAST stage's exit.
@@ -1541,7 +1513,8 @@
                  ;; next to cat / grep, so there is no `shell.run(…)` namespace.
                  (expect (true? (get-in shell/vis-extension [:ext/engine :ext.engine/builtin?])))
                  (expect (nil? (get-in shell/vis-extension [:ext/engine :ext.engine/alias])))
-                 (expect (= '[shell _shell-status _shell-logs _shell-wait _shell-type _shell-stop]
+                 ;; No `status` transport either: every stage's answer already carries it.
+                 (expect (= '[shell _shell-logs _shell-wait _shell-type _shell-stop]
                             (mapv :ext.symbol/symbol shell/shell-symbols)))))
 
 (defdescribe
@@ -1625,10 +1598,13 @@
       (expect (nil? (render-shell-call "run" {})))
       ;; A malformed command is the CALL's error to report, never this preview's.
       (expect (nil? (render-shell-call "run" {"command" ""}))))
-  (it "publishes the renderer under the one native tool's wire name"
-      (let [rs (extension/native-tool-start-call-renderers [shell/vis-extension])]
-        (expect (= ["shell"] (vec (keys rs))))
-        (expect (every? fn? (vals rs))))))
+  (it "publishes no native renderer, and the op-card resolves off the result's own op"
+      ;; Nothing is advertised, so there is no wire name to hang a pending card on; a
+      ;; shell result printed in Python still finds its card through `op`.
+      (expect (= {} (extension/native-tool-start-call-renderers [shell/vis-extension])))
+      (expect (= {} (extension/native-tool-finish-call-renderers [shell/vis-extension])))
+      (let [rs (extension/native-tool-finish-call-renderers-by-op [shell/vis-extension])]
+        (expect (fn? (:render-finish-call-fn (get rs "shell")))))))
 
 (defdescribe
   macos-jailed-pty-e2e-test
@@ -1704,9 +1680,9 @@
 (defdescribe
   python-sandbox-surface-test
   "The bare Python global has only the one-map shell grammar."
-  (it "binds the six shell symbols into sandbox globals, each with a doc"
+  (it "binds the five shell symbols into sandbox globals, each with a doc"
       (let [bind (extension/builtin-sandbox-bindings (constantly nil))]
-        (expect (= '[_shell-logs _shell-status _shell-stop _shell-type _shell-wait shell]
+        (expect (= '[_shell-logs _shell-stop _shell-type _shell-wait shell]
                    (vec (sort (filter #(str/includes? (name %) "shell") (keys bind))))))
         (expect (contains? (extension/sandbox-symbol-docs) 'shell))))
   (it "documents the ONE command on the run tool"
@@ -1776,9 +1752,9 @@
                               "[isinstance(sh, dict), type(sh).__name__, 'shell_logs' in globals(),"
                               " 'got ready' in w['stdout'], w['status'], w['timed_out']]"))))
              (finally (resources/stop-all! sid)))))
-  (it "reports status through the handle, with no log read and no cursor moved"
-      ;; The handle could kill a process and read its bytes but could not simply SAY
-      ;; what it was doing, so "has it finished" cost a log read that moved a cursor.
+  (it "reports the shell's status on the run's OWN answer, with no second call"
+      ;; The handle carried a `status()` verb of its own, so "has it finished" read as a
+      ;; separate question about a shell whose own answer had already said it.
       (let
         [sid
          (str "py-status-" (System/nanoTime))
@@ -1786,13 +1762,13 @@
          c
          (py-ctx {:session-id sid})]
 
-        (try (expect (= ["status" "running" true true true true]
+        (try (expect (= [false "running" true true true true]
                         (py c
                             (str "sh = __vis_settle__(shell('sleep 30', {'id':'stat'}))\n"
-                                 "st = sh.status()\n"
-                                 "sh.stop()\n" "[st['stage'], st['status'], st['exit'] is None,"
-                                 " st['log_path'].endswith('stat.log'),"
-                                 " st['rss_bytes'] > 0, st['started_at'] > 0]"))))
+                                 "sh.stop()\n"
+                                 "[hasattr(sh, 'status'), sh['status'], sh['exit'] is None,"
+                                 " sh['log_path'].endswith('stat.log'),"
+                                 " sh['rss_bytes'] > 0, sh['started_at'] > 0]"))))
              (finally (resources/stop-all! sid)))))
   (it "removes the binding when the shell toggle is off"
       (let
@@ -2173,14 +2149,14 @@
                                  (do (Thread/sleep 100) (recur (inc n))))))]
                      (expect (str/includes? text "got yes")))
                    (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))))
-  ;; The whole point of the phase: one process jail, one schema. Everything else the
-  ;; family used to advertise operates on a handle the caller already holds.
-  (it "advertises exactly one native tool for the whole shell family"
-      (expect (= ["shell"]
+  ;; The whole point of the phase: one process jail, and no schema at all. Everything the
+  ;; family used to advertise operates on a handle the caller already holds, in Python.
+  (it "advertises no native tool for the whole shell family"
+      (expect (= []
                  (->> shell/shell-symbols
                       (filter :ext.symbol/native-tool?)
                       (mapv :ext.symbol/name))))
-      (expect (= ["shell" "_shell_status" "_shell_logs" "_shell_wait" "_shell_type" "_shell_stop"]
+      (expect (= ["shell" "_shell_logs" "_shell_wait" "_shell_type" "_shell_stop"]
                  (mapv :ext.symbol/name shell/shell-symbols)))))
 
 

@@ -1168,12 +1168,13 @@
    Reaches Python as the `__vis_process_surface__` global (see
    `install-process-surface!`), so no `.py` file carries a copy."
   {"ban" (str "`subprocess`, `os.system` and `os.popen` never spawn in the vis sandbox "
-              "— every process starts through the `shell` tool, which owns the jail, "
-              "the log file and the handle.")
-   "use" (str "Use `await shell({'command': 'npm test'})`; the handle it returns drives "
-              "it with `status()`, `logs()`, `wait()`, `type()` and `stop()`.")
-   "off" (str "Shell commands are DISABLED in this vis sandbox: the `shell` tool is "
-              "gone, a live handle cannot be driven, and `subprocess`, `os.system` and "
+              "— every process starts through the sandbox's own `shell` verb, which "
+              "owns the jail, the log file and the handle. There is no shell TOOL.")
+   "use" (str "Use `sh = await shell('npm test')`; the handle it returns drives "
+              "it with `logs()`, `wait()`, `type()` and `stop()`, and every answer "
+              "already carries that shell's status.")
+   "off" (str "Shell commands are DISABLED in this vis sandbox: `shell` is not bound, "
+              "a live handle cannot be driven, and `subprocess`, `os.system` and "
               "`os.popen` all raise — nothing here can start a process. Turn on 'Shell "
               "commands' in the settings dialog.")
    "extension" (str

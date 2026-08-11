@@ -292,12 +292,6 @@ class Shell(dict):
     def _vis_op(self, opts):
         return Shell(self._vis_call(dict(opts, id=self.get('id'))), self._vis_call)
 
-    def status(self):
-        # WHAT is it doing, with no bytes read and no cursor moved: status/exit,
-        # started_at/finished_at/uptime_ms, log_path, and cpu_ms/cpu_percent/rss_bytes
-        # for the live process tree.
-        return self._vis_op({'op': 'status'})
-
     def logs(self, offset=None, limit=None):
         opts = {'op': 'logs'}
         if offset is not None:

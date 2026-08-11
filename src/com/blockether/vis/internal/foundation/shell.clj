@@ -4,8 +4,10 @@
    (default ON; flip it OFF in Settings or in `vis.yml` via `toggles: {shell: false}`
    to drop the tools). The OS process jail is the containment layer while active.
 
-   ONE model-facing tool — `shell` — bound BARE in the flat Python sandbox
-   next to `cat` / `grep`. EVERY run is a background run: the call spawns
+   ONE model-facing entry point — the `shell` PYTHON verb, bound BARE in the flat
+   sandbox next to `cat` / `grep`, and NO native tool: a process is started from
+   Python and nowhere else, because every verb after the spawn is a method on the
+   handle the call returns. EVERY run is a background run: the call spawns
    under a real pty and returns the HANDLE now, so there is no `wait` on the
    request and no number that can select a second mode. ONE call runs ONE command:
    an ordered batch was a second budget, a second result shape and a second failure
@@ -29,12 +31,15 @@
 
    The result IS the HANDLE: every shell answer is a dict-with-methods in the
    sandbox, so the process is driven on the object the call already returned —
-   `sh.status()` says what it is doing — running or exited, since when, where its
-   log file is, and what CPU and RAM its process tree is costing — without reading
-   a byte, `sh.logs(offset=0)` reads the log from a byte OFFSET and returns NOW,
+   `sh.logs(offset=0)` reads the log from a byte OFFSET and returns NOW,
    `sh.wait(30)` is the bounded poll loop written once in the engine, `sh.type(\"y\")`
    types into the pty and `sh.stop()` kills the tree. There are no id-taking verbs to
    re-type an id into; re-issuing a LIVE id gives the same handle back.
+
+   STATUS is not a stage of its own: EVERY answer of EVERY stage already says what the
+   shell is doing — `status`/`exit`, `started_at`/`finished_at`/`uptime_ms`, `log_path`,
+   and the live `cpu_ms`/`cpu_percent`/`rss_bytes` of its process tree — so \"is it done
+   yet\" is read off the result already in hand and never costs a second call.
 
    `shell-dispatch` survives as the INTERNAL grammar the Python-extension entry
    points use, since those hand-author an options map and genuinely need an `op`.
@@ -356,9 +361,7 @@
   ^String [^String s]
   (when s
     (let [s (.replace s "\r\n" "\n")]
-      (if (neg? (.indexOf s "\r"))
-        s
-        (str/join "\n" (map last-redraw (str/split s #"\n" -1)))))))
+      (if (neg? (.indexOf s "\r")) s (str/join "\n" (map last-redraw (str/split s #"\n" -1)))))))
 
 (def ^:private terminal-escape-re
   ;; ANSI/VT sequences a PTY-attached tool emits. Stripped both when MATCHING a
@@ -563,12 +566,12 @@
                                                                 policy)
                                :dir (.getPath ^File dir)
                                :env (doto ^HashMap
-                                      (if-let [full (process-jail/jailed-child-env policy)]
-                                        ;; Confined child: allowlisted env only (secrets dropped).
-                                        (HashMap. ^java.util.Map full)
-                                        (doto (HashMap. ^java.util.Map (System/getenv))
-                                          (.putAll ^java.util.Map
-                                                   (process-jail/proxy-env policy))))
+                                          (if-let [full (process-jail/jailed-child-env policy)]
+                                            ;; Confined child: allowlisted env only (secrets dropped).
+                                            (HashMap. ^java.util.Map full)
+                                            (doto (HashMap. ^java.util.Map (System/getenv))
+                                              (.putAll ^java.util.Map
+                                                       (process-jail/proxy-env policy))))
                                       (.putAll ^java.util.Map pty-child-env))
                                :cols 120
                                :rows 40})))
@@ -1837,6 +1840,12 @@
                          "id" id
                          "cwd" cwd
                          "timeout_secs" wait-secs
+                         ;; The STATUS block every other stage answers with, stamped on the
+                         ;; run itself: WHERE the bytes are and HOW LONG the command lived.
+                         ;; A run that reported neither made "what is this shell doing" a
+                         ;; second call for a question this result already knew.
+                         "log_path" (:path sink)
+                         "uptime_ms" (max 0 (- (long (or @exited-at (now-ms))) (long t0)))
                          "note" (if timed-out
                                   (str "The WAIT expired, not the process: it is still running as"
                                        " shell '" id
@@ -1939,48 +1948,6 @@
                     "is_truncated" (:is-truncated chunk))
           :op :_shell-logs
           :metadata {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}})))))
-
-(defn- shell-status-impl
-  "`sh.status()` — WHAT IS THIS SHELL DOING, with no bytes moved and no cursor
-   touched. Every field is already in [[shell-result-base]]; this stage is the one
-   that exists purely to REFRESH them, so asking \"has it finished\" never costs a
-   log read and never advances someone else's offset.
-
-   It answers `status` (`running` / `exited` / `stopped`), `exit` (nil exactly
-   while there is no exit code yet), `started_at` / `finished_at` / `uptime_ms`,
-   `log_path` — where the bytes are on this machine — and, while the child lives,
-   `cpu_ms` / `cpu_percent` / `rss_bytes` for the whole process TREE.
-
-   A shell whose registry entry is retired still answers, from its log index row:
-   a finished run's outcome outlives its process."
-  [env id]
-  (let
-    [session
-     (:session-id env)
-
-     id
-     (str id)
-
-     entry
-     (bg-entry session id)
-
-     ^java.io.File file
-     (shell-log/log-file session id)
-
-     t
-     (now-ms)]
-
-    (authorize-origin! env session id)
-    (when-not (or entry (.isFile file))
-      (throw (ex-info (str "No shell '" id
-                           "' in this session — every run and every background start"
-                           " answers with its own id; live ids are listed in resources.")
-                      {:type ::unknown-bg-id :id id})))
-    (extension/success {:result (if entry
-                                  (bg-core "status" id entry)
-                                  (assoc (retired-log-core env session id) "stage" "status"))
-                        :op :_shell-status
-                        :metadata {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}})))
 
 (defn- wait-idle-poll-ms
   "Idle sleep before the next read while the child is ALIVE and its log is at EOF,
@@ -2201,9 +2168,9 @@
 
 (defn- shell-stop-impl
   "`sh.stop()` — the TERMINAL lifecycle stage. Stopping used to be
-   reachable only through `resource_stop`, a sandbox builtin absent from the native
-   tool list, so the end of a background shell's life was undiscoverable from the
-   schema; it is now a tool of its own. Routes through
+   reachable only through `resource_stop`, so the end of a background shell's life
+   was undiscoverable from the thing that started it; it is now a method on the
+   handle. Routes through
    `resources/stop!` — the single stop path the footer and `resource_stop` share —
    so the process tree dies, the retained logs are dropped, and the registry
    entry disappears exactly once."
@@ -2247,11 +2214,9 @@
   "INTERNAL shell lifecycle grammar, kept for the Python-extension entry points
    (`trusted-extension-shell`, `jailed-shell`, `session-jailed-shell`) whose
    caller authors an options map by hand and therefore genuinely needs an `op`
-   discriminator. The MODEL never reaches this: it calls `shell` — one tool
-   whose `wait` decides whether it blocks — and drives what came back through the
-   HANDLE's own methods (`sh.status()`, `sh.logs()`, `sh.wait()`, `sh.type()`,
-   `sh.stop()`), so one
-   schema with five mutually-exclusive shapes is never presented as a contract to
+   discriminator. The MODEL never reaches this: it calls the `shell` PYTHON verb —
+   one call that spawns one command — and drives what came back through the
+   HANDLE's own methods (`sh.logs()`, `sh.wait()`, `sh.type()`, `sh.stop()`), so one
    disambiguate."
   [env opts]
   (when-not (opts-arg? opts)
@@ -2371,12 +2336,6 @@
                          valid-command
                          opts))
 
-      "status"
-      ;; NO bytes, NO cursor: the one stage that only ever REPORTS. Reading a log to
-      ;; find out whether a command finished moved someone else's offset and cost a
-      ;; file read for a question the registry already knew the answer to.
-      (do (reject-command) (reject-text) (shell-status-impl env (need-id)))
-
       "logs"
       (do (reject-command)
           (reject-text)
@@ -2397,10 +2356,9 @@
       "stop"
       (do (reject-command) (reject-text) (shell-stop-impl env (need-id)))
 
-      (throw (ex-info (str
-                        "Unknown shell op " (pr-str op)
-                        " — use \"run\" (default), \"background\", \"status\", \"logs\", \"wait\","
-                        " \"send\" or \"stop\".")
+      (throw (ex-info (str "Unknown shell op " (pr-str op)
+                           " — use \"run\" (default), \"background\", \"logs\", \"wait\","
+                           " \"send\" or \"stop\".")
                       {:type ::unknown-op :op op})))))
 
 (defn run-argv
@@ -2603,7 +2561,7 @@
 (defn shell
   "`sh = await shell(\"npm test\")` — spawn ONE bash line under a pty and return
    the HANDLE now. Every run is a background run; waiting is `sh.wait(secs)`, the
-   only wait there is. The handle also reports (`sh.status()`), reads
+   only wait there is. The handle reads
    (`sh.logs(offset=0)`), types
    (`sh.type(text)`) and kills (`sh.stop()`), and its log file outlives the call,
    so nothing is ever lost to a deadline or to a call that already returned."
@@ -2619,14 +2577,6 @@
   {:arglists '([id] [id opts])}
   [env & args]
   (shell-dispatch env (assoc (shell-call-opts ["id"] args) "op" "logs")))
-
-(defn shell-status
-  "`sh.status()` — WHAT is this shell doing, right now, without reading a byte.
-   Answers `status`/`exit`, `started_at`/`finished_at`/`uptime_ms`, `log_path` and,
-   while it lives, `cpu_ms`/`cpu_percent`/`rss_bytes` for the whole process tree."
-  {:arglists '([id] [id opts])}
-  [env & args]
-  (shell-dispatch env (assoc (shell-call-opts ["id"] args) "op" "status")))
 
 (defn shell-wait
   "`sh.wait(secs)` — the ONLY wait there is. Block until the shell exits or the
@@ -3156,9 +3106,6 @@
          "logs"
          "reading the log of"
 
-         "status"
-         "checking on"
-
          "send"
          "typing into"
 
@@ -3180,7 +3127,13 @@
   (vis/symbol
     #'shell
     {:symbol 'shell
-     :native-tool? true
+     ;; NOT a native tool: a process is started from PYTHON and nowhere else.
+     ;; A `tool_use` schema can only ever spawn ONE command and then hand back an
+     ;; object the wire cannot hold — every verb after the spawn (`wait`, `logs`,
+     ;; `type`, `stop`) is a METHOD on the handle, so the whole family belongs
+     ;; where the handle already lives. `apropos('shell')` / `doc('shell')` are
+     ;; how it is found, exactly like every other sandbox capability.
+     :native-tool? false
      :name "shell"
      :result
      (str "A HANDLE: ONE result shape for every shell answer — `{stage, id, cwd, command, "
@@ -3191,9 +3144,10 @@
      (str "Spawn ONE `bash -lc` command under a real pty and return its HANDLE NOW — every run "
           "is a background run. Chain with `&&`; run independent work as separate calls. Drive "
           "it through the handle: `sh.wait(secs)` (the ONLY wait; `timed_out` means the WAIT "
-          "expired, not the process), `sh.status()` (state, clock, `log_path`, live cpu/rss), "
-          "`sh.logs(offset=…, limit=…)`, `sh.type(text)`, `sh.stop()` — never a rerun; "
-          "re-issuing a live `id` returns THAT shell. NEVER trim inside the command: `| head`, "
+          "expired, not the process), `sh.logs(offset=…)`, `sh.type(text)`, `sh.stop()` — never "
+          "a rerun; re-issuing a live `id` returns THAT shell. Every answer already carries the "
+          "STATUS — `status`/`exit`, the clock, `log_path` and live cpu/rss — so nothing asks "
+          "twice. NEVER trim inside the command: `| head`, "
           "`| tail`, `| grep`, `2>/dev/null`, `> file` discard bytes the handle keeps whole, and "
           "a pipeline's exit is its LAST stage's, so a failed build looks green — run it plain, "
           "then slice on the handle or filter `log_path` in Python. "
@@ -3243,31 +3197,6 @@
      :tag :observation
      :ticker-fn (shell-ticker "logs")
      :on-error-fn (shell-on-error :_shell-logs)}))
-
-(def shell-status-symbol
-  (vis/symbol
-    #'shell-status
-    {:symbol '_shell-status
-     :native-tool? false
-     :name "_shell_status"
-     :result
-     (str "The same shell result shape (`stage` \"status\"): `status` running/exited/stopped, "
-          "`exit` nil exactly while there is none yet, `started_at`/`finished_at`/`uptime_ms`, "
-          "`log_path` for the bytes on disk, and `cpu_ms`/`cpu_percent`/`rss_bytes` while the "
-          "process tree is alive.")
-     :description
-     (str "TRANSPORT for `sh.status()` — call the HANDLE the shell result already is, not this. "
-          "Refreshes one shell's state without reading its log or moving any cursor.")
-     :render-finish-call-fn render-shell-run-result
-     :render-start-call-fn (shell-start-renderer "status")
-     :schema {:type "object"
-              :properties {"id" {:type "string" :minLength 1 :description "Background handle."}}
-              :required ["id"]
-              :additionalProperties false}
-     :inject-env? true
-     :tag :observation
-     :ticker-fn (shell-ticker "status")
-     :on-error-fn (shell-on-error :_shell-status)}))
 
 (def shell-wait-symbol
   (vis/symbol
@@ -3342,14 +3271,15 @@
      :on-error-fn (shell-on-error :_shell-stop)}))
 
 (def shell-symbols
-  ;; ONE native tool for the whole family, and ONE object to drive what it starts.
-  ;; `_shell_logs` / `_shell_type` / `_shell_stop` are PRIVATE sandbox transport
-  ;; (`:native-tool? false`, underscore-prefixed so `apropos` never lists them):
-  ;; the model calls the handle's own `sh.status()` / `sh.logs()` / `sh.wait()` /
-  ;; `sh.type()` / `sh.stop()`, because operations on an object the caller already holds are
-  ;; control flow, not four more schemas to disambiguate before running a command.
-  [shell-symbol shell-status-symbol shell-logs-symbol shell-wait-symbol shell-type-symbol
-   shell-stop-symbol])
+  ;; NO native tool at all, and ONE object to drive what a Python call starts.
+  ;; `shell` is an engine-bound sandbox verb; `_shell_logs` / `_shell_wait` /
+  ;; `_shell_type` / `_shell_stop` are PRIVATE transport (underscore-prefixed so
+  ;; `apropos` never lists them): the model calls the handle's own `sh.logs()` /
+  ;; `sh.wait()` / `sh.type()` / `sh.stop()`, because operations on an object the
+  ;; caller already holds are control flow, not more schemas to disambiguate before
+  ;; running a command. There is no status transport at all: every stage's answer
+  ;; already carries the status block.
+  [shell-symbol shell-logs-symbol shell-wait-symbol shell-type-symbol shell-stop-symbol])
 
 (defn shell-attach-command
   "`vis-agent extension shell attach <id>` — the human-side passthrough: join a live
@@ -3392,13 +3322,14 @@
 (vis/register-toggle!
   {:id "shell"
    :label "Shell commands"
-   :description
-   (str "Expose `shell` — one tool that spawns ONE command under a pty "
-        "and answers with the live handle that drives it (`sh.status()` / "
-        "`sh.logs()` / `sh.wait()` / `sh.type()` / `sh.stop()`). When OFF " "none is bound. "
-        "Contained by the OS process jail whenever it is ON. "
-        "This is the MODEL's door: an installed extension keeps its own "
-        "trusted process boundary (`vis.shell`, `subprocess`), which this " "toggle does not gate.")
+   :description (str "Expose `shell` — the Python verb that spawns ONE command under a pty "
+                     "and answers with the live handle that drives it (`sh.logs()` / "
+                     "`sh.wait()` / `sh.type()` / `sh.stop()`). It is never a native tool: "
+                     "a process starts from Python or not at all. When OFF " "nothing is bound. "
+                     "Contained by the OS process jail whenever it is ON. "
+                     "This is the MODEL's door: an installed extension keeps its own "
+                     "trusted process boundary (`vis.shell`, `subprocess`), which this "
+                     "toggle does not gate.")
    :default true
    :owner :vis
    :persist? true
@@ -3408,7 +3339,7 @@
   (vis/extension
     {:ext/name "foundation-shell"
      :ext/description
-     "One shell tool: `shell` spawns ONE command under a pty and answers with a live handle (`sh.status()` / `sh.logs()` / `sh.wait()` / `sh.type()` / `sh.stop()`); `resource_stop` also stops PTYs. Default-on behind the `shell` toggle and OS process jail."
+     "No native shell tool: the `shell` PYTHON verb spawns ONE command under a pty and answers with a live handle (`sh.logs()` / `sh.wait()` / `sh.type()` / `sh.stop()`) whose every answer carries the shell's status; `resource_stop` also stops PTYs. Default-on behind the `shell` toggle and OS process jail."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

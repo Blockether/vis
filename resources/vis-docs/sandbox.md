@@ -300,7 +300,7 @@ allowlist of non-secret variables is passed through (`PATH`, `HOME`, `USER`,
 `SHELL`, `LANG`/`LC_*`, `TERM`, `TZ`, `TMPDIR`, `PWD`, …) plus this session's
 proxy and CA variables; every `*_KEY` / `*_TOKEN` / `*_SECRET` / `*_PASSWORD`
 and other operator credential is dropped before the process starts. This covers
-the `shell` tool (every op), trusted extension `subprocess`, and every managed
+the sandbox's `shell(...)` call (every stage), trusted extension `subprocess`, and every managed
 language REPL / test runner.
 
 To pass a specific extra variable through to confined children, list its exact

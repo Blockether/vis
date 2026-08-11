@@ -591,7 +591,6 @@ class __VisShell__(__VisResult__):
     __vis_shell_ops__ = frozenset(
         (
             "shell",
-            "_shell_status",
             "_shell_logs",
             "_shell_wait",
             "_shell_type",
@@ -607,14 +606,6 @@ class __VisShell__(__VisResult__):
             # the prompt block say — a handle is just where it is met next.
             raise RuntimeError(globals()["__vis_process_surface__"]["off"])
         return __vis_settle__(fn(__vis_args__))
-
-    def status(self):
-        # WHAT is it doing — with no bytes read and no cursor moved. `status`/`exit`
-        # say whether it finished, `started_at`/`finished_at`/`uptime_ms` say when,
-        # `log_path` says where the bytes are on this machine, and `cpu_ms` /
-        # `cpu_percent` / `rss_bytes` say what the process TREE is costing while it
-        # lives. Asking "is it done yet" must never consume someone's log offset.
-        return self.__vis_op__("_shell_status", {"id": self["id"]})
 
     def logs(self, offset=None, limit=None):
         # Read the log and return NOW — nothing blocks on the caller's behalf.
