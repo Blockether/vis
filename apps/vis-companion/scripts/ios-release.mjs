@@ -61,9 +61,7 @@ const secret = (envName, account) => process.env[envName]?.trim() || keychain('v
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const appBundleId = JSON.parse(readFileSync(join(appDir, 'capacitor.config.json'), 'utf8')).appId;
-const provisioningProfileName = process.env.VIS_IOS_PROVISIONING_PROFILE_NAME?.trim();
 const shareBundleId = `${appBundleId}.share`;
-const shareProfileName = process.env.VIS_IOS_SHARE_PROVISIONING_PROFILE_NAME?.trim();
 
 const iosDir = join(appDir, 'ios');
 const projectDir = join(iosDir, 'App');
@@ -318,7 +316,7 @@ console.log(
 // Only where it can actually work: without the distribution certificate's private
 // key in a keychain — a laptop usually has only a development identity — manual
 // signing would fail at codesign, so automatic signing stays.
-let profileNames = { [appBundleId]: provisioningProfileName, [shareBundleId]: shareProfileName };
+let profileNames = {};
 let manualArchive = false;
 const identity = hasApiKey ? distributionIdentity() : undefined;
 if (identity) {
