@@ -63,13 +63,10 @@
 (def ^:private render-shell-send-result @#'shell/render-shell-send-result)
 
 
-(def ^:private render-shell-stop-result @#'shell/render-shell-stop-result)
-
 (def ^:private keys-label @#'shell/keys-label)
 
 (def ^:private format-shell-command @#'shell/format-shell-command)
 
-(def ^:private render-shell-call @#'shell/render-shell-call)
 
 (defn- with-shell-on
   "Shell is unconditionally available now; kept as a thin pass-through so the
@@ -1137,6 +1134,9 @@
                            ((ticker-of shell/shell-wait-symbol) env [{"id" "dev"}])))
                 (expect (= "stopping: sleep 30"
                            ((ticker-of shell/shell-stop-symbol) env [{"id" "dev"}])))
+                ;; The SPAWN says what it is about to run, read from its own
+                ;; argument — the one call that cannot look the command up yet.
+                (expect (= "running: npm test" ((ticker-of shell/shell-symbol) env ["npm test"])))
                 ;; Regression, user report (paraphrased: what is `tt`?): no live
                 ;; shell answers, and the sentence says the generic noun rather
                 ;; than a token only the caller can resolve.
@@ -1517,94 +1517,21 @@
                  (expect (= '[shell _shell-logs _shell-wait _shell-type _shell-stop]
                             (mapv :ext.symbol/symbol shell/shell-symbols)))))
 
-(defdescribe
-  shell-pending-call-render-test
-  (it "renders a PENDING run with the finished card's own COMMAND section"
-      (let
-        [command
-         "echo one && echo two"
-
-         display
-         (render-shell-call "run" {"command" command})]
-
-        ;; Built by the SAME section builder as the completed card, so the running
-        ;; block IS the block it becomes — no pending dialect, no comment band.
-        (expect (= (str "**COMMAND**\n```bash\n" (format-shell-command command) "\n```")
-                   (:render display)))
-        (expect (not (str/includes? (:render display) "#")))
-        (expect (not (str/includes? (:render display) "{")))
-        ;; …under the SAME headline the finished card wears, with the outcome
-        ;; replaced by what the call is doing.
-        (expect (= "$ echo one && echo two (running)" (:summary display)))))
-  (it "accepts keyword-keyed input"
-      (expect (= {:summary "$ ls -1 (running)" :render "**COMMAND**\n```bash\nls -1\n```"}
-                 (render-shell-call "run" {:command "ls -1"}))))
-  (it "wears the background START headline, which comes from the TOOL and not the arguments"
-      ;; A background start is a lifecycle card, not a run: it wears the same
-      ;; headline as the finished `▸ … started`, naming the bash it launched.
-      (expect (= {:summary "▸ `npm run dev` starting"
-                  :render "**COMMAND**\n```bash\nnpm run dev\n```"}
-                 (render-shell-call "background" {"id" "dev" "command" "npm run dev"}))))
-  (it "reports a `type` by its keystroke label, never a byte count"
-      (expect (= {:summary "↵ the shell sending \"y\" ↵"
-                  :render "**STATUS**\n```\nkeys: \"y\" ↵\n```"}
-                 (render-shell-call "send" {"id" "dev" "text" "y\n"}))))
-  (it "shows a lifecycle target's OWN command, read live from the registry"
-      ;; A logs/type/stop runs no command of its own, but the bash it acts on
-      ;; is right there in `bg-procs` — so its pending card carries a real COMMAND
-      ;; section too instead of narrating the stage in prose.
-      (let
-        [sid
-         (str (random-uuid))
-
-         id
-         "pending-live-shell"]
-
-        (try (swap! @#'shell/bg-procs assoc-in [sid id] {:script "npm run dev"})
-             (expect (= "**COMMAND**\n```bash\nnpm run dev\n```"
-                        (:render (render-shell-call "logs" {"id" id}))))
-             (expect (= "◷ `npm run dev` reading logs"
-                        (:summary (render-shell-call "logs" {"id" id}))))
-             (finally (swap! @#'shell/bg-procs dissoc sid)))
-        ;; No live shell answers to that id: the card has nothing to show but the
-        ;; verb — and still never falls back to printing the id.
-        (expect (nil? (:render (render-shell-call "logs" {"id" id}))))
-        (expect (= "◷ the shell reading logs" (:summary (render-shell-call "logs" {"id" id}))))))
-  ;; Regression, user report (paraphrased: "what is tt?" — a two-letter handle an
-  ;; agent typed reached the screen): every lifecycle card named the shell by the
-  ;; caller's id, which resolves to nothing for the person reading it.
-  (it "never prints the caller's disposable handle"
-      (let
-        [handle
-         "zq7"
-
-         cards
-         [(render-shell-call "logs" {"id" handle})
-          (render-shell-call "send" {"id" handle "text" "y\n"})
-          (render-shell-call "stop" {"id" handle})
-          (render-shell-logs-result {"id" handle "command" "npm run dev" "status" "running"})
-          (render-shell-send-result
-            {"id" handle "command" "npm run dev" "sent" 1 "keys" (keys-label "\u0003")})
-          (render-shell-stop-result {"id" handle "command" "npm run dev"})]]
-
-        (doseq [card cards]
-          (expect (not (str/includes? (str (:summary card) (:body card) (:render card)) handle))))
-        ;; What it says instead is the bash.
-        (expect (= "✕ background `npm run dev` stopped"
-                   (:summary (render-shell-stop-result {"id" handle "command" "npm run dev"}))))
-        (expect (= "✕ background the shell stopping"
-                   (:summary (render-shell-call "stop" {"id" handle}))))))
-  (it "keeps the raw invocation when there is neither a command nor a target"
-      (expect (nil? (render-shell-call "run" {})))
-      ;; A malformed command is the CALL's error to report, never this preview's.
-      (expect (nil? (render-shell-call "run" {"command" ""}))))
-  (it "publishes no native renderer, and the op-card resolves off the result's own op"
-      ;; Nothing is advertised, so there is no wire name to hang a pending card on; a
-      ;; shell result printed in Python still finds its card through `op`.
-      (expect (= {} (extension/native-tool-start-call-renderers [shell/vis-extension])))
-      (expect (= {} (extension/native-tool-finish-call-renderers [shell/vis-extension])))
-      (let [rs (extension/native-tool-finish-call-renderers-by-op [shell/vis-extension])]
-        (expect (fn? (:render-finish-call-fn (get rs "shell")))))))
+(defdescribe shell-native-render-test
+             (it "publishes no native renderer, and the op-card resolves off the result's own op"
+                 ;; Nothing is advertised, so there is no wire name to hang a pending card on; a
+                 ;; shell result printed in Python still finds its card through `op`.
+                 (expect (= {} (extension/native-tool-start-call-renderers [shell/vis-extension])))
+                 (expect (= {} (extension/native-tool-finish-call-renderers [shell/vis-extension])))
+                 (let [rs (extension/native-tool-finish-call-renderers-by-op [shell/vis-extension])]
+                   (expect (fn? (:render-finish-call-fn (get rs "shell")))))
+                 ;; …so the two presentations that survive a Python-only surface are pinned here:
+                 ;; the live sentence every stage says while it runs, and the op-card its result
+                 ;; paints in the TUI and the app.
+                 (doseq [s shell/shell-symbols]
+                   (expect (fn? (:ext.symbol/ticker-fn s)) (str (:ext.symbol/name s)))
+                   (expect (fn? (:ext.symbol/render-finish-call-fn s))
+                           (str (:ext.symbol/name s))))))
 
 (defdescribe
   macos-jailed-pty-e2e-test

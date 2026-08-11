@@ -4032,15 +4032,15 @@
 (defdescribe
   native-tool-call-block-test
   ;; REGRESSION: only the `:handler` branch carried `:vis/native-input`, so every
-  ;; sandbox-bound native tool — the `shell_*` verbs above all — lost the input its own
-  ;; `:render-start-call-fn` needs and painted raw invocation JSON for the whole run.
+  ;; sandbox-bound native tool lost the input its own `:render-start-call-fn` needs
+  ;; and painted raw invocation JSON for the whole run.
   (it "carries the call input on the synthesized-python branch too"
       (let
-        [tc {:id "c1" :name "shell_logs" :input {"id" "dev" "offset" 4096}}
+        [tc {:id "c1" :name "grep" :input {"query" "vis" "limit" 20}}
          block (native-tool-call-block {} nil tc)]
 
         (expect (= "python" (:lang block)))
-        (expect (= {"id" "dev" "offset" 4096} (:vis/native-input block)))))
+        (expect (= {"query" "vis" "limit" 20} (:vis/native-input block)))))
   (it "keeps carrying it for a `:handler` tool dispatched in Clojure"
       (let
         [tc {:id "c2" :name "search_web" :input {"query" "vis"}}
@@ -4051,22 +4051,25 @@
 
         (expect (= "native" (:lang block)))
         (expect (= {"query" "vis"} (:vis/native-input block)))))
-  (it "renders a pending `shell` call as the op-card it becomes, not the call JSON"
+  (it "renders a pending call as the op-card it becomes, not the call JSON"
       ;; End to end over the real seam: the block's input reaches the tool's own
-      ;; `:render-start-call-fn`, so the running form is the shell CARD its result card
-      ;; completes instead of `shell({\"commands\": …})`.
+      ;; `:render-start-call-fn`, so the running form is the CARD its result card
+      ;; completes instead of `tool({\"command\": …})`.
       (let
-        [renderers (extension/native-tool-start-call-renderers [sh/vis-extension])
+        [renderers {"q" (fn [input]
+                          {:summary (str "$ " (get input "command") " (running)")
+                           :render (str "**COMMAND**\n```bash\n" (get input "command") "\n```")})}
          tc {:id "c4"
-             :name "shell"
+             :name "q"
              :input {"command" "echo one"}}
          block (native-tool-call-block {} nil tc)
          display (pending-call-display renderers
                                        (:vis/tool-name block)
                                        (:vis/native-input block))]
 
-        ;; The card BODY, built by the very sections the finished card uses — no
-        ;; comment band invented for pending calls…
+        ;; The card BODY, authored by the tool — no comment band invented for
+        ;; pending calls…
+        (expect (= "$ echo one (running)" (:pending-summary display)))
         (expect (= "**COMMAND**\n```bash\necho one\n```" (:pending-render display)))
         ;; …and therefore no separate code band saying the same thing in JSON.
         (expect (nil? (:display-code display)))

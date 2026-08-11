@@ -2985,8 +2985,8 @@
 (defn- live-bg-script
   "The bash the LIVE background shell `id` is already running. A `logs`/`send`/
    `stop` call runs no command of its OWN, but the command it acts on is right
-   there in the registry — the same lines the finished card renders out of its
-   result — so its pending card can show that real command.
+   there in the registry — the same line the finished card renders out of its
+   result — so the live ticker can name that real command.
 
    nil when no live shell answers to that id, or when two sessions both do and the
    answer would be a guess."
@@ -2995,89 +2995,38 @@
     (let [hits (into [] (keep #(get % id)) (vals @bg-procs))]
       (when (= 1 (count hits)) (present-str (:script (first hits)))))))
 
-(defn- render-shell-call
-  "PENDING-call display for one shell tool invocation: the SAME op-card the finished
-   call wears, assembled by the SAME section builders, out of what is known BEFORE
-   the run instead of out of a result. `op` comes from the TOOL, never from the
-   arguments — each of the five is its own verb now.
-
-   nil when the arguments name neither a command nor a target — the raw invocation
-   stays the honest fallback."
-  [op input]
-  (let
-    [id
-     (some-> (opt input :id)
-             str
-             str/trim
-             not-empty)
-
-     command
-     (opt input :command)
-
-     cmd
-     (when (and (#{"run" "background"} op) (some? command))
-       ;; A malformed command is the CALL's error to report, never this preview's.
-       (try (one-command command) (catch Throwable _ nil)))
-
-     keys-lbl
-     (some-> (opt input :text)
-             keys-label)
-
-     script
-     (or cmd (live-bg-script id))
-
-     target
-     (shell-target-label script)
-
-     summary
-     (cond
-       ;; A background START is its own lifecycle card even though it carries a
-       ;; command — mirror the finished `▸ … started · pid N`.
-       (= "background" op) (str "▸ " target " starting")
-       (seq cmd) (str "$ " (clip-chip (shell-one-line cmd) shell-chip-max) " (running)")
-       (nil? id) nil
-       (= "logs" op) (str "◷ " target " reading logs")
-       (= "send" op) (str "↵ " target
-                          " sending" (when keys-lbl
-                                       (str " "
-                                            (clip-chip (shell-one-line keys-lbl) shell-chip-max))))
-       (= "stop" op) (str "✕ background " target " stopping")
-       :else (str "◷ " target " " op))
-
-     body
-     (->> [(shell-section "COMMAND"
-                          (some-> script
-                                  format-shell-command)
-                          "bash")
-           (shell-section "STATUS" (kv-lines [["cwd" (opt input :cwd)] ["keys" keys-lbl]]))]
-          (remove nil?)
-          (str/join "\n\n"))]
-
-    (when (or summary (seq body))
-      (cond-> {}
-        summary
-        (assoc :summary summary)
-
-        (seq body)
-        (assoc :render body)))))
 
 (defn- shell-ticker
-  "LIVE-TICKER phrase for one shell transport — what the bubble says while the call
-   is still in flight, completing `Vis is …`.
+  "LIVE-TICKER phrase for one shell call — what the bubble says while the call is
+   still in flight, completing `Vis is …`. This is the ONLY live presentation a
+   process has: nothing is advertised as a native tool any more, so the spawn and
+   every method on its handle say here what they are doing.
 
-   A private transport's own name answers nothing: `_shell-wait tt` names neither
-   the command nor the budget, which is exactly how a wait that is doing its job
-   reads as a wait stuck on nothing. Naming the HANDLE answers no better — `tt` is
+   A transport's own name answers nothing: `_shell-wait tt` names neither the
+   command nor the budget, which is exactly how a wait that is doing its job reads
+   as a wait stuck on nothing. Naming the HANDLE answers no better — `tt` is
    bookkeeping the caller invented and nobody else can resolve. So the sentence
-   names the COMMAND and the budget — `waiting up to 60s for: npm test` — read live
-   from the registry, so `wait`/`logs`/`stop`, which run no command of their own,
-   still say which bash they act on. `the shell` when the registry knows none: a
-   generic noun tells the reader as much as a private token and misleads less."
+   names the COMMAND and the budget — `running: npm test`, `waiting up to 60s for:
+   npm test` — taken from the spawn's OWN arguments, and otherwise read live from
+   the registry so `wait`/`logs`/`stop`, which run no command of their own, still
+   say which bash they act on. `the shell` when neither answers: a generic noun
+   tells the reader as much as a private token and misleads less."
   [op]
   (fn [_env args]
     (let
       [input
-       (first args)
+       (shell-call-opts (case op
+                          "run"
+                          ["command"]
+
+                          "wait"
+                          ["id" "seconds"]
+
+                          "send"
+                          ["id" "text"]
+
+                          ["id"])
+                        args)
 
        id
        (some-> (opt input :id)
@@ -3092,14 +3041,22 @@
                    not-empty)
            "120")
 
+       ;; The spawn KNOWS its command — it is right there in the call — while a
+       ;; lifecycle stage has to look up the shell it acts on.
        script
-       (some-> (live-bg-script id)
-               shell-one-line)
+       (or (some-> (try (command-line (opt input :command)) (catch Throwable _ nil))
+                   shell-one-line
+                   not-empty)
+           (some-> (live-bg-script id)
+                   shell-one-line))
 
        ;; Every verb ends on the preposition, so the nameless case is the same
        ;; sentence with the generic noun: `stopping the shell`.
        verb
        (case op
+         "run"
+         "running"
+
          "wait"
          (str "waiting up to " secs "s for")
 
@@ -3116,12 +3073,6 @@
 
       (if (seq script) (str verb ": " (clip-chip script shell-chip-max)) (str verb " the shell")))))
 
-(defn- shell-start-renderer
-  "Pending-card renderer for ONE shell tool: the verb is fixed by the tool, so the
-   arguments never have to carry it."
-  [op]
-  (fn [input]
-    (render-shell-call op input)))
 
 (def shell-symbol
   (vis/symbol
@@ -3153,7 +3104,7 @@
           "then slice on the handle or filter `log_path` in Python. "
           "`print((await shell(\"npm test\")).wait(300)[\"stdout\"])`.")
      :render-finish-call-fn render-shell-run-result
-     :render-start-call-fn (shell-start-renderer "run")
+     :ticker-fn (shell-ticker "run")
      :schema
      {:type "object"
       :properties
@@ -3182,7 +3133,6 @@
           "is, not this. Reads a background shell's log from a byte offset and returns NOW. No "
           "offset reads the TAIL; `offset=0` starts at the beginning.")
      :render-finish-call-fn render-shell-logs-result
-     :render-start-call-fn (shell-start-renderer "logs")
      :schema {:type "object"
               :properties
               {"id" {:type "string" :minLength 1 :description "Background handle."}
@@ -3213,7 +3163,6 @@
           "this. Blocks until the command exits or the deadline passes; the bounded poll loop "
           "lives here so no caller writes one.")
      :render-finish-call-fn render-shell-run-result
-     :render-start-call-fn (shell-start-renderer "wait")
      :schema
      {:type "object"
       :properties
@@ -3237,7 +3186,6 @@
      :description
      "TRANSPORT for `sh.type(text, is_enter=True)` — call the handle. Writes keystrokes to a background shell's stdin."
      :render-finish-call-fn render-shell-send-result
-     :render-start-call-fn (shell-start-renderer "send")
      :schema {:type "object"
               :properties
               {"id" {:type "string" :minLength 1 :description "Background handle."}
@@ -3260,7 +3208,6 @@
      :description
      "TRANSPORT for `sh.stop()` — call the handle. Kills a background shell's process tree and drops its retained logs and resource."
      :render-finish-call-fn render-shell-stop-result
-     :render-start-call-fn (shell-start-renderer "stop")
      :schema {:type "object"
               :properties {"id" {:type "string" :minLength 1 :description "Background handle."}}
               :required ["id"]

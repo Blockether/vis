@@ -5548,8 +5548,7 @@
                   (wrap-text (form-error-headline error) fill-w)))
 
           ;; A native invocation's source is redundant beside its op-card, running
-          ;; or finished: every long-running tool (`python_execution`,
-          ;; `shell`) authors its own pending card body, so
+          ;; or finished: a long-running tool authors its own pending card body, so
           ;; the submitted program is already on screen while it runs. Python keeps
           ;; its source in every state; failed native calls retain only their
           ;; compact error message. `vis/hide-tool-code?` owns the whole policy.

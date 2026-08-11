@@ -721,8 +721,8 @@
         (expect (not (str/includes? body "PROVIDER_ERROR  HTTP 429")))))
   (it "hides a running native tool's invocation, but keeps a running python program"
       ;; A native tool spins behind its badge in every state: the long-running ones
-      ;; (`shell`/`shell_background`) author their own pending card body, so
-      ;; nothing has to fall back to raw invocation JSON while the call runs.
+      ;; author their own pending card body, so nothing has to fall back to raw
+      ;; invocation JSON while the call runs.
       (let
         [entry-lines
          (fn [form]

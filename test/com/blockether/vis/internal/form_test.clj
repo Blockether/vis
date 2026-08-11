@@ -103,7 +103,7 @@
       (expect (not (form/hide-tool-code? {:vis/tool-name "cat" :error "boom"})))
       (expect (not (form/hide-tool-code? {:vis/tool-name "cat" :success? false})))
       ;; A long-running tool needs no exception here: `python_execution` keeps its
-      ;; program above, and shell authors its own pending card
+      ;; program above, and a tool that authors its own pending card body shows that
       ;; body, so nothing has to re-show raw invocation JSON while a call runs.
       (expect (form/hide-tool-code? {:vis/tool-name "shell"}))
       (expect (form/hide-tool-code? {:vis/tool-name "shell"})))
