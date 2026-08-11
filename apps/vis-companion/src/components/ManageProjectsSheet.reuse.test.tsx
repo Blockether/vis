@@ -338,7 +338,9 @@ describe("browsing opens one level above the current project", () => {
 describe("a folder that is already a project offers no verb", () => {
   it("takes both footer buttons down and says why", async () => {
     sheet({ isAdding: true, knownRoots: new Set([CODE]) });
-    const use = await screen.findByRole("button", { name: "Use project" });
+    // The aim is the folder being LISTED, so the verbs only answer once it lands.
+    await screen.findByRole("menuitem", { name: /vis/ });
+    const use = screen.getByRole("button", { name: "Use project" });
 
     expect(use).toBeDisabled();
     expect(screen.getByRole("button", { name: "New folder" })).toBeDisabled();
