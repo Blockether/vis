@@ -427,12 +427,20 @@
                                           ;; `:ext.symbol/call` STAYS: it maps a kwargs dict onto
                                           ;; positional params for a PYTHON call, and is not a schema.
                                           (contains? #{:ext.symbol/schema :ext.symbol/native-tool?
-                                                       :ext.symbol/replay}
+                                                       :ext.symbol/replay
+                                                       :ext.symbol/render-start-call-fn
+                                                       :ext.symbol/render-finish-call-fn}
                                                      k))))
                           entries)]
 
                    (expect (< 20 (count entries)))
                    (expect (= #{} dead-keys))))
+             (it "keeps no by-name renderer registry to look a card up in"
+                 ;; A result is painted from its OWN data now. A registry keyed by tool
+                 ;; name is how per-tool cards grew back last time: one lookup, then a
+                 ;; declaration per verb to feed it.
+                 (doseq [nm '[finish-call-renderers-by-name printed-result-renderers-by-op]]
+                   (expect (nil? (ns-resolve 'com.blockether.vis.internal.extension nm)) (str nm))))
              (it "binds every doc-bearing symbol under a bare Python name"
                  (let
                    [docs

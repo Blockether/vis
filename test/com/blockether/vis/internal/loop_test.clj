@@ -455,11 +455,9 @@
                     card
                     (display {:result nil
                               :timeout? true
-                              :error {:message "Native tool repl_eval timed out after 30000ms"
-                                      :type :vis/native-tool-timeout
-                                      :data {:tool "repl_eval" :timeout-ms 30000}}}
-                             "repl_eval"
-                             {})]
+                              :error {:message "python_execution timed out after 30000ms"
+                                      :type :vis/eval-timeout
+                                      :data {:timeout-ms 30000}}})]
 
                    (expect (= "⧖ timed out after 30000ms" (:summary card)))
                    (expect (str/includes? (:body card) "timed out"))))
@@ -469,7 +467,7 @@
                     (deref #'lp/tool-result-display)
 
                     card
-                    (display {:result nil :timeout? true :error {:message "boom"}} "repl_eval" {})]
+                    (display {:result nil :timeout? true :error {:message "boom"}})]
 
                    (expect (= "⧖ timed out" (:summary card))))))
 
@@ -2560,7 +2558,7 @@
           (expect (str/includes? text "/tmp/shot.png"))))
 
     (it "still hands the WHOLE grid to the transcript"
-        (let [body (str (:body (display {:stdout stdout} "python_execution" {})))]
+        (let [body (str (:body (display {:stdout stdout})))]
           (expect (str/includes? body "````vis-table"))
           (expect (str/includes? body "rack-01,120"))))))
 

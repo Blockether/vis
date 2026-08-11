@@ -1717,136 +1717,11 @@
 ;; Symbol entries
 ;; =============================================================================
 
-;; =============================================================================
-;; Op-card renderer — a boxed citation table + full excerpt cards
-;; =============================================================================
-;;
-;; Declared as `:render-finish-call-fn` on each search symbol. The channel layer
-;; calls it with the tool's `:result` map and paints the returned
-;; `{:summary :body}` op-card. `:body` is Markdown: a GFM table the channels
-;; draw as a boxed grid, then one card per citation with the FULL excerpt.
-;; Table CELLS render as plain text (the TUI table painter does not re-parse
-;; inline markdown inside a cell), so links live in the cards, not the table.
-
-(defn- search-cell
-  "One-line, pipe-escaped, length-capped text for a GFM table cell."
-  [s max-len]
-  (let
-    [s (-> (str s)
-           (str/replace #"\s+" " ")
-           str/trim
-           (str/replace "|" "\\|"))]
-    (if (> (count s) (long max-len)) (str (subs s 0 (max 0 (dec (long max-len)))) "…") s)))
-
-(defn- search-host
-  "Bare host of a URL (leading `www.` stripped) for the compact Source column.
-   Falls back to the raw string when the URL is unparseable or empty."
-  [url]
-  (let [u (str url)]
-    (try (let [h (.getHost (URI/create u))]
-           (if (str/blank? h) u (str/replace h #"^www\." "")))
-         (catch Exception _ u))))
-
-(defn- prose-excerpt
-  "Flatten an Exa excerpt to wrap-friendly prose. Web excerpts carry ``` fenced
-   code blocks whose long verbatim lines (curl commands, mermaid, tables) would
-   overflow the TUI bubble's right edge because a bare fence has no `:lang` and
-   so renders unwrapped. Dropping the fence markers lets every line reflow as a
-   normal paragraph inside the bubble width."
-  [s]
-  (->> (str/split-lines (str s))
-       (remove #(re-matches #"\s*```.*" %))
-       (str/join "\n")
-       str/trim
-       not-empty))
-
-(defn- render-search-result
-  "Op-card renderer for search_web / search_code / search_papers. Paints a GFM
-   table (index · title · source · date) — drawn as a boxed table by the
-   channels — followed by one card per citation carrying the FULL markdown
-   excerpt under a linked heading. A failure / empty result degrades to a
-   summary-only card (its single excerpt is the error message)."
-  [r]
-  (let
-    [citations
-     (get r "citations")
-
-     query
-     (str (get r "query"))
-
-     n
-     (count citations)
-
-     error?
-     (get r "error")
-
-     summary
-     (str (if error? "search failed" (str n " result" (when (not= 1 n) "s")))
-          (when (seq query) (str " · «" query "»")))]
-
-    (if (or error? (empty? citations))
-      {:summary summary
-       :body (some-> (first citations)
-                     (get "excerpt")
-                     prose-excerpt)}
-      (let
-        [header
-         ["| # | Result | Source | Published |" "|--:|--------|--------|-----------|"]
-
-         rows
-         (map-indexed (fn [^long i c]
-                        (str "| "
-                             (inc i)
-                             " | "
-                             (search-cell (get c "title") 70)
-                             " | "
-                             (search-cell (search-host (get c "url")) 28)
-                             " | "
-                             (search-cell (or (not-empty (str (get c "published"))) "—") 12)
-                             " |"))
-                      citations)
-
-         table
-         (str/join "\n" (concat header rows))
-
-         cards
-         (map-indexed (fn [^long i c]
-                        (let
-                          [title
-                           (str/trim (str (get c "title")))
-
-                           url
-                           (str (get c "url"))
-
-                           meta
-                           (->> [(get c "source") (get c "authors") (get c "published")]
-                                (keep #(let
-                                         [s
-                                          (str %)]
-
-                                         (when (seq s) s)))
-                                (str/join " · "))
-
-                           head
-                           (if (seq url)
-                             (str "**" (inc i) ". [" title "](" url ")**")
-                             (str "**" (inc i) ". " title "**"))]
-
-                          (str head
-                               (when (seq meta) (str "  \n_" meta "_"))
-                               "\n\n"
-                               (prose-excerpt (get c "excerpt")))))
-                      citations)]
-
-        {:summary summary :body (str table "\n\n" (str/join "\n\n---\n\n" cards))}))))
-
-
 (def web-symbol
   (vis/symbol
     #'search-web
     {:tag :observation
      :name "search_web"
-     :render-finish-call-fn render-search-result
      :description
      "Search the live web for current facts, external documentation, or research the local project cannot answer. Returns ranked citations with excerpts."}))
 
@@ -1855,7 +1730,6 @@
     #'search-code
     {:tag :observation
      :name "search_code"
-     :render-finish-call-fn render-search-result
      :description
      "Search live repositories and technical documentation when the local project and embedded docs are insufficient. Set provider to github to use GitHub Code Search directly."}))
 
@@ -1864,7 +1738,6 @@
     #'download-code
     {:tag :observation
      :name "download_code"
-     :render-finish-call-fn render-search-result
      :description
      "Fetch bounded UTF-8 source excerpts from a known public GitHub owner/repo archive. Use after search, not for discovery."}))
 
@@ -1873,7 +1746,6 @@
     #'download-archive
     {:tag :observation
      :name "download_archive"
-     :render-finish-call-fn render-search-result
      :description
      (str
        "Download and extract a complete public GitHub repository archive into the workspace: "
@@ -1885,7 +1757,6 @@
     #'search-papers
     {:tag :observation
      :name "search_papers"
-     :render-finish-call-fn render-search-result
      :description
      "Search arXiv for relevant papers. Returns citations with abstracts so claims can be checked against primary research."}))
 
@@ -1898,7 +1769,6 @@
        "String-keyed `{op,query,citations,citation_count,truncated,source,endpoint?}`; citations are "
        "normalized source objects with title, URL, and available excerpt/metadata.")
      :name "search"
-     :render-finish-call-fn render-search-result
      :description
      (str
        "Search live web, public code/docs, or arXiv papers — `kind` is one of `web`, `code`, `papers`; "

@@ -3270,53 +3270,18 @@
 
 
 (defn- tool-result-display
-  "The human-channel DISPLAY for one executed TOOL CALL as `{:summary :body}` —
-   the ONE surface both the TUI and web render, so they're unified:
-     - native tool WITH a `:render-finish-call-fn` → its `{:summary :body}` card. `:summary`
-       is the op-card HEADLINE (e.g. \"5 hits in 1 file\"); `:body` is the detail
-       beneath it. A renderer that returns a bare string is treated as a body.
-     - native tool WITHOUT one → its `:result` pretty-printed (Python-literal,
-       fenced) as the body, no summary;
-     - `python_execution` → its `:stdout` verbatim as the body, no summary.
+  "The human-channel DISPLAY for one executed block as `{:summary :body}` — the
+   ONE surface both the TUI and the web render, so they're unified:
+     - the eval wall-clock BACKSTOP fired → a ⧖ TIMEOUT card carrying the FORM,
+       whatever it printed, and the message;
+     - a `:result` value → pretty-printed (Python-literal, fenced) as the body,
+       no summary;
+     - `:stdout` → verbatim as the body, no summary.
    The body is head-clipped to `MAX_FORM_WIRE_CHARS`. Returns nil when there's
-   nothing to show; the summary is the proper op-card title (NOT a first-line
-   slice of the body)."
-  [result* tool-name renderers & [input]]
-  (let
-    [clip
-     clip-to-wire
-
-     ;; per-tool custom finish renderer declared on the symbol
-     custom
-     (when-let [rf (and tool-name (some? (:result result*)) (get renderers tool-name))]
-       (try (rf (:result result*))
-            (catch Throwable e
-              ;; never swallow silently — a broken renderer must be visible
-              ;; in the logs; the result still shows via the pretty-print path.
-              (tel/log! {:level :warn
-                         :id ::native-tool-render-failed
-                         :data {:tool tool-name :error (ex-message e)}}
-                        (str "native-tool :render-finish-call-fn for "
-                             tool-name
-                             " threw — falling back to pretty-print"))
-              nil)))
-
-     ->card
-     (fn [m]
-       (let
-         [summary
-          (some-> (:summary m)
-                  str
-                  str/trim
-                  not-empty)
-
-          body
-          (some-> (:body m)
-                  str
-                  clip)]
-
-         (when (or summary body) {:summary summary :body body})))]
-
+   nothing to show. NO symbol is consulted: a card is built from the RESULT's own
+   data, so it can never drift from what actually ran."
+  [result* & [input]]
+  (let [clip clip-to-wire]
     (cond
       ;; The eval wall-clock BACKSTOP fired: there is no :result to render, but the
       ;; card must still read as a TIMEOUT — a distinct ⧖ headline, not the raw error
@@ -3324,67 +3289,37 @@
       ;; any partial stdout/error also present.
       (:timeout? result*)
       (let
-        [err
-         (:error result*)
-
-         ms
-         (some-> err
-                 :data
-                 :timeout-ms)
-
+        [err (:error result*)
+         ms (some-> err
+                    :data
+                    :timeout-ms)
          ;; The evaluated FORM/prompt that blew the wall — so a
          ;; timeout card shows WHAT timed out, not just that it did.
-         code
-         (some-> (or (get input "code") (get input :code))
-                 str
-                 str/trim
-                 not-empty)
-
-         lang
-         (if (= tool-name "python_execution") "python" "clojure")
-
-         msg
-         (some-> (:message err)
-                 str
-                 not-empty)
-
+         code (some-> (or (get input "code") (get input :code))
+                      str
+                      str/trim
+                      not-empty)
+         msg (some-> (:message err)
+                     str
+                     not-empty)
          ;; Partial output the block PRINTED before the wall fired. A backstop
          ;; timeout is exactly when it matters: the work is gone, so the lines
          ;; that did print are all that is left of it.
-         out
-         (some-> (:stdout result*)
-                 str
-                 str/trim
-                 not-empty)
+         out (some-> (:stdout result*)
+                     str
+                     str/trim
+                     not-empty)
+         detail (->> [(when code (str "**FORM**\n" (strutil/fenced (clip code) "python")))
+                      (when out (str "**STDOUT**\n" (strutil/fenced (clip out))))
+                      (when msg (str "**TIMEOUT**\n" (strutil/fenced msg)))]
+                     (remove nil?)
+                     (str/join "\n\n")
+                     not-empty)]
 
-         ;; Prefer the tool's OWN renderer so a backstop timeout reads
-         ;; EXACTLY like an in-band one (form-chip preview + labeled FORM /
-         ;; TIMEOUT sections), not a bare fence. Synthesize the timeout
-         ;; result shape the renderer expects; fall back to a hand-built
-         ;; FORM/TIMEOUT card when no renderer exists (e.g. python_execution).
-         rf
-         (when (and code tool-name) (get renderers tool-name))
-
-         rendered
-         (when rf (try (rf {"code" code "timed_out" true "ms" ms}) (catch Throwable _ nil)))]
-
-        (if-let [card (and (map? rendered) (->card rendered))]
-          card
-          (let
-            [detail (->> [(when code (str "**FORM**\n" (strutil/fenced (clip code) lang)))
-                          (when out (str "**STDOUT**\n" (strutil/fenced (clip out))))
-                          (when msg (str "**TIMEOUT**\n" (strutil/fenced msg)))]
-                         (remove nil?)
-                         (str/join "\n\n")
-                         not-empty)]
-            {:summary (str "⧖ timed out" (when ms (str " after " ms "ms")))
-             :body (when detail (str "\n" detail))})))
-      ;; renderer returned a canonical {:summary :body} card …
-      (map? custom) (->card custom)
-      ;; … or a legacy bare string (body only, no summary)
-      (string? custom) (->card {:body custom})
-      ;; native tool value, no custom renderer → monospaced Python-literal body, so
-      ;; a dict/list reads as structured data rather than reflowed prose.
+        {:summary (str "⧖ timed out" (when ms (str " after " ms "ms")))
+         :body (when detail (str "\n" detail))})
+      ;; a result value → monospaced Python-literal body, so a dict/list reads as
+      ;; structured data rather than reflowed prose.
       (some? (:result result*)) (when-let [s (clip (env/ctx->python-str (:result result*)))]
                                   {:body (strutil/fenced s "python")})
       ;; A `vis-image` fence (matplotlib `plt.show()` → inline PNG, ASCII plot
@@ -4668,7 +4603,7 @@
               ;; so a DB-restored / post-turn trace shows the SAME card the live
               ;; stream did, instead of pr-str'ing the raw result map. `:summary`
               ;; is the op-card HEADLINE; `:body` (→ `:result-render`) the detail.
-              result-card (tool-result-display result* (:vis/tool-name entry) nil)
+              result-card (tool-result-display result*)
               ;; RESULTS the model print()ed (each carrying its own :op) → one card
               ;; each, built from the VALUE alone. Each card is a CANONICAL MINI-FORM,
               ;; so the shared form projection handles it without a second shape.
@@ -8325,18 +8260,35 @@
      err
      (:error envelope)
 
-     active-exts
-     ;; `registered-extensions` (NOT activation-filtered) so the shell op-card
-     ;; renderers resolve even when the shell layer's activation-fn is false —
-     ;; the "shell" toggle gate is applied above, renderer lookup is display-only.
-     (try (extension/registered-extensions) (catch Throwable _ []))
-
-     renderers
-     (try (extension/finish-call-renderers-by-name active-exts) (catch Throwable _ {}))
-
      display
+     ;; A bang PRINTS its command's output, so the shell card — exit-code headline
+     ;; plus COMMAND / STATUS / STDOUT / STDERR — IS the answer here. It is built by
+     ;; calling shell's renderer DIRECTLY: one function, no symbol table, no
+     ;; registry lookup. Every other result is painted from its own data.
      (when (some? result-map)
-       (try (tool-result-display {:result result-map} tool-name renderers) (catch Throwable _ nil)))
+       (try (let
+              [render
+               (requiring-resolve
+                 'com.blockether.vis.internal.foundation.shell/render-shell-run-result)
+
+               card
+               (render result-map)]
+
+              (when (map? card)
+                (let
+                  [summary
+                   (some-> (:summary card)
+                           str
+                           str/trim
+                           not-empty)
+
+                   body
+                   (some-> (:body card)
+                           str
+                           clip-to-wire)]
+
+                  (when (or summary body) {:summary summary :body body}))))
+            (catch Throwable _ nil)))
 
      answer-md
      (cond (not enabled?) (str "**Shell layer is OFF.** Only you can enable it: settings dialog"

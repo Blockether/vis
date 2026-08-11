@@ -2602,10 +2602,10 @@
   (shell-dispatch env (assoc (shell-call-opts ["id"] args) "op" "stop")))
 
 ;; =============================================================================
-;; Native op-card renderers — `:result` → `{:summary :body}`. The result arrives
-;; string-keyed snake_case (strings-only boundary); the injected env first arg is
-;; already gone. Renderers read string keys but still RETURN the keyword `{:summary
-;; :body}` IR (that part is internal).
+;; The `!cmd` bang card — `:result` → `{:summary :body}`, built by
+;; `render-shell-run-result` below and called directly by the loop's bang path.
+;; The result arrives string-keyed snake_case (strings-only boundary); the card
+;; is the keyword `{:summary :body}` IR (that part is internal).
 ;; =============================================================================
 
 (def ^:private shell-chip-max
@@ -2628,14 +2628,6 @@
           str/trim
           not-empty))
 
-(defn- result-script
-  "The command a background/lifecycle result is about, as a display string. It
-   lives under the ONE `command` key every stage answers with."
-  [r]
-  (some-> (get r "command")
-          str
-          not-empty))
-
 (defn- clip-chip
   "Clip a single-line preview with an ellipsis so shell commands cannot blow out
    collapsed cards."
@@ -2648,23 +2640,6 @@
      (long n)]
 
     (if (> (count s) n) (str (subs s 0 (max 0 (dec n))) "…") s)))
-
-(defn- shell-target-label
-  "How a background shell is NAMED on screen: by the COMMAND it runs, never by the
-   handle it answers to.
-
-   A handle is the CALLER's addressing token — `tt`, `d4`, `chk2` — routinely two
-   letters an agent typed to keep two calls apart, and disposable by construction.
-   It resolves to nothing for the person reading the screen: `◷ `tt` running` asks
-   them to look up a name that exists only inside one call site. The bash is what
-   they recognize, so the bash is the name. The handle stays in the RESULT, where
-   the caller that invented it reads it back.
-
-   `the shell` when no command is known — a generic noun beats a private token."
-  [script]
-  (if-let [cmd (shell-one-line script)]
-    (str "`" (clip-chip cmd shell-chip-max) "`")
-    "the shell"))
 
 (def ^:private card-head-chars
   "Head of a stream kept in a CARD. Display-only: capture stays whole."
@@ -2835,8 +2810,11 @@
           exit {:icon "✓" :label (str "exit " exit) :failed? false}
           :else {:icon "✓" :label "finished" :failed? false})))
 
-(defn- render-shell-run-result
-  "shell op `run` → REPL-style collapsed/expanded card.
+(defn render-shell-run-result
+  "shell op `run` → REPL-style collapsed/expanded card. The ONE surviving op-card
+   renderer, and it is called DIRECTLY: the `!cmd` bang path in the loop PRINTS a
+   command's output, so this card IS its whole answer. No registry, no symbol key
+   — every other result is painted from the result's own data.
 
    Collapsed: `$ npm test (success) · 1.2s` or
    `$ grep x missing (failure) · exit 2 · 34ms`.
@@ -2889,93 +2867,6 @@
 
     {:summary summary :body (when (seq body) body)}))
 
-
-(defn- render-shell-logs-result
-  "shell op `logs` → compact process/log status plus the window this read returned."
-  [r]
-  (let
-    [text
-     (or (get r "stdout") "")
-
-     status
-     (or (get r "status") "?")
-
-     uptime
-     (duration-label (get r "uptime_ms"))
-
-     exited?
-     (= "exited" status)
-
-     off
-     (long (or (get r "offset") 0))
-
-     next-off
-     (long (or (get r "next_offset") off))
-
-     ;; The card says WHERE the reader now is, because that is the number the
-     ;; next call feeds back. "more" means the file already holds bytes past this
-     ;; window — read again rather than sleep.
-     summary
-     (str (if exited? "■" "◷")
-          " "
-          (shell-target-label (result-script r))
-          " "
-          status
-          (when-let [exit (get r "exit")]
-            (str " · exit " exit))
-          " · "
-          (- next-off off)
-          " B at "
-          off
-          (when-not (true? (get r "is_eof")) " · more")
-          (when uptime (str " · " uptime)))
-
-     details
-     (kv-lines [["status" status] ["exit" (get r "exit")] ["offset" off] ["next_offset" next-off]
-                ["more" (when-not (true? (get r "is_eof")) "true")] ["uptime" uptime]
-                ["pid" (get r "pid")]])
-
-     body
-     (->> [(shell-section "STATUS" details) (shell-section "LOGS" text "bash")]
-          (remove nil?)
-          (str/join "\n\n"))]
-
-    {:summary summary :body (when (seq body) body)}))
-
-(defn- render-shell-send-result
-  "shell op `send` → send-keys lifecycle card that SHOWS the keystrokes: printable
-   text verbatim, control characters by name (`↵`, `C-c`, `Esc`). A bare char count
-   never told the reader what the shell was actually driven with."
-  [r]
-  (let
-    [keys-lbl
-     (get r "keys")
-
-     details
-     (kv-lines [["keys" keys-lbl]
-                ["sent"
-                 (when-let [n (get r "sent")]
-                   (str n " chars"))] ["status" (get r "status")] ["pid" (get r "pid")]])
-
-     body
-     (->> [(shell-section "KEYS" keys-lbl) (shell-section "STATUS" details)]
-          (remove nil?)
-          (str/join "\n\n"))]
-
-    {:summary (str "↵ " (shell-target-label (result-script r))
-                   " sent " (if keys-lbl
-                              (clip-chip (shell-one-line keys-lbl) shell-chip-max)
-                              (str (get r "sent") " chars")))
-     :body (when (seq body) body)}))
-
-(defn- render-shell-stop-result
-  "shell op `stop` → terminal lifecycle card."
-  [r]
-  {:summary (str "✕ background " (shell-target-label (result-script r)) " stopped")
-   :body (shell-section "STATUS"
-                        (kv-lines [["status" "stopped"] ["pid" (get r "pid")]
-                                   ["command" (shell-one-line (result-script r))]
-                                   ["uptime" (duration-label (get r "uptime_ms"))]]))})
 
 ;; =============================================================================
 ;; Symbols + prompt + extension. ONE builtin symbol — `shell` — bound bare in the
@@ -3103,7 +2994,6 @@
           "a pipeline's exit is its LAST stage's, so a failed build looks green — run it plain, "
           "then slice on the handle or filter `log_path` in Python. "
           "`print((await shell(\"npm test\")).wait(300)[\"stdout\"])`.")
-     :render-finish-call-fn render-shell-run-result
      :ticker-fn (shell-ticker "run")
      :inject-env? true
      :tag :mutation
@@ -3123,7 +3013,6 @@
      (str "TRANSPORT for `sh.logs(offset=…, limit=…)` — call the HANDLE the shell result already "
           "is, not this. Reads a background shell's log from a byte offset and returns NOW. No "
           "offset reads the TAIL; `offset=0` starts at the beginning.")
-     :render-finish-call-fn render-shell-logs-result
      :inject-env? true
      :tag :observation
      :ticker-fn (shell-ticker "logs")
@@ -3142,7 +3031,6 @@
      (str "TRANSPORT for `sh.wait(seconds)` — call the HANDLE the shell result already is, not "
           "this. Blocks until the command exits or the deadline passes; the bounded poll loop "
           "lives here so no caller writes one.")
-     :render-finish-call-fn render-shell-run-result
      :inject-env? true
      :tag :observation
      :ticker-fn (shell-ticker "wait")
@@ -3156,7 +3044,6 @@
      :result "The same shell result shape (`stage` \"send\"): `sent` chars, `keys` label."
      :description
      "TRANSPORT for `sh.type(text, is_enter=True)` — call the handle. Writes keystrokes to a background shell's stdin."
-     :render-finish-call-fn render-shell-send-result
      :inject-env? true
      :tag :mutation
      :ticker-fn (shell-ticker "send")
@@ -3170,7 +3057,6 @@
      :result "The same shell result shape (`stage` \"stop\"): `stopped`, `status`, `exit`."
      :description
      "TRANSPORT for `sh.stop()` — call the handle. Kills a background shell's process tree and drops its retained logs and resource."
-     :render-finish-call-fn render-shell-stop-result
      :inject-env? true
      :tag :mutation
      :ticker-fn (shell-ticker "stop")

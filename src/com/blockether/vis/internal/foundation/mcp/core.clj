@@ -41,7 +41,6 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.mcp.client :as mcp]
             [com.blockether.vis.internal.foundation.mcp.oauth :as mcp-oauth]
-            [com.blockether.vis.internal.strutil :as strutil]
             [taoensso.telemere :as tel]))
 
 (defn- now-ms [] (System/currentTimeMillis))
@@ -1085,41 +1084,6 @@
                                  :throwable err*})}))
 
 ;; ---------------------------------------------------------------------------
-;; Native op-card renderers
-;; ---------------------------------------------------------------------------
-
-(defn- mcp-fence [s] (when (seq (str s)) (strutil/fenced s)))
-
-
-
-(defn- render-mcp-call-result
-  "One card for both shapes of the one verb: a catalog listing, or an invocation."
-  [r]
-  (if (contains? r "tools")
-    (let [tools (get r "tools")]
-      {:summary
-       (str "`" (get r "server") "` - " (count tools) " tool" (when (not= 1 (count tools)) "s"))
-       :body (when (seq tools)
-               (str/join "\n"
-                         (map (fn [t]
-                                (str "- `" (get t "name")
-                                     "`" (when (seq (str (get t "description")))
-                                           (str " - " (get t "description")))))
-                              tools)))})
-    (let
-      [blocks
-       (get r "content")
-
-       text
-       (->> blocks
-            (keep (fn [b]
-                    (get b "text")))
-            (str/join "\n"))]
-
-      {:summary (str "`" (get r "server") "`/" (get r "tool") (when (get r "is_error") " - error"))
-       :body (mcp-fence (if (seq text) text (pr-str blocks)))})))
-
-;; ---------------------------------------------------------------------------
 ;; Public vars retain developer examples and fallback docs. Native symbols
 ;; below own compact model-facing semantics and exact schemas. Under alias
 ;; `mcp` the Python names use one underscore; direct native names use two.
@@ -1152,7 +1116,6 @@
       "String-keyed `{op,server,tool,content,is_error,input_schema?}`; text at `block[\"text\"]`. With `tool` omitted: `{op,server,tools:[{name,description,input_schema}]}`."
       :description
       "Call a tool on an MCP server; auto-connects. Servers and their tool names are already in `session[\"env\"][\"mcp\"]`, so just name them. Omit `tool` for that server's input schemas. In `python_execution`, call `await mcp_call(...)`."
-      :render-finish-call-fn render-mcp-call-result
       :call {:pos ["server"] :opt-pos ["tool" "args"]}
       :tag :mutation
       :on-error-fn (mcp-on-error :mcp/call)})])

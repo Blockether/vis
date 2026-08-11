@@ -449,21 +449,13 @@
 ;; Exact raw return contract for the value Python receives; `doc(name)` appends it
 ;; exactly once.
 (s/def :ext.symbol/result non-blank-string?)
-;; `(fn [result] -> {:summary :body})` — the op-card renderer for THIS symbol's result,
-;; shared by every surface (native tool_result card + a Python-path surfaced value).
-(s/def :ext.symbol/render-finish-call-fn fn?)
-;; `(fn [input] -> {:code :language :summary :render})` — how THIS symbol's pending
-;; call displays while it runs.
-(s/def :ext.symbol/render-start-call-fn fn?)
-
 (s/def ::fn-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/fn :ext.symbol/doc :ext.symbol/arglists]
           :opt [:ext.symbol/raw? :ext.symbol/hidden? :ext.symbol/tag :ext.symbol/batch-hint
                 :ext.symbol/before-fn :ext.symbol/active-fn :ext.symbol/inject-env?
                 :ext.symbol/after-fn :ext.symbol/on-error-fn :ext.symbol/ticker-fn
                 :ext.symbol/source :ext.symbol/name :ext.symbol/call :ext.symbol/description
-                :ext.symbol/result :ext.symbol/render-start-call-fn
-                :ext.symbol/render-finish-call-fn]))
+                :ext.symbol/result]))
 
 (s/def ::val-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/val :ext.symbol/doc] :opt [:ext.symbol/source]))
@@ -951,18 +943,6 @@
 
 (defn ext-sandbox-shims [ext] (vec (or (:ext/sandbox-shims ext) [])))
 
-(defn finish-call-renderers-by-name
-  "Map wire-name → `:render-finish-call-fn` for every symbol that declares one.
-   NOT active-filtered: a result that already ran must still render even if its
-   toggle flipped after."
-  [active-extensions]
-  (into {}
-        (keep (fn [e]
-                (when-let [r (:ext.symbol/render-finish-call-fn e)]
-                  [(or (:ext.symbol/name e) (name (:ext.symbol/symbol e))) r]))
-              (mapcat ext-symbols (or active-extensions [])))))
-
-
 (defn symbol-active?
   "Whether a symbol ENTRY is LIVE for `env` this iteration. Default true; an
    `:active-fn (fn [env] -> bool)` makes it dynamic (e.g. a sub-toggle). `env` may
@@ -1146,14 +1126,6 @@
        (:result opts)
        (assoc :ext.symbol/result (:result opts))
 
-       ;; The finish callback owns the completed op card across every surface.
-       (:render-finish-call-fn opts)
-       (assoc :ext.symbol/render-finish-call-fn (:render-finish-call-fn opts))
-
-       ;; The start callback owns this symbol's pending call display.
-       (:render-start-call-fn opts)
-       (assoc :ext.symbol/render-start-call-fn (:render-start-call-fn opts))
-
        ;; :active-fn (fn [env] -> bool) — dynamic per-symbol activation gate.
        (:active-fn opts)
        (assoc :ext.symbol/active-fn (:active-fn opts))
@@ -1191,10 +1163,10 @@
    `:arglists` (read from var metadata - i.e. the underlying defn's
    docstring + arglists). Pass it as `#'my-tool`.
 
-   Observed tools return canonical internal envelope maps and must provide
-   a symbol-specific channel renderer. The model-facing surface is the
-   per-iteration trailer (real Python form values); no per-tool model-side
-   render exists.
+   Observed tools return canonical internal envelope maps. The model-facing
+   surface is the per-iteration trailer (real Python form values); there is
+   no per-symbol render callback — a printed result is painted from the
+   result's own data.
 
    Raw helpers pass `:raw? true` and return plain values directly, with no
    envelope enforcement, channel sink, or tool metadata.
@@ -1779,29 +1751,6 @@
   (if (and (tool-result? result) (:success? result) (:symbol result) (map? (:result result)))
     (update result :result assoc "op" (op-kw->str (public-op-keyword (:symbol result))))
     result))
-
-(defn printed-result-renderers-by-op
-  "Map op STRING (the value `stamp-public-result-op` writes into a result's `:op`,
-   e.g. `cat`) to `{:render-finish-call-fn}`. Resolves the op-card of a result a
-   python block PRINTED, where the only origin handle is `:op`. Not
-   active-filtered: a printed result must still render even if its toggle flipped."
-  [active-extensions]
-  (into {}
-        (for
-          [ext
-           (or active-extensions [])
-
-           e
-           (ext-symbols ext)
-
-           :when (:ext.symbol/render-finish-call-fn e)
-           ;; Alias-qualify via `default-tool-op-keyword` so an aliased verb's key
-           ;; matches the op its RESULT actually carries (`db/status` → "db_status"),
-           ;; not the bare symbol ("status").
-           :let [op-kw
-                 (public-op-keyword (default-tool-op-keyword ext e))]]
-
-          [(op-kw->str op-kw) {:render-finish-call-fn (:ext.symbol/render-finish-call-fn e)}])))
 
 (defn- enrich-tool-result-info
   "Stamp the MINIMAL tool identity on a result's metadata: symbol, call

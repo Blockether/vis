@@ -3402,31 +3402,6 @@
             (expect (= :hashline-not-found (get-in r [:error :reason]))))))))
 
 (defdescribe
-  render-patch-result-compact-headline-test
-  (let [render @#'editing/render-patch-result]
-    (it "uses only path chips because the tool badge already names the operation"
-        (let
-          [card (render [{"path" "src/a.clj" "op" "update" "changed" true "diff" "+a"}
-                         {"path" "src/b.clj" "op" "add" "changed" true "diff" "+b"}])]
-          (expect (= "`src/a.clj`, `src/b.clj`" (:summary card)))
-          (expect (not (clojure.string/includes? (:body card) "update")))
-          (expect (not (clojure.string/includes? (:body card) "add `")))))
-    (it
-      "widens the diff fence past any backtick run in the diff so an inner ``` fence never closes it early"
-      ;; Editing a doc that shows ```diff examples produces a diff
-      ;; whose context lines carry a bare ``` — a fixed 3-backtick
-      ;; wrapper closed early and the rest rendered as prose.
-      (let
-        [diff "@@ -1,3 +1,3 @@\n ```diff\n+ x\n ```"
-         card (render [{"path" "resources/vis-docs/configuration.md"
-                        "op" "update"
-                        "changed" true
-                        "diff" diff}])]
-
-        (expect (clojure.string/includes? (:body card) "````diff\n"))
-        (expect (clojure.string/ends-with? (clojure.string/trim (:body card)) "````"))))))
-
-(defdescribe
   patch-summary-line-counts-test
   ;; A patch/write/struct_patch summary states HOW BIG the edit was: the model
   ;; wire strips the `"diff"` and the card caps it hunk-wise, so without the
@@ -3460,104 +3435,7 @@
                (string/replace "line-750\n" "LINE-750\n")
                (string/replace "line-900\n" "LINE-900\n"))]
 
-          (expect (= {"added" 0 "removed" 0 "modified" 2} (counts before after)))))
-    (it "the card headline reports the size next to the path"
-        (let
-          [render
-           @#'editing/render-patch-result
-
-           card
-           (render [{"path" "src/a.clj"
-                     "op" "update"
-                     "changed" true
-                     "lines" {"added" 12 "removed" 3 "modified" 4}}
-                    {"path" "src/b.clj" "op" "update" "changed" false}])]
-
-          (expect (= "`src/a.clj` +12 -3 ~4, `src/b.clj`" (:summary card)))))
-    (it "a fan-out beyond three files reports the TOTAL size, not just a count"
-        ;; The collapsed headline named only how many files changed, so a
-        ;; batch edit was the one case that never said how big it was.
-        (let
-          [render
-           @#'editing/render-patch-result
-
-           file
-           (fn [p a r m]
-             {"path" p "op" "update" "changed" true "lines" {"added" a "removed" r "modified" m}})
-
-           card
-           (render [(file "src/a.clj" 1 2 3) (file "src/b.clj" 10 0 0) (file "src/c.clj" 0 5 0)
-                    {"path" "src/d.clj" "op" "update" "changed" false}])]
-
-          (expect (= (str "`src/a.clj` +1 -2 ~3, `src/b.clj` +10, "
-                          "+2 more (3/4 changed) +11 -7 ~3")
-                     (:summary card)))))))
-
-(defdescribe
-  render-cat-result-spans-test
-  ;; Regression (session 128cefd8): two adjacent ranged reads of the SAME file
-  ;; rendered near-identical cards — `app.css · 60 lines` then `app.css ·
-  ;; 266 lines` — because the summary carried no line-span info. The headline
-  ;; now says WHICH lines were read.
-  (let [render @#'editing/render-cat-result]
-    (it "single contiguous range: `L<a>-<b>`, count implied (renders each value's \"text\")"
-        ;; Canonical anchor values mirror rg hits: {"text" line}.
-        (let
-          [card (render {"path" "app.css"
-                         "anchors" {"1:aa" {"text" "x"} "2:bb" {"text" "y"} "3:cc" {"text" "z"}}})]
-          (expect (= "`app.css` · L1-3" (:summary card)))
-          ;; Gutter is sized to the widest line number (1 digit here) — no
-          ;; fixed-5 left-pad, so the row is flush `1  x`, not `    1  x`.
-          (expect (clojure.string/includes? (:body card) "\n1  x\n"))))
-    (it "single line: `L<n>`"
-        (expect (= "`app.css` · L42"
-                   (:summary (render {"path" "app.css" "anchors" {"42:ff" {"text" "q"}}})))))
-    (it "multiple ranges: overall extent + run count + line total"
-        (expect (= "`app.css` · L1-371 (2 ranges) · 4 lines"
-                   (:summary (render {"path" "app.css"
-                                      "anchors" {"1:aa" {"text" "a"}
-                                                 "2:bb" {"text" "b"}
-                                                 "370:cc" {"text" "c"}
-                                                 "371:dd" {"text" "d"}}})))))
-    (it "spans derive from SORTED line numbers, not map iteration order"
-        (expect (= "`app.css` · L5-7"
-                   (:summary (render {"path" "app.css"
-                                      "anchors" {"7:cc" {"text" "c"}
-                                                 "5:aa" {"text" "a"}
-                                                 "6:bb" {"text" "b"}}})))))
-    (it "unparseable anchor key degrades to the count-only summary (total, never throws)"
-        (expect (= "`app.css` · 1 line"
-                   (:summary (render {"path" "app.css" "anchors" {"garbage" {"text" "g"}}})))))
-    (it "empty anchors: `0 lines`, no body"
-        (let [card (render {"path" "app.css" "anchors" {}})]
-          (expect (= "`app.css` · 0 lines" (:summary card)))
-          (expect (nil? (:body card)))))))
-
-(defdescribe
-  render-cat-result-language-test
-  (let [render @#'editing/render-cat-result]
-    (it "tags code CAT bodies with the detected tree-sitter language"
-        (let [body (:body (render {"path" "src/app.clj" "anchors" {"1:aa" {"text" "(def x 1)"}}}))]
-          (expect (clojure.string/starts-with? body "\n```clojure\n"))))
-    (it "leaves non-code CAT bodies as plain fences"
-        (let [body (:body (render {"path" "notes.txt" "anchors" {"1:aa" {"text" "hello"}}}))]
-          (expect (clojure.string/starts-with? body "\n```\n"))))
-    (it
-      "widens the fence past any backtick run in the file content so an inner ``` never closes it early"
-      (let
-        [body (:body (render {"path" "README.md"
-                              "anchors" {"1:aa" {"text" "```clojure"}
-                                         "2:bb" {"text" "(def x 1)"}
-                                         "3:cc" {"text" "```"}}}))]
-        (expect (clojure.string/starts-with? body "\n````"))
-        (expect (clojure.string/ends-with? (clojure.string/trim body) "````"))))))
-
-(defdescribe
-  render-nodes-result-language-test
-  (let [render @#'editing/render-nodes-result]
-    (it "tags structural-node source with its file language"
-        (let [body (:body (render {"results" [{"path" "src/app.clj" "source" "(def x 1)"}]}))]
-          (expect (clojure.string/includes? body "```clojure\n(def x 1)\n```"))))))
+          (expect (= {"added" 0 "removed" 0 "modified" 2} (counts before after)))))))
 
 ;; ── e2e: REAL tool invocations against REAL temp files ───────────────────────
 
@@ -3689,85 +3567,50 @@
                  {"paths" ["widget.clj"] "include_occurrences" "yes"}]]
           (expect (throws? clojure.lang.ExceptionInfo #(idx args)))))))
 
-(defdescribe
-  merged-symbol-entry-points-test
-  "Occurrence grouping backs the one paths-only struct_index mode."
-  (let [idx (private-fn "index-tool")]
-    (it "an ambiguous name groups PER SYMBOL and parks the rest in other_uses"
-        (let
-          [_ (temp-dir-path "idxamb")
-           a (str (temp-root) "/idxamb/a.clj")
-           b (str (temp-root) "/idxamb/b.clj")
-           c (str (temp-root) "/idxamb/c.clj")]
+(defdescribe merged-symbol-entry-points-test
+             "Occurrence grouping backs the one paths-only struct_index mode."
+             (let [idx (private-fn "index-tool")]
+               (it "an ambiguous name groups PER SYMBOL and parks the rest in other_uses"
+                   (let
+                     [_ (temp-dir-path "idxamb")
+                      a (str (temp-root) "/idxamb/a.clj")
+                      b (str (temp-root) "/idxamb/b.clj")
+                      c (str (temp-root) "/idxamb/c.clj")]
 
-          (spit (fs/file a) "(defn gizmo [x] x)\n(gizmo 1)\n")
-          (spit (fs/file b) "(defn gizmo [x y] y)\n(gizmo 1 2)\n")
-          ;; uses only — owned by neither definition
-          (spit (fs/file c) "(ns c)\n(gizmo 9)\n(gizmo 8)\n")
-          (with-redefs [editing/rg-search (constantly {:files [a b c]})]
-            (let
-              [r (idx {"paths" [a b c] "include_occurrences" true})
-               res (:result r)
-               gizmo (first (filter #(= "gizmo" (get % "name")) (get res "occurrences")))
-               syms (get gizmo "symbols")]
+                     (spit (fs/file a) "(defn gizmo [x] x)\n(gizmo 1)\n")
+                     (spit (fs/file b) "(defn gizmo [x y] y)\n(gizmo 1 2)\n")
+                     ;; uses only — owned by neither definition
+                     (spit (fs/file c) "(ns c)\n(gizmo 9)\n(gizmo 8)\n")
+                     (with-redefs [editing/rg-search (constantly {:files [a b c]})]
+                       (let
+                         [r (idx {"paths" [a b c] "include_occurrences" true})
+                          res (:result r)
+                          gizmo (first (filter #(= "gizmo" (get % "name")) (get res "occurrences")))
+                          syms (get gizmo "symbols")]
 
-              (expect (:success? r))
-              (expect (= 2 (get gizmo "definition_count")))
-              (expect (= 2 (count syms)))
-              ;; each definition keeps its own path + signature to disambiguate
-              (expect (= [a b] (mapv #(get % "path") syms)))
-              (expect (= ["[x]" "[x y]"] (mapv #(get % "signature") syms)))
-              ;; a use in a file that defines the name exactly once is attributed there
-              (expect (= [1 1] (mapv #(get % "use_count") syms)))
-              (expect (= [[a] [b]]
-                         (mapv (fn [s]
-                                 (mapv #(get % "path") (get s "uses")))
-                               syms)))
-              ;; the third file defines nothing, so ownership is NOT guessed
-              (expect (= [c] (mapv #(get % "path") (get gizmo "other_uses"))))
-              (expect (= 2 (count (get (first (get gizmo "other_uses")) "anchors"))))))))
-    (it "the card renders a table: one row per symbol, its use sites beneath"
-        (let
-          [render (private-fn "render-occurrences-result")
-           {:keys [summary body]} (render {"name" "gizmo"
-                                           "count" 3
-                                           "definition_count" 1
-                                           "paths" ["."]
-                                           "symbols" [{"name" "gizmo"
-                                                       "kind" "fn"
-                                                       "visibility" "public"
-                                                       "signature" "[x]"
-                                                       "path" "src/a.clj"
-                                                       "anchor" "1:aaa"
-                                                       "end_anchor" "3:bbb"
-                                                       "use_count" 2
-                                                       "uses" [{"path" "src/b.clj"
-                                                                "anchors" ["4:ccc" "9:ddd"]}]}]})]
-
-          (expect (= "`gizmo` · 1 def · 2 uses · 2 files · project-wide" summary))
-          (expect (clojure.string/includes? body "| Def | Arity | Kind | Where | Uses |"))
-          (expect (clojure.string/includes? body "| gizmo | [x] | fn | src/a.clj @1:aaa | 2 |"))
-          (expect (clojure.string/includes? body "· src/b.clj | — | use | 4, 9 | 2 |"))))
-    (it "uses no definition owns are their own table rows, and anchors sort by line"
-        (let
-          [render (private-fn "render-occurrences-result")
-           {:keys [body]} (render {"name" "gizmo"
-                                   "count" 2
-                                   "definition_count" 0
-                                   "paths" ["."]
-                                   "symbols" []
-                                   "other_uses" [{"path" "src/c.clj"
-                                                  "anchors" ["9:ddd" "4:ccc"]}]})]
-
-          (expect (clojure.string/includes? body "· src/c.clj | — | unowned use | 4, 9 | 2 |"))))
-    (it "struct_index without `paths` is refused"
-        (expect (throws? clojure.lang.ExceptionInfo #(idx {}))))
-    (it "struct_occurrences is gone entirely"
-        ;; No `struct_occurrences` symbol is exported: occurrence analysis is an
-        ;; explicit struct_index option (a stale Var can survive a REPL :reload, so
-        ;; assert on the exported symbol list, not `resolve`).
-        (expect (not-any? #(= 'struct_occurrences (:ext.symbol/symbol %))
-                          (editing/available-editing-symbols))))))
+                         (expect (:success? r))
+                         (expect (= 2 (get gizmo "definition_count")))
+                         (expect (= 2 (count syms)))
+                         ;; each definition keeps its own path + signature to disambiguate
+                         (expect (= [a b] (mapv #(get % "path") syms)))
+                         (expect (= ["[x]" "[x y]"] (mapv #(get % "signature") syms)))
+                         ;; a use in a file that defines the name exactly once is attributed there
+                         (expect (= [1 1] (mapv #(get % "use_count") syms)))
+                         (expect (= [[a] [b]]
+                                    (mapv (fn [s]
+                                            (mapv #(get % "path") (get s "uses")))
+                                          syms)))
+                         ;; the third file defines nothing, so ownership is NOT guessed
+                         (expect (= [c] (mapv #(get % "path") (get gizmo "other_uses"))))
+                         (expect (= 2 (count (get (first (get gizmo "other_uses")) "anchors"))))))))
+               (it "struct_index without `paths` is refused"
+                   (expect (throws? clojure.lang.ExceptionInfo #(idx {}))))
+               (it "struct_occurrences is gone entirely"
+                   ;; No `struct_occurrences` symbol is exported: occurrence analysis is an
+                   ;; explicit struct_index option (a stale Var can survive a REPL :reload, so
+                   ;; assert on the exported symbol list, not `resolve`).
+                   (expect (not-any? #(= 'struct_occurrences (:ext.symbol/symbol %))
+                                     (editing/available-editing-symbols))))))
 
 (defdescribe
   index-tool-e2e-test
@@ -3868,71 +3711,7 @@
                                               "[[start, end], ...]")))
           (expect (throws? clojure.lang.ExceptionInfo #(index {})))
           (expect (throws? clojure.lang.ExceptionInfo
-                           #(index {"paths" [{"path" f "range" [2 2]}]}))))))
-    (it "the render summary surfaces the narrowing window(s)"
-        (let
-          [render
-           (private-fn "render-index-result")
-
-           base
-           {"path" "src/x.clj"
-            "language" "clojure"
-            "line_count" 3
-            "definitions" [{"name" "b"
-                            "kind" "function"
-                            "visibility" "public"
-                            "anchor" "2:aa"
-                            "end_anchor" "2:bb"
-                            "depth" 0}]}]
-
-          ;; whole-file index: no window suffix
-          (expect (not (clojure.string/includes? (:summary (render base)) "window")))
-          (expect (not (clojure.string/includes? (:summary (render base)) "lines ")))
-          ;; One or several windows always use the same `ranges` response shape.
-          (expect (clojure.string/includes? (:summary (render (assoc base "ranges" [[2 2]])))
-                                            "1 window"))
-          (expect (clojure.string/includes? (:summary (render (assoc base "ranges" [[1 1] [3 3]])))
-                                            "2 windows"))))))
-
-(defdescribe
-  render-index-batch-test
-  (let
-    [render
-     (private-fn "render-index-result")
-
-     result
-     (fn [path name]
-       {"path" path
-        "language" "clojure"
-        "line_count" 3
-        "definitions" [{"name" name
-                        "kind" "function"
-                        "visibility" "public"
-                        "anchor" "1:aa"
-                        "end_anchor" "1:bb"
-                        "depth" 0}]})]
-
-    (it "renders a batch as ordered per-file index tables"
-        (let
-          [rendered
-           (render {"results" [(result "src/a.clj" "a") (result "src/b.clj" "b")]})
-
-           body
-           (:body rendered)
-
-           a-heading
-           "### `src/a.clj` · 1 def · clojure · 3 lines"
-
-           b-heading
-           "### `src/b.clj` · 1 def · clojure · 3 lines"]
-
-          (expect (clojure.string/includes? (:summary rendered) "src/{a.clj, b.clj}"))
-          (expect (clojure.string/includes? (:summary rendered) "2 files · 2 defs"))
-          (expect (< (clojure.string/index-of body a-heading)
-                     (clojure.string/index-of body b-heading)))
-          (expect (= 2 (count (re-seq #"\\| Def \\| Arity \\| Kind" body))))
-          (expect (clojure.string/includes? body "| a |"))
-          (expect (clojure.string/includes? body "| b |"))))))
+                           #(index {"paths" [{"path" f "range" [2 2]}]}))))))))
 
 (defdescribe
   batch-read-tools-test
@@ -4975,115 +4754,6 @@
            out (find-search [{"query" "zzzqqq wwwvvv" "paths" [dir]}])]
 
           (expect (zero? (get out "item_count")))))))
-
-(defdescribe
-  render-grep-card-test
-  "The grep card is HIT-first: content matches are the strength of the tool, so
-   the body carries per-file, line-numbered, needle-highlighted hits (the same
-   line numbers as the `lineno:hash` anchors the model patches with). File-NAME
-   matches ride the body as a path fence — the whole answer when no content
-   matched — and the 0-match steer stays visible. A body is what makes
-   `result-card` collapsible in the TUI/Web."
-  (let [render (private-fn "render-grep-result")]
-    (it "content hits: the headline counts them and the body shows anchored lines"
-        (let
-          [{:keys [summary body]} (render {"query" "needle"
-                                           "needles" ["needle"]
-                                           "paths" []
-                                           "hit_count" 2
-                                           "file_count" 1
-                                           "matches" {"src/a.clj"
-                                                      {"12:abc" {"text" "(def needle 1)"}
-                                                       "7:def" {"text" ";; needle here"}}}})]
-          (expect (string/includes? summary "2 hits in 1 file"))
-          (expect (string/includes? summary "`needle`"))
-          ;; hits are line-ordered, not map-ordered
-          (expect (< (string/index-of (str body) "7") (string/index-of (str body) "12")))
-          (expect (string/includes? (str body) "src/a.clj"))
-          (expect (string/includes? (str body) "(def "))))
-    (it "context lines ride the same gutter block"
-        (let
-          [{:keys [body]}
-           (render {"query" "needle"
-                    "needles" ["needle"]
-                    "hit_count" 1
-                    "file_count" 1
-                    "matches" {"src/a.clj" {"12:abc" {"text" "hit line"
-                                                      "before" [{"line" 11 "text" "ctx before"}]
-                                                      "after" [{"line" 13 "text" "ctx after"}]}}}})]
-          (expect (string/includes? (str body) "ctx before"))
-          (expect (string/includes? (str body) "ctx after"))
-          (expect (string/includes? (str body) "hit line"))))
-    (it
-      "overlapping context windows merge into ONE deduplicated, gap-marked block"
-      (let
-        [ctx (fn [ls]
-               (mapv (fn [n]
-                       {"line" n "text" (str "line " n)})
-                     ls))
-         {:keys [body]} (render {"query" "SGR"
-                                 "needles" ["SGR"]
-                                 "hit_count" 3
-                                 "file_count" 1
-                                 "matches" {"src/a.clj" {"48:aaa" {"text" "(def BOLD SGR/BOLD)"
-                                                                   "before" (ctx [46 47])
-                                                                   "after" (ctx [49 50 51])}
-                                                         "50:bbb" {"text" "(def ITALIC SGR/ITALIC)"
-                                                                   "before" (ctx [47 48 49])
-                                                                   "after" (ctx [51 52])}
-                                                         "70:ccc" {"text" "(def LATE SGR/LATE)"
-                                                                   "before" (ctx [68 69])
-                                                                   "after" (ctx [71])}}}})
-         body (str body)
-         occurrences (fn [s]
-                       (count (re-seq (re-pattern (java.util.regex.Pattern/quote s)) body)))]
-
-        ;; Every source line appears EXACTLY once, however many hit windows cover it.
-        (expect (= 1 (occurrences "line 47")))
-        (expect (= 1 (occurrences "line 49")))
-        (expect (= 1 (occurrences "line 51")))
-        ;; A line that is BOTH a match and a neighbour's context keeps its highlight.
-        (expect (= 1 (occurrences "(def BOLD ")))
-        (expect (string/includes? body "\u001B[7mSGR\u001B[0m/BOLD"))
-        ;; Non-adjacent runs are separated, never implied contiguous.
-        (expect (string/includes? body "\u22ef"))
-        (expect (< (string/index-of body "line 52") (string/index-of body "\u22ef")))
-        (expect (< (string/index-of body "\u22ef") (string/index-of body "line 68")))))
-    (it "no content hits: ranked file NAMES are the answer and ride the body"
-        (let
-          [{:keys [summary body]}
-           (render {"query" "resource config"
-                    "hit_count" 0
-                    "file_count" 0
-                    "matches" {}
-                    "paths"
-                    ["resources/META-INF/native-image/com.blockether/spel/resource-config.json"]})]
-          (expect (string/includes? summary "1 file name"))
-          (expect (string/includes?
-                    (str body)
-                    "resources/META-INF/native-image/com.blockether/spel/resource-config.json"))))
-    (it "zero matches: the filename-vs-content steer still rides the body"
-        (let
-          [{:keys [summary body]}
-           (render
-             {"query" "zzz" "hit_count" 0 "matches" {} "paths" [] "hint" "No FILENAME matched"})]
-          (expect (string/includes? summary "no matches"))
-          (expect (string/includes? (str body) "No FILENAME matched"))))
-    (it "an explicit `searched_paths` scope is named on the headline; default `.` is not"
-        (let
-          [scoped (render {"query" "render"
-                           "hit_count" 0
-                           "matches" {}
-                           "paths" ["src/render.clj"]
-                           "searched_paths" ["src"]})
-           default (render {"query" "render"
-                            "hit_count" 0
-                            "matches" {}
-                            "paths" ["render.clj"]
-                            "searched_paths" ["."]})]
-
-          (expect (string/includes? (:summary scoped) "in `src`"))
-          (expect (not (string/includes? (:summary default) "in `")))))))
 
 (defdescribe
   structural-tool-gating-test

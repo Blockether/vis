@@ -3607,19 +3607,17 @@
 (defn- form-fingerprint
   "Content-derived fingerprint of one form map. Captures every field
    the iteration renderer reads."
-  [{:keys [code comment display-code display-language pending-summary pending-render render-segments
-           result-render result-summary result-kind result-detail error success? silent? cards]}]
+  [{:keys [code comment display-code display-language render-segments result-render result-summary
+           result-kind result-detail error success? silent? cards]}]
   [(text-fingerprint code) (text-fingerprint comment) render-segments
    (text-fingerprint result-render) (text-fingerprint result-summary) result-kind
    ;; result-detail is a small op-metadata map; compared structurally.
    result-detail error success? silent?
    ;; What a RUNNING block paints before its result lands: the formatted code band
-   ;; (`:display-code`/`:display-language`) and its pending headline
-   ;; (`:pending-summary`). `:code` alone can't stand in for them — the block
-   ;; renders differently once the formatted display lands, and without these the
-   ;; live bubble keeps the pre-display body forever.
-   (text-fingerprint display-code) display-language (text-fingerprint pending-summary)
-   (text-fingerprint pending-render)
+   ;; (`:display-code`/`:display-language`). `:code` alone can't stand in for it —
+   ;; the block renders differently once the formatted display lands, and without
+   ;; these the live bubble keeps the pre-display body forever.
+   (text-fingerprint display-code) display-language
    ;; Print-many cards: a cheap per-card digest (op/summary + a body fingerprint)
    ;; so two card-forms with the same code + summary but different cards cannot
    ;; collide on a stale cache entry.
@@ -5366,9 +5364,8 @@
           result-text
           (let
             [rendered
-             ;; The CARD's body, not `:result-render` straight off the form: a block
-             ;; still RUNNING has no result yet and paints its pending body
-             ;; instead — one field, decided once in `result-card`.
+             ;; The CARD's body, not `:result-render` straight off the form —
+             ;; one field, decided once in `result-card`.
              (:body card)
 
              v

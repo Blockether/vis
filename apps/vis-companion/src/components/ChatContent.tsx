@@ -1074,16 +1074,8 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
       : form.result_summary?.trim() || (failed ? "Failed" : "");
   const running =
     !failed && !hasOutcome && (!form.result_summary || placeholderSummary);
-  // A RUNNING call wears the headline its own tool authored (`shell`'s
-  // `$ npm test (running)`) instead of the generic wait: the awaiting card is the
-  // same card as the finished one, only its outcome is still missing…
-  const pendingSummary = form.pending_summary?.trim();
-  // …and it paints that tool's own pending BODY underneath — the same sections
-  // its finished body is built from — so the card never changes shape when the
-  // result lands, and no pending-only dialect exists.
-  const body =
-    resultText || (running ? (form.pending_render?.trimEnd() ?? "") : "");
-  const summary = running && pendingSummary ? pendingSummary : rawSummary;
+  const body = resultText;
+  const summary = rawSummary;
   const duration = formatDuration(form.duration_ms);
   // A COLLAPSED result body is not in the DOM at all. Measured on device on a
   // real transcript: those bodies were 52k of the screen's 72k elements, and
@@ -1187,17 +1179,6 @@ function formCode(form: TranscriptForm): string {
 function formCodeLanguage(form: TranscriptForm): string {
   const language = (form.display_language ?? "").trim();
   return language || "python";
-}
-
-function formIsRunning(form: TranscriptForm): boolean {
-  const summary = form.result_summary?.trim();
-  return (
-    form.error == null &&
-    form.result == null &&
-    form.result_render == null &&
-    form.duration_ms == null &&
-    (!summary || summary === "Running…")
-  );
 }
 
 // The program the model wrote is the evidence on screen in every state — while

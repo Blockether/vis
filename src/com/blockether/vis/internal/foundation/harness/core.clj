@@ -149,8 +149,8 @@
   (if (map? input) (or (get input "name") (get input :name)) input))
 
 (defn skill-tool
-  "Native `tool_use` handler: raw input map in, RAW result map out (renderers and
-   the provider tape read that map directly — no envelope here)."
+  "Host callback: raw input map in, RAW result map out (the provider tape reads
+   that map directly — no envelope here)."
   [env input]
   (skill-result env (skill-name-arg input)))
 
@@ -171,13 +171,6 @@
   (fn skill-impl [env input]
     (extension/success {:result (skill-tool env input)})))
 
-(defn- render-skill
-  [r]
-  (cond (get r "error") {:summary (str "skill not found — " (get r "error"))}
-        (= "already-active" (get r "status")) {:summary (str "`" (get r "name") "` already active")}
-        :else {:summary (str "loaded skill `" (get r "name") "`")
-               :body (not-empty (str (get r "body")))}))
-
 (def skill-symbol
   ;; Everything on the SYMBOL. `skill` is a bare Python verb in the sandbox, so a
   ;; `python_execution` block can activate a skill inside a `gather(...)` batch.
@@ -197,8 +190,7 @@
      :description
      (str "Activate an advertised skill. First load on a live provider tape returns full SKILL.md; "
           "repeats return an already-active receipt. Changed/evicted bodies return again. "
-          "In `python_execution`, call `await skill(name)`.")
-     :render-finish-call-fn render-skill}))
+          "In `python_execution`, call `await skill(name)`.")}))
 
 ;; =============================================================================
 ;; /<name> — user-invokable skill templates (pi-style)

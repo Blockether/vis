@@ -729,7 +729,7 @@
   (it "the body the engine hands the human is the fence VERBATIM, and it paints"
       (let
         [card
-         (#'vloop/tool-result-display {:stdout wire-fence} "python_execution" {})
+         (#'vloop/tool-result-display {:stdout wire-fence})
 
          tbls
          (keep :table (:line-meta (markdown-render (str (:body card)))))]

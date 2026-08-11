@@ -707,16 +707,6 @@ export interface TranscriptForm {
   result?: JsonValue;
   result_render?: string;
   result_summary?: string;
-  /**
-   * The card headline WHILE the block runs. Its own key, never
-   * `result_summary`: a pending card must not read as an outcome.
-   */
-  pending_summary?: string;
-  /**
-   * The card BODY while the block runs: the same sections its finished body is
-   * built from, minus the outcome. Its own key, never `result_render`.
-   */
-  pending_render?: string;
   result_kind?: string;
   result_detail?: Record<string, JsonValue>;
   render_segments?: JsonValue[];

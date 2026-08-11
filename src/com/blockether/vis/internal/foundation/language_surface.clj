@@ -10,8 +10,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
-            [com.blockether.vis.internal.foundation.surface-contract :as contract]
-            [com.blockether.vis.internal.strutil :as strutil]))
+            [com.blockether.vis.internal.foundation.surface-contract :as contract]))
 
 (defn- normalize-language
   [x]
@@ -421,223 +420,10 @@
                                                 vec)}}))))
 
 ;; =============================================================================
-;; Native op-card renderers — `:result` → `{:summary :body}`. The result arrives
-;; string-keyed snake_case (strings-only boundary), the injected env gone.
-;; Renderers read string keys but still RETURN the keyword `{:summary :body}` IR.
-;; Defensive: language results vary per pack, so every access is nil-safe.
+;; Call-selection helpers — what a CALL asked for, read off its input map. A pack
+;; reports what it RAN; only the call knows what was SELECTED, so `run_tests`
+;; stamps `test-target` into the result metadata.
 ;; =============================================================================
-
-(defn- fence [label s] (when (seq (str s)) (str (when label (str label ":\n")) (strutil/fenced s))))
-
-(defn- md-cell
-  "Sanitize a value for ONE markdown table cell: escape `\\`/`|` and collapse every
-   whitespace run (incl. newlines) to a single space, so a multi-line form or a value
-   carrying a pipe can never break the row's column structure."
-  [s]
-  (-> (str s)
-      (str/replace "\\" "\\\\")
-      (str/replace "|" "\\|")
-      (str/replace #"\s+" " ")
-      str/trim))
-
-(defn- md-table
-  "A GitHub-flavored markdown table from `headers` (column labels) and `rows` (each a
-   same-arity seq of cells). nil when there are no rows, so an empty result drops out
-   of the card body; the TUI renders the markdown as a boxed grid."
-  [headers rows]
-  (when (seq rows)
-    (let
-      [line (fn [cells]
-              (str "| " (str/join " | " cells) " |"))]
-      (str/join "\n"
-                (concat [(line headers) (line (repeat (count headers) "---"))]
-                        (map (fn [row]
-                               (line (map md-cell row)))
-                             rows))))))
-
-(defn- render-format-result
-  "format_code → `` `path` (changed) `` when writing a file (the FORMAT_CODE
-   badge already names the tool), a per-file roll-up when several `paths` were
-   formatted, else the formatted text as a code block."
-  [r]
-  (if-let [files (get r "files")]
-    (let
-      [n (count files)
-       changed (or (get r "changed") 0)
-       by-cwd (get r "by-cwd")]
-
-      {:summary (str n " file" (when (not= 1 n) "s") " — " changed " changed")
-       :body (fence
-               nil
-               (if (map? by-cwd)
-                 ;; grouped: each directory prefix written ONCE, its files indented
-                 (str/join
-                   "\n"
-                   (mapcat (fn [[dir entries]]
-                             (cons (str dir "/")
-                                   (for [[base v] (sort-by key entries)]
-                                     (str "  " base
-                                          " " (if (get v "changed") "(changed)" "(no change)")))))
-                           (sort-by key by-cwd)))
-                 (str/join
-                   "\n"
-                   (for [f files]
-                     (str (get f "path") " " (if (get f "changed") "(changed)" "(no change)"))))))})
-    (let
-      [changed (get r "changed")
-       note (if changed "(changed)" "(no change)")
-       delta (get r "chars")
-       mag (when (and changed (number? delta) (not (zero? (long delta))))
-             (str " (" (if (pos? (long delta)) "+" "-") (Math/abs (long delta)) " chars)"))
-       label (str note mag)]
-
-      (if-let [path (get r "path")]
-        {:summary (str "`" path "` " label)}
-        {:summary label}))))
-
-(defn- findings->table
-  "Lint `findings` → a markdown table the LINT_CODE card renders as a boxed grid:
-   one row per finding with its `file`, `row:col`, `level`, `provider`, and
-   `message`. nil when there are no findings."
-  [findings]
-  (md-table ["file" "at" "level" "provider" "message"]
-            (for [f findings]
-              [(str (get f "file")) (str (get f "row") ":" (get f "col")) (str (get f "level"))
-               (str (get f "provider")) (str (get f "message"))])))
-
-(defn- render-lint-result
-  "lint_code → `` `path` — clean `` / `N targets — E errors, W warnings` headline
-   (the LINT_CODE badge already names the tool, and the headline names the linted
-   target(s) — the file/dir path(s) when given, else `snippet` for a stdin lint or
-   `N files` for a bare workspace lint). A stdin lint also renders the exact snippet
-   in a fenced body, followed by the findings table when present."
-  [r]
-  (let
-    [errors
-     (long (or (get r "error") 0))
-
-     warnings
-     (long (or (get r "warning") 0))
-
-     infos
-     (long (or (get r "info") 0))
-
-     findings
-     (get r "findings")
-
-     snippet
-     (get r "snippet")
-
-     clean?
-     (and (zero? errors) (zero? warnings) (zero? infos))
-
-     targets
-     (get r "targets")
-
-     n
-     (get r "files")
-
-     head
-     (cond (seq targets) (if (= 1 (count targets))
-                           (str "`" (first targets)
-                                "`" (when (and n (> (long n) 1)) (str " (" n " files)")))
-                           (str (count targets)
-                                " targets"
-                                (when (and n (> (long n) (count targets))) (str " (" n " files)"))))
-           (some? snippet) "snippet"
-           n (if (= 1 n) "snippet" (str n " files")))
-
-     body
-     (not-empty (str/join "\n\n"
-                          (keep identity [(fence "snippet" snippet) (findings->table findings)])))]
-
-    {:summary (not-empty (when head
-                           (str head
-                                (if clean?
-                                  " — clean"
-                                  (str " — "
-                                       errors
-                                       " error"
-                                       (when (not= 1 errors) "s")
-                                       ", "
-                                       warnings
-                                       " warning"
-                                       (when (not= 1 warnings) "s")
-                                       (when (pos? infos) (str ", " infos " info")))))))
-     :body body}))
-
-(defn- failures->table
-  "Structured test `failures` → a markdown table the RUN_TESTS card renders as a
-   boxed grid centred on the expectation-vs-reality comparison: one row per fault
-   with `ns/test` and its `file:line`, then `expected`/`actual` columns whenever a
-   fault carries them. The generic `message` (e.g. lazytest's `Expectation failed`)
-   only earns its own column when some fault leans on it as its SOLE signal — an
-   error or plain assertion with no expected/actual pair — so a clean expectation
-   failure reads purely as expected vs actual. nil when there are no faults, so a
-   passing run stays body-less."
-  [fails]
-  (let
-    [keep?
-     (fn [x]
-       (and x (not (str/blank? (str x))) (not= "nil" (str x))))
-
-     exp?
-     (boolean (some #(keep? (get % "expected")) fails))
-
-     act?
-     (boolean (some #(keep? (get % "actual")) fails))
-
-     ;; The message is worth a column only when some fault has NO expected/actual
-     ;; pair, so it is that row's only signal (a thrown error, a bare assertion).
-     msg?
-     (boolean (some #(and (keep? (get % "message"))
-                          (not (keep? (get % "expected")))
-                          (not (keep? (get % "actual"))))
-                    fails))
-
-     headers
-     (cond-> ["test" "at"]
-       msg?
-       (conj "message")
-
-       exp?
-       (conj "expected")
-
-       act?
-       (conj "actual"))
-
-     rows
-     (for [f fails]
-       (let
-         [nm (str (get f "ns") (when (keep? (get f "test")) (str "/" (get f "test"))))
-          at (if (keep? (get f "file"))
-               (str (get f "file") (when (keep? (get f "line")) (str ":" (get f "line"))))
-               "")]
-
-         (cond-> [nm at]
-           msg?
-           (conj (str (get f "message")))
-
-           exp?
-           (conj (str (get f "expected")))
-
-           act?
-           (conj (str (get f "actual"))))))]
-
-    (md-table headers rows)))
-
-(def ^:private repl-form-inline-max
-  "Display-width budget for the evaluated FORM on the collapsed chip. A form wider
-   than this (or any multi-line form) is too long to ride inline, so it's clipped
-   on the chip and promoted to its own FORM section when expanded."
-  56)
-
-(defn- clip-chip
-  "Clip `s` to `n` display chars with a trailing ellipsis, so one long form or value
-   never blows out the single-line collapsed summary."
-  [s n]
-  (let [s (str s)]
-    (if (> (count s) (long n)) (str (subs s 0 (max 0 (dec (long n)))) "…") s)))
 
 (defn- input-list
   "Comma-joined non-blank entries of list-ish call key `k`, else nil — how a
@@ -671,340 +457,6 @@
       (some->> (input-str input "filter")
                (str "filter: "))
       "full suite"))
-
-(defn- render-test-result
-  "run_tests → `<what ran> — pass/total (Nms)` headline (the RUN_TESTS badge already
-   names the tool, so no redundant `tests` word or success glyph — only a leading
-   `✗` flags a failure). The headline NAMES the run: the pack's `ns` when it reports
-   one, else the `target` the call selected, and the target rides after a ` · ` when
-   it says something the namespace does not (one var out of a namespace) — two runs
-   that ran different tests must never render the same line. Many namespaces
-   collapse to `<first> +N more` so the headline stays one tidy line. A runner that
-   reported no counts still states its VERDICT — `timed out`, `failed (exit 1)` —
-   because a bare duration says nothing about whether the suite passed. The
-   CLI-fallback `:note` rides after a ` · ` instead of being fused into the run
-   detail; the body carries the run output on failure, or the error text when the
-   run itself could not produce a result. A failing run NEVER renders blank — with
-   neither output nor error we surface the raw result so the user always sees
-   *something* went wrong, never an empty card."
-  [r]
-  (let
-    [pass
-     (get r "pass")
-
-     fail
-     (get r "fail")
-
-     total
-     (get r "total")
-
-     error
-     (get r "error")
-
-     exit
-     (get r "exit")
-
-     ok
-     (and (not error)
-          (cond (number? fail) (zero? (long fail))
-                (some? (get r "is_pass")) (boolean (get r "is_pass")) ; CLI fallback: exit-code verdict
-                :else (boolean (get r "pass"))))
-
-     parts
-     (some-> (get r "ns")
-             str
-             str/trim
-             not-empty
-             (str/split #"\s+"))
-
-     ns-disp
-     (cond (empty? parts) nil
-           (> (count parts) 1) (str (first parts) " +" (dec (count parts)) " more")
-           :else (first parts))
-
-     target
-     (some-> (get r "target")
-             str
-             str/trim
-             not-empty)
-
-     ;; The whole suite adds nothing beside a namespace the pack already named.
-     target-chip
-     (when (and ns-disp target (not= target ns-disp) (not= target "full suite")) target)
-
-     verdict
-     (cond total (str pass
-                      "/" total
-                      " passed" (when (and (number? fail) (pos? (long fail)))
-                                  (str ", " fail " failed")))
-           (get r "timed_out") "timed out"
-           (number? exit) (str (if ok "passed" "failed") " (exit " exit ")")
-           (not ok) "error")
-
-     detail
-     (or (not-empty (str (get r "output")))
-         (not-empty (str error))
-         (when-not ok (str "no test result returned — " (pr-str r))))]
-
-    {:summary (str (when-not ok "✗ ")
-                   (clip-chip (or ns-disp target "tests") repl-form-inline-max)
-                   (when verdict (str " — " verdict))
-                   (when target-chip (str " · " (clip-chip target-chip repl-form-inline-max)))
-                   (when-let [ms (get r "ms")]
-                     (str " (" ms "ms)"))
-                   (when (get r "note") (str " · " (get r "note"))))
-     :body (when-not ok
-             (or (some-> (get r "failures")
-                         seq
-                         failures->table)
-                 (fence nil detail)))}))
-
-(defn- short-error
-  "First line of an error headline, trimmed to its class before the `:` — e.g.
-   `NullPointerException: null` → `NullPointerException`. Capped so a long
-   message never blows out the one-line summary badge."
-  [s]
-  (let
-    [head
-     (-> (str s)
-         str/split-lines
-         first
-         (or "")
-         str/trim)
-
-     cls
-     (-> head
-         (str/split #":" 2)
-         first
-         str/trim)]
-
-    (subs cls 0 (min 60 (count cls)))))
-
-(defn- one-line
-  "Collapse `s` to a single trimmed line — every run of whitespace (incl. newlines)
-   becomes one space. nil/blank → nil."
-  [s]
-  (not-empty (str/trim (str/replace (str s) #"\s+" " "))))
-
-(defn- sect
-  "One labeled body SECTION — a bold uppercase header over a fenced monospace block,
-   the shape the collapsed/expanded repl_eval card stacks (RESULT / STDOUT / …). nil
-   when there's nothing to show, so an empty section drops out of the join."
-  ([label s] (sect label s nil))
-  ([label s lang]
-   (let [s (str/trimr (str s))]
-     (when (seq s) (str "**" label "**\n" (strutil/fenced s lang))))))
-
-(defn- render-test-call
-  "PENDING run_tests card, emitted with block.started before the pack begins. The
-   selected language/scope is visible immediately instead of leaving the previous
-   reasoning line on screen for the whole run. This is descriptive selection data,
-   never an invented shell command: each language pack owns how its tests execute."
-  [input]
-  (let
-    [language
-     (or (input-str input "language") "auto")
-
-     namespaces
-     (input-list input "namespaces")
-
-     paths
-     (input-list input "paths")
-
-     only
-     (input-list input "only")
-
-     filter*
-     (input-str input "filter")
-
-     ;; The SAME selection the finished headline reports, so the card that opens
-     ;; a run and the card that closes it name one run.
-     scope
-     (test-target input)
-
-     detail
-     (->> [["language" language] ["scope" scope] ["cwd" (input-str input "cwd")]
-           ["environment" (input-str input "environment")] ["namespaces" namespaces] ["paths" paths]
-           ["only" only] ["filter" filter*] ["include" (input-list input "include")]
-           ["exclude" (input-list input "exclude")]]
-          (keep (fn [[label value]]
-                  (when value (str label ": " value))))
-          (str/join "\n"))]
-
-    {:summary (str (if (= "full suite" scope)
-                     (str language " — full suite")
-                     (clip-chip scope repl-form-inline-max))
-                   " (running)")
-     :render (sect "SELECTION" detail)}))
-
-(defn- render-repl-eval-result
-  "repl_eval → a collapsed/expanded op-card modeled on the GIT band (the REPL badge
-   names the tool). The COLLAPSED chip carries the evaluated FORM (clipped) plus a
-   value/error/timeout PREVIEW so a run reads at a glance — `(+ 1 1)  ⇒ 2`, `(/ 1 0)  ✗
-   ArithmeticException`, `(Thread/sleep 999999)  ⧖ timed out after 30000ms`. EXPANDED,
-   the body stacks labeled sections, each fenced and separated by one blank line:
-     - FORM    — the evaluated form; shown when multi-line / too wide to sit on the
-                 chip, and ALWAYS on a timeout so the timed-out code is visible;
-     - RESULT  — the non-nil value; ERROR replaces it on failure;
-     - STDOUT  — :out when non-blank;
-     - STDERR  — :err when non-blank;
-     - TIMEOUT — a note (with the deadline in ms) when the eval blew the deadline.
-   :error_message/:trace/:error_data come enriched from the nREPL client; we fall
-   back to the raw :err one-liner when no structured trace was captured. A TIMEOUT is
-   detected from a timed_out flag / a timeout status and renders like a first-class
-   outcome (its own preview + FORM + any partial stdout/stderr)."
-  [r]
-  (let
-    [code
-     (not-empty (str (get r "code")))
-
-     value
-     (get r "value")
-
-     out
-     (get r "out")
-
-     err
-     (get r "err")
-
-     emsg
-     (not-empty (str (get r "error_message")))
-
-     trace
-     (get r "trace")
-
-     edata
-     (get r "error_data")
-
-     timed-out?
-     (boolean (or (get r "timed_out") (some #{"timeout"} (get r "status"))))
-
-     ms
-     (get r "ms")
-
-     error?
-     (boolean (or emsg
-                  (not-empty (str (get r "ex")))
-                  (not-empty (str (get r "root_ex")))
-                  (some #{"eval-error"} (get r "status"))))
-
-     long-form?
-     (boolean (and code
-                   (or (str/includes? code "\n") (> (count code) (long repl-form-inline-max)))))
-
-     ;; The form on the chip: single-lined + clipped. Short → it's the whole
-     ;; story; long → it's a teaser and the full form leads the expanded body.
-     form-chip
-     (some-> code
-             one-line
-             (clip-chip repl-form-inline-max))
-
-     value-preview
-     (or (one-line value) "nil")
-
-     show-result?
-     (not= "nil" value-preview)
-
-     preview
-     (cond timed-out? (str "⧖ timed out" (when ms (str " after " ms "ms")))
-           error? (str "✗ " (if emsg (short-error emsg) "error"))
-           :else (str "⇒ " (clip-chip value-preview repl-form-inline-max)))
-
-     summary
-     (not-empty (str (when form-chip (str form-chip "  ")) preview))
-
-     error-body
-     (str/join "\n"
-               (remove str/blank?
-                 [(or emsg (str err)) (when (seq trace) (str/join "\n" trace))
-                  (when (seq (str edata)) (str "ex-data: " edata))]))
-
-     ;; Fixed section order; each gate matches the design. ERROR stands in for
-     ;; RESULT on failure and sits LAST, after any captured stdout. On a TIMEOUT
-     ;; the FORM is ALWAYS shown (so the timed-out code is visible), followed by
-     ;; whatever partial STDOUT/STDERR was captured and a closing TIMEOUT note.
-     sections
-     (cond timed-out? [(sect "FORM" code "clojure") (sect "STDOUT" out) (sect "STDERR" err)
-                       (sect "TIMEOUT"
-                             (str "Evaluation timed out"
-                                  (when ms (str " after " ms "ms"))
-                                  ". The form was still running when the deadline was reached."))]
-           error? [(when long-form? (sect "FORM" code "clojure")) (sect "STDOUT" out)
-                   (sect "ERROR" error-body)]
-           :else [(when long-form? (sect "FORM" code "clojure"))
-                  (when show-result? (sect "RESULT" value "clojure")) (sect "STDOUT" out)
-                  (sect "STDERR" err)])
-
-     body
-     (->> sections
-          (remove nil?)
-          (str/join "\n\n"))]
-
-    {:summary summary :body (when (seq body) (str "\n" body))}))
-
-(defn- render-repl-status-result
-  "repl_status → `N REPLs: id (status), …`."
-  [r]
-  (let [res (get r "resources")]
-    {:summary
-     (str (count res)
-          " REPL"
-          (when (not= 1 (count res)) "s")
-          (when (seq res)
-            (str ": " (str/join ", " (map #(str (get % "id") " (" (get % "status") ")") res)))))}))
-
-(defn- render-repl-start-result
-  "repl → lifecycle headline plus startup failure/log details when present."
-  [r]
-  (cond (contains? r "resources") (render-repl-status-result r)
-        (#{"stopped" "detached"} (get r "result")) {:summary (str (get r "result")
-                                                                  (when-let [id (get r "id")]
-                                                                    (str " " id)))}
-        :else (let
-                [status
-                 (or (get r "status") "ready")
-
-                 failed?
-                 (or (= "failed" status) (= "failed" (get r "result")))
-
-                 prefix
-                 (if failed? "✗ " "")
-
-                 summary
-                 (str prefix
-                      (or (get r "id") (get r "language") "")
-                      " "
-                      status
-                      (when-let [p (get r "port")]
-                        (str " :" p)))
-
-                 log-tail
-                 (get r "log_tail")
-
-                 sections
-                 [(when-let [m (get r "message")]
-                    (str "MESSAGE\n" m))
-                  (when-let [exit (get r "exit")]
-                    (str "EXIT\n" exit))
-                  (when-let [log (get r "log")]
-                    (str "LOG\n" log))
-                  (when-let [cmd (seq (get r "cmd"))]
-                    (str "CMD\n" (str/join " " (map str cmd))))
-                  (when (seq log-tail) (str "LOG TAIL\n" (str/join "\n" log-tail)))]
-
-                 body
-                 (->> sections
-                      (remove nil?)
-                      (str/join "\n\n"))]
-
-                {:summary summary :body (when (seq body) (str "\n" body))})))
-
-(defn- render-repl-stop-result
-  "repl_stop → `stopped <id>`."
-  [r]
-  {:summary (str "stopped"
-                 (when-let [id (get r "id")]
-                   (str " " id)))})
 
 (defn format-code
   "Format through a pack: `format_code(language,arg)`; omit `language` only for paths-based inference. Source/`{\"code\":...}` returns changed + char-delta, never text. `{\"paths\":[...]}` (always a list) recursively formats files/dirs in place and returns per-file changes, never text. Omit code/paths for default source paths recursively."
@@ -1089,7 +541,6 @@
      ;; NAME(language, {payload}) — optional leading `language`, the rest a
      ;; pure options dict (always emitted so the payload stays a map).
      :call {:lead-opt "language" :rest :always}
-     :render-finish-call-fn render-format-result
      :inject-env? true
      :tag :mutation}))
 
@@ -1103,7 +554,6 @@
        "stdin adds `snippet`, paths add `targets`. Findings use `file,row,col,level,type,message` "
        "and optional `provider`.")
      :description "Lint code/paths without edits."
-     :render-finish-call-fn render-lint-result
      :inject-env? true
      :tag :observation}))
 
@@ -1120,8 +570,6 @@
      :call {:lead-opt "language" :rest :always}
      ;; run_tests can exceed the generic Python eval watchdog; dispatch it
      ;; directly in Clojure so the language pack's own timeout budget wins.
-     :render-finish-call-fn render-test-result
-     :render-start-call-fn render-test-call
      :inject-env? true
      :tag :mutation}))
 
@@ -1139,7 +587,6 @@
      ;; watchdog (DEFAULT_EVAL_TIMEOUT_MS, 120s); dispatch it directly in
      ;; Clojure so the language pack's own timeout budget wins (parity with
      ;; run_tests above).
-     :render-finish-call-fn render-repl-eval-result
      :inject-env? true
      :tag :mutation}))
 
@@ -1160,7 +607,6 @@
        "then `start`. `status` reports that "
        "directory's state; `stop` ends a managed REPL; `connect` attaches an external REPL by port and only detaches it.")
      :call {:lead-opt "language" :rest :always}
-     :render-finish-call-fn render-repl-start-result
      :inject-env? true
      :tag :mutation}))
 
@@ -1171,7 +617,6 @@
      :description
      "Attach an external running REPL; Vis registers it but never owns or kills it, so stop only detaches."
      :call {:lead-opt "language" :rest :always}
-     :render-finish-call-fn render-repl-start-result
      :inject-env? true
      :tag :mutation}))
 
@@ -1184,7 +629,6 @@
      ;; repl_stop(id) — one positional id. (lint_code intentionally has NO
      ;; :call: its fn takes the whole input dict, so the generic form fits.)
      :call {:pos ["id"]}
-     :render-finish-call-fn render-repl-stop-result
      :inject-env? true
      :tag :mutation}))
 

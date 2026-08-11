@@ -32,12 +32,6 @@
    ;; result surfaces — the raw value, the pre-rendered op-card body, and the
    ;; op-card HEADLINE (a tool-authored summary, never a first-line body slice)
    [:result "result"] [:result-render "result_render"] [:result-summary "result_summary"]
-   ;; the same HEADLINE while the call is still RUNNING, authored by the tool's
-   ;; `:render-start-call-fn`. Its own key: a pending card must never look like an outcome,
-   ;; so channels still read "running" off the absent `:result-*` fields.
-   ;; …and the BODY it paints under that headline while it runs: the tool's own
-   ;; card sections, built by the same renderers its finished body uses.
-   [:pending-summary "pending_summary"] [:pending-render "pending_render"]
    ;; MULTI-card: canonical MINI-FORMS, recursively normalized by `<-wire`.
    [:cards "cards"]
    ;; A printed result's OWN op ("grep", "attach") — the only identity a card has.
@@ -91,35 +85,21 @@
       :collapsible? true}               — true ⇔ there's a body to fold under
                                           the summary (a chevron/`<details>`)
 
-   A block still RUNNING has no result yet, so both fields fall back to their
-   `:pending-*` twins: the SAME card, in its awaiting state, rather than a bare
-   unlabeled code band.
-
    `nil` when the form has neither headline nor body — there is no card, and the
    channel renders whatever the form itself carries."
-  [{:keys [op result-summary pending-summary result-render pending-render]}]
+  [{:keys [op result-summary result-render]}]
   (let
     [summary
-     (or (some-> result-summary
-                 str
-                 str/trim
-                 not-empty)
-         (some-> pending-summary
-                 str
-                 str/trim
-                 not-empty))
+     (some-> result-summary
+             str
+             str/trim
+             not-empty)
 
-     ;; A RUNNING block has no result body yet, so the card shows the PENDING
-     ;; body and simply swaps it for the real one when the block lands.
      body
-     (or (some-> result-render
-                 str
-                 str/trimr
-                 not-empty)
-         (some-> pending-render
-                 str
-                 str/trimr
-                 not-empty))]
+     (some-> result-render
+             str
+             str/trimr
+             not-empty)]
 
     (when (or summary body)
       {:label (card-label op) :summary summary :body body :collapsible? (boolean body)})))

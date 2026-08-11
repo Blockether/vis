@@ -461,7 +461,6 @@
 ;; UI-level helper: stringify a plain Clojure value with size + nesting
 ;; caps so non-tool progress chunks, history-restore previews, and trailer
 ;; `;; => …` lines never dump multi-megabyte payloads into a render buffer.
-;; Tool results must use symbol-specific renderers in `internal.extension`.
 ;; Renders *runtime values* via `clojure.pprint` for data shapes and
 ;; `pr-str` for scalar fallback.
 ;; =============================================================================
@@ -487,8 +486,7 @@
   "Bounded Clojure data rendering for plain working-memory previews
    (TUI progress, history-restore, trailer `;; => …` lines). Caps output
    at `MAX_RESULT_DISPLAY_CHARS` chars by default; callers that want
-   tighter or looser bounds pass `:max-chars`. Do not use for tool results;
-   tools must render through their symbol-specific renderers."
+   tighter or looser bounds pass `:max-chars`."
   ([v] (bounded-value-str v {}))
   ([v
     {:keys [max-chars print-length print-level]

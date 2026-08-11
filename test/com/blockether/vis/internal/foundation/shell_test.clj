@@ -55,12 +55,7 @@
 
 (def ^:private shell* @#'shell/shell-dispatch)
 
-(def ^:private render-shell-run-result @#'shell/render-shell-run-result)
-
-
-(def ^:private render-shell-logs-result @#'shell/render-shell-logs-result)
-
-(def ^:private render-shell-send-result @#'shell/render-shell-send-result)
+(def ^:private render-shell-run-result shell/render-shell-run-result)
 
 
 (def ^:private keys-label @#'shell/keys-label)
@@ -934,12 +929,7 @@
          {"command" "tests" "exit" 0 "stdout" stdout}
 
          run-card
-         (render-shell-run-result result)
-
-         logs-card
-         (render-shell-logs-result {"id" "tests"
-                                    "status" "running"
-                                    "stdout" "\u001b]0;title\u0007\u001b[31mready\u001b[0m"})]
+         (render-shell-run-result result)]
 
         (expect (= stdout (get result "stdout")))
         ;; The CR REDREW the line, so the frame the terminal was left showing is the
@@ -947,72 +937,24 @@
         (expect (str/includes? (:body run-card) "next!"))
         (expect (not (str/includes? (:body run-card) "PASS")))
         (expect (not (str/includes? (:body run-card) "\u001b")))
-        (expect (not (str/includes? (:body run-card) "[0;32m")))
-        (expect (str/includes? (:body logs-card) "ready"))
-        (expect (not (str/includes? (:body logs-card) "\u001b")))))
-  (it "renders the log card with expandable sections"
+        (expect (not (str/includes? (:body run-card) "[0;32m")))))
+  (it "answers the bang path by the SYMBOL it resolves at runtime"
+      ;; `!cmd` builds its card by `requiring-resolve`-ing this exact public var —
+      ;; no registry, no symbol table. Renaming or re-privatizing it would fail
+      ;; silently at the call site, so the name is pinned here.
       (let
-        [logs (render-shell-logs-result {"id" "srv"
-                                         "command" "npm run dev"
-                                         "status" "running"
-                                         "stdout" "ready\n"
-                                         "offset" 0
-                                         "next_offset" 6
-                                         "is_eof" true
-                                         "uptime_ms" 1500})]
-        (expect (str/includes? (:summary logs) "◷ `npm run dev` running · 6 B at 0"))
-        (expect (not (str/includes? (:summary logs) "more")))
-        (expect (str/includes? (:body logs) "**LOGS**"))))
-  ;; A read that stopped short of the end must SAY so, because the cursor is the
-  ;; only invitation to come back for the rest.
-  (it "says where the reader is and whether more is already waiting"
-      (let
-        [more (render-shell-logs-result {"id" "build"
-                                         "command" "npm run build"
-                                         "status" "running"
-                                         "stdout" "chunk"
-                                         "offset" 4096
-                                         "next_offset" 4101
-                                         "is_eof" false})]
-        (expect (str/includes? (:summary more) "◷ `npm run build` running · 5 B at 4096 · more"))
-        (expect (str/includes? (:body more) "next_offset: 4101"))
-        (expect (str/includes? (:body more) "more: true"))))
-  (it
-    "shows the KEYSTROKES a send typed, naming every control character"
-    (let
-      [typed
-       (render-shell-send-result {"id" "ops"
-                                  "command" "vim notes"
-                                  "status" "running"
-                                  "sent" 6
-                                  "keys" (keys-label "hello\n")})
-
-       ;; A send is frequently ENTIRELY non-printing (Ctrl-C, Esc, a bare Enter):
-       ;; the old card said "sent 1 chars" and the reader learned nothing.
-       ctrl
-       (render-shell-send-result {"id" "ops"
-                                  "command" "vim notes"
-                                  "status" "running"
-                                  "sent" 1
-                                  "keys" (keys-label "\u0003")})]
-
+        [render (requiring-resolve
+                  'com.blockether.vis.internal.foundation.shell/render-shell-run-result)]
+        (expect (some? render))
+        (expect (= "$ echo hi (success)" (:summary (render {"command" "echo hi" "exit" 0}))))))
+  (it "names every control character a send typed"
+      ;; `keys` is RESULT data, not paint: a send is frequently ENTIRELY
+      ;; non-printing (Ctrl-C, Esc, a bare Enter), and "sent 1 chars" taught
+      ;; the reader nothing.
       (expect (= "\"hello\" ↵" (keys-label "hello\n")))
       (expect (= "C-c" (keys-label "\u0003")))
       (expect (= "Esc ⇥ \"y\" ↵" (keys-label "\u001b\ty\n")))
-      (expect (nil? (keys-label "")))
-      (expect (= "↵ `vim notes` sent \"hello\" ↵" (:summary typed)))
-      (expect (str/includes? (:body typed) "**KEYS**"))
-      (expect (str/includes? (:body typed) "keys: \"hello\" ↵"))
-      (expect (= "↵ `vim notes` sent C-c" (:summary ctrl)))
-      (expect (str/includes? (:body ctrl) "C-c"))
-      ;; Falls back to the payload when an older result carries no `keys`.
-      (expect (= "↵ `vim notes` sent \"y\" ↵"
-                 (:summary
-                   (render-shell-send-result
-                     {"id" "ops" "command" "vim notes" "sent" 2 "keys" (keys-label "y\n")}))))
-      ;; Nothing knows the command: a generic noun, never the caller's handle.
-      (expect (= "↵ the shell sent 0 chars"
-                 (:summary (render-shell-send-result {"id" "ops" "sent" 0})))))))
+      (expect (nil? (keys-label "")))))
 
 (defdescribe
   shell-status-on-every-stage-test

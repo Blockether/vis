@@ -89,27 +89,6 @@
     (expect (= "UNHEARD_OF" (:label (form/result-card {:op "unheard_of" :result-summary "1 row"}))))
     ;; a block that printed nothing and returned nothing → no card at all.
     (expect (= [] (form/result-cards {:result {:k 1}}))))
-  (it "falls back to the PENDING card while a block is still running"
-      ;; A running block has no result yet, but it is the SAME card: it wears the
-      ;; pending headline AND the pending body instead of collapsing to a bare band.
-      (let
-        [running (form/result-card {:pending-summary "$ npm test (running)"
-                                    :pending-render "**COMMAND**\n```bash\nnpm test\n```"})]
-        (expect (= "$ npm test (running)" (:summary running)))
-        (expect (= "**COMMAND**\n```bash\nnpm test\n```" (:body running)))
-        (expect (:collapsible? running)))
-      ;; Summary-only pending card: nothing to fold under it yet.
-      (let [bare (form/result-card {:pending-summary "◷ `dev` reading logs"})]
-        (expect (nil? (:body bare)))
-        (expect (not (:collapsible? bare))))
-      ;; The moment the result lands it wins — a finished card never says "running".
-      (let
-        [done (form/result-card {:pending-summary "$ npm test (running)"
-                                 :pending-render "**COMMAND**\n```bash\nnpm test\n```"
-                                 :result-summary "exit 0 · 12 lines"
-                                 :result-render "**OUTPUT**\n```\nok\n```"})]
-        (expect (= "exit 0 · 12 lines" (:summary done)))
-        (expect (= "**OUTPUT**\n```\nok\n```" (:body done)))))
   (it "->display drops nils so a merge never stamps empty keys"
       (expect (= {} (form/->display {:result nil :op nil})))
       (expect (= {:op "grep"} (form/->display {:op "grep" :result-render nil})))))
