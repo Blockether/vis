@@ -854,6 +854,32 @@ needs once it is already calling the shim, and `doc(name)` already answers from 
 **Unknowns.** None. `attach`'s SAME DOCUMENT, SAME NAME rule stays PUSHED on purpose — its test pins it
 in the description because a model reads it BEFORE attaching, not while calling.
 
+## Phase 10 — Stop reprinting finished background shells in ctx
+
+**Rationale.** `session["resources"]["other"]` is real and stays: a background `shell` is the one thing
+an agent starts that outlives its own call, and a running one it cannot see is one it never stops. But
+nothing ever LEFT that block. A background shell registers on spawn, flips to `status "exited"` when it
+finishes, and its record is deliberately retained so the TUI footer can still open the log card — so the
+model paid for every shell it had ever started, for the rest of the session. This session had 67 of them,
+all `exit 0`: 10,537 chars (~2,900 tokens) reprinted on every request, more than the whole sandbox-shims
+block after phase 9, and growing with every command run.
+
+**Data.** None crosses a boundary and nothing is retired early. `resources/model-view` — the ctx-only
+projection, used by `ctx_loop/enrich-ctx` and nothing else — drops a non-REPL resource whose `status` is
+`"exited"`. The registry, `list-resources`, the footer, the gateway `/resources` route and
+`resource_stop` are untouched, and a finished shell's log still answers by id from the file
+(`shell-logs-impl` reads the FILE once the entry is gone — `retired-log-core`).
+
+**Acceptance criteria.**
+- A `running` shell and a `failed` one still appear; both change what the agent does next.
+- `other` disappears entirely once every shell has finished, instead of listing 67 dead ones.
+- Test: `resources-test/model-view-test` gains the mixed exited/running/failed case and the
+  all-finished case.
+
+**Unknowns.** None. Retiring the RECORD at exit was rejected: the footer's log card is that retention,
+and the detail string ("logs retained until resource_stop") is a promise to the human reader, not to the
+model.
+
 ## Cross-validation — the SECOND inventory (measured against the tree; phases 1-7 missed these)
 
 Every figure below was counted this pass — balanced-brace spans and full-tree greps, not recall.
@@ -1266,7 +1292,14 @@ about `ntr[…]`-carrying metric bullets).
 
 ## State of the plan
 
-**REQUIRES WORK** — phases 1-9 have LANDED. What is left is the cross-cutting cleanup list (steps 45-53, the `:schema` literals, `form.clj`'s reduction, `extension_bootstrap.py`, the wire's `tool_name`/`result_render` columns, the tool wall, the replay policy, `:tag`) and the two pieces of shipped-UI evidence (56b's `spel` figures, 57's `cap/shot!` PNG).
+**REQUIRES WORK** — phases 1-10 have LANDED. What is left is the cross-cutting cleanup list (steps 45-53, the `:schema` literals, `form.clj`'s reduction, `extension_bootstrap.py`, the wire's `tool_name`/`result_render` columns, the tool wall, the replay policy, `:tag`) and the two pieces of shipped-UI evidence (56b's `spel` figures, 57's `cap/shot!` PNG).
+
+**Phase 10 — finished background shells leave ctx: DONE.** `session["resources"]["other"]` stays — a
+running background shell is the one thing an agent starts that outlives its own call — but a shell that
+already exited now drops out of `resources/model-view`, the ctx-only projection. The registry, the
+footer's log card, `list-resources` and `resource_stop` keep every record. This session had accumulated
+67 exited shells: 10,537 chars (~2,900 tokens) of `exit 0` on every request, bigger than the whole
+sandbox-shims block after phase 9. `running` and `failed` still show.
 
 **Phase 9 — the shim block splits into a pushed line and a pulled page: DONE.** All 23
 `:shim/description` values are one tight line (surface + refusals), 8,694 → 4,865 chars; the 7 that lost

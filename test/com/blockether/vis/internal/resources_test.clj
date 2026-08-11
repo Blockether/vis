@@ -122,7 +122,21 @@
 
         (expect (= {"id" "server" "status" "up" "can_stop" true}
                    (get-in view ["other" "process" "server"])))
-        (expect (nil? (get view "repls"))))))
+        (expect (nil? (get view "repls")))))
+  (it "drops a background shell that already exited and keeps the ones still worth a decision"
+      (let
+        [view (resources/model-view
+                [{"id" "done" "kind" "shell" "status" "exited" "can_stop" true "detail" "exit 0"}
+                 {"id" "live" "kind" "shell" "status" "running" "can_stop" true "pid" 42}
+                 {"id" "bad" "kind" "shell" "status" "failed" "can_stop" true "detail" "exit 3"}]
+                {:root "/repo"})]
+        (expect (nil? (get-in view ["other" "shell" "done"])))
+        (expect (= #{"live" "bad"} (set (keys (get-in view ["other" "shell"])))))))
+  (it "omits `other` entirely once every background shell has finished"
+      (expect (nil? (get (resources/model-view
+                           [{"id" "done" "kind" "shell" "status" "exited" "can_stop" true}]
+                           {:root "/repo"})
+                         "other")))))
 
 (defdescribe
   lifecycle-race-test

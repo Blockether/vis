@@ -341,7 +341,8 @@
 (def ^:private other-ctx-keys
   "Model-facing leaf keys for non-REPL resources (`[\"other\"][kind][id]`): what to
    address, whether it is alive, what it is running, and whether the agent can —
-   and therefore must — stop it before it finishes."
+   and therefore must — stop it before it finishes. Only resources that still ask
+   for a decision reach this projection; `model-view` says which."
   ["id" "status" "can_stop" "detail" "pid"])
 
 (defn- ctx-leaf
@@ -359,7 +360,16 @@
    with empty maps so absence at a dir means inactive. Non-REPL resources live
    under `[\"other\"][kind][id]`. Leaves are PROJECTED to the decision-bearing keys
    (`repl-ctx-keys` / `other-ctx-keys`); the registry, the footer and the `repl`
-   status result keep the full flat DATA API."
+   status result keep the full flat DATA API.
+
+   A background shell that ran to completion (`status` `\"exited\"`) is dropped
+   HERE and nowhere else. Its exit code and output already went back to the caller
+   that started it, its log keeps answering by id long after any record goes, and
+   the registry deliberately retains the card so the footer can still open it —
+   so in ctx it is a line the agent can neither act on nor learn from, and it
+   never leaves on its own: one working session accumulated 67 of them, 10.5k
+   chars of `exit 0` reprinted on every request. Anything still RUNNING stays,
+   and so does a `failed` one: both change what the agent does next."
   [resource-data {:keys [root languages]}]
   (let
     [seed-repls
@@ -371,18 +381,19 @@
      {:keys [repls other]}
      (reduce (fn [{:keys [repls other] :as acc} resource]
                (let [kind (get resource "kind")]
-                 (if (repl-kind? kind)
-                   (let
-                     [language (str/lower-case (str (or (get resource "language") "unknown")))
-                      detail (or (get resource "detail") {})
-                      dir (model-dir root (get detail "cwd"))
-                      leaf (ctx-leaf repl-ctx-keys (merge (dissoc resource "detail") detail))]
+                 (cond (repl-kind? kind)
+                       (let
+                         [language (str/lower-case (str (or (get resource "language") "unknown")))
+                          detail (or (get resource "detail") {})
+                          dir (model-dir root (get detail "cwd"))
+                          leaf (ctx-leaf repl-ctx-keys (merge (dissoc resource "detail") detail))]
 
-                     (assoc acc :repls (assoc-in repls [language dir] leaf)))
-                   (assoc acc
-                     :other (assoc-in other
-                              [(str kind) (get resource "id")]
-                              (ctx-leaf other-ctx-keys resource))))))
+                         (assoc acc :repls (assoc-in repls [language dir] leaf)))
+                       (= "exited" (get resource "status")) acc
+                       :else (assoc acc
+                               :other (assoc-in other
+                                        [(str kind) (get resource "id")]
+                                        (ctx-leaf other-ctx-keys resource))))))
              {:repls seed-repls :other (sorted-map)}
              (sort-by #(get % "id") resource-data))]
 
