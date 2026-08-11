@@ -143,20 +143,20 @@ if (( jfr )); then
   warn "  snapshot: jcmd <pid> JFR.dump name=vis-<role>"
 fi
 
-# ── Provider SSE tracing: ON by default ──────────────────────────────────────
+# ── Provider SSE tracing: OPT-IN ─────────────────────────────────────────────
 # svar's own stream tracer logs every SSE line with its gap and the running
-# reasoning length — the instrument that says whether a stunted thinking block
-# lost its deltas on the wire or inside the extractor. Thinking blocks are
-# still arriving truncated, so the trace stays on for everyone until that is
-# settled; `VIS_STREAM_TRACE=0` (or `off`/`no`/`false`) opts out. The switch is
+# reasoning length. It answered its question — stunted thinking blocks are the
+# provider's summarized output, not lost deltas — so it is off by default again;
+# it costs tens of thousands of log lines per run. Turn it on with
+# `--stream-trace` or `VIS_STREAM_TRACE=1` (`true`/`yes`/`on`). The switch is
 # a system property svar reads at load, so it is passed to both runtimes;
 # exporting the variable also carries it into the detached gateway daemon,
 # where the model loop actually runs.
 stream_trace_on() {
-  case "${VIS_STREAM_TRACE:-1}" in
-    0|false|FALSE|no|NO|off|OFF) return 1 ;;
+  case "${VIS_STREAM_TRACE:-0}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
   esac
-  return 0
+  return 1
 }
 if stream_trace_on; then export VIS_STREAM_TRACE=1; fi
 
