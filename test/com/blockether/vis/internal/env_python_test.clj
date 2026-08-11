@@ -327,10 +327,10 @@
 (defdescribe
   doc-apropos-surface-test
   "The in-sandbox self-discovery surface must stay complete and clean: every
-   bound NATIVE tool's `doc(name)` carries its description AND a `params:` block
-   (input schema), and `apropos('')` lists the real tools while excluding Python
-   builtins and the async-runtime `asyncio` shim global. Guards the schema→doc
-   wiring (`extension/sandbox-symbol-docs`) and the `apropos` non-tool filter."
+   bound sandbox verb answers `doc(name)` with its own contract, and `apropos('')`
+   lists the real verbs while excluding Python builtins and the async-runtime
+   `asyncio` shim global. Guards the docstring→doc wiring
+   (`extension/sandbox-symbol-docs`) and the `apropos` non-tool filter."
   (let
     [bind
      (ext/builtin-sandbox-bindings (fn []
@@ -343,8 +343,8 @@
      (fn [code]
        (str (:stdout (ep/run-python-block ctx code))))
 
-     ;; The kernel native tools that are ALSO wired into this sandbox — the
-     ;; exact set whose docs must be seeded. Keyed by their Python name.
+     ;; Every kernel verb wired into this sandbox — the exact set whose docs
+     ;; must be seeded. Keyed by their Python name.
      native
      (for
        [e
@@ -357,15 +357,14 @@
 
        (ep/sym->py-name (:ext.symbol/symbol s)))]
 
-    (it "every wired native tool exposes a non-empty doc WITH a params: block"
+    (it "every wired sandbox verb exposes a non-empty doc"
         (expect (seq native)) ;; sanity: we actually tested some
         (let
           [out (run (str "import json\nbad=[]\n"
                          "for n in ["
                          (str/join ", " (map pr-str native))
                          "]:\n"
-                         "    d = doc(n)\n"
-                         "    if ('<not found>' in d) or ('params:' not in d) or (not d.strip()):\n"
+                         "    d = doc(n)\n" "    if ('<not found>' in d) or (not d.strip()):\n"
                          "        bad.append(n)\n" "print('BAD='+json.dumps(bad))"))]
           (expect (re-find #"BAD=\[\]" out))))
     (it "apropos('') lists real tools but not builtins or the asyncio shim"
@@ -405,21 +404,25 @@
           (expect (str/includes? out "results preserve input order"))
           (expect (str/includes? out "keep dependent calls sequential"))
           (expect (str/includes? out "every failing slot index"))))
-    (it "session_fold documents raw recovery and fold-of-fold semantics"
+    ;; The fold receipt promises nothing it cannot keep: with the native-result
+    ;; store gone there is no coordinate to hand back, so the doc says the gist is
+    ;; what survives and `session_state()` is the only door to the rest.
+    (it "session_fold documents what a fold keeps and what it drops"
         (ep/set-python-binding! ctx 'session-fold identity)
         (let
           [out (run (str "print(apropos('session_fold')['session_fold'])\n"
                          "print(doc('session_fold'))"))]
           (expect (str/includes? out "session_fold(target, gist=None) -> str"))
-          (expect (str/includes? out "replaces eligible settled transcript text"))
-          (expect (str/includes? out "including recorded thinking and tool results"))
-          (expect (str/includes? out "cannot erase an in-flight model's hidden reasoning"))
+          (expect (str/includes? out "Folding changes rendering, not storage"))
           (expect (str/includes? out "there is no destructive unfold command"))
-          (expect (str/includes? out "`ntr` never stores a `session_fold` receipt"))
+          (expect (str/includes? out "its GIST is what survives"))
           (expect (str/includes? out "s = await session_state()"))
           (expect (str/includes? out "['iterations'][...]['blocks']"))
           (expect (str/includes? out "broader newer fold supersedes fully covered"))
-          (expect (str/includes? out "Partial overlaps remain separate"))))))
+          (expect (str/includes? out "Partial overlaps remain separate"))
+          ;; No coordinate, no store: the words that used to promise recovery are gone.
+          (expect (not (str/includes? out "`ntr`")))
+          (expect (not (str/includes? out "# saved:")))))))
 
 (defdescribe
   native-container-preservation-test
@@ -631,218 +634,6 @@
                          "        return 'safe'\n" "print(_t())"))]
           (expect (re-find #"safe" out))))))
 
-(defdescribe
-  ntr-browse-test
-  "`ntr` must be browseable by MEANING, not by opaque id. `keys()` hands back
-   24-character tool_use ids that say nothing about what they hold, and
-   `items()`/`values()` thaw the ENTIRE store to find out. `describe()` sits
-   between them: a bounded, newest-first window primed in ONE batched query,
-   each id labelled with its `op` plus a couple of that result's own salient
-   fields — so a stored result can be CHOSEN before it is fetched in full."
-  (let
-    [ctx
-     (tpc/shared)
-
-     run
-     (fn [code]
-       (str (:stdout (ep/run-python-block ctx code))))]
-
-    (it "describe() labels each id with its op and salient fields"
-        ;; No host callbacks in a bare context: seed the in-process cache and
-        ;; describe THOSE ids, which is the same path a primed read takes.
-        (let
-          [out (run
-                 (str
-                   "_c = getattr(ntr, '__vis_cache__')\n" "_c['toolu_A'] = "
-                   "{'op': 'grep', 'query': 'session-fold-card', 'hit_count': 2, 'file_count': 1}\n"
-                   "_c['toolu_B'] = {'op': 'cat', 'path': 'src/loop.clj'}\n"
-                   "for line in ntr.describe(ids=['toolu_A', 'toolu_B', 'toolu_ZZ']):\n"
-                   "    print(line)\n"))]
-          (expect (str/includes? out "toolu_A · grep · query=session-fold-card · hit_count=2"))
-          (expect (str/includes? out "toolu_B · cat · path=src/loop.clj"))
-          ;; An unknown id is reported, never raised — browsing must not blow up.
-          (expect (str/includes? out "toolu_ZZ · <missing>"))))
-    (it "describe() labels from the host INDEX without fetching any payload"
-        ;; The index is the whole point of the fast path: labelling a window of
-        ;; ids must cost ZERO result thaws. A throwing prime proves it — it may
-        ;; only ever run for an id the index cannot label.
-        (let
-          [own
-           (tpc/shared)
-
-           primed
-           (atom [])]
-
-          (ep/set-python-binding!
-            own
-            (symbol "__vis_native_result_index__")
-            (fn []
-              [{"id" "toolu_A" "tool" "grep" "gist" "closed-map?, 26 hits in 1 file"}
-               {"id" "toolu_B" "tool" "cat"}]))
-          (ep/set-python-binding! own
-                                  (symbol "__vis_native_result_prime__")
-                                  (fn [ids]
-                                    (swap! primed conj (vec ids))
-                                    nil))
-          (let
-            [out (str (:stdout
-                        (ep/run-python-block
-                          own
-                          (str "for line in ntr.describe(ids=['toolu_A', 'toolu_B', 'toolu_ZZ']):\n"
-                               "    print(line)\n"))))]
-            (expect (str/includes? out "toolu_A · grep · closed-map?, 26 hits in 1 file"))
-            (expect (str/includes? out "toolu_B · cat"))
-            ;; only the id the index does not know is ever primed
-            (expect (= [["toolu_ZZ"]] @primed)))))
-    (it "repr says how many results are stored and how to browse them"
-        (let
-          [out (run (str "_c = getattr(ntr, '__vis_cache__')\n"
-                         "_c['toolu_A'] = {'op': 'grep'}\n"
-                         "print(repr(ntr))\n"))]
-          (expect (str/includes? out "stored native results"))
-          (expect (str/includes? out "ntr.at("))
-          (expect (str/includes? out "ntr.describe()"))))))
-
-;; Regression: every tool result in the transcript is HEADED with its coordinate
-;; (`# t5/i1`) and only footed with the `toolu_…` id, so the model reached for the
-;; coordinate — and `ntr["t5/i1"]` always raised `no native tool result for
-;; 't5/i1' — that tool_use id is unknown`, an error that named the wrong problem
-;; and left no way to recover the result without re-running the tool.
-(defdescribe
-  ntr-coordinate-test
-  "A transcript COORDINATE (`tN/iM`) is a first-class `ntr` key: it resolves to
-   the native result that iteration stored, without the model having to copy a
-   24-character `toolu_…` id. An iteration that ran SEVERAL native tools never
-   guesses — it names them and asks for one."
-  (let
-    [context-with
-     (fn [scope-fn]
-       (let [own (tpc/shared)]
-         (ep/set-python-binding! own (symbol "__vis_native_result_scope__") scope-fn)
-         own))
-
-     run
-     (fn [ctx code]
-       (str (:stdout (ep/run-python-block ctx code))))]
-
-    (it "a coordinate resolves to that iteration's one stored result"
-        (let
-          [fetched
-           (atom [])
-
-           own
-           (context-with (fn [scope]
-                           (when (= "t5/i1" scope)
-                             [{"id" "toolu_A" "tool" "grep" "gist" "26 hits"}])))]
-
-          (ep/set-python-binding! own
-                                  (symbol "__vis_native_result_fetch__")
-                                  (fn [id]
-                                    (swap! fetched conj id)
-                                    (when (= "toolu_A" id) {"op" "grep" "hit_count" 26})))
-          (let [out (run own (str "r = ntr['t5/i1']\n" "print(r['op'], r['hit_count'])\n"))]
-            (expect (str/includes? out "grep 26"))
-            ;; the coordinate is resolved to the id, and only the ID is fetched
-            (expect (= ["toolu_A"] @fetched)))))
-    (it "a form scope and the verbose alias resolve the same iteration"
-        (let
-          [own (context-with (fn [scope]
-                               ;; the host widens a `/fK` tail nobody stored back to
-                               ;; the whole iteration, so a stray tail never dead-ends
-                               (when (contains? #{"t5/i1" "t5/i1/f2"} scope)
-                                 [{"id" "toolu_A" "tool" "cat"}])))]
-          (ep/set-python-binding! own
-                                  (symbol "__vis_native_result_fetch__")
-                                  (fn [id]
-                                    (when (= "toolu_A" id) {"op" "cat"})))
-          (expect (str/includes? (run own "print(ntr['t5/i1/f2']['op'])\n") "cat"))
-          (expect (str/includes? (run own "print(native_tools_results['T5/I1']['op'])\n") "cat"))))
-    (it "an iteration with several native calls names them instead of guessing"
-        (let
-          [own
-           (context-with (fn [_]
-                           [{"id" "toolu_A" "tool" "grep"} {"id" "toolu_B" "tool" "cat"}]))
-
-           out
-           (run own
-                (str "try:\n" "    ntr['t5/i1']\n"
-                     "except KeyError as e:\n" "    print(str(e))\n"))]
-
-          (expect (str/includes? out "t5/i1"))
-          (expect (str/includes? out "toolu_A"))
-          (expect (str/includes? out "grep"))
-          (expect (str/includes? out "toolu_B"))
-          (expect (str/includes? out "cat"))))
-    ;; Regression: naming those calls by `toolu_…` id was the whole problem — the
-    ;; ambiguous coordinate has to hand back keys that can be READ, and a way to
-    ;; take every result the iteration stored.
-    (it "several native calls in one iteration are addressed by their form key"
-        (let
-          [entries
-           [{"id" "toolu_A" "tool" "grep" "gist" "26 hits" "form" "t5/i1/f1"}
-            {"id" "toolu_B" "tool" "cat" "form" "t5/i1/f2"}]
-
-           own
-           (context-with (fn [scope]
-                           ;; the host narrows a form key to ONE entry
-                           (cond (= "t5/i1" scope) entries
-                                 (= "t5/i1/f2" scope) [(second entries)]
-                                 :else [])))]
-
-          (ep/set-python-binding! own
-                                  (symbol "__vis_native_result_fetch__")
-                                  (fn [id]
-                                    (get {"toolu_A" {"op" "grep"} "toolu_B" {"op" "cat"}} id)))
-          ;; the ambiguous coordinate names READABLE keys, not just ids
-          (let
-            [out (run own
-                      (str "try:\n" "    ntr['t5/i1']\n"
-                           "except KeyError as e:\n" "    print(str(e))\n"))]
-            (expect (str/includes? out "t5/i1/f1"))
-            (expect (str/includes? out "t5/i1/f2"))
-            (expect (str/includes? out "ntr.at(")))
-          (expect (str/includes? (run own "print(ntr['t5/i1/f2']['op'])\n") "cat"))
-          ;; …and every result of that iteration at once, in the order it ran
-          (expect (str/includes? (run own "print([r['op'] for r in ntr.at('t5/i1')])\n")
-                                 "['grep', 'cat']"))))
-    (it "a coordinate that stored nothing says so, and points at describe()"
-        (let
-          [own
-           (context-with (fn [_]
-                           []))
-
-           out
-           (run own
-                (str "try:\n" "    ntr['t9/i9']\n"
-                     "except KeyError as e:\n" "    print(str(e))\n"))]
-
-          (expect (str/includes? out "t9/i9"))
-          (expect (str/includes? out "ntr.describe()"))
-          ;; the id-shaped miss keeps naming the coordinate as an option
-          (expect (str/includes? (run own
-                                      (str "try:\n" "    ntr['toolu_NOPE']\n"
-                                           "except KeyError as e:\n" "    print(str(e))\n"))
-                                 "tN/iM"))))
-    ;; Regression: the `# saved:` line under every result now stamps the COORDINATE, so
-    ;; describe() leads with the same key instead of a 24-character id to copy.
-    (it "describe() leads each entry with the coordinate the transcript stamped"
-        (let [own (tpc/shared)]
-          (ep/set-python-binding!
-            own
-            (symbol "__vis_native_result_index__")
-            (fn []
-              [{"id" "toolu_A" "scope" "t7/i3" "form" "t7/i3/f2" "tool" "grep" "gist" "26 hits"}
-               {"id" "toolu_OLD" "tool" "cat"}]))
-          (let
-            [out (run own
-                      (str "for line in ntr.describe(ids=['toolu_A', 'toolu_OLD']):\n"
-                           "    print(line)\n"))]
-            (expect (str/includes? out "t7/i3/f2 · grep · 26 hits"))
-            ;; the opaque id is never stamped in front of a key that reads back
-            (expect (not (str/includes? out "toolu_A ·")))
-            ;; …but a record too old to carry a coordinate still names its id
-            (expect (str/includes? out "toolu_OLD · cat")))))))
-
 (defdescribe collect-garbage-gil-budget-test
              ;; Regression: `collect-garbage!` runs in `loop/send!`'s `finally`, i.e. between
              ;; the engine unwinding and `gateway.state/run-turn!` appending the terminal
@@ -1006,5 +797,4 @@
           ;; and `stop` answers the same keys — never a stage-scoped subset.
           (expect (str/includes? out "The same shell result shape as every other stage"))
           (expect (str/includes? out "`stdout` is the window this read returned"))
-          (expect (str/includes? out "(`stage` \"stop\"): `stopped`, `status`, `exit`."))
-          (expect (str/includes? out "params:"))))))
+          (expect (str/includes? out "(`stage` \"stop\"): `stopped`, `status`, `exit`."))))))

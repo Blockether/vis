@@ -146,59 +146,38 @@
                    (expect (str/includes? ((deref #'core/skills-prompt) {}) "demo [apps/demo]")))))
 
 (defdescribe
-  skill-native-tool-test
+  skill-activation-is-a-session-effect-test
+  ;; `skill` is not a lookup: activation MARKS the skill on the session, resolves its
+  ;; owning project root and bundled resources, and survives the iteration. Reading a
+  ;; skill is `doc(name)`; working under it is `skill(name)`.
   (let [exts [core/vis-extension]]
-    (it "skill is a native tool (schema + handler + render) AND a bound Python verb"
-        (expect (some #(= "skill" (:name %)) (extension/native-tool-schemas exts)))
-        (expect (fn? (get (extension/native-tool-handlers exts) "skill")))
+    (it "is a bare Python verb in the sandbox, handed the live env"
         (let
           [entry (first (filter #(= 'skill (:ext.symbol/symbol %))
                                 (mapcat extension/ext-symbols exts)))]
-          ;; Engine-bound (the default): `skill` is ALSO a bare Python verb, handed
-          ;; the live env via :inject-env?, so a python_execution block can activate
-          ;; a skill inside a `gather(...)` batch.
+          ;; Engine-bound (the default): a python_execution block can activate a
+          ;; skill inside a `gather(...)` batch.
           (expect (nil? (:ext.symbol/engine-bound? entry)))
-          (expect (extension/symbol-bound? entry))
           (expect (true? (:ext.symbol/inject-env? entry)))
-          ;; Strong flat form: schema and renderer callback live on the symbol.
-          (expect (true? (:ext.symbol/native-tool? entry)))
-          (expect (map? (:ext.symbol/schema entry)))
-          (expect (nil? (:ext.symbol/native-tool entry)))
-          (expect (fn? (:ext.symbol/render-finish-call-fn entry)))))
-    (it "renderer resolves; native description stays compact and schema owns inputs"
-        (expect (fn? (get (extension/native-tool-finish-call-renderers exts) "skill")))
-        (let [schema (first (filter #(= "skill" (:name %)) (extension/native-tool-schemas exts)))]
-          (expect (str/includes? (:description schema) "already-active receipt"))
-          (expect (not (str/includes? (:description schema) "SKILLS block")))
-          (expect (false? (get-in schema [:schema :additionalProperties])))))
-    (it "renders the loaded SKILL.md as markdown instead of a fenced code block"
-        (let
-          [render (get (extension/native-tool-finish-call-renderers exts) "skill")
-           body "## Setup\n\n1. Run `context.mjs`."
-           rendered (render {"name" "demo" "body" body})]
-
-          (expect (= "loaded skill `demo`" (:summary rendered)))
-          (expect (= body (:body rendered)))))
-    (it "the handler activates once and returns a compact receipt on repeat"
+          (expect (contains? (extension/builtin-sandbox-bindings (fn []
+                                                                   nil))
+                             'skill))))
+    (it "activates once and answers a compact receipt on repeat"
         (with-redefs
           [d/skill-by-name (fn [_]
                              {:name "demo" :body "B" :description "d" :dir "/x" :resources []})]
           (let
-            [h (get (extension/native-tool-handlers exts) "skill")
-             env (skill-env {})
-             r1 (h env {"name" "demo"})
-             r2 (h env {"name" "demo"})]
+            [env (skill-env {})
+             r1 (core/skill env {"name" "demo"})
+             r2 (core/skill env {"name" "demo"})]
 
-            (expect (= "B" (get r1 "body")))
-            (expect (= "already-active" (get r2 "status")))
-            (expect (not (contains? r2 "body"))))))
-    (it "the Python verb is wired into the sandbox and takes kwargs or a bare name"
+            (expect (= "B" (get (:result r1) "body")))
+            (expect (= "already-active" (get (:result r2) "status")))
+            (expect (not (contains? (:result r2) "body"))))))
+    (it "takes kwargs or a bare name"
         ;; `skill(name="x")` folds its kwargs into ONE trailing dict at the GraalPy
         ;; boundary; `skill("x")` stays positional. Both bind identically, and the
         ;; bound verb returns the canonical envelope the invoker asserts on.
-        (expect (contains? (extension/builtin-sandbox-bindings (fn []
-                                                                 nil))
-                           'skill))
         (with-redefs
           [d/skill-by-name (fn [_]
                              {:name "demo" :body "B" :description "d" :dir "/x" :resources []})]
@@ -208,10 +187,7 @@
 
             (expect (extension/envelope-success? kw))
             (expect (= "B" (get (:result kw) "body")))
-            (expect (= "B" (get (:result pos) "body"))))))
-    (it "skill is unconditionally advertised + dispatchable (no toggle gate)"
-        (expect (some #(= "skill" (:name %)) (extension/native-tool-schemas exts nil)))
-        (expect (contains? (extension/native-tool-handlers exts nil) "skill")))))
+            (expect (= "B" (get (:result pos) "body"))))))))
 
 (defdescribe skills-prompt-test
              (it "skills-prompt is a string listing skills when any exist"

@@ -75,59 +75,6 @@
     rel))
 
 (defdescribe
-  native-tools-flat-spec-guard
-  ;; Cross-check the STRONG flat spec across EVERY editing native tool: schema,
-  ;; result contract, renderer, and description are required; legacy maps are gone.
-  (it
-    "every editing native tool has flat schema/result/render/description fields and no legacy map"
-    (let
-      [ext
-       {:ext/engine {:ext.engine/symbols (editing/available-editing-symbols)}}
-
-       ents
-       (filter :ext.symbol/native-tool? (extension/ext-symbols ext))
-
-       tools
-       (extension/native-tools-for [ext])
-
-       names
-       (set (map :name tools))
-
-       find-files-tool
-       (first (filter #(= "grep" (:name %)) tools))
-
-       include-schema
-       (get-in find-files-tool [:schema :properties "include"])]
-
-      ;; `ls` is NOT here: the listing left the tool layer for the sandbox shim.
-      (expect (= 6 (count ents)))           ;; cat grep patch struct_index struct_nodes struct_patch
-      (expect (contains? names "cat"))
-      (expect (not (contains? names "rg"))) ;; rg folded into grep
-      ;; The filesystem MUTATION verbs are gone: create/copy/move/delete/exists are
-      ;; plain Python (`os`, `shutil`, `pathlib`) under the confined filesystem.
-      (expect (not (contains? names "fs")))
-      (expect (not-any? names ["copy" "move" "delete" "create_directory" "file_exists"]))
-      (expect (every? (comp map? :ext.symbol/schema) ents))
-      (expect (every? :schema tools))
-      (expect (some #(= {:type "string"} %) (:oneOf include-schema)))
-      (expect (some #(= {:type "array" :items {:type "string"}} %) (:oneOf include-schema)))
-      (expect (every? (comp seq str :result) tools))
-      (expect (every? :render-finish-call-fn tools))
-      (expect (every? (comp seq str :description) tools))
-      (expect (not-any? :ext.symbol/native-tool ents))))
-  (it "native-tool-finish-call-renderers-by-op keys by result :op (cat→\"cat\")"
-      (let
-        [ext
-         {:ext/engine {:ext.engine/symbols (editing/available-editing-symbols)}}
-
-         by-op
-         (extension/native-tool-finish-call-renderers-by-op [ext])]
-
-        (expect (fn? (:render-finish-call-fn (get by-op "cat"))))
-        (expect (fn? (:render-finish-call-fn (get by-op "grep"))))
-        (expect (not (contains? by-op "file_exists"))))))
-
-(defdescribe
   rg-simplified-api-test
   ;; NEW simplified rg grammar: `query` canonical, `any`/`all` accepted aliases
   ;; that BOTH mean OR, smart-case literal substring, `paths`/`include`/`context`
@@ -507,32 +454,31 @@
                                         :error
                                         :hint)))
                          (expect (= ["file-write" "file-write"] (mapv :operation @seen!))))))))
-  (it "a gate hook that THROWS refuses: a boundary that fails open is not a boundary"
-      (with-fs-gate! (fn [_env _op _ctx]
-                       (throw (ex-info "guard exploded" {})))
-                     (fn []
-                       (let
-                         [before
-                          (:ext.symbol/before-fn (private-fn "struct-patch-symbol"))
+  (it
+    "a gate hook that THROWS refuses: a boundary that fails open is not a boundary"
+    (with-fs-gate!
+      (fn [_env _op _ctx]
+        (throw (ex-info "guard exploded" {})))
+      (fn []
+        (let
+          [before
+           (:ext.symbol/before-fn (private-fn "struct-patch-symbol"))
 
-                          out
-                          (before {:extensions (atom [])}
-                                  (constantly :ok)
-                                  [{"path" "target/editing-test/a.clj"
-                                    "op" "replace"
-                                    "target" "f"
-                                    "code" "x"}])]
+           out
+           (before {:extensions (atom [])}
+                   (constantly :ok)
+                   [{"path" "target/editing-test/a.clj" "op" "replace" "target" "f" "code" "x"}])]
 
-                         (expect (= :ext.foundation.editing/path-protected
-                                    (-> out
-                                        :result
-                                        :error
-                                        :type)))
-                         (expect (clojure.string/includes? (-> out
-                                                               :result
-                                                               :error
-                                                               :hint)
-                                                           "fails closed"))))))
+          (expect (= :ext.foundation.editing/path-protected
+                     (-> out
+                         :result
+                         :error
+                         :type)))
+          (expect (clojure.string/includes? (-> out
+                                                :result
+                                                :error
+                                                :hint)
+                                            "fails closed"))))))
   (it "no gate registered: the op passes through with its args untouched"
       (let
         [before
@@ -3225,9 +3171,6 @@
     [patch-description
      (:ext.symbol/description editing/patch-symbol)
 
-     patch-schema
-     (:ext.symbol/schema editing/patch-symbol)
-
      cat-description
      (:ext.symbol/description editing/cat-symbol)
 
@@ -3252,11 +3195,10 @@
           (expect (string/includes? patch-description "auto-repaired (`repaired`)"))
           (expect (string/includes? struct-description "will not parse is REFUSED"))
           (expect (string/includes? struct-description "delimiters auto-repaired"))
-          ;; "applies in order, never rolled back" is a property of the BATCH, so it
-          ;; lives once on the `edits` parameter rather than in the tool description.
-          (expect (string/includes? (get-in editing/struct-patch-symbol
-                                            [:ext.symbol/schema :properties "edits" :description])
-                                    "never rolled back"))
+          ;; "applies in order, never rolled back" is a property of the BATCH, and
+          ;; `doc(name)` is the only place it can be stated now that no schema
+          ;; describes the `edits` parameter.
+          (expect (string/includes? struct-description "never rolled back"))
           (expect (string/includes? patch-result "`repaired` true"))
           (expect (string/includes? patch-result "`note`"))))
     (it "documents cat's Python result shape instead of relying on rendered output"
@@ -3265,114 +3207,7 @@
         ;; The window maps must be documented as metadata-only so the contract cannot
         ;; drift back to shipping every anchor twice.
         (expect (string/includes? cat-result "never repeat the text"))
-        (expect (string/includes? cat-result "carry metadata")))
-    (it "keeps exact patch fields only in the JSON Schema"
-        (expect (not (string/includes? patch-description "from_anchor")))
-        (expect (contains? (get-in patch-schema [:properties "edits" :items :properties])
-                           "from_anchor")))
-    (it "advertises exactly the canonical patch fields"
-        (let [fields (get-in patch-schema [:properties "edits" :items :properties])]
-          (expect (= #{"path" "from_anchor" "to_anchor" "replace"} (set (keys fields))))))))
-
-(defdescribe
-  editing-native-schema-shape-test
-  (it "grep advertises content-list OR, filename semantics, and empty-query listing"
-      (let
-        [description
-         (:ext.symbol/description editing/grep-symbol)
-
-         query
-         (get-in editing/grep-symbol [:ext.symbol/schema :properties "query"])
-
-         alternatives
-         (into {} (map (juxt :type identity) (:oneOf query)))
-
-         string-schema
-         (get alternatives "string")
-
-         array-schema
-         (get alternatives "array")]
-
-        (expect (= #{"string" "array"} (set (keys alternatives))))
-        (expect (nil? (:minLength string-schema)))
-        (expect (= 1 (get-in array-schema [:items :minLength])))
-        (expect (string/includes? description "`query: \"\"`"))
-        (expect (string/includes? (:description query) "empty string"))
-        (expect (string/includes? (:description query) "frecency/recency"))
-        (expect (string/includes? (:description query) "OR for content search"))
-        (expect (string/includes? (:description query) "joined terms"))))
-  (it "advertises file-scope fallback and non-negative context lines"
-      (let
-        [properties
-         (get-in editing/grep-symbol [:ext.symbol/schema :properties])
-
-         paths
-         (get properties "paths")
-
-         context
-         (get properties "context")]
-
-        (expect (string/includes? (:description paths) "searched exactly"))
-        (expect (string/includes? (:description paths) "never widened"))
-        (expect (string/includes? (:description paths) "nearest existing directory"))
-        (expect (string/includes? (:description paths) "missing_paths"))
-        (expect (string/includes? (:description paths) "exact physical paths"))
-        (expect (string/includes? (:description paths) "never rebuilt from a language namespace"))
-        (expect (= "integer" (:type context)))
-        (expect (= 0 (:minimum context)))))
-  (it "requires plural exact discovered paths for struct_index and cat"
-      (let
-        [index-schema
-         (:ext.symbol/schema editing/index-symbol)
-
-         cat-schema
-         (:ext.symbol/schema editing/cat-symbol)
-
-         index-paths-description
-         (get-in index-schema [:properties "paths" :description])
-
-         cat-files-description
-         (get-in cat-schema [:properties "files" :description])]
-
-        (expect (string/includes? index-paths-description "Exact physical"))
-        (expect (string/includes? index-paths-description "grep/cat/struct_index"))
-        (expect (not (contains? (:properties index-schema) "path")))
-        (expect (not (contains? (:properties cat-schema) "paths")))
-        ;; struct_index has ONE paths-only mode; occurrence analysis is opt-in.
-        (expect (= ["paths"] (:required index-schema)))
-        (expect (= "boolean" (get-in index-schema [:properties "include_occurrences" :type])))
-        (expect (not (contains? (:properties index-schema) "name")))
-        (expect (= ["files"] (:required cat-schema)))
-        (expect (= 2 (:maxProperties cat-schema)))
-        (expect (string/includes? cat-files-description "Exact physical"))
-        (expect (not (contains? (:properties cat-schema) "range")))
-        (expect (= 2 (get-in cat-schema [:properties "ranges" :items :minItems])))
-        (expect (= 2 (get-in cat-schema [:properties "ranges" :items :maxItems])))))
-  ;; `ls` is NOT a native tool: listing a directory is a Python call inside the
-  ;; block the model is already running, so it spends no schema, no description
-  ;; and no tool result. What must still hold is that `cat`'s surface stays free
-  ;; of directory options — the listing left, it did not move into `cat`.
-  (it "ls is no native symbol, and cat stays a FILE reader"
-      (let
-        [ls
-         (some #(when (= 'ls (:ext.symbol/symbol %)) %) (editing/available-editing-symbols))
-
-         cat-entry
-         (->> (get-in editing/cat-symbol [:ext.symbol/schema :properties "files" :items :oneOf])
-              (filter #(= "object" (:type %)))
-              first)]
-
-        (expect (nil? ls))
-        (expect (not (contains? (:properties cat-entry) "depth")))
-        (expect (not (contains? (:properties cat-entry) "is_hidden")))
-        (expect (not (string/includes? (:ext.symbol/result editing/cat-symbol) "Directory")))))
-  (it "uses one portable patch shape with a path on every edit"
-      (let [schema (:ext.symbol/schema editing/patch-symbol)]
-        (expect (= "object" (:type schema)))
-        (expect (not-any? #(contains? schema %) [:oneOf :allOf :anyOf]))
-        (expect (= #{"edits"} (set (keys (:properties schema)))))
-        (expect (= ["path" "from_anchor" "replace"]
-                   (get-in schema [:properties "edits" :items :required]))))))
+        (expect (string/includes? cat-result "carry metadata")))))
 
 (defdescribe
   outline-path-resolution-test
@@ -5920,37 +5755,6 @@
           (expect (string/includes? msg "line 2"))
           ;; the located detail must not leave a doubled sentence stop
           (expect (not (string/includes? msg "..")))))))
-
-(defdescribe
-  plural-only-path-schemas-test
-  "`cat` exposes a plural `files` contract; read/search/fs scope contracts use
-   plural `paths`. Neither surface has a singular `path` twin, and batch entries
-   carry their own per-file windows so one call can read different regions."
-  (it "cat advertises `files`; struct_index and grep advertise `paths`"
-      (let [cat-props (get-in editing/cat-symbol [:ext.symbol/schema :properties])]
-        (expect (contains? cat-props "files"))
-        (expect (nil? (get cat-props "paths")))
-        (expect (nil? (get cat-props "path"))))
-      (doseq [sym [editing/index-symbol editing/grep-symbol]]
-        (let [props (get-in sym [:ext.symbol/schema :properties])]
-          (expect (contains? props "paths"))
-          (expect (nil? (get props "path"))))))
-  (it "cat advertises no singular `path` twin"
-      (expect (nil? (get-in editing/cat-symbol [:ext.symbol/schema :properties "path"]))))
-  (it "cat `files` and struct_index `paths` entries take per-file `ranges`"
-      (doseq [[sym key] [[editing/cat-symbol "files"] [editing/index-symbol "paths"]]]
-        (let
-          [entry (->> (get-in sym [:ext.symbol/schema :properties key :items :oneOf])
-                      (filter #(= "object" (:type %)))
-                      first)]
-          (expect (some? entry))
-          (expect (some? (get-in entry [:properties "ranges"]))))))
-  (it "grep ORs MANY needles across MANY scopes in one call"
-      (let [schema (:ext.symbol/schema editing/grep-symbol)]
-        ;; query: string OR a non-empty array of needles
-        (expect (some #(= "array" (:type %)) (get-in schema [:properties "query" :oneOf])))
-        ;; paths: always an array of scopes
-        (expect (= "array" (get-in schema [:properties "paths" :type]))))))
 
 (defdescribe
   ls-directory-fff-overlay-test

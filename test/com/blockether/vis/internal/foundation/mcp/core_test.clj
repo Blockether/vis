@@ -8,38 +8,27 @@
             [com.blockether.vis.internal.gateway.wire :as wire]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(defdescribe
-  mcp-native-contract-test
-  (it "keeps native/Python alias routing in each compact description"
-      (let [symbols (get-in mcp/vis-extension [:ext/engine :ext.engine/symbols])]
-        (doseq [s symbols]
-          (let [description (:ext.symbol/description s)]
-            (expect (str/includes? description "In `python_execution`"))
-            (expect (< (count description) 350))))))
-  (it "closes the dispatcher schemas while leaving MCP tool args open"
-      (let
-        [symbols
-         (get-in mcp/vis-extension [:ext/engine :ext.engine/symbols])
-
-         call
-         (first (filter #(= "mcp__call" (:ext.symbol/name %)) symbols))]
-
-        (doseq [s symbols]
-          (expect (false? (get-in s [:ext.symbol/schema :additionalProperties]))))
-        (expect (= "object" (get-in call [:ext.symbol/schema :properties "args" :type])))))
-  (it "exposes exactly ONE verb — the inventory is ctx's job, connecting is the gateway's"
-      (let
-        [names (set (map :ext.symbol/name
-                         (get-in mcp/vis-extension [:ext/engine :ext.engine/symbols])))]
-        (expect (= #{"mcp__call"} names))
-        ;; Server names, status and tool names ride in `env.mcp`, so a listing
-        ;; verb would only re-fetch what the session object already carries.
-        (expect (not (contains? names "mcp__servers")))
-        (expect (not (contains? names "mcp__tools")))
-        ;; A session must not be able to yank a connection every other session is
-        ;; using, nor be expected to establish one the daemon already owes it.
-        (expect (not (contains? names "mcp__connect")))
-        (expect (not (contains? names "mcp__disconnect"))))))
+(defdescribe mcp-native-contract-test
+             (it "keeps native/Python alias routing in each compact description"
+                 (let [symbols (get-in mcp/vis-extension [:ext/engine :ext.engine/symbols])]
+                   (doseq [s symbols]
+                     (let [description (:ext.symbol/description s)]
+                       (expect (str/includes? description "In `python_execution`"))
+                       (expect (< (count description) 350))))))
+             (it
+               "exposes exactly ONE verb — the inventory is ctx's job, connecting is the gateway's"
+               (let
+                 [names (set (map :ext.symbol/name
+                                  (get-in mcp/vis-extension [:ext/engine :ext.engine/symbols])))]
+                 (expect (= #{"mcp__call"} names))
+                 ;; Server names, status and tool names ride in `env.mcp`, so a listing
+                 ;; verb would only re-fetch what the session object already carries.
+                 (expect (not (contains? names "mcp__servers")))
+                 (expect (not (contains? names "mcp__tools")))
+                 ;; A session must not be able to yank a connection every other session is
+                 ;; using, nor be expected to establish one the daemon already owes it.
+                 (expect (not (contains? names "mcp__connect")))
+                 (expect (not (contains? names "mcp__disconnect"))))))
 
 (defdescribe
   gateway-mcp-management-test

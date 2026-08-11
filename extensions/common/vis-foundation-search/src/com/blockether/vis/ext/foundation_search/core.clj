@@ -1875,7 +1875,10 @@
      :name "download_archive"
      :render-finish-call-fn render-search-result
      :description
-     "Download and extract a complete public GitHub repository archive into the workspace. Returns the saved absolute directory path."}))
+     (str
+       "Download and extract a complete public GitHub repository archive into the workspace: "
+       "`repository` (`owner/name`) is required, optional `ref` and a workspace-relative `directory`. "
+       "Returns the saved absolute directory path.")}))
 
 (def papers-symbol
   (vis/symbol
@@ -1897,7 +1900,9 @@
      :name "search"
      :render-finish-call-fn render-search-result
      :description
-     "Search live web, public code/docs, or arXiv; code can use GitHub. Returns ranked citations with excerpts."}))
+     (str
+       "Search live web, public code/docs, or arXiv papers — `kind` is one of `web`, `code`, `papers`; "
+       "code can use GitHub. Returns ranked citations with excerpts.")}))
 
 (def search-symbols
   [search-symbol web-symbol code-symbol download-code-symbol download-archive-symbol papers-symbol])

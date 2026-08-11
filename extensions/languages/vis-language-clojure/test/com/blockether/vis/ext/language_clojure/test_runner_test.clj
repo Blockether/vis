@@ -6,7 +6,6 @@
             [com.blockether.vis.ext.language-clojure.nrepl-client :as nc]
             [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
             [com.blockether.vis.ext.language-clojure.test-runner :as tr]
-            [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.surface-contract :as contract]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -249,9 +248,7 @@
   (it "boots/selects the nREPL at the cwd arg, not the workspace root"
       (let [seen-root (atom nil)]
         (with-redefs
-          [extension/run-outside-tool-wall (fn [_env thunk]
-                                             (thunk))
-           repl-manager/ensure-repl-for-dir! (fn [_sid root]
+          [repl-manager/ensure-repl-for-dir! (fn [_sid root]
                                                (reset! seen-root root)
                                                {:port 12345})
            com.blockether.vis.ext.language-clojure.test-runner/run-via-repl
@@ -266,9 +263,7 @@
   (it "falls back to the workspace root when no cwd arg is given"
       (let [seen-root (atom nil)]
         (with-redefs
-          [extension/run-outside-tool-wall (fn [_env thunk]
-                                             (thunk))
-           repl-manager/ensure-repl-for-dir! (fn [_sid root]
+          [repl-manager/ensure-repl-for-dir! (fn [_sid root]
                                                (reset! seen-root root)
                                                {:port 12345})
            com.blockether.vis.ext.language-clojure.test-runner/run-via-repl
@@ -303,11 +298,7 @@
       (try (.mkdirs test-dir)
            (spit test-file "(ns com.example.thing-test)\n")
            (with-redefs
-             [extension/run-outside-tool-wall
-              (fn [_env thunk]
-                (thunk))
-
-              repl-manager/ensure-repl-for-dir!
+             [repl-manager/ensure-repl-for-dir!
               (fn [_sid _root]
                 {:port 12345})
 

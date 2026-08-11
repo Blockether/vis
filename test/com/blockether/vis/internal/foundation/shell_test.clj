@@ -1197,7 +1197,6 @@
   ;; ONE host op now (`_shell_wait`), and these are its edges.
   (it "is the ONE loop: every caller routes through the host wait op"
       (expect (= "_shell_wait" (:ext.symbol/name shell/shell-wait-symbol)))
-      (expect (false? (:ext.symbol/native-tool? shell/shell-wait-symbol)))
       ;; No Python caller may keep a loop of its own — the sandbox handle and
       ;; the extension handle both call the host op.
       (doseq
@@ -1471,24 +1470,6 @@
       ;; Still the public, documented Python verb — not a private underscore transport.
       (expect (= "shell" (:ext.symbol/name (first shell/shell-symbols))))
       (expect (contains? (extension/sandbox-symbol-docs) 'shell)))
-  (it "gives each tool a satisfiable schema with no op discriminator and no blocking knobs"
-      (doseq [s shell/shell-symbols]
-        (let [props (get-in s [:ext.symbol/schema :properties])]
-          ;; Closed input, and the merged tool's three confusions are gone everywhere:
-          ;; the discriminator, the wait predicate, and the timeout that meant three things.
-          (expect (false? (get-in s [:ext.symbol/schema :additionalProperties])))
-          (expect (not (contains? props "op")))
-          (expect (not (contains? props "until")))
-          (expect (not (contains? props "timeout_secs")))
-          (expect (not (contains? props "cmd"))))))
-  (it "puts the command only on the tool that starts a process, and text only on type"
-      (let
-        [props (fn [s]
-                 (get-in s [:ext.symbol/schema :properties]))]
-        (expect (= "string" (get-in (props shell/shell-symbol) ["command" :type])))
-        (expect (not (contains? (props shell/shell-logs-symbol) "command")))
-        (expect (contains? (props shell/shell-type-symbol) "text"))
-        (expect (= ["id"] (get-in shell/shell-stop-symbol [:ext.symbol/schema :required])))))
   (it "points the shell verbs at the HANDLE that replaced a blocking wait"
       (expect (str/includes? (:ext.symbol/description shell/shell-symbol) "HANDLE"))
       (expect (str/includes? (:ext.symbol/description shell/shell-symbol) "sh.wait(secs)"))
@@ -1516,22 +1497,6 @@
                  ;; No `status` transport either: every stage's answer already carries it.
                  (expect (= '[shell _shell-logs _shell-wait _shell-type _shell-stop]
                             (mapv :ext.symbol/symbol shell/shell-symbols)))))
-
-(defdescribe shell-native-render-test
-             (it "publishes no native renderer, and the op-card resolves off the result's own op"
-                 ;; Nothing is advertised, so there is no wire name to hang a pending card on; a
-                 ;; shell result printed in Python still finds its card through `op`.
-                 (expect (= {} (extension/native-tool-start-call-renderers [shell/vis-extension])))
-                 (expect (= {} (extension/native-tool-finish-call-renderers [shell/vis-extension])))
-                 (let [rs (extension/native-tool-finish-call-renderers-by-op [shell/vis-extension])]
-                   (expect (fn? (:render-finish-call-fn (get rs "shell")))))
-                 ;; …so the two presentations that survive a Python-only surface are pinned here:
-                 ;; the live sentence every stage says while it runs, and the op-card its result
-                 ;; paints in the TUI and the app.
-                 (doseq [s shell/shell-symbols]
-                   (expect (fn? (:ext.symbol/ticker-fn s)) (str (:ext.symbol/name s)))
-                   (expect (fn? (:ext.symbol/render-finish-call-fn s))
-                           (str (:ext.symbol/name s))))))
 
 (defdescribe
   macos-jailed-pty-e2e-test
@@ -2020,11 +1985,6 @@
                               (do (Thread/sleep 100) (recur (inc n))))))]
                   (expect (str/includes? text "up")))
                 (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))))
-  (it "refuses a `wait` on the request instead of quietly accepting a dead knob"
-      (binding [workspace/*workspace-root* (workspace/trunk-root)]
-        (expect (not (contains? (get-in shell/shell-symbol [:ext.symbol/schema :properties])
-                                "wait")))
-        (expect (false? (get-in shell/shell-symbol [:ext.symbol/schema :additionalProperties])))))
   (it "the handle's wait is what fills exit and stdout"
       (with-shell-on
         (fn []

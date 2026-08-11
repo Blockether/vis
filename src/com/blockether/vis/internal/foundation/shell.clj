@@ -3091,8 +3091,9 @@
           "started_at, finished_at, log_path, cpu_ms, cpu_percent, rss_bytes, note, …}` plus the "
           "methods below. A fresh run has no `exit`; nonzero exit is data.")
      :description
-     (str "Spawn ONE `bash -lc` command under a real pty and return its HANDLE NOW — every run "
-          "is a background run. Chain with `&&`; run independent work as separate calls. Drive "
+     (str "`shell(command, {\"id\": …, \"cwd\": …})` — spawn ONE `bash -lc` `command` under a "
+          "real pty and return its HANDLE NOW; every run is a background run. Chain with `&&`; "
+          "run independent work as separate calls. Drive "
           "it through the handle: `sh.wait(secs)` (the ONLY wait; `timed_out` means the WAIT "
           "expired, not the process), `sh.logs(offset=…)`, `sh.type(text)`, `sh.stop()` — never "
           "a rerun; re-issuing a live `id` returns THAT shell. Every answer already carries the "

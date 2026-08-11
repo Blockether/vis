@@ -1206,7 +1206,7 @@ about `ntr[…]`-carrying metric bullets).
 
 ## State of the plan
 
-**REQUIRES WORK** — phase 1 has LANDED; phases 2-7 are written and unstarted.
+**REQUIRES WORK** — phases 1-2 have LANDED; phases 3-7 are written and unstarted.
 
 **Phase 1 — advertise only `python_execution`: DONE** (commit `118237e6b`).
 `loop.clj/native-tools` takes `caps` alone and returns the one finalized `python_execution` tool;
@@ -1219,6 +1219,53 @@ was per-tool schema portability across four providers; the engine-schema `it` in
 and the suppression `it` in `env_python_test` are rewritten. Nine failures in
 `env-python-test`/`loop-test` are PRE-EXISTING on `ffeaa9db0` — verified by stashing the phase and
 re-running — seven of them the `ntr`/fold describes phase 5 deletes.
+
+**Phase 2 — delete the declaration and dispatch machinery: DONE.** The SOURCE half landed inside
+commit `5bf7f5bab` (its message names only the per-process log file — the deletion was swept in by a
+`git add -A` while that commit was being made; recorded here rather than rewritten, since the commit
+is pushed). `extension.clj` and `loop.clj` now grep ZERO for `:ext.symbol/schema` and
+`native-tool`; `foundation/shell.clj`, `foundation/editing/core.clj`,
+`foundation/language_surface.clj`, `foundation/mcp/core.clj` and the search extension carry no
+`:schema` literal. The TEST half is this commit.
+
+One correction to step 12: **`:ext.symbol/call` STAYS.** It is not a schema — `extension.clj:2256`
+`folded-kwargs->positional` reads it to map a kwargs dict onto positional parameters for a PYTHON
+call. Eight symbols declare it (`format_code`, `run_tests`, `repl_eval`, `repl`, `repl_connect`,
+`repl_stop`, `patch`, `call`).
+
+Because a description is now the whole contract, three of them gained the argument names their
+schema used to carry: `editing/core.clj` `struct_patch` (a batch of `edits` applies in order and is
+never rolled back), `vis-foundation-search` `search` / `download_archive` (kinds, `repository`,
+`directory`), and `foundation/shell.clj` `shell` (`shell(command, {"id": …, "cwd": …})`).
+
+Step 14's registry gate lives in `extension_test/every-function-is-a-python-name-test`, not
+`surface_contract_test` — that namespace pins language-surface RESULT contracts and has no registry
+in it. It walks the live registry: 28 symbols, no `:ext.symbol/schema`, `:ext.symbol/native-tool?`
+or `:ext.symbol/replay` key survives, every doc key is a typeable one-segment name, and every bound
+built-in door is documented.
+
+Deleted with their behaviour: `extension_test/flat-native-tool-spec-test` and the schema-refusal
+items; seven `loop_test` describes plus `large-arg-replay-compaction-test`; both `env_python_test`
+`ntr` describes (`ntr-browse-test`, `ntr-coordinate-test` — the store they read has no rows once
+`python_execution` is the only call); the schema items in `language_surface_test`, `shell_test`
+(`gives each tool a satisfiable schema…`, `puts the command only on the tool that starts a
+process…`, `refuses a `wait` on the request…`), `python_extensions_test`, `mcp/core_test` and
+`vis-language-python/test_fn_test`. Rewritten: `only-python-execution-is-advertised-test`, the
+tool-call door/leak tests (one argument, `code`), `harness/core_test`'s skill test as
+`skill-activation-is-a-session-effect-test`, and `env_python_test`'s `session_fold` doc test, which
+now asserts the receipt promises NO coordinate (no `` `ntr` ``, no `# saved:`).
+
+Adjusted: `posix_refusal_shim_test` (the refusal says "`shell` is not bound"; `apropos` misses with
+"nothing matches."; the handle probe calls `logs()` since `status()` went with the native shell
+tool) and `editing/zipper_test/op-keyword-regression-test` (`:create-dirs` and `:delete` left the
+op registry with the native write verbs).
+
+Four suite failures are PRE-EXISTING on `6e7b0b0ee` and belong to other work, not this phase:
+`audit-inventory-test` (`com.blockether/rift` pinned at `0.0.10-11`, `audit/README.md` still says
+`0.0.10-10`), `gateway/fcm-test` + `gateway/relay-test` (push status answers `web`, the tests expect
+`relay`), and `native-image-env-capture-test` (`config/log-path` is now the per-process
+`~/.vis/logs/vis-<pid>.log` from `5bf7f5bab`). `loop-test/providers-router-rebuild-hook-wiring-test`
+fails only in the whole-suite JVM (two loads of `loop.clj`) and passes in its own run.
 
 TODO — one checkable step per line, in order. Each step names the file, the thing it does to it, and
 the test that flips. A step is done when its own tests are green; a PHASE is done when its whole
@@ -1234,15 +1281,15 @@ block is green, lint and format are clean, and it is committed with its tests.
 
 **Phase 2 — delete the declaration and dispatch machinery.**
 
-6. `extension.clj:421-500` — delete the `:ext.symbol/native-tool?` and `:ext.symbol/schema` specs; `:440-448` `native-tool-root-union-keys` / `portable-native-tool-schema?`.
-7. `extension.clj:993,1027,1036-1146` — delete `native-tools-for`, `native-tool-replay-policies`, `wire-schema`, `advertise-tool`, `native-tool-schemas`.
-8. `extension.clj:1148-1224` — delete `native-tool-handlers`, `native-tool-call-shapes`, `native-tool-finish-call-renderers`, `native-tool-start-call-renderers`, `native-tool-tags`; `:2157` `native-tool-finish-call-renderers-by-op`; `:1226` `symbol-bound?` (every symbol is bound now).
-9. `extension.clj:1495-1553` — delete the six refusal rules that only guarded schemas; `:1805` the `remove :ext.symbol/native-tool?` filter becomes an unconditional pass; `:2766-2769` loses the `symbol-bound?` filter.
-10. `loop.clj:978-1060` — delete native handler execution and the `:vis/native-tool-timeout` error type; `:4707` `finalize-engine-native-tool`; `:4838` `engine-native-tool-call-shapes`; `:4867+` `py-literal` and `tool-call->python-source`; `:5169` `native-tool-call-block`; the lookups at `:5516-5527`, `:8257`, `:5565-5622`, `:9413`. The block builder becomes: one call, name `python_execution`, `:lang "python"`, `:source` = `code`.
-11. `runtime_settings.clj:17-51` — `NATIVE_TOOL_TIMEOUT_MS` / `native-tool-timeout-ms` renamed to the python-block budget they now exclusively serve.
-12. Strip `:native-tool?`, `:schema`, `:call`, `:render-start-call-fn`, `:render-finish-call-fn`, `:replay` from every registration: `foundation/editing/core.clj:6180,6272,6296,6341,6746,6966`; `foundation/language_surface.clj:1081,1111,1135,1178,1208`; `foundation/harness/core.clj:180`; `foundation/mcp/core.clj:1114`; `vis-foundation-search/.../core.clj:1848,1873,1898,1924,1948`. `:description` and `:result` REMAIN — they are the `doc(name)` body.
-13. Tests: delete `native_tool_provider_contract_test.clj` (whole file); delete the four `extension_test` items; delete the seven `loop_test` items; delete `language_surface_test:442,591`, `shell_test:1469,1604`, `python_extensions_test:1672`; rewrite the six loop/shell/search entries listed in the REWRITE table.
-14. ADD `surface_contract_test/every-function-is-a-python-name-test` — walk the live registry: no schema key survives, every symbol resolves to a bound sandbox name. Run `…extension-test`, `…loop-test`, `…python-extensions-test`, `…foundation.surface-contract-test`, `…foundation.shell-test`, `…foundation.language-surface-test`, the search extension test. Commit.
+6. DONE — `extension.clj:421-500` — delete the `:ext.symbol/native-tool?` and `:ext.symbol/schema` specs; `:440-448` `native-tool-root-union-keys` / `portable-native-tool-schema?`.
+7. DONE — `extension.clj:993,1027,1036-1146` — delete `native-tools-for`, `native-tool-replay-policies`, `wire-schema`, `advertise-tool`, `native-tool-schemas`.
+8. DONE — `extension.clj:1148-1224` — delete `native-tool-handlers`, `native-tool-call-shapes`, `native-tool-finish-call-renderers`, `native-tool-start-call-renderers`, `native-tool-tags`; `:2157` `native-tool-finish-call-renderers-by-op`; `:1226` `symbol-bound?` (every symbol is bound now).
+9. DONE — `extension.clj:1495-1553` — delete the six refusal rules that only guarded schemas; `:1805` the `remove :ext.symbol/native-tool?` filter becomes an unconditional pass; `:2766-2769` loses the `symbol-bound?` filter.
+10. DONE — `loop.clj:978-1060` — delete native handler execution and the `:vis/native-tool-timeout` error type; `:4707` `finalize-engine-native-tool`; `:4838` `engine-native-tool-call-shapes`; `:4867+` `py-literal` and `tool-call->python-source`; `:5169` `native-tool-call-block`; the lookups at `:5516-5527`, `:8257`, `:5565-5622`, `:9413`. The block builder becomes: one call, name `python_execution`, `:lang "python"`, `:source` = `code`.
+11. DONE — `runtime_settings.clj:17-51` — `NATIVE_TOOL_TIMEOUT_MS` / `native-tool-timeout-ms` renamed to the python-block budget they now exclusively serve.
+12. DONE — Strip `:native-tool?`, `:schema`, `:call`, `:render-start-call-fn`, `:render-finish-call-fn`, `:replay` from every registration: `foundation/editing/core.clj:6180,6272,6296,6341,6746,6966`; `foundation/language_surface.clj:1081,1111,1135,1178,1208`; `foundation/harness/core.clj:180`; `foundation/mcp/core.clj:1114`; `vis-foundation-search/.../core.clj:1848,1873,1898,1924,1948`. `:description` and `:result` REMAIN — they are the `doc(name)` body.
+13. DONE — Tests: delete `native_tool_provider_contract_test.clj` (whole file); delete the four `extension_test` items; delete the seven `loop_test` items; delete `language_surface_test:442,591`, `shell_test:1469,1604`, `python_extensions_test:1672`; rewrite the six loop/shell/search entries listed in the REWRITE table.
+14. DONE — ADD `surface_contract_test/every-function-is-a-python-name-test` — walk the live registry: no schema key survives, every symbol resolves to a bound sandbox name. Run `…extension-test`, `…loop-test`, `…python-extensions-test`, `…foundation.surface-contract-test`, `…foundation.shell-test`, `…foundation.language-surface-test`, the search extension test. Commit.
 
 **Phase 3 — one card.**
 

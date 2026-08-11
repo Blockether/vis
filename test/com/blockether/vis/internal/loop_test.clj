@@ -1,6 +1,5 @@
 (ns com.blockether.vis.internal.loop-test
   (:require [clojure.string :as str]
-            [clojure.java.io :as io]
             [com.blockether.svar.core :as svar]
             [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.content :as content]
@@ -11,8 +10,6 @@
             [com.blockether.vis.internal.prompt :as prompt]
             [com.blockether.vis.internal.ctx-engine :as eng]
             [com.blockether.vis.internal.foundation.editing.core :as ed]
-            [com.blockether.vis.internal.foundation.shell :as sh]
-            [com.blockether.vis.internal.foundation.language-surface :as lsf]
             [com.blockether.vis.internal.titling :as titling]
             [com.blockether.vis.internal.runtime-settings :as rt]
             [com.blockether.vis.internal.human-input :as hi]
@@ -446,16 +443,6 @@
         (expect (= :tool-result (reason-of 1)))
         (expect (= :tool-result (reason-of 7))))))
 
-(defdescribe native-tool-timeout-settings-test
-             (it "keeps the wall a grace period above the tool's own budget"
-                 ;; The wall is a BACKSTOP: the tool's own timeout (30s fallback,
-                 ;; or the explicit request) must fire FIRST and produce a
-                 ;; structured result, so the wall always sits one grace (+1000ms)
-                 ;; higher and never races the tool's own deadline.
-                 (expect (= 31000 (rt/native-tool-timeout-ms {})))
-                 (expect (= 21000 (rt/native-tool-timeout-ms {"timeout_ms" 20000})))
-                 (expect (= 21000 (rt/native-tool-timeout-ms {:timeout-ms 20000})))))
-
 (defdescribe tool-result-display-timeout-test
              ;; The wall-clock BACKSTOP fires with :result nil but :timeout? true.
              ;; The card must read as a distinct ⧖ TIMEOUT, not the raw
@@ -485,76 +472,6 @@
                     (display {:result nil :timeout? true :error {:message "boom"}} "repl_eval" {})]
 
                    (expect (= "⧖ timed out" (:summary card))))))
-
-(defdescribe native-handler-timeout-test
-             (it "returns a typed timeout and interrupts a wedged native tool"
-                 (let
-                   [started
-                    (promise)
-
-                    handler
-                    (fn [_ _]
-                      (deliver started true)
-                      (Thread/sleep 5000)
-                      :unreachable)
-
-                    started-at
-                    (System/currentTimeMillis)
-
-                    result
-                    ((deref #'lp/run-native-handler) handler {} {"timeout_ms" 20} "repl_eval")]
-
-                   (expect (true? (deref started 100 false)))
-                   (expect (true? (:timeout? result)))
-                   (expect (= :vis/native-tool-timeout (get-in result [:error :type])))
-                   (expect (= "repl_eval" (get-in result [:error :data :tool])))
-                   (expect (< (- (System/currentTimeMillis) started-at) 2000)))))
-
-;; Regression, issue: git/shell (native `:handler` tools) resolved cwd against the
-;; JVM's launch directory instead of the active draft workspace, because
-;; `run-native-handler` invoked the handler directly instead of through
-;; `extension/with-context` — the ONE seam that binds `workspace/*workspace-root*`
-;; from `:workspace/root` for every other extension callback. A session running
-;; inside a draft therefore had `shell` silently act on the trunk checkout.
-(defdescribe native-handler-workspace-root-test
-             (it "binds workspace/*workspace-root* from the environment's :workspace/root"
-                 (let
-                   [draft-root
-                    (.getCanonicalPath (io/file "/tmp"))
-
-                    observed
-                    (promise)
-
-                    handler
-                    (fn [_env _input]
-                      (deliver observed (workspace/cwd))
-                      {:ok true})
-
-                    _
-                    ((deref #'lp/run-native-handler) handler
-                     {:workspace/root draft-root}
-                     {}
-                     "shell")]
-
-                   (expect (= draft-root (.getCanonicalPath (deref observed 100 (io/file ""))))))))
-
-;; Regression, same issue: the fix lives in `run-native-handler` itself (the ONE
-;; generic seam for every native `:handler` tool), not in a per-tool patch — so it
-;; must hold for `repl` (start), `repl_connect`, and `repl_eval` exactly as for
-;; `shell`, since those are dispatched through the identical code path.
-(defdescribe native-handler-workspace-root-repl-tools-test
-  (for [tool ["repl" "repl_connect" "repl_eval"]]
-    (it (str "binds workspace/*workspace-root* for the \"" tool "\" native tool")
-        (let [draft-root (.getCanonicalPath (io/file "/tmp"))
-              observed (promise)
-              handler (fn [_env _input]
-                        (deliver observed (workspace/cwd))
-                        {:ok true})
-              _ ((deref #'lp/run-native-handler) handler
-                 {:workspace/root draft-root}
-                 {}
-                 tool)]
-          (expect (= draft-root (.getCanonicalPath (deref observed 100 (io/file "")))))))))
 
 (defdescribe guest-interrupt-on-eval-timeout-test
              ;; REGRESSION: an eval timeout (and Esc cancel) only did `Future.cancel(true)`.
@@ -667,36 +584,6 @@
                          ;; the sibling's work is RETURNED, not orphaned
                          (expect (= "completed" (get (second res) "status")))
                          (expect (true? (:finished @sib)))))))))
-
-(defdescribe nested-outside-tool-wall-test
-             ;; REGRESSION: run_tests nests the park — language-surface wraps the
-             ;; WHOLE run in run-outside-tool-wall AND clj-test-fn wraps its
-             ;; ensure-repl-for-dir! boot. A non-reentrant park let the INNER
-             ;; exit collapse the clock back to the 30s base wall while the OUTER
-             ;; park was still live, so a slow test eval after the boot died at
-             ;; 30000ms even though the pack budget is 290s.
-             (it "a nested park does not collapse the enclosing park's deadline"
-                 (let
-                   [handler
-                    (fn [env _]
-                      ;; OUTER park (mirrors language-surface run-tests).
-                      (extension/run-outside-tool-wall env
-                                                       (fn []
-                                                         ;; INNER park returns fast (mirrors the REPL boot).
-                                                         (extension/run-outside-tool-wall
-                                                           env
-                                                           (fn []
-                                                             :booted))
-                                                         ;; Still inside the OUTER park: work well past the
-                                                         ;; base wall must stay parked, not time out.
-                                                         (Thread/sleep 300)
-                                                         :ran)))
-
-                    result
-                    ((deref #'lp/run-native-handler) handler {} {"timeout_ms" 20} "run_tests")]
-
-                   (expect (false? (:timeout? result)))
-                   (expect (= :ran (:result result))))))
 
 (defdescribe native-tool-call-execution-test
              ;; REGRESSION: native tool calling once shipped 100% broken — `run-iteration`
@@ -1795,55 +1682,6 @@
         (expect (str/includes? (:content (second messages)) "continue"))
         (expect (string? (:content (last messages))))
         (expect (str/includes? (:content (last messages)) "item_count")))))
-
-(defdescribe
-  large-arg-replay-compaction-test
-  (let [payload (apply str (repeat 9000 "x"))
-        id "py-big-1"
-        tc {:id id
-            :name "python_execution"
-            :input {"code" payload}}
-        policies {"python_execution" {:elide-args {"code" 8192}}}
-        target {:provider :lmstudio :model "google/gemma-4-12b-qat"}
-        entry (fn [form]
-                [1
-                 {:assistant-message
-                  {:role "assistant"
-                   :content [{:type "thinking"
-                              :thinking "large program"
-                              :thinking-signature "sig"}
-                             {:type "tool_use"
-                              :id id
-                              :name "python_execution"
-                              :input (:input tc)}]}
-                  :llm-provider (:provider target)
-                  :llm-model (:model target)
-                  :preserved-thinking/replay? true
-                  :tool-calls [tc]
-                  :forms-vec [(assoc form
-                                     :scope "t1/i1/f1"
-                                     :svar/tool-call-id id)]}])]
-    (it "replaces a successful oversized call's protocol pair with a hashed textual receipt"
-        (let [suffix (conversation-suffix
-                       [(entry {:result {"ok" true}})]
-                       target
-                       policies)
-              wire (pr-str suffix)]
-          (expect (= ["assistant" "user"] (mapv :role suffix)))
-          (expect (str/includes? (get-in suffix [0 :content 0 :text]) "sha256="))
-          (expect (str/includes? (get-in suffix [0 :content 0 :text]) "9000 chars"))
-          (expect (not (str/includes? wire payload)))
-          (expect (not (str/includes? wire "tool_use")))))
-    (it "keeps every failed oversized call verbatim"
-        (doseq [reason [:timeout :exception]]
-          (let [suffix (conversation-suffix
-                         [(entry {:error {:type :python/execution-failed
-                                          :data {:reason reason}}})]
-                         target
-                         policies)
-                wire (pr-str suffix)]
-            (expect (str/includes? wire payload))
-            (expect (not (str/includes? wire "retry_native"))))))))
 
 
 ;; 1x1 red PNG — REAL pixels. Every image block the loop emits is decoded at
@@ -3693,26 +3531,6 @@
                                       {"text" "hi"}])))
                    (expect (nil? (op "plain text"))))))
 
-;; Build the wire-name → `:call` shape map from the REAL tool symbols, exactly as
-;; `extension/native-tool-call-shapes` does at runtime. Driving the synthesizer with
-;; the ACTUAL declarations (not a hand-copied table) makes this an EQUIVALENCE ORACLE:
-;; every pinned string below is the output the old hardcoded `case` produced, so a
-;; green run proves the data-driven interpreter reproduces the prior behavior AND
-;; that each tool's on-symbol `:call` is wired correctly. mcp lives in a separate
-;; extension (off this test's classpath) so its trivial positional shapes are added
-;; inline — the interpreter path they exercise is identical.
-(defn- shapes-from
-  [& symbol-vecs]
-  (into {}
-        (keep (fn [s]
-                (when-let [c (:ext.symbol/call s)]
-                  [(or (:ext.symbol/name s) (name (:ext.symbol/symbol s))) c])))
-        (apply concat symbol-vecs)))
-
-(def ^:private real-call-shapes
-  (merge (shapes-from @ed/editing-symbols sh/shell-symbols lsf/symbols)
-         {"mcp__call" {:pos ["server"] :opt-pos ["tool" "args"]}}))
-
 (defdescribe
   only-python-execution-is-advertised-test
   ;; ONE tool reaches the provider. Every other capability is already a bare Python
@@ -3723,523 +3541,47 @@
     "advertises exactly one tool, and it is python_execution"
     (let
       [tools
-       (@#'lp/native-tools nil)]
+       (@#'lp/model-facing-tools nil)
+
+       tool
+       (first tools)]
 
       (expect (= ["python_execution"] (mapv :name tools)))
-      ;; No extension can add a tool: `native-tools` does not take extensions at
-      ;; all any more, which is the proof rather than an assertion about them.
+      ;; No extension can add a tool: `model-facing-tools` does not take extensions
+      ;; at all any more, which is the proof rather than an assertion about them.
       (expect (= 1 (count tools)))
       ;; Regression: `github-copilot`/`gpt-5.6-terra` 400ed the WHOLE request over a
       ;; `:strict true` flag Vis derived from Anthropic's own grammar subset, so every
       ;; turn failed before a token. The one tool is advertised unconstrained.
       (expect (not-any? :strict tools))
-      (doseq [tool tools]
-        (expect (= 1 (count (re-seq #"Raw result:" (:description tool)))))
-        (expect (not (contains? tool :result))))
-      (let [python-description (:description (first tools))]
-        (doseq
-          [fact ["project packages need a project REPL" "bare snake_case" "errors surface"
-                 ;; The sleep/poll prohibition lives HERE and nowhere else: the core
-                 ;; prompt deliberately dropped its duplicate copy.
-                 "`sh.logs()`" "no tool waits for you"
-                 ;; Sandbox Python does NOT close a dropped file handle, so an
-                 ;; unclosed `open(...)` leaks a PROCESS descriptor until a GC —
-                 ;; enough of them and no `shell` child can be spawned at
-                 ;; all. The sandbox reclaims and caps them
-                 ;; (`env-python-fd-test`); the description says so, because the
-                 ;; cheapest fix is the block never leaking in the first place.
-                 "Close what you open" "with open(...)" "leaked descriptors"
-                 "VIS_PY_MAX_OPEN_FILES"]]
-          (expect (str/includes? python-description fact))))))
-  (it "rejects engine-owned native tools without description or raw-result contracts"
+      ;; The raw-result contract is FOLDED into the description exactly once, and the
+      ;; separate `:result` key never reaches a provider.
+      (expect (= 1 (count (re-seq #"Raw result:" (:description tool)))))
+      (expect (not (contains? tool :result)))
+      ;; One tool, one argument: the whole model-facing schema surface.
+      (expect (= {:type "object"
+                  :properties {"code" {:type "string" :description "Python source."}}
+                  :required ["code"]
+                  :additionalProperties false}
+                 (:schema tool)))
       (doseq
-        [[tool expected-type]
-         [[{:name "bad" :result "a result"} :loop/missing-engine-native-description]
-          [{:name "bad" :description "Missing result."} :loop/missing-engine-native-result]]]
-        (let
-          [err (try (@#'lp/finalize-engine-native-tool tool)
-                    nil
-                    (catch clojure.lang.ExceptionInfo e e))]
-          (expect (= expected-type (:type (ex-data err)))))))
-  (it "reserves the Raw result label for engine-native projection"
-      (doseq
-        [[tool expected-type]
-         [[{:name "bad" :description "Raw result: duplicated" :result "a map"}
-           :loop/engine-native-result-in-description]
-          [{:name "bad" :description "Has semantics." :result "Raw result: duplicated"}
-           :loop/engine-native-result-has-label]]]
-        (let
-          [err (try (@#'lp/finalize-engine-native-tool tool)
-                    nil
-                    (catch clojure.lang.ExceptionInfo e e))]
-          (expect (= expected-type (:type (ex-data err)))))))
-  (it "dispatches native discovery through the existing Python functions"
-      (let
-        [shapes
-         (var-get #'lp/engine-native-tool-call-shapes)
-
-         synth
-         (fn [name input]
-           (@#'lp/tool-call->python-source shapes {:name name :input input}))]
-
-        (expect (= "__vis_apropos_table__()" (synth "apropos" {})))
-        (expect (= "__vis_apropos_table__(\"struct\")" (synth "apropos" {"query" "struct"})))
-        (expect (= "doc(\"struct_patch\")" (synth "doc" {"name" "struct_patch"}))))))
-
-(defdescribe
-  tool-call->python-source-test
-  ;; A no-`:handler` native tool is dispatched by synthesizing a bare Python call
-  ;; into its bound fn. The call SHAPE is DATA on each tool's symbol (`:call`); the
-  ;; engine holds NO per-tool list. A tool with no `:call` → the generic
-  ;; `name({input})` form. `synth` drives the synthesizer with the REAL declarations.
-  (let
-    [synth (fn [tc]
-             (@#'lp/tool-call->python-source real-call-shapes tc))]
-    (it "the shapes come from the tools themselves (not a hand-copied engine table)"
-        ;; wiring: the interesting shapes are declared on the real symbols.
-        ;; `cat` is plural-only (`paths`), so it declares NO positional shape.
-        (expect (nil? (get real-call-shapes "cat")))
-        (expect (= {:lead-opt "language" :rest :always} (get real-call-shapes "repl_eval")))
-        (expect (fn? (get real-call-shapes "patch")))
-        ;; lint_code takes a whole dict → it declares NO :call and uses the default.
-        (expect (nil? (get real-call-shapes "lint_code")))
-        ;; Every shell verb is a one-map call; none may grow a positional shape.
-        (doseq [n ["shell" "_shell_logs" "_shell_wait" "_shell_type" "_shell_stop"]]
-          (expect (nil? (get real-call-shapes n)))))
-    (it "a tool with NO :call gets the generic whole-dict call"
-        (expect (= "rg({\"query\": [\"x\"]})" (synth {:name "rg" :input {"query" ["x"]}})))
-        (expect (= "grep({\"query\": \"x\"})" (synth {:name "grep" :input {"query" "x"}})))
-        (expect (= "struct_index({\"paths\": [\"src/x.clj\"]})"
-                   (synth {:name "struct_index" :input {"paths" ["src/x.clj"]}})))
-        (expect (= "lint_code({\"code\": \"x\"})" (synth {:name "lint_code" :input {"code" "x"}})))
-        (expect (= "shell({\"command\": \"ls\"})"
-                   (synth {:name "shell" :input {"command" "ls"}}))))
-    (it "python_execution still passes the model's code through"
-        (expect (= "print(1)" (synth {:name "python_execution" :input {"code" "print(1)"}}))))
-    (it
-      "a native tool's `code` PAYLOAD is escaped into the call, NOT dumped as a program"
-      ;; Regression: struct_patch/symbol_rename carry the replacement SOURCE under
-      ;; `code` (arbitrary language, not Python). The generic branch once returned
-      ;; that payload verbatim as the program, so a Clojure `(defn …)` was fed to the
-      ;; Python engine and died with `unterminated string literal` — the edit never
-      ;; ran. It must synthesize `struct_patch({…})` with the payload escaped.
-      (expect
-        (=
-          "struct_patch({\"path\": \"a.clj\", \"op\": \"replace\", \"target\": \"f\", \"code\": \"(defn f []\\n  \\\"doc — x\\\"\\n  1)\"})"
-          (synth {:name "struct_patch"
-                  :input {"path" "a.clj"
-                          "op" "replace"
-                          "target" "f"
-                          "code" "(defn f []\n  \"doc — x\"\n  1)"}})))
-      ;; the synthesized program is a SINGLE line (no raw newline the Python
-      ;; tokenizer could trip on) and never starts with a bare `(`.
-      (let
-        [prog (synth
-                {:name "struct_patch"
-                 :input
-                 {"path" "a.clj" "op" "replace" "target" "f" "code" "(defn f []\n  \"d\"\n  1)"}})]
-        (expect (not (.contains ^String prog "\n")))
-        (expect (.startsWith ^String prog "struct_patch("))))
-    (it
-      "positional + optional-rest-dict shapes (copy/shell) and plural-only dicts"
-      ;; `cat` is plural-only, so it rides the generic whole-dict form.
-      (expect (= "cat({\"paths\": [\"a.clj\"]})" (synth {:name "cat" :input {"paths" ["a.clj"]}})))
-      (expect (= "cat({\"paths\": [\"a.clj\"], \"ranges\": [[1, 2]]})"
-                 (synth {:name "cat" :input {"paths" ["a.clj"] "ranges" [[1 2]]}})))
-      ;; `struct_nodes` is plural-only too: `nodes` rides the generic whole-dict form.
-      (expect (= "struct_nodes({\"nodes\": [{\"path\": \"a.clj\", \"nav\": [\"down\"]}]})"
-                 (synth {:name "struct_nodes" :input {"nodes" [{"path" "a.clj" "nav" ["down"]}]}})))
-      (expect (= "shell({\"command\": \"ls\", \"cwd\": \"/tmp\"})"
-                 (synth {:name "shell" :input {"command" "ls" "cwd" "/tmp"}}))))
-    (it "all-positional + optional-trailing-positional shapes"
-        ;; Every shell verb receives its complete request as one map.
-        ;; Every shell verb receives its complete request as one map.
-        (expect (= "shell({\"id\": \"x\", \"command\": \"sleep 1\"})"
-                   (synth {:name "shell" :input {"id" "x" "command" "sleep 1"}})))
-        (expect (= "_shell_logs({\"id\": \"x\", \"offset\": 4096})"
-                   (synth {:name "_shell_logs" :input {"id" "x" "offset" 4096}})))
-        (expect (= "_shell_stop({\"id\": \"x\"})"
-                   (synth {:name "_shell_stop" :input {"id" "x"}}))))
-    (it "patch projects its one native shape to the edits vector"
-        (expect (= "patch([{\"path\": \"a.clj\", \"from_anchor\": \"1:a\"}])"
-                   (synth {:name "patch"
-                           :input {"edits" [{"path" "a.clj" "from_anchor" "1:a"}]}}))))
-    (it "strips the model-drift leading colon at EVERY depth (not just top-level)"
-        ;; Regression: the model reads keyword-heavy Clojure source and drifts into
-        ;; `:key` spelling. A shallow normalize fixed top-level keys (cat(\"x\")) but
-        ;; left NESTED dict keys colon-prefixed, so `patch` leaked
-        ;; `patch([{\":from_anchor\": …}])`. Keys normalize at all depths; VALUES
-        ;; that happen to start with a colon are untouched.
-        (expect (= "cat({\"paths\": [\"x\"]})" (synth {:name "cat" :input {":paths" ["x"]}})))
-        (expect (= "patch([{\"path\": \"a.clj\", \"from_anchor\": \"1:a\", \"replace\": \"x\"}])"
-                   (synth {:name "patch"
-                           :input {"edits"
-                                   [{":path" "a.clj" ":from_anchor" "1:a" ":replace" "x"}]}})))
-        (expect (=
-                  "patch([{\"path\": \"a.clj\", \"from_anchor\": \"1:a\", \"to_anchor\": \"2:b\"}])"
-                  (synth {:name "patch"
-                          :input {"edits"
-                                  [{":path" "a.clj" ":from_anchor" "1:a" ":to_anchor" "2:b"}]}})))
-        ;; a VALUE spelled like a keyword survives verbatim — only KEYS are cleaned.
-        (expect
-          (= "patch([{\"path\": \"a.clj\", \"from_anchor\": \"1:a\", \"replace\": \":kw-value\"}])"
-             (synth {:name "patch"
-                     :input {"edits"
-                             [{"path" "a.clj" "from_anchor" "1:a" "replace" ":kw-value"}]}}))))
-    (it "language facade splits `language` into the leading positional"
-        (expect (= "repl_eval(\"clojure\", {\"code\": \"(+ 1 2)\"})"
-                   (synth {:name "repl_eval" :input {"language" "clojure" "code" "(+ 1 2)"}})))
-        (expect (= "format_code(\"clojure\", {\"code\": \"x\"})"
-                   (synth {:name "format_code" :input {"language" "clojure" "code" "x"}})))
-        (expect (= "run_tests({\"namespaces\": [\"a.b\"]})"
-                   (synth {:name "run_tests" :input {"namespaces" ["a.b"]}})))
-        (expect (= "repl_stop(\"r1\")" (synth {:name "repl_stop" :input {"id" "r1"}}))))
-    (it "mcp binds positionally: server first, tool and args optional"
-        (expect (= "mcp__call(\"fs\")" (synth {:name "mcp__call" :input {"server" "fs"}})))
-        (expect (= "mcp__call(\"fs\", \"read\", {\"p\": 1})"
-                   (synth {:name "mcp__call" :input {"server" "fs" "tool" "read" "args" {"p" 1}}})))
-        (expect (= "mcp__call(\"fs\", \"read\")"
-                   (synth {:name "mcp__call" :input {"server" "fs" "tool" "read"}}))))))
-
-;; ===========================================================================
-;; All-observation concurrent batch
-;; ===========================================================================
-
-(def ^:private observation-batch? (deref #'lp/observation-batch?))
-
-(def ^:private observation-batch-program (deref #'lp/observation-batch-program))
-
-(def ^:private execute-observation-batch (deref #'lp/execute-observation-batch))
-
-(defdescribe
-  observation-batch-gate-test
-  ;; The gate decides whether an iteration's tool calls may run concurrently.
-  ;; It is CONSERVATIVE: any mutation / python_execution / native handler /
-  ;; preflight error / <2 calls / blank source ⇒ serial (false). Classification
-  ;; is by the AUTHORITATIVE per-symbol :tag (never a hardcoded name list).
-  (let
-    [tags
-     {"cat" :observation
-      "rg" :observation
-      "grep" :observation
-      "struct_index" :observation
-      "ls" :observation
-      "struct_nodes" :observation
-      "patch" :mutation
-      "struct_patch" :mutation}
-
-     obs
-     (fn [id nm]
-       {:expr (str nm "({})") :svar/tool-call-id id :vis/tool-name nm})]
-
-    (it "batches two observations"
-        (expect (true? (observation-batch? [(obs "a" "cat") (obs "b" "rg")] tags))))
-    (it "batches three observations"
-        (expect (true? (observation-batch? [(obs "a" "cat") (obs "b" "cat") (obs "c" "rg")] tags))))
-    (it "does NOT batch a single call"
-        (expect (false? (observation-batch? [(obs "a" "cat")] tags))))
-    (it "does NOT batch when any call is a mutation"
-        (expect (false? (observation-batch? [(obs "a" "cat") (obs "b" "patch")] tags))))
-    (it "does NOT batch when any call is python_execution (no tag)"
-        (expect (false? (observation-batch? [(obs "a" "cat")
-                                             {:expr "print(1)"
-                                              :svar/tool-call-id "b"
-                                              :vis/tool-name "python_execution"}]
-                                            tags))))
-    (it "does NOT batch when a native-handler entry is present"
-        (expect (false? (observation-batch? [(obs "a" "cat")
-                                             {:expr ""
-                                              :svar/tool-call-id "b"
-                                              :vis/tool-name "skill"
-                                              :vis/native-handler (fn [_ _]
-                                                                    {})}]
-                                            tags))))
-    (it "does NOT batch when any entry has a preflight error"
-        (expect (false? (observation-batch? [(obs "a" "cat")
-                                             (assoc (obs "b" "rg")
-                                               :vis/preflight-error {:message "boom"})]
-                                            tags))))
-    (it "does NOT batch when a tool-call-id is missing"
-        (expect (false? (observation-batch? [(obs "a" "cat")
-                                             (dissoc (obs "b" "rg") :svar/tool-call-id)]
-                                            tags))))
-    (it "does NOT batch when a source is blank"
-        (expect (false? (observation-batch? [(obs "a" "cat") (assoc (obs "b" "rg") :expr "  ")]
-                                            tags))))
-    (it "does NOT batch an unknown/untagged tool name"
-        (expect (false? (observation-batch? [(obs "a" "cat") (obs "b" "mystery")] tags))))
-    (it "does NOT batch a native-handler OBSERVATION (search_web runs in Clojure, not GraalPy)"
-        ;; search_web is :tag :observation BUT dispatched via run-native-handler
-        ;; (pure Clojure, not synthesized-python) — its block carries
-        ;; :vis/native-handler and NO :expr, so it can't ride a gather batch. The
-        ;; gate must fall the whole iteration to serial. Double-guarded: the
-        ;; native-handler flag AND the nil/blank :expr both reject it.
-        (let [tags* (assoc tags "search_web" :observation)]
-          (expect (false? (observation-batch? [(obs "a" "cat")
-                                               {:expr nil
-                                                :svar/tool-call-id "b"
-                                                :vis/tool-name "search_web"
-                                                :vis/native-handler (fn [_ _]
-                                                                      {})
-                                                :vis/native-input {}}]
-                                              tags*)))))))
-
-(defdescribe
-  observation-batch-program-shape-test
-  (it "wraps the exprs in an isolated-par settle over a deferred list"
-      (let [p (observation-batch-program ["cat(\"a\", {})" "rg({\"query\": \"x\"})"])]
-        (expect (str/includes? p "__vis_obs_batch__ = [cat(\"a\", {}), rg({\"query\": \"x\"})]"))
-        (expect (str/includes? p "__vis_par_isolated__("))
-        (expect (str/includes? p "__vis_settle__(__x__)")))))
-
-(def ^:private native-tool-call-block (deref #'lp/native-tool-call-block))
-
-(def ^:private pending-call-display (deref #'lp/pending-call-display))
-
-(defdescribe
-  native-tool-call-block-test
-  ;; REGRESSION: only the `:handler` branch carried `:vis/native-input`, so every
-  ;; sandbox-bound native tool lost the input its own `:render-start-call-fn` needs
-  ;; and painted raw invocation JSON for the whole run.
-  (it "carries the call input on the synthesized-python branch too"
-      (let
-        [tc {:id "c1" :name "grep" :input {"query" "vis" "limit" 20}}
-         block (native-tool-call-block {} nil tc)]
-
-        (expect (= "python" (:lang block)))
-        (expect (= {"query" "vis" "limit" 20} (:vis/native-input block)))))
-  (it "keeps carrying it for a `:handler` tool dispatched in Clojure"
-      (let
-        [tc {:id "c2" :name "search_web" :input {"query" "vis"}}
-         block (native-tool-call-block {}
-                                       (fn [_ _]
-                                         {})
-                                       tc)]
-
-        (expect (= "native" (:lang block)))
-        (expect (= {"query" "vis"} (:vis/native-input block)))))
-  (it "renders a pending call as the op-card it becomes, not the call JSON"
-      ;; End to end over the real seam: the block's input reaches the tool's own
-      ;; `:render-start-call-fn`, so the running form is the CARD its result card
-      ;; completes instead of `tool({\"command\": …})`.
-      (let
-        [renderers {"q" (fn [input]
-                          {:summary (str "$ " (get input "command") " (running)")
-                           :render (str "**COMMAND**\n```bash\n" (get input "command") "\n```")})}
-         tc {:id "c4"
-             :name "q"
-             :input {"command" "echo one"}}
-         block (native-tool-call-block {} nil tc)
-         display (pending-call-display renderers
-                                       (:vis/tool-name block)
-                                       (:vis/native-input block))]
-
-        ;; The card BODY, authored by the tool — no comment band invented for
-        ;; pending calls…
-        (expect (= "$ echo one (running)" (:pending-summary display)))
-        (expect (= "**COMMAND**\n```bash\necho one\n```" (:pending-render display)))
-        ;; …and therefore no separate code band saying the same thing in JSON.
-        (expect (nil? (:display-code display)))
-        (expect (nil? (:display-language display)))
-        ;; A pending display is never mistaken for an outcome.
-        (expect (nil? (:result-summary display)))
-        (expect (nil? (:result-render display)))))
-  (it "still hands a plain code band to a tool that renders one"
-      ;; Card sections are `shell`'s choice, not the seam's: a tool that would
-      ;; rather preview source keeps `:display-code`/`:display-language`.
-      (expect (= {:display-code "SELECT 1" :display-language "sql"}
-                 (pending-call-display {"q" (fn [_] {:code "SELECT 1" :language "sql"})}
-                                       "q"
-                                       {})))))
-
-(defn- env-root
-  "The sandbox's primary allowed root — where cat is confined for a :memory env.
-   Falls back to cwd. Temp files for the fs tests MUST live under here or cat
-   refuses them (`escapes the allowed workspace roots`)."
-  [env]
-  (or (:workspace/root env)
-      (some-> (:workspace env)
-              :root
-              str)
-      (System/getProperty "user.dir")))
-
-(defn- write-tmp!
-  "Write a temp file UNDER `dir` (an allowed sandbox root) and return its path."
-  [dir content]
-  (let [f (java.io.File/createTempFile "vis-obs-batch" ".txt" (java.io.File. (str dir)))]
-    (spit f content)
-    (.deleteOnExit f)
-    (.getAbsolutePath f)))
-
-(defdescribe
-  execute-observation-batch-integration-test
-  ;; End-to-end against a REAL GraalPy sandbox built by create-environment (so
-  ;; __vis_par_isolated__ + cat are wired exactly as production). Proves: ordered
-  ;; re-split (result[i] ↔ entry[i]), per-call error isolation (a missing file
-  ;; only fails ITS slot), and — with slow fake tools — real concurrency.
-  (it
-    "runs an all-cat batch concurrently, preserving order + isolating one failure"
-    (let
-      [env
-       (lp/create-environment ::router {:db :memory})
-
-       root
-       (env-root env)
-
-       pa
-       (write-tmp! root "AAA-content")
-
-       pc
-       (write-tmp! root "CCC-content")]
-
-      (try
-        (let
-          [;; slot 0 ok, slot 1 missing file (isolated error), slot 2 ok
-           entries
-           [{:expr (str "cat(" (pr-str pa) ", {})") :svar/tool-call-id "id-0" :vis/tool-name "cat"}
-            {:expr "cat(\"/no/such/file-xyz.txt\", {})"
-             :svar/tool-call-id "id-1"
-             :vis/tool-name "cat"}
-            {:expr (str "cat(" (pr-str pc) ", {})") :svar/tool-call-id "id-2" :vis/tool-name "cat"}]
-
-           out
-           (execute-observation-batch env entries)]
-
-          (expect (= 3 (count out)))
-          ;; ordered + paired: slot 0 read AAA, slot 2 read CCC, both succeeded
-          (expect (nil? (:error (nth out 0))))
-          (expect (some? (:result (nth out 0))))
-          (expect (str/includes? (str (:result (nth out 0))) "AAA-content"))
-          (expect (nil? (:error (nth out 2))))
-          (expect (str/includes? (str (:result (nth out 2))) "CCC-content"))
-          ;; ISOLATION: only slot 1 errored; its siblings still returned values
-          (expect (nil? (:result (nth out 1))))
-          (expect (some? (:error (nth out 1))))
-          (expect (map? (:error (nth out 1)))))
-        (finally (lp/dispose-environment! env)
-                 (.delete (java.io.File. ^String pa))
-                 (.delete (java.io.File. ^String pc))))))
-  (it
-    "actually overlaps calls on bounded platform workers (wall ≈ max, not sum)"
-    ;; Bind SLOW fake observation tools via set-python-binding! so their host bodies
-    ;; (Thread/sleep) overlap. A flat wall-clock budget cannot say "concurrent":
-    ;; a genuinely overlapped 3x400 ms batch measured 964 ms on a loaded macOS runner
-    ;; -- the batch's own fixed cost, not serialisation -- and went red against 900 ms.
-    ;; So calibrate on THIS machine: run the same machinery once to warm it, time a
-    ;; batch of ONE slow call, then require the batch of three to land within a single
-    ;; extra sleep of it. Overlapped, three cost about what one costs; serialised they
-    ;; cost two sleeps more, whatever the host's overhead happens to be.
-    (let [env (lp/create-environment ::router {:db :memory})]
-      (try (let
-             [pc (:python-context env)
-              slow (fn [nm]
-                     (fn [& _args]
-                       (Thread/sleep 400)
-                       {"op" nm "v" nm}))
-              one #(vector {:expr "slowcat({})" :svar/tool-call-id % :vis/tool-name "slowcat"})]
-
-             (env/set-python-binding! pc 'slowcat (slow "slowcat"))
-             (env/set-python-binding! pc 'slowrg (slow "slowrg"))
-             (execute-observation-batch env (one "warm"))
-             (let
-               [entries [{:expr "slowcat({})" :svar/tool-call-id "a" :vis/tool-name "slowcat"}
-                         {:expr "slowcat({})" :svar/tool-call-id "b" :vis/tool-name "slowcat"}
-                         {:expr "slowrg({})" :svar/tool-call-id "c" :vis/tool-name "slowrg"}]
-
-                t1 (System/currentTimeMillis)
-                solo (do (execute-observation-batch env (one "solo"))
-                         (- (System/currentTimeMillis) t1))
-                t0 (System/currentTimeMillis)
-                out (execute-observation-batch env entries)
-                dt (- (System/currentTimeMillis) t0)]
-
-               (expect (= 3 (count out)))
-               (expect (every? (comp nil? :error) out))
-               ;; Concurrency proof: three overlapping calls cost about what one costs,
-               ;; two full sleeps short of the serial floor.
-               (expect (< dt (+ solo 400))
-                       (str "observation batch wall-ms=" dt " against a solo call at " solo " ms"))))
-           (finally (lp/dispose-environment! env))))))
-
-(defdescribe
-  run-iteration-observation-batch-test
-  ;; FULL pipeline: a model reply with TWO cat tool_calls drives run-iteration;
-  ;; the all-observation batch runs concurrently, and each result is re-split +
-  ;; PAIRED to its own tool_use_id in the emitted blocks + :form-result chunks.
-  (it
-    "pairs each batched observation result to its tool_use_id, in order"
-    (let
-      [env
-       (lp/create-environment ::router {:db :memory})
-
-       chunks
-       (atom [])
-
-       root
-       (env-root env)
-
-       pa
-       (write-tmp! root "FIRST-file")
-
-       pb
-       (write-tmp! root "SECOND-file")]
-
-      (try
-        (let [active (deref (:extensions env))]
-          (with-redefs
-            [svar/ask-code! (fn [_router _opts]
-                              {:stop-reason :tool-calls
-                               :tool-calls [{:id "call_A" :name "cat" :input {:path pa}}
-                                            {:id "call_B" :name "cat" :input {:path pb}}]
-                               :content nil
-                               :reasoning nil
-                               :tokens {}})]
-            (let
-              [result (lp/run-iteration env
-                                        []
-                                        {:iteration 0
-                                         :active-extensions active
-                                         :resolved-model {:provider :zai-coding-plan
-                                                          :name "glm-5.1"}
-                                         :on-chunk #(swap! chunks conj %)})
-               blocks (:blocks result)
-               frs (filterv #(= :form-result (:phase %)) @chunks)]
-
-              ;; two blocks, each paired to its own tool_use id, in order
-              (expect (= 2 (count blocks)))
-              (expect (= ["call_A" "call_B"] (mapv :svar/tool-call-id blocks)))
-              ;; each block carries its OWN file's content (correct re-split)
-              (expect (str/includes? (str (:result (nth blocks 0))) "FIRST-file"))
-              (expect (str/includes? (str (:result (nth blocks 1))) "SECOND-file"))
-              (expect (nil? (:error (nth blocks 0))))
-              (expect (nil? (:error (nth blocks 1))))
-              ;; per-call streaming stayed coherent: one :form-result per call,
-              ;; at positions 0 and 1
-              (expect (= 2 (count frs)))
-              (expect (= [0 1] (mapv :position frs))))))
-        (finally (lp/dispose-environment! env)
-                 (.delete (java.io.File. ^String pa))
-                 (.delete (java.io.File. ^String pb))))))
-  (it "keeps a mutation-bearing iteration serial (patch is never batched)"
-      ;; A cat + patch iteration must NOT batch. We assert the gate rejects it via
-      ;; the real tags; the serial path still runs (both blocks present, paired).
-      (let [env (lp/create-environment ::router {:db :memory})]
-        (try (let
-               [active (deref (:extensions env))
-                tags (extension/native-tool-tags active)]
-
-               (expect (= :observation (get tags "cat")))
-               (expect (= :mutation (get tags "patch")))
-               (expect (false?
-                         (observation-batch?
-                           [{:expr "cat(\"x\", {})" :svar/tool-call-id "a" :vis/tool-name "cat"}
-                            {:expr "patch([])" :svar/tool-call-id "b" :vis/tool-name "patch"}]
-                           tags))))
-             (finally (lp/dispose-environment! env))))))
+        [fact ["project packages need a project REPL" "bare snake_case" "errors surface"
+               ;; The sleep/poll prohibition lives HERE and nowhere else: the core
+               ;; prompt deliberately dropped its duplicate copy.
+               "`sh.logs()`" "no tool waits for you"
+               ;; Sandbox Python does NOT close a dropped file handle, so an
+               ;; unclosed `open(...)` leaks a PROCESS descriptor until a GC —
+               ;; enough of them and no `shell` child can be spawned at
+               ;; all. The sandbox reclaims and caps them
+               ;; (`env-python-fd-test`); the description says so, because the
+               ;; cheapest fix is the block never leaking in the first place.
+               "Close what you open" "with open(...)" "leaked descriptors"
+               "VIS_PY_MAX_OPEN_FILES"]]
+        (expect (str/includes? (:description tool) fact))))))
 
 (def ^:private settle-gather-futures! (deref #'lp/settle-gather-futures!))
 
-(def ^:private gather-executor (deref #'lp/gather-executor))
+(def ^:private gather-executor @@#'lp/gather-executor)
 
 (def ^:private gather-max-threads @@#'lp/gather-max-threads)
 
@@ -5293,7 +4635,6 @@
                                     []
                                     #{}
                                     {:provider :openai :model "gpt"}
-                                    {}
                                     "gpt-4o"
                                     (constantly 1000000))]
 
@@ -5409,7 +4750,6 @@
              [{"scopes" #{"t1/i1"} "gist" "IMPORTANT ROOT CAUSE" "at_turn" 1}]
              #{}
              {:provider :openai :model "gpt"}
-             {}
              "gpt-4o"
              (constantly 1000000))
 
@@ -5437,7 +4777,6 @@
                                                    []
                                                    #{scope}
                                                    {:provider :openai :model "gpt"}
-                                                   {}
                                                    "gpt-4o"
                                                    (constantly 1000000))))))
     (it "refuses a retry whose folded estimate still exceeds the provider budget"
@@ -5454,7 +4793,6 @@
                                                    []
                                                    #{}
                                                    {:provider :openai :model "gpt"}
-                                                   {}
                                                    "gpt-4o"
                                                    (constantly 1))))))
     (it "distinguishes replay-safe lifecycle chunks from output and side effects"
@@ -5502,7 +4840,7 @@
          terminal
          (loop
            [messages (into base
-                           (conversation-suffix canonical {:provider :openai :model "gpt"} {}))]
+                           (conversation-suffix canonical {:provider :openai :model "gpt"}))]
            (swap! calls conj messages)
            (let [result (try (throw overflow) (catch Exception e e))]
              (if-let
@@ -5780,12 +5118,12 @@
           (expect (= cfg @built))
           (expect (= ::rebuilt @seated))))))
 
-(defdescribe human-input-parks-native-tool-wall-test
-             ;; REGRESSION: HITL. A native tool that ASKS the operator blocks in
-             ;; human-input/request!, and the native-tool wall used to bill that
+(defdescribe human-input-parks-the-eval-wall-test
+             ;; REGRESSION: HITL. Code that ASKS the operator blocks in
+             ;; human-input/request!, and the enclosing wall used to bill that
              ;; thinking time — the call died with a timeout while the dialog was
              ;; still on screen and the answer was never applied.
-             (it "a human-input pause parks the tool wall instead of timing out"
+             (it "a human-input pause parks the enclosing wall instead of timing out"
                  (let
                    [chan
                     (keyword "vis-test" (str "loop-hitl-" (random-uuid)))
@@ -5793,8 +5131,8 @@
                     events
                     (atom [])
 
-                    handler
-                    (fn [_env _input]
+                    ask
+                    (fn []
                       (hi/request! {:title "Login"
                                     :session-id "loop-hitl-session"
                                     :fields [{:id "otp" :label "OTP"}]
@@ -5810,23 +5148,27 @@
                             (if-let [request-id (some #(when (= :human-input/request (:op %))
                                                          (:request-id %))
                                                       @events)]
-                              ;; The operator takes MUCH longer than the 20ms + 1s wall.
+                              ;; The operator takes MUCH longer than the 20ms wall.
                               (do (Thread/sleep 1500) (hi/submit! request-id {"otp" "123456"}))
                               (when (< n 400) (Thread/sleep 10) (recur (inc n))))))
 
+                        {:keys [deadline park]}
+                        (rt/parkable-wall (System/currentTimeMillis) 20)
+
                         result
-                        ((deref #'lp/run-native-handler) handler {} {"timeout_ms" 20} "vis.ask")]
+                        (binding [rt/*blocking-wall-park* park]
+                          (ask))]
 
                        (deref answerer 5000 nil)
-                       (expect (false? (:timeout? result)))
-                       (expect (true? (:is-submitted (:result result)))))
+                       (expect (true? (:is-submitted result)))
+                       ;; the wall MOVED: it is no longer the 20ms one the call started with
+                       (expect (> @deadline (+ (System/currentTimeMillis) -10))))
                      (finally (ce/remove-channel-event-listener! chan ::hitl-wall))))))
 
 (defdescribe normalize-tool-input-strings-only-test
   (describe "model-drift and extension EDN are stringified, keys AND values"
-    (it "stringifies keyword/symbol values at every depth so py-literal renders"
+    (it "stringifies keyword/symbol values at every depth"
       (let [normalize #'lp/normalize-tool-input
-            py-literal #'lp/py-literal
             normalized (normalize {:op :delete
                                    :paths ['a "b"]
                                    :edits [{:mode :replace/nested}]
@@ -5837,10 +5179,7 @@
                     "edits" [{"mode" "replace/nested"}]
                     "count" 3
                     "is_overwrite" true}
-                   normalized))
-        (expect (string? (py-literal normalized)))))
-    (it "still refuses a keyword that never passed through the adapter"
-      (expect (throws? Exception #(#'lp/py-literal {"op" :delete}))))))
+                   normalized))))))
 
 (defdescribe tool-call-door-strings-only-test
   (describe "model drift is repaired once, at the door"
@@ -5861,16 +5200,9 @@
                      :input {":edits" [{":path" "a.clj" ":from_anchor" "1:aa"}]}}])]
         (expect (= {"edits" [{"path" "a.clj" "from_anchor" "1:aa"}]} (:input tc)))))
     (it "lets downstream consumers read string keys only — no keyword fallback"
-      (let [payload (apply str (repeat 20 "x"))
-            [tc] (#'lp/normalize-tool-calls [{:id "w" :name "python_execution"
-                                              :input {:code payload}}])
-            receipts (#'lp/oversized-arg-receipts tc {:elide-args {"code" 8}})]
-        (expect (= ["code"] (mapv :arg receipts)))
-        (expect (= [20] (mapv :chars receipts)))))
-    (it "feeds call synthesis directly, with no second conversion"
-      (let [[tc] (#'lp/normalize-tool-calls [{:id "d" :name "doc" :input {:name "struct_patch"}}])]
-        (expect (= "doc({\"name\": \"struct_patch\"})"
-                   (#'lp/tool-call->python-source real-call-shapes tc)))))))
+      (let [[tc] (#'lp/normalize-tool-calls [{:id "w" :name "python_execution"
+                                              :input {:code "print(1)"}}])]
+        (expect (= {"code" "print(1)"} (:input tc)))))))
 
 ;; A tool call whose arguments were CORRUPTED inside the provider's own
 ;; tool-call encoding: the model's closing tag arrived mangled
@@ -5883,10 +5215,8 @@
   (describe "a leaked tool-call tag is not an argument value"
     (it "drops the mangled closing tag and runs the call the model meant"
       (let [[tc] (#'lp/normalize-tool-calls
-                   [{:id "a" :name "apropos" :input {"query" "</antmlutparameter>\n"}}])]
-        (expect (= {} (:input tc)))
-        (expect (= "__vis_apropos_table__()"
-                   (#'lp/tool-call->python-source @#'lp/engine-native-tool-call-shapes tc)))))
+                   [{:id "a" :name "python_execution" :input {"code" "</antmlutparameter>\n"}}])]
+        (expect (= {} (:input tc)))))
     (it "drops a `</invoke>` value carried under an entity-escaped key"
       (let [[tc] (#'lp/normalize-tool-calls
                    [{:id "c" :name "cat"
@@ -5915,14 +5245,13 @@
   ;; decoded to an OBJECT at all. svar's tool-argument decode is strict and
   ;; FAITHFUL — it hands whatever JSON value it read straight back, so
   ;; `"\"</invoke>\""` arrives as a String and `"[1,2]"` as a vector — while
-  ;; every consumer past this door (call synthesis, oversized-arg receipts,
-  ;; persistence) reads a string-keyed map.
+  ;; every consumer past this door (the sandbox program, persistence) reads a
+  ;; string-keyed map.
   (describe "an arguments payload that is not an object at all"
     (it "drops a bare string payload and runs the call the model meant"
-      (let [[tc] (#'lp/normalize-tool-calls [{:id "a" :name "apropos" :input "</invoke>"}])]
-        (expect (= {} (:input tc)))
-        (expect (= "__vis_apropos_table__()"
-                   (#'lp/tool-call->python-source @#'lp/engine-native-tool-call-shapes tc)))))
+      (let [[tc] (#'lp/normalize-tool-calls
+                   [{:id "a" :name "python_execution" :input "</invoke>"}])]
+        (expect (= {} (:input tc)))))
     (it "drops a vector payload"
       (let [[tc] (#'lp/normalize-tool-calls [{:id "a" :name "apropos" :input [1 2]}])]
         (expect (= {} (:input tc)))))

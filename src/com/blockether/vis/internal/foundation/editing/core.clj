@@ -6636,7 +6636,8 @@
      (str
        "Structurally edit supported code: definition by NAME (`target`)—no stale anchors—or node by "
        "`at`/`anchor`. Renames, docs, moves, `append_child`. Writes re-parse: code that will not parse "
-       "is REFUSED; unbalanced Clojure delimiters auto-repaired.")
+       "is REFUSED; unbalanced Clojure delimiters auto-repaired. A batch of `edits` applies in order "
+       "and is never rolled back: an entry that fails leaves the earlier ones written.")
      :render-finish-call-fn render-patch-result
      :before-fn (plan-gated-before-fn :struct_patch :file struct-arg-paths)
      :tag :mutation

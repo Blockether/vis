@@ -6,7 +6,6 @@
   (:require [clojure.java.io :as io]
             [com.blockether.vis.ext.language-python.core :as core]
             [com.blockether.vis.ext.language-python.interpreter :as interp]
-            [com.blockether.vis.internal.foundation.language-surface :as language-surface]
             [com.blockether.vis.internal.process-jail :as process-jail]
             [com.blockether.vis.internal.python-project :as pyproj]
             ;; side-effecting require: registers the built-in pytest shim so
@@ -89,13 +88,10 @@
                (expect (= 0 (get res "files")))
                (expect (= 0 (get res "passed"))))
              (finally (cleanup root)))))
-  (it "exposes the generic project environment and routes it to project pytest"
-      (let
-        [environment-schema (get-in language-surface/test-symbol
-                                    [:ext.symbol/schema :properties "environment"])]
-        (expect (= ["project"] (:enum environment-schema)))
-        (expect (not (re-find #"(?i)python|graalpy|pytest|venv"
-                              (:description environment-schema)))))
+  ;; The `environment` option is documented in the tool's description, not in a
+  ;; JSON Schema enum: the model reaches `run_tests` from Python, where the option
+  ;; is a plain string key.
+  (it "routes the generic project environment to project pytest"
       ;; No project pytest is assumed in CI; assert routing from the public option
       ;; to the project-process result shape rather than whether that suite passes.
       (when (has-python?)

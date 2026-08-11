@@ -7,232 +7,6 @@
 
 (defn- sample-channel-fn [& _] nil)
 
-;; ── STRONG flat native-tool spec (everything on the symbol) ───────────────────
-
-(def ^:private a-render-start
-  (fn [input]
-    {:summary (str "running " (:query input))}))
-
-(def ^:private a-render-finish
-  (fn [result]
-    {:summary (str (:hits result) " hits")}))
-
-(defn- ext-with [& syms] {:ext/name "test.lift" :ext/engine {:ext.engine/symbols (vec syms)}})
-
-(defn flat-native-tool
-  "A native tool declared the STRONG way — schema/name/handler on the SYMBOL."
-  [_input]
-  {:ok true})
-
-(defdescribe
-  flat-native-tool-spec-test
-  (it
-    ":native-tool? plus flat schema, handler, and start/finish renderers produce the native surface"
-    (let
-      [sym
-       (extension/symbol #'flat-native-tool
-                         {:tag :observation
-                          :native-tool? true
-                          :name "flat_tool"
-                          :description "Compact routing and result semantics."
-                          :result "A map with boolean `ok`."
-                          :schema {:type "object" :properties {"x" {:type "string"}}}
-                          :replay {:elide-args {"x" 1024}}
-                          :handler (fn [_env _in]
-                                     {:ok true})
-                          :render-start-call-fn a-render-start
-                          :render-finish-call-fn a-render-finish})
-
-       ext
-       (ext-with sym)
-
-       schema
-       (first (filter #(= "flat_tool" (:name %)) (extension/native-tool-schemas [ext])))]
-
-      (expect (some? schema))
-      (let [tool (first (extension/native-tools-for [ext]))]
-        (expect (= 'flat-native-tool (:symbol tool)))
-        (expect (= #{:symbol :name :description :result :schema :handler :call :replay
-                     :render-start-call-fn :render-finish-call-fn :active?}
-                   (set (keys tool)))))
-      (expect (not (contains? schema :symbol)))
-      (expect (= "Compact routing and result semantics.\n\nRaw result: A map with boolean `ok`."
-                 (:description schema)))
-      (expect (= {:type "object" :properties {"x" {:type "string"}}} (:schema schema)))
-      (expect (= {:elide-args {"x" 1024}}
-                 (get (extension/native-tool-replay-policies [ext]) "flat_tool")))
-      (expect (fn? (get (extension/native-tool-handlers [ext]) "flat_tool")))
-      (expect (= a-render-start
-                 (get (extension/native-tool-start-call-renderers [ext]) "flat_tool")))
-      (expect (= a-render-finish
-                 (get (extension/native-tool-finish-call-renderers [ext]) "flat_tool")))
-      (expect (= a-render-start (:ext.symbol/render-start-call-fn sym)))
-      (expect (= a-render-finish (:ext.symbol/render-finish-call-fn sym)))))
-  (it "a symbol with neither :native-tool? nor a legacy :native-tool map is NOT a native tool"
-      (let
-        [sym
-         (extension/symbol #'flat-native-tool {:tag :observation})
-
-         ext
-         (ext-with sym)]
-
-        (expect (empty? (extension/native-tool-schemas [ext])))
-        (expect (empty? (extension/native-tool-handlers [ext])))))
-  (it "a native description remains separate from the implementation docstring"
-      (let
-        [sym
-         (extension/symbol #'flat-native-tool
-                           {:tag :observation
-                            :native-tool? true
-                            :name "flat_tool"
-                            :schema {:type "object"}
-                            :description "explicit model-facing desc"
-                            :result "an explicit result map"})
-
-         ext
-         (ext-with sym)
-
-         schema
-         (first (filter #(= "flat_tool" (:name %)) (extension/native-tool-schemas [ext])))]
-
-        (expect (= "explicit model-facing desc\n\nRaw result: an explicit result map"
-                   (:description schema)))))
-  (it ":native-tool? true WITHOUT a compact :description is rejected at build time"
-      (expect (try (extension/symbol #'flat-native-tool
-                                     {:tag :observation
-                                      :native-tool? true
-                                      :name "no_description_tool"
-                                      :result "a result map"
-                                      :schema {:type "object"}})
-                   false
-                   (catch Throwable _ true))))
-  (it ":native-tool? true WITHOUT a raw :result contract is rejected at build time"
-      (let
-        [err (try (extension/symbol #'flat-native-tool
-                                    {:tag :observation
-                                     :native-tool? true
-                                     :name "no_result_tool"
-                                     :description "Has semantics."
-                                     :schema {:type "object"}})
-                  nil
-                  (catch clojure.lang.ExceptionInfo e e))]
-        (expect (= :extension/native-tool-missing-result (:type (ex-data err))))))
-  (it "reserves the Raw result label for centralized projection"
-      (doseq
-        [[opts expected-type] [[{:description "Raw result: duplicated" :result "a map"}
-                                :extension/native-tool-result-in-description]
-                               [{:description "Has semantics." :result "Raw result: duplicated"}
-                                :extension/native-tool-result-has-label]]]
-        (let
-          [err (try (extension/symbol #'flat-native-tool
-                                      (merge {:tag :observation
-                                              :native-tool? true
-                                              :name "bad_result_label_tool"
-                                              :schema {:type "object"}}
-                                             opts))
-                    nil
-                    (catch clojure.lang.ExceptionInfo e e))]
-          (expect (= expected-type (:type (ex-data err)))))))
-  (it "budgets the whole model-facing prose surface, schema descriptions included"
-      (doseq
-        [[label opts]
-         [["a bloated :description"
-           {:description (apply str (repeat 2100 "x")) :result "A map." :schema {:type "object"}}]
-          ["bloated nested schema :description entries"
-           {:description "Compact."
-            :result "A map."
-            :schema {:type "object"
-                     :properties {"q" {:type "string"
-                                       :description (apply str (repeat 2100 "x"))}}}}]]]
-        (let
-          [err (try (extension/symbol
-                      #'flat-native-tool
-                      (merge {:tag :observation :native-tool? true :name "bloated_tool"} opts))
-                    nil
-                    (catch clojure.lang.ExceptionInfo e e))]
-          (expect (= :extension/native-tool-over-budget (:type (ex-data err))) label))))
-  (it "every registered builtin native tool stays inside the prose budget"
-      (let
-        [budget
-         @#'extension/native-prose-budget
-
-         tools
-         (->> (#'extension/registered-extensions)
-              (mapcat #(get-in % [:ext/engine :ext.engine/symbols]))
-              (filterv :ext.symbol/native-tool?))]
-
-        ;; never let this pass vacuously on an unloaded registry
-        (expect (< 10 (count tools)))
-        (doseq [sym tools]
-          (expect (<= (long (#'extension/native-prose-chars sym)) budget)
-                  (str (:ext.symbol/symbol sym)
-                       " spends " (#'extension/native-prose-chars sym)
-                       " of " budget)))))
-  (it "doc text combines compact semantics with schema parameters exactly once"
-      (let
-        [sym
-         (extension/symbol #'flat-native-tool
-                           {:tag :observation
-                            :native-tool? true
-                            :name "flat_tool"
-                            :description "Compact routing and result semantics."
-                            :result "A map with boolean `ok`."
-                            :schema {:type "object"
-                                     :properties {"query" {:oneOf [{:type "string"}
-                                                                   {:type "array"
-                                                                    :items {:type "string"}}]
-                                                           :description "Exact query input."}}
-                                     :required ["query"]}})
-
-         doc
-         (extension/symbol-doc-text sym)]
-
-        (expect (= 1 (count (re-seq #"Compact routing" doc))))
-        (expect (= 1 (count (re-seq #"Raw result:" doc))))
-        (expect (= 1 (count (re-seq #"A map with boolean `ok`" doc))))
-        (expect (not (re-find #"A native tool declared the STRONG way" doc)))
-        (expect (= 1 (count (re-seq #"`query`" doc))))
-        (expect (re-find #"string\|array<string>, required" doc))))
-  (it "generic extension prompts omit native tools and their implementation docstrings"
-      (let
-        [native
-         (extension/symbol #'flat-native-tool
-                           {:tag :observation
-                            :native-tool? true
-                            :description "Native routing only."
-                            :result "A native result."
-                            :schema {:type "object" :properties {}}})
-
-         python-only
-         (extension/symbol #'flat-native-tool {:tag :observation})
-
-         prompt
-         (extension/render-prompt {:heading "TOOLS" :symbols [native python-only]})]
-
-        (expect (re-find #"TOOLS" prompt))
-        (expect (re-find #"A native tool declared the STRONG way" prompt))
-        (expect (not (re-find #"Native routing only" prompt)))))
-  (it ":native-tool? true WITHOUT a :schema is rejected at build time"
-      (expect (try (extension/symbol #'flat-native-tool
-                                     {:tag :observation
-                                      :native-tool? true
-                                      :name "no_schema_tool"
-                                      :description "No schema."
-                                      :result "A result map."})
-                   false
-                   (catch Throwable _ true))))
-  (it "rejects provider-incompatible top-level schema unions at build time"
-      (let
-        [err (try (extension/symbol #'flat-native-tool
-                                    {:tag :observation
-                                     :native-tool? true
-                                     :description "Bad root union."
-                                     :result "A result map."
-                                     :schema {:type "object" :anyOf [{:required ["x"]}]}})
-                  nil
-                  (catch clojure.lang.ExceptionInfo e e))]
-        (expect (= :extension/native-tool-nonportable-schema (:type (ex-data err)))))))
-
 (defdescribe prompt-normalization-test
              (it "normalizes string and fn extension prompts"
                  (let
@@ -516,113 +290,6 @@
       (expect (= [] (folded->pos {:pos ["id"]} [])))
       (expect (= ["x" {"n" 1}] (folded->pos {:pos ["id"]} ["x" {"n" 1}])))))
 
-(defn constrained-native-tool
-  "A native tool whose schema carries JSON-schema validation constraints."
-  [_input]
-  {:ok true})
-
-(defdescribe
-  wire-schema-constraints-test
-  (it
-    "enforceable bounds survive; provider-unenforceable bounds become description prose"
-    (let
-      [sym
-       (extension/symbol #'constrained-native-tool
-                         {:tag :observation
-                          :native-tool? true
-                          :name "constrained_tool"
-                          :description "Edits files."
-                          :result "One row per edit."
-                          :schema {:type "object"
-                                   :properties {"edits" {:type "array"
-                                                         :minItems 1
-                                                         :maxItems 8
-                                                         :description "Edit maps."
-                                                         :items {:type "object"
-                                                                 :properties {"path" {:type "string"
-                                                                                      :minLength
-                                                                                      1}}}}
-                                                "pair" {:type "array" :minItems 2 :maxItems 2}
-                                                "depth" {:type "integer" :minimum 1 :maximum 9}}
-                                   :required ["edits"]}})
-
-       schema
-       (:schema (first (filter #(= "constrained_tool" (:name %))
-                               (extension/native-tool-schemas [(ext-with sym)]))))
-
-       edits
-       (get-in schema [:properties "edits"])]
-
-      ;; `minItems 0/1` is the one array bound a tool API keeps as a real
-      ;; constraint, so it survives on the wire.
-      (expect (= 1 (:minItems edits)))
-      ;; The live API rejects `maxItems` outright and every `minItems` past 0/1,
-      ;; so those are inlined instead of dropped.
-      (expect (nil? (:maxItems edits)))
-      (expect (= "Edit maps. {maxItems: 8}" (:description edits)))
-      (expect (= {:type "array" :description "{maxItems: 2, minItems: 2}"}
-                 (get-in schema [:properties "pair"])))
-      ;; Outside what a tool API enforces ⇒ inlined into the node's own description,
-      ;; never dropped, appended after an existing description.
-      (expect (= {:type "string" :description "{minLength: 1}"}
-                 (get-in edits [:items :properties "path"])))
-      (expect (= {:type "integer" :description "{minimum: 1, maximum: 9}"}
-                 (get-in schema [:properties "depth"])))
-      (expect (= ["edits"] (:required schema)))))
-  (it "rewrites oneOf unions to anyOf — no tool-schema validator accepts oneOf"
-      (expect (= {:type "object"
-                  :properties {"x" {:anyOf [{:type "string"} {:type "integer"}]}}
-                  :additionalProperties false}
-                 (#'extension/wire-schema
-                  {:type "object"
-                   :properties {"x" {:oneOf [{:type "string"} {:type "integer"}]}}
-                   :additionalProperties false})))))
-
-;; Regression: switching to `github-copilot`/`gpt-5.6-terra` (an
-;; OpenAI-compatible chat wire) made EVERY turn fail before a single token, with
-;; no provider information in the TUI beyond "turn failed" — the provider 400ed
-;; the whole request: `Invalid schema for function 'struct_index': In
-;; context=('properties', 'paths', 'items', 'anyOf', '1'), 'required' is required
-;; to be supplied and to be an array including every key in properties. Missing
-;; 'ranges'.` Vis used to stamp `:strict true` on every schema it judged
-;; grammar-samplable — a judgement calibrated on ANTHROPIC's subset, which allows
-;; an optional property and a real `minItems` bound. Nothing is advertised strict.
-(defdescribe
-  unconstrained-tools-test
-  (it "the very shape an OpenAI-compatible wire refused is advertised untouched"
-      (let
-        [schema
-         {:type "object"
-          :properties {"paths" {:type "array"
-                                :minItems 1
-                                :items {:anyOf [{:type "string"}
-                                                {:type "object"
-                                                 :properties {"path" {:type "string"}
-                                                              "ranges" {:type "array"
-                                                                        :items {:type "integer"}}}
-                                                 :required ["path"]
-                                                 :additionalProperties false}]}}}
-          :required ["paths"]
-          :additionalProperties false}
-
-         tool
-         (extension/advertise-tool {:name "struct_index" :description "d" :schema schema})]
-
-        (expect (nil? (:strict tool)))
-        (expect (= schema (:schema tool)))))
-  (it "a closed, fully-required scalar schema is not advertised strict either"
-      ;; This one is inside EVERY provider's strict subset, and the flag is gone
-      ;; regardless: no advertised tool depends on which wire built the request.
-      (let
-        [tool (extension/advertise-tool {:name "scalars"
-                                         :description "d"
-                                         :schema {:type "object"
-                                                  :properties {"q" {:type "string"}}
-                                                  :required ["q"]
-                                                  :additionalProperties false}})]
-        (expect (nil? (:strict tool)))
-        (expect (= #{:name :description :schema} (set (keys tool)))))))
-
 ;; ── ONE context for the extension and the session (issue #104) ────────────────
 ;;
 ;; Regression, issue #104: each callback site installed its OWN SUBSET of the
@@ -739,3 +406,50 @@
 
                    (expect (= draft-root (get result "root")))
                    (expect (= draft-root (get result "env-root"))))))
+
+;; Phase 2: a function is reached by TYPING its name in a python block, so the
+;; registry may not carry a second, schema-shaped door beside that name. This
+;; walks the LIVE registry rather than a fixture, so a symbol that quietly
+;; re-grows a JSON Schema (or a `native-tool?` flag) fails here.
+(defdescribe every-function-is-a-python-name-test
+             (it "registers no schema and no native-tool flag on any symbol"
+                 ;; Reading the docs table loads the built-in extensions, so the walk
+                 ;; below sees the same registry a live session does.
+                 (extension/sandbox-symbol-docs)
+                 (let
+                   [entries
+                    (into [] (mapcat extension/ext-symbols) (extension/registered-extensions))
+
+                    dead-keys
+                    (into #{}
+                          (comp (mapcat keys)
+                                (filter (fn [k]
+                                          ;; `:ext.symbol/call` STAYS: it maps a kwargs dict onto
+                                          ;; positional params for a PYTHON call, and is not a schema.
+                                          (contains? #{:ext.symbol/schema :ext.symbol/native-tool?
+                                                       :ext.symbol/replay}
+                                                     k))))
+                          entries)]
+
+                   (expect (< 20 (count entries)))
+                   (expect (= #{} dead-keys))))
+             (it "binds every doc-bearing symbol under a bare Python name"
+                 (let
+                   [docs
+                    (extension/sandbox-symbol-docs)
+
+                    bound
+                    (set (keys (extension/builtin-sandbox-bindings (fn []
+                                                                     nil))))]
+
+                   (expect (seq docs))
+                   (doseq [sym (keys docs)]
+                     ;; A name the model can type: one segment, munged to underscores
+                     ;; when it reaches the sandbox (`_shell-stop` -> `_shell_stop`).
+                     (expect (re-matches #"[A-Za-z_][A-Za-z0-9_-]*" (name sym)) (str sym)))
+                   ;; Every bound door is DOCUMENTED — `doc(name)` is the only contract
+                   ;; a function has now, so a binding without one is unreachable prose.
+                   ;; (The reverse does not hold: an aliased extension such as MCP's
+                   ;; `call` documents itself here and binds as `mcp__call` per turn.)
+                   (doseq [sym bound]
+                     (expect (contains? (set (keys docs)) sym) (str sym))))))

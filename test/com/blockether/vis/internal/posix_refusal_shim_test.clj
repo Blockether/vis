@@ -72,7 +72,7 @@
         (let [msg (raised ctx "subprocess.run(['echo','hi'])")]
           (expect (some? msg))
           (expect (str/includes? msg "DISABLED"))
-          (expect (str/includes? msg "`shell` tool"))
+          (expect (str/includes? msg "`shell` is not bound"))
           (expect (str/includes? msg "Shell commands")))))
   ;; Regression, discovery audit: with the toggle off the whole `shell` group left
   ;; `apropos`, so a shell-shaped query answered "no unadvertised capabilities
@@ -90,7 +90,7 @@
           (expect (str/includes? (table q) (get ep/PROCESS_SURFACE "off")) q)
           (expect (str/includes? (table q) (get ep/PROCESS_SURFACE "extension")) q))
         ;; A query that is not shell-shaped keeps the plain miss.
-        (expect (= "apropos('mcp'): no unadvertised capabilities match." (table "mcp")))))
+        (expect (= "apropos('mcp'): nothing matches." (table "mcp")))))
   (it "says nothing about the extension door while the shell tool is bound"
       (let [^Context ctx (shell-bound-context)]
         (expect (not (str/includes? (.asString
@@ -132,7 +132,7 @@
         (let [ctx (:python-context (ep/create-python-context {}))]
           (.eval ctx "python" "import subprocess")
           (expect (= off (raised ctx "subprocess.run('ls')")))
-          (expect (= off (raised ctx "__VisShell__({'id': 'p1'}).status()"))))))
+          (expect (= off (raised ctx "__VisShell__({'id': 'p1'}).logs()"))))))
   (it "keeps the wording out of the Python files that say it"
       ;; All of them read `__vis_process_surface__`; a literal copy in any file is a
       ;; second source of truth that drifts on the next edit.

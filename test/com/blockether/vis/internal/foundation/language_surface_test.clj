@@ -1,7 +1,6 @@
 (ns com.blockether.vis.internal.foundation.language-surface-test
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
             [com.blockether.vis.internal.foundation.language-surface :as language-surface]
             [com.blockether.vis.internal.process-jail :as process-jail]
@@ -68,24 +67,6 @@
         (expect (= 2 (get result "total")))
         (expect (nat-int? (get result "ms")))
         (expect (nil? (get envelope "ms")))))
-  (it "parks the test run OUTSIDE the native tool wall"
-      (let
-        [parked
-         (atom 0)
-
-         env
-         (assoc (fake-env [{:language "clojure"
-                            :test-fn (fn [_ arg]
-                                       {:success? true :result {:arg arg}})}])
-           :vis/outside-tool-wall (fn [thunk]
-                                    (swap! parked inc)
-                                    (thunk)))
-
-         r
-         (language-surface/run-tests env {"ns" "x"})]
-
-        (expect (= 1 @parked))
-        (expect (= {"ns" "x"} (get-in r [:result :arg])))))
   (it "passes clj_repl-shaped repl op and opts to language handlers"
       (let
         [env (fake-env [{:language "clojure"
@@ -118,14 +99,8 @@
         (expect (= :language-surface/removed-op (:type (refuses "clojure" "restart" {}))))
         (expect (= :language-surface/removed-op (:type (refuses "clojure" "main" "restart" {}))))
         (expect (= :language-surface/removed-op (:type (refuses {"op" "restart" "cwd" "ext"}))))
-        (expect (= ["connect" "start" "status" "stop"] (:allowed (refuses "restart"))))
-        (expect (not (contains? (set (get-in language-surface/start-repl-symbol
-                                             [:ext.symbol/schema :properties "op" :enum]))
-                                "restart")))))
-  (it "advertises explicit lifecycle op and no repl_eval auto-start"
-      (expect (= ["start" "connect" "stop" "status"]
-                 (get-in language-surface/start-repl-symbol
-                         [:ext.symbol/schema :properties "op" :enum])))
+        (expect (= ["connect" "start" "status" "stop"] (:allowed (refuses "restart"))))))
+  (it "documents the explicit REPL lifecycle in its own doc text"
       (let
         [start
          (:ext.symbol/description language-surface/start-repl-symbol)
@@ -149,13 +124,7 @@
         (expect (not (str/includes? (:ext.symbol/result language-surface/test-symbol)
                                     "always present")))
         (expect (str/includes? stop "managed REPL you started"))
-        (expect (str/includes? stop "never killed")))
-      (expect (not (str/includes? (get-in language-surface/repl-eval-symbol
-                                          [:ext.symbol/schema :properties "cwd" :description])
-                                  "auto-start"))))
-  (it "keeps every native language input schema closed"
-      (doseq [s language-surface/symbols]
-        (expect (false? (get-in s [:ext.symbol/schema :additionalProperties])))))
+        (expect (str/includes? stop "never killed"))))
   (it "accepts language-first calls for repl eval"
       (let
         [seen
@@ -434,31 +403,6 @@
                    (expect (= "full suite" (target {})))
                    (expect (= "full suite" (target {"paths" [] "only" [nil ""] "filter" "   "}))))))
 
-;; Regression, session d92fe644-0519-44a7-8225-2be882542566: a full run_tests call
-;; stayed invisible behind the last planning line until the whole suite returned.
-(defdescribe render-test-call-test
-             (it "publishes the selected test run as soon as the call starts"
-                 (let
-                   [render (get (extension/native-tool-start-call-renderers
-                                  [{:ext/engine {:ext.engine/symbols
-                                                 [language-surface/test-symbol]}}])
-                                "run_tests")]
-                   (expect (fn? render))
-                   (when render
-                     (expect (= {:summary "clojure — full suite (running)"
-                                 :render (str "**SELECTION**\n" "```\n"
-                                              "language: clojure\n" "scope: full suite\n"
-                                              "environment: project\n" "```")}
-                                (render {"language" "clojure"
-                                         "paths" []
-                                         "namespaces" []
-                                         "only" []
-                                         "include" []
-                                         "exclude" []
-                                         "filter" ""
-                                         "cwd" ""
-                                         "environment" "project"})))))))
-
 (defdescribe render-repl-start-result-test
              (let [render #'language-surface/render-repl-start-result]
                (it "surfaces failed startup details instead of a bare starting line"
@@ -549,58 +493,6 @@
           (expect (str/includes? body "**FORM**"))
           (expect (str/includes? body "(loop [] (recur))"))))))
 
-(defdescribe format-schema-advertises-recursion-test
-             (it "format_code schema + doc advertise directory recursion and the omit-all default"
-                 (let
-                   [props
-                    (get-in language-surface/format-symbol [:ext.symbol/schema :properties])
-
-                    paths-desc
-                    (get props "paths" ::missing)
-
-                    doc
-                    (:ext.symbol/doc language-surface/format-symbol)]
-
-                   ;; a directory in :paths is walked recursively for source files
-                   (expect (re-find #"(?i)recursiv" (:description paths-desc)))
-                   (expect (re-find #"(?i)director" (:description paths-desc)))
-                   ;; omitting everything formats the workspace default source paths
-                   (expect (re-find #"(?i)OMIT" (:description paths-desc)))
-                   ;; PLURAL ONLY: no singular `path` twin beside `paths`
-                   (expect (nil? (get props "path")))
-                   ;; the facade docstring documents both behaviours too
-                   (expect (re-find #"(?i)recursiv" doc))
-                   (expect (re-find #"(?i)default source paths" doc))))
-             (it "lint_code + run_tests schemas already advertise dirs/files"
-                 (let
-                   [lint-paths
-                    (get-in language-surface/lint-symbol
-                            [:ext.symbol/schema :properties "paths" :description])
-
-                    test-paths
-                    (get-in language-surface/test-symbol
-                            [:ext.symbol/schema :properties "paths" :description])]
-
-                   (expect (str/includes? lint-paths "files/dirs"))
-                   (expect (re-find #"(?i)dirs/files" test-paths))
-                   ;; PLURAL ONLY here too
-                   (expect (nil? (get-in language-surface/lint-symbol
-                                         [:ext.symbol/schema :properties "path"])))))
-             (it "run_tests is a direct native handler, not Python-watchdog-bound"
-                 (let
-                   [handlers (extension/native-tool-handlers
-                               [{:ext/engine {:ext.engine/symbols [language-surface/test-symbol]}}]
-                               (fake-env []))]
-                   (expect (contains? handlers "run_tests"))))
-             ;; REGRESSION #93: the graalpy backend's own hint tells the agent to
-             ;; re-run with {"environment": "project"} — a strict schema that omits
-             ;; `environment` rejects the call that hint asks for.
-             (it "run_tests advertises the generic project environment selector"
-                 (let [schema (:ext.symbol/schema language-surface/test-symbol)]
-                   (expect (false? (:additionalProperties schema)))
-                   (expect (= "string" (get-in schema [:properties "environment" :type])))
-                   (expect (= ["project"] (get-in schema [:properties "environment" :enum]))))))
-
 (defdescribe
   render-lint-result-names-target-test
   (let [render #'language-surface/render-lint-result]
@@ -673,50 +565,12 @@
 (defdescribe
   language-process-jail-refresh-test
   (it "refreshes the session jail before a test handler launches a process"
-      (let [env
-            (fake-env [{:language "clojure"
-                        :test-fn (fn [handler-env _]
-                                   {:success? true
-                                    :result {:launch? (boolean (seq (:argv
-                                                                      (vis/session-process-launch
-                                                                        (:session-id handler-env)
-                                                                        ["clojure"
-                                                                         "-Sdescribe"]))))}})}])
-
-            session-id
-            (:session-id env)
-
-            result
-            (try (language-surface/run-tests env {})
-                 (finally (process-jail/unregister-session-jail! session-id)))]
-
-        (expect (true? (get-in result [:result :launch?])))))
-  (it "refreshes the session jail before repl_eval can auto-start a REPL"
-      (let [env
-            (fake-env [{:language "clojure"
-                        :repl-eval-fn (fn [handler-env _]
-                                        {:success? true
-                                         :result {:launch? (boolean
-                                                             (seq (:argv (vis/session-process-launch
-                                                                           (:session-id handler-env)
-                                                                           ["clojure"
-                                                                            "-Sdescribe"]))))}})}])
-
-            session-id
-            (:session-id env)
-
-            result
-            (try (language-surface/repl-eval env "(+ 1 1)")
-                 (finally (process-jail/unregister-session-jail! session-id)))]
-
-        (expect (true? (get-in result [:result :launch?])))))
-  (it "refreshes the session jail before starting a REPL"
-      (let [env
-            (fake-env [{:language "clojure"
-                        :start-repl-fn (fn [handler-env _ _]
-                                         {:success? true
-                                          :result {:launch?
-                                                   (boolean (seq (:argv (vis/session-process-launch
+      (let
+        [env
+         (fake-env [{:language "clojure"
+                     :test-fn (fn [handler-env _]
+                                {:success? true
+                                 :result {:launch? (boolean (seq (:argv (vis/session-process-launch
                                                                           (:session-id handler-env)
                                                                           ["clojure"
                                                                            "-Sdescribe"]))))}})}])
@@ -724,9 +578,47 @@
          session-id
          (:session-id env)
 
-            result
-            (try (language-surface/start-repl env "start")
-                 (finally (process-jail/unregister-session-jail! session-id)))]
+         result
+         (try (language-surface/run-tests env {})
+              (finally (process-jail/unregister-session-jail! session-id)))]
+
+        (expect (true? (get-in result [:result :launch?])))))
+  (it "refreshes the session jail before repl_eval can auto-start a REPL"
+      (let
+        [env
+         (fake-env [{:language "clojure"
+                     :repl-eval-fn
+                     (fn [handler-env _]
+                       {:success? true
+                        :result {:launch? (boolean (seq (:argv (vis/session-process-launch
+                                                                 (:session-id handler-env)
+                                                                 ["clojure" "-Sdescribe"]))))}})}])
+
+         session-id
+         (:session-id env)
+
+         result
+         (try (language-surface/repl-eval env "(+ 1 1)")
+              (finally (process-jail/unregister-session-jail! session-id)))]
+
+        (expect (true? (get-in result [:result :launch?])))))
+  (it "refreshes the session jail before starting a REPL"
+      (let
+        [env
+         (fake-env [{:language "clojure"
+                     :start-repl-fn
+                     (fn [handler-env _ _]
+                       {:success? true
+                        :result {:launch? (boolean (seq (:argv (vis/session-process-launch
+                                                                 (:session-id handler-env)
+                                                                 ["clojure" "-Sdescribe"]))))}})}])
+
+         session-id
+         (:session-id env)
+
+         result
+         (try (language-surface/start-repl env "start")
+              (finally (process-jail/unregister-session-jail! session-id)))]
 
         (expect (true? (get-in result [:result :launch?]))))))
 

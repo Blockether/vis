@@ -512,11 +512,10 @@ const total = add(1, 2);")
                          (it (str (name label) " no longer ships as a :raw? helper")
                              (expect (not (true? (:ext.symbol/raw? sym-entry))))))))
 
-(defdescribe native-contract-test
-             (it "keeps research routing compact and every input schema closed"
+(defdescribe sandbox-contract-test
+             (it "keeps research routing compact"
                  (doseq [s search/search-symbols]
-                   (expect (< (count (:ext.symbol/description s)) 500))
-                   (expect (false? (get-in s [:ext.symbol/schema :additionalProperties]))))))
+                   (expect (< (count (:ext.symbol/description s)) 500)))))
 
 (defdescribe
   extension-shape-test
@@ -635,9 +634,9 @@ const total = add(1, 2);")
                               (expect (= "(println :ok)\n" (slurp (io/file path "src/app.clj")))))))
                         (finally (doseq [f (reverse (file-seq workspace))]
                                    (io/delete-file f true))))))
-             (it "exposes a closed sandbox schema with a workspace-relative destination"
-                 (expect (= ["repository"]
-                            (get-in search/download-archive-symbol [:ext.symbol/schema :required])))
-                 (expect (contains? (get-in search/download-archive-symbol
-                                            [:ext.symbol/schema :properties])
-                                    "directory"))))
+             ;; With no JSON Schema left, `doc(name)` is the ONLY place the call's
+             ;; arguments are stated — so the doc text names them itself.
+             (it "documents its required repository and workspace-relative destination"
+                 (let [text (str (:ext.symbol/description search/download-archive-symbol))]
+                   (expect (str/includes? text "`repository`"))
+                   (expect (str/includes? text "`directory`")))))
