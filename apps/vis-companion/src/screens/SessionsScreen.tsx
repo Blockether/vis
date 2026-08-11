@@ -2015,7 +2015,7 @@ const SessionRow = memo(function SessionRow({
           <button
             type="button"
             autoFocus
-            className="flex flex-1 items-center justify-center border-r border-dialog-edge bg-panel-2 font-mono text-meta font-bold uppercase tracking-[0.08em] text-accent-ink transition-colors duration-150 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none"
+            className="flex flex-1 items-center justify-center bg-panel-2 font-mono text-meta font-bold uppercase tracking-[0.08em] text-white/70 transition-colors duration-150 hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none"
             onClick={onCancelDelete}
           >
             No, keep it
@@ -2023,7 +2023,7 @@ const SessionRow = memo(function SessionRow({
           <button
             type="button"
             disabled={deleteBusy}
-            className="flex flex-1 items-center justify-center bg-err/15 font-mono text-meta font-bold uppercase tracking-[0.08em] text-err transition-colors duration-150 hover:bg-err hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 disabled:opacity-60 motion-reduce:transition-none"
+            className="flex flex-1 items-center justify-center border-l border-err-edge bg-err-surface font-mono text-meta font-bold uppercase tracking-[0.08em] text-err-ink transition-colors duration-150 hover:bg-err hover:text-white active:bg-err active:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-err/70 disabled:opacity-60 motion-reduce:transition-none"
             onClick={onConfirmDelete}
           >
             {deleteBusy ? 'Deleting...' : live ? 'Yes, stop and delete' : 'Yes, delete'}

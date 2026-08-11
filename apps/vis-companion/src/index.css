@@ -169,6 +169,21 @@
   --color-warn-surface: var(--warning-bg);
   --color-warn-edge: var(--warning-border);
   --color-err: var(--err);
+  /* A destructive answer that lives INSIDE the list cannot wear raw --err.
+     Poured full-bleed across half a row, that slab is the heaviest mass on the
+     screen and outweighs the live badge, the accent buttons and the title it is
+     asking about — the list reads as an alarm, not as a question. So red is
+     split the way amber and green already are: a SURFACE tinted into the row's
+     own paper, an EDGE that separates the two answers, and --color-err kept as
+     the INK on top of it. Full-strength --err is then spent only on press,
+     where the destructive commit actually happens. */
+  --color-err-surface: color-mix(in oklab, var(--err) 14%, var(--surface));
+  --color-err-edge: color-mix(in oklab, var(--err) 42%, var(--surface));
+  /* --err is a BADGE fill, not ink: #dc2626 on that 14% surface measures
+     3.68:1, under the 4.5 a 10px bold label owes. Bent toward the theme's own
+     ink it stays unmistakably red and reads: light 5.9:1, dark on the dark
+     surface the same way, because --fg flips with the palette. */
+  --color-err-ink: color-mix(in oklab, var(--err) 68%, var(--fg));
   --color-dialog-title: var(--dialog-title-bg);
   --color-dialog-title-foreground: var(--dialog-title-fg);
   --color-dialog-edge: var(--dialog-border);
