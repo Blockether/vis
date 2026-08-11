@@ -1685,6 +1685,56 @@
                      (expect (nil? (:submitted-input acked)))))))
 
 
+(defdescribe failed-turn-refill-test
+             ;; A provider-FAILURE terminal (overloaded / rate-limited, retries
+             ;; exhausted) must hand the failed prompt BACK to the composer — one
+             ;; Enter re-sends it — while keeping the error bubble the user needs
+             ;; to read. Before this, a failed turn dropped :submitted-input and
+             ;; the text was lost, so recovery meant retyping. The failed turn is
+             ;; never auto-replayed by the gateway; the refill IS the retry.
+             (let
+               [handler
+                (fn [id] (-> #'state/event-registry deref deref (get id) :fn))
+
+                pending-id "client-1"
+
+                running-db
+                {:active-tab-id :main
+                 :session {:id "s1"}
+                 :loading? true
+                 :turn-start-ms 1000
+                 :input (input/empty-input)
+                 :messages [{:role :user :text "first" :client-turn-id pending-id}
+                            {:role :assistant :pending? true :client-turn-id pending-id}]
+                 :progress {:iterations [{:n 1 :blocks [{:kind :tool}]}]}
+                 :submitted-input {:text "first" :pastes {} :paste-counter 0}
+                 :pending-sends []}
+
+                failed
+                (:db ((handler :message-received)
+                       running-db
+                       [:message-received :main
+                        [:ast {} [:p {} [:span {} "Provider gateway unavailable"]]]
+                        {:status :failed :client-turn-id pending-id}]))]
+
+               (it "hands the failed prompt back to the composer"
+                   (expect (= "first" (input/input->text (:input failed)))))
+               (it "clears the submitted-input snapshot once refilled"
+                   (expect (nil? (:submitted-input failed))))
+               (it "keeps the failure bubble instead of dropping it"
+                   (expect (seq (:messages failed))))
+               (it "settles the turn (no longer loading)"
+                   (expect (false? (:loading? failed))))
+               (it "never overwrites a newer draft typed while the failure settles"
+                   (let [typed (assoc running-db :input (#'state/text->input-state "new idea"))
+                         out (:db ((handler :message-received)
+                                    typed
+                                    [:message-received :main
+                                     [:ast {} [:p {} [:span {} "Provider gateway unavailable"]]]
+                                     {:status :failed :client-turn-id pending-id}]))]
+                     (expect (= "new idea" (input/input->text (:input out))))))))
+
+
 (defdescribe cancel-self-heal-test
              ;; REGRESSION (design edge): `:cancel-turn` flips `:cancelling?` and
              ;; waits for the daemon's terminal `turn.completed` (cancelled) event

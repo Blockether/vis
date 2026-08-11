@@ -4987,6 +4987,14 @@
                 cancelled?
                 (= :cancelled status)
 
+                ;; A provider-failure terminal (overloaded/rate-limited, retries
+                ;; exhausted, etc.). The failed turn is never auto-replayed, so
+                ;; the humane recovery is to hand its prompt BACK to the composer
+                ;; — one Enter re-sends it — instead of dropping the text and
+                ;; leaving the user to retype what they just wrote.
+                failed?
+                (= :failed status)
+
                 ;; Cancelling the local attach worker can synthesize this result before
                 ;; the HTTP cancel reaches the daemon. Keep the turn gate armed until the
                 ;; generation-matched :gateway-cancel-result confirms server acceptance;
@@ -5070,7 +5078,14 @@
                     ;; the user can edit/resubmit the prompt that
                     ;; produced this trace without retyping.
                     ws-final
-                    (if (and cancelled? (:submitted-input workspace) (not no-work?))
+                    (if (and (:submitted-input workspace)
+                             (or (and cancelled? (not no-work?))
+                                 ;; A FAILURE keeps its error bubble (the provider
+                                 ;; card the user needs to read) AND refills the
+                                 ;; editor from the snapshot, so "overloaded, retry"
+                                 ;; is one Enter away — the failed turn is never
+                                 ;; auto-replayed, so this refill IS the retry.
+                                 failed?))
                       (restore-editor-only workspace' (:submitted-input workspace))
                       (cond-> workspace'
                         (not still-pending?)

@@ -6279,7 +6279,13 @@
            {:line (str hint-marker
                        "⚠ held — "
                        (str/replace (str (or (:reason paused-info) "provider unhealthy")) #"_" " ")
-                       " · resumes automatically")
+                       ;; A breaker-open hold (provider unhealthy) DOES resume on
+                       ;; its own when the provider recovers. A turn-failure hold
+                       ;; does NOT auto-resume — the failed prompt is handed back
+                       ;; to the composer and a new send un-wedges the backlog.
+                       (if (:is-breaker-open paused-info)
+                         " · resumes automatically"
+                         " · send a message to continue"))
             :meta nil})]
 
         (vec (concat [{:line "" :meta nil} {:line hdr-line :meta nil}]
@@ -6363,12 +6369,17 @@
       ;; non-blank row, so the fold-boundary invariant holds).
       spinner-line
       (if queue-held?
+        ;; Recovery is a NEW submit, NOT a replay: the failed turn is never
+        ;; re-run (see gateway `resume-queue!`). A fresh message bypasses the
+        ;; pause — `submit-turn!` starts it immediately when idle — and its
+        ;; success auto-resumes the queue, draining anything still held. So the
+        ;; honest, actionable hint is "send a message", never "retry".
         (str "⏸  Paused — the previous turn failed; nothing is running"
              (let [held (:held queue-paused)]
                (if (and (number? held) (pos? (long held)))
                  (str " (" held " held)." )
                  "."))
-             "  Retry the failed turn to continue.")
+             "  Send a message to continue.")
         (str (spinner-frame now-ms)
              "  "
              (progress-phase iterations cancelling? command-label)
