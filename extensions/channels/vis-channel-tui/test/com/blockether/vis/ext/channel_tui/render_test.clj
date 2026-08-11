@@ -1072,6 +1072,48 @@
         (expect (str/includes? body "Vis is calling the provider"))
         (expect (str/includes? body "please also check logs"))
         (expect (not (str/includes? body "queued update")))))
+  (it "a HELD turn (queue paused, prior turn failed) shows Paused, not a live provider spinner"
+      ;; Regression: vis session 6d764784 — a turn parked behind a paused queue
+      ;; (previous turn failed) rendered "Vis is calling the provider… 29m" with
+      ;; a ticking clock, reading as an infinite hang. A held, not-started turn
+      ;; must never claim a provider call is in flight.
+      (let
+        [payload
+         (render/progress->lines-data
+           {:iterations []}
+           80
+           {:show-thinking true :show-iterations true}
+           {:now-ms 1780000 :turn-start-ms 0
+            :queue-paused {:reason "turn_failed" :held 1 :gen 1 :at 0}})
+
+         body
+         (strip-ansi (str/join "\n" (:lines payload)))]
+
+        ;; the honest hold, not an active call
+        (expect (str/includes? body "Paused"))
+        (expect (str/includes? body "previous turn failed"))
+        ;; no phantom "calling the provider" and no ticking elapsed clock
+        (expect (not (str/includes? body "Vis is calling the provider")))
+        (expect (not (str/includes? body "Esc to cancel")))
+        (expect (not (str/includes? body "29m")))))
+  (it "a RUNNING turn with real iterations still shows the live spinner even if the queue is paused"
+      ;; Guard the guard: `queue-paused` only suppresses the spinner for a
+      ;; not-started (zero-iteration) held turn. A turn that has produced
+      ;; iterations is genuinely in flight and must keep its live spinner.
+      (let
+        [payload
+         (render/progress->lines-data
+           {:iterations [{:iteration 1 :activity :response-parse}]}
+           80
+           {:show-thinking true :show-iterations true}
+           {:now-ms 1000 :turn-start-ms 0
+            :queue-paused {:reason "turn_failed" :held 1 :gen 1 :at 0}})
+
+         body
+         (strip-ansi (str/join "\n" (:lines payload)))]
+
+        (expect (str/includes? body "Vis is parsing model response (iter 1)"))
+        (expect (not (str/includes? body "Paused")))))
   (it "distinguishes response parsing from provider waiting"
       (let
         [payload

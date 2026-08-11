@@ -6344,18 +6344,38 @@
       elapsed-str
       (or (vis/format-duration elapsed-ms) "0ms")
 
+      ;; A HELD turn is not running: the queue paused because a PRIOR turn
+      ;; failed, so this turn never started and no provider call is in flight.
+      ;; `queue-paused` + zero iterations is the phantom: a real just-started
+      ;; turn resumes the queue (clearing `queue-paused`) before it reaches the
+      ;; provider, so an empty-iteration bubble under a paused queue is always
+      ;; the held one. Regression: vis session 6d764784 painted "Vis is calling
+      ;; the provider… 29m" with a ticking clock for exactly this held turn,
+      ;; reading as an infinite hang.
+      queue-held?
+      (boolean (and queue-paused (empty? iterations) (not cancelling?)))
+
       ;; The ONLY per-tick-volatile row: it embeds the animated spinner
       ;; glyph + elapsed clock, both a pure function of `now-ms`. Always
       ;; non-blank (glyph + phase text), which is what lets the body split
-      ;; below stay byte-identical to a single-pass coalesce.
+      ;; below stay byte-identical to a single-pass coalesce. For a HELD turn
+      ;; there is nothing to animate or time — show the hold honestly (still one
+      ;; non-blank row, so the fold-boundary invariant holds).
       spinner-line
-      (str (spinner-frame now-ms)
-           "  "
-           (progress-phase iterations cancelling? command-label)
-           "...  "
-           elapsed-str
-           (or (progress-error-segment iterations) "")
-           "  /  Esc to cancel")
+      (if queue-held?
+        (str "⏸  Paused — the previous turn failed; nothing is running"
+             (let [held (:held queue-paused)]
+               (if (and (number? held) (pos? (long held)))
+                 (str " (" held " held)." )
+                 "."))
+             "  Retry the failed turn to continue.")
+        (str (spinner-frame now-ms)
+             "  "
+             (progress-phase iterations cancelling? command-label)
+             "...  "
+             elapsed-str
+             (or (progress-error-segment iterations) "")
+             "  /  Esc to cancel"))
 
       line-entry
       (fn [line]
