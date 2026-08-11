@@ -1443,6 +1443,14 @@
             (update :exclude-globs rebase)
             (update :unignore-globs rebase))))
 
+(defn- outside-workspace?
+  "True when `rel-path` answered an ABSOLUTE path for the listed directory — the one
+   signal that it lies outside the workspace and outside every context-clone
+   mapping. Such a directory has no warm index to ride and no `vis.yml` overlay to
+   rebase, so nothing there is worth an index: `ls` LISTS it."
+  [target-rel]
+  (str/starts-with? (str target-rel) "/"))
+
 (defn- warm-ls-lease
   "The pooled WORKSPACE-root index — the one `grep` and `find` already keep hot — but
    ONLY when it is ALREADY built. Reusing it turns `ls` of a subdirectory into a page
@@ -1473,7 +1481,7 @@
    coverage, so an empty-but-indexed directory answers here instead of paying for a
    fallback index."
   [^File root target-rel ^long levels is-hidden?]
-  (when (and (seq target-rel) (not (str/starts-with? (str target-rel) "/")))
+  (when (and (seq target-rel) (not (outside-workspace? target-rel)))
     (when-let [lease (warm-ls-lease)]
       (let
         [prefix (str target-rel "/")
@@ -1496,8 +1504,8 @@
 
 (defn- fff-ls-target-items
   "Listing rows from an index rooted AT the listed directory: the fallback that keeps
-   an explicitly named ignored directory readable, and the only source for a
-   directory outside the workspace."
+   an explicitly named ignored directory (`target/`, `node_modules/` …) readable
+   INSIDE the workspace."
   [^File root target-rel ^long levels is-hidden?]
   (fff-index/with-index [idx (fff-index/lease root true (fff-ls-overlay target-rel))]
                         (fff-ls-records idx "" (fff-ls-keeper root "" levels is-hidden?))))
@@ -1522,16 +1530,21 @@
   "Directory listing as MODEL data, powered by fff — never a filesystem walk.
 
    fff owns `.gitignore`, `.ignore`, `.rgignore`, and the live `vis.yml` grep overlay;
-   this code only rebuilds the documented tree shape. Three fff sources, cheapest
-   first:
+   this code only rebuilds the documented tree shape. Four fff sources, and which
+   one answers is decided FIRST by whether the directory is even ours:
 
-   1. the WARM workspace index `grep`/`find` already maintain, prefix-filtered — no
-      new index and no new watcher;
-   2. otherwise an index rooted at the directory itself, which is also what keeps a
-      directly listed ignored directory readable, as it was before;
-   3. and, only when fff refuses to INDEX that root (`fff-unavailable`: a filesystem
-      root or a home directory), fff's own stateless listing — `fff-ls-listing-items`,
-      which builds no index and so is never refused.
+   1. a directory OUTSIDE the workspace is LISTED, never indexed — naming a few
+      entries must not cost a recursive walk, a live filesystem watcher and a
+      bigram CONTENT index over whatever lives there. `~/.vis/models` is ~790 MB
+      of model weights, and indexing it to answer `ls` is what turned that
+      listing into minutes and then a `fff-scan-timeout`;
+   2. inside the workspace, the WARM workspace index `grep`/`find` already
+      maintain, prefix-filtered — no new index and no new watcher;
+   3. otherwise an index rooted at the directory itself, which is also what keeps
+      a directly listed ignored directory readable, as it was before;
+   4. and, when fff refuses to INDEX that root (`fff-unavailable`: a filesystem
+      root or a home directory), the stateless listing again —
+      `fff-ls-listing-items` builds no index and so is never refused.
 
    Records are depth-filtered inside the paging loop (`fff-ls-scan`), so cost tracks
    the rows RETURNED rather than the size of the tree, and rendered paths are joined
@@ -1555,12 +1568,14 @@
      (boolean is_hidden)
 
      items
-     (or (fff-ls-workspace-items root target-rel levels is-hidden?)
-         (try (fff-ls-target-items root target-rel levels is-hidden?)
-              (catch clojure.lang.ExceptionInfo e
-                (if (= :ext.foundation.editing/fff-unavailable (:type (ex-data e)))
-                  (fff-ls-listing-items root levels is-hidden?)
-                  (throw e)))))
+     (if (outside-workspace? target-rel)
+       (fff-ls-listing-items root levels is-hidden?)
+       (or (fff-ls-workspace-items root target-rel levels is-hidden?)
+           (try (fff-ls-target-items root target-rel levels is-hidden?)
+                (catch clojure.lang.ExceptionInfo e
+                  (if (= :ext.foundation.editing/fff-unavailable (:type (ex-data e)))
+                    (fff-ls-listing-items root levels is-hidden?)
+                    (throw e))))))
 
      render-prefix
      (if (= "." base) "" (str base "/"))

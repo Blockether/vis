@@ -5596,7 +5596,45 @@
 
               (expect (throws? clojure.lang.ExceptionInfo #(open-index! (java.io.File. ".")))))
             (expect @closed?)
-            (expect (= before (.availablePermits semaphore))))))))
+            (expect (= before (.availablePermits semaphore)))))
+      (it "reports the queue wait and the scan wait APART when it times out"
+          ;; `wait-for-scan` cannot tell "still walking your tree" from "never got
+          ;; a pool thread", and both are billed to the same 30s ceiling — so the
+          ;; error carries the two numbers instead of accusing the filesystem.
+          (let
+            [open-index!
+             (fff-index-fn "open!")
+
+             fake-idx
+             (reify
+               java.io.Closeable
+                 (close [_] nil))]
+
+            (with-redefs
+              [fff/create
+               (fn [_opts]
+                 fake-idx)
+
+               fff/wait-for-scan
+               (fn [_idx _timeout]
+                 false)]
+
+              (let
+                [data (try (open-index! (java.io.File. "."))
+                           nil
+                           (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+                (expect (= :ext.foundation.editing/fff-scan-timeout (:type data)))
+                (expect (number? (:queued-ms data)))
+                (expect (number? (:scan-ms data)))
+                ;; the timing-out scan still holds its own permit
+                (expect (pos? (long (:scans-in-flight data))))))))
+      (it "never offers more permits than fff's own scan pool can START"
+          ;; fff runs every scan on ONE background pool
+          ;; (`crates/fff-core/src/parallelism.rs`: `max(cores / 2, 2)`), and a
+          ;; permit handed out past that width does not start a scan — it queues
+          ;; one, while `wait-for-scan` counts the wait against `scan-timeout-ms`.
+          (expect (pos? permits))
+          (expect (<= permits (fff-index-fn "fff-scan-pool-width")))))))
 
 (defdescribe
   fff-index-pool-test
@@ -6096,6 +6134,59 @@
                    {"path" "resources/vis-docs" "depth" 2 "is_hidden" true}]]
             (expect (seq (get ((private-fn "ls-one") spec) "entries")))))
         (expect (zero? @fresh)))))
+
+(defdescribe
+  ls-outside-workspace-test
+  "A directory OUTSIDE the workspace is LISTED, never indexed.
+
+   Reported as `ls`/`grep` of `~/.vis/models` taking minutes and then failing:
+   naming two subdirectories leased a FRESH fff index rooted at that directory,
+   which walks it, starts a watcher and builds a bigram CONTENT index over ~790 MB
+   of model weights, then throws `fff-scan-timeout` past the 30s ceiling.
+   `fff/list-directory` answers the same question with no index and no watcher at
+   all — and, unlike the index, it can actually see dotfiles."
+  (let
+    [list-dir
+     (private-fn "list-dir")
+
+     outside!
+     (fn []
+       (let [dir (fs/path (System/getProperty "java.io.tmpdir") "vis-ls-outside-test")]
+         (fs/delete-tree dir)
+         (fs/create-dirs (fs/path dir "sub" "deep"))
+         (spit (fs/file (fs/path dir "a.txt")) "a")
+         (spit (fs/file (fs/path dir ".hidden")) "h")
+         (spit (fs/file (fs/path dir "sub" "s.txt")) "s")
+         (.getCanonicalFile (fs/file dir))))
+
+     names
+     (fn [out]
+       (set (map #(get % "name") (get out "entries"))))]
+
+    (it "lists a directory outside the workspace without ever leasing an index"
+        (let
+          [root
+           (outside!)
+
+           out
+           (with-redefs
+             [editing/fff-ls-target-items
+              (fn [_ _ ^long _ _]
+                (throw (ex-info "ls must not index a directory outside the workspace" {})))]
+             (list-dir root {:depth 2}))]
+
+          (expect (= #{"sub" "a.txt"} (names out)))
+          ;; depth still descends through the stateless listing
+          (expect (= ["deep" "s.txt"]
+                     (mapv #(get % "name")
+                           (get (some #(when (= "sub" (get % "name")) %) (get out "entries"))
+                                "children"))))))
+    (it "shows dotfiles outside the workspace when asked"
+        ;; the per-directory index never held them, so `is_hidden` answered the
+        ;; same listing whether or not it was set
+        (let [root (outside!)]
+          (expect (contains? (names (list-dir root {:depth 1 :is_hidden true})) ".hidden"))
+          (expect (not (contains? (names (list-dir root {:depth 1})) ".hidden")))))))
 
 (defdescribe
   grep-large-file-and-deadline-test

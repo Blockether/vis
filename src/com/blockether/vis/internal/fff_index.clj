@@ -40,6 +40,23 @@
 ;; fff's on-disk mmap cache stays OFF (`:enable-mmap-cache? false`): that one
 ;; persists ACROSS processes with no watcher behind it.
 
+(def ^:private fff-scan-pool-width
+  "How many fresh fff scans can actually be RUNNING at once on this machine: the
+   width of fff's `BACKGROUND_THREAD_POOL`, the ONE rayon pool every fff instance
+   in this process scans on (`crates/fff-core/src/parallelism.rs`:
+   `bg_threads = max(total / 2, 2)` over `available_parallelism`, which is what
+   `availableProcessors` answers here).
+
+   Queue time and scan time are NOT the same thing, and fff cannot tell them
+   apart: `ScanJob::spawn` (`crates/fff-core/src/scan.rs`) stores
+   `scanning = true` on the CALLING thread and only then hands the job to the
+   pool, so `wait-for-scan` reports a job that has not started yet as scanning
+   and `scan-timeout-ms` is burned WAITING FOR A THREAD. Measured on a 14-core
+   machine (pool width 7), 10 concurrent scans of one 25k-file tree: 7 finished
+   in ~200 ms and the last 3 in ~1135 ms, while a 3-file directory whose own
+   scan costs 12 ms took 990 ms — all of it queue."
+  (max 2 (quot (.availableProcessors (Runtime/getRuntime)) 2)))
+
 (def ^:private scan-max-concurrency
   "Permit count for `scan-semaphore`: the max number of FRESH fff index
    scans (grep / struct_index — everything that goes through
@@ -50,8 +67,13 @@
    full-tree scans, N CPU-heavy scan groups grinding at once (the orphan-CPU
    shape). A small bound caps that blast radius while still overlapping enough
    scans to keep `gather` worthwhile. Cheap reads (cat / index) never spin an
-   index and are NEVER bounded — they don't pass through here."
-  4)
+   index and are NEVER bounded — they don't pass through here.
+
+   Never wider than `fff-scan-pool-width`: a permit handed out past fff's own
+   pool width does not start a scan, it PARKS one in fff's queue while our 30s
+   scan budget runs down, and the timeout then blames the tree for a scheduling
+   wait. On a 4-core laptop this is 2 permits, not 4."
+  (min 4 (long fff-scan-pool-width)))
 
 (defonce ^:private ^java.util.concurrent.Semaphore scan-semaphore
   ;; FAIR (true) so a queued burst of scans drains in arrival order — no scan
@@ -89,7 +111,12 @@
    scan completes. The caller owns the instance and must close it. The
    CPU-heavy build (create + scan) runs under `with-scan-permit*`, so no
    more than `scan-max-concurrency` fresh scans ever run at once — a
-   `gather(rg, …)` fan-out queues past the bound instead of stampeding.
+   `gather(rg, …)` fan-out queues past the bound instead of stampeding, and that
+   bound never exceeds fff's own scan-pool width, so a permit buys a RUNNING
+   scan instead of a place in fff's queue. A scan that still misses the ceiling
+   reports the two costs APART (`:queued-ms` waiting for a permit, `:scan-ms`
+   inside fff), because `your tree is slow` and `no thread was free` are
+   different problems.
 
    `overlay` (optional) is the caller's ignore overlay —
    `{:custom-ignore-filenames [\".rgignore\"] :exclude-globs [\"…\"] :unignore-globs [\"…\"]}` —
@@ -117,46 +144,67 @@
    (when-not (.isDirectory root)
      (throw (ex-info "rg fff index root must be a directory"
                      {:type :ext.foundation.editing/invalid-rg-root :path (.getPath root)})))
-   (with-scan-permit*
-     (fn []
-       (let
-         [k
-          (.getCanonicalPath root)
+   (let [requested-at (System/nanoTime)]
+     (with-scan-permit*
+       (fn []
+         (let
+           [queued-ms (quot (- (System/nanoTime) requested-at) 1000000)
+            k (.getCanonicalPath root)
+            idx (try (fff/create
+                       {:base-path k
+                        :watch? true
+                        :ai-mode? true
+                        :enable-content-indexing? true
+                        :enable-mmap-cache? false
+                        ;; content budget: fff skips files past this SILENTLY,
+                        ;; and its 10 MB default made grep miss needles that
+                        ;; live in big logs/dumps (issue #63 follow-up).
+                        :cache-budget-max-file-size max-content-file-size
+                        ;; see docstring — never open fff's LMDB dbs.
+                        :frecency-db-path nil
+                        :history-db-path nil
+                        :respect-ignore-files? (boolean respect-ignore-files?)
+                        ;; ignore overlay — fff honors it in BOTH the scan
+                        ;; walk and the live watcher, which is why vis no
+                        ;; longer walks trees in Clojure for `.rgignore` or
+                        ;; the `:grep` config overlay.
+                        :custom-ignore-filenames (:custom-ignore-filenames overlay)
+                        :exclude-globs (:exclude-globs overlay)
+                        :unignore-globs (:unignore-globs overlay)})
+                     (catch Throwable t
+                       (throw (ex-info
+                                (str "rg requires fff for directory search, but fff failed for " k)
+                                {:type :ext.foundation.editing/fff-unavailable :path k}
+                                t))))
+            scan-started-at (System/nanoTime)]
 
-          idx
-          (try (fff/create
-                 {:base-path k
-                  :watch? true
-                  :ai-mode? true
-                  :enable-content-indexing? true
-                  :enable-mmap-cache? false
-                  ;; content budget: fff skips files past this SILENTLY,
-                  ;; and its 10 MB default made grep miss needles that
-                  ;; live in big logs/dumps (issue #63 follow-up).
-                  :cache-budget-max-file-size max-content-file-size
-                  ;; see docstring — never open fff's LMDB dbs.
-                  :frecency-db-path nil
-                  :history-db-path nil
-                  :respect-ignore-files? (boolean respect-ignore-files?)
-                  ;; ignore overlay — fff honors it in BOTH the scan
-                  ;; walk and the live watcher, which is why vis no
-                  ;; longer walks trees in Clojure for `.rgignore` or
-                  ;; the `:grep` config overlay.
-                  :custom-ignore-filenames (:custom-ignore-filenames overlay)
-                  :exclude-globs (:exclude-globs overlay)
-                  :unignore-globs (:unignore-globs overlay)})
-               (catch Throwable t
-                 (throw (ex-info (str "rg requires fff for directory search, but fff failed for " k)
-                                 {:type :ext.foundation.editing/fff-unavailable :path k}
-                                 t))))]
+           (when-not (fff/wait-for-scan idx scan-timeout-ms)
+             (.close ^java.io.Closeable idx)
+             (let
+               [scan-ms (quot (- (System/nanoTime) scan-started-at) 1000000)
+                in-flight (- (long scan-max-concurrency)
+                             (long (.availablePermits ^java.util.concurrent.Semaphore
+                                                      scan-semaphore)))]
 
-         (when-not (fff/wait-for-scan idx scan-timeout-ms)
-           (.close ^java.io.Closeable idx)
-           (throw (ex-info "rg fff scan did not complete in time"
-                           {:type :ext.foundation.editing/fff-scan-timeout
-                            :path k
-                            :timeout-ms scan-timeout-ms})))
-         idx)))))
+               (throw
+                 (ex-info (str "rg fff scan did not complete in time for "
+                               k
+                               " — queued "
+                               queued-ms
+                               "ms for one of "
+                               scan-max-concurrency
+                               " scan permits, then "
+                               scan-ms
+                               "ms inside fff with "
+                               in-flight
+                               " scan(s) in flight")
+                          {:type :ext.foundation.editing/fff-scan-timeout
+                           :path k
+                           :timeout-ms scan-timeout-ms
+                           :queued-ms queued-ms
+                           :scan-ms scan-ms
+                           :scans-in-flight in-flight}))))
+           idx))))))
 
 (def ^:private pool-size
   "How many pooled fff indexes (root × ignore-policy) stay live at once. Each
