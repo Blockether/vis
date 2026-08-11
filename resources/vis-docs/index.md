@@ -34,28 +34,35 @@ The payoff is cost. A long task might touch forty steps, but only a handful
 stay "live" at any moment — the rest are folded to a sentence each. You pay for
 a working set, not a full transcript, on every turn.
 
-## Two gears: native tools and the Python sandbox
+## One gear: the Python sandbox
 
-Vis is hybrid by design, and the two modes trade off directness against context
-cost:
+Vis hands the model exactly ONE tool — `python_execution` — and everything else is
+a function inside it:
 
-- **Native tools** — call a tool directly and its result comes straight back.
-  Simple, low-latency, ideal for a quick read or a single edit on a small task.
+- **The sandbox** — every capability (`grep`, `struct_index`, `shell`, `attach`, a
+  skill, an MCP tool) is a bare Python name in an embedded GraalPython runtime. The
+  agent writes Python that runs many of them, filters and chains their output, and
+  `print()`s only the slice worth keeping. Ten file reads, one search, and a
+  transform happen in a single step — and the context only ever sees what the agent
+  chose to print.
 
-- **The Python sandbox** — engine-bound native tools are also callables inside
-  an embedded GraalPython runtime; native-only handlers are the exception. The agent writes Python that runs many tools,
-  filters and chains their output, and `print()`s only the slice worth keeping.
-  Ten file reads, one search, and a transform can happen in a single step — and
-  the context only ever sees what the agent chose to print.
+- **Why not many tools** — a JSON Schema per tool is a second, weaker copy of a
+  Python signature, pushed into every request whether it is used or not. One tool
+  means one schema, and a model that never has to guess which of eighteen doors to
+  open.
 
-That second gear is where context utilization drops on advanced tasks: the raw
-tool output lives in Python vars, never in the window, and the model decides
-what surfaces.
+That is where context utilization drops on advanced tasks: the raw tool output
+lives in Python vars, never in the window, and the model decides what surfaces.
 
-Native contracts have one source: tool descriptions own routing and semantics; JSON Schemas own exact inputs. The agent discovers the live surface with `apropos` → `doc`, then follows `struct_index` → `struct_nodes` (a node's verbatim source + zipper cursor) → `struct_patch` for supported code. See [Token optimization](token-optimization.md) and [Extending Vis](extending.md#native-tool-contracts).
+Contracts are PULLED, not pushed: `apropos(text)` is full-text search over every
+function docstring, documentation page, skill body and MCP tool description, and
+`doc(name)` returns the authoritative contract for one of them. From there,
+`struct_index` → `struct_nodes` (a node's verbatim source + zipper cursor) →
+`struct_patch` for supported code. See [Token
+optimization](token-optimization.md) and [Extending Vis](extending.md#one-tool-and-it-is-python_execution).
 
 ```text
-        NATIVE TOOL                    PYTHON SANDBOX
+      ONE TOOL PER RESULT                 PYTHON SANDBOX
    ┌───────────────────┐        ┌────────────────────────────┐
    │ cat(a)  ──► ctx    │        │ rows = [cat(f) for f in fs] │  20 files
    │ cat(b)  ──► ctx    │        │ hits = grep(rows, "TODO")   │  in vars
@@ -64,6 +71,7 @@ Native contracts have one source: tool descriptions own routing and semantics; J
      every result lands            the agent chooses what
      in the context window          reaches the context window
 ```
+
 
 ## Extensible
 

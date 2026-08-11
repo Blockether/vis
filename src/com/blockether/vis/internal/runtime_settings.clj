@@ -14,44 +14,6 @@
 
 (def MAX_EVAL_TIMEOUT_MS "Hard ceiling for :eval-timeout-ms." (* 30 60 1000))
 
-(def NATIVE_TOOL_TIMEOUT_MS
-  "Wall-clock fallback for Clojure-native tool handlers when the caller does not
-   request a `timeout_ms` — 30 seconds. Calls expected to take longer must
-   explicitly request a timeout or use a background workflow. Slow synchronous
-   SETUP (e.g. a cold project-REPL boot) runs OUTSIDE this wall via the loop's
-   `:vis/outside-tool-wall` hook, so it never bills against this budget."
-  30000)
-
-(def ^:private native-tool-timeout-grace-ms
-  "Room for a tool's own timeout to produce its structured result first."
-  1000)
-
-(defn native-tool-timeout-ms
-  "Return the outer wall-clock deadline for a native handler. Always sits a short
-   grace period ABOVE the tool's own budget — an explicit `timeout_ms`, otherwise
-   the 30-second fallback — so a tool whose internal timeout equals the fallback
-   (e.g. repl_eval's 30s default) still gets to produce its STRUCTURED timeout
-   result before the wall fires. Capped at `MAX_EVAL_TIMEOUT_MS`."
-  [input]
-  (let
-    [requested
-     (when (map? input)
-       (or (get input "timeout_ms") (get input :timeout_ms) (get input :timeout-ms)))
-
-     requested
-     (when (and (number? requested) (pos? (long requested))) (long requested))
-
-     base
-     ;; ALWAYS add the grace: the wall is a BACKSTOP, never a co-deadline. If it
-     ;; equalled the tool's own timeout the two would race and the wall's raw
-     ;; :vis/native-tool-timeout error would clobber the tool's nice structured
-     ;; timeout result (repl_eval's `⧖ timed out after Nms` card degraded to a
-     ;; bare message string exactly because default == default here).
-     (+ (long (if requested (long requested) NATIVE_TOOL_TIMEOUT_MS))
-        (long native-tool-timeout-grace-ms))]
-
-    (long (min (long MAX_EVAL_TIMEOUT_MS) base))))
-
 (def ^:dynamic *eval-timeout-ms*
   "Dynamic timeout in milliseconds for Python code evaluation."
   DEFAULT_EVAL_TIMEOUT_MS)
@@ -133,7 +95,7 @@
 (def ^:private shell-timeout-eval-grace-ms
   "Extra room around a bounded call's OWN timeout so that call can kill, drain,
    and return its structured timeout envelope before the outer Python eval
-   watchdog fires. Mirrors `native-tool-timeout-grace-ms`: the watchdog is a
+   watchdog fires. The watchdog is a
    BACKSTOP, never a co-deadline."
   10000)
 

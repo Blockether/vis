@@ -5034,9 +5034,9 @@
 ;; -----------------------------------------------------------------------------
 ;; Symbol declarations.
 ;;
-;; Underlying `xxx-tool` defs retain developer docs + arglists. Each native
-;; symbol supplies compact routing/semantics in `:description`; exact inputs
-;; live only in its schema and are appended once by `doc(name)`.
+;; Underlying `xxx-tool` defs retain developer docs + arglists. Each symbol
+;; supplies compact routing/semantics in `:description`, which is what
+;; `doc(name)` answers.
 ;; `:symbol` overrides the var name (`cat-tool` -> `cat`) for the model-facing
 ;; surface; everything else (examples, error hook, result spec)
 ;; lives in opts because it has nothing to do with the function's signature.
@@ -6180,7 +6180,6 @@
   (vis/symbol
     #'index-tool
     {:symbol 'struct_index
-     :native-tool? true
      :result
      (str
        "String-keyed `{results, occurrences?}`. Row/file: `path,language,line_count,imports,definitions,skeleton,note,ranges`. "
@@ -6192,86 +6191,14 @@
        "Skeleton of supported source before bodies: imports, definitions, signatures, doc gists, and "
        "fresh anchors for `cat`/`struct_patch`. `include_occurrences` traces each definition's uses.")
      :render-finish-call-fn render-index-result
-     :schema
-     {:type "object"
-      :properties
-      {"paths"
-       {:type "array"
-        :items {:oneOf [{:type "string" :minLength 1}
-                        {:type "object"
-                         :properties
-                         {"path" {:type "string" :minLength 1}
-                          "ranges"
-                          {:type "array"
-                           :items {:type "array" :items {:type "integer"} :minItems 2 :maxItems 2}
-                           :minItems 1
-                           :description (str "THIS path's windows; override shared `ranges`. "
-                                             "`[[-1, -1]]` = the whole file.")}}
-                         :required ["path"]
-                         :additionalProperties false}]}
-        :minItems 1
-        :description
-        (str
-          "Exact physical paths from grep/cat/struct_index; batch them. Shared `ranges` apply to "
-          "all; an object entry overrides one file.")}
-       "include_occurrences" {:type "boolean"
-                              :description "Adds each definition's occurrence group; default off."}
-       "ranges"
-       {:type "array"
-        :items {:type "array" :items {:type "integer"} :minItems 2 :maxItems 2}
-        :minItems 1
-        :description
-        "1-based inclusive `[[start,end],…]`; keeps definitions intersecting any window. `line_count` stays whole-file."}}
-      :required ["paths"]
-      :additionalProperties false}
      :before-fn (fs-access-before-fn :struct_index :file "file-read" read-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :struct_index :file nil)}))
-
-(def ^:private cat-ranges-schema
-  "Shape of a `ranges` value: a non-empty list of inclusive 1-based [start end]
-   pairs, or the whole-file sentinel [-1, -1]."
-  {:type "array"
-   :items {:type "array" :items {:type "integer"} :minItems 2 :maxItems 2}
-   :minItems 1})
-
-
-(def ^:private cat-file-entry-schema
-  "A per-file object entry in `files`: the path plus its own `ranges`."
-  {:type "object"
-   :properties {"path" {:type "string" :minLength 1}
-                "ranges" (assoc cat-ranges-schema
-                           :description (str "THIS file; overrides shared `ranges`. "
-                                             "`[[-1, -1]]` = the whole file."))}
-   :required ["path"]
-   :additionalProperties false})
-
-(def ^:private cat-files-schema
-  "The `files` argument: bare file paths and/or per-file range objects."
-  {:type "array"
-   :items {:oneOf [{:type "string" :minLength 1} cat-file-entry-schema]}
-   :minItems 1
-   :description
-   "Exact physical files. Batch regions; strings use shared `ranges`, objects override."})
-
-(def ^:private cat-schema
-  "`cat`'s JSON Schema: plural `files` plus optional shared line `ranges`."
-  {:type "object"
-   :properties {"files" cat-files-schema
-                "ranges" (assoc cat-ranges-schema
-                           :description
-                           (str
-                             "Shared inclusive 1-based `[[start,end],…]` windows for bare entries; "
-                             "omit for whole files, `[[-1, -1]]` to unslice ONE entry."))}
-   :required ["files"]
-   :additionalProperties false
-   :maxProperties 2})
 
 (def cat-symbol
   (vis/symbol
     #'cat-tool
     {:symbol 'cat
-     :native-tool? true
      :result
      (str
        "String-keyed `{results}` rows: `{op,path,size,mtime,eof,truncated,next_offset,ranges,anchors}`. "
@@ -6283,7 +6210,6 @@
        "directories in `python_execution`, "
        "`struct_index` maps code first. A write invalidates only that file's earlier anchors.")
      :render-finish-call-fn render-cat-result
-     :schema cat-schema
      :before-fn (fs-access-before-fn :cat :file "file-read" read-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :cat :file nil)}))
@@ -6295,7 +6221,6 @@
   (vis/symbol
     #'grep-tool
     {:symbol 'grep
-     :native-tool? true
      :result
      (str
        "Fields `op,query,needles,searched_paths,missing_paths,paths,matches,file_counts,first_hit,hint,hit_count,"
@@ -6308,30 +6233,6 @@
           "`query: \"\"` lists files; null `hits_truncated_by` means complete content. "
           "Page with `offset`: null `next_offset` means this page is the whole answer.")
      :render-finish-call-fn render-grep-result
-     :schema
-     {:type "object"
-      :properties
-      {"query"
-       {:oneOf [{:type "string"} {:type "array" :items {:type "string" :minLength 1} :minItems 1}]
-        :description
-        "Content/filename; an empty string lists by frecency/recency. Arrays are OR for content search; filenames use joined terms."}
-       "paths"
-       {:type "array"
-        :items {:type "string" :minLength 1}
-        :description
-        "Default: whole tree. Existing files are searched exactly, never widened. Missing scopes use the nearest existing directory and enter `missing_paths`. Reuse exact physical paths; never rebuilt from a language namespace."}
-       "include" {:oneOf [{:type "array" :items {:type "string"}} {:type "string"}]
-                  :description "Content globs, e.g. [\"**/*.clj\"]."}
-       "context" {:type "integer"
-                  :minimum 0
-                  :description "Context lines per hit in before/after (default 0)."}
-       "limit" {:type "integer" :minimum 1 :description "Filename-match cap (default 50)."}
-       "offset" {:type "integer"
-                 :minimum 0
-                 :description "Page start on BOTH axes; pass back the previous `next_offset`."}
-       "is_hidden" {:type "boolean" :description "Include hidden paths (default false)."}}
-      :required ["query"]
-      :additionalProperties false}
      :before-fn (fs-access-before-fn :grep :dir "file-read" find-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :grep :dir nil)}))
@@ -6340,7 +6241,6 @@
   (vis/symbol
     #'patch-tool
     {:symbol 'patch
-     :native-tool? true
      :result
      "One row/edit: `path`, `op`, `changed`, `diff`; small regions add `anchors` (`{\"lineno:hash\":{\"text\":line}}`) reusable as the next `from_anchor`; auto-balanced files add `repaired` true and `note`."
      :call (fn [input]
@@ -6351,24 +6251,6 @@
        "ATOMIC: one bad edit writes NOTHING. Code that will not parse is refused; unbalanced Clojure "
        "delimiters are auto-repaired (`repaired`). A write invalidates only that file's earlier anchors.")
      :render-finish-call-fn render-patch-result
-     :schema {:type "object"
-              :properties
-              {"edits"
-               {:type "array"
-                :minItems 1
-                :description "Atomic anchor edits; each names a file, so a batch may span files."
-                :items
-                {:type "object"
-                 :properties
-                 {"path" {:type "string" :minLength 1 :description "File path."}
-                  "from_anchor" {:type "string" :minLength 1 :description "Fresh-read lineno:hash."}
-                  "to_anchor"
-                  {:type "string" :minLength 1 :description "Optional inclusive span-end anchor."}
-                  "replace" {:type "string" :description "Replacement; empty deletes."}}
-                 :required ["path" "from_anchor" "replace"]
-                 :additionalProperties false}}}
-              :required ["edits"]
-              :additionalProperties false}
      :before-fn (plan-gated-before-fn :patch :file patch-arg-paths)
      :tag :mutation
      :on-error-fn (tool-failure-on-error :patch :file nil)}))
@@ -6745,7 +6627,6 @@
   (vis/symbol
     #'struct-patch-tool
     {:symbol 'struct_patch
-     :native-tool? true
      :result
      (str
        "One row/edit: `path`, `op`, `changed`, `diff`; small regions add reusable `anchors` for the "
@@ -6757,38 +6638,6 @@
        "`at`/`anchor`. Renames, docs, moves, `append_child`. Writes re-parse: code that will not parse "
        "is REFUSED; unbalanced Clojure delimiters auto-repaired.")
      :render-finish-call-fn render-patch-result
-     :schema
-     {:type "object"
-      :properties
-      {"path" {:type "string" :description "Edit file, or shared default for `edits`."}
-       "edits"
-       {:type "array"
-        :minItems 1
-        :items {:type "object"}
-        :description
-        "ORDERED batch; top-level keys are defaults, applied in order, never rolled back. Omit for a lone edit."}
-       "op" {:type "string"
-             :enum ["replace" "delete" "insert_before" "insert_after" "append" "add_doc"
-                    "replace_doc" "replace_node" "rename" "move_before" "move_after" "append_child"
-                    "prepend_child"]
-             :description
-             "`append`=EOF; `append_child`/`prepend_child` take a definition or node locator."}
-       "target" {:type "string" :description "Definition NAME; also container for child appends."}
-       "code" {:type "string" :description "Source to replace/insert, or rename's new name."}
-       "kind" {:type "string" :description "Disambiguates same-named defs."}
-       "match" {:type "string"
-                :description
-                "`replace_node`: unique subexpression text to swap inside the located node."}
-       "anchor"
-       {:type "string"
-        :description
-        "`move_before`/`move_after`: adjacent def NAME; else `lineno:hash` entering its node. Composes with `nav`."}
-       "at" {:type "array"
-             :items {:type "integer" :minimum 0}
-             :description "Named-child path from a `struct_nodes` row."}
-       "nav" {:type "array" :description "Relative zipper moves after `at` (strings/maps)."}}
-      ;; Either a lone `path`+`op` edit or an `edits` batch — validated in the tool.
-      :additionalProperties false}
      :before-fn (plan-gated-before-fn :struct_patch :file struct-arg-paths)
      :tag :mutation
      :on-error-fn (tool-failure-on-error :struct_patch :file nil)}))
@@ -6907,8 +6756,8 @@
     [a
      (first args)
 
-     ;; struct_nodes("p") / struct_nodes("p", {opts}) stay usable from Clojure; the
-     ;; native schema advertises only the plural `nodes` contract.
+     ;; struct_nodes("p") / struct_nodes("p", {opts}) are the shorthand forms; the
+     ;; documented contract is the plural `nodes` argument.
      a
      (cond (string? a) (merge {"path" a} (when (map? (second args)) (second args)))
            (map? a) a
@@ -6965,7 +6814,6 @@
   (vis/symbol
     #'nodes-tool
     {:symbol 'struct_nodes
-     :native-tool? true
      :result
      (str
        "String-keyed `{results}`; one ordered row/node: `path`, `at` (named-child path for `struct_patch`), "
@@ -6975,35 +6823,6 @@
      :description
      "Read nested tree-sitter node SOURCE and navigate when a named definition is too coarse."
      :render-finish-call-fn render-nodes-result
-     :schema
-     {:type "object"
-      :properties
-      {"nodes"
-       {:type "array"
-        :items {:oneOf [{:type "string" :minLength 1}
-                        {:type "object"
-                         :properties
-                         {"path" {:type "string" :minLength 1}
-                          "at" {:type "array"
-                                :items {:type "integer" :minimum 0}
-                                :description "THIS node's absolute named-child index path."}
-                          "nav" {:type "array" :description "THIS node's relative cursor moves."}
-                          "anchor" {:type "string"
-                                    :description "`lineno:hash` entry for THIS node."}}
-                         :additionalProperties false}]}
-        :minItems 1
-        :description
-        "ONE call's nodes: file-root path or object overriding shared `path`/`at`/`nav`/`anchor`."}
-       "path" {:type "string" :description "Shared source file when an entry omits `path`."}
-       "at" {:type "array"
-             :items {:type "integer" :minimum 0}
-             :description "Shared absolute named-child index path."}
-       "nav" {:type "array"
-              :description "Shared relative moves: strings or {find/child/find_kind} maps."}
-       "anchor" {:type "string"
-                 :description
-                 "`lineno:hash` from struct_index/cat; enters that line's node instead of `at`."}}
-      :additionalProperties false}
      :before-fn (fs-access-before-fn :struct_nodes :file "file-read" nodes-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :struct_nodes :file nil)}))
@@ -7149,9 +6968,9 @@
   [index-symbol cat-symbol grep-symbol patch-symbol struct-patch-symbol nodes-symbol])
 
 (defn available-editing-prompt
-  "No separate editing prompt: active native descriptions own routing and their
-   JSON Schemas own inputs. Structural tools are already omitted by their
-   activation gate when unsupported, so repeating that matrix would waste tokens."
+  "No separate editing prompt: each symbol's own documentation owns routing and
+   inputs, reachable through `doc(name)`. Structural tools are already omitted by
+   their activation gate when unsupported, so repeating that matrix would waste tokens."
   []
   "")
 

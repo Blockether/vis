@@ -803,89 +803,10 @@
 ;; the registry stores the internal tag keyword. Bounded map — no minting.
 (def ^:private symbol-tags {"observation" :observation "mutation" :mutation})
 
-;; JSON Schema vocabulary the host reads with KEYWORD keys (see
-;; `extension/schema->param-doc`). A Python author writes a plain dict, so the
-;; keys arrive as strings: only these vocabulary words become keywords, while
-;; author-chosen PROPERTY NAMES stay strings — exactly the shape a
-;; Clojure-authored native tool schema has
-;; (`{:type "object" :properties {"path" {:type "string"}}}`).
-(def ^:private json-schema-words
-  #{"type" "properties" "required" "description" "items" "prefixItems" "enum" "const" "default"
-    "examples" "format" "pattern" "title" "not" "oneOf" "anyOf" "allOf" "additionalProperties"
-    "patternProperties" "minimum" "maximum" "exclusiveMinimum" "exclusiveMaximum" "multipleOf"
-    "minLength" "maxLength" "minItems" "maxItems" "uniqueItems" "minProperties" "maxProperties"
-    "nullable" "$ref" "$defs" "definitions"})
-
-;; Vocabulary words whose VALUE is a map keyed by author-chosen names rather
-;; than by schema words — those keys must survive as strings.
-(def ^:private json-schema-name-maps #{"properties" "patternProperties" "$defs" "definitions"})
-
-(defn- py-schema
-  "Python JSON Schema dict -> the host schema shape (keyword vocabulary keys,
-   string property names). Without it a Python-declared schema would still be
-   sent to the provider but read as EMPTY by every host projection
-   (`doc(name)` params, wire docs), which reads `:properties` / `:required`."
-  [x]
-  (cond (map? x) (into {}
-                       (map (fn [[k v]]
-                              (let [ks (str k)]
-                                (if (contains? json-schema-words ks)
-                                  [(keyword ks)
-                                   (if (and (map? v) (contains? json-schema-name-maps ks))
-                                     (into {}
-                                           (map (fn [[pk pv]]
-                                                  [(str pk) (py-schema pv)]))
-                                           v)
-                                     (py-schema v))]
-                                  [ks (py-schema v)]))))
-                       x)
-        (sequential? x) (mapv py-schema x)
-        :else x))
-
-
-(defn- render-start-call-adapter
-  "`:ext.symbol/render-start-call-fn` for one Python-backed symbol."
-  [ext-name ^Context ctx ^Value pyfn]
-  (fn [input]
-    (try (let [r (call-py-ext ext-name nil ctx pyfn [(stringify-deep input)])]
-           (when (map? r)
-             (reduce
-               (fn [card [wire-key host-key]]
-                 (if (some? (get r wire-key)) (assoc card host-key (str (get r wire-key))) card))
-               {}
-               [["summary" :summary] ["render" :render] ["code" :code] ["language" :language]])))
-         (catch Throwable t
-           (tel/log! {:level :warn
-                      :id ::render-start-call-failed
-                      :data {:extension ext-name :error (ex-message t)}})
-           nil))))
-
-(defn- render-finish-call-adapter
-  "`:ext.symbol/render-finish-call-fn` for one Python-backed symbol. The Python
-   callable gets the tool result as plain string-keyed data and returns
-   `{'summary': str, 'body': str}` (a bare string counts as the summary). A failing
-   or unusable renderer yields nil, so a bad op card never breaks the tool itself."
-  [ext-name ^Context ctx ^Value pyfn]
-  (fn [result]
-    (try (let [r (call-py-ext ext-name nil ctx pyfn [(stringify-deep result)])]
-           (cond (string? r) {:summary r}
-                 (map? r) (cond-> {}
-                            (some? (get r "summary"))
-                            (assoc :summary (str (get r "summary")))
-
-                            (string? (get r "body"))
-                            (assoc :body (get r "body")))
-                 :else nil))
-         (catch Throwable t
-           (tel/log! {:level :warn
-                      :id ::render-finish-call-failed
-                      :data {:extension ext-name :error (ex-message t)}})
-           nil))))
-
 (defn- ->symbol-entry
   "`spec` is a Python registration dict — STRING keys (strings-only boundary).
-   Native-tool metadata rides through `extension/symbol-entry`, so a Python-declared
-   tool is validated, advertised, documented and rendered exactly like a Clojure one."
+   A Python-declared symbol is a plain sandbox function: its `doc` is what
+   `doc(name)` answers, and it is never advertised as a provider tool."
   [ext-name alias-sym ^Context ctx spec]
   (let
     [sym
@@ -900,30 +821,10 @@
        (-> (conj '&)
            (conj 'args)))
 
-     render-start-call-fn
-     (get spec "render_start_call_fn")
-
-     render-finish-call-fn
-     (get spec "render_finish_call_fn")
-
      opts
      (cond-> {:tag (get symbol-tags (str (get spec "tag")) :observation)}
        (get spec "hidden")
-       (assoc :hidden? true)
-
-       (get spec "is_native_tool")
-       (assoc :native-tool?
-         true :schema
-         (py-schema (get spec "schema")) :description
-         (str (get spec "description")) :result
-         (str (get spec "result")))
-
-       render-start-call-fn
-       (assoc :render-start-call-fn (render-start-call-adapter ext-name ctx render-start-call-fn))
-
-       render-finish-call-fn
-       (assoc :render-finish-call-fn
-         (render-finish-call-adapter ext-name ctx render-finish-call-fn)))]
+       (assoc :hidden? true))]
 
     (extension/symbol-entry {:symbol sym
                              :fn (tool-adapter ext-name sym ctx pyfn)

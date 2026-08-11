@@ -104,9 +104,7 @@ def _kwargs_call(fn):
     _call.__doc__ = fn.__doc__
     return _call
 
-def symbol(fn, name=None, tag='observation', is_hidden=False, schema=None,
-           description=None, result=None, is_native_tool=False,
-           render_start_call_fn=None, render_finish_call_fn=None):
+def symbol(fn, name=None, tag='observation', is_hidden=False):
     if not callable(fn):
         raise ValueError('vis.symbol(fn, ...) requires a callable')
     if tag not in ('observation', 'mutation'):
@@ -122,40 +120,8 @@ def symbol(fn, name=None, tag='observation', is_hidden=False, schema=None,
         elif p.kind in (inspect.Parameter.POSITIONAL_ONLY,
                         inspect.Parameter.POSITIONAL_OR_KEYWORD):
             params.append(p.name)
-    label = name or getattr(fn, '__name__', '?')
-    is_native = bool(is_native_tool) or schema is not None
-    if is_native:
-        if not isinstance(schema, dict):
-            raise ValueError('vis.symbol: native tool %s requires schema=<JSON Schema dict>'
-                             % (label,))
-        if schema.get('type') != 'object':
-            raise ValueError('vis.symbol: native tool %s schema root must be type object'
-                             % (label,))
-        for union in ('oneOf', 'anyOf', 'allOf'):
-            if union in schema:
-                raise ValueError('vis.symbol: native tool %s schema root must not use %s; '
-                                 'nested property unions are allowed' % (label, union))
-        for slot, text in (('description', description), ('result', result)):
-            if not text or not isinstance(text, str) or not text.strip():
-                raise ValueError('vis.symbol: native tool %s requires %s=<non-empty string>'
-                                 % (label, slot))
-            if 'Raw result:' in text:
-                raise ValueError('vis.symbol: %s= must not carry the reserved label '
-                                 'Raw result: - put the bare contract in result=' % (slot,))
-    elif description is not None or result is not None:
-        raise ValueError('vis.symbol: description=/result= describe a NATIVE tool; '
-                         'pass schema= as well (%s)' % (label,))
-    if render_start_call_fn is not None and not callable(render_start_call_fn):
-        raise ValueError('vis.symbol render_start_call_fn= must be a callable '
-                         '(input) -> pending display dict')
-    if render_finish_call_fn is not None and not callable(render_finish_call_fn):
-        raise ValueError('vis.symbol render_finish_call_fn= must be a callable '
-                         '(result) -> dict with summary and optional body')
     return {'marker': 'symbol', 'fn': _kwargs_call(fn), 'name': name or fn.__name__, 'tag': tag,
-            'hidden': bool(is_hidden), 'is_native_tool': is_native,
-            'schema': schema, 'description': description, 'result': result,
-            'render_start_call_fn': render_start_call_fn,
-            'render_finish_call_fn': render_finish_call_fn,
+            'hidden': bool(is_hidden),
             'doc': doc, 'params': params, 'varargs': varargs}
 
 def slash(name, run, doc=None, usage=None):

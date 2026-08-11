@@ -30,6 +30,7 @@
             [com.blockether.vis.internal.attachment-storage :as attachment-storage]
             [com.blockether.vis.internal.egress-proxy :as egress-proxy]
             [com.blockether.vis.internal.manifest :as manifest]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.theme :as theme]
@@ -417,10 +418,6 @@
 ;; Plain value bound in the sandbox (constant, data, config).
 ;; Mutually exclusive with :ext.symbol/fn.
 (s/def :ext.symbol/val some?)
-;; When false, the symbol is NOT bound into the GraalPy env (no Python verb) —
-;; it exists only as a native tool (requires `:native-tool?` + a `:handler`).
-;; Absent ⇒ default true (bound). ORTHOGONAL to `:native-tool?`.
-(s/def :ext.symbol/engine-bound? boolean?)
 ;; Per-symbol activation predicate `(fn [env] -> bool)`, default true. THE gate:
 ;; when it returns false the symbol is inactive this iteration — not bound into
 ;; the env, its native tool not advertised, its handler not dispatchable. Use it
@@ -429,32 +426,15 @@
 ;; When true, the live `env` is prepended as the call's FIRST arg (so the impl is
 ;; `(fn [env & model-args])`). Orthogonal to gating — env-injection is mechanical.
 (s/def :ext.symbol/inject-env? boolean?)
-;; ── Native tool: FLAT on the symbol, the SINGLE source. ───────────────────────
-;; `:native-tool?` is THE source of "is this a native tool?": true ⇒ advertised as a
-;; `tool_use` and REQUIRES `:schema`. Orthogonal to `:engine-bound?`: native-only
-;; (a `:handler` with `:engine-bound? false`), verb-only, or both (cat/rg/skill).
-(s/def :ext.symbol/native-tool? boolean?)
-;; Model-facing JSON schema for the tool input — REQUIRED when `:native-tool?`.
-(s/def :ext.symbol/schema map?)
-
-(def ^:private native-tool-root-union-keys
-  "JSON Schema unions forbidden at a provider tool schema's root. Nested unions
-   remain valid for individual properties."
-  #{:oneOf :allOf :anyOf "oneOf" "allOf" "anyOf"})
-
-(defn- portable-native-tool-schema?
-  [schema]
-  (and (= "object" (or (:type schema) (get schema "type")))
-       (not-any? #(contains? schema %) native-tool-root-union-keys)))
-;; How this native tool's structured input is synthesized into the Python call that
-;; runs it (positional-args contract — the sandbox binds tools positionally). The
-;; SINGLE source of truth for the call shape, co-located with the tool so a new
-;; module never edits the engine. Either a shape map or a `(fn [input] -> source)`
-;; escape hatch; ABSENT ⇒ the generic `name({…whole input…})` form. Shape keys:
-;;   :py-name   bound python name override (default: wire name)
-;;   :lead-opt  one optional leading positional key — emitted only when present
+;; How a Python call's ALL-KEYWORD arguments fold back onto this symbol's
+;; POSITIONAL parameters. GraalPy collapses `tool(a=1, b=2)` into ONE trailing
+;; dict positional, so a fixed-arity impl `[env a b]` would otherwise receive the
+;; whole map in its first slot; the shape re-expands it — see
+;; `folded-kwargs->positional`. Either a shape map or a `(fn [input] -> source)`
+;; escape hatch; ABSENT ⇒ the arguments bind as GraalPy handed them over. Keys:
+;;   :lead-opt  one optional leading positional key
 ;;   :pos       required positional keys, in order
-;;   :opt-pos   trailing optional positional keys — each emitted only when present
+;;   :opt-pos   trailing optional positional keys
 ;;   :rest      :opt (append remaining keys as a dict, omit when empty)
 ;;              :always (always append the remaining-keys dict)
 (s/def :ext.symbol/call
@@ -462,13 +442,12 @@
         :fn fn?))
 ;; Wire-name advertised to the model (default: the symbol name). `exists?`→`file_exists`.
 (s/def :ext.symbol/name non-blank-string?)
-;; Direct Clojure executor `(fn [env input] -> result)`; absent ⇒ synthesized-Python path.
-(s/def :ext.symbol/handler fn?)
-;; Compact model-facing routing/semantics. REQUIRED when `:native-tool?`; the
-;; implementation docstring is developer documentation and never substitutes for it.
+;; Compact model-facing routing/semantics — the FIRST thing `doc(name)` answers.
+;; The implementation docstring is developer documentation and never substitutes
+;; for it.
 (s/def :ext.symbol/description non-blank-string?)
-;; Exact raw return contract for Python/native callers. REQUIRED when
-;; `:native-tool?`; projected into every model-facing description and `doc(name)`.
+;; Exact raw return contract for the value Python receives; `doc(name)` appends it
+;; exactly once.
 (s/def :ext.symbol/result non-blank-string?)
 ;; `(fn [result] -> {:summary :body})` — the op-card renderer for THIS symbol's result,
 ;; shared by every surface (native tool_result card + a Python-path surfaced value).
@@ -476,31 +455,15 @@
 ;; `(fn [input] -> {:code :language :summary :render})` — how THIS symbol's pending
 ;; call displays while it runs.
 (s/def :ext.symbol/render-start-call-fn fn?)
-;; Optional agent-context policy for large native arguments. `:elide-args` maps
-;; string input keys to replay thresholds. Only successful calls are compacted;
-;; failures retain their complete arguments and error context.
-(s/def :ext.symbol/replay
-  (s/and map?
-         #(let
-            [elide-args
-             (:elide-args %)]
-
-            (and (= #{:elide-args} (set (keys %)))
-                 (map? elide-args)
-                 (seq elide-args)
-                 (every? (fn [[k n]]
-                           (and (string? k) (pos-int? n)))
-                         elide-args)))))
 
 (s/def ::fn-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/fn :ext.symbol/doc :ext.symbol/arglists]
           :opt [:ext.symbol/raw? :ext.symbol/hidden? :ext.symbol/tag :ext.symbol/batch-hint
-                :ext.symbol/before-fn :ext.symbol/engine-bound? :ext.symbol/active-fn
-                :ext.symbol/inject-env? :ext.symbol/after-fn :ext.symbol/on-error-fn
-                :ext.symbol/ticker-fn :ext.symbol/source :ext.symbol/native-tool? :ext.symbol/schema
-                :ext.symbol/name :ext.symbol/call :ext.symbol/handler :ext.symbol/description
+                :ext.symbol/before-fn :ext.symbol/active-fn :ext.symbol/inject-env?
+                :ext.symbol/after-fn :ext.symbol/on-error-fn :ext.symbol/ticker-fn
+                :ext.symbol/source :ext.symbol/name :ext.symbol/call :ext.symbol/description
                 :ext.symbol/result :ext.symbol/render-start-call-fn
-                :ext.symbol/render-finish-call-fn :ext.symbol/replay]))
+                :ext.symbol/render-finish-call-fn]))
 
 (s/def ::val-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/val :ext.symbol/doc] :opt [:ext.symbol/source]))
@@ -988,247 +951,17 @@
 
 (defn ext-sandbox-shims [ext] (vec (or (:ext/sandbox-shims ext) [])))
 
-(declare symbol-active?)
-
-(defn native-tools-for
-  "Every native tool on `active-extensions`' symbols — ONE walk, the single source
-   the schemas, handlers, and renderers all project from, NORMALIZED to
-  `{:symbol :name :description :result :schema :handler :render-start-call-fn
-    :render-finish-call-fn :replay :active?}`.
-
-   A symbol IS a native tool IFF it declares `:native-tool? true`, which REQUIRES
-   `:schema`, `:description`, and `:result`. Every field is FLAT on the symbol — no
-   legacy `:native-tool` map. `:description` is compact routing/semantics;
-   `:result` is the exact raw return contract. Implementation docstrings never
-   enter the native surface. Input mechanics belong in `:schema`, and `doc(name)`
-   appends the result contract and schema parameters exactly once. `:name` is the
-   wire-name override else the symbol name. `:symbol` is internal identity metadata;
-   model-facing projections omit it. `:active?` is the `:active-fn` against `env`
-   (default true). `env` may be nil."
-  ([active-extensions] (native-tools-for active-extensions nil))
-  ([active-extensions env]
-   (->> (or active-extensions [])
-        (mapcat ext-symbols)
-        (keep (fn [e]
-                (when (:ext.symbol/native-tool? e)
-                  {:symbol (:ext.symbol/symbol e)
-                   :name (or (:ext.symbol/name e) (name (:ext.symbol/symbol e)))
-                   :description (:ext.symbol/description e)
-                   :result (:ext.symbol/result e)
-                   :schema (:ext.symbol/schema e)
-                   :handler (:ext.symbol/handler e)
-                   :call (:ext.symbol/call e)
-                   :replay (:ext.symbol/replay e)
-                   :render-start-call-fn (:ext.symbol/render-start-call-fn e)
-                   :render-finish-call-fn (:ext.symbol/render-finish-call-fn e)
-                   :active? (symbol-active? e env)})))
-        vec)))
-
-(defn native-tool-replay-policies
-  "Map active native wire-name → extension-declared context replay policy."
-  ([active-extensions] (native-tool-replay-policies active-extensions nil))
-  ([active-extensions env]
-   (into {}
-         (keep (fn [t]
-                 (when (and (:active? t) (:replay t)) [(:name t) (:replay t)]))
-               (native-tools-for active-extensions env)))))
-
-(def ^:private wire-schema-prose-keys
-  "Constraint keys no tool API takes as a real bound, in wire order. They are
-   INLINED into the enclosing `description` — the same transform the official
-   Anthropic SDK applies — never dropped: the model still reads the bound, and a
-   tool call cannot 400 on an unsupported keyword. Nothing re-validates an
-   inbound tool input against `:ext.symbol/schema`, so every tool still coerces
-   and checks its OWN arguments.
-
-   Measured against the live Anthropic tool API, NOT guessed: `maxItems` is
-   rejected outright (`For 'array' type, property 'maxItems' is not supported`)
-   and `minItems` only takes 0 or 1 (`'minItems' values other than 0 or 1 are not
-   supported`) — hence `wire-schema`'s special case, which keeps a real
-   `minItems 0/1` and proses every other array bound."
-  [:minLength :maxLength :minimum :maximum :minProperties :maxProperties :maxItems])
-
-(defn- enforceable-min-items?
-  "True for the only `minItems` values a tool API keeps as a real constraint;
-   every other bound becomes prose."
-  [x]
-  (or (= x 0) (= x 1)))
-
-(defn- schema-constraint-prose
-  "Compact `{minLength: 1, minimum: 0}` for ONE schema node's prose-only
-   constraints, or nil when it declares none."
-  [m]
-  (let
-    [pairs
-     (keep (fn [k]
-             (when-some [v (get m k)]
-               (str (name k) ": " v)))
-           wire-schema-prose-keys)
-
-     pairs
-     (cond-> (vec pairs)
-       (and (contains? m :minItems) (not (enforceable-min-items? (:minItems m))))
-       (conj (str "minItems: " (:minItems m))))]
-
-    (when (seq pairs) (str "{" (str/join ", " pairs) "}"))))
-
-(defn- wire-schema
-  "Recursively rewrite a JSON-schema tree for the model-facing wire:
-   `wire-schema-prose-keys` (and an unenforceable `minItems`) move into the
-   node's own `description`; `oneOf` becomes `anyOf` — the tool-schema validators
-   refuse `oneOf` (`Schema type 'oneOf' is not supported`) and every one accepts
-   `anyOf`, which for these disjoint unions means the same thing. What survives
-   is a real provider-enforceable constraint."
-  [x]
-  (cond (map? x) (let
-                   [prose
-                    (schema-constraint-prose x)
-
-                    base
-                    (apply dissoc x wire-schema-prose-keys)
-
-                    base
-                    (cond-> base
-                      (not (enforceable-min-items? (:minItems base)))
-                      (dissoc :minItems))
-
-                    base
-                    (if-some [alts (:oneOf base)]
-                      (-> base
-                          (dissoc :oneOf)
-                          (assoc :anyOf alts))
-                      base)
-
-                    base
-                    (if prose
-                      (assoc base
-                        :description (if-some [d (:description base)]
-                                       (str d " " prose)
-                                       prose))
-                      base)]
-
-                   (into {}
-                         (map (fn [[k v]]
-                                [k (wire-schema v)]))
-                         base))
-        (sequential? x) (mapv wire-schema x)
-        :else x))
-
-(defn advertise-tool
-  "Project ONE finalized tool def `{:name :description :schema}` onto the
-   model-facing wire: the schema through `wire-schema`, and nothing else.
-
-   Vis advertises NO grammar-constrained (`strict`) tool. That flag is a per-wire
-   opt-in whose accepted schema subset differs per provider — an
-   OpenAI-compatible wire refuses the ENTIRE request when a single strict tool
-   misses its subset (measured on `github-copilot`/`gpt-5.6-terra`: `Invalid
-   schema for function 'struct_index': … 'required' is required to be supplied and
-   to be an array including every key in properties. Missing 'ranges'.`), so a
-   flag derived from one provider's rules is a turn that never starts on another.
-   Arguments are sampled unconstrained and every tool coerces and validates its
-   own input — that coercion is the gate."
-  [tool]
-  (assoc tool :schema (wire-schema (:schema tool))))
-
-(defn native-tool-schemas
-  "The model-facing `:tools` surface: `{:name :description :schema}` for every
-   ACTIVE native tool, in extension/symbol
-   order. Each description automatically includes the symbol's mandatory
-   raw-result contract. Schema constraints no provider can enforce are inlined
-   into their own `description` here."
-  ([active-extensions] (native-tool-schemas active-extensions nil))
-  ([active-extensions env]
-   (->> (native-tools-for active-extensions env)
-        (filter :active?)
-        (mapv (fn [{:keys [name description result schema]}]
-                (advertise-tool {:name name
-                                 :description (str description "\n\nRaw result: " result)
-                                 :schema schema}))))))
-
-(defn native-tool-handlers
-  "Map wire-name → `:handler` `(fn [env input] -> result)` for every ACTIVE native
-   tool that declares one. A handler tool is dispatched DIRECTLY in Clojure by the
-   loop (no synthesized Python); one without runs the legacy synthesized-Python
-   path. Inactive (`:active-fn` false) tools are excluded — unadvertised ⇒
-   undispatchable."
-  ([active-extensions] (native-tool-handlers active-extensions nil))
-  ([active-extensions env]
-   (into {}
-         (keep (fn [t]
-                 (when (and (:active? t) (:handler t)) [(:name t) (:handler t)]))
-               (native-tools-for active-extensions env)))))
-
-(defn run-outside-tool-wall
-  "Run `thunk` OUTSIDE the enclosing native tool's wall-clock deadline: the loop
-   injects `:vis/outside-tool-wall` into a native handler's env — a `(fn [thunk])`
-   that PARKS the deadline while the thunk runs and restarts the clock when it
-   returns — so slow synchronous setup (e.g. cold-booting a project REPL before
-   an eval) never bills against the tool's `timeout_ms`. A plain passthrough
-   when no wall is active (direct calls, tests)."
-  [env thunk]
-  (if-let [outside (when (map? env) (:vis/outside-tool-wall env))]
-    (outside thunk)
-    (thunk)))
-
-(defn native-tool-call-shapes
-  "Map wire-name → the symbol's `:call` synthesis shape (a shape map or a
-   `(fn [input] -> source)`) for every ACTIVE native tool that declares one.
-   `tool-call->python-source` consults this to build the Python a tool call runs;
-   a tool with no `:call` is ABSENT here and falls back to the generic
-   `name({input})` form. Single source — the shape lives WITH its symbol, so a new
-   module's tool needs NO engine edit."
-  ([active-extensions] (native-tool-call-shapes active-extensions nil))
-  ([active-extensions env]
-   (into {}
-         (keep (fn [t]
-                 (when (and (:active? t) (:call t)) [(:name t) (:call t)]))
-               (native-tools-for active-extensions env)))))
-
-(defn native-tool-finish-call-renderers
-  "Map wire-name → `:render-finish-call-fn` for every declared native tool. The
-   function takes the tool's RESULT and returns a `{:summary :body}` op-card both
-   the TUI and web paint — a clean card, never a raw args+result dump. NOT
-   active-filtered: a result that already ran must still render even if its toggle
-   flipped after."
-  [active-extensions]
-  (into {}
-        (keep (fn [t]
-                (when (:render-finish-call-fn t) [(:name t) (:render-finish-call-fn t)]))
-              (native-tools-for active-extensions))))
-
-(defn native-tool-start-call-renderers
-  "Map wire-name → `:render-start-call-fn` for every declared native tool. The
-   function takes the tool's INPUT and returns a pending display map — how the call
-   displays while it is still running. NOT active-filtered (mirrors
-   `native-tool-finish-call-renderers`)."
-  [active-extensions]
-  (into {}
-        (keep (fn [t]
-                (when (:render-start-call-fn t) [(:name t) (:render-start-call-fn t)]))
-              (native-tools-for active-extensions))))
-
-
-(defn native-tool-tags
-  "Map wire-name → `:tag` (`:observation | :mutation`) for every declared native
-   tool that carries a `:tag`. The tag is the AUTHORITATIVE observation/mutation
-   classification declared INLINE on each `(vis/symbol …)` opts map (never a
-   hardcoded name list). Used by the loop to decide whether an all-observation
-   iteration may run its calls concurrently. NOT active-filtered (mirrors the
-   renderer registries): the classification of a tool never depends on whether its
-   toggle is currently on."
+(defn finish-call-renderers-by-name
+  "Map wire-name → `:render-finish-call-fn` for every symbol that declares one.
+   NOT active-filtered: a result that already ran must still render even if its
+   toggle flipped after."
   [active-extensions]
   (into {}
         (keep (fn [e]
-                (when (and (:ext.symbol/native-tool? e) (:ext.symbol/tag e))
-                  [(or (:ext.symbol/name e) (name (:ext.symbol/symbol e))) (:ext.symbol/tag e)]))
+                (when-let [r (:ext.symbol/render-finish-call-fn e)]
+                  [(or (:ext.symbol/name e) (name (:ext.symbol/symbol e))) r]))
               (mapcat ext-symbols (or active-extensions [])))))
 
-(defn symbol-bound?
-  "Whether a symbol ENTRY is ENGINE-BOUND (bound into the GraalPy env as a Python
-   verb). Default true; `:engine-bound? false` (native-tool-only verbs) opts out —
-   they never become a Python name; their `:handler` executes directly."
-  [e]
-  (not (false? (:ext.symbol/engine-bound? e))))
 
 (defn symbol-active?
   "Whether a symbol ENTRY is LIVE for `env` this iteration. Default true; an
@@ -1370,32 +1103,6 @@
          source
          (assoc :source source))))))
 
-(def ^:private native-prose-budget
-  "Max model-facing prose chars a single native tool may spend (see
-   `native-prose-chars`). Shared by the registration guard and its test so the
-   number lives in exactly one place."
-  1200)
-
-(defn- schema-prose-chars
-  "Total characters of every `:description` (or `\"description\"`) nested anywhere
-   in a JSON-Schema value — the part of a schema that is prose rather than
-   machine-enforced structure."
-  [x]
-  (cond (map? x) (apply +
-                   (count (str (or (:description x) (get x "description"))))
-                   (map schema-prose-chars (vals (dissoc x :description "description"))))
-        (coll? x) (transduce (map schema-prose-chars) + 0 x)
-        :else 0))
-
-(defn- native-prose-chars
-  "Model-facing prose cost of a native tool symbol entry: `:description` plus
-   `:result` plus every schema parameter description. This whole surface is
-   re-sent on EVERY request, so it is budgeted at registration time."
-  [entry]
-  (+ (count (str (:ext.symbol/description entry)))
-     (count (str (:ext.symbol/result entry)))
-     (long (schema-prose-chars (:ext.symbol/schema entry)))))
-
 (defn- build-symbol-entry
   "Shared core that turns `{:symbol :fn :doc :arglists :source}` plus opts into
    a validated `::fn-symbol-entry`. Observed tools keep their symbol-specific
@@ -1425,36 +1132,19 @@
        (:tag opts)
        (assoc :ext.symbol/tag (:tag opts))
 
-       ;; STRONG flat native-tool spec — the SINGLE source of truth. `:native-tool?`
-       ;; marks the symbol as a native tool and requires `:schema`, `:description`,
-       ;; and `:result`. The latter is the exact raw return contract automatically
-       ;; projected into provider descriptions and `doc(name)`.
-       (contains? opts :native-tool?)
-       (assoc :ext.symbol/native-tool? (boolean (:native-tool? opts)))
-
-       (:schema opts)
-       (assoc :ext.symbol/schema (:schema opts))
-
-       ;; :call — how the structured tool input is synthesized into its Python call
-       ;; (positional-args contract). Co-located with the tool; absent ⇒ generic
-       ;; `name({input})`. See `:ext.symbol/call` spec above.
+       ;; :call — how a Python call's folded kwargs re-expand onto this symbol's
+       ;; positional parameters. See the `:ext.symbol/call` spec above.
        (:call opts)
        (assoc :ext.symbol/call (:call opts))
 
        (:name opts)
        (assoc :ext.symbol/name (:name opts))
 
-       (:handler opts)
-       (assoc :ext.symbol/handler (:handler opts))
-
        (:description opts)
        (assoc :ext.symbol/description (:description opts))
 
        (:result opts)
        (assoc :ext.symbol/result (:result opts))
-
-       (:replay opts)
-       (assoc :ext.symbol/replay (:replay opts))
 
        ;; The finish callback owns the completed op card across every surface.
        (:render-finish-call-fn opts)
@@ -1463,11 +1153,6 @@
        ;; The start callback owns this symbol's pending call display.
        (:render-start-call-fn opts)
        (assoc :ext.symbol/render-start-call-fn (:render-start-call-fn opts))
-
-       ;; :engine-bound? false → NOT bound into the GraalPy env (native-tool-only).
-       ;; Stored only when explicitly set; absent means default-true (bound).
-       (contains? opts :engine-bound?)
-       (assoc :ext.symbol/engine-bound? (boolean (:engine-bound? opts)))
 
        ;; :active-fn (fn [env] -> bool) — dynamic per-symbol activation gate.
        (:active-fn opts)
@@ -1492,65 +1177,6 @@
        (:on-error-fn opts)
        (assoc :ext.symbol/on-error-fn (:on-error-fn opts)))]
 
-    (when (and (:ext.symbol/native-tool? entry) (not (:ext.symbol/schema entry)))
-      (anomaly/incorrect! (str "Native tool " sym
-                               " declares :native-tool? but no :schema — "
-                               "every native tool MUST have a :schema.")
-                          {:type :extension/native-tool-missing-schema :symbol sym}))
-    (when (and (:ext.symbol/native-tool? entry)
-               (not (portable-native-tool-schema? (:ext.symbol/schema entry))))
-      (anomaly/incorrect! (str
-                            "Native tool " sym
-                            " has a non-portable :schema root — use type object without "
-                            "top-level oneOf, allOf, or anyOf; nested property unions are allowed.")
-                          {:type :extension/native-tool-nonportable-schema :symbol sym}))
-    (when (and (:ext.symbol/native-tool? entry)
-               (not (and (string? (:ext.symbol/description entry))
-                         (not (str/blank? (:ext.symbol/description entry))))))
-      (anomaly/incorrect! (str "Native tool "
-                               sym
-                               " declares :native-tool? but no non-blank :description — "
-                               "native routing/semantics MUST be explicit and compact; "
-                               "implementation docstrings never substitute for it.")
-                          {:type :extension/native-tool-missing-description :symbol sym}))
-    (when (and (:ext.symbol/native-tool? entry)
-               (not (and (string? (:ext.symbol/result entry))
-                         (not (str/blank? (:ext.symbol/result entry))))))
-      (anomaly/incorrect! (str "Native tool " sym
-                               " declares :native-tool? but no non-blank :result — "
-                               "the exact raw return contract MUST be explicit.")
-                          {:type :extension/native-tool-missing-result :symbol sym}))
-    (when (and (:ext.symbol/native-tool? entry)
-               (str/includes? (:ext.symbol/description entry) "Raw result:"))
-      (anomaly/incorrect! (str "Native tool " sym
-                               " embeds `Raw result:` in :description — put the unlabeled "
-                               "contract in :result so projection cannot duplicate or drift.")
-                          {:type :extension/native-tool-result-in-description :symbol sym}))
-    (when (and (:ext.symbol/native-tool? entry)
-               (str/includes? (:ext.symbol/result entry) "Raw result:"))
-      (anomaly/incorrect!
-        (str "Native tool " sym " includes the reserved `Raw result:` label in :result.")
-        {:type :extension/native-tool-result-has-label :symbol sym}))
-    (when (:ext.symbol/native-tool? entry)
-      (let
-        [budget
-         (long native-prose-budget)
-
-         spent
-         (long (native-prose-chars entry))]
-
-        (when (< budget spent)
-          (anomaly/incorrect!
-            (str "Native tool "
-                 sym
-                 " spends "
-                 spent
-                 " chars of prose (:description + "
-                 ":result + every schema :description); the budget is " budget
-                 ". Every " "native description is re-sent on EVERY request, so state each fact "
-                 "exactly once: never restate the CORE prompt, and never narrate what the "
-                 "JSON Schema already enforces (types, required, enums, defaults).")
-            {:type :extension/native-tool-over-budget :symbol sym :chars spent :budget budget}))))
     (validate-symbol-entry! entry)))
 
 (defn symbol
@@ -1620,9 +1246,9 @@
    The constructor for hosts that have no var to point at — the Python
    extension bridge, where `:fn`, `:doc` and `:arglists` are derived from a
    Python function. `parts` is `{:symbol :fn :doc :arglists}` (plus optional
-   `:source`) and `opts` is EXACTLY the `symbol` opts map, native-tool keys
-   included, so a Python-declared native tool runs the SAME validation and can
-   never skip the `:schema` / `:description` / `:result` contract."
+   `:source`) and `opts` is EXACTLY the `symbol` opts map, so a Python-declared
+   symbol runs the SAME validation and can never skip the `:description` /
+   `:result` contract."
   [parts opts]
   (build-symbol-entry parts opts))
 
@@ -1802,7 +1428,7 @@
      (ext-alias-symbol opts)
 
      symbols
-     (remove :ext.symbol/native-tool? (or (:symbols opts) (ext-symbols opts)))
+     (or (:symbols opts) (ext-symbols opts))
 
      heading
      (or heading (:ext/description opts) "Extension tools")
@@ -2154,12 +1780,11 @@
     (update result :result assoc "op" (op-kw->str (public-op-keyword (:symbol result))))
     result))
 
-(defn native-tool-finish-call-renderers-by-op
+(defn printed-result-renderers-by-op
   "Map op STRING (the value `stamp-public-result-op` writes into a result's `:op`,
-   e.g. `cat`) to `{:render-finish-call-fn}`. Resolves the op-card of a tool result
-   printed in Python, where the only origin handle is `:op`. Mirrors
-   `native-tool-finish-call-renderers` and is not active-filtered: a printed result
-   must still render even if its toggle flipped."
+   e.g. `cat`) to `{:render-finish-call-fn}`. Resolves the op-card of a result a
+   python block PRINTED, where the only origin handle is `:op`. Not
+   active-filtered: a printed result must still render even if its toggle flipped."
   [active-extensions]
   (into {}
         (for
@@ -2172,9 +1797,7 @@
            :when (:ext.symbol/render-finish-call-fn e)
            ;; Alias-qualify via `default-tool-op-keyword` so an aliased verb's key
            ;; matches the op its RESULT actually carries (`db/status` → "db_status"),
-           ;; not the bare symbol ("status"). No `:native-tool?` gate: a printed result
-           ;; renders off its `:op` whether the verb is a tool_use native tool (cat) or
-           ;; an engine-bound Python verb (db_status).
+           ;; not the bare symbol ("status").
            :let [op-kw
                  (public-op-keyword (default-tool-op-keyword ext e))]]
 
@@ -2725,7 +2348,9 @@
 (defn- get-log-writer
   []
   (or *log-writer*
-      (let [log-path (str (System/getProperty "user.home") "/.vis/vis.log")]
+      ;; Per-process file: Telemere rotates the log by renaming it, so a path
+      ;; shared with another vis process orphans this writer's fd.
+      (let [log-path (paths/log-file)]
         (alter-var-root #'*log-writer*
                         (fn [cur]
                           (or cur
@@ -2763,10 +2388,7 @@
    BEFORE the environment map exists — mirroring how `doc`/`apropos` defer
    through `environment-atom`. Same wrapping/IO-redirect as `wrap-extension`."
   [ext env-thunk]
-  ;; `:engine-bound? false` symbols (native-tool-only verbs) are NOT interned into
-  ;; the sandbox — they have no Python name, never reach apropos/protected-names,
-  ;; and execute via their `:handler` instead.
-  (let [entries (filter symbol-bound? (ext-symbols ext))]
+  (let [entries (ext-symbols ext)]
     (into {}
           (map
             (fn [sym-entry]
@@ -3773,86 +3395,26 @@
       (merge-manifest-entry! id entry))
     (count (mapcat :nses (vals manifests)))))
 
-(defn- json-schema-type-str
-  "Compact type string for one JSON-schema node, including `oneOf`/`anyOf`
-   unions such as `string|array<string>`."
-  [prop]
-  (letfn [(render [node]
-            (let
-              [t
-               (:type node)
-
-               alternatives
-               (or (:oneOf node) (:anyOf node))]
-
-              (cond (seq alternatives) (->> alternatives
-                                            (map render)
-                                            distinct
-                                            (str/join "|"))
-                    (= t "array") (str "array<" (render (or (:items node) {})) ">")
-                    (some? t) (str t)
-                    :else "any")))]
-    (render prop)))
-
-(defn- schema->param-doc
-  "Render a native tool's input `:ext.symbol/schema` (a JSON-schema map) into a
-   compact `params:` block — one line per input key with its type, whether it is
-   required, and the first line of its description. Required keys sort first, then
-   alphabetically, so the rendering is deterministic regardless of map order.
-   Returns nil when there is no usable schema, so callers can append conditionally."
-  [schema]
-  (when-let [props (:properties schema)]
-    (let
-      [required (set (:required schema))
-       ordered (sort-by (fn [[k _]]
-                          [(if (contains? required k) 0 1) (str k)])
-                        props)
-       lines
-       (for
-         [[k prop] ordered
-          :let [typ (json-schema-type-str prop)
-                req (when (contains? required k) ", required")
-                d (:description prop)
-                d1 (when (and (string? d) (not (str/blank? d))) (first (str/split-lines d)))]]
-
-         (str "- `" k "` (" typ req ")" (when d1 (str " — " d1))))]
-
-      (when (seq lines) (str "**params:**\n" (str/join "\n" lines))))))
-
 (defn symbol-doc-text
-  "Model-facing doc text for ONE symbol ENTRY: a native tool's required compact
-   description or a non-native symbol's implementation docstring, then the raw-result
-   contract whenever the entry declares one, followed by one generated params block. Native
-   implementation docstrings never enter model context. Returns nil without prose.
-   This is the single source for sandbox docs, so `doc(name)` and provider tool
-   descriptions expose the same result contract."
+  "Model-facing doc text for ONE symbol ENTRY: its compact `:description` (falling
+   back to the implementation docstring), then the raw-result contract whenever the
+   entry declares one. Returns nil without prose. This is the single source
+   `doc(name)` answers from."
   [entry]
   (let
-    [native?
-     (:ext.symbol/native-tool? entry)
+    [prose
+     (or (:ext.symbol/description entry) (:ext.symbol/doc entry))
 
-     prose
-     (if native?
-       (:ext.symbol/description entry)
-       (or (:ext.symbol/description entry) (:ext.symbol/doc entry)))
-
-     ;; The raw-result contract belongs to EVERY doc-bearing symbol, native or
-     ;; not: a bare sandbox verb like `resource_stop` is called from Python without
-     ;; a provider schema in front of it, so `doc("resource_stop")` is the only
+     ;; The raw-result contract belongs to EVERY doc-bearing symbol: a sandbox verb
+     ;; is called from Python with nothing in front of it, so `doc(name)` is the only
      ;; place its result keys are ever stated.
      result
      (:ext.symbol/result entry)
 
-     params
-     (schema->param-doc (:ext.symbol/schema entry))
-
      text
      (cond-> prose
        (and (string? prose) result)
-       (str "\n\nRaw result: " result)
-
-       (and (string? prose) params)
-       (str "\n\n" params))]
+       (str "\n\nRaw result: " result))]
 
     (when (and (string? text) (not (str/blank? text))) text)))
 
@@ -3880,7 +3442,6 @@
            entry
            (ext-symbols ext)
 
-           :when (symbol-bound? entry)
            :let [sym
                  (:ext.symbol/symbol entry)
 
@@ -3931,7 +3492,6 @@
            entry
            (ext-symbols ext)
 
-           :when (symbol-bound? entry)
            :let [sym
                  (:ext.symbol/symbol entry)]
            :when sym]

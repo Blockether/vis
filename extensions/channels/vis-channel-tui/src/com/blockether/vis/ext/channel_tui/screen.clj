@@ -27,6 +27,7 @@
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.magit :as magit]
             [com.blockether.vis.internal.external-opener :as opener]
+            [com.blockether.vis.internal.paths :as vis-paths]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [taoensso.telemere :as tel])
@@ -7657,21 +7658,16 @@
 
 (defn- redirect-stdio-to-log!
   "Lanterna writes to /dev/tty directly. Everything else (Telemere, SLF4J,
-   library prints, JVM warnings) MUST be redirected to ~/.vis/vis.log
-   before any other code runs - otherwise stray bytes corrupt the screen."
+   library prints, JVM warnings) MUST be redirected to this process's log
+   (`~/.vis/logs/vis-<pid>.log`, see `internal.paths/log-file`) before any
+   other code runs - otherwise stray bytes corrupt the screen."
   []
   (try (require 'taoensso.telemere)
        ((resolve 'taoensso.telemere/remove-handler!) :default/console)
        (catch Throwable _ nil))
   (let
-    [log-dir
-     (java.io.File. (str (System/getProperty "user.home") "/.vis"))
-
-     _
-     (when-not (.exists log-dir) (.mkdirs log-dir))
-
-     log-path
-     (str log-dir "/vis.log")
+    [log-path
+     (vis-paths/log-file)
 
      log-ps
      (java.io.PrintStream. (java.io.FileOutputStream. ^String log-path true) true)

@@ -11,7 +11,7 @@ There are two flavors, and this page is the whole story for both:
 | Ship | drop a file | build into the binary |
 | Reload | `/reload`, in place | rebuild + restart (native) |
 | Scope | per project or per user | every install of the distribution |
-| Can contribute | tools (incl. native tools with JSON Schema), prompts, slash commands, op hooks, network filters, session context, durable state, LLM providers | everything (channels, persistence backends, TUI, CLI, themes, sandbox shims, …) |
+| Can contribute | tools, prompts, slash commands, op hooks, network filters, session context, durable state, LLM providers | everything (channels, persistence backends, TUI, CLI, themes, sandbox shims, …) |
 
 Reach for Python for project-specific tools and guards — Vis can write those for
 itself mid-session. Graduate to Clojure when you need deeper surfaces or want to
@@ -21,11 +21,10 @@ ship to others as part of a
 Both flavors converge on the same contracts:
 
 1. **Declare the extension** — one spec per file/namespace.
-2. **Expose tools** — plain functions that surface as sandbox Python functions,
-   provider-native tools, or both.
-3. **Publish one contract per surface** — description + JSON Schema for native
-   tools; docstrings for Python-only symbols; prompt fragments only for dynamic
-   routing or catalogs.
+2. **Expose tools** — plain functions that surface as sandbox Python functions.
+3. **Publish one contract per tool** — its docstring (or `:description`), which is
+   what `apropos` searches and `doc(name)` returns; prompt fragments only for
+   dynamic routing or catalogs.
 
 ---
 
@@ -47,8 +46,6 @@ warning in `vis-agent doctor` — it never crashes Vis.
 A Python extension can contribute:
 
 - **tools** — functions the model calls in its sandbox (`todo_add("x")`)
-- **native tools** — the same functions promoted to first-class provider tools
-  with their own JSON Schema
 - **prompt fragments** — constant or recomputed every turn
 - **slash commands** — `/todos`, `/gh-repo …` for the user
 - **op hooks** — guards that can block file operations
@@ -142,9 +139,7 @@ vis.extension(
 ### Tools
 
 ```python
-vis.symbol(fn, name=None, tag="observation", is_hidden=False,
-           schema=None, description=None, result=None, is_native_tool=False,
-           render_start_call_fn=None, render_finish_call_fn=None)
+vis.symbol(fn, name=None, tag="observation", is_hidden=False)
 ```
 
 - `tag` declares what the tool does: `"observation"` (reads state) or `"mutation"`
@@ -152,8 +147,10 @@ vis.symbol(fn, name=None, tag="observation", is_hidden=False,
 - The sandbox name is `f"{alias}_{name}"`; `name` defaults to `fn.__name__`
   with a leading `"{alias}_"` stripped, so a module can use readable full
   names (`todo_add` under alias `todo`) without double-prefixing.
-- **The docstring is mandatory** — it becomes the model's `doc()` text.
-  House style: `await name(args) -> shape` on the first line.
+- **The docstring is mandatory** — it is the whole contract. `apropos(text)`
+  searches it and `doc(name)` returns it verbatim, so it is the only place the
+  tool is described. House style: `await name(args) -> shape` on the first line,
+  because that first line is what the curated `doc()` index prints.
 - Parameter names are read from the real signature and shown to the model.
 - `is_hidden=True` hides the tool from the model-facing listing (still callable).
 - Boolean keys keep **one spelling** across the boundary: a Python `is_<name>` key
@@ -163,6 +160,13 @@ vis.symbol(fn, name=None, tag="observation", is_hidden=False,
   `is_hidden` → `:is-hidden`. The only exceptions are the few keys svar's router
   itself spells with a trailing `?` (`is_tool_call` → `:tool-call?`); those map
   through one named table instead of by convention.
+
+**A tool is a Python function, never a provider tool.** `python_execution` is the
+only thing a model is handed a schema for; every symbol an extension registers is
+a bare name inside that sandbox, called like any other Python function. There is
+no JSON Schema to write, no `description=`/`result=` pair to keep in sync with the
+docstring, and no per-symbol renderer: a printed result is carded from the value
+itself.
 
 **Envelope semantics — Python authors never construct envelopes:**
 
@@ -180,55 +184,6 @@ def todo_toggle(id):
 ```
 
 Dict keys pass through as written — use snake_case.
-
-### Native tools from Python
-
-A Python symbol is promoted to a **first-class native tool** — its own JSON
-Schema, its own model-facing doc, its own op card — the moment it carries a
-`schema`. Nothing has to move to Clojure; the
-[native tool contract](#native-tool-contracts) below is identical.
-
-```python
-def weather_lookup(input):
-    """Implementation note — never shown to the model."""
-    return {"city": input["city"], "temp_c": 21}
-
-
-def _render_finish_call(result):
-    return {"summary": f"{result['city']} {result['temp_c']}C"}
-
-
-vis.symbol(
-    weather_lookup,
-    description="Look up the weather for ONE city.",
-    result="Object with string `city` and number `temp_c`.",
-    schema={"type": "object",
-            "properties": {"city": {"type": "string", "description": "City name."}},
-            "required": ["city"],
-            "additionalProperties": False},
-    render_finish_call_fn=_render_finish_call,
-)
-```
-
-| Argument | Meaning |
-| --- | --- |
-| `schema` | Plain-dict JSON Schema for the tool input. Supplying it implies `is_native_tool=True`. |
-| `description` | **Required** with a schema: the model-facing first line. The docstring stays an implementation note. |
-| `result` | **Required** with a schema: the raw-result contract, rendered as `Raw result: …`. |
-| `is_native_tool` | Explicit opt-in; redundant when `schema` is present. |
-| `render_start_call_fn` | `fn(input) -> dict` building the pending display (`summary`, `render`, `code`, `language`). |
-| `render_finish_call_fn` | `fn(result) -> dict` building the finished op card (`summary`, optional `body`). |
-
-- JSON-Schema vocabulary keys (`type`, `properties`, `required`,
-  `additionalProperties`, `items`, `enum`, …) are keywordized on the Clojure
-  side; **your property names stay verbatim strings**, so a property called
-  `type` or `items` is safe.
-- The model-facing doc is generated: `description`, the `Raw result:` contract,
-  and a parameter list derived from the schema. The Python docstring is never
-  part of it.
-- Validation is strict and happens **at load time**: a schema without a
-  `description` or a `result` fails the whole extension load rather than
-  registering a half-declared tool.
 
 ### Slash commands
 
@@ -1104,7 +1059,7 @@ my-extension/
 | `:ext/kind` | Categorical bucket used as a section label: `"foundation"`, `"language"`, `"channel"`, `"provider"`, … |
 | `:ext/activation-fn` | `(fn [env] -> boolean)`, called **once per turn**. Falsy hides every symbol and the prompt fragment for that turn. Defaults to always-on. |
 | `:ext/engine` | `{:ext.engine/alias 'weather :ext.engine/symbols [...]}` — the sandbox surface (below). |
-| `:ext/prompt-fn` | `(fn [env] -> string)` — optional dynamic routing/capability text; never a copy of native tool contracts. |
+| `:ext/prompt-fn` | `(fn [env] -> string)` — optional dynamic routing/capability text; never a copy of what `doc(name)` answers. |
 | `:ext/ctx-fn` | `(fn [env] -> map)` — structured per-turn context contributed into the model's `session` dict. |
 | `:ext/sandbox-shims` | Vec of Python **shim** specs — host-backed modules published into the model's Python sandbox (below). |
 | `:ext/slash-commands` | Vec of slash-command specs (below). |
@@ -1132,50 +1087,34 @@ Returns {\"city\", \"summary\"} — current conditions for a city."
 
 The rules:
 
-- **Pass the var** (`#'lookup-fn`), never a bare fn. For Python-only symbols, its docstring and arglists become `doc("weather_lookup")`. Native tools use the separate contract below.
+- **Pass the var** (`#'lookup-fn`), never a bare fn: its docstring and arglists become `doc("weather_lookup")`.
 - **Naming.** The Python name is `<alias>_<symbol>` in snake_case: alias `'weather` + symbol `'lookup` → `weather_lookup`. Kebab-case folds to snake_case, and a trailing `?`/`!` is stripped (`refresh!` → `refresh`).
 - **`:tag` is required**: `:observation` for pure reads, `:mutation` for anything that writes.
 - **Arguments** arrive as plain values; a Python dict of options becomes a Clojure map with keyword keys (`weather_lookup("Oslo", {"units": "metric"})` → `[city {:units "metric"}]`). Use multiple arities for optional args.
 - **Return an envelope.** `extension/success {:result value}` on success; on failure either throw (`ex-info` is converted for you) or return `extension/failure {:result nil :error {:message "…" :hint "…"}}`. The model sees only the `:result` payload — map keys convert kebab→snake automatically — and failures surface as normal Python exceptions.
 - Envelope constructors live in `com.blockether.vis.internal.extension` (`success` / `failure`); the spec/registration API is `com.blockether.vis.core` (aliased `vis`).
 
-Useful `vis/symbol` opts beyond `:symbol` and `:tag`: `:before-fn` (e.g. inject the turn's `env` as the first argument), `:render-start-call-fn` + `:render-finish-call-fn` (custom pending and finished cards), `:hidden?` (bind but don't advertise).
+Useful `vis/symbol` opts beyond `:symbol` and `:tag`: `:before-fn` (e.g. inject the turn's `env` as the first argument), `:hidden?` (bind but don't advertise), and `:description` — one compact paragraph that REPLACES the docstring in `doc(name)` when the docstring is a developer note rather than the model's contract.
 
-### Native tool contracts
+### One tool, and it is `python_execution`
 
-Prefer `:native-tool? true` for operations the agent should call directly. Native tools are discoverable and validated from the provider tool specification, so CORE and extension prompts can stay lean. Keep a symbol Python-only when it is primarily a composable helper or data-preparation primitive for `python_execution`, rather than a direct agent action. (The Python spelling of this same contract is [Native tools from Python](#native-tools-from-python).)
+`python_execution` is the ONLY tool a provider is ever handed a schema for. Every
+symbol an extension registers is a bare Python name inside that sandbox, so there
+is nothing to advertise, no JSON Schema to keep portable across providers, and no
+per-symbol renderer.
 
-Every symbol still passes a Var whose function has a non-blank docstring and concrete arglists. For a native tool, that docstring documents the implementation for developers; the model-facing contract lives only in `:description` and `:schema`. Keep each fact in one place:
-
-For provider portability, every native `:schema` root must be `type: object` without top-level `oneOf`, `allOf`, or `anyOf`. Nested property unions are allowed.
+What follows from that:
 
 | Owner | Contains | Must not contain |
 | --- | --- | --- |
-| `:description` | Compact routing, preconditions, side effects, and result semantics | Parameter inventories, types, defaults, or required fields |
-| `:schema` | Exact input names, types, constraints, defaults, and field descriptions | Workflow prose already in `:description` |
-| `:replay` | Optional large-argument elision thresholds for successful calls | Provider serialization, retry behavior, or tool-specific loop logic |
-| Function docstring | Developer implementation notes | Native model contract |
-| `:ext/prompt-fn` | Dynamic availability, routing, or catalogs only | Native descriptions or schemas |
+| Function docstring (or `:description`) | Compact routing, preconditions, side effects, result semantics, and the exact arguments | Anything the signature already says twice |
+| `:result` | The raw-result contract, appended by `doc(name)` as `Raw result: …` | Workflow prose already in the description |
+| `:ext/prompt-fn` | Dynamic availability, routing, or catalogs only | Signatures, example calls, or anything `doc(name)` already answers |
 
-```clojure
-(vis/symbol
-  #'lookup-fn
-  {:symbol 'lookup
-   :name "weather_lookup"
-   :native-tool? true
-   :tag :observation
-   :description "Read live weather when current conditions are required."
-   :call {:pos ["city"]}
-   :schema {:type "object"
-            :properties {"city" {:type "string" :minLength 1
-                                  :description "City to look up."}}
-            :required ["city"]
-            :additionalProperties false}})
-```
-
-Both `:description` and `:schema` are mandatory. Close the top-level schema with `:additionalProperties false` unless unknown keys are intentional. `doc(name)` renders the compact description plus schema-derived parameters exactly once; it never substitutes the implementation docstring. `vis/render-prompt` also skips native symbols, preventing a prompt fragment from duplicating their provider contract.
-
-For a tool with a large replay-only argument, declare the threshold on its symbol: `:replay {:elide-args {"content" 8192}}`. Vis keeps the original call for execution and forensics, but replaces a successful oversized call with a hashed textual receipt. Failed calls remain verbatim so their complete arguments and error context are available to the model. svar remains a faithful provider codec and never elides arguments itself.
+A model finds a symbol with `apropos(text)` — full-text over every docstring,
+documentation page, skill body and MCP tool description — and reads its contract
+with `doc(name)`. The prompt therefore does not need to carry either one, which is
+the whole reason a fragment must not restate them.
 
 ### Sandbox shims and autoloads
 
@@ -1227,13 +1166,13 @@ free of Clojure escaping hazards.
 
 ### The prompt fragment
 
-`:ext/prompt-fn` rides in a labeled `;; -- EXTENSION <alias> --` block only while the extension is active. Use it only for facts unavailable from native descriptions and schemas—for example, a dynamic capability matrix or a catalog that changes per turn.
+`:ext/prompt-fn` rides in a labeled `;; -- EXTENSION <alias> --` block only while the extension is active. Use it only for facts unavailable from a symbol's own documentation—for example, a dynamic capability matrix or a catalog that changes per turn.
 
 ```
 Weather service configured for this workspace; live lookups are available.
 ```
 
-Fixed native extensions usually need no prompt fragment. Do not repeat signatures, fields, defaults, or return contracts here.
+A fixed extension usually needs no prompt fragment. Do not repeat signatures, fields, defaults, or return contracts here — that is exactly the text `doc(name)` already carries, and a copy here costs MORE than the pull it duplicates.
 
 ### Activation
 
@@ -1367,15 +1306,10 @@ Every `vis-docs/vis-docs.edn` on the classpath is discovered — no central regi
      #'lookup-fn
      {:symbol 'lookup
       :name "weather_lookup"
-      :native-tool? true
       :tag :observation
-      :description "Read live weather when current conditions are required."
-      :call {:pos ["city"]}
-      :schema {:type "object"
-               :properties {"city" {:type "string" :minLength 1
-                                     :description "City to look up."}}
-               :required ["city"]
-               :additionalProperties false}})])
+      :description "Read live weather when current conditions are required. ONE city."
+      :result "Object with string `city` and string `summary`."
+      :call {:pos ["city"]}})])
 
 (def vis-extension
   (vis/extension

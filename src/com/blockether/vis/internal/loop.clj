@@ -852,224 +852,6 @@
 
       exec)))
 
-;; ---------------------------------------------------------------------------
-;; All-observation concurrent batch
-;;
-;; When ONE iteration emits ≥2 native tool calls that are ALL read-only
-;; OBSERVATIONS (cat / grep / ls / struct_index / struct_nodes /
-;; anything the extension declares `:tag :observation`), and NONE
-;; is python_execution, a native handler, or carries a preflight error, we run
-;; the whole batch CONCURRENTLY through the isolated bounded platform pool
-;; (`__vis_par_isolated__`) instead of serially. I/O-bound reads/greps overlap;
-;; the ORDERED result list is re-split so result[i] still pairs to the i-th
-;; tool_use_id, exactly as the serial path does. A single mutation
-;; (patch/struct_patch/…) or python_execution in the iteration → the WHOLE iteration
-;; stays serial + ordered (mutations are NEVER reordered or parallelized).
-;; ---------------------------------------------------------------------------
-
-(defn- observation-entry?
-  "True when a preflighted code-entry is a synthesized-Python OBSERVATION safe to
-   run concurrently: it answers a tool_use (`:svar/tool-call-id`), it is NOT a
-   native handler, it has NO preflight error, and its tool name resolves to
-   `:tag :observation` in `tags-by-name` (the AUTHORITATIVE per-symbol
-   classification — never a hardcoded name list). `python_execution` has no
-   symbol/tag, so it never matches (it is excluded by construction)."
-  [entry tags-by-name]
-  (and (:svar/tool-call-id entry)
-       (not (:vis/native-handler entry))
-       (not (:vis/preflight-error entry))
-       (= :observation (get tags-by-name (:vis/tool-name entry)))))
-
-(defn- observation-batch?
-  "True when EVERY entry in `code-entries` is a concurrent-safe observation and
-   there are at least two of them. Any doubt (a mutation, python_execution, a
-   native handler, a preflight error, a missing/blank source) → false → the
-   iteration runs serially. Conservative by design."
-  [code-entries tags-by-name]
-  (let [entries (vec code-entries)]
-    (and (>= (count entries) 2)
-         (every? (fn [e]
-                   (and (not (str/blank? (str (:expr e)))) (observation-entry? e tags-by-name)))
-                 entries))))
-
-(defn- observation-batch-program
-  "Synthesize the ONE Python program that runs `exprs` (each a bare observation
-   call like `cat(\"x\", {…})` — a DEFERRED `__vis_Call__`) concurrently and
-   returns an ORDERED list of per-call sentinels. `__vis_par_isolated__` settles
-   each deferred call on the pool and isolates failures per slot. The synthesized
-   names are `__vis_*` (baseline/protected), so they never collide with model
-   globals; the block is a host-owned batch, never model-authored code."
-  [exprs]
-  (str
-    "__vis_obs_batch__ = [" (str/join ", " exprs)
-    "]\n"
-    "__vis_par_isolated__([(lambda __x__=__x__: __vis_settle__(__x__)) for __x__ in __vis_obs_batch__])"))
-
-(defn- sentinel-get
-  "Read a `__vis_*` sentinel key from a batch slot. The per-call sentinels are
-   built in `par-isolated-fn` as Clojure maps `{\"__vis_ok__\" true \"__vis_val__\" …}`
-   and the boundary is STRINGS-ONLY, so a round-tripped slot is always a
-   string-keyed map — one plain string lookup, no keyword fallback."
-  [slot k]
-  (get slot (name k)))
-
-(defn- execute-observation-batch
-  "Run an all-observation iteration's calls CONCURRENTLY via one `execute-code`
-   of a `__vis_par_isolated__` batch, then RE-SPLIT the ordered sentinel list so
-   each entry gets its OWN result envelope — the SAME shape `execute-code` yields
-   for a single call, so everything downstream (render cards, tool_result pairing
-   by id, DB persist, streaming) is unchanged.
-
-   Returns a vector aligned 1:1 with `entries`: for slot i,
-     {:result <tool-value>  :duration-ms d :timeout? false …}   on success, OR
-     {:result nil :error <op-error> :duration-ms d :timeout? false …} on failure.
-   The batch's wall time is stamped on every slot (they ran together); a per-slot
-   duration is not separable and not needed for correctness.
-
-   If the batch itself fails to run (a syntax/host error before any slot settles,
-   or the sentinel list is malformed), returns nil so the caller falls back to
-   the proven SERIAL path — the feature never makes a batchable iteration worse
-   than serial."
-  [environment entries]
-  (let
-    [exprs
-     (mapv #(str (:expr %)) entries)
-
-     program
-     (observation-batch-program exprs)
-
-     start
-     (System/currentTimeMillis)
-
-     exec
-     (execute-code environment program)
-
-     finish
-     (System/currentTimeMillis)
-
-     dur
-     (- finish start)
-
-     slots
-     (:result exec)]
-
-    ;; Guard: the batch must have run and returned exactly one sentinel per entry.
-    ;; Any deviation (batch-level :error, wrong arity, non-map slot) → nil → the
-    ;; caller runs the iteration serially instead. Never silently drop a call.
-    (if (and (nil? (:error exec))
-             (sequential? slots)
-             (= (count slots) (count entries))
-             (every? map? slots))
-      (mapv (fn [slot expr]
-              (let
-                [base {:execution-started-at-ms start
-                       :execution-finished-at-ms finish
-                       :duration-ms dur
-                       :timeout? false
-                       :lru {}}]
-                (if (sentinel-get slot :__vis_ok__)
-                  (assoc base :result (sentinel-get slot :__vis_val__))
-                  (let [exc (sentinel-get slot :__vis_exc__)]
-                    (assoc base
-                      :result nil
-                      :error (if (instance? Throwable exc)
-                               (python-op-error (:python-context environment) exc expr)
-                               {:message (str (or exc "observation failed"))}))))))
-            slots
-            exprs)
-      nil)))
-
-(defn- run-native-handler
-  "Execute a native-tool `:handler` directly in Clojure under a cancellable
-   wall-clock deadline. Native handlers bypass the Python eval watchdog, so this
-   boundary prevents a wedged REPL/socket/process from holding a turn forever.
-
-   Slow SYNCHRONOUS setup runs OUTSIDE the wall: the handler's env carries
-   `:vis/outside-tool-wall`, a `(fn [thunk])` that PARKS the deadline while the
-   thunk runs (wedge-guarded by MAX_EVAL_TIMEOUT_MS) and RESTARTS the clock when
-   it returns — so a cold project-REPL boot never bills against the eval's
-   `timeout_ms` (see extension/run-outside-tool-wall). That same park is bound
-   as `rt/*blocking-wall-park*` around the handler, so a `human-input` pause
-   raised deep inside it stops this clock (and every enclosing one) instead of
-   dying at the wall while the operator is still typing."
-  [handler environment input display-src]
-  (let
-    [start
-     (System/currentTimeMillis)
-
-     timeout-ms
-     (long (rt/native-tool-timeout-ms input))
-
-     {:keys [deadline park]}
-     (rt/parkable-wall start timeout-ms)
-
-     worker
-     (cancellation/worker-future
-       "vis-native-tool"
-       #(binding
-          [rt/*blocking-wall-park*
-           park]
-
-          ;; The ONE seam that binds `workspace/*workspace-root*` /
-          ;; `workspace/*filesystem-roots*` from the environment for
-          ;; every extension callback (extension/with-context's own
-          ;; docstring). A `:handler` native tool used to call `handler`
-          ;; directly here, so `shell` silently resolved cwd
-          ;; against the JVM's launch directory instead of a draft
-          ;; workspace's `:workspace/root`.
-          (extension/with-context {:env environment}
-                                  (handler (assoc environment :vis/outside-tool-wall park) input))))
-
-     dispose-cancel-hook
-     (when-let [cancel-token (:cancel-token environment)]
-       (cancellation/on-cancel! cancel-token
-                                #(try (.cancel ^java.util.concurrent.Future worker true)
-                                      (catch Throwable _ nil))))
-
-     done
-     (fn [m]
-       (merge {:lru {}
-               :timeout? false
-               :execution-started-at-ms start
-               :execution-finished-at-ms (System/currentTimeMillis)
-               :duration-ms (- (System/currentTimeMillis) start)}
-              m))]
-
-    (try (let
-           [timeout-sentinel
-            (Object.)
-
-            ;; The deadline is a MOVABLE atom (outside-wall / human-input park
-            ;; it), so this re-checks the CURRENT wall on every wake.
-            ret
-            (rt/await-wall worker deadline timeout-sentinel)]
-
-           (if (identical? timeout-sentinel ret)
-             (do (.cancel ^java.util.concurrent.Future worker true)
-                 (done {:result nil
-                        :timeout? true
-                        :error
-                        {:message
-                         (str "Native tool "
-                              display-src
-                              " timed out after "
-                              timeout-ms
-                              "ms; retry with an explicit timeout_ms or use a background workflow")
-                         :type :vis/native-tool-timeout
-                         :data {:tool display-src :timeout-ms timeout-ms}}}))
-             (done (if (and (map? ret) (or (contains? ret :result) (contains? ret :error)))
-                     ret
-                     {:result ret}))))
-         (catch Throwable e
-           (done {:result nil
-                  :error (try (extension/ex->op-error e {:form-source display-src})
-                              (catch Throwable _
-                                {:message (or (ex-message e) (.getName (class e)))
-                                 :type (-> e
-                                           ex-data
-                                           :type)}))}))
-         (finally (when dispose-cancel-hook (try (dispose-cancel-hook) (catch Throwable _ nil)))))))
-
 ;; Print-cap defaults for `fmt/bounded-value-str` - chosen so a wide flat
 ;; collection or a deep nested map still pr-strs without materializing
 ;; an unbounded JVM string before truncation. Override per call site
@@ -1343,17 +1125,15 @@
     [blocks
      (vec (or blocks []))
 
-     ;; Dedupe duplicate (stuttered) blocks. A native handler-tool block is
-     ;; CODE-LESS (no :source) — keep it (don't blank-filter) and dedup it by
-     ;; tool-call-id, since several distinct handler calls share a blank source.
-     ;; Normal Python blocks still dedup by source.
+     ;; Dedupe duplicate (stuttered) blocks by source: the same program arriving
+     ;; twice is the provider repeating itself, so keep the first copy.
      block-key
      (fn [b]
-       (if (:vis/native-handler b) [::native (:svar/tool-call-id b)] (:source b)))
+       (:source b))
 
      unique-blocks
      (->> blocks
-          (remove #(and (str/blank? (:source %)) (not (:vis/native-handler %))))
+          (remove #(str/blank? (:source %)))
           (reduce (fn [{:keys [seen acc]} b]
                     (let [k (block-key b)]
                       (if (contains? seen k)
@@ -1388,14 +1168,7 @@
                  (assoc :svar/tool-call-id (:svar/tool-call-id b))
 
                  (:vis/tool-name b)
-                 (assoc :vis/tool-name (:vis/tool-name b))
-
-                 ;; native handler-tool dispatch carries through to execution
-                 (:vis/native-handler b)
-                 (assoc :vis/native-handler (:vis/native-handler b))
-
-                 (contains? b :vis/native-input)
-                 (assoc :vis/native-input (:vis/native-input b)))))
+                 (assoc :vis/tool-name (:vis/tool-name b)))))
            unique-blocks)
 
      raw-fence-error
@@ -3105,9 +2878,8 @@
             ;; fold — it is monotonically ≤ the current reading and can only
             ;; move for the fold's own reason. With nothing reclaimed the
             ;; absolute reading stands unchanged. The arrow is deliberately
-            ;; UNSPACED: `session-fold-card` splits the receipt from the gist on
-            ;; the FIRST " → ", so a spaced arrow here would swallow the whole
-            ;; tail into the gist.
+            ;; UNSPACED: a receipt's gist is split off at the FIRST " → ", so a
+            ;; spaced arrow here would swallow the whole tail into the gist.
             ctx-pct
             (when (and sat (pos? (long sat)))
               (let
@@ -3278,20 +3050,6 @@
                 "{\"from\": \"t1/i2\", \"to\": \"t1/i5\"}"))))}))
 
 
-(defn- split-on
-  "Split `s` on the LITERAL separator `sep`. Plain index scanning, no regex:
-   fold receipts are assembled from known separators, so pattern matching buys
-   nothing and only hides the contract."
-  [^String s ^String sep]
-  (let [n (count sep)]
-    (loop
-      [from 0
-       acc []]
-
-      (if-let [i (str/index-of s sep from)]
-        (recur (+ (long i) (long n)) (conj acc (subs s from (long i))))
-        (conj acc (subs s from))))))
-
 (defn- ntr-recover-hint
   "One compact recovery pointer for a folded result set. The receipt deliberately
    never repeats ids, tool names, or gists: large folds otherwise turn a compact
@@ -3300,250 +3058,6 @@
   [ids]
   (when (seq (distinct (remove nil? ids))) " · more results: ntr.describe()"))
 
-(defn- scope-token-end
-  "Index just PAST the iteration address starting at `i` (`t12`, `t1/i2`,
-   `t2/i3-i7`), or nil when `i` doesn't open one. Hand-rolled scan: the address
-   grammar is three optional pieces and reads plainer here than as a pattern."
-  [^String s i]
-  (let
-    [n
-     (count s)
-
-     digits
-     (fn [j]
-       (loop [k (long j)]
-         (if (and (< k n) (Character/isDigit (.charAt s k)))
-           (recur (inc k))
-           (when (> k (long j)) k))))]
-
-    (when (and (< (long i) n) (= \t (.charAt s (long i))))
-      (when-let [after-turn (digits (inc (long i)))]
-        (let
-          [after-iter (when (and (< (inc (long after-turn)) n)
-                                 (= \/ (.charAt s (long after-turn)))
-                                 (= \i (.charAt s (inc (long after-turn)))))
-                        (digits (+ (long after-turn) 2)))
-           end (long (or after-iter after-turn))
-           after-range
-           (when
-             (and after-iter (< (inc end) n) (= \- (.charAt s end)) (= \i (.charAt s (inc end))))
-             (digits (+ end 2)))]
-
-          (or after-range end))))))
-
-(defn- word-char? [ch] (or (Character/isLetterOrDigit ^char ch) (= ch \_)))
-
-(defn- code-scopes
-  "Monospace every iteration address in `s` so `t11/i24` reads as one token at any
-   width instead of blending into the sentence."
-  [x]
-  (let
-    [^String s
-     (str x)
-
-     n
-     (count s)
-
-     sb
-     (StringBuilder.)]
-
-    (loop [i 0]
-      (if (>= (long i) n)
-        (.toString sb)
-        (let
-          [start? (or (zero? (long i)) (not (word-char? (.charAt s (dec (long i))))))
-           end (when start? (scope-token-end s i))
-           end (when (and end (or (>= (long end) n) (not (word-char? (.charAt s (long end))))))
-                 (long end))]
-
-          (if end
-            (do (.append sb \`) (.append sb (subs s (long i) end)) (.append sb \`) (recur end))
-            (do (.append sb (.charAt s (long i))) (recur (inc (long i))))))))))
-
-(defn- ntr-accessor-end
-  "Index just PAST an `ntr[…]` subscript or an `ntr.foo()` call opening at `i`,
-   else nil."
-  [^String s i]
-  (let
-    [n
-     (count s)
-
-     i
-     (long i)]
-
-    (when (and (<= (+ i 4) n) (= "ntr" (subs s i (+ i 3))))
-      (let [ch (.charAt s (+ i 3))]
-        (cond (= \[ ch) (when-let [close (str/index-of s "]" (+ i 3))]
-                          (inc (long close)))
-              (= \. ch) (let
-                          [name-end (long (loop [k (long (+ i 4))]
-                                            (if (and (< k (long n)) (word-char? (.charAt s k)))
-                                              (recur (inc k))
-                                              k)))]
-                          (when (and (> name-end (+ i 4))
-                                     (<= (+ name-end 2) (long n))
-                                     (= "()" (subs s name-end (+ name-end 2))))
-                            (+ name-end 2)))
-              :else nil)))))
-
-(defn- code-ntr
-  "Monospace the recovery accessors — they are literally code to paste back."
-  [x]
-  (let
-    [^String s
-     (str x)
-
-     n
-     (count s)
-
-     sb
-     (StringBuilder.)]
-
-    (loop [i 0]
-      (if (>= (long i) n)
-        (.toString sb)
-        (let
-          [start? (or (zero? (long i)) (not (word-char? (.charAt s (dec (long i))))))
-           end (when start? (ntr-accessor-end s i))]
-
-          (if end
-            (do (.append sb \`)
-                (.append sb (subs s (long i) (long end)))
-                (.append sb \`)
-                (recur (long end)))
-            (do (.append sb (.charAt s (long i))) (recur (inc (long i))))))))))
-
-(defn- bold-lead-word
-  "Bold the leading whitespace-delimited word of `seg` — each metric opens with
-   its keyword (saved / context / recover / kept), so this turns the bullet list
-   into a scannable label → value table."
-  [^String seg]
-  (let
-    [n
-     (count seg)
-
-     end
-     (loop [k 0]
-       (if (and (< k n) (not (Character/isWhitespace (.charAt seg k)))) (recur (inc k)) k))]
-
-    (if (pos? (long end)) (str "**" (subs seg 0 (long end)) "**" (subs seg (long end))) seg)))
-
-(defn- recover-bullet
-  "Markup for the `recover …` metric: ONE accessor per line, every free-text
-   label inside a code span.
-
-   Both matter because a label is FOREIGN prose — another tool's op-card gist,
-   full of paths and flags (`~/vis/bin/vis-agent`, `--ff-only`). Rendered as inline
-   markdown it gets EATEN: a single tilde opens GFM strikethrough (one is
-   enough, two are not required), so one path silently struck through half the
-   breadcrumb. A code span makes the label inert, and it is honest markup —
-   the label quotes what ran. The list replaces a run-on `;`-joined line that
-   neither surface could wrap readably."
-  [seg]
-  (let
-    [prefix
-     (if (str/starts-with? seg "recover raw result/no rerun:")
-       "recover raw result/no rerun:"
-       "recover")
-
-     entries
-     (->> (split-on (str/triml (subs seg (count prefix))) "; ")
-          (map str/trim)
-          (remove str/blank?))
-
-     ;; `ntr[\"id\"] <label>` — the accessor stays code the reader retypes, the
-     ;; label becomes a quoted span.
-     line
-     (fn [e]
-       (if-let [end (str/index-of e "] ")]
-         (str (code-ntr (subs e 0 (inc (long end)))) " `" (str/trim (subs e (+ (long end) 2))) "`")
-         (code-ntr e)))]
-
-    (if (seq entries)
-      (str "**recover** exact raw result, no re-run:\n"
-           (str/join "\n" (map #(str "  - " (line %)) entries)))
-      (code-ntr (bold-lead-word seg)))))
-
-(defn- session-fold-card
-  "Presentation split of a `session_fold` receipt into an op-card.
-
-   The verb returns ONE dense line — `folded <label> · saved … · context … ·
-   recover raw result/no rerun: ntr[…] → <gist>` — and every channel used to paint it as a headline
-   plus a VERBATIM ``` fence. That fence is what made folds unreadable: the TUI
-   CHAR-folds a language-less block (cuts mid-word, mid-`ntr[\"…\"]`) and the
-   companion hands it `overflow-x-auto`, so the longest, densest line we emit
-   was the one line neither surface wrapped.
-
-   So the split is MARKDOWN, not a fence: a short headline (identity + the
-   reclaim figure) and a body of prose — the gist as its own paragraph, the
-   metrics as a bullet list. Markdown paragraphs soft-wrap to whatever width the
-   channel actually has, so ONE engine-side shape reads correctly in the TUI and
-   on the web without either client learning anything about folds.
-
-   The receipt is also MARKED UP here, where the wording is decided, not in the
-   channels: scope labels (`t2`, `t1/i1`, `t2/i3-i7`) and `ntr[…]` accessors are
-   identifiers the reader retypes, so they get code spans, and each metric's
-   leading keyword is bolded. Both surfaces already render inline markdown in a
-   card summary AND body (TUI `tool-card-entries`, companion `ToolSummary` /
-   `<Markdown compact nested>`), so a fold finally reads like every other card
-   instead of a wall of plain text."
-  [result]
-  (let
-    [s
-     (str result)
-
-     arrow
-     (str/index-of s " → ")
-
-     receipt
-     (if arrow (subs s 0 (long arrow)) s)
-
-     gist
-     (when arrow (not-empty (str/trim (subs s (+ (long arrow) 3)))))
-
-     [head & segs]
-     (split-on receipt " · ")
-
-     ;; `~P% of budget` only qualifies the `saved …` it follows — keep the
-     ;; pair on ONE bullet instead of stranding a bare percentage.
-     bullets
-     (reduce (fn [acc seg]
-               (if (and (seq acc) (str/includes? seg "of budget"))
-                 (conj (pop acc) (str (peek acc) " · " seg))
-                 (conj acc seg)))
-             []
-             segs)
-
-     markup-bullet
-     (fn [seg]
-       (cond (str/starts-with? seg "recover ") (recover-bullet seg)
-             (str/starts-with? seg "more results:")
-             (str "**more results:** `" (str/trim (subs seg (count "more results:"))) "`")
-             :else (code-ntr (bold-lead-word seg))))
-
-     ;; Collapsed view = WHAT was folded + HOW MUCH it reclaimed; the rest
-     ;; (context level, recovery accessors, kept skills) reads fine one
-     ;; disclosure away and would only push the headline past truncation.
-     saved
-     (first (filter #(str/starts-with? % "saved ") segs))
-
-     saved
-     (when saved
-       (let [figure (str/triml (subs saved (count "saved ")))]
-         (if (seq figure) (str "saved **" figure "**") saved)))
-
-     body
-     (str/join "\n\n"
-               (cond-> []
-                 gist
-                 (conj gist)
-
-                 (seq bullets)
-                 (conj (str/join "\n" (map #(str "- " (markup-bullet %)) bullets)))))]
-
-    (cond-> {:summary (str (code-scopes head) (when saved (str " · " saved)))}
-      (seq body)
-      (assoc :body (str "\n" body)))))
 
 (defn- apply-summaries
   "Wire-only rewrite of `trailer-iters` applying the model's `session_fold`/
@@ -3777,16 +3291,6 @@
         (and (sequential? pr) (seq pr) (every? patch-file-summary? pr)) "patch"))
 
 
-(defn- own-tool-forms
-  [iter-record tool-call]
-  (let
-    [forms (or (:forms-vec iter-record)
-               (mapcat (fn [b]
-                         (or (seq (:forms b)) [b]))
-                       (:blocks iter-record)))]
-    (filterv #(= (:id tool-call) (:svar/tool-call-id %)) forms)))
-
-
 (def ^:private MAX_FORM_WIRE_CHARS
   "Per-block printed-output ceiling. A block's stdout is head-clipped to this
    many chars in the tool result — a universal backstop for a runaway print()
@@ -3804,49 +3308,6 @@
   [cards result-card]
   (if (and (seq cards) (some :result-render cards)) nil (:body result-card)))
 
-(defn- pending-call-display
-  "The DISPLAY a native call carries WHILE it runs: the tool's own `:render-start-call-fn`
-   rendering of its INPUT, as `{:display-code :display-language :pending-summary
-   :pending-render}`. `shell` hands back the very op-card its result will complete
-   — the headline (`$ npm test (running)`) plus that card's BODY, built by the same
-   section renderers the finished body uses — so a running block is that card in
-   its awaiting state instead of raw `shell({…})` invocation JSON, and no preview
-   dialect exists only for pending calls.
-
-   Both surfaces ride their OWN keys, never `:result-summary`/`:result-render`, so
-   a running call never looks finished to any channel. A tool that would rather
-   show a plain code band still gets `:display-code`/`:display-language`.
-
-   nil for a tool without a `:render-start-call-fn`; a throwing renderer degrades to that raw
-   invocation rather than failing the call it was only previewing."
-  [call-renderers tool-name input]
-  (when-let [render (and tool-name (get call-renderers (name tool-name)))]
-    (let
-      [display (try (render input) (catch Throwable _ nil))
-       trimmed (fn [k]
-                 (some-> (k display)
-                         str
-                         str/trim
-                         not-empty))
-       code (trimmed :code)
-       summary (trimmed :summary)
-       body (some-> (:render display)
-                    str
-                    str/trimr
-                    not-empty)]
-
-      (when (or code summary body)
-        (cond-> {}
-          code
-          (assoc :display-code
-            code :display-language
-            (or (trimmed :language) "text"))
-
-          summary
-          (assoc :pending-summary summary)
-
-          body
-          (assoc :pending-render body))))))
 
 (defn- tool-result-display
   "The human-channel DISPLAY for one executed TOOL CALL as `{:summary :body}` —
@@ -3913,11 +3374,10 @@
          (when (or summary body) {:summary summary :body body})))]
 
     (cond
-      ;; The outer wall-clock BACKSTOP fired (the tool's own timeout did not return
-      ;; its structured result first): there is no :result to render, but the card
-      ;; must still read as a TIMEOUT — a distinct ⧖ headline, not the raw
-      ;; :vis/native-tool-timeout error string. Sits FIRST so a timeout always wins
-      ;; its own display regardless of any partial stdout/error also present.
+      ;; The eval wall-clock BACKSTOP fired: there is no :result to render, but the
+      ;; card must still read as a TIMEOUT — a distinct ⧖ headline, not the raw error
+      ;; string. Sits FIRST so a timeout always wins its own display regardless of
+      ;; any partial stdout/error also present.
       (:timeout? result*)
       (let
         [err
@@ -4298,90 +3758,6 @@
       ;; Legacy text fallback (no tool calls on this record).
       (not (str/blank? fallback-content)) {:role "user" :content fallback-content})))
 
-(defn- successful-tool-call?
-  [iter-record tool-call]
-  (let [own (own-tool-forms iter-record tool-call)]
-    (and (seq own) (not-any? :error own))))
-
-(defn- oversized-arg-receipts
-  [tool-call replay-policy]
-  (let [input (:input tool-call)]
-    (into []
-          (keep (fn [[arg threshold]]
-                  (let [payload (get input arg)]
-                    (when (and (string? payload) (> (count payload) (long threshold)))
-                      {:arg arg :chars (count payload) :sha256 (extension/sha256-hex payload)}))))
-          (:elide-args replay-policy))))
-
-(defn- compactable-native-call
-  "Return context-compaction data for one successful policy-owned native call.
-   Mixed batches and failed calls stay verbatim so provider call/result pairing
-   and failure context remain untouched."
-  [iter-record replay-policies]
-  (let
-    [calls
-     (vec (:tool-calls iter-record))
-
-     tc
-     (first calls)
-
-     policy
-     (get replay-policies (:name tc))
-
-     elided
-     (oversized-arg-receipts tc policy)]
-
-    (when (and (= 1 (count calls)) (seq elided) (successful-tool-call? iter-record tc))
-      {:tool-call tc :elided elided})))
-
-(defn- plain-tool-results
-  "Turn a canonical tool_result message into ordinary text after its assistant
-   tool_use is intentionally removed from replay."
-  [results]
-  (when results
-    (if (string? (:content results))
-      (:content results)
-      (->> (:content results)
-           (map (fn [{:keys [tool_use_id content]}]
-                  (str "# result " tool_use_id "\n" content)))
-           (str/join "\n\n")))))
-
-(defn- compacted-native-replay
-  "Provider-safe replay for one successful oversized native call. Use ordinary
-   assistant/user text instead of mutating a provider-native tool_use block;
-   signed thinking and function-call item ids therefore cannot be invalidated."
-  [iter-record {:keys [tool-call elided]}]
-  (let
-    [input
-     (:input tool-call)
-
-     elided-keys
-     (into #{} (map :arg) elided)
-
-     visible-input
-     (apply dissoc input elided-keys)
-
-     elided-text
-     (->> elided
-          (map (fn [{:keys [arg chars sha256]}]
-                 (str arg "=" chars " chars sha256=" sha256)))
-          (str/join ", "))
-
-     receipt
-     (str (:name tool-call)
-          "(args="
-          (pr-str visible-input)
-          ", omitted="
-          "["
-          elided-text
-          "])\nTool completed; exact original arguments remain stored by Vis.")
-
-     results
-     (plain-tool-results (iteration-results-message iter-record))]
-
-    (cond-> [{:role "assistant" :content [{:type "text" :text receipt}]}]
-      (not (str/blank? results))
-      (conj {:role "user" :content results}))))
 
 (defn- strip-assistant-thinking
   "Cross-provider/model-SAFE version of a canonical assistant replay: drop
@@ -4567,7 +3943,7 @@
    images are re-uploaded in full on every request, so an unbounded history
    eventually exceeds the provider's request limit and breaks every later
    turn. Newest wins; older ones are named instead of sent."
-  [trailer-iters target & [replay-policies]]
+  [trailer-iters target]
   (let
     [iters
      (vec (or trailer-iters []))
@@ -4600,9 +3976,6 @@
              img
              (when vision? (iteration-image-messages (get image-plan pos)))
 
-             compacted-call
-             (compactable-native-call iter-rec replay-policies)
-
              +img
              (fn [msgs]
                (into (vec msgs) img))]
@@ -4630,10 +4003,6 @@
                   (+img [textual])
                   (vec img))
                 (vec img))
-              ;; Policy-owned large arguments on successful calls: replace the
-              ;; completed native protocol pair with ordinary text. Signed/provider-
-              ;; owned blocks remain immutable; failed calls stay verbatim.
-              compacted-call (+img (compacted-native-replay iter-rec compacted-call))
               ;; Same provider+model, valid signature → verbatim replay
               ;; with the full thinking chain.
               (contains? compatible pos)
@@ -4709,33 +4078,6 @@
 
       (str fs-part " " net-part))))
 
-(defn- finalize-engine-native-tool
-  "Require and project the raw-result contract for one engine-owned native tool,
-   then put its schema through the SAME wire projection extension natives get
-   (`extension/advertise-tool`) so the engine surface carries identical
-   constraint prose."
-  [{:keys [name description result] :as tool}]
-  (when-not (and (string? description) (not (str/blank? description)))
-    (throw (ex-info
-             (str "Engine native tool " name " is missing a non-blank :description contract.")
-             {:type :loop/missing-engine-native-description :name name})))
-  (when-not (and (string? result) (not (str/blank? result)))
-    (throw (ex-info (str "Engine native tool " name " is missing a non-blank :result contract.")
-                    {:type :loop/missing-engine-native-result :name name})))
-  (when (str/includes? description "Raw result:")
-    (throw (ex-info (str "Engine native tool "
-                         name
-                         " embeds the reserved `Raw result:` label in :description.")
-                    {:type :loop/engine-native-result-in-description :name name})))
-  (when (str/includes? result "Raw result:")
-    (throw (ex-info (str "Engine native tool "
-                         name
-                         " includes the reserved `Raw result:` label in :result.")
-                    {:type :loop/engine-native-result-has-label :name name})))
-  (-> tool
-      (assoc :description (str description "\n\nRaw result: " result))
-      (dissoc :result)
-      (extension/advertise-tool)))
 
 (defn- python-execution-tool
   "The engine-level `python_execution` tool schema. Preferred for batched,
@@ -4767,60 +4109,23 @@
             :additionalProperties false}})
 
 
-
-
-
-(def ^:private engine-native-tool-call-shapes
-  {"apropos" {:py-name "__vis_apropos_table__" :opt-pos ["query"]}
-   "doc" {:pos ["name"]}
-   "session_fold" {:pos ["target"] :opt-pos ["gist"]}})
-
-(defn- native-tools
+(defn- model-facing-tools
   "The ONE provider-visible tool. `python_execution` IS the model-facing surface:
    every other capability is already a bare Python name inside that sandbox, so a
    second JSON schema advertises a door the model can open anyway — and charges
    for it on every request. Discovery of the rest is pulled, not pushed:
    `apropos(text)` searches and `doc(name)` retrieves, both from inside a block.
 
-   Finalized here, so the one tool still cannot reach a provider without an
-   explicit raw-result contract. Nothing is advertised `strict`: `advertise-tool`
-   explains why a per-wire grammar opt-in has no place on a surface that must
-   reach every provider."
+   The raw-result contract is folded into the description here, so the one tool
+   cannot reach a provider without saying what it hands back. Nothing is
+   advertised `strict`: a per-wire grammar opt-in has no place on a surface that
+   must reach every provider."
   [caps]
-  [(finalize-engine-native-tool (python-execution-tool caps))])
+  (let [{:keys [description result] :as tool} (python-execution-tool caps)]
+    [(-> tool
+         (assoc :description (str description "\n\nRaw result: " result))
+         (dissoc :result))]))
 
-
-(defn- py-literal
-  "Render a JSON-ish value as a PYTHON literal string (`True`/`False`/`None`,
-   quoted strings, lists, dicts) so a native tool-call's structured arguments can
-   be synthesized into a call to the bound Python tool fn. JSON's lowercase
-   true/false/null are NOT valid Python, hence this rather than raw JSON.
-   STRINGS-ONLY: a keyword/symbol here means a producer leaked one past
-   `normalize-tool-input` / a `:call` shape fn — throw, never render `:kw`
-   into Python source."
-  [v]
-  (cond (nil? v) "None"
-        (true? v) "True"
-        (false? v) "False"
-        (or (keyword? v) (symbol? v)) (env/boundary-violation! :keyword-value v ["py-literal"])
-        (string? v) (str \"
-                         (-> ^String v
-                             (str/replace "\\" "\\\\")
-                             (str/replace "\"" "\\\"")
-                             (str/replace "\n" "\\n")
-                             (str/replace "\r" "\\r")
-                             (str/replace "\t" "\\t"))
-                         \")
-        (map? v) (str "{"
-                      (str/join ", "
-                                (map (fn [[k val]]
-                                       (str (py-literal (str k)) ": " (py-literal val)))
-                                     v))
-                      "}")
-        (sequential? v) (str "[" (str/join ", " (map py-literal v)) "]")
-        (integer? v) (str v)
-        (number? v) (str v)
-        :else (py-literal (str v))))
 
 (def ^:private tool-protocol-leak-re
   "A LONE closing tool-call tag. `invoke`/`parameter` are the provider's own
@@ -4883,7 +4188,7 @@
 
    VALUES TOO, at every depth: a keyword/symbol VALUE (`{\"op\" :delete}` out of
    extension EDN) is stringified HERE — `:delete` -> `\"delete\"`, `:a/b` ->
-   `\"a/b\"` — because `py-literal` rightly treats one as a producer bug and
+   `\"a/b\"` — because the sandbox boundary refuses a keyword value and
    throws `boundary-violation!`, which killed the whole tool call instead of
    running it. Everything else (edit `replace` text, anchors, paths, numbers,
    booleans) passes through verbatim."
@@ -4926,95 +4231,6 @@
   [tool-calls]
   (mapv #(update % :input normalize-tool-input) (vec tool-calls)))
 
-
-
-(defn- synth-call
-  "Synthesize `py-name(args…)` from a native tool's `:call` SHAPE map + the tool
-   input (positional-args contract). Shape keys (all optional):
-     :py-name   bound python name override (default: wire name `nm`)
-     :lead-opt  one optional leading positional key — emitted only when present
-     :pos       required positional keys, in order
-     :opt-pos   trailing optional positional keys — each emitted only when present
-     :rest      :opt    → append remaining keys as a dict, OMITTED when empty
-                :always → always append the remaining-keys dict (even when empty)
-   Every input key NOT consumed by :lead-opt/:pos/:opt-pos falls into the :rest
-   dict. `py-literal` escapes each argument, so any payload (Clojure source, quotes,
-   newlines, unicode) round-trips as a valid Python literal."
-  [nm shape input]
-  (let
-    [py-name
-     (or (:py-name shape) nm)
-
-     lead
-     (:lead-opt shape)
-
-     pos
-     (:pos shape)
-
-     opt-pos
-     (:opt-pos shape)
-
-     consumed
-     (cond-> (set pos)
-       lead
-       (conj lead)
-
-       (seq opt-pos)
-       (into opt-pos))
-
-     rest-map
-     (apply dissoc input consumed)
-
-     args
-     (concat (when (and lead (contains? input lead)) [(py-literal (get input lead))])
-             (map #(py-literal (get input %)) pos)
-             (keep #(when (contains? input %) (py-literal (get input %))) opt-pos)
-             (case (:rest shape)
-               :always
-               [(py-literal rest-map)]
-
-               :opt
-               (when (seq rest-map) [(py-literal rest-map)])
-
-               nil))]
-
-    (str py-name "(" (str/join ", " args) ")")))
-
-(defn- tool-call->python-source
-  "Synthesize the Python a native tool-call runs. A native tool becomes a BARE call
-   into its already-bound async fn (`cat(\"x\", {...})`) — it auto-runs and its
-   result becomes the tool_result, reusing the whole GraalPy execution + confinement
-   + render pipeline.
-
-   The call SHAPE is DATA on the tool's symbol (`:ext.symbol/call`, projected into
-   `shapes` as wire-name → shape-map-or-fn) — the engine holds NO per-tool list, so
-   a new module's tool works by default or by declaring its own shape. A shape map
-   is interpreted by `synth-call`; a `(fn [input] -> {:args [raw-vals] :py-name?})`
-   is an escape hatch for the irreducible one (`patch` reshape) — it returns RAW
-   argument values (no `py-literal`, so tool namespaces
-   need no engine dependency) which THIS fn renders. A tool with NO shape → the
-   generic `name({…whole input…})` form (correct for struct_patch, grep,
-   struct_index …).
-
-   `python_execution` is the ONE engine tool (not a symbol): its `code` really IS a
-   Python program, passed through verbatim. This is deliberately the ONLY `code`
-   special-case — a native tool's `code` is a PAYLOAD (replacement source), NOT a
-   program, so it must ride escaped inside the call, never be dumped as the program."
-  [shapes tc]
-  (let
-    [nm
-     (:name tc)
-
-     input
-     (normalize-tool-input (:input tc))]
-
-    (if (= nm "python_execution")
-      (or (get input "code") "")
-      (let [shape (get shapes nm)]
-        (cond (fn? shape) (let [{:keys [py-name args]} (shape input)]
-                            (str (or py-name nm) "(" (str/join ", " (map py-literal args)) ")"))
-              (map? shape) (synth-call nm shape input)
-              :else (str nm "(" (py-literal input) ")"))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Prompt-cache breakpoints (Anthropic `cache_control`; OpenAI-style strips the
@@ -5092,33 +4308,6 @@
                     (= (squash p) (squash code))) ;; prose IS the code verbatim
         p))))
 
-(defn- native-tool-call-block
-  "ONE iteration block for a native tool call.
-
-   A `:handler` native tool is dispatched in Clojure and never runs as Python:
-   its `:source` is the synthesized call kept for DISPLAY/persist/validation only
-   (blocks require a string `:code`; a nil here failed `validate-iteration-blocks!`
-   and errored the whole iteration on every handler-tool call). Every other native
-   tool synthesizes the bare call into its bound sandbox symbol. Execution branches
-   on `:vis/native-handler` before `:source` is ever evaluated.
-
-   Both shapes carry `:vis/native-input` — the normalized input the tool was called
-   with. That input lets a tool render its own pending call (`:render-start-call-fn`): carrying
-   it only on the handler branch meant every sandbox-bound native tool — `shell`
-   included — painted the raw invocation JSON while it ran instead of the bash block
-   its result completes."
-  [call-shapes handler tc]
-  (assoc (if handler
-           {:lang "native"
-            :source (tool-call->python-source call-shapes tc)
-            :svar/tool-call-id (:id tc)
-            :vis/tool-name (:name tc)
-            :vis/native-handler handler}
-           {:lang "python"
-            :source (tool-call->python-source call-shapes tc)
-            :svar/tool-call-id (:id tc)
-            :vis/tool-name (:name tc)})
-    :vis/native-input (:input tc)))
 
 (defn- provider-call-reason
   "WHY this provider request exists. The FIRST call of a turn answers the human's
@@ -5293,7 +4482,7 @@
        ;; surfaced on the routing trace, same as an empty-reply resend.
        refusal-fallback-events (atom [])
        refusal-fallbacks (refusal-fallbacks-for resolved-model)
-       provider-tools (native-tools (:sandbox-caps environment))
+       provider-tools (model-facing-tools (:sandbox-caps environment))
        ask-opts
        (rt/with-default-ask-code-idle-timeout
          (cond->
@@ -5436,18 +4625,15 @@
        _ (when answer-md (finalize-answer! environment answer-md))
        _ (when (and assistant-prose on-chunk)
            (on-chunk {:phase :assistant-prose :iteration iteration-position :text assistant-prose}))
-       ;; Native tools whose symbol declares a `:native-tool :handler` run
-       ;; DIRECTLY in Clojure (no synthesized Python). All others synthesize a
-       ;; bare call into their bound fn and run through GraalPy as before.
-       native-handlers (extension/native-tool-handlers active-extensions environment)
-       ;; Per-tool call SHAPES (wire-name → shape-map-or-fn), projected from each
-       ;; symbol's `:ext.symbol/call`. The synthesizer holds no per-tool list.
-       call-shapes (merge (extension/native-tool-call-shapes active-extensions environment)
-                          engine-native-tool-call-shapes)
+       ;; The ONE advertised tool is `python_execution`, so a tool call IS a
+       ;; Python block: its `code` argument is the program, verbatim.
        blocks (if answer-md
                 []
                 (mapv (fn [tc]
-                        (native-tool-call-block call-shapes (get native-handlers (:name tc)) tc))
+                        {:lang "python"
+                         :source (or (get (:input tc) "code") "")
+                         :svar/tool-call-id (:id tc)
+                         :vis/tool-name (:name tc)})
                       tool-calls))
        preflight-start-ns (System/nanoTime)
        preflight-result (if answer-md
@@ -5477,75 +4663,10 @@
        ;; executable tool code.
        suppress-form-start? (some :vis/preflight-error code-entries)
        total-blocks (count code-entries)
-       ;; per-tool finish renderers (`:render-finish-call-fn`), looked up
-       ;; once for this iteration — form-result-display applies them so a native
-       ;; tool's result shows as a clean card, unified across TUI + web.
-       ;; `session_fold` is ENGINE-level (no extension symbol), so its card
-       ;; renderer rides here: the verb returns "folded <label><note> → <gist>"
-       ;; — split it so the receipt (label + reclaimed tokens + utilization) is
-       ;; the op-card HEADLINE and the gist the expandable body, instead of the
-       ;; whole string hiding as a body-only card the user must expand.
-       native-renderers (assoc (extension/native-tool-finish-call-renderers active-extensions)
-                          ;; `resource_stop` is ENGINE-level (no extension symbol),
-                          ;; so its card renderer rides here: lift the outcome +
-                          ;; stopped resource id into the HEADLINE so the label
-                          ;; names WHICH resource, not a raw `{result, id}` dump
-                          ;; the user must expand.
-                          "resource_stop" (fn [result]
-                                            (let
-                                              [r (if (map? result) result {})
-                                               outcome (str (get r "result"))
-                                               id (str (get r "id"))
-                                               msg (get r "message")]
-
-                                              {:summary (str (if (seq outcome) outcome "stopped")
-                                                             (when (seq id) (str " `" id "`")))
-                                               :body (when (seq (str msg)) (str "\n" msg))}))
-                          "session_fold" session-fold-card
-                          ;; `doc` / `apropos` are ENGINE-level (no extension
-                          ;; symbol) and RETURN authored markdown. Render it
-                          ;; VERBATIM as the card body (channels paint bodies as
-                          ;; markdown) instead of the default python-literal fence,
-                          ;; and lift a real headline: the doc's symbol line, or
-                          ;; the apropos match count.
-                          "doc" (fn [result]
-                                  (let
-                                    [s (str/trim (str result))
-                                     nl (str/index-of s "\n")
-                                     head (if nl (subs s 0 (long nl)) s)]
-
-                                    {:summary (-> head
-                                                  (str/replace #"^#+\s*" "")
-                                                  str/trim
-                                                  not-empty)
-                                     :body (not-empty s)}))
-                          "apropos" (fn [result]
-                                      (let [s (str/trim (str result))]
-                                        (if (str/starts-with? s "|")
-                                          {:summary (let
-                                                      [n (max 0 (- (count (str/split-lines s)) 2))]
-                                                      (str n " tool" (when (not= n 1) "s")))
-                                           :body (not-empty s)}
-                                          {:summary (not-empty s)}))))
        ;; per-OP renderers for TOOL RESULTS the model print()ed in Python — keyed
        ;; by the result's `:op` (the only origin handle a printed value carries),
-       ;; so `print(await rg(...))` paints rg's card just like a native call.
-       printed-renderers (extension/native-tool-finish-call-renderers-by-op active-extensions)
-       ;; Per-tool start renderers own how a native call displays while it runs.
-       call-renderers (extension/native-tool-start-call-renderers active-extensions)
-       ;; ALL-OBSERVATION CONCURRENCY: when every code-entry is a read-only
-       ;; observation (≥2 of them, no mutation / python_execution / handler /
-       ;; preflight error), run the whole batch CONCURRENTLY through
-       ;; `__vis_par_isolated__` once, then re-split the ordered results per
-       ;; entry below. A `delay` so the batch fires on the FIRST entry's turn
-       ;; (its `:form-start` already emitted, preserving in-order streaming) and
-       ;; only when the iteration actually reaches eval. If the batch can't run
-       ;; cleanly (`nil`), every entry falls back to the SERIAL `execute-code`
-       ;; path — the feature never degrades a batchable iteration below serial.
-       obs-tags-by-name (extension/native-tool-tags active-extensions)
-       batch-observations? (observation-batch? code-entries obs-tags-by-name)
-       batch-results (when batch-observations?
-                       (delay (execute-observation-batch environment (vec code-entries))))
+       ;; so `print(await rg(...))` paints rg's card.
+       printed-renderers (extension/printed-result-renderers-by-op active-extensions)
        executed
        (mapv
          (fn
@@ -5556,83 +4677,57 @@
              :as entry}]
            (log-stage! :code-exec iteration {:idx (inc (long idx)) :total total-blocks :code expr})
            (when (and on-chunk (not suppress-form-start?))
-             (on-chunk
-               (merge {:phase :form-start
-                       :iteration iteration-position
-                       :position idx
-                       :count total-blocks
-                       ;; Carry the native-tool name so channels can hide the
-                       ;; redundant invocation code WHILE the tool runs (not just
-                       ;; after the result lands). nil for a non-tool form.
-                       :vis/tool-name (:vis/tool-name entry)
-                       :scope (form-scope idx)
-                       :code expr
-                       :render-segments render-segments
-                       :started-at-ms (System/currentTimeMillis)}
-                      ;; …plus the tool's OWN rendering of the pending call, so a
-                      ;; running `shell` block reads as its command immediately.
-                      (pending-call-display call-renderers
-                                            (:vis/tool-name entry)
-                                            (:vis/native-input entry)))))
+             (on-chunk {:phase :form-start
+                        :iteration iteration-position
+                        :position idx
+                        :count total-blocks
+                        :vis/tool-name (:vis/tool-name entry)
+                        :scope (form-scope idx)
+                        :code expr
+                        :render-segments render-segments
+                        :started-at-ms (System/currentTimeMillis)}))
            ;; Stamp form-idx BEFORE eval so the
            ;; executing block's position is recorded
            ;; on the turn-state atom.
            (swap! turn-state-atom assoc :form-idx idx)
            (let
              [scope (form-scope idx)
-              raw-result
-              (cond preflight-error {:result nil
-                                     :error (op-error preflight-error
-                                                      {:code expr :phase :vis/preflight})
-                                     :duration-ms 0
-                                     :op :vis/guard}
-                    ;; native handler-tool → run in Clojure (run-native-handler)
-                    (:vis/native-handler entry) (run-native-handler (:vis/native-handler entry)
-                                                                    environment
-                                                                    (:vis/native-input entry)
-                                                                    (:vis/tool-name entry))
-                    :else (if-let
-                            [err (literal-code-block-error (:python-context environment) expr)]
-                            {:result nil
-                             :error (op-error err {:code expr :phase :vis/guard})
-                             :duration-ms 0
-                             :op :vis/guard}
-                            (let
-                              [tool-event-fn (when (and on-chunk (not suppress-form-start?))
-                                               (fn [tool-event]
-                                                 (on-chunk {:phase :tool-start
-                                                            :iteration iteration-position
-                                                            :position idx
-                                                            :count total-blocks
-                                                            :scope scope
-                                                            :code expr
-                                                            :render-segments render-segments
-                                                            :tool-event tool-event})))
-                               ;; ALL-OBSERVATION concurrent batch: the whole
-                               ;; iteration ran together via `__vis_par_isolated__`
-                               ;; (forced on the first entry's turn). This slot pulls
-                               ;; ITS re-split result — same envelope `execute-code`
-                               ;; yields, so downstream render/pairing/persist is
-                               ;; unchanged. `nil` batch (couldn't run cleanly) →
-                               ;; fall through to the serial path. Batched runs don't
-                               ;; emit per-tool `:tool-start` sub-events (one eval,
-                               ;; no per-call sink routing); `:form-start` /
-                               ;; `:form-result` still fire per entry, in order.
-                               batched (when batch-results (nth @batch-results idx nil))
-                               r (or batched
-                                     (if tool-event-fn
-                                       (execute-code environment expr :tool-event-fn tool-event-fn)
-                                       (execute-code environment expr)))]
+              raw-result (cond preflight-error {:result nil
+                                                :error (op-error preflight-error
+                                                                 {:code expr :phase :vis/preflight})
+                                                :duration-ms 0
+                                                :op :vis/guard}
+                               :else
+                               (if-let
+                                 [err (literal-code-block-error (:python-context environment) expr)]
+                                 {:result nil
+                                  :error (op-error err {:code expr :phase :vis/guard})
+                                  :duration-ms 0
+                                  :op :vis/guard}
+                                 (let
+                                   [tool-event-fn (when (and on-chunk (not suppress-form-start?))
+                                                    (fn [tool-event]
+                                                      (on-chunk {:phase :tool-start
+                                                                 :iteration iteration-position
+                                                                 :position idx
+                                                                 :count total-blocks
+                                                                 :scope scope
+                                                                 :code expr
+                                                                 :render-segments render-segments
+                                                                 :tool-event tool-event})))
+                                    r (if tool-event-fn
+                                        (execute-code environment expr :tool-event-fn tool-event-fn)
+                                        (execute-code environment expr))]
 
-                              (log-stage! :code-result
-                                          iteration
-                                          {:idx (inc (long idx))
-                                           :total total-blocks
-                                           :duration-ms (:duration-ms r)
-                                           :error (:error r)
-                                           :timeout? (:timeout? r)
-                                           :result (:result r)})
-                              r)))
+                                   (log-stage! :code-result
+                                               iteration
+                                               {:idx (inc (long idx))
+                                                :total total-blocks
+                                                :duration-ms (:duration-ms r)
+                                                :error (:error r)
+                                                :timeout? (:timeout? r)
+                                                :result (:result r)})
+                                   r)))
               ;; Carry parinfer's whole-source
               ;; rebalance flag into the block
               ;; result. `execute-code` may also
@@ -5663,10 +4758,7 @@
               ;; so a DB-restored / post-turn trace shows the SAME card the live
               ;; stream did, instead of pr-str'ing the raw result map. `:summary`
               ;; is the op-card HEADLINE; `:body` (→ `:result-render`) the detail.
-              result-card (tool-result-display result*
-                                               (:vis/tool-name entry)
-                                               native-renderers
-                                               (:vis/native-input entry))
+              result-card (tool-result-display result* (:vis/tool-name entry) nil)
               ;; TOOL RESULTS the model print()ed (each carrying :op) → one op-card
               ;; each, rendered loop-side via the SAME symbol renderer a native call
               ;; uses. Each card is a CANONICAL MINI-FORM, so the shared form
@@ -7360,8 +6452,7 @@
    authoritative and are not replaced by the mechanical gist. The gate uses Svar's
    message-token estimator, not serialized characters; the retry itself repeats Svar's
    provider-aware exact preflight before any send."
-  [base-messages trailer-iters summaries protected-scopes replay-target replay-policies model
-   budget-fn]
+  [base-messages trailer-iters summaries protected-scopes replay-target model budget-fn]
   (let
     [universe
      (into []
@@ -7388,8 +6479,7 @@
     (when (seq foldable)
       (let
         [before-messages
-         (into (vec base-messages)
-               (conversation-suffix trailer-iters replay-target replay-policies))
+         (into (vec base-messages) (conversation-suffix trailer-iters replay-target))
 
          before-tokens
          (svar-router/count-messages model before-messages)
@@ -7423,8 +6513,7 @@
               (apply-summaries trailer-iters (conj (vec summaries) intent) protected)
 
               messages
-              (into (vec base-messages)
-                    (conversation-suffix folded-trailer replay-target replay-policies))]
+              (into (vec base-messages) (conversation-suffix folded-trailer replay-target))]
 
              {:messages messages
               :scopes scopes
@@ -7486,7 +6575,7 @@
    one; without progress the retry would resend a request the provider already refused,
    so the iteration goes terminal instead."
   [{:keys [error output-started? recovery-state ctx-atom turn-input-tokens base-messages
-           trailer-iters summaries protected-scopes replay-target replay-policies model]}]
+           trailer-iters summaries protected-scopes replay-target model]}]
   (let [overflow (ex-data error)]
     (when (and (contains? perr/CONTEXT_OVERFLOW_TYPES (:type overflow)) (not @output-started?))
       (let
@@ -7506,7 +6595,6 @@
                           summaries
                           protected-scopes
                           replay-target
-                          replay-policies
                           model
                           (fn [local-tokens]
                             (overflow-fold-budget
@@ -8187,7 +7275,6 @@
                  ;; intact, while an already-collapsed payload is never priced twice.
                  _raw-iter-state (stamp-iter-universe! (:ctx-atom environment) trailer-iters)
                  replay-target (replay-context pre-resolved-model)
-                 replay-policies (extension/native-tool-replay-policies active-exts environment)
                  summarized-trailer-iters (apply-summaries trailer-iters
                                                            (some-> (:ctx-atom environment)
                                                                    deref
@@ -8199,8 +7286,8 @@
                  _visible-iter-state (stamp-iter-universe! (:ctx-atom environment)
                                                            trailer-iters
                                                            summarized-trailer-iters)
-                 conversation-suffix-msgs
-                 (conversation-suffix summarized-trailer-iters replay-target replay-policies)
+                 conversation-suffix-msgs (conversation-suffix summarized-trailer-iters
+                                                               replay-target)
                  provider-messages (into (vec messages) conversation-suffix-msgs)
                  effective-messages-atom (atom provider-messages)
                  ;; Per-ITERATION rescue counter: escalating context-overflow folds.
@@ -8353,7 +7440,6 @@
                                                             deref
                                                             (get "engine_protected_iter_scopes"))
                                   :replay-target replay-target
-                                  :replay-policies replay-policies
                                   :model (or (:name resolved-model) (:model resolved-model))})]
                               (do (reset! effective-messages-atom (:messages recovery))
                                   (tel/log!
@@ -9344,7 +8430,7 @@
      (try (extension/registered-extensions) (catch Throwable _ []))
 
      renderers
-     (try (extension/native-tool-finish-call-renderers active-exts) (catch Throwable _ {}))
+     (try (extension/finish-call-renderers-by-name active-exts) (catch Throwable _ {}))
 
      display
      (when (some? result-map)
@@ -11001,9 +10087,8 @@
      ;; Throwable crosses back as a host object (env/->clj `asHostObject`), so
      ;; the loop maps it through the SAME `python-op-error` path a serial call
      ;; uses — byte-identical error fidelity, but ISOLATED (one failing
-     ;; observation never poisons its siblings). This backs the
-     ;; all-observations concurrent batch (`execute-observation-batch`); the
-     ;; model never calls it (it is synthesized by the host, not advertised).
+     ;; observation never poisons its siblings). Exposed to the sandbox as
+     ;; `__vis_par_isolated__` so python code can fan out inside ONE block.
      par-isolated-fn
      (fn par-isolated [& thunks]
        (let

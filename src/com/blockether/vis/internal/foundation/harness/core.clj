@@ -178,11 +178,9 @@
                :body (not-empty (str (get r "body")))}))
 
 (def skill-symbol
-  ;; STRONG flat native-tool form: everything on the SYMBOL. `:native-tool? true`
-  ;; (the source of "is a native tool") AND engine-bound — `skill` is a bare Python
-  ;; verb in the sandbox too, so a `python_execution` block can activate a skill
-  ;; inside a `gather(...)` batch. `:handler` keeps the raw-map native path.
-  ;; Compact semantics live in :description; exact inputs live in :schema.
+  ;; Everything on the SYMBOL. `skill` is a bare Python verb in the sandbox, so a
+  ;; `python_execution` block can activate a skill inside a `gather(...)` batch.
+  ;; Compact semantics live in :description; `doc("skill")` answers the contract.
   (vis/symbol
     #'skill
     {:symbol 'skill
@@ -190,7 +188,6 @@
      :active-fn (fn [_env]
                   true)
      :tag :observation
-     :native-tool? true
      :result
      (str "Loaded `{name,description,body,cwd,resources}`, plus `project_root` and a `note` when a "
           "nested project owns the skill; active `{name,status,scope,note}`; "
@@ -200,11 +197,6 @@
      (str "Activate an advertised skill. First load on a live provider tape returns full SKILL.md; "
           "repeats return an already-active receipt. Changed/evicted bodies return again. "
           "In `python_execution`, call `await skill(name)`.")
-     :schema {:type "object"
-              :properties {"name" {:type "string" :description "Advertised skill name."}}
-              :required ["name"]
-              :additionalProperties false}
-     :handler skill-tool
      :render-finish-call-fn render-skill}))
 
 ;; =============================================================================

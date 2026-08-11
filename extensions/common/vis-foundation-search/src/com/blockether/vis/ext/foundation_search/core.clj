@@ -1845,130 +1845,51 @@
   (vis/symbol
     #'search-web
     {:tag :observation
-     :native-tool? false
      :name "search_web"
      :render-finish-call-fn render-search-result
      :description
-     "Search the live web for current facts, external documentation, or research the local project cannot answer. Returns ranked citations with excerpts."
-     :schema
-     {:type "object"
-      :properties
-      {"query" {:type "string" :minLength 1 :description "Natural-language web search query."}
-       "num_results" {:type "integer" :minimum 1 :description "Max results to return."}
-       "type" {:type "string"
-               :description "Exa search type, e.g. \"auto\", \"neural\", \"keyword\"."}
-       "livecrawl" {:type "string"
-                    :description "Live-crawl mode, e.g. \"preferred\", \"always\", \"never\"."}
-       "context_max_characters"
-       {:type "integer" :minimum 1 :description "Cap on context characters per result."}}
-      :required ["query"]
-      :additionalProperties false}
-     :handler (fn [_env input]
-                (search-web (str (get input "query")) (dissoc input "query")))}))
+     "Search the live web for current facts, external documentation, or research the local project cannot answer. Returns ranked citations with excerpts."}))
 
 (def code-symbol
   (vis/symbol
     #'search-code
     {:tag :observation
-     :native-tool? false
      :name "search_code"
      :render-finish-call-fn render-search-result
      :description
-     "Search live repositories and technical documentation when the local project and embedded docs are insufficient. Set provider to github to use GitHub Code Search directly."
-     :schema
-     {:type "object"
-      :properties
-      {"query" {:type "string" :minLength 1 :description "Natural-language code/docs search query."}
-       "provider" {:type "string"
-                   :enum ["auto" "exa" "github"]
-                   :description
-                   "Code provider (default auto: Exa, then GitHub on retryable Exa failure)."}
-       "tokens_num" {:type "integer"
-                     :minimum 1
-                     :description "Approximate token budget for the returned context."}}
-      :required ["query"]
-      :additionalProperties false}
-     :handler (fn [_env input]
-                (search-code (str (get input "query")) (dissoc input "query")))}))
+     "Search live repositories and technical documentation when the local project and embedded docs are insufficient. Set provider to github to use GitHub Code Search directly."}))
 
 (def download-code-symbol
   (vis/symbol
     #'download-code
     {:tag :observation
-     :native-tool? false
      :name "download_code"
      :render-finish-call-fn render-search-result
      :description
-     "Fetch bounded UTF-8 source excerpts from a known public GitHub owner/repo archive. Use after search, not for discovery."
-     :schema
-     {:type "object"
-      :properties
-      {"repository" {:type "string" :minLength 3 :description "GitHub repository as owner/repo."}
-       "ref" {:type "string" :minLength 1 :description "Git ref; default HEAD."}
-       "path" {:type "string" :minLength 1 :description "Optional archive path prefix to include."}
-       "max_files"
-       {:type "integer" :minimum 1 :maximum 20 :description "Returned file cap; default 6."}
-       "max_bytes" {:type "integer"
-                    :minimum 1
-                    :maximum 131072
-                    :description "Total returned UTF-8 byte cap; default 51200."}}
-      :required ["repository"]
-      :additionalProperties false}
-     :handler (fn [_env input]
-                (download-code (str (get input "repository")) (dissoc input "repository")))}))
+     "Fetch bounded UTF-8 source excerpts from a known public GitHub owner/repo archive. Use after search, not for discovery."}))
 
 (def download-archive-symbol
   (vis/symbol
     #'download-archive
     {:tag :observation
-     :native-tool? false
      :name "download_archive"
      :render-finish-call-fn render-search-result
      :description
-     "Download and extract a complete public GitHub repository archive into the workspace. Returns the saved absolute directory path."
-     :schema
-     {:type "object"
-      :properties
-      {"repository" {:type "string" :minLength 3 :description "GitHub repository as owner/repo."}
-       "ref" {:type "string" :minLength 1 :description "Git ref; default HEAD."}
-       "directory" {:type "string"
-                    :minLength 1
-                    :description "Optional relative destination directory within the workspace."}}
-      :required ["repository"]
-      :additionalProperties false}
-     :handler (fn [env input]
-                (download-archive (workspace/workspace-root env)
-                                  (str (get input "repository"))
-                                  (dissoc input "repository")))}))
+     "Download and extract a complete public GitHub repository archive into the workspace. Returns the saved absolute directory path."}))
 
 (def papers-symbol
   (vis/symbol
     #'search-papers
     {:tag :observation
-     :native-tool? false
      :name "search_papers"
      :render-finish-call-fn render-search-result
      :description
-     "Search arXiv for relevant papers. Returns citations with abstracts so claims can be checked against primary research."
-     :schema
-     {:type "object"
-      :properties
-      {"query" {:type "string" :minLength 1 :description "Natural-language paper search query."}
-       "num_results" {:type "integer" :minimum 1 :description "Max papers to return (default 10)."}
-       "sort" {:type "string"
-               :enum ["relevance" "lastUpdatedDate" "submittedDate"]
-               :description "relevance | lastUpdatedDate | submittedDate (default relevance)."}
-       "timeout_ms" {:type "integer" :minimum 1 :description "HTTP timeout in milliseconds."}}
-      :required ["query"]
-      :additionalProperties false}
-     :handler (fn [_env input]
-                (search-papers (str (get input "query")) (dissoc input "query")))}))
+     "Search arXiv for relevant papers. Returns citations with abstracts so claims can be checked against primary research."}))
 
 (def search-symbol
   (vis/symbol
     #'search
     {:tag :observation
-     :native-tool? true
      :result
      (str
        "String-keyed `{op,query,citations,citation_count,truncated,source,endpoint?}`; citations are "
@@ -1976,32 +1897,7 @@
      :name "search"
      :render-finish-call-fn render-search-result
      :description
-     "Search live web, public code/docs, or arXiv; code can use GitHub. Returns ranked citations with excerpts."
-     :schema
-     {:type "object"
-      :properties
-      {"query" {:type "string" :description "Natural-language query."}
-       "kind" {:type "string"
-               :enum ["web" "code" "papers"]
-               :description "Corpus: web (default), code (repos/docs), or papers (arXiv)."}
-       "provider" {:type "string"
-                   :enum ["auto" "exa" "github"]
-                   :description "code: auto (Exa then GitHub), exa, or github (`gh auth login`)."}
-       "num_results" {:type "integer" :description "web/papers result cap; papers default 10."}
-       "type" {:type "string" :description "web: Exa type (`auto`, `neural`, `keyword`)."}
-       "livecrawl" {:type "string"
-                    :description "web: live-crawl mode (`preferred`, `always`, `never`)."}
-       "context_max_characters" {:type "integer" :description "web: context chars per result."}
-       "tokens_num" {:type "integer"
-                     :description "code: approximate returned-context token budget."}
-       "sort" {:type "string"
-               :enum ["relevance" "lastUpdatedDate" "submittedDate"]
-               :description "papers: sort; default relevance."}
-       "timeout_ms" {:type "integer" :description "papers: HTTP timeout in ms."}}
-      :required ["query"]
-      :additionalProperties false}
-     :handler (fn [_env input]
-                (search (str (get input "query")) (dissoc input "query")))}))
+     "Search live web, public code/docs, or arXiv; code can use GitHub. Returns ranked citations with excerpts."}))
 
 (def search-symbols
   [search-symbol web-symbol code-symbol download-code-symbol download-archive-symbol papers-symbol])

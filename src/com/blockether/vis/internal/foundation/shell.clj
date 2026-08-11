@@ -3084,7 +3084,6 @@
      ;; `type`, `stop`) is a METHOD on the handle, so the whole family belongs
      ;; where the handle already lives. `apropos('shell')` / `doc('shell')` are
      ;; how it is found, exactly like every other sandbox capability.
-     :native-tool? false
      :name "shell"
      :result
      (str "A HANDLE: ONE result shape for every shell answer — `{stage, id, cwd, command, "
@@ -3105,14 +3104,6 @@
           "`print((await shell(\"npm test\")).wait(300)[\"stdout\"])`.")
      :render-finish-call-fn render-shell-run-result
      :ticker-fn (shell-ticker "run")
-     :schema
-     {:type "object"
-      :properties
-      {"command" {:type "string" :minLength 1 :description "ONE `bash -lc` line."}
-       "id" {:type "string" :minLength 1 :description "Handle; from the program name when omitted."}
-       "cwd" {:type "string" :description "Dir under allowed root; relative uses workspace."}}
-      :required ["command"]
-      :additionalProperties false}
      :inject-env? true
      :tag :mutation
      :on-error-fn (shell-on-error :shell)}))
@@ -3122,7 +3113,6 @@
   (vis/symbol
     #'shell-logs
     {:symbol '_shell-logs
-     :native-tool? false
      :name "_shell_logs"
      :result
      (str "The same shell result shape as every other stage (`stage` is \"logs\"): `stdout` is the "
@@ -3133,16 +3123,6 @@
           "is, not this. Reads a background shell's log from a byte offset and returns NOW. No "
           "offset reads the TAIL; `offset=0` starts at the beginning.")
      :render-finish-call-fn render-shell-logs-result
-     :schema {:type "object"
-              :properties
-              {"id" {:type "string" :minLength 1 :description "Background handle."}
-               "offset" {:type "integer"
-                         :minimum 0
-                         :description "Byte to read from; omit for the tail, 0 for the whole log."}
-               "limit"
-               {:type "integer" :minimum 1 :description "Bytes this read returns; default 16384."}}
-              :required ["id"]
-              :additionalProperties false}
      :inject-env? true
      :tag :observation
      :ticker-fn (shell-ticker "logs")
@@ -3152,7 +3132,6 @@
   (vis/symbol
     #'shell-wait
     {:symbol '_shell-wait
-     :native-tool? false
      :name "_shell_wait"
      :result
      (str "The same shell result shape (`stage` \"wait\"): `stdout` is everything printed since "
@@ -3163,14 +3142,6 @@
           "this. Blocks until the command exits or the deadline passes; the bounded poll loop "
           "lives here so no caller writes one.")
      :render-finish-call-fn render-shell-run-result
-     :schema
-     {:type "object"
-      :properties
-      {"id" {:type "string" :minLength 1 :description "Background handle."}
-       "seconds" {:type "integer" :minimum 1 :description "Seconds to wait; default 120, cap 600."}
-       "offset" {:type "integer" :minimum 0 :description "Byte to accumulate from; default 0."}}
-      :required ["id"]
-      :additionalProperties false}
      :inject-env? true
      :tag :observation
      :ticker-fn (shell-ticker "wait")
@@ -3180,19 +3151,11 @@
   (vis/symbol
     #'shell-type
     {:symbol '_shell-type
-     :native-tool? false
      :name "_shell_type"
      :result "The same shell result shape (`stage` \"send\"): `sent` chars, `keys` label."
      :description
      "TRANSPORT for `sh.type(text, is_enter=True)` — call the handle. Writes keystrokes to a background shell's stdin."
      :render-finish-call-fn render-shell-send-result
-     :schema {:type "object"
-              :properties
-              {"id" {:type "string" :minLength 1 :description "Background handle."}
-               "text" {:type "string" :description "Keystrokes written verbatim to stdin."}
-               "is_enter" {:type "boolean" :description "Append a newline; default true."}}
-              :required ["id" "text"]
-              :additionalProperties false}
      :inject-env? true
      :tag :mutation
      :ticker-fn (shell-ticker "send")
@@ -3202,16 +3165,11 @@
   (vis/symbol
     #'shell-stop
     {:symbol '_shell-stop
-     :native-tool? false
      :name "_shell_stop"
      :result "The same shell result shape (`stage` \"stop\"): `stopped`, `status`, `exit`."
      :description
      "TRANSPORT for `sh.stop()` — call the handle. Kills a background shell's process tree and drops its retained logs and resource."
      :render-finish-call-fn render-shell-stop-result
-     :schema {:type "object"
-              :properties {"id" {:type "string" :minLength 1 :description "Background handle."}}
-              :required ["id"]
-              :additionalProperties false}
      :inject-env? true
      :tag :mutation
      :ticker-fn (shell-ticker "stop")

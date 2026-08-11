@@ -5,9 +5,11 @@
    provider must survive a restart)."
   (:require [clojure.java.io :as io]
             [clojure.spec.alpha :as s]
+            [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.config-spec :as config-spec]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.registry :as registry]
             [lazytest.core :refer [defdescribe it expect]]
             [taoensso.telemere :as tel]
@@ -863,3 +865,13 @@
                    (-> signal
                        :data
                        :reasoning-acc-len))))))
+
+;; Regression: the TUI and the gateway daemon both wrote `~/.vis/vis.log`, and
+;; the Telemere rolling handler rotates by renaming — the process that did not
+;; rotate kept appending into a deleted inode.
+(defdescribe log-path-test
+             "`config/log-path` is this process's own file, never a shared one."
+             (it "is `paths/log-file`, pid-stamped, under ~/.vis/logs"
+                 (expect (= (paths/log-file) (config/log-path)))
+                 (expect (str/ends-with? (paths/unixify (config/log-path))
+                                         (str "/.vis/logs/vis-" (paths/process-id) ".log")))))

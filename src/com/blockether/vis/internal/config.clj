@@ -5,7 +5,8 @@
 
    Two halves:
 
-     - On-disk config under `~/.vis/`: `state.yml` (machine-written), `vis.mdb/`, `vis.log`.
+     - On-disk config under `~/.vis/`: `state.yml` (machine-written), `vis.mdb/`, and
+       this process's log `logs/vis-<pid>.log` (`log-path`).
        `init!` / `init-cli!` / `shutdown!` redirect stdout/stderr into
        the log file and bring up Telemere's file handler.
      - Live process state: the `active-config` atom holds the
@@ -24,6 +25,7 @@
             [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.config-spec :as config-spec]
             [com.blockether.vis.internal.credential-command :as cred]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.registry :as registry]
             [taoensso.telemere :as tel]
             [taoensso.trove :as trove]
@@ -56,7 +58,11 @@
 
 (defn default-db-spec [] {:backend :sqlite :path (db-path)})
 
-(defn ^:private log-path ^String [] (str (config-dir) "/vis.log"))
+(defn log-path
+  "This process's diagnostic log. Per-process by design — see
+   `internal.paths/log-file` for why a shared path corrupts rotation."
+  ^String []
+  (paths/log-file))
 
 (def tty-in (delay (FileInputStream. "/dev/tty")))
 

@@ -1040,12 +1040,7 @@
       ;; ("no-launcher"/"failed"/"starting"…) instead — the two cases are gated apart
       ;; below so a boot failure is surfaced, not swallowed into a bare CLI fallback.
       repl
-      ;; The cold autostart runs OUTSIDE the native tool wall (see
-      ;; extension/run-outside-tool-wall) — the run's timeout bounds only the
-      ;; tests, never the boot.
-      (extension/run-outside-tool-wall env
-                                       #(repl-manager/ensure-repl-for-dir! (:session-id env)
-                                                                           eff-root))
+      (repl-manager/ensure-repl-for-dir! (:session-id env) eff-root)
 
       port
       (:port repl)]

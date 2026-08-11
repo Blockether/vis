@@ -90,3 +90,31 @@
   (let [d (logs-dir)]
     (try (.mkdirs (java.io.File. d)) (catch Throwable _ nil))
     d))
+
+(defn process-id
+  "This JVM's OS process id. Its only job is to make `log-file` unique per
+   process, so it is read fresh (never a load-time `def`): `native-image`
+   would otherwise bake the BUILDER's pid into the image."
+  ^long []
+  (.pid (java.lang.ProcessHandle/current)))
+
+(defn log-file
+  "Diagnostic log file for THIS process — `~/.vis/logs/vis-<pid>.log`, or
+   `~/.vis/logs/<prefix>-<pid>.log` for a second sink in the same process.
+
+   ONE WRITER PER FILE, by construction. Telemere's rolling file handler owns
+   the file it writes and rotates by RENAMING it; with several vis processes
+   (TUI, gateway daemon, CLI) on a single shared path, whichever one rotates
+   pulls the file out from under the others, and they go on appending into a
+   deleted inode — observed as a gateway writing 13.8 MB of stream traces into
+   a file nobody could read. Stamping the pid into the name makes that
+   impossible instead of merely unlikely.
+
+   Two sinks in the same process must NOT share one name either (a raw
+   `FileOutputStream` survives the rename with a stale fd), hence `prefix` —
+   GraalPy's polyglot log takes its own.
+
+   Growth is bounded by `foundation.housekeeping/sweep-logs!`, which prunes
+   `~/.vis/logs` by age; the rolling handler bounds each live file."
+  (^String [] (log-file "vis"))
+  (^String [prefix] (str (ensure-logs-dir!) "/" prefix "-" (process-id) ".log")))

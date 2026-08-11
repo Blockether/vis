@@ -581,23 +581,17 @@ const total = add(1, 2);")
         (let [c (first (get (envelope-result (search/search "x" {"kind" "moon"})) "citations"))]
           (expect (true? (get c "error")))
           (expect (str/includes? (get c "excerpt") "web | code | papers")))))
-  (describe "wire surface"
-            (it "`search` is the only NATIVE search tool"
-                (expect (true? (:ext.symbol/native-tool? search/search-symbol)))
+  (describe "sandbox surface"
+            (it "`search` is the one routing verb, and every kind is its own function too"
+                (expect (= "search" (:ext.symbol/name search/search-symbol)))
                 (doseq
                   [sym-entry [search/web-symbol search/code-symbol search/download-code-symbol
                               search/papers-symbol]]
-                  (expect (false? (:ext.symbol/native-tool? sym-entry)))))
-            (it "the schema exposes the three search kinds"
-                (expect (= ["web" "code" "papers"]
-                           (get-in search/search-symbol
-                                   [:ext.symbol/schema :properties "kind" :enum]))))
-            (it "download_code requires a repository and bounds its input"
-                (expect (= ["repository"]
-                           (get-in search/download-code-symbol [:ext.symbol/schema :required])))
-                (expect (= 20
-                           (get-in search/download-code-symbol
-                                   [:ext.symbol/schema :properties "max_files" :maximum]))))))
+                  (expect (some? (:ext.symbol/symbol sym-entry)))))
+            (it "`search`'s own documentation names the three kinds"
+                (let [text (str (:ext.symbol/description search/search-symbol))]
+                  (doseq [kind ["web" "code" "papers"]]
+                    (expect (str/includes? text kind)))))))
 
 (defn- tar-gzip-fixture
   [entries]

@@ -71,3 +71,27 @@
                    (expect (.isDirectory (java.io.File. ^String d)))
                    ;; idempotent: a second call on an existing dir still returns it
                    (expect (= d (paths/ensure-logs-dir!))))))
+
+;; Regression: two vis processes (TUI + gateway daemon) shared `~/.vis/vis.log`;
+;; Telemere's rolling handler rotates by RENAMING the file, so the process that
+;; did not rotate went on appending into a deleted inode and everything it
+;; logged after that point — including the SSE stream trace — was unreadable.
+(defdescribe log-file-test
+             (it "stamps THIS process's pid into the name, inside ~/.vis/logs"
+                 (let
+                   [f
+                    (paths/unixify (paths/log-file))
+
+                    pid
+                    (paths/process-id)]
+
+                   (expect (str/ends-with? f (str "/.vis/logs/vis-" pid ".log")))
+                   (expect (= f (paths/unixify (paths/log-file))))
+                   (expect (pos? pid))
+                   (expect (.isDirectory (java.io.File. ^String (paths/logs-dir))))))
+             (it "gives a second sink in the same process its OWN file"
+                 ;; A raw FileOutputStream (GraalPy's polyglot log) keeps a stale fd
+                 ;; across the handler's rotation rename, so it must not share a name.
+                 (expect (not= (paths/log-file) (paths/log-file "graalpy")))
+                 (expect (str/ends-with? (paths/unixify (paths/log-file "graalpy"))
+                                         (str "/.vis/logs/graalpy-" (paths/process-id) ".log")))))

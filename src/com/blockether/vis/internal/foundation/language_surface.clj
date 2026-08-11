@@ -688,62 +688,63 @@
    neither output nor error we surface the raw result so the user always sees
    *something* went wrong, never an empty card."
   [r]
-  (let [pass
-        (get r "pass")
+  (let
+    [pass
+     (get r "pass")
 
-        fail
-        (get r "fail")
+     fail
+     (get r "fail")
 
-        total
-        (get r "total")
+     total
+     (get r "total")
 
-        error
-        (get r "error")
+     error
+     (get r "error")
 
-        exit
-        (get r "exit")
+     exit
+     (get r "exit")
 
-        ok
-        (and (not error)
-             (cond (number? fail) (zero? (long fail))
-                   (some? (get r "is_pass")) (boolean (get r "is_pass")) ; CLI fallback: exit-code verdict
-                   :else (boolean (get r "pass"))))
+     ok
+     (and (not error)
+          (cond (number? fail) (zero? (long fail))
+                (some? (get r "is_pass")) (boolean (get r "is_pass")) ; CLI fallback: exit-code verdict
+                :else (boolean (get r "pass"))))
 
-        parts
-        (some-> (get r "ns")
-                str
-                str/trim
-                not-empty
-                (str/split #"\s+"))
+     parts
+     (some-> (get r "ns")
+             str
+             str/trim
+             not-empty
+             (str/split #"\s+"))
 
-        ns-disp
-        (cond (empty? parts) nil
-              (> (count parts) 1) (str (first parts) " +" (dec (count parts)) " more")
-              :else (first parts))
+     ns-disp
+     (cond (empty? parts) nil
+           (> (count parts) 1) (str (first parts) " +" (dec (count parts)) " more")
+           :else (first parts))
 
-        target
-        (some-> (get r "target")
-                str
-                str/trim
-                not-empty)
+     target
+     (some-> (get r "target")
+             str
+             str/trim
+             not-empty)
 
-        ;; The whole suite adds nothing beside a namespace the pack already named.
-        target-chip
-        (when (and ns-disp target (not= target ns-disp) (not= target "full suite")) target)
+     ;; The whole suite adds nothing beside a namespace the pack already named.
+     target-chip
+     (when (and ns-disp target (not= target ns-disp) (not= target "full suite")) target)
 
-        verdict
-        (cond total (str pass
-                         "/" total
-                         " passed" (when (and (number? fail) (pos? (long fail)))
-                                     (str ", " fail " failed")))
-              (get r "timed_out") "timed out"
-              (number? exit) (str (if ok "passed" "failed") " (exit " exit ")")
-              (not ok) "error")
+     verdict
+     (cond total (str pass
+                      "/" total
+                      " passed" (when (and (number? fail) (pos? (long fail)))
+                                  (str ", " fail " failed")))
+           (get r "timed_out") "timed out"
+           (number? exit) (str (if ok "passed" "failed") " (exit " exit ")")
+           (not ok) "error")
 
-        detail
-        (or (not-empty (str (get r "output")))
-            (not-empty (str error))
-            (when-not ok (str "no test result returned — " (pr-str r))))]
+     detail
+     (or (not-empty (str (get r "output")))
+         (not-empty (str error))
+         (when-not ok (str "no test result returned — " (pr-str r))))]
 
     {:summary (str (when-not ok "✗ ")
                    (clip-chip (or ns-disp target "tests") repl-form-inline-max)
@@ -800,34 +801,35 @@
    reasoning line on screen for the whole run. This is descriptive selection data,
    never an invented shell command: each language pack owns how its tests execute."
   [input]
-  (let [language
-        (or (input-str input "language") "auto")
+  (let
+    [language
+     (or (input-str input "language") "auto")
 
-        namespaces
-        (input-list input "namespaces")
+     namespaces
+     (input-list input "namespaces")
 
-        paths
-        (input-list input "paths")
+     paths
+     (input-list input "paths")
 
-        only
-        (input-list input "only")
+     only
+     (input-list input "only")
 
-        filter*
-        (input-str input "filter")
+     filter*
+     (input-str input "filter")
 
-        ;; The SAME selection the finished headline reports, so the card that opens
-        ;; a run and the card that closes it name one run.
-        scope
-        (test-target input)
+     ;; The SAME selection the finished headline reports, so the card that opens
+     ;; a run and the card that closes it name one run.
+     scope
+     (test-target input)
 
-        detail
-        (->> [["language" language] ["scope" scope] ["cwd" (input-str input "cwd")]
-              ["environment" (input-str input "environment")] ["namespaces" namespaces]
-              ["paths" paths] ["only" only] ["filter" filter*]
-              ["include" (input-list input "include")] ["exclude" (input-list input "exclude")]]
-             (keep (fn [[label value]]
-                     (when value (str label ": " value))))
-             (str/join "\n"))]
+     detail
+     (->> [["language" language] ["scope" scope] ["cwd" (input-str input "cwd")]
+           ["environment" (input-str input "environment")] ["namespaces" namespaces] ["paths" paths]
+           ["only" only] ["filter" filter*] ["include" (input-list input "include")]
+           ["exclude" (input-list input "exclude")]]
+          (keep (fn [[label value]]
+                  (when value (str label ": " value))))
+          (str/join "\n"))]
 
     {:summary (str (if (= "full suite" scope)
                      (str language " — full suite")
@@ -1017,35 +1019,33 @@
 (defn run-tests
   "Run through a pack: `run_tests(language,arg)`. `arg` is a module string or map: `namespaces`/`paths` choose loading/discovery; `only`, `include`, `exclude`, and `filter` narrow tests; `cwd` chooses the project; `runner` picks a pack backend (python: `graalpy` default, or `project` for the project interpreter's own pytest). List selectors stay lists, even one. Omit `arg` for all tests."
   [env & args]
-  ;; Park outside the generic 30s native wall. Language packs own the test budget.
-  (let [started-at
-        (System/nanoTime)
+  (let
+    [started-at
+     (System/nanoTime)
 
-        ;; A pack reports what it RAN; only the CALL knows what was ASKED FOR, so
-        ;; stamp the selection here or the headline cannot tell two runs apart.
-        target
-        (test-target (or (first (filter map? args)) {}))]
+     ;; A pack reports what it RAN; only the CALL knows what was ASKED FOR, so
+     ;; stamp the selection here or the headline cannot tell two runs apart.
+     target
+     (test-target (or (first (filter map? args)) {}))]
 
-    (extension/run-outside-tool-wall
-      env
-      #(dispatch! env
-                  :test-fn
-                  args
-                  (fn [handler envelope]
-                    ;; Language handlers return extension envelopes. Complete and time
-                    ;; the PUBLIC payload; metadata added beside :result gets unwrapped.
-                    (if (and (map? envelope) (contains? envelope :result))
-                      (update envelope
-                              :result
-                              (fn [result]
-                                (let [completed (contract/complete-test-result (:language handler)
-                                                                               result)]
-                                  (if (map? completed)
-                                    (assoc completed
-                                      "target" (or (get result "target") target)
-                                      "ms" (quot (- (System/nanoTime) started-at) 1000000))
-                                    completed))))
-                      envelope))))))
+    (dispatch! env
+               :test-fn
+               args
+               (fn [handler envelope]
+                 ;; Language handlers return extension envelopes. Complete and time
+                 ;; the PUBLIC payload; metadata added beside :result gets unwrapped.
+                 (if (and (map? envelope) (contains? envelope :result))
+                   (update
+                     envelope
+                     :result
+                     (fn [result]
+                       (let [completed (contract/complete-test-result (:language handler) result)]
+                         (if (map? completed)
+                           (assoc completed
+                             "target" (or (get result "target") target)
+                             "ms" (quot (- (System/nanoTime) started-at) 1000000))
+                           completed))))
+                   envelope)))))
 
 (defn repl-eval
   "Eval in an already-running project REPL: `repl_eval(language,arg)`. Pass `language` first; `arg` may set `id`/`repl_id`, `cwd` (root default), and `timeout_ms`."
@@ -1081,7 +1081,6 @@
   (vis/symbol
     #'format-code
     {:symbol 'format_code
-     :native-tool? true
      :result
      (str
        "String-keyed `op` result. Code/file: `changed` plus optional `chars,path,formatter,repaired`; "
@@ -1091,19 +1090,6 @@
      ;; pure options dict (always emitted so the payload stays a map).
      :call {:lead-opt "language" :rest :always}
      :render-finish-call-fn render-format-result
-     :schema
-     {:type "object"
-      :properties
-      {"language" {:type "string" :minLength 1}
-       "code" {:type "string"}
-       "paths"
-       {:type "array"
-        :items {:type "string" :minLength 1}
-        :minItems 1
-        :description
-        "Directories recursively; exclusive with `code`; OMIT both for default source paths."}}
-      :required []
-      :additionalProperties false}
      :inject-env? true
      :tag :mutation}))
 
@@ -1111,7 +1097,6 @@
   (vis/symbol
     #'lint-code
     {:symbol 'lint_code
-     :native-tool? true
      :result
      (str
        "String-keyed `op` object: `language`, severity counts, `files,findings,providers,by-cwd`; "
@@ -1119,15 +1104,6 @@
        "and optional `provider`.")
      :description "Lint code/paths without edits."
      :render-finish-call-fn render-lint-result
-     :schema {:type "object"
-              :properties {"language" {:type "string" :minLength 1}
-                           "code" {:type "string" :description "Source; exclusive with `paths`."}
-                           "paths" {:type "array"
-                                    :items {:type "string" :minLength 1}
-                                    :minItems 1
-                                    :description "files/dirs; OMIT for defaults."}}
-              :required []
-              :additionalProperties false}
      :inject-env? true
      :tag :observation}))
 
@@ -1135,7 +1111,6 @@
   (vis/symbol
     #'run-tests
     {:symbol 'run_tests
-     :native-tool? true
      :result
      (str
        "String-keyed, stamped with `op`; absent fields mean not applicable. Carries execution metadata, "
@@ -1145,32 +1120,8 @@
      :call {:lead-opt "language" :rest :always}
      ;; run_tests can exceed the generic Python eval watchdog; dispatch it
      ;; directly in Clojure so the language pack's own timeout budget wins.
-     :handler (fn [env input]
-                (run-tests env input))
      :render-finish-call-fn render-test-result
      :render-start-call-fn render-test-call
-     :schema
-     {:type "object"
-      :properties
-      {"language" {:type "string" :minLength 1}
-       "namespaces" {:type "array"
-                     :items {:type "string" :minLength 1}
-                     :description "Modules; OMIT/[] discovers all `*_test`."}
-       "paths" {:type "array"
-                :items {:type "string" :minLength 1}
-                :description "Dirs/files; OMIT/[] uses root; non-empty miss errors."}
-       "only" {:type "array" :items {:type "string"} :description "Qualified vars."}
-       "include" {:type "array" :items {:type "string"} :description "Required tags."}
-       "exclude" {:type "array" :items {:type "string"} :description "Skipped tags."}
-       "cwd" {:type "string" :description "Project dir; root default."}
-       "filter" {:type "string" :description "Name filter if supported."}
-       "environment"
-       {:type "string"
-        :enum ["project"]
-        :description
-        "Execution environment when supported; `project` uses the project's managed toolchain and dependencies."}}
-      :required ["language"]
-      :additionalProperties false}
      :inject-env? true
      :tag :mutation}))
 
@@ -1178,7 +1129,6 @@
   (vis/symbol
     #'repl-eval
     {:symbol 'repl_eval
-     :native-tool? true
      :result (str
                "Pack-defined string-keyed object stamped with `op`; fields may be absent. Clojure: "
                "`code,repl,value/values,out,err,status,ns,ms,timed_out,ex,root_ex`; Python/Bun: "
@@ -1189,18 +1139,7 @@
      ;; watchdog (DEFAULT_EVAL_TIMEOUT_MS, 120s); dispatch it directly in
      ;; Clojure so the language pack's own timeout budget wins (parity with
      ;; run_tests above).
-     :handler (fn [env input]
-                (repl-eval env input))
      :render-finish-call-fn render-repl-eval-result
-     :schema {:type "object"
-              :properties {"language" {:type "string" :minLength 1}
-                           "code" {:type "string" :minLength 1}
-                           "id" {:type "string" :minLength 1 :description "REPL id."}
-                           "cwd" {:type "string" :description "Project dir; root default."}
-                           "timeout_ms"
-                           {:type "integer" :minimum 1 :description "ms; default 30000."}}
-              :required ["language" "code"]
-              :additionalProperties false}
      :inject-env? true
      :tag :mutation}))
 
@@ -1208,7 +1147,6 @@
   (vis/symbol
     #'start-repl
     {:symbol 'repl
-     :native-tool? true
      :result
      (str
        "String-keyed result stamped with `op`; never a `{resources: [...]}` list. Status: Clojure "
@@ -1223,19 +1161,6 @@
        "directory's state; `stop` ends a managed REPL; `connect` attaches an external REPL by port and only detaches it.")
      :call {:lead-opt "language" :rest :always}
      :render-finish-call-fn render-repl-start-result
-     :schema {:type "object"
-              :properties
-              {"language" {:type "string" :minLength 1}
-               "op" {:type "string"
-                     :enum ["start" "connect" "stop" "status"]
-                     :description "Default `start`."}
-               "id" {:type "string" :minLength 1 :description "Exact id for stop."}
-               "cwd" {:type "string" :minLength 1 :description "Dir (`.` default); connect key."}
-               "port" {:type "integer" :description "Connect port."}
-               "host" {:type "string" :description "Connect host; localhost default."}
-               "aliases" {:type "array" :items {:type "string"}}}
-              :required ["language"]
-              :additionalProperties false}
      :inject-env? true
      :tag :mutation}))
 
@@ -1243,19 +1168,10 @@
   (vis/symbol
     #'connect-repl
     {:symbol 'repl_connect
-     :native-tool? false
      :description
      "Attach an external running REPL; Vis registers it but never owns or kills it, so stop only detaches."
      :call {:lead-opt "language" :rest :always}
      :render-finish-call-fn render-repl-start-result
-     :schema {:type "object"
-              :properties
-              {"language" {:type "string" :minLength 1}
-               "port" {:type "integer" :minimum 1 :maximum 65535 :description "External REPL port."}
-               "host" {:type "string" :description "Host; localhost default."}
-               "cwd" {:type "string" :description "Project dir; root default; attachment key."}}
-              :required ["language" "port"]
-              :additionalProperties false}
      :inject-env? true
      :tag :mutation}))
 
@@ -1263,17 +1179,12 @@
   (vis/symbol
     #'repl-stop
     {:symbol 'repl_stop
-     :native-tool? false
      :description
      "After verification, stop by exact id the managed REPL you started. External REPLs are only detached, never killed."
      ;; repl_stop(id) — one positional id. (lint_code intentionally has NO
      ;; :call: its fn takes the whole input dict, so the generic form fits.)
      :call {:pos ["id"]}
      :render-finish-call-fn render-repl-stop-result
-     :schema {:type "object"
-              :properties {"id" {:type "string" :minLength 1 :description "Exact resource id."}}
-              :required ["id"]
-              :additionalProperties false}
      :inject-env? true
      :tag :mutation}))
 

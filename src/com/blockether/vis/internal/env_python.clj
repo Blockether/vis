@@ -447,9 +447,9 @@
   ;; `native-image` initializes this namespace at BUILD time, so an eager body
   ;; would create the BUILDER's `~/.vis/logs` and bake that path into the image.
   (delay (when-not (System/getProperty "polyglot.log.file")
-           (let [vis-dir (java.io.File. (System/getProperty "user.home") ".vis/logs")]
-             (.mkdirs vis-dir)
-             (System/setProperty "polyglot.log.file" (str (java.io.File. vis-dir "vis.log")))))
+           ;; Its OWN file, not vis's: two writers on one path break rotation,
+           ;; and GraalPy holds this fd for the life of the process.
+           (System/setProperty "polyglot.log.file" (paths/log-file "graalpy")))
          true))
 
 (def graal-resource-cache-redirected

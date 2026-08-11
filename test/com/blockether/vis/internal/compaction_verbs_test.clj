@@ -10,10 +10,7 @@
      3. What the LLM actually SEES — `apply-summaries` over a trailer: which
         iterations collapse off the wire, where the single gist breadcrumb lands,
         and that a broader re-fold supersedes a finer one.
-     4. Native tool_use surface — the injected `session_fold` call-shape
-        synthesizes the SAME positional `session_fold(target, gist)` into the
-        bound verb, so both surfaces share one definition.
-     5. Session-bag reflection — a landed fold surfaces INSIDE `session_utilization`
+     4. Session-bag reflection — a landed fold surfaces INSIDE `session_utilization`
         as two string leaves: `folds` (stable gists, one structural delta per fold)
         and `now` (volatile position + budget + live, re-emitted each iteration),
         via `ctx-engine/folds-view` → `ctx-renderer/render-ctx-delta`."
@@ -32,10 +29,6 @@
 
 (def ^:private expand-through (var-get #'eng/expand-through))
 
-
-(def ^:private session-fold-card (var-get #'lp/session-fold-card))
-
-(def ^:private tool-call->python-source (var-get #'lp/tool-call->python-source))
 
 (def ^:private irm (var-get #'lp/iteration-results-message))
 
@@ -563,39 +556,6 @@
           (expect (every? (fn [[_ r]]
                             (:collapsed? r))
                           out))))))
-
-;; ── layer 4: native tool_use surface ─────────────────────────────────────────
-
-(def ^:private native-shapes {"session_fold" {:pos ["target"] :opt-pos ["gist"]}})
-
-(defdescribe session-fold-native-tool-test
-             ;; The session_fold CONTRACT is the sandbox binding's own docstring
-             ;; (`env_python/set-python-binding-doc!`), reached with `doc("session_fold")` —
-             ;; there is no second JSON schema to advertise it.
-             (it "native dispatch synthesizes a POSITIONAL call for a list target + gist"
-                 (expect (= "session_fold([\"t1/i2\", \"t1/i3\"], \"G\")"
-                            (tool-call->python-source native-shapes
-                                                      {:name "session_fold"
-                                                       :input {"target" ["t1/i2" "t1/i3"]
-                                                               "gist" "G"}}))))
-             (it "native dispatch synthesizes a DICT selector target, gist omitted"
-                 (expect (= "session_fold({\"through\": \"t1/i2\"})"
-                            (tool-call->python-source native-shapes
-                                                      {:name "session_fold"
-                                                       :input {"target" {"through" "t1/i2"}}}))))
-             (it "the synthesized native source runs the SAME bound verb (records the intent)"
-                 (let
-                   [[ca ev]
-                    (with-verbs)
-
-                    src
-                    (tool-call->python-source native-shapes
-                                              {:name "session_fold"
-                                               :input {"target" ["t2/i4"] "gist" "native"}})]
-
-                   (ev src)
-                   (expect (= [{"scopes" #{"t2/i4"} "issued_turn" 99 "at_turn" 99 "gist" "native"}]
-                              (get @ca "session_summaries"))))))
 
 ;; ── layer 5: session-bag reflection (the CTX delta) ──────────────────────────
 
@@ -1207,57 +1167,3 @@
         (expect (= "folded t1/i1 · more results: ntr.describe() → g" out))
         (expect (not (str/includes? out "toolu_")))
         (expect (not (str/includes? out "older labelled results"))))))
-
-(defdescribe
-  session-fold-card-render-test
-  "The op-card a channel paints for a fold: a SHORT headline plus a MARKDOWN
-   body — never the old verbatim ``` fence, whose language-less block the TUI
-   char-folds mid-word and the companion gives `overflow-x-auto`. Prose and
-   bullets soft-wrap to whatever width each surface has, so one engine-side
-   shape reads correctly in the TUI and on the web."
-  (it "splits a full receipt into headline + gist paragraph + metric bullets"
-      (let
-        [card (session-fold-card
-                (str "folded t1/i1 · saved ~60k tokens · ~67% of budget"
-                     " · context 94%→~31% (90k→30k tokens) · more results: ntr.describe()"
-                     " → bigger task"))]
-        ;; Collapsed view: WHAT was folded + HOW MUCH it reclaimed.
-        (expect (= "folded `t1/i1` · saved **~60k tokens**" (:summary card)))
-        ;; `~67% of budget` qualifies the `saved …` it follows, so the pair
-        ;; stays on ONE bullet instead of stranding a bare percentage.
-        (expect (= (str "\nbigger task\n\n" "- **saved** ~60k tokens · ~67% of budget\n"
-                        "- **context** 94%→~31% (90k→30k tokens)\n"
-                        "- **more results:** `ntr.describe()`")
-                   (:body card)))
-        (expect (not (str/includes? (:body card) "```")))))
-  (it "a tilde in an accessor label can't strike out the breadcrumb"
-      ;; ONE tilde opens GFM strikethrough and tool gists are full of `~/vis/…`
-      ;; paths, so every label is monospaced — and each accessor gets its own
-      ;; line instead of one unwrappable run-on.
-      (let
-        [card (session-fold-card
-                (str
-                  "folded t1/i1 · recover ntr[\"toolu_A\"] shell: $ bash -n ~/vis/bin/vis-agent; "
-                  "ntr[\"toolu_B\"] cat"
-                  " · IMPORTANT 3 more folded results stay recoverable"))]
-        (expect (str/includes? (:body card)
-                               "\n  - `ntr[\"toolu_A\"]` `shell: $ bash -n ~/vis/bin/vis-agent`"))
-        (expect (str/includes? (:body card) "\n  - `ntr[\"toolu_B\"]`"))
-        (expect (str/includes? (:body card)
-                               "- **IMPORTANT** 3 more folded results stay recoverable"))))
-  (it "a gist-less fold still renders its metrics as wrapping bullets"
-      (let
-        [card (session-fold-card "folded t1/i1 · saved ~0 tokens · context 44% (42k/96k tokens)")]
-        (expect (= "folded `t1/i1` · saved **~0 tokens**" (:summary card)))
-        (expect (= "\n- **saved** ~0 tokens\n- **context** 44% (42k/96k tokens)" (:body card)))))
-  (it "a bare confirmation (no metrics, no gist) stays a headline with NO body"
-      ;; With no stamped utilization the verb returns just `folded <label>`;
-      ;; an empty disclosure would be a rendering bug, not a card.
-      (let [card (session-fold-card "folded t1/i1")]
-        (expect (= "folded `t1/i1`" (:summary card)))
-        (expect (nil? (:body card)))))
-  (it "the gist is the FIRST thing the body says"
-      ;; The breadcrumb the model wrote is why the human expands the card; the
-      ;; accounting reads underneath it.
-      (let [card (session-fold-card "folded t2 · saved ~12k tokens → traced the wedge")]
-        (expect (str/starts-with? (:body card) "\ntraced the wedge\n\n- **saved** ~12k tokens")))))

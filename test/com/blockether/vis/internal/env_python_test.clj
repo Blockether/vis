@@ -353,9 +353,7 @@
         s
         (ext/ext-symbols e)
 
-        :when (and (ext/symbol-bound? s)
-                   (:ext.symbol/native-tool? s)
-                   (contains? bind (:ext.symbol/symbol s)))]
+        :when (contains? bind (:ext.symbol/symbol s))]
 
        (ep/sym->py-name (:ext.symbol/symbol s)))]
 

@@ -146,7 +146,8 @@
 ;; logs, JFR dumps) whose entries are never referenced again once the process
 ;; that wrote them is gone, and it grows one file per REPL start forever —
 ;; hundreds of mostly-empty files accumulate within weeks. Nothing bounded it,
-;; because the Telemere rolling handler only governs `~/.vis/vis.log`.
+;; because the Telemere rolling handler only bounds the CURRENT process's
+;; `~/.vis/logs/vis-<pid>.log`, and every exited process leaves its own behind.
 ;; ---------------------------------------------------------------------------
 
 (def default-log-retention-days

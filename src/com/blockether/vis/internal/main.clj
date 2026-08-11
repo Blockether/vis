@@ -12,8 +12,9 @@
 
      (-main & args)   - invoked by the `:vis` alias / `bin/vis-agent`.
                         Configures logging, runs the unified extension
-                        discovery scan, redirects stderr to ~/.vis/vis.log
-                        for any TTY-owning channel, then dispatches to
+                        discovery scan, redirects stderr to this process's
+                        log (`~/.vis/logs/vis-<pid>.log`) for any TTY-owning
+                        channel, then dispatches to
                         the resolved command's `:cmd/run-fn`.
 
    Built-in commands registered here:
@@ -4331,7 +4332,7 @@
 ;;
 ;; Default behavior:
 ;;   - stdout stays clean
-;;   - every signal is appended to `~/.vis/vis.log`
+;;   - every signal is appended to `~/.vis/logs/vis-<pid>.log`
 ;;
 ;; Pass `--debug` / `--verbose` / `-v` (or set `VIS_DEBUG=1`) to KEEP
 ;; the console handler in addition to the file handler.
@@ -4343,9 +4344,9 @@
 
 (defn- log-file-path
   []
-  (let [vis-dir (java.io.File. (str (System/getProperty "user.home") "/.vis"))]
-    (when-not (.exists vis-dir) (.mkdirs vis-dir))
-    (str vis-dir "/vis.log")))
+  ;; One file per process (`~/.vis/logs/vis-<pid>.log`); `config/log-path` is
+  ;; the same call, so both boot paths agree on the file.
+  (config/log-path))
 
 (defn- configure-logging!
   "Route Telemere signals: file handler always on, persistence-backed
@@ -4517,11 +4518,10 @@
   [args]
   (when-let [{:keys [command]} (commandline/find-leaf (root-command) (cons "vis-agent" args))]
     (when (:cmd/owns-tty? command)
-      (let [log-dir (java.io.File. (str (System/getProperty "user.home") "/.vis/logs"))]
-        (when-not (.exists log-dir) (.mkdirs log-dir))
-        (System/setErr (java.io.PrintStream.
-                         (java.io.FileOutputStream. ^String (str log-dir "/vis.log") true)
-                         true))))))
+      ;; This process's own log file — see `internal.paths/log-file`.
+      (let [log-path (paths/log-file)]
+        (System/setErr (java.io.PrintStream. (java.io.FileOutputStream. ^String log-path true)
+                                             true))))))
 
 ;; =============================================================================
 ;; Main
@@ -4692,7 +4692,7 @@
     (when (some-> (System/getenv "VIS_DEBUG")
                   (.equalsIgnoreCase "1"))
       (.printStackTrace t))
-    (stdout! "See ~/.vis/logs/vis.log for details."))
+    (stdout! (str "See " (config/log-path) " for details.")))
   (shutdown-agents)
   (System/exit 1))
 
