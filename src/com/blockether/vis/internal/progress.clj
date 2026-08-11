@@ -12,8 +12,8 @@
      :reasoning        LLM is streaming reasoning text. Updates the
                        iteration entry's `:thinking` field.
 
-     :tool-preview     LLM is streaming a native call. Carries tool identity
-                       and cumulative code separately from reasoning/content;
+     :tool-preview     LLM is streaming the block's code. Carries the
+                       cumulative source separately from reasoning/content;
                        the first real form replaces this ephemeral slot.
 
      :form-start       One block is about to evaluate. Carries
@@ -206,9 +206,8 @@
    `:success?` is nil."
   [chunk]
   (merge
-    ;; Native-tool badge identity (`:vis/tool-name` + colour), projected from the
-    ;; ONE canonical list so a running form can hide its invocation code the same
-    ;; way the completed form does.
+    ;; The display fields a running form already has, projected from the ONE
+    ;; canonical list so it paints the same way the completed form does.
     (form/->display chunk)
     {:code (:code chunk)
      :comment (:comment chunk)
@@ -229,9 +228,9 @@
   [prev-form chunk]
   (let [errored? (some? (:error chunk))]
     (merge
-      ;; Native-tool op-card fields (pre-rendered card + badge label + colour),
-      ;; projected from the ONE canonical list so this builder can't drift from
-      ;; the gateway / restore builders (see internal/form.clj).
+      ;; The card fields (pre-rendered body, headline, the printed result's own
+      ;; op), projected from the ONE canonical list so this builder can't drift
+      ;; from the gateway / restore builders (see internal/form.clj).
       (form/->display chunk)
       {:code (:code chunk)
        :comment (:comment chunk)
@@ -240,8 +239,8 @@
        :started-at-ms (or (:started-at-ms chunk) (:started-at-ms prev-form))
        :duration-ms (or (envelope-duration-ms (:envelope chunk)) 0)
        ;; The SINGLE display surface the channels paint (render.clj / web both read
-       ;; `(:result form)`): the pre-rendered markdown the loop built — a native
-       ;; tool's custom card, a pretty-printed result, or python_execution's stdout.
+       ;; `(:result form)`): the pre-rendered markdown the loop built — the
+       ;; block's stdout plus a card per printed result.
        :result (:result chunk)
        ;; raw stdout kept for any model-context / resume consumer.
        :stdout (:stdout chunk)
@@ -342,9 +341,9 @@
       :slash/label (:slash chunk))
 
     :tool-start
-    ;; A native tool (shell/cat/rg/…) began executing INSIDE a
+    ;; A sandbox function (`shell`, `grep`, …) began executing INSIDE a
     ;; python_execution block. `:form-start` cleared `:activity` to nil, so a
-    ;; long-running nested tool (e.g. a multi-minute `shell` run) would otherwise
+    ;; long-running nested call (e.g. a multi-minute `shell` run) would otherwise
     ;; leave the bubble frozen with no sign anything is happening. Surface it as
     ;; coarse `:tool-call` activity naming the op, so the spinner reads
     ;; "Vis is running: <op>" with a live wall-clock. Reset by the next
@@ -431,9 +430,9 @@
                     (select-keys chunk [:reason :failed-provider :new-provider :fallback]))))
 
     :tool-preview
-    ;; The model has selected a native call but execution has not begun. Reuse
-    ;; the form display contract in slot 0 so channels render the native badge
-    ;; and code immediately; :form-start replaces this preview in place.
+    ;; The model is still writing the block and execution has not begun. Reuse
+    ;; the form display contract in slot 0 so channels render the code
+    ;; immediately; :form-start replaces this preview in place.
     (assoc (assoc-form entry 0 (chunk->form-start chunk)) :activity nil)
 
     :form-start

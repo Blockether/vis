@@ -316,10 +316,10 @@
 
           (expect (seq visible))
           (expect (not (some #(= last-idx (:idx %)) visible)))))
-    (it "hides plain value results while streaming — no collapsible summary"
-        ;; Per user directive: collapsible disclosure was removed. Plain
-        ;; `:value` form results never paint a body while streaming — no
-        ;; `RESULT` label, no `chars hidden` hint, no toggle-details meta.
+    (it "folds a huge streaming result behind its RESULT card"
+        ;; A live bubble must never grow by the SIZE of what the block produced:
+        ;; the result rides behind its own `▸ RESULT` disclosure, so a 10 000-char
+        ;; value costs the streaming frame one row, not a wall.
         (render/invalidate-cache!)
         (let
           [huge-result
@@ -350,10 +350,10 @@
            projected
            (:projected (first visible))]
 
-          (expect (not (str/includes? (:text projected) "RESULT")))
+          (expect (str/includes? (:text projected) "RESULT"))
           (expect (not (str/includes? (:text projected) "chars hidden")))
           (expect (not (str/includes? (:text projected) huge-result)))
-          (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta projected)))))
+          (expect (some #(= :toggle-details (:kind %)) (:line-meta projected)))))
     (it "keeps long live progress layout inside scroll-frame budget"
         ;; Plain `:value` results are now hidden per user directive, so
         ;; the row count is dominated by code + status lines per
@@ -644,9 +644,18 @@
   ;; by the painter, newline-counted by the old estimator) and pasted
   ;; diffs (every `+ ` line explodes into a markdown list item).
   (let
-    [est->real (fn [m w]
-                 (let [pm (project-message m w settings)]
-                   [(estimated-height m w) (render/bubble-height pm w)]))]
+    [;; Measure the PRODUCTION shape: a live bubble always carries a session, so
+     ;; every collapsible section really does fold behind its details node. Without
+     ;; one the painter has nothing to key an expand state on and paints each body
+     ;; inline in full — a shape the TUI never ships.
+     sid
+     "overshoot"
+
+     est->real
+     (fn [m w]
+       (let [pm (project-message m w settings {:session-id sid :detail-expansions {}})]
+         [(estimated-height m w {} sid) (render/bubble-height pm w)]))]
+
     (describe
       "estimate >= painted height"
       (it "long single-line code in a trace, across widths"
@@ -676,10 +685,13 @@
               (expect (>= (long est) (long real)) (str "w=" w " est=" est " real=" real)))))
       (it "plain user / assistant prose"
           (doseq
-            [w [84 154 254]
-             m [(user-msg "hi") (user-msg (apply str (repeat 600 "x")))
-                (plain-assistant-msg "Short answer.")
-                (plain-assistant-msg (str/join "\n\n" (repeat 8 "A paragraph of answer prose.")))]]
+            [w
+             [84 154 254]
+
+             m
+             [(user-msg "hi") (user-msg (apply str (repeat 600 "x")))
+              (plain-assistant-msg "Short answer.")
+              (plain-assistant-msg (str/join "\n\n" (repeat 8 "A paragraph of answer prose.")))]]
 
             (let [[est real] (est->real m w)]
               (expect (>= (long est) (long real)) (str "w=" w " est=" est " real=" real))))))))
@@ -1195,95 +1207,118 @@
       (expect (every? (fn [d]
                         (= d step))
                       deltas))))
-  (it "expanding a fold in the CLIPPED top message never jumps the viewport up"
-      ;; Regression: scroll up a little so the top-of-viewport message is
-      ;; clipped, then open a collapsed disclosure inside it. The freshly
-      ;; expanded bubble is still on its (over-shooting) estimate; anchoring on
-      ;; the first FULLY-visible message BELOW the growth let that estimate->real
-      ;; correction yank the viewport UP to earlier content ("open a fold, jump
-      ;; to the top"). The in-frame anchor now pins the clipped top message
-      ;; itself when IT grew this frame, so its top row stays put.
-      (virtual/invalidate-heights!)
-      (render/invalidate-cache!)
-      (let
-        [sid
-         "rowsess"
+  (it
+    "expanding a fold in the CLIPPED top message never jumps the viewport up"
+    ;; Regression: scroll up a little so the top-of-viewport message is
+    ;; clipped, then open a collapsed disclosure inside it. The freshly
+    ;; expanded bubble is still on its (over-shooting) estimate; anchoring on
+    ;; the first FULLY-visible message BELOW the growth let that estimate->real
+    ;; correction yank the viewport UP to earlier content ("open a fold, jump
+    ;; to the top"). The in-frame anchor now pins the clipped top message
+    ;; itself when IT grew this frame, so its top row stays put.
+    (virtual/invalidate-heights!)
+    (render/invalidate-cache!)
+    (let
+      [sid
+       "rowsess"
 
-         mk
-         (fn [i]
-           (-> (trace-assistant-msg 1 1 (str "Answer " i))
-               (assoc :session-turn-id (str "turn-" i))
-               (assoc-in [:traces 0 :thinking]
-                         (str/join "\n" (map #(str "reasoning " % " msg " i) (range 30))))
-               (assoc-in [:traces 0 :forms 0 :result]
-                         (str/join "\n" (map #(str "out " % " msg " i) (range 40))))))
+       mk
+       (fn [i]
+         (-> (trace-assistant-msg 1 1 (str "Answer " i))
+             (assoc :session-turn-id (str "turn-" i))
+             (assoc-in [:traces 0 :thinking]
+                       (str/join "\n" (map #(str "reasoning " % " msg " i) (range 30))))
+             (assoc-in [:traces 0 :forms 0 :result]
+                       (str/join "\n" (map #(str "out " % " msg " i) (range 40))))))
 
-         msgs
-         (vec (interleave (map #(user-msg (str "q" %)) (range 20)) (map mk (range 20))))
+       msgs
+       (vec (interleave (map #(user-msg (str "q" %)) (range 20)) (map mk (range 20))))
 
-         inner-h
-         40
+       inner-h
+       40
 
-         lay
-         (fn [scroll de prev]
-           (virtual/layout msgs
-                           bubble-w
-                           settings
-                           scroll
-                           inner-h
-                           {}
-                           (merge {:session-id sid :detail-expansions de}
-                                  (when prev {:prev-offsets prev}))))
+       lay
+       (fn [scroll de prev]
+         (virtual/layout msgs
+                         bubble-w
+                         settings
+                         scroll
+                         inner-h
+                         {}
+                         (merge {:session-id sid :detail-expansions de}
+                                (when prev {:prev-offsets prev}))))
 
-         settle
-         (fn [start de]
-           (loop
-             [scroll
-              start
+       settle
+       (fn [start de]
+         (loop
+           [scroll
+            start
 
-              prev
-              nil
+            prev
+            nil
 
-              k
-              0
+            k
+            0
 
-              acc
-              nil]
+            acc
+            nil]
 
-             (if (>= k 8)
-               acc
-               (let [ly (lay scroll de prev)]
-                 (recur (:anchored-scroll ly) (:offsets ly) (inc k) ly)))))
+           (if (>= k 8)
+             acc
+             (let [ly (lay scroll de prev)]
+               (recur (:anchored-scroll ly) (:offsets ly) (inc k) ly)))))
 
-         max-s
-         (max 0 (- (long (:total-h (lay nil {} nil))) inner-h))
+       max-s
+       (max 0 (- (long (:total-h (lay nil {} nil))) inner-h))
 
-         fA
-         (settle (- max-s 6) {})
-
-         top-idx
-         (:idx (first (:visible fA)))
-
-         node
-         (->> (:line-meta (project-message (nth msgs top-idx)
+       node-of
+       (fn [idx]
+         (->> (:line-meta (project-message (nth msgs idx)
                                            bubble-w
                                            settings
                                            {:session-id sid :detail-expansions {}}))
               (keep #(when (= :toggle-details (:kind %)) (:node-id %)))
-              first)
+              first))
 
-         f1
-         (lay (:anchored-scroll fA) {[sid node] true} (:offsets fA))
+       ;; The scroll offset that lands a FOLDABLE message clipped at the top of
+       ;; the viewport is a function of every bubble's painted height, so pinning
+       ;; one magic offset makes this regression re-break on any layout change.
+       ;; Search for the frame the claim is ABOUT instead: top message clipped,
+       ;; and carrying a disclosure to open.
+       [fA top-idx node]
+       (or (first
+             (for
+               [k
+                (range 4 60)
 
-         row-of
-         (fn [ly]
-           (- (long (nth (:offsets ly) top-idx)) (long (:eff-scroll ly))))]
+                :let [f
+                      (settle (- max-s k) {})
 
-        ;; sanity: a real disclosure exists and the top message is truly clipped
-        (expect (some? node))
-        (expect (neg? (row-of fA)))
-        ;; the expanded top message's top row must stay EXACTLY put — no jump
-        (expect (= (row-of fA) (row-of f1))))))
+                      idx
+                      (:idx (first (:visible f)))
+
+                      nd
+                      (node-of idx)
+
+                      row
+                      (- (long (nth (:offsets f) idx)) (long (:eff-scroll f)))]
+                :when (and nd (neg? row))]
+
+               [f idx nd]))
+           [(settle (- max-s 6) {}) (:idx (first (:visible (settle (- max-s 6) {})))) nil])
+
+       f1
+       (lay (:anchored-scroll fA) {[sid node] true} (:offsets fA))
+
+       row-of
+       (fn [ly]
+         (- (long (nth (:offsets ly) top-idx)) (long (:eff-scroll ly))))]
+
+      ;; sanity: a real disclosure exists and the top message is truly clipped
+      (expect (some? node))
+      (expect (neg? (row-of fA)))
+      ;; the expanded top message's top row must stay EXACTLY put — no jump
+      (expect (= (row-of fA) (row-of f1))))))
 
 (defdescribe
   turn-separator-test

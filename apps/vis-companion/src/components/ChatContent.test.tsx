@@ -225,7 +225,7 @@ describe("collapsed tool results", () => {
         {
           id: "iteration-1",
           forms: Array.from({ length: 400 }, (_, index) => ({
-            tool_name: "shell",
+            op: "shell",
             result: "ok",
             result_summary: `summary ${index}`,
             result_render: `**STDOUT**\n\n\`\`\`\n${bodySentinel} ${index}\n\`\`\``,
@@ -240,6 +240,35 @@ describe("collapsed tool results", () => {
     expect(html).toContain("summary 0");
     expect(html).toContain("summary 399");
     expect(html).not.toContain(bodySentinel);
+  });
+});
+
+describe("a card titles itself", () => {
+  const card = (form: Record<string, unknown>) =>
+    text(
+      renderToStaticMarkup(
+        <AssistantMessage
+          turn={{
+            id: "titles",
+            status: "completed",
+            iterations: [{ id: "iteration-1", forms: [form] }],
+          }}
+        />,
+      ),
+    );
+
+  it("wears the op the PRINTED value carried, not a tool name", () => {
+    expect(card({ op: "grep", result_summary: "12 results" })).toContain("GREP");
+  });
+
+  it("wears RESULT for the block's own output", () => {
+    expect(card({ result_render: "```\nprinted\n```" })).toContain("RESULT");
+  });
+
+  it("titles an op no build ever registered", () => {
+    expect(card({ op: "unheard_of", result_summary: "1 row" })).toContain(
+      "UNHEARD_OF",
+    );
   });
 });
 

@@ -3301,8 +3301,70 @@
    blow the request."
   65536)
 
+(defn- clip-to-wire
+  "Head-clip one display string to `MAX_FORM_WIRE_CHARS`, announcing what it
+   dropped. nil for a string that is blank once trailing space is gone."
+  [^String s]
+  (let
+    [s
+     (str/trimr (str s))
+
+     n
+     (long (count s))]
+
+    (when (pos? n)
+      (if (> n (long MAX_FORM_WIRE_CHARS))
+        (str (subs s 0 MAX_FORM_WIRE_CHARS)
+             "\n# ⋯ output clipped at "
+             MAX_FORM_WIRE_CHARS
+             "/"
+             n
+             " chars")
+        s))))
+
+(def ^:private tally-keys
+  "The sequential fields a result puts its ROWS under, in the order a headline
+   should prefer them. The KEY names the unit — a `files` vector of 3 reads
+   `3 files` — so a card sizes itself from the value instead of from a per-tool
+   renderer that had to be written first."
+  ["results" "files" "matches" "hits" "entries" "edits" "nodes" "rows" "items"])
+
+(defn- printed-result-tally
+  "The one-line HEADLINE for a printed result, taken from the value itself: the
+   count of the rows it carries plus the name of the field carrying them. nil when
+   the value counts nothing — then the card is its title and its body, and no
+   headline invents a number the result never reported."
+  [pr]
+  (let
+    [say (fn [n unit]
+           (str n
+                " "
+                (if (and (= 1 (long n)) (str/ends-with? unit "s"))
+                  (subs unit 0 (dec (count unit)))
+                  unit)))]
+    (cond (sequential? pr) (say (count pr) "rows")
+          (map? pr) (some (fn [k]
+                            (let [v (get pr k)]
+                              (when (sequential? v) (say (count v) k))))
+                          tally-keys))))
+
+(defn- printed-result-card
+  "One CARD for a value the model print()ed inside a python block, built from the
+   VALUE and nothing else: its own `:op` titles it, the rows it already carries
+   size it, and the value pretty-printed as a Python literal is the body. There is
+   no symbol table to consult, so a result from an op with no extension registered
+   still paints, and a card can never drift from what actually ran. Returns a
+   canonical MINI-FORM (`nil` for a value carrying no op)."
+  [pr]
+  (when-let [op (printed-result-op pr)]
+    {:op op
+     :result-summary (printed-result-tally pr)
+     :result-render (some-> (env/ctx->python-str pr)
+                            clip-to-wire
+                            (strutil/fenced "python"))}))
+
 (defn- printed-cards-result-render
-  "Keep python stdout as a fallback when printed op-cards have headlines only.
+  "Keep python stdout as a fallback when printed cards have headlines only.
    Cards with any body remain the canonical human display; summary-only cards do
    not suppress the sole non-empty result surface."
   [cards result-card]
@@ -3324,23 +3386,7 @@
   [result* tool-name renderers & [input]]
   (let
     [clip
-     (fn [^String s]
-       (let
-         [s
-          (str/trimr (str s))
-
-          n
-          (long (count s))]
-
-         (when (pos? n)
-           (if (> n (long MAX_FORM_WIRE_CHARS))
-             (str (subs s 0 MAX_FORM_WIRE_CHARS)
-                  "\n# ⋯ output clipped at "
-                  MAX_FORM_WIRE_CHARS
-                  "/"
-                  n
-                  " chars")
-             s))))
+     clip-to-wire
 
      ;; per-tool custom finish renderer declared on the symbol
      custom
@@ -4668,10 +4714,6 @@
        ;; executable tool code.
        suppress-form-start? (some :vis/preflight-error code-entries)
        total-blocks (count code-entries)
-       ;; per-OP renderers for TOOL RESULTS the model print()ed in Python — keyed
-       ;; by the result's `:op` (the only origin handle a printed value carries),
-       ;; so `print(await rg(...))` paints rg's card.
-       printed-renderers (extension/printed-result-renderers-by-op active-extensions)
        executed
        (mapv
          (fn
@@ -4764,29 +4806,10 @@
               ;; stream did, instead of pr-str'ing the raw result map. `:summary`
               ;; is the op-card HEADLINE; `:body` (→ `:result-render`) the detail.
               result-card (tool-result-display result* (:vis/tool-name entry) nil)
-              ;; TOOL RESULTS the model print()ed (each carrying :op) → one op-card
-              ;; each, rendered loop-side via the SAME symbol renderer a native call
-              ;; uses. Each card is a CANONICAL MINI-FORM, so the shared form
-              ;; projection handles it without a second shape.
-              printed-cards (vec
-                              (keep (fn [pr]
-                                      ;; `pr` crossed the boundary — STRING keys ("op"),
-                                      ;; or a LIST of per-file edit rows (see
-                                      ;; `printed-result-op`).
-                                      (when-let [op (printed-result-op pr)]
-                                        (when-let [t (get printed-renderers op)]
-                                          (let
-                                            [c ((:render-finish-call-fn t) pr)
-                                             c (if (map? c) c {:body (str c)})]
-
-                                            {:vis/tool-name op
-                                             :result-summary (some-> (:summary c)
-                                                                     str
-                                                                     not-empty)
-                                             :result-render (some-> (:body c)
-                                                                    str
-                                                                    not-empty)}))))
-                                    (:printed-results result*)))
+              ;; RESULTS the model print()ed (each carrying its own :op) → one card
+              ;; each, built from the VALUE alone. Each card is a CANONICAL MINI-FORM,
+              ;; so the shared form projection handles it without a second shape.
+              printed-cards (vec (keep printed-result-card (:printed-results result*)))
               ;; Printed cards replace raw stdout only when at least one carries a body.
               ;; Summary-only cards otherwise suppress the sole non-empty result surface,
               ;; so retain stdout as a fallback. Mixed text always keeps stdout too.
@@ -8274,8 +8297,7 @@
      ;; the misleading "Final answer must be canonical content or Markdown
      ;; prose". On a throw, persist no content; the gateway rebuilds honest
      ;; content from the trace error (see gateway/state).
-     (try (content/answer-content (:answer result))
-          (catch Throwable _ []))
+     (try (content/answer-content (:answer result)) (catch Throwable _ []))
 
      _
      (persistance/db-update-session-turn! (:db-info env)
@@ -8470,6 +8492,9 @@
           (str "await shell({\"command\": " (pr-str cmd) "})"))
         :svar/tool-call-id (str "bang-" (subs (str (java.util.UUID/randomUUID)) 0 8))
         :vis/tool-name tool-name
+        ;; The card is titled by the op that produced it, exactly like a printed
+        ;; result: a `!cmd` bubble reads SHELL, not RESULT.
+        :op tool-name
         :envelope {:started-at-ms t0 :finished-at-ms t1}}
        (some? result-map)
        (assoc :result result-map)

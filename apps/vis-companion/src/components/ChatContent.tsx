@@ -115,12 +115,6 @@ export const transcriptRiseClass =
 // only INITIAL_VISIBLE_TURNS, `Load earlier` brings the rest in on demand, and
 // the iteration ramp below stages a turn's trace. None of those guess a height.
 
-const toolLabelOverrides: Record<string, string> = {
-  python_execution: "RESULT",
-  repl_eval: "REPL",
-  // `shell` needs no override: ONE tool, whose card names the op that ran.
-};
-
 type DiffLineKind = "add" | "del" | "ctx";
 type DiffLine =
   | { kind: "meta"; text: string }
@@ -967,9 +961,13 @@ function commandTurn(turn: TranscriptTurn): boolean {
   return request.startsWith("/") || request.startsWith("!");
 }
 
-function toolLabel(name?: string): string {
-  if (!name) return "TOOL";
-  return toolLabelOverrides[name] ?? name.toUpperCase();
+// Mirrors `form/card-label`: a printed result is titled by its OWN `op`, and the
+// block's own output by RESULT. The badge comes from the value, never from a
+// table of tool names — so a result from an op this build has never heard of
+// still titles itself.
+function toolLabel(op?: string): string {
+  const named = (op ?? "").trim();
+  return named ? named.toUpperCase() : "RESULT";
 }
 
 // A fenced block must not be closable by the content it wraps: file text, tool
@@ -996,6 +994,8 @@ function resultBody(form: TranscriptForm): string {
   return typeof form.result === "string" ? raw : fenced(raw, "json");
 }
 
+// Mirrors `form/result-cards`: a block that printed several results carries one
+// mini-form per result, and every other block is its own single card.
 function toolCards(form: TranscriptForm): TranscriptForm[] {
   if (
     form.silent ||
@@ -1004,19 +1004,7 @@ function toolCards(form: TranscriptForm): TranscriptForm[] {
   )
     return [];
   if (form.cards?.length) return form.cards.flatMap(toolCards);
-  return form.tool_name ? [form] : [];
-}
-
-function compactToolSummary(name: string | undefined, summary: string): string {
-  if (!name || !["patch", "struct_patch"].includes(name))
-    return summary;
-
-  return summary
-    .replace(
-      /(^| · )(?:(?:update|add|delete|replace|overwrite)\s+|\(no change\)\s+)/g,
-      "$1",
-    )
-    .replaceAll(" · ", ", ");
+  return [form];
 }
 
 function ToolSummary({
@@ -1095,10 +1083,7 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
   // result lands, and no pending-only dialect exists.
   const body =
     resultText || (running ? (form.pending_render?.trimEnd() ?? "") : "");
-  const summary = compactToolSummary(
-    form.tool_name,
-    running && pendingSummary ? pendingSummary : rawSummary,
-  );
+  const summary = running && pendingSummary ? pendingSummary : rawSummary;
   const duration = formatDuration(form.duration_ms);
   // A COLLAPSED result body is not in the DOM at all. Measured on device on a
   // real transcript: those bodies were 52k of the screen's 72k elements, and
@@ -1119,7 +1104,7 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
       <span
         className={`shrink-0 font-mono text-chip font-extrabold tracking-[0.06em] ${failed ? "text-err" : "text-accent-ink"}`}
       >
-        {toolLabel(form.tool_name)}
+        {toolLabel(form.op)}
       </span>
       {summary && <ToolSummary className={summaryClass}>{summary}</ToolSummary>}
       {/* A finished call that produced NO summary and NO body still says so: an
@@ -1192,17 +1177,9 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
 });
 
 function formCode(form: TranscriptForm): string {
-  const nativeTool = form.tool_name && form.tool_name !== "python_execution";
-  // A running native call must show the invocation actually submitted, not its
-  // prettified display mirror. Python keeps the canonical formatted surface.
-  // Exception: a tool may AUTHOR the pending surface for its own call (marked by
-  // `display_language`, e.g. `shell` rendering its commands as a bash block); that
-  // block is what the finished card keeps showing, so the raw JSON never appears.
-  const authored = (form.display_language ?? "").trim() !== "";
-  const source =
-    nativeTool && !authored
-      ? (form.code ?? form.source ?? form.src ?? form.display_code)
-      : (form.display_code ?? form.code ?? form.source ?? form.src);
+  // The canonical formatted surface, falling back to whatever source the event
+  // carried. A block is the program the model wrote; there is no second dialect.
+  const source = form.display_code ?? form.code ?? form.source ?? form.src;
   return typeof source === "string" ? source.trim() : "";
 }
 
@@ -1223,28 +1200,11 @@ function formIsRunning(form: TranscriptForm): boolean {
   );
 }
 
-// Mirrors `form/running-code-tools`: the only native tools whose submitted source
-// stays on screen while the call is still running. Everything else spins behind
-// its op-card instead of flashing a bordered code frame for 200ms.
-const RUNNING_CODE_TOOLS = new Set(["python_execution", "shell"]);
-
-function showFormCode(form: TranscriptForm, code: string): boolean {
-  if (!code) return false;
-  if (!form.tool_name) return true;
-  // Keep completed native invocations compact behind their result card. A long
-  // `shell`/`python_execution` call is the exception while it runs: the submitted
-  // command IS the most important fact on screen, and `block.started` carries that
-  // exact source plus the Running… sentinel. Python remains evidence after
-  // completion as well, whether it passed or failed.
-  // …and never once the tool AUTHORED its own pending card body
-  // (`pending_render`, mirroring `form/show-running-tool-code?`): that body
-  // already IS the submitted command, rendered the way the card renders it, so a
-  // raw invocation beside it would say the same thing twice in JSON.
-  if (form.pending_render?.trim()) return false;
-  return (
-    form.tool_name === "python_execution" ||
-    (formIsRunning(form) && RUNNING_CODE_TOOLS.has(form.tool_name))
-  );
+// The program the model wrote is the evidence on screen in every state — while
+// it runs, when it lands, and when it fails. The only source a block hides is
+// one it never had. Mirrors `render/hide-code-chrome?`.
+function showFormCode(_form: TranscriptForm, code: string): boolean {
+  return Boolean(code);
 }
 
 const PYTHON_PREVIEW_LINES = 5;
@@ -1345,7 +1305,7 @@ const CardGrid = memo(function CardGrid({
     >
       {cards.map((card, cardIndex) => (
         <ToolCard
-          key={`${card.scope ?? card.tool_name ?? "tool"}-${cardIndex}`}
+          key={`${card.scope ?? card.op ?? "result"}-${cardIndex}`}
           form={card}
         />
       ))}
@@ -1370,10 +1330,7 @@ const FormTrace = memo(function FormTrace({
   const showCode = showFormCode(form, code);
   const cards = toolCards(form);
   if (!showCode && !cards.length) return null;
-  const codeLabel =
-    form.tool_name === "python_execution"
-      ? "PYTHON"
-      : toolLabel(form.tool_name);
+  const codeLabel = "PYTHON";
 
   return (
     <div className={live ? `min-w-0 ${transcriptRiseClass}` : "min-w-0"}>
@@ -2036,7 +1993,7 @@ const TraceSegment = memo(function TraceSegment({
           form.result === "vis_answer"
         )
           return;
-        const key = `${entry.index}-${formIndex}-${form.scope ?? form.tool_name ?? "form"}`;
+        const key = `${entry.index}-${formIndex}-${form.scope ?? "form"}`;
         if (showFormCode(form, formCode(form))) {
           built.push({ kind: "code", key, form });
           return;
@@ -2192,7 +2149,7 @@ export const ContentBlockView = memo(function ContentBlockView({
       return block.text ? <ThinkingBand>{block.text}</ThinkingBand> : null;
     case "tool": {
       const form: TranscriptForm = {
-        tool_name: block.tool ?? "tool",
+        op: block.tool ?? undefined,
         result_summary: block.status,
         result_render:
           block.output == null ? undefined : jsonText(block.output),

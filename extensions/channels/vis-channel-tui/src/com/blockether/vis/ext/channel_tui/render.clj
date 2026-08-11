@@ -2567,8 +2567,8 @@
                         (p/put-str! g x y (subs line 1)))
                     ;; ── Result (success) - neutral code-block bg ──
                     (str/starts-with? line result-marker)
-                    ;; Body rows stay on the quiet RESULT band; native-tool headlines
-                    ;; get the stronger summary tint so the operation and its inline
+                    ;; Body rows stay on the quiet RESULT band; a card's headline
+                    ;; gets the stronger summary tint so the op and its inline
                     ;; path chip remain immediately scannable.
                     (let
                       [abs-row (+ (long viewport-top) (long y))
@@ -3608,28 +3608,23 @@
   "Content-derived fingerprint of one form map. Captures every field
    the iteration renderer reads."
   [{:keys [code comment display-code display-language pending-summary pending-render render-segments
-           result-render result-summary result-kind result-detail error success? silent? cards]
-    tool-name :vis/tool-name}]
+           result-render result-summary result-kind result-detail error success? silent? cards]}]
   [(text-fingerprint code) (text-fingerprint comment) render-segments
    (text-fingerprint result-render) (text-fingerprint result-summary) result-kind
    ;; result-detail is a small op-metadata map; compared structurally.
    result-detail error success? silent?
-   ;; What a RUNNING native call actually paints: the tool-authored code band
+   ;; What a RUNNING block paints before its result lands: the formatted code band
    ;; (`:display-code`/`:display-language`) and its pending headline
-   ;; (`:pending-summary`). `:code` alone can't stand in for them — the same
-   ;; invocation renders differently once the tool's own `:render-start-call-fn` lands,
-   ;; and without these the live bubble keeps the pre-display body forever.
+   ;; (`:pending-summary`). `:code` alone can't stand in for them — the block
+   ;; renders differently once the formatted display lands, and without these the
+   ;; live bubble keeps the pre-display body forever.
    (text-fingerprint display-code) display-language (text-fingerprint pending-summary)
    (text-fingerprint pending-render)
-   ;; The native-tool identity the renderer paints. Without it in the key, a form
-   ;; that gains a tool name renders from a stale cache entry.
-   tool-name
-   ;; Print-many cards: a cheap per-card digest (name/summary + a body fingerprint)
+   ;; Print-many cards: a cheap per-card digest (op/summary + a body fingerprint)
    ;; so two card-forms with the same code + summary but different cards cannot
    ;; collide on a stale cache entry.
    (mapv (fn [c]
-           [(:vis/tool-name c) (text-fingerprint (:result-summary c))
-            (text-fingerprint (:result-render c))])
+           [(:op c) (text-fingerprint (:result-summary c)) (text-fingerprint (:result-render c))])
          cards)])
 
 (defn- iteration-fingerprint
@@ -5198,15 +5193,6 @@
           running?
           (and (some? started-at-ms) (nil? success?))
 
-          ;; A FAILED native tool (cat/rg/patch/…, not python_execution) keeps
-          ;; only its concise error. While that same tool is RUNNING, however,
-          ;; its exact submitted invocation is the primary evidence on screen.
-          ;; Python source remains visible through every state.
-          native-tool-error?
-          (and is-error?
-               (some? (:vis/tool-name form))
-               (not= (name (:vis/tool-name form)) "python_execution"))
-
           ;; BLOCK N header removed per user directive (also gated
           ;; on `show-header?` which is now always false). Keep
           ;; `expr-hdr` defined as empty so the existing `(when
@@ -5254,22 +5240,13 @@
           title-lines
           []
 
-          ;; Canonical code surface: Python uses the gateway's cached, ruff-formatted
-          ;; `:display-code`. A RUNNING native call is different: the user needs the
-          ;; exact invocation submitted to the tool, so prefer its raw `:code`. The
-          ;; exception is a tool that RENDERS its own pending call (`:render-start-call-fn`,
-          ;; flagged by `:display-language`) — `shell` ships the bash it is about to
-          ;; run, and that block, not the call JSON, is the evidence on screen.
+          ;; Canonical code surface: the gateway's cached, ruff-formatted
+          ;; `:display-code`, falling back to formatting the raw source here.
           code-text
-          (str/trim (str (if (and running?
-                                  (some? (:vis/tool-name form))
-                                  (str/blank? (str display-language))
-                                  (not= (name (:vis/tool-name form)) "python_execution"))
-                           (or (not-empty (str code)) display-code)
-                           (or (not-empty (str display-code)) (vis/beautify-python code)))))
+          (str/trim (str (or (not-empty (str display-code)) (vis/beautify-python code))))
 
-          ;; A tool-authored pending display names its OWN language (`bash` for a
-          ;; shell block); every other code surface here is Python.
+          ;; A pre-rendered display names its OWN language; every other code
+          ;; surface here is Python.
           code-language
           (or (not-empty (str display-language)) "python")
 
@@ -5295,14 +5272,13 @@
           ;; disclosure previews and its `+N more` count describe PROGRAM lines,
           ;; never the extra screen rows introduced by soft wrapping.
           code-line-groups
-          (cond native-tool-error? []
-                :else (or (some->> inline-error-code-lines
-                                   (mapv vector))
-                          (mapv (fn [plain colored]
-                                  (let [folded (p/fold-cols plain fill-w)]
-                                    (if (and colored (= 1 (count folded))) [colored] folded)))
-                                (str/split-lines code-text)
-                                (or colored-lines (repeat nil)))))
+          (or (some->> inline-error-code-lines
+                       (mapv vector))
+              (mapv (fn [plain colored]
+                      (let [folded (p/fold-cols plain fill-w)]
+                        (if (and colored (= 1 (count folded))) [colored] folded)))
+                    (str/split-lines code-text)
+                    (or colored-lines (repeat nil))))
 
           code-node-id
           (when session-id
@@ -5327,10 +5303,7 @@
           (count (str/split-lines code-text))
 
           python-code-collapsible?
-          (and (= "python_execution"
-                  (some-> (:vis/tool-name form)
-                          name))
-               code-node-id
+          (and code-node-id
                (>= (- (long python-program-row-count) (long python-code-preview-line-limit))
                    (long vis/reasoning-collapse-min-hidden)))
 
@@ -5378,43 +5351,32 @@
           ;; model-context only and is not rendered in human channels.
           ;; Long results mirror thinking: keep the first rows visible and
           ;; collapse only the surplus behind a compact details row.
-          ;; Prefer the loop's pre-rendered display STRING (`:result-render` —
-          ;; the native-tool card / pretty result) for NATIVE TOOL forms only
-          ;; (gated on `:vis/tool-name`). It's persisted, so a DB-restored trace
-          ;; shows the SAME card the live stream did instead of pr-str'ing the
-          ;; raw `:result` map. Plain `:value` form results have no tool name
-          ;; and stay hidden while streaming (per the no-bare-value directive).
-          tool-name*
-          (:vis/tool-name form)
-
-          ;; Canonical op-card descriptor — `tool?`, badge LABEL/colour, the
-          ;; HEADLINE `:summary`, and `:collapsible?` are decided ONCE in the
-          ;; gateway (`vis/result-card`) so the TUI badge can't drift from the
-          ;; web one. nil for a non-tool form (its body stays the EDN below).
+          ;; Canonical card descriptor — badge LABEL/colour, the HEADLINE
+          ;; `:summary` and `:collapsible?` are decided ONCE in the gateway
+          ;; (`vis/result-card`) so the TUI badge can't drift from the web one.
+          ;; nil for a form that printed nothing (its body stays the EDN below).
           card
           (vis/result-card form)
 
-          ;; The op-card HEADLINE — a real tool-authored summary
-          ;; ("5 hits in 1 file", "moved `a` → `b`"), never a first-line
-          ;; slice of the body. Only native-tool forms carry one.
+          ;; The card HEADLINE — the tally the printed value itself carried
+          ;; ("12 results"), never a first-line slice of the body.
           head-summary
           (:summary card)
 
           result-text
           (let
             [rendered
-             ;; The CARD's body, not `:result-render` straight off the form: a call
-             ;; still RUNNING has no result yet and paints its tool-authored
-             ;; pending body instead — one field, decided once in `result-card`.
-             (when tool-name* (:body card))
+             ;; The CARD's body, not `:result-render` straight off the form: a block
+             ;; still RUNNING has no result yet and paints its pending body
+             ;; instead — one field, decided once in `result-card`.
+             (:body card)
 
              v
              (:result form)]
 
             (cond (and (string? rendered) (not (str/blank? rendered))) (str/trimr rendered)
-                  ;; A native tool that returned ONLY a `:result-summary`
-                  ;; (move/delete/exists) has no body — the summary alone
-                  ;; IS the card; never fall back to an EDN dump of :result.
+                  ;; A result that carried ONLY a headline has no body — the
+                  ;; summary alone IS the card; never fall back to an EDN dump.
                   head-summary nil
                   (nil? v) nil
                   (string? v) (some-> v
@@ -5478,9 +5440,9 @@
                entries
                (vec entries)
 
-               ;; Native tools carry a tool name. The label renames a few wire
-               ;; names (python_execution → CODE).
-               tool-label
+               ;; Every card wears a badge: the printed value's own op, or
+               ;; `RESULT` for the block's own output.
+               card-badge
                (:label card)
 
                preview-n
@@ -5506,11 +5468,11 @@
                    (assoc e :line (str result-marker stripped))))]
 
               (cond
-                ;; Native tool result: the tool label and tool-authored summary ride
-                ;; on a neutral headline; the whole `:result-render` body nests under
-                ;; it (collapsible). A summary-only tool renders a plain headline
-                ;; with no expand triangle because there is nothing beneath it.
-                tool-label (tool-card-entries card
+                ;; The badge and the value's own headline ride on a neutral row;
+                ;; the whole `:result-render` body nests under it (collapsible). A
+                ;; headline-only result renders a plain row with no expand
+                ;; triangle because there is nothing beneath it.
+                card-badge (tool-card-entries card
                                               {:fill-w fill-w
                                                :session-id session-id
                                                :detail-expansions detail-expansions
@@ -5547,19 +5509,15 @@
             (mapv #(line-entry (str err-result-marker %))
                   (wrap-text (form-error-headline error) fill-w)))
 
-          ;; A native invocation's source is redundant beside its op-card, running
-          ;; or finished: a long-running tool authors its own pending card body, so
-          ;; the submitted program is already on screen while it runs. Python keeps
-          ;; its source in every state; failed native calls retain only their
-          ;; compact error message. `vis/hide-tool-code?` owns the whole policy.
-          ;; Blank non-tool code also drops empty chrome.
+          ;; The program the model wrote is evidence in every state — success,
+          ;; failure and while it runs — so the only source a form hides is one it
+          ;; never had. Blank code drops the empty chrome around it.
           hide-code-chrome?
-          (or (and (not is-error?) (str/blank? code-text)) (vis/hide-tool-code? form))
+          (and (not is-error?) (str/blank? code-text))
 
           code-block
           (cond hide-code-chrome?
-                ;; Hide only a native tool's synthesized invocation source; its
-                ;; compact error message still remains visible.
+                ;; No source to show; the error message still remains visible.
                 (vec (concat (when (seq title-lines) [(line-entry "")])
                              title-lines
                              (when (seq title-lines) [(line-entry "")])
@@ -5589,16 +5547,11 @@
                           ;; footer; code blocks stay source-only.
                           [(line-entry (str c-pad ""))])))
 
-          ;; A code band already closes with its one blank bottom edge. Python
-          ;; results begin immediately after that edge, rather than adding a
+          ;; A code band already closes with its one blank bottom edge, so the
+          ;; results begin immediately after that edge rather than adding a
           ;; second visually blank row from the result band.
           result-block
-          (when (seq result-lines)
-            (concat (when-not (= "python_execution"
-                                 (some-> (:vis/tool-name form)
-                                         name))
-                      [(line-entry (str result-marker ""))])
-                    result-lines))]
+          (vec result-lines)]
 
          ;; A RUNNING native call wears its op-card HEADLINE FIRST — exactly where
          ;; the finished card's headline sits — with the submitted command band
@@ -5619,64 +5572,18 @@
      (when (seq forms)
        (let
          [forms-vec
-          (vis/coalesce-forms (vec forms))
-
-          ;; A code-less native op-card (cat/rg/patch/…, not
-          ;; python_execution, no error) hides its code chrome
-          ;; and paints ONLY the op rows — which already open
-          ;; with their own leading breathe blank. So when one
-          ;; such card immediately follows another, the
-          ;; inter-form terminal-bg pad below is a REDUNDANT
-          ;; second margin; drop it so consecutive native calls
-          ;; stack flush (one breathe row, not two).
-          chrome-hidden?
-          (fn [form]
-            (let
-              [tn
-               (:vis/tool-name form)
-
-               err?
-               (and (some? (:success? form)) (not (:success? form)))
-
-               running?
-               (and (some? (:started-at-ms form)) (nil? (:success? form)))]
-
-              (boolean (and tn (not= (name tn) "python_execution") (not err?) (not running?)))))
+          (vec forms)
 
           block-code-lines
-          (into
-            []
-            (mapcat (fn [[idx form]]
-                      (let
-                        [;; Adjacent code-less native op-cards share ONE
-                         ;; continuous result-bg BAND: every card keeps its
-                         ;; own leading breathe + trailing pad row — the
-                         ;; pre-allocated background under each op headline,
-                         ;; so a grouped tool call is always TWO rows
-                         ;; (headline + band row), and an EXPANDED body
-                         ;; keeps a band row before the next headline
-                         ;; instead of gluing to it. The blank-coalesce
-                         ;; pass folds the seam (this card's trailing pad +
-                         ;; the next card's leading breathe) into a single
-                         ;; band row. Only the terminal-bg inter-form gap
-                         ;; is skipped inside such a run, so the band never
-                         ;; tears back to terminal bg mid-run.
-                         prev-native?
-                         (and (pos? (long idx))
-                              (chrome-hidden? form)
-                              (chrome-hidden? (nth forms-vec (dec (long idx)))))
-
-                         fl
-                         (form-lines form (inc (long idx)))]
-
-                        ;; ONE terminal-bg blank between consecutive
-                        ;; forms inside the same iteration — skipped when
-                        ;; both are chrome-hidden native cards (their shared
-                        ;; result-bg band already separates them).
-                        (concat (when (and (pos? (long idx)) (not prev-native?))
-                                  [(line-entry (str iteration-pad-marker ""))])
-                                fl)))
-                    (map-indexed vector forms-vec)))]
+          (into []
+                (mapcat (fn [[idx form]]
+                          (let [fl (form-lines form (inc (long idx)))]
+                            ;; ONE terminal-bg blank between consecutive
+                            ;; forms inside the same iteration.
+                            (concat (when (pos? (long idx))
+                                      [(line-entry (str iteration-pad-marker ""))])
+                                    fl)))
+                        (map-indexed vector forms-vec)))]
 
          ;; TRAILING iter-pad only. It separates this iteration's
          ;; body from the NEXT iteration below by a single
@@ -5855,7 +5762,7 @@
      tool-op
      (:tool/op last-iteration)
 
-     tool-label
+     activity-label
      (let
        [s (some-> (:tool/label last-iteration)
                   str
@@ -5925,7 +5832,7 @@
                                     (str "Vis is " tool-phrase " (iter " n ")")
                                     (str "Vis is running: "
                                          (or tool-op "tool")
-                                         (when tool-label (str " " tool-label))
+                                         (when activity-label (str " " activity-label))
                                          " (iter "
                                          n
                                          ")"))
@@ -6376,9 +6283,7 @@
         ;; honest, actionable hint is "send a message", never "retry".
         (str "⏸  Paused — the previous turn failed; nothing is running"
              (let [held (:held queue-paused)]
-               (if (and (number? held) (pos? (long held)))
-                 (str " (" held " held)." )
-                 "."))
+               (if (and (number? held) (pos? (long held))) (str " (" held " held).") "."))
              "  Send a message to continue.")
         (str (spinner-frame now-ms)
              "  "

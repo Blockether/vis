@@ -708,14 +708,12 @@ export interface TranscriptForm {
   result_render?: string;
   result_summary?: string;
   /**
-   * The op-card headline WHILE the call runs, authored by the tool's own
-   * renderer (`shell`'s `$ npm test (running)`). Its own key, never
+   * The card headline WHILE the block runs. Its own key, never
    * `result_summary`: a pending card must not read as an outcome.
    */
   pending_summary?: string;
   /**
-   * The op-card BODY while the call runs, authored by the tool's own renderer
-   * (`shell`'s `**COMMAND**` section): the same sections its finished body is
+   * The card BODY while the block runs: the same sections its finished body is
    * built from, minus the outcome. Its own key, never `result_render`.
    */
   pending_render?: string;
@@ -725,7 +723,13 @@ export interface TranscriptForm {
   cards?: TranscriptForm[];
   error?: JsonValue;
   stdout?: string;
-  tool_name?: string;
+  /**
+   * A PRINTED result's own op (`grep`, `attach`) — the only identity a card
+   * has, and data the value carried out of the sandbox rather than a name
+   * looked up in a registry. Absent on the block itself: a form is always the
+   * model's python, and its card reads RESULT.
+   */
+  op?: string;
   silent?: boolean;
   duration_ms?: number;
   [key: string]: unknown;

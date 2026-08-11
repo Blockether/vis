@@ -211,9 +211,9 @@
           (vis/parse-block-display src)]
 
          ;; Project the persisted envelope's whole display-key set via
-         ;; `vis/form->display`: the pre-rendered native-tool card, its tool name,
-         ;; and a print-many block's per-result cards. A hand-listed copy silently
-         ;; dropped those fields on resume; the canonical projection cannot drift.
+         ;; `vis/form->display`: the pre-rendered result card and a print-many
+         ;; block's per-result cards. A hand-listed copy silently dropped those
+         ;; fields on resume; the canonical projection cannot drift.
          ;; `:code`, `:scope`/`:tag`, and computed render segments are layered on top.
          (cond->
            (merge (vis/form<-wire env)
@@ -915,9 +915,9 @@
 
       "block.started"
       (merge {:phase :form-start :iteration iteration :position block-id :code code}
-             ;; Read back the native-tool badge identity (`:vis/tool-name`
-             ;; + colour) so the live bubble can hide the redundant
-             ;; invocation code WHILE the tool runs, not just after.
+             ;; Read back the display fields the block already carries while it
+             ;; RUNS (its formatted source, its pending headline), so the live
+             ;; bubble paints the same card it will keep once the block lands.
              (vis/form<-wire event))
 
       "block.output"

@@ -1203,20 +1203,18 @@
        (case phase
          (:tool-preview :form-start)
          (merge
-           ;; Carry the native-tool badge identity so a client can hide the
-           ;; redundant invocation code WHILE the tool runs.
+           ;; Carry the display fields the block already has while it RUNS — its
+           ;; formatted source and pending headline — so the live bubble paints
+           ;; the same card it keeps once the block lands.
            (form/->display (form/with-display-code chunk))
            (cond-> {:block_id position :code code}
-             (:vis/tool-name chunk)
-             (assoc :tool_name (:vis/tool-name chunk))
-
              (:svar/tool-call-id chunk)
              (assoc :tool_call_id (:svar/tool-call-id chunk))))
 
          :form-result
          (merge
-           ;; The native-tool op-card fields (pre-rendered card + badge label
-           ;; + colour) — projected from ONE canonical list.
+           ;; The card fields (pre-rendered body + headline + the printed
+           ;; result's own op) — projected from ONE canonical list.
            (form/->display (form/with-display-code chunk))
            {:block_id position
             :code code

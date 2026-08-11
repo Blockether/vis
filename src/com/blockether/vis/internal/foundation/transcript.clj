@@ -132,11 +132,13 @@
     (contains? envelope :error)
     (assoc :error (:error envelope))
 
-    ;; Canonical native-tool IR so the dialog renderer reuses the SAME op-card
-    ;; descriptors the TUI/web build instead of re-parsing the invocation string.
-    (:vis/tool-name envelope)
-    (assoc :vis/tool-name
-      (:vis/tool-name envelope) :result-summary
+    ;; Canonical card IR so the dialog renderer reuses the SAME descriptors the
+    ;; TUI/web build instead of re-parsing the invocation string. Gated on the
+    ;; CARD fields themselves: a block's own output carries no op, and losing its
+    ;; headline/body to a missing identity is exactly the drift this avoids.
+    (or (some? (:result-summary envelope)) (some? (:result-render envelope)))
+    (assoc :op
+      (:op envelope) :result-summary
       (:result-summary envelope) :result-render
       (:result-render envelope))
 

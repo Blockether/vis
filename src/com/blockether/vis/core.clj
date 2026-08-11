@@ -365,9 +365,7 @@
              [form-with-display-code form/with-display-code]
              [form<-wire form/<-wire]
              [result-card form/result-card]
-             [result-cards form/result-cards]
-             [hide-tool-code? form/hide-tool-code?]
-             [coalesce-forms form/coalesce-forms])
+             [result-cards form/result-cards])
 
 (import-vars [markdown->ast ir/markdown->ast])
 ;; Shared unified-diff line classifier — TUI maps the kind to ANSI, web to a CSS

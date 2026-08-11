@@ -383,22 +383,22 @@
                    (expect (= "iteration.completed" type))
                    (expect (= 5 (:iteration payload)))
                    (expect (= "full prose" (:assistant-prose payload)))))
-             (it "native-call preview is a distinct replayable block event"
+             (it "the streaming code preview is a distinct replayable block event"
                  (let
                    [[type store? payload] (#'state/chunk->event
                                            {:phase :tool-preview
                                             :iteration 1
                                             :position 0
                                             :code "print(4"
-                                            :vis/tool-name "native_call"
-                                            :result-summary "run_python"
                                             :svar/tool-call-id "call_1"})]
                    (expect (= "block.preview" type))
                    (expect store?)
                    (expect (= 1 (:iteration payload)))
                    (expect (= 0 (:block_id payload)))
                    (expect (= "print(4" (:code payload)))
-                   (expect (= "native_call" (:tool_name payload)))
+                   ;; The preview names no tool: there is exactly one, and a
+                   ;; card's identity is the printed result's own `op`.
+                   (expect (nil? (:tool_name payload)))
                    (expect (= "call_1" (:tool_call_id payload))))))
 
 (defdescribe

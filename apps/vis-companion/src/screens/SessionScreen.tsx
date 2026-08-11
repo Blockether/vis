@@ -504,7 +504,7 @@ function formFromEvent(event: SseEvent, running = false): TranscriptForm {
     display_code: stringField(event, "display_code") || undefined,
     display_language: stringField(event, "display_language") || undefined,
     comment: stringField(event, "comment") || undefined,
-    tool_name: stringField(event, "tool_name") || undefined,
+    op: stringField(event, "op") || undefined,
     result_summary:
       stringField(event, "result_summary") ||
       (running ? "Running…" : undefined),
@@ -551,14 +551,13 @@ function upsertLiveForm(
   const blockId = next.block_id;
   let index = forms.findIndex((form) => blockId && form.block_id === blockId);
   // Fallback: a completed form supersedes the still-running placeholder for the
-  // same tool when block_id didn't line up (gateway replay / a started event
-  // that shipped no block_id). Without this the 'X Running…' placeholder and the
-  // finished card both render — the same op shown twice.
+  // same scope when block_id didn't line up (gateway replay / a started event
+  // that shipped no block_id). Without this the 'Running…' placeholder and the
+  // finished card both render — the same block shown twice.
   if (index < 0 && formHasOutcome(next)) {
     index = forms.findIndex(
       (form) =>
         formIsRunningPlaceholder(form) &&
-        (form.tool_name ?? "") === (next.tool_name ?? "") &&
         (form.scope ?? "") === (next.scope ?? ""),
     );
   }
@@ -683,9 +682,9 @@ function reduceLiveEvent(
     return {
       ...next,
       activity: {
-        kind: form.tool_name ? "tool" : "code",
+        kind: "code",
         iteration: position,
-        operation: form.tool_name || form.scope,
+        operation: form.scope,
       },
     };
   }

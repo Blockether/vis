@@ -539,18 +539,18 @@
           (expect (= :reasoning (:phase chunk)))
           (expect (= 2 (:iteration chunk)))
           (expect (= "pondering" (:thinking chunk)))))
-    (it "block.preview remains a native preview rather than reasoning/content"
+    (it "block.preview remains a block preview rather than reasoning/content"
         (let
           [chunk (g->c {"type" "block.preview"
                         "iteration" 1
                         "block_id" 0
                         "code" "print(4"
-                        "tool_name" "native_call"
-                        "result_summary" "run_python"
+                        "op" "grep"
+                        "result_summary" "12 results"
                         "tool_call_id" "call_1"})]
           (expect (= :tool-preview (:phase chunk)))
           (expect (= "print(4" (:code chunk)))
-          (expect (= "native_call" (:vis/tool-name chunk)))
+          (expect (= "grep" (:op chunk)))
           (expect (= "call_1" (:svar/tool-call-id chunk)))))))
 
 (defdescribe
@@ -616,7 +616,7 @@
              ;; The restore chain — persisted envelope → `envelope->block` → `block->form-record`
              ;; — used to be TWO hand-listed projections, so a display field either forgot
              ;; silently vanished on RESUME while the live stream kept it (exactly how
-             ;; print-many `:cards` AND the native-tool card identity were dropped). Both
+             ;; print-many `:cards` AND the card's own `:op` identity were dropped). Both
              ;; builders now project through `vis/form->display` (the ONE display-key
              ;; projection). This guard drives a PERSISTED-SHAPED envelope through the REAL
              ;; restore entry (`it->iteration-entry`) so a drop anywhere in the chain fails.
@@ -634,33 +634,32 @@
                (it "a restored print-many envelope keeps its per-result cards"
                    (let
                      [cards
-                      [{:vis/tool-name "cat" :result-summary "read 3 lines" :result-render "x"}
-                       {:vis/tool-name "rg" :result-summary "5 hits" :result-render "y"}]
+                      [{:op "cat" :result-summary "read 3 lines" :result-render "x"}
+                       {:op "grep" :result-summary "5 hits" :result-render "y"}]
 
                       rec
                       (restore {:scope "t1/i2"
                                 :tag :host
                                 :src "print(await cat('x'))"
-                                :vis/tool-name "python_execution"
                                 :result-summary "2 printed results"
                                 :cards cards})]
 
                      (expect (= cards (:cards rec)))
                      (expect (= 2 (count (vis/result-cards rec))))))
-               (it "a restored single native-tool envelope keeps its op-card identity"
+               (it "a restored single-result envelope keeps its card identity"
                    (let
                      [rec
                       (restore {:scope "t1/i1"
                                 :tag :host
-                                :src "rg('defn','src')"
-                                :vis/tool-name "rg"
+                                :src "print(await grep(query='defn', paths=['src']))"
+                                :op "grep"
                                 :result-render "a.clj:1: x"
                                 :result-summary "8 hits in 1 file"})
 
                       card
                       (vis/result-card rec)]
 
-                     (expect (= "RG" (:label card)))
+                     (expect (= "GREP" (:label card)))
                      (expect (= "8 hits in 1 file" (:summary card)))))))
 
 ;; Regression: a FAILED provider turn's styled card must survive the

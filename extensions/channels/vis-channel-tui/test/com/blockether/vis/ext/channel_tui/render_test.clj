@@ -27,8 +27,6 @@
 
 (def ^:private truncate-with-suffix @#'render/truncate-with-suffix)
 
-(def ^:private coalesce-forms vis/coalesce-forms)
-
 (def ^:private format-iteration-entry-entries @#'render/format-iteration-entry-entries)
 
 (def ^:private coalesce-bubble-blanks @#'render/coalesce-bubble-blanks)
@@ -72,7 +70,7 @@
                      :sgr (set (.getModifiers c0))}]))))))
 
 (defdescribe result-summary-color-test
-             (it "keeps native-tool headlines flush on the quiet result band"
+             (it "keeps result headlines flush on the quiet result band"
                  (expect (= t/result-bg (result-row-bg {:kind :result-headline} false)))
                  (expect (= t/result-bg (result-row-bg {:kind :toggle-details} false))))
              (it "keeps body rows quiet and gives hover the strongest affordance"
@@ -88,19 +86,19 @@
                  (expect (= t/link-chrome-hover-bg
                             (code-row-bg {:kind :toggle-details} true t/code-ok-bg)))))
 
-(defn- native-form
-  [tool summary render]
-  (cond-> {:vis/tool-name tool :success? true :code "" :result-summary summary :result {}}
-    render
-    (assoc :result-render render)))
+(defn- result-form
+  "One executed form whose card is titled by the printed value's own `:op` — the
+   shape every op-card in a python block wears. Blank `:code`: the card, not the
+   program, is what these tests measure."
+  [op summary]
+  {:op op :success? true :code "" :result-summary summary :result {}})
 
 (defn- render-forms
   [forms]
   ;; Mirror the REAL bubble-assembly seam: `format-iteration-entry-entries` then the
   ;; `coalesce-bubble-blanks` pass every live/restored path runs (see `trace-render-entries`).
-  ;; That pass folds the seam between two adjacent native cards — the earlier card's trailing
-  ;; pad + the next card's leading breathe — into ONE shared band row. Asserting on the raw
-  ;; pre-coalesce lines would over-count the gap by one, so run the seam here too.
+  ;; Asserting on the raw pre-coalesce lines would over-count blank rows, so run the
+  ;; seam here too.
   (->> (apply format-iteration-entry-entries
          (iteration/canonicalize {:position 0 :thinking nil :forms forms})
          80
@@ -109,80 +107,53 @@
        coalesce-bubble-blanks
        (mapv :line)))
 
-(defdescribe native-card-flush-spacing-test
-             ;; Two adjacent code-less native op-cards (cat/rg/ls/…) must stack FLUSH — no
-             ;; blank row between their headlines. The flush logic (render/…block-code-body)
-             ;; drops the trailing pad of the earlier card and the leading breathe of the
-             ;; next when both are chrome-hidden natives. Guards the "two native calls
-             ;; shouldn't have a blank line between them" contract.
-             (it "two summary-only native cards render their headlines on ADJACENT lines"
-                 (let
-                   [lines
-                    (render-forms [(native-form "rg" "`x` · 0 hits in 0 files" nil)
-                                   (native-form "rg" "`y` · 0 hits in 0 files" nil)])
-
-                    head-idxs
-                    (keep-indexed (fn [i l]
-                                    (when (str/includes? (str l) "hits in") i))
-                                  lines)]
-
-                   (expect (= 2 (count head-idxs)))
-                   ;; delta 2 == exactly ONE band row between the two headlines (the shared
-                   ;; result-bg breathe), i.e. flush — NOT the pre-coalesce two blanks.
-                   (expect (= 2 (- (second head-idxs) (first head-idxs))))))
-             (it "a summary-only native card followed by one WITH a body still stacks flush"
-                 (let
-                   [lines
-                    (render-forms [(native-form "rg" "`x` · 0 hits in 0 files" nil)
-                                   (native-form "cat" "`a.clj` · L1-10" "line one\nline two")])
-
-                    head-idxs
-                    (keep-indexed (fn [i l]
-                                    (when (or (str/includes? (str l) "hits in")
-                                              (str/includes? (str l) "L1-10"))
-                                      i))
-                                  lines)]
-
-                   (expect (= 2 (count head-idxs)))
-                   (expect (= 2 (- (second head-idxs) (first head-idxs)))))))
-
 (defdescribe
-  native-tool-error-compact-test
-  ;; A FAILED native tool (cat/rg/patch/…) must NOT dump its synthesized
-  ;; `name({…args…})` invocation source into the client — that wall of the very
-  ;; args that failed is redundant chrome. Python is the exception: the complete
-  ;; submitted program is evidence and must remain visible above its concise error.
-  (it "drops the args-source wall for a failed native tool, keeps the message"
+  card-titles-itself-from-its-op-test
+  ;; A card's identity is DATA the printed value carried out of the sandbox, never
+  ;; a symbol looked up in a registry: an op with no extension registered still
+  ;; paints its own badge, and the block's own output reads `RESULT`.
+  (it "titles a printed result's card with its own op"
+      (let [txt (str/join "\n" (map strip-ansi (render-forms [(result-form "grep" "12 results")])))]
+        (expect (str/includes? txt "GREP"))
+        (expect (str/includes? txt "12 results"))))
+  (it "titles a card for an op no extension registered"
       (let
         [txt (str/join "\n"
-                       (render-forms
-                         [{:vis/tool-name "patch"
-                           :success? false
-                           :code "patch([{\"replace\": \"ARGWALLMARKER huge\nmulti\nline\"}])"
-                           :error {:message
-                                   "No changes: patch is atomic. edit 1: stale from_anchor."}
-                           :result nil}]))]
-        (expect (not (str/includes? txt "ARGWALLMARKER")))
-        (expect (str/includes? txt "stale from_anchor"))))
+                       (map strip-ansi
+                            (render-forms [(result-form "totally_unknown_op" "1 row")])))]
+        (expect (str/includes? txt "TOTALLY_UNKNOWN_OP"))))
+  (it "reads RESULT for the block's own output"
+      (let
+        [txt (str/join
+               "\n"
+               (map strip-ansi
+                    (render-forms
+                      [{:success? true :code "print(1)" :result-summary "1" :result "1"}])))]
+        (expect (str/includes? txt "RESULT")))))
+
+(defdescribe
+  python-failure-compact-test
+  ;; The complete submitted program is EVIDENCE and stays visible above its
+  ;; concise error; what must never reach the client is the raw exception
+  ;; plumbing — nested Java frames, the `ExceptionInfo` prefix and the ex-data
+  ;; map — when one actionable message already says what went wrong.
   (it
-    "keeps JSON-restored native errors compact"
+    "keeps a JSON-restored host error compact"
     (let
       [msg
        "clojure.lang.ExceptionInfo: clj_test found no *_test.clj namespaces under [\"test/com/blockether/vis/internal/gateway\"] {:type :clj/bad-args, :got {\"language\" \"clojure\"}}"
 
        txt
-       (str/join
-         "\n"
-         (render-forms
-           [{:vis/tool-name "run_tests"
-             :success? false
-             :code
-             "run_tests({\"language\": \"clojure\", \"paths\": [\"test/com/blockether/vis/internal/gateway\"]})"
-             :error {"message" msg
-                     "cause_data" {"type" "clj/bad-args"}
-                     "trace" (str "java.util.concurrent.ExecutionException: " msg)
-                     "block" {"source" "run_tests" "phase" "preflight"}}
-             :result nil}]))]
+       (str/join "\n"
+                 (render-forms
+                   [{:success? false
+                     :code
+                     "run_tests(\"clojure\", paths=[\"test/com/blockether/vis/internal/gateway\"])"
+                     :error {"message" msg
+                             "cause_data" {"type" "clj/bad-args"}
+                             "trace" (str "java.util.concurrent.ExecutionException: " msg)
+                             "block" {"source" "run_tests" "phase" "preflight"}}
+                     :result nil}]))]
 
       (expect (str/includes? txt "clj_test found no *_test.clj namespaces"))
       (expect (not (str/includes? txt "error: {\"message\"")))
@@ -203,8 +174,7 @@
          (iteration/canonicalize
            {:position 0
             :thinking nil
-            :forms [{:vis/tool-name "python_execution"
-                     :success? false
+            :forms [{:success? false
                      :code code
                      :error {:message
                              (str "ZeroDivisionError: division by zero\n\n" "7: x = 1/0\n" "   ^")
@@ -238,8 +208,7 @@
                           (iteration/canonicalize
                             {:position 0
                              :thinking nil
-                             :forms [{:vis/tool-name "python_execution"
-                                      :success? false
+                             :forms [{:success? false
                                       :code code
                                       :error {:message "ZeroDivisionError: division by zero"
                                               :block {:row 9 :col 1}}
@@ -257,13 +226,12 @@
 (defdescribe failed-form-error-row-test
              ;; Inside a code band the error row is the ONLY status signal a failed call has:
              ;; the band itself is deliberately status-neutral. Painting that row with the
-             ;; plain code marker made a failed `shell`/`python_execution` read exactly like a
+             ;; plain code marker made a failed python block read exactly like a
              ;; successful one, so the row must carry the ERROR marker (red fg).
-             (it "marks a failed python_execution error row as an error row"
+             (it "marks a failed python block's error row as an error row"
                  (let
                    [lines
-                    (render-forms [{:vis/tool-name "python_execution"
-                                    :success? false
+                    (render-forms [{:success? false
                                     :code "r = await shell({\"op\": \"background\"})"
                                     :error {:message "shell op background needs an ERRMARKER id."}
                                     :result nil}])
@@ -273,131 +241,7 @@
 
                    (expect (seq err-lines))
                    (expect (every? #(str/starts-with? (str %) p/MARKER_ERR_RESULT) err-lines))
-                   (expect (not-any? #(str/starts-with? (str %) p/MARKER_CODE) err-lines))))
-             (it "marks a failed native tool error row as an error row"
-                 (let
-                   [lines
-                    (render-forms [{:vis/tool-name "patch"
-                                    :success? false
-                                    :code "patch([{\"path\": \"a.clj\"}])"
-                                    :error {:message "No changes: ERRMARKER stale from_anchor."}
-                                    :result nil}])
-
-                    err-lines
-                    (filter #(str/includes? (str %) "ERRMARKER") lines)]
-
-                   (expect (seq err-lines))
-                   (expect (every? #(str/starts-with? (str %) p/MARKER_ERR_RESULT) err-lines)))))
-
-(defdescribe
-  coalesce-forms-test
-  ;; `cat`/`patch`/`grep` batch every path of one call into ONE card, so two
-  ;; adjacent cards are two genuinely distinct calls and are never folded: only
-  ;; `format_code`, which the workflow still runs once per file, rolls up.
-  (it "leaves adjacent same-path cat forms alone (each card is its own call)"
-      (let
-        [forms
-         [{:vis/tool-name "cat"
-           :result-summary "`a.clj` · L1-10"
-           :result-render "line one\nline two"
-           :result "line one\nline two"}
-          {:vis/tool-name "cat"
-           :result-summary "`a.clj` · L40-50"
-           :result-render "line forty"
-           :result "line forty"}]
-
-         out
-         (coalesce-forms forms)]
-
-        (expect (= 2 (count out)))
-        (expect (= forms out))))
-  (it "leaves adjacent same-file patch forms alone"
-      (let
-        [forms
-         [{:vis/tool-name "patch"
-           :success? true
-           :result-summary "`a.clj`"
-           :result-render "```diff\n+ one\n```"
-           :result {:path "a.clj"}}
-          {:vis/tool-name "patch"
-           :success? true
-           :result-summary "`a.clj`"
-           :result-render "```diff\n+ two\n```"
-           :result {:path "a.clj"}}]
-
-         out
-         (coalesce-forms forms)]
-
-        (expect (= 2 (count out)))))
-  (it "leaves a solo cat form and non-cat forms untouched"
-      (let
-        [forms
-         [{:vis/tool-name "cat" :result-summary "`a.clj` · L1-10" :result "solo"}
-          {:vis/tool-name "rg" :result-summary "5 hits" :result "hits"}]
-
-         out
-         (coalesce-forms forms)]
-
-        (expect (= 2 (count out)))))
-  (it "folds adjacent format_code path acks into one roll-up card"
-      (let
-        [forms
-         [{:vis/tool-name "format_code"
-           :success? true
-           :result-summary "`src/a.clj` (no change)"
-           :result {"path" "src/a.clj" "changed" false}}
-          {:vis/tool-name "format_code"
-           :success? true
-           :result-summary "`test/a_test.clj` (no change)"
-           :result {"path" "test/a_test.clj" "changed" false}}]
-
-         out
-         (coalesce-forms forms)]
-
-        (expect (= 1 (count out)))
-        (expect (= "2 files — 0 changed" (:result-summary (first out))))
-        (expect (str/includes? (:result-render (first out)) "src/a.clj (no change)"))
-        (expect (str/includes? (:result-render (first out)) "test/a_test.clj (no change)"))))
-  (it "keeps a failed format_code ack separate from an adjacent success"
-      (let
-        [forms
-         [{:vis/tool-name "format_code"
-           :success? false
-           :result-summary "`src/a.clj` failed"
-           :result-render "boom"
-           :result {"path" "src/a.clj"}}
-          {:vis/tool-name "format_code"
-           :success? true
-           :result-summary "`test/a_test.clj` (no change)"
-           :result {"path" "test/a_test.clj" "changed" false}}]
-
-         out
-         (coalesce-forms forms)]
-
-        (expect (= 2 (count out)))))
-  (it "uses structured format_code files instead of repeating aggregate summaries"
-      (let
-        [forms
-         [{:vis/tool-name "format_code"
-           :success? true
-           :result-summary "1 file — 1 changed"
-           :result {:op "format_code" :files [{:path "src/a.clj" :changed true}]}}
-          {:vis/tool-name "format_code"
-           :success? true
-           :result-summary "1 file — 0 changed"
-           :result {"op" "format_code" "files" [{"path" "test/a_test.clj" "changed" false}]}}]
-
-         out
-         (coalesce-forms forms)
-
-         card
-         (first out)]
-
-        (expect (= 1 (count out)))
-        (expect (= "2 files — 1 changed" (:result-summary card)))
-        (expect (str/includes? (:result-render card) "src/a.clj (changed)"))
-        (expect (str/includes? (:result-render card) "test/a_test.clj (no change)"))
-        (expect (not (str/includes? (:result-render card) "1 file —"))))))
+                   (expect (not-any? #(str/starts-with? (str %) p/MARKER_CODE) err-lines)))))
 
 
 (defmacro ^:private with-raw-code-on
@@ -719,10 +563,11 @@
         (expect (not (str/includes? body "RECAP")))
         (expect (str/includes? body "NEXT STEP: wait and retry, or switch provider/model."))
         (expect (not (str/includes? body "PROVIDER_ERROR  HTTP 429")))))
-  (it "hides a running native tool's invocation, but keeps a running python program"
-      ;; A native tool spins behind its badge in every state: the long-running ones
-      ;; author their own pending card body, so nothing has to fall back to raw
-      ;; invocation JSON while the call runs.
+  (it "paints a running form's OWN source, never the invocation that carried it"
+      ;; A `!cmd` bubble authors `:display-code`/`:display-language` — the command
+      ;; the user typed — so the band shows `sleep 30` in bash and never the
+      ;; `await shell({…})` call the engine synthesized around it. A python block
+      ;; has no such stand-in: its source IS what the model wrote.
       (let
         [entry-lines
          (fn [form]
@@ -733,29 +578,27 @@
                                    {:now-ms 2500}))
 
          shell-lines
-         (entry-lines {:vis/tool-name "shell"
-                       :code "shell({\"command\": \"sleep 30\"})"
+         (entry-lines {:op "shell"
+                       :code "await shell({\"command\": \"sleep 30\"})"
                        :display-code "sleep 30"
                        :display-language "bash"})
 
          python-lines
-         (entry-lines {:vis/tool-name "python_execution" :code "print(1)"})]
+         (entry-lines {:code "print(1)"})]
 
-        (expect (nil? (first (filter #(str/includes? (strip-ansi %) "sleep 30") shell-lines))))
+        (expect (some? (first (filter #(str/includes? (strip-ansi %) "sleep 30") shell-lines))))
         (expect (nil? (first (filter #(str/includes? (strip-ansi %) "command\":") shell-lines))))
         (expect (some? (first (filter #(str/includes? (strip-ansi %) "print(1)") python-lines))))))
-  (it "wears its op-card HEADLINE above the tool-authored card body while running"
-      ;; REGRESSION: a running `shell` painted a naked bash band and only grew its
-      ;; badge once the result landed — the same call reading as two different
-      ;; components. The awaiting card is the SAME card, minus the outcome: the
-      ;; tool's own `:pending-render` sections stand in for the result body, and
-      ;; the raw invocation JSON never shows up beside them.
+  (it "wears its op-card HEADLINE above the pending card body while running"
+      ;; REGRESSION, a running `!cmd`: the bubble painted a naked bash band and
+      ;; only grew its badge once the result landed — the same call reading as two
+      ;; different components. The awaiting card is the SAME card, minus the
+      ;; outcome: the `:pending-render` sections stand in for the result body, and
+      ;; the invocation the engine synthesized never shows up beside them.
       (let
         [lines
          (format-iteration-entry {:iteration 0
-                                  :forms [{:vis/tool-name "shell"
-                                           :code "shell({\"command\": \"sleep 30\"})"
-                                           ;; the card `shell`'s own `:render-start-call-fn` authored
+                                  :forms [{:op "shell"
                                            :pending-summary "$ sleep 30 (running)"
                                            :pending-render "**COMMAND**\n```bash\nsleep 30\n```"
                                            :started-at-ms 1000
@@ -1079,12 +922,12 @@
       ;; must never claim a provider call is in flight.
       (let
         [payload
-         (render/progress->lines-data
-           {:iterations []}
-           80
-           {:show-thinking true :show-iterations true}
-           {:now-ms 1780000 :turn-start-ms 0
-            :queue-paused {:reason "turn_failed" :held 1 :gen 1 :at 0}})
+         (render/progress->lines-data {:iterations []}
+                                      80
+                                      {:show-thinking true :show-iterations true}
+                                      {:now-ms 1780000
+                                       :turn-start-ms 0
+                                       :queue-paused {:reason "turn_failed" :held 1 :gen 1 :at 0}})
 
          body
          (strip-ansi (str/join "\n" (:lines payload)))]
@@ -1102,12 +945,12 @@
       ;; iterations is genuinely in flight and must keep its live spinner.
       (let
         [payload
-         (render/progress->lines-data
-           {:iterations [{:iteration 1 :activity :response-parse}]}
-           80
-           {:show-thinking true :show-iterations true}
-           {:now-ms 1000 :turn-start-ms 0
-            :queue-paused {:reason "turn_failed" :held 1 :gen 1 :at 0}})
+         (render/progress->lines-data {:iterations [{:iteration 1 :activity :response-parse}]}
+                                      80
+                                      {:show-thinking true :show-iterations true}
+                                      {:now-ms 1000
+                                       :turn-start-ms 0
+                                       :queue-paused {:reason "turn_failed" :held 1 :gen 1 :at 0}})
 
          body
          (strip-ansi (str/join "\n" (:lines payload)))]
@@ -1278,7 +1121,7 @@
         (expect (str/includes? body "/draft list"))
         (expect (not (str/includes? body "Vis is calling the provider")))))
   (it "labels a nested tool call in the spinner while the block runs"
-      ;; A `shell` run (or any native tool) INSIDE a python_execution block streams
+      ;; A `shell` run INSIDE a python block streams
       ;; a :tool-call activity naming the op, so the bubble reads
       ;; "Vis is running: <op>" instead of freezing for the whole call.
       (let
@@ -3603,7 +3446,7 @@
      #'render/form-fingerprint
 
      base
-     {:code "_shell_logs({\"id\": \"verify\"})" :vis/tool-name "_shell_logs"}]
+     {:code "sh.logs()"}]
 
     (it "display-code busts the fingerprint"
         (expect (not= (fp base) (fp (assoc base :display-code "# shell logs verify"))))
@@ -3959,9 +3802,9 @@
 
 (defdescribe
   iteration-merge-flush-test
-  ;; Consecutive PLAIN tool iterations — ANY tools, mixed — MERGE into ONE
+  ;; Consecutive PLAIN block iterations MERGE into ONE
   ;; synthetic iteration rendered once, so their op-cards flush-stack into a
-  ;; single bubble (uniform compaction: no tool-name whitelist, no summary band).
+  ;; single bubble (uniform compaction: no per-op whitelist, no summary band).
   ;; Prose / thinking is the only separator: a narrated head OPENS a run (its
   ;; narration renders above the merged forms); an INTERIOR narrated call, or an
   ;; iteration-level error, breaks the run.
@@ -3971,11 +3814,11 @@
 
      tool
      (fn [i t s]
-       [i {:forms [(native-form t s nil)]}])
+       [i {:forms [(result-form t s)]}])
 
      narr
      (fn [i t s]
-       [i {:forms [(native-form t s nil)] :thinking "hmm"}])
+       [i {:forms [(result-form t s)] :thinking "hmm"}])
 
      ;; iter-fn stub: one CALL# row per render, tagged with the head idx and
      ;; the merged form count so the run-grouping is directly observable.
@@ -4007,8 +3850,8 @@
         (expect (= ["CALL#0×1" "CALL#1×1" "CALL#2×1"]
                    (calls [(tool 0 "cat" "a")
                            [1
-                            {:forms [(native-form "rg" "x" nil)]
-                             :error {:type :svar.core/http-error}}] (tool 2 "rg" "c")]))))))
+                            {:forms [(result-form "rg" "x")] :error {:type :svar.core/http-error}}]
+                           (tool 2 "rg" "c")]))))))
 
 ;; ---------------------------------------------------------------------------
 ;; wrap-text* — the plain-text wrap path
@@ -4091,8 +3934,7 @@
        (format-iteration-entry-entries
          (iteration/canonicalize {:position 0
                                   :thinking nil
-                                  :forms [{:vis/tool-name "python_execution"
-                                           :success? true
+                                  :forms [{:success? true
                                            :code
                                            "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8"
                                            :result-summary "ok"
@@ -4132,10 +3974,7 @@
          entries
          (format-iteration-entry-entries
            (iteration/canonicalize
-             {:position 0
-              :thinking nil
-              :forms
-              [{:vis/tool-name "python_execution" :success? true :display-code code :result "ok"}]})
+             {:position 0 :thinking nil :forms [{:success? true :display-code code :result "ok"}]})
            40
            1
            {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
@@ -4154,9 +3993,9 @@
            (iteration/canonicalize {:position 0
                                     :thinking nil
                                     :forms
-                                    [{:vis/tool-name "python_execution"
-                                      :success? true
+                                    [{:success? true
                                       :code "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8"
+                                      :result-summary "ok"
                                       :result "ok"}]})
            80
            1
@@ -4188,8 +4027,7 @@
                     (iteration/canonicalize
                       {:position 0
                        :thinking nil
-                       :forms [{:vis/tool-name "python_execution"
-                                :success? true
+                       :forms [{:success? true
                                 :code "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8"
                                 :result "ok"}]})
                     80
@@ -4355,7 +4193,7 @@
          (mapv card-plain
                (format-iteration-entry
                  {:iteration 0
-                  :forms [{:vis/tool-name "shell"
+                  :forms [{:op "shell"
                            :code "shell(\"git commit\")"
                            :pending-summary "commit — feat: thing (running)"
                            :pending-render
@@ -4381,7 +4219,7 @@
          (mapv card-plain
                (format-iteration-entry
                  {:iteration 0
-                  :forms [{:vis/tool-name "shell"
+                  :forms [{:op "shell"
                            :code "shell({\"command\": \"run.sh\"})"
                            :result-summary "$ run.sh"
                            :result-render (str
