@@ -330,6 +330,44 @@
      :error error
      :event event}))
 
+(defn- refusal-fallback-chunk
+  "Live-progress chunk for ONE automatic refusal fallback: the current model's
+   Anthropic safety classifier DECLINED, so svar switched to a fallback model
+   (e.g. Opus 5 → Opus 4.8). Same shape as a transport rewind
+   (`:provider-retry-reset`) so every channel already knows how to draw it and
+   the gateway persists it the instant it happens — the UI shows the switch
+   instead of a silent multi-second gap."
+  [iteration-position {:keys [from-model to-model category explanation attempt]}]
+  (let
+    [event
+     (cond-> {:event/type :llm.routing/provider-retry :reason :refusal-fallback :attempt attempt}
+       from-model
+       (assoc :from-model (str from-model))
+
+       to-model
+       (assoc :to-model (str to-model))
+
+       category
+       (assoc :category (str category)))
+
+     error
+     (cond->
+       {:type :svar.llm/refusal
+        :message (str "Model declined this request"
+                      (when category (str " (" category ")"))
+                      (when to-model (str " — switching to " to-model)))}
+       explanation
+       (assoc :explanation (str explanation))
+
+       attempt
+       (assoc :attempt attempt))]
+
+    {:phase :provider-retry-reset
+     :iteration iteration-position
+     :attempt attempt
+     :error error
+     :event event}))
+
 (defn- prepend-routing-trace
   [result retry-events]
   (if (seq retry-events)
@@ -375,6 +413,24 @@
   [resolved-model]
   (and (copilot-provider? (:provider resolved-model))
        (boolean (re-find #"(?i)claude" (str (:name resolved-model))))))
+
+(def ^:private refusal-fallback-models
+  "Ordered models Vis retries when the CURRENT model's Anthropic safety
+   classifier DECLINES the request (`stop_reason: refusal`). Anthropic
+   recommends serving a refused Fable 5 / Opus 5 request on another Claude
+   model; Opus 4.8 is Vis's standing fallback. Passed to svar as
+   `:refusal-fallbacks`, which owns the actual client-side model switch."
+  ["claude-opus-4-8"])
+
+(defn- refusal-fallbacks-for
+  "The refusal-fallback chain for `resolved-model`, or nil. Only Anthropic's
+   Fable/Opus/Sonnet 5 models emit `stop_reason: refusal`, so this targets those
+   by name and drops the current model — so we never attach a pointless fallback
+   elsewhere, and never retry into the very model that just refused."
+  [resolved-model]
+  (let [nm (str (:name resolved-model))]
+    (when (re-find #"(?i)claude-(opus|fable|sonnet)-5" nm)
+      (not-empty (vec (remove #{nm} refusal-fallback-models))))))
 
 (def ^:private casual-request-pattern
   #"(?iu)^\s*(hi|hey|hello|yo|sup|siema|cześć|czesc|hej|dzień dobry|dzie dobry|thanks|thank you|thx|ok|okay|👍|👋)[\s!.?,]*\s*$")
@@ -5310,6 +5366,12 @@
        ;; a typed routing-trace event so the UI shows what the heal cost
        ;; instead of silence.
        empty-reply-resend-events (atom [])
+       ;; Automatic refusal fallback: when the model's Anthropic safety
+       ;; classifier declines (stop_reason refusal), svar switches to the
+       ;; fallback model (Opus 5 → Opus 4.8). Each switch is collected here and
+       ;; surfaced on the routing trace, same as an empty-reply resend.
+       refusal-fallback-events (atom [])
+       refusal-fallbacks (refusal-fallbacks-for resolved-model)
        provider-tools (native-tools active-extensions (:sandbox-caps environment) environment)
        _ (env/set-advertised-native-tools!
            (:python-context environment)
@@ -5350,6 +5412,18 @@
            session-cache-key
            (assoc :cache-key session-cache-key)
 
+           refusal-fallbacks
+           (assoc :refusal-fallbacks
+             refusal-fallbacks :on-refusal-fallback
+             (fn [ev]
+               ;; LIVE: the instant svar switches models, paint the switch
+               ;; and persist the recap — otherwise the UI shows a silent
+               ;; gap while the fallback model streams its answer.
+               (let [chunk (refusal-fallback-chunk iteration-position ev)]
+                 (swap! refusal-fallback-events conj (:event chunk))
+                 (reset-stream-state!)
+                 (when on-chunk (on-chunk chunk)))))
+
            effective-reasoning
            (assoc :reasoning effective-reasoning)
 
@@ -5383,7 +5457,9 @@
                         ;; Svar is the single owner of provider classification and retries.
                         ;; Once this call returns or throws, Vis must not issue it again.
                         (svar/ask-code! (:router environment) ask-opts))
-       ask-result (prepend-routing-trace ask-result-raw @empty-reply-resend-events)
+       ask-result (prepend-routing-trace ask-result-raw
+                                         (into (vec @empty-reply-resend-events)
+                                               @refusal-fallback-events))
        code-observation (ask-code-block-observation ask-result)
        provider-duration-ms (elapsed-ms provider-start-ns)
        _ (log-stage! :provider-call/stop
@@ -7031,18 +7107,28 @@
    root model so a session with no preference still gets an answer."
   [router provider-id model-name]
   (let
-    [provider-id (some-> provider-id name not-empty keyword)
+    [provider-id
+     (some-> provider-id
+             name
+             not-empty
+             keyword)
 
      hit
-     (first
-       (for [provider (:providers router)
-             :when (or (nil? provider-id) (= provider-id (:id provider)))
-             model (:models provider)
-             :let [model (if (map? model) model {:name (str model)})]
-             :when (or (nil? model-name) (= (str model-name) (str (:name model))))]
-         (cond-> model
-           (:id provider)
-           (assoc :provider (:id provider)))))]
+     (first (for
+              [provider
+               (:providers router)
+
+               :when (or (nil? provider-id) (= provider-id (:id provider)))
+               model
+               (:models provider)
+
+               :let [model
+                     (if (map? model) model {:name (str model)})]
+               :when (or (nil? model-name) (= (str model-name) (str (:name model))))]
+
+              (cond-> model
+                (:id provider)
+                (assoc :provider (:id provider)))))]
 
     (or hit (resolve-effective-model router))))
 
@@ -9305,14 +9391,15 @@
 
      envelope
      (when enabled?
-       (try (let [shell-fn (requiring-resolve
-                             (if (= kind :bg)
-                               'com.blockether.vis.internal.foundation.shell/shell
-                               ;; A `!cmd` bang PRINTS the command's output, so it is the one
-                               ;; caller that genuinely blocks. The tool no longer takes a wait
-                               ;; knob — waiting is a handle method — so the bang path calls the
-                               ;; INTERNAL blocking runner directly instead of a request flag.
-                               'com.blockether.vis.internal.foundation.shell/run-blocking))]
+       (try (let
+              [shell-fn (requiring-resolve
+                          (if (= kind :bg)
+                            'com.blockether.vis.internal.foundation.shell/shell
+                            ;; A `!cmd` bang PRINTS the command's output, so it is the one
+                            ;; caller that genuinely blocks. The tool no longer takes a wait
+                            ;; knob — waiting is a handle method — so the bang path calls the
+                            ;; INTERNAL blocking runner directly instead of a request flag.
+                            'com.blockether.vis.internal.foundation.shell/run-blocking))]
               ;; Calling the shell var directly skips the symbol-call seam, so the
               ;; workspace view stays unbound and `resolve-dir` falls back to the
               ;; PROCESS cwd — a bang inside a draft would then run on trunk.

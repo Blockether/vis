@@ -243,6 +243,40 @@
                                           (perr/provider-error-explanation err)))))))
 
 (defdescribe
+  refusal-kind-test
+  (it "typed :svar.llm/refusal → 'declined' card with category, not an empty-stall"
+      (let
+        [err {:message "The model declined this request."
+              :data {:type :svar.llm/refusal
+                     :stop-details {"type" "refusal"
+                                    "category" "cyber"
+                                    "explanation" "Declined: could enable cyber harm."}}}]
+        (expect (= :refusal (perr/provider-error-kind err)))
+        ;; distinct from empty-content: never presented as a stall
+        (expect (not= :empty-content (perr/provider-error-kind err)))
+        (expect (re-find #"(?i)declined" (perr/provider-error-title err)))
+        (expect (re-find #"cyber" (perr/provider-error-title err)))
+        (expect (re-find #"(?i)declined" (perr/provider-error-explanation err)))
+        ;; the classifier's own explanation is surfaced verbatim
+        (expect (re-find #"could enable cyber harm" (perr/provider-error-explanation err)))
+        ;; the card says outright that this is neither a stall nor a credential problem
+        (expect (re-find #"(?i)not a stall and not a credential problem"
+                         (perr/provider-error-explanation err)))
+        ;; next step points at rephrase / switch model / server-side fallback
+        (expect (re-find #"(?i)switch to a different model" (perr/provider-error-next-step err)))
+        (expect (re-find #"server-side-fallback" (perr/provider-error-next-step err)))
+        ;; deterministic — never advertised as retryable
+        (expect (false? (perr/provider-error-retryable? err)))))
+  (it "an uncategorised refusal (null category) still classifies and reads honestly"
+      (let
+        [err {:message "The model declined this request."
+              :data {:type :svar.llm/refusal
+                     :stop-details {"type" "refusal" "category" nil "explanation" nil}}}]
+        (expect (= :refusal (perr/provider-error-kind err)))
+        (expect (= "Model declined this request" (perr/provider-error-title err)))
+        (expect (re-find #"(?i)declined" (perr/provider-error-explanation err))))))
+
+(defdescribe
   stream-timeout-kind-test
   (it "typed :svar.core/stream-semantic-timeout → honest stall card, never 'Provider unavailable'"
       (let

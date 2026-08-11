@@ -192,6 +192,28 @@
   [err]
   (= :svar.llm/empty-content (or (:type (:data err)) (:type err) (:type (ex-data err)))))
 
+(defn refusal-error?
+  "True when the failure is svar's TYPED `:svar.llm/refusal` — Anthropic's
+   Fable 5 / Opus 5 safety classifier DECLINED the request. It is a documented
+   HTTP-200 outcome (`stop_reason: refusal`), NOT a stall and NOT a rejection of
+   the CREDENTIALS: the model ran and chose not to answer. Dispatches on the
+   typed `ex-data`, never on message text.
+
+   Emphatically distinct from `empty-content-error?`: an empty reply is a stall
+   a same-model re-send can clear; a refusal is deterministic, so svar never
+   re-sends it — a DIFFERENT model (server-side or client-side fallback) is the
+   documented recovery."
+  [err]
+  (= :svar.llm/refusal (or (:type (:data err)) (:type err) (:type (ex-data err)))))
+
+(defn refusal-stop-details
+  "Anthropic `stop_details` map for a refusal — `{\"category\" .. \"explanation\" ..}`
+   (string keys, either value possibly nil), or nil. svar hoists it to the top
+   level of the thrown ex-data."
+  [err]
+  (let [data (or (:data err) (ex-data err) err)]
+    (:stop-details data)))
+
 (defn stream-timeout-error?
   "True when the failure is one of svar's TYPED stream watchdogs firing:
    `:svar.core/stream-semantic-timeout` (transport alive, zero model/progress
@@ -363,6 +385,22 @@
              (when budget-ms (str " for " (long (/ (long budget-ms) 1000)) "s"))
              ". The model was likely still reasoning. Nothing was rejected; your "
              "transcript and tool results are intact."))
+      (refusal-error? err) (let
+                             [details
+                              (refusal-stop-details err)
+
+                              category
+                              (get details "category")
+
+                              explanation
+                              (get details "explanation")]
+
+                             (str
+                               "WHAT HAPPENED: the model's safety classifier DECLINED this request"
+                               (when category (str " (category: " category ")"))
+                               ". This is a documented, deliberate refusal — not a stall and not a "
+                               "credential problem. Your transcript and tool results are intact."
+                               (when explanation (str " Provider explanation: " explanation))))
       (empty-content-error? err)
       (let [resends (long (or (:empty-reply-resends data) 0))]
         (str "WHAT HAPPENED: the model replied with no text and no tool call."
@@ -463,6 +501,11 @@
       :empty-content
       "Model returned an empty response"
 
+      :refusal
+      (if-let [category (get (refusal-stop-details err) "category")]
+        (str "Model declined this request (" category ")")
+        "Model declined this request")
+
       :invalid-thinking-signature
       "Provider rejected the request"
 
@@ -533,6 +576,13 @@
 
       :empty-content
       (str "NEXT STEP: retry explicitly. If it persists, rephrase or trim the last " "message.")
+
+      :refusal
+      (str "NEXT STEP: an identical retry on the same model earns the same refusal. "
+           "Rephrase the request, or switch to a different model. To auto-recover, "
+           "enable Anthropic server-side fallback (`fallbacks: default` + the "
+           "`server-side-fallback-2026-07-01` beta) so a refused Opus 5 / Fable 5 "
+           "request is served by a fallback model in one round trip.")
 
       :invalid-thinking-signature
       "NEXT STEP: retry with plain context. If it persists, don't replay preserved thinking across a provider/model switch."
@@ -645,6 +695,7 @@
 
     (cond (context-overflow-error? err) :context-overflow
           (stream-timeout-error? err) :stream-timeout
+          (refusal-error? err) :refusal
           (empty-content-error? err) :empty-content
           (invalid-thinking-signature-message? provider-message) :invalid-thinking-signature
           (or (tool-schema-rejection-message? (str provider-message "\n" message))
@@ -699,7 +750,10 @@
    This does not drive a retry in Vis. Svar owns and exhausts the retry ladder
    before an error reaches this namespace."
   [err]
-  (boolean (:retryable? (svar-classification err))))
+  ;; A refusal is deterministic on the same model — an identical retry earns the
+  ;; same decline. Never advertise it as retryable, whatever svar's generic
+  ;; classifier defaults to for the typed error.
+  (and (not (refusal-error? err)) (boolean (:retryable? (svar-classification err)))))
 
 (defn provider-failure?
   "True when `err` is a PROVIDER failure — presentable as the styled card
