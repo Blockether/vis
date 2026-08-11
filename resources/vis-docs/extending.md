@@ -805,7 +805,10 @@ per-turn callables (`prompt`, `activation`) fast; tools may take their time.
   `sys.path` sees, and the reload check hashes every `.py` under it. A lazy
   `import helper` inside a tool therefore runs the bytes the load admitted:
   editing a sidecar module after the load changes nothing until `/reload`
-  either. Files an extension writes next to itself land in the frozen copy —
+  either. A symlinked module or package inside the root is followed and frozen
+  with it, so a package you develop elsewhere and link into
+  `~/.vis/extensions` behaves like any other file — including waiting for
+  `/reload`. Files an extension writes next to itself land in the frozen copy —
   durable state belongs in `vis.state`.
 - `vis-agent doctor` lists every loaded file and every load failure with its
   Python error.

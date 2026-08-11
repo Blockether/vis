@@ -1450,21 +1450,51 @@
                  [#{} []])
          second)))
 
-(defn- import-root-files
-  "Every file under an extension's import root, `__pycache__` aside. The root is
-   the directory `load-file!` puts on `sys.path`, so this is the whole body of
-   code a lazy `import` inside a symbol can still reach at CALL time - long after
-   the load."
-  [^File root]
-  (->> (file-seq root)
-       (filter (fn [^File f]
-                 (and (.isFile f) (not (str/includes? (.getPath f) "__pycache__")))))
-       (sort-by (fn [^File f]
-                  (.getCanonicalPath f)))))
+(defn- import-root
+  "The directory an extension file is served from - what `load-file!` freezes and
+   puts on `sys.path`. The loader's fingerprint, the freeze and the heal guard
+   all resolve it HERE, so one file can never be keyed under two roots."
+  ^File [^File f]
+  (.getParentFile (.getCanonicalFile f)))
 
-(defn- rel-path
-  [^File root ^File f]
-  (str (.relativize (.toPath (.getCanonicalFile root)) (.toPath (.getCanonicalFile f)))))
+(defn- import-root-files
+  "Every regular file under an extension's import root as `[rel-path file]`,
+   sorted, `__pycache__` aside. The root is the directory `load-file!` puts on
+   `sys.path`, so this is the whole body of code a lazy `import` inside a symbol
+   can still reach at CALL time - long after the load.
+
+   A symlinked subdirectory or module is FOLLOWED, because linking a package one
+   is working on into `~/.vis/extensions` is how extensions get developed - but
+   its `rel-path` stays lexically under the root. Resolving the file instead
+   produced `../…` entries, which put the frozen copy OUTSIDE the snapshot (and
+   `io/copy` truncates whatever it lands on) while leaving the module missing
+   from the tree the extension actually imports. A directory already walked ends
+   that branch, so a symlink cycle terminates."
+  [^File root]
+  (let [root-path (.toPath (.getAbsoluteFile root))]
+    (loop
+      [[^File dir & more] [root]
+       seen #{}
+       out []]
+
+      (if (nil? dir)
+        (vec (sort-by first out))
+        (let [k (.getCanonicalPath dir)]
+          (if (or (seen k) (= "__pycache__" (.getName dir)))
+            (recur more seen out)
+            (let [children (vec (.listFiles dir))]
+              (recur (into (vec more)
+                           (filter (fn [^File f]
+                                     (.isDirectory f)))
+                           children)
+                     (conj seen k)
+                     (into out
+                           (comp (filter (fn [^File f]
+                                           (.isFile f)))
+                                 (map (fn [^File f]
+                                        [(str (.relativize root-path
+                                                           (.toPath (.getAbsoluteFile f)))) f])))
+                           children)))))))))
 
 (defn- code-sha
   "One digest over every `.py` under the import root. An extension's identity is
@@ -1472,13 +1502,11 @@
    `helper.py` at CALL time, so entry-only identity let a module edited after the
    load execute in the trusted context with no `/reload` behind it."
   [^File root]
-  (extension/sha256-hex (str/join
-                          "\n"
-                          (map (fn [^File f]
-                                 (str (rel-path root f) " " (extension/sha256-hex (slurp f))))
-                               (filter (fn [^File f]
-                                         (str/ends-with? (.getName f) ".py"))
-                                       (import-root-files root))))))
+  (extension/sha256-hex (str/join "\n"
+                                  (keep (fn [[^String rel ^File f]]
+                                          (when (str/ends-with? rel ".py")
+                                            (str rel " " (extension/sha256-hex (slurp f)))))
+                                        (import-root-files root)))))
 
 (defn- delete-tree!
   [^File dir]
@@ -1495,19 +1523,30 @@
                                         (delete-tree! d))))
            d)))
 
-(defn- snapshot-root!
+(defn- freeze-root!
   "FREEZE an import root: copy it into a private temp tree and hand THAT to
    `sys.path`. After this the extension's own imports resolve against the bytes
    this load admitted - a module edited or planted next to it afterwards is
-   invisible until the next `/reload`, which is the whole freshness contract."
-  ^File [^File root]
+   invisible until the next `/reload`, which is the whole freshness contract.
+
+   Returns `{:dir <frozen dir> :code-sha <digest>}`; the digest is taken over the
+   COPY, so an entry's `:code-sha` describes the bytes that actually ran."
+  [^File root]
   (let [dest (io/file @snapshot-home (str (java.util.UUID/randomUUID)))]
     (.mkdirs dest)
-    (doseq [^File f (import-root-files root)]
-      (let [t (io/file dest (rel-path root f))]
+    (doseq [[rel ^File f] (import-root-files root)]
+      (let [t (io/file dest rel)]
         (io/make-parents t)
         (io/copy f t)))
-    dest))
+    {:dir dest :code-sha (code-sha dest)}))
+
+(defn- close-quietly!
+  "Close a GraalPy context, swallowing what it throws. Every close in this
+   namespace tears down a context that is already superseded, dead or being
+   replaced, so a failing close must never take the load - or the failure being
+   reported - down with it."
+  [ctx]
+  (when ctx (try (.close ^Context ctx true) (catch Throwable _ nil))))
 
 (defn- load-file!
   "Evaluate one extension file in a fresh trusted context and register the
@@ -1520,19 +1559,22 @@
    call finally runs - new code in the trusted context with no `/reload` anywhere
    in the chain.
 
-   `snapshot` reuses an already-frozen root: one freeze per root per load pass,
+   `frozen` reuses an already-frozen root: one freeze per root per load pass,
    and the heal path re-runs its entry against the root it was admitted with.
 
    Returns `{:path :sha :code-sha :snapshot :ext-name :context}`; throws (with
    the context closed) on any failure."
   ([^File f] (load-file! f nil))
-  ([^File f ^File snapshot]
+  ([^File f frozen]
    (let
      [path
       (.getCanonicalPath f)
 
+      frozen
+      (or frozen (freeze-root! (import-root f)))
+
       ^File snap
-      (or snapshot (snapshot-root! (.getParentFile (.getCanonicalFile f))))
+      (:dir frozen)
 
       source
       (slurp (io/file snap (.getName f)))
@@ -1582,12 +1624,12 @@
                          :msg (str "Python extension '" (:ext/name spec) "' loaded from " path)})
               {:path path
                :sha sha
-               :code-sha (code-sha snap)
+               :code-sha (:code-sha frozen)
                :snapshot (.getCanonicalPath snap)
                :ext-name (:ext/name spec)
                :ext validated
                :context ctx}))
-          (catch Throwable t (try (.close ctx true) (catch Throwable _)) (throw t))))))
+          (catch Throwable t (close-quietly! ctx) (throw t))))))
 
 (defn- live-symbol-fn
   "The CURRENTLY registered fn for `[ext-name sym]`, after `dead-ctx` was torn
@@ -1624,8 +1666,7 @@
            ;; start or the last `/reload` loaded, so a changed tree heals into
            ;; nothing and the caller reports the original failure until the next
            ;; `/reload`.
-           (if-not (= (:code-sha entry)
-                      (code-sha (.getParentFile (.getCanonicalFile (io/file path)))))
+           (if-not (= (:code-sha entry) (code-sha (import-root (io/file path))))
              (do (tel/log! {:level :warn
                             :id ::heal-refused
                             :data {:extension ext-name :file path}
@@ -1636,9 +1677,10 @@
              (let
                [rebuilt (load-file! (io/file path)
                                     (let [snap (io/file (:snapshot entry))]
-                                      (when (.isDirectory snap) snap)))]
+                                      (when (.isDirectory snap)
+                                        {:dir snap :code-sha (:code-sha entry)})))]
                (swap! loaded assoc path (dissoc rebuilt :path))
-               (try (.close ^Context dead-ctx true) (catch Throwable _))
+               (close-quietly! dead-ctx)
                (tel/log! {:level :info
                           :id ::context-rebuilt
                           :data {:extension ext-name :file path :symbol (str sym)}
@@ -1667,7 +1709,7 @@
 
    Change is measured over each extension's WHOLE import root, never its entry
    file alone — a package module the entry imports is part of the extension —
-   and every root is FROZEN at load (`snapshot-root!`), one freeze per root per
+   and every root is FROZEN at load (`freeze-root!`), one freeze per root per
    pass.
 
    A file that fails to load is recorded in `load-failures` (and surfaced
@@ -1687,10 +1729,6 @@
       roots
       (atom {})
 
-      root-of
-      (fn [^File f]
-        (.getParentFile (.getCanonicalFile f)))
-
       per-root
       (fn [k ^File root f]
         (let [rk (.getCanonicalPath root)]
@@ -1702,7 +1740,7 @@
       fp
       (mapv (fn [^File f]
               [(.getCanonicalPath f) (extension/sha256-hex (slurp f))
-               (per-root :code-sha (root-of f) code-sha)])
+               (per-root :code-sha (import-root f) code-sha)])
             files)]
 
      (if (= fp @last-fingerprint)
@@ -1737,7 +1775,7 @@
 
              (try (let
                     [{:keys [ext-name] :as entry}
-                     (load-file! f (per-root :snapshot (root-of f) snapshot-root!))]
+                     (load-file! f (per-root :frozen (import-root f) freeze-root!))]
                     ;; A later file (project dir) registering the same extension
                     ;; name supersedes an earlier one at a DIFFERENT path — the
                     ;; registry already swapped the registration; close the
@@ -1746,10 +1784,10 @@
                       [[opath {oname :ext-name ^Context octx :context}] @loaded
                        :when (and (= oname ext-name) (not= opath path))]
 
-                      (try (.close octx true) (catch Throwable _))
+                      (close-quietly! octx)
                       (swap! loaded dissoc opath))
                     (swap! loaded assoc path (dissoc entry :path))
-                    (when prev-ctx (try (.close ^Context prev-ctx true) (catch Throwable _))))
+                    (close-quietly! prev-ctx))
                   (catch Throwable t
                     (tel/log! {:level :warn
                                :id ::load-failed
@@ -1766,7 +1804,7 @@
             :when (not (scanned opath))]
 
            (try (extension/deregister-extension! ext-name) (catch Throwable _))
-           (try (.close ^Context (:context e) true) (catch Throwable _))
+           (close-quietly! (:context e))
            (swap! loaded dissoc opath))
          ;; Frozen code this process no longer serves. A retained last-good entry
          ;; (its own reload failed) still points at its snapshot, so only trees
@@ -1778,7 +1816,7 @@
 
              (delete-tree! (io/file s)))
            (doseq
-             [^File s (keep :snapshot (vals @roots))
+             [^File s (keep (comp :dir :frozen) (vals @roots))
               :when (not (live (.getCanonicalPath s)))]
 
              (delete-tree! s)))

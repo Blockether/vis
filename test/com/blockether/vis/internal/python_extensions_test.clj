@@ -2433,3 +2433,41 @@ vis.extension(name='sidecar', description='sidecar', alias='sd',
             (.close dead true)
             (expect (= "v1" (:result (captured))))
             (expect (not (identical? dead (:context (first (vals @@#'pyx/loaded)))))))))))
+
+(defdescribe
+  frozen-import-root-test
+  (it "a symlinked module is frozen with the extension it belongs to"
+      ;; Regression: the frozen copy's destination came from the CANONICAL file,
+      ;; so a symlink pointing out of the import root produced a `../…` relative
+      ;; path — `io/copy` wrote it OUTSIDE the snapshot (truncating whatever it
+      ;; landed on) and the module the extension imports was missing from the
+      ;; tree the load handed to `sys.path`. Linking a package one is working on
+      ;; into `~/.vis/extensions` is ordinary extension development.
+      (let
+        [ext-dir
+         (temp-dir)
+
+         away
+         (temp-dir)
+
+         impl
+         (io/file away "sidecar_impl.py")
+
+         store
+         (ps/db-create-connection! :memory)]
+
+        (write-ext! ext-dir "sidecar/extension.py" sidecar-py)
+        (spit impl sidecar-impl-py)
+        (Files/createSymbolicLink (.toPath (io/file ext-dir "sidecar" "sidecar_impl.py"))
+                                  (.toPath impl)
+                                  (make-array FileAttribute 0))
+        (reset! live-load nil)
+        (binding [extension/*current-environment* {:db-info store}]
+          (try (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
+               (expect (= "v1" (:result ((symbol-fn (registered "sidecar") 'peek)))))
+               (let [snap (io/file (:snapshot (first (vals @@#'pyx/loaded))))]
+                 (expect (.isFile (io/file snap "sidecar_impl.py"))))
+               (expect (= sidecar-impl-py (slurp impl)))
+               (finally (reset! live-load nil)
+                        (pyx/reload-python-extensions! {:dirs []})
+                        (ps/db-dispose-connection! store)))))))
