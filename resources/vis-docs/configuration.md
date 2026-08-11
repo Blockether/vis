@@ -123,8 +123,57 @@ router:
   budget:
     max_cost: 5.0
 environment:
-  ANTHROPIC_API_KEY: "…"
+  ANTHROPIC_API_KEY: {env: ANTHROPIC_API_KEY}
 ```
+
+## Environment
+
+`environment:` declares the variables Vis may resolve and **names the source of
+each one**. It never carries the value itself: a literal is rejected, because
+every read-modify-write into `~/.vis/state.yml` passes the loaded config back
+through the writer, and a secret typed here would land on disk in plaintext.
+
+```yaml
+environment:
+  # 1. another process variable, passed through or renamed
+  ANTHROPIC_API_KEY: {env: ANTHROPIC_API_KEY}
+  OPENAI_API_KEY: {env: WORK_OPENAI_KEY}
+
+  # 2. the working directory's `.env`, then `.env.local`
+  STRIPE_KEY: {dotenv: STRIPE_KEY}
+
+  # 3. the OS credential store (macOS Keychain; `secret-tool` elsewhere)
+  EXA_API_KEY:
+    keychain: vis-exa
+    account: alice          # optional, qualifies the keychain item
+
+  # 4. a helper command; its trimmed stdout IS the value
+  GITHUB_TOKEN:
+    command: [gh, auth, token]
+```
+
+Exactly one source per entry, and **that declaration is the only source for the
+name** — nothing falls through to a place the file never mentioned. A name that
+appears nowhere in the block is answered by the process environment alone, so
+`.env` and `.env.local` are read only for a name declared with `dotenv:`. A blank
+value is no value, whatever produced it: an explicit `FOO=` means "not this one".
+
+Within the dotenv files the usual rules still apply — a later assignment wins,
+`.env` beats `.env.local`, and an explicit blank in `.env` masks `.env.local`.
+
+A declared name resolves the same way everywhere: a Clojure extension, a Python
+extension, the TUI's settings row.
+
+A `command:`/`keychain:` value is fetched by running the argv directly — never
+through a shell — cached briefly and single-flighted, so a keychain prompt or a
+vault helper is not forked once per turn. Its stdout is never logged, never
+persisted and never placed in an error message.
+
+**Declaring is not exposing.** `environment:` answers *where a value comes from*;
+`jail.env` still decides which confined child process ever sees a name (see
+`sandbox.md`), and `LD_*`, `DYLD_*`, `PERL*`, `BASH_ENV` and friends are refused
+unconditionally. Python extensions receive the declared names in `os.environ`
+alongside the names they declare with `vis.extension(env=[...])`.
 
 ## Providers and models
 
@@ -540,7 +589,7 @@ argument on the call still wins.
 
 ## Extension environment
 
-Extensions may declare the environment variables they read so Vis can report whether they are available. Their values never come from `vis.yml` or Vis state. Set them in the environment that starts Vis, or in the working directory's `.env` / `.env.local` files. Precedence is: process environment, then `.env`, then `.env.local`; a blank value from any higher-precedence source intentionally masks a lower value. Dotenv files support `NAME=value` and `export NAME=value`, quoted values, comments, CRLF, and a UTF-8 BOM:
+Extensions may declare the environment variables they read so Vis can report whether they are available. Their values never come from `vis.yml` itself — the file only says where to fetch them. A name declared under [`environment:`](#environment) resolves from the source that declaration names; a name nobody declared is answered by the environment that started Vis. The working directory's `.env` / `.env.local` are read only for a name declared with `dotenv:`; there, `.env` beats `.env.local` and a blank value intentionally masks a lower one. Dotenv files support `NAME=value` and `export NAME=value`, quoted values, comments, CRLF, and a UTF-8 BOM:
 
 ```dotenv
 ANTHROPIC_API_KEY=…

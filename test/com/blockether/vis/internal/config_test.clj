@@ -4,8 +4,10 @@
    the first-run welcome and the provider manager both rely on (a connected
    provider must survive a restart)."
   (:require [clojure.java.io :as io]
+            [clojure.spec.alpha :as s]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.config-spec :as config-spec]
             [com.blockether.vis.internal.registry :as registry]
             [lazytest.core :refer [defdescribe it expect]]
             [taoensso.telemere :as tel]
@@ -697,109 +699,142 @@
       (expect (not (contains? (config/->svar-provider {:id :gw :api-key "k" :models [{:name "m"}]})
                               :stateless-items?)))))
 
+(defn- with-declared-environment
+  "Run `f` with `block` DECLARED as the active config's `environment:` block."
+  [block f]
+  (let [previous @config/active-config]
+    (try (reset! config/active-config {:environment block})
+         (f)
+         (finally (reset! config/active-config previous)))))
+
+(defn- with-dotenv
+  "Write a temporary `.env` (and `.env.local`), bind both paths and call `f`."
+  [env-text local-text f]
+  (let
+    [env-path
+     (str (System/getProperty "java.io.tmpdir") "/vis-extension-env-" (System/nanoTime))
+
+     local-path
+     (str env-path ".local")]
+
+    (try (spit env-path (or env-text ""))
+         (when local-text (spit local-path local-text))
+         (binding
+           [config/*extension-dotenv-path*
+            env-path
+
+            config/*extension-dotenv-local-path*
+            (when local-text local-path)]
+
+           (f))
+         (finally (.delete (io/file env-path)) (.delete (io/file local-path))))))
+
+(defn- dotenv-status
+  "Status for `name` DECLARED as `dotenv:` — the only way `.env` is ever read."
+  [name]
+  (with-declared-environment {name {"dotenv" name}}
+                             (fn []
+                               (config/extension-env-status name))))
+
 (defdescribe
   extension-environment-test
-  (it "uses .env only when the process environment has no value"
-      (let
-        [path (str (System/getProperty "java.io.tmpdir") "/vis-extension-env-" (System/nanoTime))]
-        (try (spit path "# comment\nexport VIS_TEST_EXTENSION_TOKEN = quoted\nVIS_TEST_EMPTY=\n")
-             (binding
-               [config/*extension-dotenv-path* path
-                config/*extension-dotenv-local-path* nil]
-
-               (expect (= {:name "VIS_TEST_EXTENSION_TOKEN" :source :dotenv :value "quoted"}
-                          (config/extension-env-status "VIS_TEST_EXTENSION_TOKEN")))
-               (expect (nil? (config/extension-env-value "VIS_TEST_EMPTY"))))
-             (finally (.delete (io/file path))))))
+  "`.env` is a source a variable has to NAME, never an ambient fallback."
+  (it "reads .env only for a name declared with `dotenv:`"
+      (with-dotenv "# comment\nexport VIS_TEST_EXTENSION_TOKEN = quoted\nVIS_TEST_EMPTY=\n"
+                   nil
+                   (fn []
+                     (expect (= {:name "VIS_TEST_EXTENSION_TOKEN" :source :dotenv :value "quoted"}
+                                (dotenv-status "VIS_TEST_EXTENSION_TOKEN")))
+                     (expect (nil? (:value (dotenv-status "VIS_TEST_EMPTY"))))
+                     ;; Undeclared: the file is right there and is still not consulted.
+                     (expect (= {:name "VIS_TEST_EXTENSION_TOKEN" :source :unset :value nil}
+                                (config/extension-env-status "VIS_TEST_EXTENSION_TOKEN"))))))
   (it "uses the final .env assignment, including an explicit blank override"
-      (let
-        [path (str (System/getProperty "java.io.tmpdir") "/vis-extension-env-" (System/nanoTime))]
-        (try (spit path
-                   (str "VIS_TEST_OVERRIDE=first\nVIS_TEST_OVERRIDE=second\n"
-                        "VIS_TEST_BLANK=first\nVIS_TEST_BLANK=\n"))
-             (binding
-               [config/*extension-dotenv-path* path
-                config/*extension-dotenv-local-path* nil]
-
-               (expect (= {:name "VIS_TEST_OVERRIDE" :source :dotenv :value "second"}
-                          (config/extension-env-status "VIS_TEST_OVERRIDE")))
-               (expect (= {:name "VIS_TEST_BLANK" :source :unset :value nil}
-                          (config/extension-env-status "VIS_TEST_BLANK"))))
-             (finally (.delete (io/file path))))))
+      (with-dotenv (str "VIS_TEST_OVERRIDE=first\nVIS_TEST_OVERRIDE=second\n"
+                        "VIS_TEST_BLANK=first\nVIS_TEST_BLANK=\n")
+                   nil
+                   (fn []
+                     (expect (= {:name "VIS_TEST_OVERRIDE" :source :dotenv :value "second"}
+                                (dotenv-status "VIS_TEST_OVERRIDE")))
+                     (expect (= {:name "VIS_TEST_BLANK" :source :unset :value nil}
+                                (dotenv-status "VIS_TEST_BLANK"))))))
   (it ".env overrides .env.local, including with an explicit blank value"
-      (let
-        [suffix
-         (System/nanoTime)
-
-         env-path
-         (str (System/getProperty "java.io.tmpdir") "/vis-extension-env-" suffix)
-
-         local-path
-         (str env-path ".local")]
-
-        (try (spit env-path (str "VIS_TEST_ENV_PRIORITY=from-env\n" "VIS_TEST_ENV_BLANK=\n"))
-             (spit local-path
+      (with-dotenv (str "VIS_TEST_ENV_PRIORITY=from-env\n" "VIS_TEST_ENV_BLANK=\n")
                    (str "VIS_TEST_ENV_PRIORITY=from-local\n"
                         "VIS_TEST_ENV_BLANK=from-local\n"
-                        "VIS_TEST_LOCAL_ONLY=from-local\n"))
-             (binding
-               [config/*extension-dotenv-path*
-                env-path
-
-                config/*extension-dotenv-local-path*
-                local-path]
-
-               (expect (= {:name "VIS_TEST_ENV_PRIORITY" :source :dotenv :value "from-env"}
-                          (config/extension-env-status "VIS_TEST_ENV_PRIORITY")))
-               (expect (= {:name "VIS_TEST_ENV_BLANK" :source :unset :value nil}
-                          (config/extension-env-status "VIS_TEST_ENV_BLANK")))
-               (expect (= {:name "VIS_TEST_LOCAL_ONLY" :source :dotenv :value "from-local"}
-                          (config/extension-env-status "VIS_TEST_LOCAL_ONLY"))))
-             (finally (.delete (io/file env-path)) (.delete (io/file local-path))))))
-  (it "the process environment overrides both dotenv files"
-      (let
-        [path (str (System/getProperty "java.io.tmpdir") "/vis-extension-env-" (System/nanoTime))]
-        (try (spit path "PATH=from-dotenv\n")
-             (binding
-               [config/*extension-dotenv-path* path
-                config/*extension-dotenv-local-path* nil]
-
-               (expect (= :env (:source (config/extension-env-status "PATH"))))
-               (expect (= (System/getenv "PATH") (config/extension-env-value "PATH"))))
-             (finally (.delete (io/file path))))))
-  (it "handles a blank process value and common dotenv edge cases without falling through"
-      (let
-        [suffix
-         (System/nanoTime)
-
-         env-path
-         (str (System/getProperty "java.io.tmpdir") "/vis-extension-env-" suffix)
-
-         local-path
-         (str env-path ".local")]
-
-        (try (spit env-path
-                   (str "﻿VIS_TEST_BOM=ok\r\n"
+                        "VIS_TEST_LOCAL_ONLY=from-local\n")
+                   (fn []
+                     (expect (= {:name "VIS_TEST_ENV_PRIORITY" :source :dotenv :value "from-env"}
+                                (dotenv-status "VIS_TEST_ENV_PRIORITY")))
+                     (expect (= {:name "VIS_TEST_ENV_BLANK" :source :unset :value nil}
+                                (dotenv-status "VIS_TEST_ENV_BLANK")))
+                     (expect (= {:name "VIS_TEST_LOCAL_ONLY" :source :dotenv :value "from-local"}
+                                (dotenv-status "VIS_TEST_LOCAL_ONLY"))))))
+  (it "answers an undeclared name from the process environment alone"
+      (with-dotenv "PATH=from-dotenv\n"
+                   nil
+                   (fn []
+                     (expect (= :env (:source (config/extension-env-status "PATH"))))
+                     (expect (= (System/getenv "PATH") (config/extension-env-value "PATH")))
+                     ;; A declared source is not a fallback: `dotenv:` BEATS the live value.
+                     (expect (= {:name "PATH" :source :dotenv :value "from-dotenv"}
+                                (dotenv-status "PATH"))))))
+  (it "handles a BOM, an inline comment and a quoted value"
+      (with-dotenv (str "\uFEFFVIS_TEST_BOM=ok\r\n"
                         "VIS_TEST_INLINE=bare # comment\n"
-                        "VIS_TEST_QUOTED=\"quoted # value\" # comment\n"))
-             (spit local-path "VIS_TEST_MASKED=from-local\n")
-             (binding
-               [config/*extension-dotenv-path*
-                env-path
+                        "VIS_TEST_QUOTED=\"quoted # value\" # comment\n")
+                   nil
+                   (fn []
+                     (expect (= "ok" (:value (dotenv-status "VIS_TEST_BOM"))))
+                     (expect (= "bare" (:value (dotenv-status "VIS_TEST_INLINE"))))
+                     (expect (= "quoted # value" (:value (dotenv-status "VIS_TEST_QUOTED"))))))))
 
-                config/*extension-dotenv-local-path*
-                local-path
-
-                config/*extension-getenv*
-                (fn [name]
-                  (when (= name "VIS_TEST_MASKED") ""))]
-
-               (expect (= "ok" (config/extension-env-value "VIS_TEST_BOM")))
-               (expect (= "bare" (config/extension-env-value "VIS_TEST_INLINE")))
-               (expect (= "quoted # value" (config/extension-env-value "VIS_TEST_QUOTED")))
-               (expect (= {:name "VIS_TEST_MASKED" :source :unset :value nil}
-                          (config/extension-env-status "VIS_TEST_MASKED"))))
-             (finally (.delete (io/file env-path)) (.delete (io/file local-path)))))))
+(defdescribe
+  declared-environment-test
+  "`environment:` says WHERE each variable's value comes from, and every surface
+   resolves it through `extension-env-status`. The key used to be spec'd,
+   documented and completely unread; wiring it to a hidden precedence chain would
+   have left the same hole — a file that still does not state a name's source."
+  (it "requires exactly one named source and refuses a literal"
+      (expect (s/valid? ::config-spec/environment {"A" {"env" "B"}}))
+      (expect (s/valid? ::config-spec/environment {"A" {"dotenv" "A"}}))
+      (expect (s/valid? ::config-spec/environment {"A" {"keychain" "vis-exa" "account" "alice"}}))
+      (expect (s/valid? ::config-spec/environment {"A" {"command" ["gh" "auth" "token"]}}))
+      (expect (not (s/valid? ::config-spec/environment {"A" "a-literal-value"})))
+      (expect (not (s/valid? ::config-spec/environment {"A" "${B}"})))
+      (expect (not (s/valid? ::config-spec/environment {"A" {}})))
+      (expect (not (s/valid? ::config-spec/environment {"A" {"env" "B" "dotenv" "B"}})))
+      (expect (not (s/valid? ::config-spec/environment {"A" {"keychain" "k" "command" ["x"]}})))
+      (expect (not (s/valid? ::config-spec/environment {"A" {"command" ["x"] "account" "alice"}})))
+      (expect (not (s/valid? ::config-spec/environment {"9BAD" {"env" "B"}}))))
+  (it "`env:` passes an outer variable through under a new name"
+      (binding [config/*extension-getenv* {"WORK_OPENAI_KEY" "outer" "VIS_TEST_BLANK_OUTER" ""}]
+        (with-declared-environment {"OPENAI_API_KEY" {"env" "WORK_OPENAI_KEY"}
+                                    "VIS_TEST_BLANK" {"env" "VIS_TEST_BLANK_OUTER"}}
+                                   (fn []
+                                     (expect (= {:name "OPENAI_API_KEY" :source :env :value "outer"}
+                                                (config/extension-env-status "OPENAI_API_KEY")))
+                                     (expect (= {:name "VIS_TEST_BLANK" :source :unset :value nil}
+                                                (config/extension-env-status "VIS_TEST_BLANK")))))))
+  (it "resolves a helper command's stdout and names the source"
+      (binding [config/*extension-getenv* (constantly nil)]
+        (with-declared-environment
+          {"VIS_TEST_DECLARED_CMD" {"command" ["/bin/echo" "token-from-helper"]}}
+          (fn []
+            (expect (= {:name "VIS_TEST_DECLARED_CMD" :source :command :value "token-from-helper"}
+                       (config/extension-env-status "VIS_TEST_DECLARED_CMD")))
+            (expect (= ["VIS_TEST_DECLARED_CMD"] (config/declared-environment-names)))))))
+  (it "a declared source that produces nothing leaves the name unset"
+      (binding [config/*extension-getenv* (constantly nil)]
+        (with-declared-environment
+          {"VIS_TEST_DECLARED_MISSING" {"env" "VIS_TEST_NEVER_SET_42"}}
+          (fn []
+            (expect (= {:name "VIS_TEST_DECLARED_MISSING" :source :unset :value nil}
+                       (config/extension-env-status "VIS_TEST_DECLARED_MISSING")))))))
+  (it "never persists a value: the block survives the write round trip unchanged"
+      (let [block {"environment" {"P" {"env" "PATH"} "Q" {"keychain" "vis-exa"}}}]
+        (expect (= block (config/interpolate-env block)))
+        (expect (= block (config/restore-env-refs (config/interpolate-env block)))))))
 
 (defdescribe
   route-svar-logs-test

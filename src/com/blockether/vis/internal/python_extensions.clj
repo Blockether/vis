@@ -214,9 +214,14 @@
 ;; Declared host environment (`vis.extension(env=["NAME", ...])`)
 ;;
 ;; An extension DECLARES the environment variables it needs; the host resolves
-;; them from the process environment (`System/getenv`) and injects ONLY those
-;; into the extension context. There is no blanket passthrough — that would
-;; hand every third-party extension the user's AWS/Gerrit/GitHub credentials.
+;; them through `config/extension-env-status` (the `environment:` declaration for
+;; a declared name, the process environment for one nobody declared) and injects
+;; ONLY those into the extension
+;; context. There is no blanket passthrough of the HOST environment — that would
+;; hand every third-party extension the user's AWS/Gerrit/GitHub credentials. The
+;; user's own config is the exception, and an explicit one: a name written under
+;; `environment:` or `extensions.env-passthrough` was declared by the operator
+;; for exactly this purpose, so it is offered to extensions as well.
 ;; =============================================================================
 
 (defn- config-env-passthrough
@@ -245,17 +250,29 @@
   (into [] (comp (map str) (filter #(re-matches env-name-re %)) (distinct)) (or names [])))
 
 (defn ^:no-doc resolve-declared-env
-  "Values for the env var names an extension DECLARED, resolved from the host
-   process environment (`System/getenv`). Names that are unset are simply
-   absent from the result (never an empty string, so an extension's
-   `os.environ.get(...) or default` still works). Extra names the user allowed
-   in `vis.yml` (`env-passthrough`) are merged in."
+  "Values for the env var names an extension may see, resolved through the ONE
+   funnel every surface uses (`config/extension-env-status`): this config's
+   `environment:` declaration when the name has one — the process environment
+   under another name, `.env`/`.env.local`, a keychain item or a helper command —
+   and otherwise the process environment.
+
+   Three sources of NAMES, unioned: what the extension DECLARED, what the user
+   allowed with `extensions.env-passthrough`, and what the user declared under
+   `environment:`. The last two are the user's own config, so they are an opt-in
+   by construction; a name nobody declared stays unreachable no matter what the
+   extension asks for.
+
+   Names that resolve to nothing are simply absent from the result (never an
+   empty string, so an extension's `os.environ.get(...) or default` still works)."
   [declared]
-  (let [names (normalize-env-names (concat (or declared []) (config-env-passthrough)))]
+  (let
+    [names (normalize-env-names (concat (or declared [])
+                                        (config-env-passthrough)
+                                        (config/declared-environment-names)))]
     (into {}
           (keep (fn [n]
-                  (when-let [v (System/getenv n)]
-                    (when-not (str/blank? v) [n v]))))
+                  (when-let [v (config/extension-env-value n)]
+                    [n v])))
           names)))
 
 (defn ^:no-doc build-context

@@ -1606,26 +1606,6 @@
           :value
           not-empty))
 
-(defn extension-env-status
-  "Return source and value metadata for an extension-declared variable.
-   The process environment wins over the working directory's `.env`, then `.env.local`;
-   Vis config is deliberately never consulted. `:source` is `:env`, `:dotenv`, or `:unset`."
-  [name]
-  (let [name' (str name)]
-    (if-some [from-env (*extension-getenv* name')]
-      (if-let [value (not-empty (str/trim from-env))]
-        {:name name' :source :env :value value}
-        {:name name' :source :unset :value nil})
-      (if-let [from-dotenv (dotenv-value name')]
-        {:name name' :source :dotenv :value from-dotenv}
-        {:name name' :source :unset :value nil}))))
-
-(defn extension-env-value
-  "Resolve an extension-declared variable from the process environment or `.env`.
-   Blank/missing values return nil."
-  [name]
-  (:value (extension-env-status name)))
-
 (defn resolve-db-spec
   "Resolve DB spec: explicit -> JVM property -> environment -> validated YAML -> default."
   ([] (resolve-db-spec nil))
@@ -1664,6 +1644,133 @@
       (let [cfg (load-config)]
         (reset! active-config cfg)
         cfg)))
+
+;; =============================================================================
+;; Declared environment (`environment:`) and variable resolution
+;;
+;; ONE block names every variable Vis may resolve and says WHERE each value
+;; comes from: another process variable (`env:`), the working directory's
+;; `.env`/`.env.local` (`dotenv:`), the OS keychain, or a helper command. The
+;; declaration is the ONLY source for that name — nothing falls through to
+;; something the file never mentioned, and `.env` is read only for a name that
+;; asked for it. It never carries the value: `config-spec/::environment` refuses
+;; a literal, because every read-modify-write into `~/.vis/state.yml` hands the
+;; loaded config back to `save-config!`.
+;;
+;; `extension-env-status` is the ONE funnel — the extension host, the TUI's
+;; env-var settings row and every builtin that reads a key go through it, so a
+;; variable resolves identically in Clojure, in Python and in the dialog that
+;; reports it. Declaring is still not EXPOSING: `jail.env` alone decides which
+;; confined child ever sees a name (`process-jail/jailed-child-env`).
+;; =============================================================================
+
+(def ^:private env-var-name-pattern #"[A-Za-z_][A-Za-z0-9_]*")
+
+(defn- declared-environment
+  "The `environment:` block of the active config, or nil. Never throws: env
+   resolution runs on paint and boot paths that must survive an unreadable
+   config file rather than take the process down with it."
+  []
+  (try (let [block (:environment (current-config))]
+         (when (map? block) block))
+       (catch Throwable _ nil)))
+
+(defn declared-environment-names
+  "Every variable name declared under `environment:`, validated and distinct.
+
+   These are the USER's own declarations in the user's own config, so they are
+   offered to extensions exactly like `extensions.env-passthrough`. An extension
+   still cannot reach a host variable nobody declared."
+  []
+  (into []
+        (comp (map str) (filter #(re-matches env-var-name-pattern %)) (distinct))
+        (keys (declared-environment))))
+
+(defn- keychain-argv
+  "Argv that prints ONE stored secret on stdout, using the platform's own
+   credential store: macOS `security`, otherwise the freedesktop secret service.
+   A vector, never a shell string — `credential-command` execs it verbatim, so a
+   service name with spaces or quotes cannot become command injection."
+  [service account]
+  (if (= "macos" (config-spec/host-os))
+    (into ["security" "find-generic-password" "-w" "-s" service] (when account ["-a" account]))
+    (into ["secret-tool" "lookup" "service" service] (when account ["account" account]))))
+
+(defn- declared-fetcher
+  "`[source argv]` for a map declaration, or nil when it configures no fetcher."
+  [entry]
+  (let
+    [account
+     (get entry "account")
+
+     keychain
+     (get entry "keychain")]
+
+    (cond (string? keychain) [:keychain (keychain-argv keychain account)]
+          (some? (get entry "command")) (when-let [av (cred/argv (get entry "command"))]
+                                          [:command av])
+          :else nil)))
+
+(defn- declared-env-status
+  "Resolve ONE `environment:` declaration for `name`. The declaration NAMES its
+   source, so there is no fallback: a source that produces nothing leaves the
+   variable UNSET rather than quietly trying another one — writing the source
+   down is the entire point of the block."
+  [name entry]
+  (let
+    [entry
+     (when (map? entry) entry)
+
+     source-name
+     (fn [k]
+       (let [v (get entry k)]
+         (when (string? v) (not-empty (str/trim v)))))
+
+     env-name
+     (source-name "env")
+
+     dotenv-name
+     (source-name "dotenv")
+
+     [fetcher argv]
+     (when (and entry (not env-name) (not dotenv-name)) (declared-fetcher entry))
+
+     [source value]
+     (cond env-name [:env (*extension-getenv* env-name)]
+           dotenv-name [:dotenv (dotenv-value dotenv-name)]
+           ;; Cached, single-flight and bounded by `credential-command`, so a keychain
+           ;; prompt or a vault helper cannot be forked once per extension per turn.
+           fetcher [fetcher (:token (cred/resolve! [::environment name] argv))]
+           :else nil)]
+
+    (if-let [value (not-empty (str/trim (str value)))]
+      {:name name :source source :value value}
+      {:name name :source :unset :value nil})))
+
+(defn extension-env-status
+  "Source and value metadata for variable `name`, for EVERY surface that resolves
+   one: the Python extension host, a Clojure extension, the TUI settings row.
+
+   `environment:` DECIDES. A declared name resolves from the source its own
+   declaration names and from nowhere else; a name nobody declared is answered by
+   the process environment alone, and `.env`/`.env.local` are read only for a
+   name declared with `dotenv:`. A blank value is no value, whatever produced it
+   — an operator's explicit `FOO=` means \"not this one\".
+
+   `:source` is `:env`, `:dotenv`, `:keychain`, `:command` or `:unset`; `:value`
+   is nil unless that source produced a non-blank string."
+  [name]
+  (let [name' (str name)]
+    (if-let [entry (get (declared-environment) name')]
+      (declared-env-status name' entry)
+      (if-let [value (not-empty (str/trim (str (*extension-getenv* name'))))]
+        {:name name' :source :env :value value}
+        {:name name' :source :unset :value nil}))))
+
+(defn extension-env-value
+  "Resolved value for `name`, or nil when no source produced a non-blank one."
+  [name]
+  (:value (extension-env-status name)))
 
 (defn active-provider
   "Return the first (primary) provider from config, or nil."

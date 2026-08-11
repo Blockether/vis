@@ -4076,6 +4076,12 @@
     :env
     "set in environment"
 
+    :keychain
+    "read from keychain"
+
+    :command
+    "read from command"
+
     :dotenv
     "set in .env"
 
@@ -6494,6 +6500,7 @@
    knows as an abort, so one mouse MOVE used to close the band mid-chord."
   ^KeyStroke [^TerminalScreen screen]
   (loop []
+
     (let [key (read-modal-key! screen)]
       (if (pointer-drift? key) (recur) key))))
 

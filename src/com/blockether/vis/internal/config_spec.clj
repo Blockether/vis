@@ -428,6 +428,54 @@
 (def titling-schema {"mode" titling-modes "provider" non-blank-string? "model" non-blank-string?})
 (s/def ::titling #(closed-map? titling-schema %))
 
+;; ── `environment:` — where each variable's value COMES FROM ───────────────────
+;;
+;; Every entry NAMES ITS SOURCE, and names exactly one: `env:` (the process
+;; environment, optionally under a different name), `dotenv:` (the working
+;; directory's `.env`/`.env.local`), `keychain:` (the OS credential store) or
+;; `command:` (a helper's stdout). There is no precedence chain and no ambient
+;; fallback to remember — a config that does not SAY where a value comes from is
+;; exactly what this block exists to abolish.
+;;
+;; The value itself is never carried here. A literal is refused on purpose: every
+;; read-modify-write into `~/.vis/state.yml` passes the loaded config back
+;; through `save-config!`, so a secret typed here would be persisted in plaintext
+;; — which is what `${NAME}` and `api_key_command` exist to prevent. A keychain
+;; item and a helper command never hold a value in the file at all.
+;;
+;; Declaring is not exposing: this key answers "where does it come from", while
+;; `jail.env` still decides which CONFINED child ever sees a name.
+
+(def environment-source-schema
+  {;; The process environment, read under this name — also the rename knob.
+   "env" env-var-name?
+   ;; The working directory's `.env`, then `.env.local`, read under this name.
+   "dotenv" env-var-name?
+   ;; macOS Keychain / freedesktop secret service item name.
+   "keychain" non-blank-string?
+   ;; Optional account qualifying the keychain item; meaningless without one.
+   "account" non-blank-string?
+   ;; Structured argv whose trimmed stdout IS the value, same shape and same
+   ;; no-shell contract as `api_key_command`.
+   "command" (spec-pred ::api-key-command)})
+
+(def ^:private environment-sources
+  "The four spellings of WHERE; exactly one of them makes an entry."
+  #{"env" "dotenv" "keychain" "command"})
+
+(s/def ::environment-source
+  #(and (closed-map? environment-source-schema %)
+        ;; Exactly ONE source — a second one would make the source invisible again.
+        (= 1 (count (filter environment-sources (keys %))))
+        (or (contains? % "keychain") (not (contains? % "account")))))
+
+(s/def ::environment
+  #(and (map? %)
+        (every? env-var-name? (keys %))
+        (every? (fn [v]
+                  (s/valid? ::environment-source v))
+                (vals %))))
+
 (def config-schema
   {"providers" (spec-pred ::providers)
    "default_provider" non-blank-string?
@@ -438,7 +486,7 @@
    "system_prompt" (spec-pred ::system-prompt)
    "workspace" (spec-pred ::workspace)
    "jail" (spec-pred ::jail)
-   "environment" string-map?
+   "environment" (spec-pred ::environment)
    "db_spec" (spec-pred ::db-spec)
    "grep" (spec-pred ::grep)
    "toggles" named-scalar-map?

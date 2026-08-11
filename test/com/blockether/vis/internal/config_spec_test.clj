@@ -86,7 +86,9 @@
                                 "methods" ["POST"]
                                 "ports" [443]
                                 "allow" [{"method" "POST" "path" "/v1/**"}]}]}}
-   "environment" {"ANTHROPIC_API_KEY" "secret"}
+   "environment" {"ANTHROPIC_API_KEY" {"env" "ANTHROPIC_API_KEY"}
+                  "EXA_API_KEY" {"keychain" "vis-exa" "account" "alice"}
+                  "GITHUB_TOKEN" {"command" ["gh" "auth" "token"]}}
    "db_spec" {"backend" "sqlite" "path" "/tmp/vis.db"}
    "grep" {"include_gitignored_paths" ["repositories/"] "always_exclude" ["target/"]}
    "toggles" {"reasoning_level" "deep"}

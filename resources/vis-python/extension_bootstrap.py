@@ -19,11 +19,14 @@ def extension(name=None, description=None, version=None, kind=None, alias=None,
         raise ValueError('vis.extension(...) requires alias=<string> when symbols= is declared')
     if ctx is not None and not callable(ctx):
         raise ValueError('vis.extension(...) ctx= must be a callable (env) -> dict of session contributions')
-    # DECLARED HOST ENV ALLOWLIST. The extension names the environment
-    # variables it needs; the host resolves them from its own process
-    # environment and injects ONLY those into this context's os.environ. No
-    # blanket passthrough: an undeclared variable stays invisible to
-    # extension code.
+    # DECLARED HOST ENV. The extension names the environment variables it
+    # needs; the host resolves each one (process env -> the `environment:`
+    # block of the config -> .env -> .env.local) and injects ONLY the resolved
+    # values into this context's os.environ. No blanket passthrough of the host
+    # environment: an undeclared variable stays invisible to extension code.
+    # Names the USER declared in their own config are the deliberate exception
+    # and always arrive, so `environment:` is written once and read from Python
+    # without every extension repeating the list.
     if env is not None:
         if isinstance(env, str) or not hasattr(env, '__iter__'):
             raise ValueError('vis.extension(...) env= must be a list of environment variable names')
@@ -32,14 +35,12 @@ def extension(name=None, description=None, version=None, kind=None, alias=None,
             if not n or not all(c.isalnum() or c == '_' for c in n) or n[0].isdigit():
                 raise ValueError(
                     'vis.extension(...) env= entries must be environment variable names, got %r' % (n,))
-        # Resolve NOW, not at registration: the host reads the declared names
-        # out of its own process environment and hands back only those it
-        # found, so `os.environ[...]` works for the rest of this file (module
-        # level included) and for every later detect/status callback.
-        if env:
-            import json as _json, os as _os
-            for _k, _v in (_json.loads(_host['declare_env'](_json.dumps(env))) or {}).items():
-                _os.environ[str(_k)] = str(_v)
+    # Resolve NOW, not at registration: the host hands back only the values it
+    # could resolve, so `os.environ[...]` works for the rest of this file (module
+    # level included) and for every later detect/status callback.
+    import json as _json, os as _os
+    for _k, _v in (_json.loads(_host['declare_env'](_json.dumps(env or []))) or {}).items():
+        _os.environ[str(_k)] = str(_v)
     _registration['spec'] = {
         'name': name, 'description': description, 'version': version,
         'kind': kind, 'alias': alias, 'activation': activation,

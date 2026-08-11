@@ -338,6 +338,12 @@ vis.extension(name=\"env-bad\", description=\"bad env fixture.\", env=\"PATH\")
         (expect (= {"PATH" path} (pyx/resolve-declared-env ["9BAD" "" "BAD-NAME" "PATH"])))
         (expect (= {} (pyx/resolve-declared-env nil)))
         (expect (= {} (pyx/resolve-declared-env [])))))
+  (it "a name declared only under `environment:` reaches an extension unasked"
+      (let [previous @config/active-config]
+        (try (reset! config/active-config {:environment {"VIS_TEST_ENV_BLOCK"
+                                                         {"command" ["/bin/echo" "from-config"]}}})
+             (expect (= "from-config" (get (pyx/resolve-declared-env []) "VIS_TEST_ENV_BLOCK")))
+             (finally (reset! config/active-config previous)))))
   (it "accepts env=, injects declared vars, and registers :ext/env"
       (with-loaded {"env_allowlist.py" env-py}
                    (fn [result _]
@@ -1471,7 +1477,7 @@ vis.extension(
     ;; `{"op": "logs", "id": …}` grammar that the handle object replaced.
     (with-loaded
       {"jail.py"
-       "import vis\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell({'command': 'echo hi', 'id': 'h'})\n    return [sh['id'], sh.status()['stage'], sh.logs(offset=0)['stage'], sh.wait(5)['stage'], sh.type('y')['stage'], sh.stop()['stage']]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
+       "import vis\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell({'command': 'echo hi', 'id': 'h'})\n    return [sh['id'], sh.logs(offset=0)['stage'], sh.wait(5)['stage'], sh.type('y')['stage'], sh.stop()['stage']]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
       (fn [_ _]
         (let
           [run
@@ -1489,7 +1495,7 @@ vis.extension(
             (binding [extension/*current-environment* env]
               ;; Every op reaches the ONE dispatch grammar, and every answer is
               ;; itself a handle.
-              (expect (= ["h" "status" "logs" "wait" "send" "stop"] (:result (run))))))))))
+              (expect (= ["h" "logs" "wait" "send" "stop"] (:result (run))))))))))
   (it
     "raises a failing host tool envelope instead of handing Python the envelope"
     (with-loaded
