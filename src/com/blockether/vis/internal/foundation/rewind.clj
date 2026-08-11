@@ -5,7 +5,7 @@
    Two independent coverage sources, combined:
 
      1. SNAPSHOT POOL — an `:around` op-hook on every mutating tool
-        (`patch`/`struct_patch`/`fs`/`format_code`)
+        (`struct_patch`/`fs`/`format_code`)
         captures each touched path's PRE-mutation state before the op runs.
         Content lands in a content-addressed pool (`objects/aa/<sha256>`), so
         the same bytes are stored once no matter how many turns touch them.

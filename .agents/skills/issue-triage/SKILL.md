@@ -19,7 +19,7 @@ issue's state comes from a tool result you just saw.
    (tool name, namespace, CLI command).
 2. **Locate the code.** `grep` for the symbol/message from the issue body,
    scoped to `src/` or `extensions/`. Then `struct_index` the hit file and
-   `cat` only the responsible body.
+   `struct_nodes` only the responsible body at its `line`.
 3. **REPRODUCE IT LIVE — this step is mandatory.** Order of preference:
    - `repl_eval("clojure", …)` in the managed REPL: call the real fn/tool
      handler with the issue's arguments and show the actual return value.

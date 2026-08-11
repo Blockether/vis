@@ -2,8 +2,8 @@
   "Embedded-GraalPy sandbox machinery — the agent's action substrate. The agent
    writes **Python**; this ns embeds a GraalPy `org.graalvm.polyglot.Context`,
    marshals values across the Clojure↔Python boundary, wires the Clojure tool
-   fns into the Python globals as `ProxyExecutable`s (so `cat(\"x\")` in Python
-   runs the Clojure `cat`), and runs the model's code block as ONE whole-block
+   fns into the Python globals as `ProxyExecutable`s (so `grep(\"x\")` in Python
+   runs the Clojure `grep`), and runs the model's code block as ONE whole-block
    coroutine.
 
    Public surface used by the loop:
@@ -409,11 +409,11 @@
 (def ^:private async-runtime-python
   "ASYNC-BY-DEFAULT runtime (maki-style, on GraalPy — no asyncio/select/socket).
 
-   Tools are DEFERRED: calling `cat('x')` returns a `__vis_Call__` thunk instead
+   Tools are DEFERRED: calling `grep('x')` returns a `__vis_Call__` thunk instead
    of running. You drive them three ways:
-     • `await cat('x')`                         — canonical, anywhere nested
-     • `a, b = await gather(cat(x), cat(y))`    — CONCURRENT on bounded host workers
-     • bare top-level `cat('x')` / `x = cat(y)` — auto-SETTLED in place
+     • `await grep('x')`                          — canonical, anywhere nested
+     • `a, b = await gather(grep(x), grep(y))`    — CONCURRENT on bounded host workers
+     • bare top-level `grep('x')` / `x = grep(y)` — auto-SETTLED in place
    (via inline `__vis_settle__(...)` wrapping of every top-level assign/expr)
 
    `await` works because run-python-block AST-wraps an await-bearing program in
@@ -2071,7 +2071,7 @@
           (.putMember g "__vis_calls_json__" nil)))
       (catch Throwable _ nil))
     ;; ASYNC-BY-DEFAULT runtime: install the trampoline + `gather`, then DEFER
-    ;; every tool binding (so `await cat(x)` / `gather(cat(x), cat(y))` work).
+    ;; every tool binding (so `await grep(x)` / `gather(grep(x), grep(y))` work).
     ;; `__vis_par__` (the bounded host platform pool) is wired as a binding above;
     ;; the compaction verbs (`session_fold`/`session_drop`) stay direct (never deferred).
     ;; Eval'd before the snapshot so all `__vis_*` names land in the baseline.
@@ -3194,7 +3194,7 @@
      {:error  <op-error>}  ; FAILURE — the raised error IS the result
 
    `__vis_run_async__` AST-wraps the block in an `async def`, AUTO-SETTLES every
-   bare top-level tool call (so `cat(x)` without `await` still runs), drives it
+   bare top-level tool call (so `grep(x)` without `await` still runs), drives it
    as a single coroutine, and maps any raised exception against the WHOLE source.
    The program runs exactly as the model wrote it — Python's own
    halt-on-exception decides what ran. Assigning a bound tool name is allowed:
@@ -3217,7 +3217,7 @@
     (if-let [err (empty-block-error ctx code)]
       {:result nil :forms [{:source code :error err}] :error err}
       ;; ONE whole-block path. `__vis_run_async__` AST-wraps the program in an
-      ;; `async def`, AUTO-SETTLES every bare top-level tool call (so `cat(x)`
+      ;; `async def`, AUTO-SETTLES every bare top-level tool call (so `grep(x)`
       ;; without `await` still RUNS), drives it as a single coroutine, and reports
       ;; any error against the WHOLE source. The block runs as the model wrote it,
       ;; so its outcome is the flat `{:stdout}` | `{:result}` | `{:error}` sum.

@@ -5,7 +5,7 @@
    to drop the tools). The OS process jail is the containment layer while active.
 
    ONE model-facing entry point — the `shell` PYTHON verb, bound BARE in the flat
-   sandbox next to `cat` / `grep`, and NO native tool: a process is started from
+   sandbox next to `ls` / `grep`, and NO native tool: a process is started from
    Python and nowhere else, because every verb after the spawn is a method on the
    handle the call returns. EVERY run is a background run: the call spawns
    under a real pty and returns the HANDLE now, so there is no `wait` on the
@@ -2870,7 +2870,7 @@
 
 ;; =============================================================================
 ;; Symbols + prompt + extension. ONE builtin symbol — `shell` — bound bare in the
-;; flat Python sandbox next to `cat` / `grep`.
+;; flat Python sandbox next to `ls` / `grep`.
 ;; =============================================================================
 
 (defn- live-bg-script

@@ -3178,9 +3178,9 @@
   "The op-STRING that resolves a PRINTED tool result's renderer.
 
    A map result carries its origin under `\"op\"` (the engine stamps it). A
-   LIST-shaped result cannot — `patch` / `struct_patch` return one
+   LIST-shaped result cannot — `struct_patch` returns one
    per-file summary row, and the `\"op\"` on a ROW is the per-file edit verb
-   (`\"add\"`/`\"update\"`), never the tool. Both share ONE renderer
+   (`\"add\"`/`\"update\"`), never the tool. That shape has ONE renderer
    (`render-patch-result`), so a list of per-file summaries resolves to
    `\"patch\"` — the card paints the edit rows instead of silently vanishing."
   [pr]
@@ -4012,7 +4012,7 @@
         humans, so they legitimately carry keywords.
      3. TRANSPORT WRECKAGE — the model's tool-call close tag arrives mangled
         and the provider hands the TAG over as an argument value
-        (`apropos(\"</antmlutparameter>\\n\")`, `cat` with `\"\\n</invoke>\\n\"`
+        (`apropos(\"</antmlutparameter>\\n\")`, `grep` with `\"\\n</invoke>\\n\"`
         under an entity-escaped key). Such an entry is DROPPED
         (`tool-protocol-leak?`), which is what the model meant: an optional
         argument disappears and `apropos()` runs, a required one is missing and
@@ -7483,7 +7483,7 @@
                      ;; projects it directly with no per-statement explosion.
                      ;; Tag resolver: lift extension-declared
                      ;; observation/mutation tag into `classify-form-tag`
-                     ;; so extension tools (`patch`, `db_commit`,
+                     ;; so extension tools (`db_commit`,
                      ;; `db_push`, …) classify correctly without the
                      ;; engine hard-coding their head symbol.
                      ;;
@@ -10210,7 +10210,7 @@
 
      ;; The `:fs/access` gate, pushed down into the sandbox filesystem: a path an
      ;; extension's gate hook refuses is refused for `open(..., "w")`,
-     ;; `shutil.move` and `Path.unlink` exactly as it is for `patch` / `struct_patch`.
+     ;; `shutil.move` and `Path.unlink` exactly as it is for `struct_patch`.
      sandbox-gate-fn
      (when sandbox-roots-fn
        (extension/fs-access-gate (fn []

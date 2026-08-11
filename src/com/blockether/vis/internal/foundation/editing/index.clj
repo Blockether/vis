@@ -29,7 +29,7 @@
   "Clojure-family file extensions the pack's grammar table does NOT map, but that
    the `clojure` grammar parses cleanly — EDN is a subset of the Clojure reader,
    so `deps.edn` / `vis.edn` / config data get real structural editing (struct_nodes,
-   node replace) instead of a refused-`patch` fallback. Consulted ONLY when the
+   node replace) instead of a refused-`struct_patch` fallback. Consulted ONLY when the
    pack's own `detectLanguageFromPath` returns nil, so it never overrides the
    pack. Drop an entry here once the pack ships it on the `clojure` grammar."
   {"edn" "clojure"})

@@ -1705,7 +1705,7 @@
 
 (defn- ensure-tool-result-op
   "Observed extension tools must carry canonical op metadata. The wrapper
-   derives it deterministically from active alias + symbol (`cat`,
+   derives it deterministically from active alias + symbol (`grep`,
    `db/fetch!`, ...). The tag comes from the symbol entry's inline
    `:ext.symbol/tag` (source of truth); a derived op->tag index covers
    call-sites without a sym-entry handle. Missing tag in BOTH places throws
@@ -1743,7 +1743,7 @@
 
 (defn- op-kw->str
   "The STRING a tool op-keyword takes on the Python boundary: namespace folded
-   with `_`, kebab→snake, trailing `?`/`!` stripped (`cat`→\"cat\",
+   with `_`, kebab→snake, trailing `?`/`!` stripped (`grep`→\"grep\",
    `exists?`→\"exists\", `:shell/run!`→\"shell_run\"). The boundary is
    strings-only, so this is applied AT THE STAMP — no keyword ever rides a
    result map."
@@ -1903,7 +1903,7 @@
    `:fs/access` is asked for EVERY path the Python sandbox's filesystem touches
    (`internal/sandbox-fs`) and for every path the model-driven editors touch
    (`foundation/editing/core`), with `{:operation :path}` — so ONE rule covers
-   `open(p, \"w\")`, `shutil.move`, `Path.unlink` and `patch`/`struct_patch`
+   `open(p, \"w\")`, `shutil.move`, `Path.unlink` and `struct_patch`
    alike, and \"protected\" can never mean \"protected from Python only\"."
   {:fs/access "fs_access"})
 
@@ -1919,7 +1919,7 @@
 ;; ── Cross-cutting operation hooks ────────────────────────────────────────────
 ;; A generic, op-keyword-keyed hook registry so ANY extension can decorate an
 ;; operation it does NOT own — e.g. the Clojure pack repairs `.clj` files after
-;; the foundation's `struct_patch`/`patch`. Distinct from a symbol's own
+;; the foundation's `struct_patch`. Distinct from a symbol's own
 ;; `:before-fn`/`:after-fn` (which only its DEFINER can set): these compose ON TOP
 ;; at the single `invoke-symbol-wrapper` chokepoint, so the hook is wired ONCE and
 ;; applies wherever that op is called. Before/after hooks are best-effort;
@@ -3286,8 +3286,8 @@
    a built-in — internal is a first-class contributor of Python symbols /
    render-fns / ctx hooks, same path third-party extensions use.
 
-     foundation — the `v/` kernel (cat/ls/rg/patch + workspace/env ctx). It is
-       mandatory (the sandbox bans `slurp` in favour of `cat`; the session
+     foundation — the `v/` kernel (ls/grep/struct_* + workspace/env ctx). It is
+       mandatory (it owns the sandbox filesystem gate; the session
        workspace block waits for its `:ext/ctx-fn`), so it lives in core, not as a
        droppable extension.
 

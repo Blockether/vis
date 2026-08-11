@@ -9,7 +9,7 @@
    appended to `~/.vis/logs/shell/<session>/<id>.log`, and a read names the byte
    it starts at.
 
-   A chunk is the `cat` contract for a growing file, key for key: give an
+   A chunk is the paging contract for a growing file, key for key: give an
    `offset`, get the bytes and the `next-offset` to continue from. Feeding
    `next-offset` back in a loop yields the WHOLE stream with no overlap and no
    gap, which is why there is no `dropped` count anywhere in this namespace —
