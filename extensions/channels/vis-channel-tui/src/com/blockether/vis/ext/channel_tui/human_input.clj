@@ -1307,9 +1307,11 @@
           inner-w (long inner-w)
           ;; The rails own the two edge columns, and the body takes the hydra's
           ;; own pane lead inside them — the ring gutter is the last of those
-          ;; columns, so nothing the form paints ever touches a rail.
+          ;; columns, so nothing the form paints ever touches a rail. The same
+          ;; one clear column answers on the right, so the box breathes equally
+          ;; on both sides and the scrollbar's rail keeps its air.
           body-left (+ left (long tr/pane-lead))
-          body-w (- inner-w (long tr/pane-lead) 1)
+          body-w (- inner-w (long tr/pane-lead))
           baz (hint form)
           actions (action-bar form)
           ;; The pinned bar costs its own row plus the blank one above it.

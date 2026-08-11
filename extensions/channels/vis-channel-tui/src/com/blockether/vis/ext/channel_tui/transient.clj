@@ -579,11 +579,14 @@
    `prompt-h` rows tall.
 
    The session frame is SIDELESS — the prompt is two horizontal rules with no
-   `│` rails — so a band that takes it over borrows exactly that: rules inset
-   [[band-pad]] columns, text one column further in, and `:is-sideless true`
-   so the chrome paints rules instead of `├───┤` junctions and wipes the FULL
-   terminal width (a band sits on the live transcript, not on a modal's own
-   paper).
+   `│` rails — so a band that takes it over lands on exactly those rules:
+   `:left` is the column of the band's own LEFT RAIL and it is [[band-pad]], the
+   very column `render/draw-input-box!` starts the prompt's rules on, with
+   `:inner-w` the interior between the rails. The box therefore spans the same
+   columns as the rule under it instead of hanging one column outside it into
+   the terminal's own margin. `:is-sideless true` so the chrome paints rules
+   instead of `├───┤` junctions and wipes the FULL terminal width (a band sits
+   on the live transcript, not on a modal's own paper).
 
    The band sits ABOVE THE PROMPT, never over it. `:hint-row` is the echo-area
    row directly above the input box (`rows - prompt-h - 3`, mirroring `screen`'s
@@ -600,10 +603,12 @@
       min-row
       (max 0 content-top)
 
+      ;; The two rails live INSIDE the prompt's rule span, so the interior is
+      ;; that span less the two columns the rails themselves take.
       inner-w
-      (max 4 (- cols (* 2 pad)))]
+      (max 4 (- cols (* 2 pad) 2))]
 
-     {:left (dec pad)
+     {:left pad
       :inner-w inner-w
       :text-w (max 1 (- inner-w 2))
       :hint-row (max (+ min-row 3) (- rows prompt-h 3))

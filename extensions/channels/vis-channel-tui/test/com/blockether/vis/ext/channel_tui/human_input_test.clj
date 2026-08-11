@@ -9,6 +9,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.dialogs :as dialogs]
             [com.blockether.vis.ext.channel-tui.human-input :as hi]
+            [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.screen :as screen]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.theme :as t]
@@ -911,13 +912,51 @@
       ;; The caps stand off the body on a row of the band's own paper.
       (expect (str/blank? (inner (dec caps-y))))
       (expect (not (str/blank? (inner caps-y))))))
+  ;; Regression: the band's box hung one column OUTSIDE the prompt's rules on
+  ;; each side — the rails sat in the terminal's own margin, so the form read as
+  ;; nailed to the screen edge instead of standing on the prompt under it.
+  (it
+    "stands its rails on the very columns the prompt's rule ends on"
+    (let
+      [{:keys [screen g]}
+       (virtual-screen)
+
+       _
+       (hi/paint! g 80 30 (hi/init-form (request)))
+
+       ;; The prompt the band sits above, painted by the session's own painter.
+       _
+       (render/draw-input-box! g {:lines [""] :crow 0 :ccol 0} 26 1 80 nil)
+
+       {:keys [left inner-w]}
+       (tr/band-region 80 30 1)
+
+       left
+       (long left)
+
+       right
+       (+ left (long inner-w) 1)
+
+       rule-cols
+       (filterv #(= "─" (char-at screen % 26)) (range 80))
+
+       top
+       (long (first (filter #(= "┌" (char-at screen left %)) (range 30))))]
+
+      (expect (= left (long (first rule-cols))))
+      (expect (= right (long (last rule-cols))))
+      ;; ...and the box really is drawn there, with terminal margin outside it.
+      (expect (= "┐" (char-at screen right top)))
+      (expect (every? #(= " " (char-at screen % top)) (range 0 left)))
+      (expect (every? #(= " " (char-at screen % top)) (range (inc right) 80)))))
   (it "anchors the band on the prompt's closing rule at any height"
       ;; PURE: the band sits ABOVE the prompt, so its hint row is
       ;; `rows - prompt-h - 3` — never on top of the input box.
       (expect (= 24 (:hint-row (tr/band-region 80 30 1))))
       (expect (= 34 (:hint-row (tr/band-region 80 40 1))))
+      ;; The left rail IS the prompt rule's own first column.
+      (expect (= 2 (:left (tr/band-region 80 30 1))))
       ;; ...unless the transcript's top would be crossed, which wins.
-      (expect (= 1 (:left (tr/band-region 80 30 1))))
       (expect (= 12 (:min-row (tr/band-region 80 30 12))))))
 
 (defn- row-index
