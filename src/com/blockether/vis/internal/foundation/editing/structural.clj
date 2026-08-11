@@ -7,7 +7,6 @@
    This namespace only maps vis op keywords onto the Java API."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.foundation.editing.index :as index]
-            [com.blockether.vis.internal.foundation.editing.patch :as patch]
             [com.blockether.vis.internal.foundation.editing.zipper :as zipper]
             ;; Side-effecting require: selects + loads the platform native lib.
             [com.blockether.tree-sitter-language-pack])
@@ -37,9 +36,7 @@
            ;; plain literal swap — the engine only ever emits `Use index(`.
            (str/replace "Use index(" "Use struct_index("))]
     (if (str/includes? m "No definition named")
-      (str m
-           " (Re-check the name/`kind` against struct_index(path); or edit with"
-           " patch(...) or struct_patch(...).)")
+      (str m " (Re-check the name/`kind` against struct_index(path).)")
       m)))
 
 (defn- split-keep-lines
@@ -145,10 +142,9 @@
   [path source {:keys [op target kind code match anchor]}]
   (let
     [language (or (index/detect-language path)
-                  (throw
-                    (ex-info
-                      (str "Unknown language for " path " — use patch(...) instead.")
-                      {:type :ext.foundation.editing/struct-unknown-language :path path})))]
+                  (throw (ex-info
+                           (str "Unknown language for " path " — no structural edit is possible.")
+                           {:type :ext.foundation.editing/struct-unknown-language :path path})))]
     (try
       (case op
         :replace-node
@@ -205,15 +201,14 @@
 (defn- occurrence-entries
   "Enrich the source-ordered `hits` of ONE identifier with `defs` — that same
    identifier's definitions — into the entry list `occurrences` returns."
-  [line-anchor defs hits]
+  [defs hits]
   (let
     [;; claim: def → index of the first still-unclaimed hit inside its span.
-     ;; The span is recovered from the def's anchors (its sole position).
      claimed
      (reduce (fn [acc d]
                (let
-                 [lo (patch/anchor->line (:anchor d))
-                  hi (patch/anchor->line (:end-anchor d))]
+                 [lo (long (:line d))
+                  hi (long (:end-line d))]
 
                  (if-let
                    [i (first
@@ -226,7 +221,7 @@
              {}
              defs)]
     (vec (map-indexed (fn [i ^dev.kreuzberg.treesitterlanguagepack.StructuralApi$ReferenceHit h]
-                        (let [base {:anchor (line-anchor (.line h))}]
+                        (let [base {:line (.line h)}]
                           (if-let [d (get claimed i)]
                             (assoc base
                               :is-definition true
@@ -234,36 +229,24 @@
                               :visibility (:visibility d)
                               :signature (:signature d)
                               :doc (:doc d)
-                              :end-anchor (:end-anchor d))
+                              :end-line (:end-line d))
                             base)))
                       hits))))
 
 (defn- reference-entries
   "Enrich ONE file's raw `{name [ReferenceHit …]}` reference map — from either
    `findReferences` form, single-file or many-file — into `{name [entry …]}`, a
-   name with no hit simply absent. ONE line split and ONE definition walk serve
-   the whole map."
+   name with no hit simply absent. ONE definition walk serves the whole map."
   [^String source ^String language refs]
-  (let
-    [lines
-     (vec (str/split-lines source))
-
-     line-anchor
-     #(patch/line-anchor % (nth lines (dec (long %)) ""))
-
-     defs-by-name
-     (group-by :name (index/definitions source language))]
-
-    (persistent! (reduce (fn [acc e]
-                           (let [hits (vec (val e))]
-                             (if (seq hits)
-                               (assoc!
-                                 acc
-                                 (key e)
-                                 (occurrence-entries line-anchor (get defs-by-name (key e)) hits))
-                               acc)))
-                         (transient {})
-                         refs))))
+  (let [defs-by-name (group-by :name (index/definitions source language))]
+    (persistent!
+      (reduce (fn [acc e]
+                (let [hits (vec (val e))]
+                  (if (seq hits)
+                    (assoc! acc (key e) (occurrence-entries (get defs-by-name (key e)) hits))
+                    acc)))
+              (transient {})
+              refs))))
 
 (defn occurrences-in
   "The BATCH form of `occurrences`: every occurrence of EACH identifier in
@@ -290,19 +273,18 @@
   "Every occurrence of identifier `name` in `path` — the DEFINITION occurrences
    ENRICHED — as ONE list (empty if none / unknown language):
 
-     {:anchor}                                                     ; a plain use
-     {:anchor :is-definition true :kind :visibility :signature     ; a DEFINITION
-      :doc :end-anchor}                                            ;   span = :anchor..:end-anchor
+     {:line}                                                       ; a plain use
+     {:line :is-definition true :kind :visibility :signature       ; a DEFINITION
+      :doc :end-line}                                              ;   span = :line..:end-line
 
-   Every entry's SOLE position is its patch-ready `lineno:hash` `:anchor` (the
-   lineno lives in the anchor — no redundant :line/:column/byte fields). A use is
-   just that anchor; a definition also carries its kind / visibility (public|
-   private) / signature / doc-gist and an `:end-anchor` (`:anchor`..`:end-anchor`
-   is the whole def, patchable in one edit). Syntactic (tree-sitter identifier
+   Every entry's SOLE position is its 1-based `:line` (no redundant :column/byte
+   fields). A use is just that line; a definition also carries its kind /
+   visibility (public|private) / signature / doc-gist and an `:end-line`
+   (`:line`..`:end-line` is the whole def). Syntactic (tree-sitter identifier
    boundaries, no scope resolution — so N same-named definitions are each marked).
 
    Definition detection: the FIRST occurrence inside each definition's
-   `:anchor`..`:end-anchor` line span IS its declaration name (findReferences
+   `:line`..`:end-line` span IS its declaration name (findReferences
    returns hits in source order), so it survives decorators / attributes above it.
 
    Tracing SEVERAL names through the same file? Call `occurrences-in` once

@@ -248,9 +248,9 @@
    `apropos(text)`, which is the whole point of dropping the schemas. A name
    that is not in the corpus is simply skipped, so this vector never has to
    track which extensions are active."
-  ["apropos" "doc" "session_state" "session_fold" "ls" "grep" "cat" "patch" "struct_index"
-   "struct_nodes" "struct_patch" "shell" "run_tests" "repl_eval" "lint_code" "format_code" "skill"
-   "attach" "mcp__call"])
+  ["apropos" "doc" "session_state" "session_fold" "ls" "grep" "struct_index" "struct_nodes"
+   "struct_patch" "shell" "run_tests" "repl_eval" "lint_code" "format_code" "skill" "attach"
+   "mcp__call"])
 
 ;; =============================================================================
 ;; The three things the two verbs PRINT

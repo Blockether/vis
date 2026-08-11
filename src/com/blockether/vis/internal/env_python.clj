@@ -73,11 +73,11 @@
 
 (defn normalize-dict-key
   "Model-input hygiene at the ONE inbound conversion: a dict key spelled
-   `\":from_anchor\"` is still a STRING (the model drifting into colon
+   `\":target\"` is still a STRING (the model drifting into colon
    spelling while reading keyword-heavy source), so strip the single leading
    colon when an identifier char follows and the call just works — no
-   lecture, no failure. Data keys are untouched: anchors (`\"44:f14\"`) start
-   with a digit, paths with a letter or `/`, neither with `:`. Produces
+   lecture, no failure. Data keys are untouched: line numbers start with a
+   digit, paths with a letter or `/`, neither with `:`. Produces
    strings, never keywords."
   ^String [^String s]
   (if (and (> (count s) 1)
@@ -128,7 +128,7 @@
         (string? x) x
         (boolean? x) x
         ;; `java.util.Map` covers BOTH Clojure maps (which implement it) AND a raw
-        ;; ordered `LinkedHashMap` a tool returns (e.g. cat's anchor map). The new
+        ;; ordered `LinkedHashMap` a tool returns (e.g. grep's matches map). The new
         ;; LinkedHashMap preserves the source's ITERATION ORDER — Clojure array-map
         ;; canonical key order, or a LinkedHashMap's insertion order — so the live
         ;; `ctx` dict and the rendered text agree, and ordered tool maps reach
@@ -175,7 +175,7 @@
         ;; Dicts preserve INSERTION ORDER: GraalPy's key iterator is insertion-
         ;; ordered, so accumulate into a flatland ordered-map (NOT a hash-map, whose
         ;; >8-key promotion scrambles order). Without this, a round-tripped ordered
-        ;; tool result (cat's anchors LinkedHashMap) comes back HASH-ordered and
+        ;; tool result (grep's matches LinkedHashMap) comes back HASH-ordered and
         ;; the model reads the file out of line order. ordered-map is still a
         ;; persistent Clojure map (assoc/dissoc/string-lookup all work downstream).
         (.hasHashEntries v) (let [it (.getHashKeysIterator v)]
@@ -2741,15 +2741,16 @@
        (str
          "Sandbox policy denied " sandbox-denial-operation
          ": the resource is outside approved filesystem roots. "
-         "Use cat(path) to read, patch([{\"path\": p, \"from_anchor\": a, \"replace\": s}]) to edit, "
+         "Use grep(query) or struct_index(paths) to read, struct_patch({\"path\": p, \"op\": o, \"target\": t, \"code\": s}) to edit, "
          "repl_eval(language, code) for project code, "
          "or ask the USER to add the path to workspace.filesystem in vis.yml and run /reload. Original error: ")
        sandbox-denied?
-       (str "Your sandbox has NO real filesystem / native / process access — "
-            "importlib + exec_module on a project file, open(), subprocess, and sockets "
-            "CANNOT run here. To READ a project file use cat(path); to RUN project code "
-            "(import its modules, use its deps) use repl_eval(language, code) — that runs "
-            "in the project's interpreter where the file is importable. Original error: "))
+       (str
+         "Your sandbox has NO real filesystem / native / process access — "
+         "importlib + exec_module on a project file, open(), subprocess, and sockets "
+         "CANNOT run here. To READ a project file use grep(query) or struct_index(paths); to RUN project code "
+         "(import its modules, use its deps) use repl_eval(language, code) — that runs "
+         "in the project's interpreter where the file is importable. Original error: "))
 
      ;; FAILING SOURCE POSITION, babashka-style. A runtime error's top-level
      ;; PolyglotException loses its guest frames to the async trampoline, so the

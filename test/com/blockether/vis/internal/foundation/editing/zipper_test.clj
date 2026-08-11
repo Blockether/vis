@@ -118,7 +118,7 @@
                  ;; symbol (:struct_patch), so op-tag threw on every real invocation. Guard it.
                  ;; `create_dirs` / `delete` left the tool surface with the native write verbs —
                  ;; a file is created and removed from Python — so only the structural ops remain.
-                 (doseq [op [:struct_nodes :struct_patch :struct_index :patch]]
+                 (doseq [op [:struct_nodes :struct_patch :struct_index :grep]]
                    (expect (#{:observation :mutation} (ext/op-tag op))))))
 
 (defdescribe

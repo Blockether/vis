@@ -355,8 +355,8 @@
                        (expect (some (fn [r]
                                        (and (= want ((juxt :name :kind) r)) (pos? (:depth r))))
                                      rows)))
-                     ;; every row is anchored and named
-                     (expect (every? #(and (string? (:anchor %)) (seq (:name %))) rows))
+                     ;; every row carries its line and its name
+                     (expect (every? #(and (pos-int? (:line %)) (seq (:name %))) rows))
                      ;; imports are extracted (Svelte/Vue: lifted out of the <script> island)
                      (doseq [want (or imports [])]
                        (expect (some #(= want (:source %)) (:imports idx))))
@@ -523,17 +523,12 @@
    :crlf (str/replace src "\n" "\r\n")})
 
 (defn- torture-rows
-  "Definitions with their 1-based start/end lines lifted out of the anchors."
+  "Definitions with their 1-based start/end lines under the torture-test names."
   [path src]
-  (let
-    [line #(some-> %
-                   (str/split #":")
-                   first
-                   parse-long)]
-    (mapv #(assoc %
-             :start (line (:anchor %))
-             :end (line (:end-anchor %)))
-          (ix/definitions src (ix/detect-language path)))))
+  (mapv #(assoc %
+           :start (:line %)
+           :end (:end-line %))
+        (ix/definitions src (ix/detect-language path))))
 
 (defn- own-text
   "A row's own source, never reaching into the next same-or-shallower row."
@@ -763,8 +758,8 @@
                        :let [lang (ix/detect-language path)
                              lines (vec (str/split src #"\n" -1))]
                        row (remove #(pos? (long (or (:depth %) 0))) (ix/definitions src lang))
-                       :let [s (dec (parse-long (first (str/split (:anchor row) #":"))))
-                             e (dec (parse-long (first (str/split (:end-anchor row) #":"))))
+                       :let [s (dec (long (:line row)))
+                             e (dec (long (:end-line row)))
                              own (str/join "\n" (subvec lines s (inc e)))
                              res
                              (try (st/edit-source path src {:op :replace-node :match own :code own})

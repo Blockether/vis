@@ -333,13 +333,7 @@
           :regex-unescaped-quote
           (and (str/includes? tool-name "patch")
                (str/includes? lower-message "unmatched delimiter"))
-          :patch-invalid-program
-          (and (str/includes? tool-name "patch")
-               (or (str/includes? lower-message "anchor") (str/includes? lower-message "hashline"))
-               (or (str/includes? lower-message "not found")
-                   (str/includes? lower-message "no longer match")
-                   (str/includes? lower-message "stale")))
-          :patch-stale-anchor
+          :struct-patch-invalid-code
           (str/includes? lower-message "unable to resolve symbol") :unresolved-symbol
           :else :code-execution-error)))
 
@@ -355,11 +349,8 @@
     :regex-unescaped-quote
     "The regex string likely contains an unescaped inner quote. Escape it as \\\" or use a regex literal / simpler pattern."
 
-    :patch-invalid-program
-    "The patch payload likely lost the closing quote of its replacement. Re-emit patch([{\"path\": …, \"from_anchor\": …, \"replace\": …}]) and use a Python triple-quoted string for multi-line content."
-
-    :patch-stale-anchor
-    "The anchor no longer matches. Re-read the smallest file slice and retry once with its fresh lineno:hash anchor."
+    :struct-patch-invalid-code
+    "The struct_patch `code` likely lost the closing quote or a delimiter. Re-emit it with a Python triple-quoted string for multi-line content."
 
     :turn-cancelled
     "Not a code defect: the turn was cancelled and the interrupt surfaced on the frame that was running. Re-run the interrupted step if you still need it."
@@ -686,13 +677,9 @@
         (conj
           "Fix the quoted regex string; an inner quote escaped poorly and exposed a bare symbol.")
 
-        (contains? classes :patch-invalid-program)
+        (contains? classes :struct-patch-invalid-code)
         (conj
-          "Re-emit patch as a vector of {:path :from_anchor :replace} maps; use a triple-quoted Python string for multi-line replacement text.")
-
-        (contains? classes :patch-stale-anchor)
-        (conj
-          "Re-read the smallest file slice and retry once with its fresh lineno:hash anchor.")))))
+          "Re-emit struct_patch with balanced `code`; use a triple-quoted Python string for multi-line replacement text.")))))
 
 (defn- foundation-diagnose
   "Compact current-turn diagnosis built from failure data. Returns a

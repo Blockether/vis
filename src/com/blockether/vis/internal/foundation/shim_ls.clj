@@ -22,7 +22,7 @@
    `__vis_pyify__` over the proxies — the string is the CHEAPEST real dict.
 
    `:fs/access` is asked by `list-directories` itself, so an extension that hides
-   a tree hides it from the listing exactly as it hides it from `cat`."
+   a tree hides it from the listing exactly as it hides it from every read."
   (:require [charred.api :as json]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]
@@ -66,14 +66,15 @@
      [{:shim/name "ls"
        :shim/globals ["ls"]
        :shim/description
-       (str "`ls(paths, depth=1, is_hidden=False)` maps a tree without spending a tool call: "
-            "`ls(dir)` returns that directory's entries `{name, path, type, size}` (directories "
-            "first, then alphabetical, nested rows under `children` when `depth` > 1), and "
-            "`ls([dir, ...])` one `{path, entries}` row per directory in request order. Dotfiles "
-            "need `is_hidden=True`; gitignored entries are never listed. A file raises "
-            "`NotADirectoryError` (read it with `cat`), a path that does not exist raises "
-            "`FileNotFoundError` naming the nearest existing directory, and a path an extension "
-            "protects raises `PermissionError`.")
+       (str
+         "`ls(paths, depth=1, is_hidden=False)` maps a tree without spending a tool call: "
+         "`ls(dir)` returns that directory's entries `{name, path, type, size}` (directories "
+         "first, then alphabetical, nested rows under `children` when `depth` > 1), and "
+         "`ls([dir, ...])` one `{path, entries}` row per directory in request order. Dotfiles "
+         "need `is_hidden=True`; gitignored entries are never listed. A file raises "
+         "`NotADirectoryError` (read it in `python_execution`), a path that does not exist raises "
+         "`FileNotFoundError` naming the nearest existing directory, and a path an extension "
+         "protects raises `PermissionError`.")
        :shim/bindings ls-bridge-bindings
        :shim/source "vis-shims/ls.py"}]}))
 

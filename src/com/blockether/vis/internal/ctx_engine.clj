@@ -949,8 +949,8 @@
      (cond (or (nil? v) (zero? depth)) v
            (instance? clojure.lang.IDeref v) (try (realize-value (deref v) depth')
                                                   (catch Throwable _ v))
-           ;; Rebuild into `(empty v)` — the SAME map type — so an ordered map (cat's
-           ;; round-tripped `:anchors`, a flatland ordered-map / array-map) keeps its
+           ;; Rebuild into `(empty v)` — the SAME map type — so an ordered map (grep's
+           ;; per-file `matches`, a flatland ordered-map / array-map) keeps its
            ;; insertion order; `(into {} …)` would demote it to a hash-map and scramble
            ;; the file's line order on the wire.
            (map? v) (reduce-kv (fn [m k val]

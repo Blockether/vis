@@ -1207,7 +1207,7 @@ about `ntr[…]`-carrying metric bullets).
 
 ## State of the plan
 
-**REQUIRES WORK** — phases 1-5 have LANDED; phases 6-7 are written and unstarted.
+**REQUIRES WORK** — phases 1-6 have LANDED; phase 7 is written and unstarted.
 
 **Phase 1 — advertise only `python_execution`: DONE** (commit `118237e6b`).
 `loop.clj/native-tools` takes `caps` alone and returns the one finalized `python_execution` tool;
@@ -1399,6 +1399,21 @@ above: `tool_name` left the gateway PAYLOAD only — `:vis/tool-name` still ride
 covers the label TABLE, not the name. `resources/examples/python-extensions/README.md` lost its
 last `vis_docs` reference.
 
+**Phase 6 — remove `cat` and `patch`: DONE.** The two anchored verbs are gone, and with them the
+`lineno:hash` ANCHOR they existed to consume. Reading is `grep` → `struct_index` → `struct_nodes`, or
+plain `Path.read_text()` in `python_execution`; writing is `struct_patch` or `Path.write_text`.
+`editing/core.clj` lost ~1 265 lines and `editing/patch.clj` was deleted outright — only its escape
+decoder was still reachable from a live path, so it moved verbatim to `editing/escapes.clj`. Every
+structural surface now reports plain 1-based LINE numbers (`line`/`end_line`, the `struct_patch`
+locator key `"line"`, `grep`'s per-file `matches` keyed by line), which is the whole point: a handle
+that goes stale on every write was a tax the model paid on data it can re-read for free. Tests:
+`anchored-verbs-are-gone-test` pins the retired names AND the deleted namespace; `patch_test.clj` and
+`hashline_bench_test.clj` are deleted; `zipper-line-path-test` covers the four refusals. The
+`language-clojure` pack lost `clj-patch-no-fail-around` and its `{:op :patch :phase :around}` hook —
+an op-hook on an unregistered op throws `has no mandatory observation/mutation tag`, so a dead verb
+could not simply be left hooked. Clean JVM `clojure -M:test`: 6 265 cases, only the 6 known
+pre-existing failures.
+
 TODO — one checkable step per line, in order. Each step names the file, the thing it does to it, and
 the test that flips. A step is done when its own tests are green; a PHASE is done when its whole
 block is green, lint and format are clean, and it is committed with its tests.
@@ -1460,10 +1475,14 @@ block is green, lint and format are clean, and it is committed with its tests.
 
 **Phase 6 — remove `cat` and `patch`.**
 
-34. `foundation/editing/core.clj:6272,6341` — delete the `cat` and `patch` registrations, then delete every internal fn no surviving verb calls (anchor hashing, range assembly, atomic multi-edit apply).
-35. `prompt.clj:215-233` — replace the `cat`/`patch` sentences with "read with `grep`/`struct_*` or plain Python; write with `struct_patch` or plain Python".
-36. `AGENTS.md` — update any rule naming `cat`/`patch`, in this same commit.
-37. Tests: delete the `cat`/`patch` describes and `native-tools-flat-spec-guard` in `editing/core_test.clj`; ADD `anchored-verbs-are-gone-test`. Run `…foundation.editing.core-test` and confirm the `struct_patch` suite still carries structural editing. Commit.
+34. DONE — `foundation/editing/core.clj` — the `cat` and `patch` registrations, both tool fns, `read-file`/`read-file-ranges`/`read-file-by-anchor`/`tail-file`, `patch-safe`/`patch-analysis`/`coerce-patch-edits` and the anchor plumbing (`fresh-anchor-max-lines`, `changed-region-anchors`) are gone; the file went 6135 → ~4870 lines.
+35. DONE — `prompt.clj` — the `cat`/`patch` sentences now read "read with `grep`/`struct_*` or plain Python; write with `struct_patch` or plain Python"; `doc_corpus.clj`, `env_python.clj` and `foundation/shim_ls.clj` lost the same names from their prose.
+36. DONE — `AGENTS.md` names neither verb (checked by grep, no rule needed changing).
+37. DONE — `editing/core_test.clj` rewritten: the `cat`/`patch` describes and `native-tools-flat-spec-guard` are gone, `anchored-verbs-are-gone-test` pins that every retired name fails to resolve. `…foundation.editing.core-test` green.
+37a. DONE — **the `lineno:hash` ANCHOR itself is retired**: `struct_index`, `struct_nodes`, `struct_patch` and `grep` now speak plain 1-based LINE numbers. `index.clj` emits `:line`/`:end-line` and prints `@<start>..<end>`; `structural.clj` occurrences carry `line`/`end_line`; `core.clj` wires `"line"`/`"end_line"`, the `use` rows key became `"lines"`, and the `struct_patch` locator key `"anchor"` became `"line"` (`:struct-anchor-error` → `:struct-line-error`). `anchor` survives only as the `move_before`/`move_after` target NAME.
+37b. DONE — `editing/zipper.clj` — `path-at-anchor` → `path-at-line [lang source line]`, refusing with `:unknown-language` / `:invalid-line` / `:parse-failed` / `:line-no-node`.
+37c. DONE — `editing/patch.clj` DELETED. Only its escape decoder was still reachable, so `decode-unicode-escapes` and its four helpers moved verbatim to the new `editing/escapes.clj`; `introspection.clj` lost `:patch-stale-anchor` and renamed `:patch-invalid-program` → `:struct-patch-invalid-code`.
+37d. DONE — tests: `patch_test.clj` and `hashline_bench_test.clj` deleted; `zipper-anchor-path-test` → `zipper-line-path-test`; `structural_test.clj`, `tree_sitter_langs_test.clj`, `introspection_test.clj`, `loop_test.clj` and `env_python_test.clj` re-pinned on line numbers; `anchored-verbs-are-gone-test` also pins that the `…editing.patch` namespace no longer loads. Docs (`token-optimization.md`, `index.md`, `extending.md`, `graalpython.md`) re-written off anchors. Commit.
 
 **Phase 7 — prompt and measurement.**
 

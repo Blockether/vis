@@ -20,7 +20,7 @@ manages that window and *when*.
 
 - **Compaction happens at a safe boundary, not under pressure.** Vis never emits
   a context-pressure nudge and rejects folds aimed at the current or a future
-  turn. Reproduction output, reads, patch anchors, edits, and verification stay
+  turn. Reproduction output, reads, edits, and verification stay
   live until the turn completes.
 
 - **The compression is structural, done by the same agent.** Because the agent
@@ -64,9 +64,9 @@ optimization](token-optimization.md) and [Extending Vis](extending.md#one-tool-a
 ```text
       ONE TOOL PER RESULT                 PYTHON SANDBOX
    ┌───────────────────┐        ┌────────────────────────────┐
-   │ cat(a)  ──► ctx    │        │ rows = [cat(f) for f in fs] │  20 files
-   │ cat(b)  ──► ctx    │        │ hits = grep(rows, "TODO")   │  in vars
-   │ cat(c)  ──► ctx    │        │ print(hits[:3])  ──► ctx    │  3 lines out
+   │ read(a) ──► ctx    │        │ rows = [read(f) for f in fs]│  20 files
+   │ read(b) ──► ctx    │        │ hits = [r for r in rows …]  │  in vars
+   │ read(c) ──► ctx    │        │ print(hits[:3])  ──► ctx    │  3 lines out
    └───────────────────┘        └────────────────────────────┘
      every result lands            the agent chooses what
      in the context window          reaches the context window

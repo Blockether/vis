@@ -3,27 +3,23 @@
    produced via tree-sitter (com.blockether/tree-sitter-language-pack, which
    sources Clojure from our own grammar fork).
 
-   Every item carries FULL anchors — the same `<lineno>:<hash>` anchors `cat`
-   emits and `patch` consumes — for its first and last line, so you can replace
-   a whole definition straight from the index with one
-   `patch([{path P, from_anchor start, to_anchor end, replace …}])`, no intermediate
-   `cat`. Each line is:
+   Every item carries its FIRST and LAST 1-based line, so a definition's whole
+   span is readable straight from the index — no intermediate read. Each line is:
 
-     <kind> <name>  <signature>  @<start-anchor>..<end-anchor>
+     <kind> <name>  <signature>  @<start-line>..<end-line>
 
    e.g.
 
-     class Greeter  @3:a1b..7:c2d
-       function hello  @6:1b2..7:c2d
-     function main  @9:3c4..10:5d6
+     class Greeter  @3..7
+       function hello  @6..7
+     function main  @9..10
 
-   Read it BEFORE `cat`: a cheap map of a file so you jump straight to the right
-   range (and its anchors) instead of reading the whole file.
+   Read it FIRST: a cheap map of a file so you jump straight to the right range
+   instead of reading the whole file.
 
    Requiring this namespace also requires the native resolver, which selects the
    right per-platform FFI library at runtime."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.foundation.editing.patch :as patch]
             ;; Side-effecting require: selects + loads the platform native lib.
             [com.blockether.tree-sitter-language-pack])
   (:import [dev.kreuzberg.treesitterlanguagepack TreeSitterLanguagePack ProcessConfig ProcessResult
@@ -324,11 +320,6 @@
               (= 1 (count named)) nil
               :else raw)))))
 
-(defn- line-text
-  [lines ln]
-  ;; lines is 0-based; ln is 1-based.
-  (nth lines (dec (long ln)) ""))
-
 (def ^:private ^:dynamic *docstrings*
   "Result-level docstrings for the file currently being indexed, bound by the
    entry points so `doc-snippet` can fall back to them. For languages whose
@@ -594,18 +585,11 @@
      (str/trim
        (str kind (when private? " private") (when nm (str " " nm)) (when sig (str "  " sig))))
 
-     from
-     (patch/line-anchor start (line-text lines start))
-
-     to
-     (patch/line-anchor end (line-text lines end))
-
      doc
      (doc-snippet lines it)]
 
-    ;; The anchors already carry the line numbers, so no separate [start-end].
     ;; A doc string, when present, rides on an indented continuation line.
-    (str indent label "  @" from ".." to (when doc (str "\n" indent "    " (pr-str doc))))))
+    (str indent label "  @" start ".." end (when doc (str "\n" indent "    " (pr-str doc))))))
 
 (defn- walk-items
   [lines items ^long depth]
@@ -619,8 +603,8 @@
     [^Span span
      (.span it)
 
-     ;; tree-sitter rows are 0-based; anchors carry 1-based line numbers (like
-     ;; the skeleton + `cat`).
+     ;; tree-sitter rows are 0-based; the rows report 1-based line numbers (like
+     ;; the skeleton).
      start
      (inc (.startLine span))
 
@@ -637,12 +621,10 @@
                         str/trim
                         not-empty)
      :doc (doc-snippet lines it)
-     ;; The def's span as patch-ready `lineno:hash` anchors — the SOLE position
-     ;; (the lineno lives in the anchor, so no redundant start-line/end-line). One
-     ;; hop `outline` DATA → `patch`; same anchors the skeleton (`@from..to`) + `cat`
-     ;; emit; `patch/anchor->line` recovers the number when arithmetic is needed.
-     :anchor (patch/line-anchor start (line-text lines start))
-     :end-anchor (patch/line-anchor end (line-text lines end))
+     ;; The def's span as 1-based inclusive line numbers — the SOLE position, and
+     ;; the same pair the skeleton prints as `@from..to`.
+     :line start
+     :end-line end
      ;; Nesting depth (0 = top-level). The flat list drops parent linkage; depth
      ;; lets a consumer rebuild the tree. `name`-mode rows are flat (no depth);
      ;; every other def field is name-for-name the SAME as a `name`-mode def row.
@@ -682,11 +664,10 @@
 (defn definitions
   "The DATA behind `file-skeleton`: every definition in `source` (parsed as
    `language`), flattened across nesting, as
-   `[{:name :kind :visibility :signature :doc :anchor :end-anchor :depth} …]`
-   where the def's span is patch-ready `lineno:hash` anchors — the SOLE position
-   (no redundant start/end line; `patch/anchor->line` recovers the number). So
-   `struct_index` → `patch` needs no re-cat. With `name`, only the definitions with that
-   exact name (there may be several — same name in different scopes). Empty when
+   `[{:name :kind :visibility :signature :doc :line :end-line :depth} …]`
+   where the def's span is 1-based inclusive line numbers — the SOLE position, so
+   `struct_index` → `struct_nodes` needs no re-read. With `name`, only the
+   definitions with that exact name (there may be several — same name in different scopes). Empty when
    the language is unsupported or nothing structural was found."
   ([source language] (all-definitions source language))
   ([source language name]
@@ -695,7 +676,7 @@
      (filterv #(= name (:name %))))))
 
 (defn file-skeleton
-  "Skeleton string for `path` (items + line ranges + full start..end anchors),
+  "Skeleton string for `path` (items + full start..end line ranges),
    or nil when the language is unsupported or nothing structural was found.
    `source` may be passed to avoid a re-read (e.g. for unsaved buffers)."
   ([path] (file-skeleton path (slurp path)))
@@ -726,11 +707,11 @@
 
 (defn- import->row
   "One `ImportInfo` → a structured import row: `{:source :items :alias :wildcard
-   :anchor}`. `:anchor` is the statement's first-line `lineno:hash` — the same
-   patch-ready handle a def row carries, so an import line is a jump target too.
+   :line}`. `:line` is the statement's first line — the same handle a def row
+   carries, so an import line is a jump target too.
    `:items`/`:alias`/`:wildcard` are the pack's parsed detail when a grammar fills
    them (some only populate `:source` with the raw statement text)."
-  [lines ^ImportInfo imp]
+  [^ImportInfo imp]
   (let
     [start
      (inc (.startLine (.span imp)))
@@ -747,7 +728,7 @@
       {:source (some-> (.source imp)
                        str/trim
                        not-empty)
-       :anchor (patch/line-anchor start (line-text lines start))}
+       :line start}
       (seq items)
       (assoc :items items)
 
@@ -758,15 +739,15 @@
       (assoc :wildcard true))))
 
 (defn- import-line
-  "One import row → skeleton line: `<source>[ :as <alias>][ (<items>|*)]  @<anchor>`."
-  [{:keys [source items alias wildcard anchor]}]
+  "One import row → skeleton line: `<source>[ :as <alias>][ (<items>|*)]  @<line>`."
+  [{:keys [source items alias wildcard line]}]
   (str "  "
        source
        (when alias (str " :as " alias))
        (cond wildcard " (*)"
              (seq items) (str " (" (str/join " " items) ")"))
        "  @"
-       anchor))
+       line))
 
 (def ^:private kind->section
   "Section-header label (pluralised) for a definition `kind` — the Maki-style
@@ -803,7 +784,7 @@
   (or (kind->section kind) (str kind "s")))
 
 (defn- item-line
-  "One definition → an anchored skeleton line WITHOUT its kind (the kind lives in
+  "One definition → a line-ranged skeleton line WITHOUT its kind (the kind lives in
    the enclosing section header): `<indent>[private ]<name>[  <sig>]  @from..to`,
    with a `pr-str`'d doc gist on an indented continuation line when present."
   [lines ^StructureItem it ^long depth]
@@ -837,16 +818,10 @@
      label
      (str/trim (str (when private? "private ") nm (when sig (str "  " sig))))
 
-     from
-     (patch/line-anchor start (line-text lines start))
-
-     to
-     (patch/line-anchor end (line-text lines end))
-
      doc
      (doc-snippet lines it)]
 
-    (str indent label "  @" from ".." to (when doc (str "\n" indent "    " (pr-str doc))))))
+    (str indent label "  @" start ".." end (when doc (str "\n" indent "    " (pr-str doc))))))
 
 (defn- count-items
   "Total definitions in the structure tree `items` (children included)."
@@ -858,7 +833,7 @@
 
 (defn- grouped-items
   "Render sibling `items` grouped by kind: a `<section>:` header per kind (in
-   first-appearance order), each def under it as an anchored, kind-less
+   first-appearance order), each def under it as a line-ranged, kind-less
    `item-line`; a def's own children recurse one level deeper, themselves
    grouped. Returns a seq of skeleton lines — no kind word repeated per row.
 
@@ -892,10 +867,10 @@
 
 (defn- index-skeleton
   "Maki-style skeleton string: a `<file> · <language> · <N> lines` header, an
-   optional anchored `imports:` section, then the `definitions:` tree GROUPED by
+   optional `imports:` section, then the `definitions:` tree GROUPED by
    kind (one `<section>:` header per kind, so the kind is not repeated on every
-   row) and structure-nested — every line still carrying its `lineno:hash`
-   anchors."
+   row) and structure-nested — every line still carrying its `@from..to` line
+   range."
   [path language line-count lines items import-rows]
   (let
     [header
@@ -956,9 +931,9 @@
   "Maki-style structural INDEX of `path`, produced in a SINGLE tree-sitter pass:
 
      {:language str :line-count int
-      :skeleton str        ; header + imports + nested definitions, all anchored
-      :definitions [row …] ; machine rows (== `definitions`) — anchor/end-anchor
-      :imports [row …]}    ; machine import rows, each anchored
+      :skeleton str        ; header + imports + nested definitions, all line-ranged
+      :definitions [row …] ; machine rows (== `definitions`) — line/end-line
+      :imports [row …]}    ; machine import rows, each with its line
 
    nil when the language is unsupported, or the file has no imports and nothing
    structural. `source` may be passed to avoid a re-read (e.g. unsaved buffers).
@@ -990,7 +965,7 @@
            [*docstrings* (docstring-index (.docstrings res))
             *doc-memo* (java.util.IdentityHashMap.)]
 
-           (let [import-rows (mapv #(import->row lines %) imps)]
+           (let [import-rows (mapv import->row imps)]
              {:language language
               :line-count (count lines)
               :skeleton (index-skeleton path language (count lines) lines items import-rows)

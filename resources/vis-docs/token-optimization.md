@@ -7,7 +7,7 @@ Vis follows one rule: **do not pay tokens for data that can stay addressable.** 
 The live runtime is the source of truth, and it answers exactly two questions. `apropos(text)` **searches** every document the session can reach — each function's whole contract, every Vis documentation page, every skill's whole `SKILL.md`, every MCP tool's description — and `doc(target)` **retrieves** one of them whole:
 
 ```python
-apropos("anchors")       # full text: the word need not be in any name
+apropos("skeleton")      # full text: the word need not be in any name
 apropos("wire contract") # terms are ANDed, hits come back ranked
 doc("struct_patch")      # one function's whole contract
 doc("gateway")           # a Vis documentation page, by slug
@@ -27,19 +27,19 @@ For supported source, `struct_index` returns imports and a tree-sitter definitio
 core.clj · clojure · 524 lines
 
 imports (2):
-  clojure.string :as str  @6:1a2
+  clojure.string :as str  @6
 
 definitions (29):
   constants:
-    code-languages           @68:3de..78:8d3
+    code-languages           @68..78
   fn:
-    private path-extension   [^String path]  @41:81b..52:39c
-    detect-language          [^String path]  @54:a53..66:58d
+    private path-extension   [^String path]  @41..52
+    detect-language          [^String path]  @54..66
 ```
 
-Each row has fresh `<line>:<hash>` start/end anchors. Read one definition with `cat` using that span instead of paging the file. In Python, the structured `definitions` and `imports` values can stay bound while the model prints only the rows it needs.
+Each row carries plain 1-based `line`/`end_line` numbers. Read that one definition with `struct_nodes` at its `line` instead of paging the file. In Python, the structured `definitions` and `imports` values can stay bound while the model prints only the rows it needs.
 
-Use `cat` directly for unsupported text, generated files, or one already-known region. Every write invalidates old anchors.
+For unsupported text, generated files, or one already-known region, read the bytes in `python_execution` (`Path(path).read_text()`) and print only the slice you need.
 
 ## Edit structure, not surrounding text
 
@@ -56,12 +56,12 @@ await struct_patch({
 })
 ```
 
-When a definition is too coarse, enter it with a `struct_index` anchor, navigate with `struct_nodes` — which hands back each node's verbatim `source` PLUS its zipper cursor `at` — then pass that `at` to `struct_patch`. `nodes` is always a list, so many cursors (across many files) ride one call:
+When a definition is too coarse, enter it at a `struct_index` line, navigate with `struct_nodes` — which hands back each node's verbatim `source` PLUS its zipper cursor `at` — then pass that `at` to `struct_patch`. `nodes` is always a list, so many cursors (across many files) ride one call:
 
 ```python
 nodes = await struct_nodes({
     "path": "src/core.clj",
-    "nodes": [{"anchor": "42:abc", "nav": [{"find": "(+ a b)"}]}],
+    "nodes": [{"line": 42, "nav": [{"find": "(+ a b)"}]}],
 })
 node = nodes["results"][0]   # node["source"] is the code, node["at"] the cursor
 await struct_patch({
@@ -74,14 +74,14 @@ await struct_patch({
 
 The same editor supports named-definition moves, docs, nested child insertion, and unique sub-expression replacement. For a project-wide rename, first `grep` the identifier, then pass its candidate file paths to `struct_index({"paths": [...], "include_occurrences": true})` to inspect declarations and occurrence blast radius before calling `struct_patch({"paths": ["."], "op": "rename", "target": "handle_click", "code": "handle_tap"}).
 
-Use anchored `patch` for prose or unsupported code. To create a file or replace one wholesale, write it from `python_execution` (`Path.write_text`) — the same filesystem gate applies.
+For prose, unsupported code, a new file, or a wholesale replacement, write from `python_execution` (`Path.write_text`) — the same filesystem gate applies.
 
 ## Keep intermediate data in Python
 
 Use a native call for one operation. Use `python_execution` for batches, filters, or transforms: raw results stay in Python vars and only explicit `print()` output reaches context. Run independent calls concurrently with `await gather(...)`; keep dependent chains sequential.
 
 ```python
-rows = await gather(*(cat(path) for path in paths))
+rows = await gather(*(struct_index({"path": path}) for path in paths))
 hits = [row for row in rows if "TODO" in json.dumps(row)]
 print(hits[:3])
 ```
@@ -99,9 +99,9 @@ session_fold(
 )
 ```
 
-The only step the runtime refuses to fold is the **live iteration you are emitting right now** (and any future step) — it is not settled yet. Every completed iteration is foldable, including finished iterations of the current turn: trim the current turn up to the last settled iteration with `{"through": "tN/iK"}`. A blocked attempt names only the live scope, so drop it and keep the settled ones. Keep active reproduction output, reads, anchors, edits, failures, and verification live until they settle.
+The only step the runtime refuses to fold is the **live iteration you are emitting right now** (and any future step) — it is not settled yet. Every completed iteration is foldable, including finished iterations of the current turn: trim the current turn up to the last settled iteration with `{"through": "tN/iK"}`. A blocked attempt names only the live scope, so drop it and keep the settled ones. Keep active reproduction output, reads, edits, failures, and verification live until they settle.
 
-A useful gist records the durable finding, rationale or consequence, and a workspace-relative `path:line`, symbol, or test. Omit the gist when the folded steps contain no reusable information. Refresh any preserved hash anchor before editing because writes make anchors stale.
+A useful gist records the durable finding, rationale or consequence, and a workspace-relative `path:line`, symbol, or test. Omit the gist when the folded steps contain no reusable information. Re-read any preserved line number before editing, because a write moves the lines under it.
 
 Targets may be step ids, whole prior turns, or `through` / `from`+`to` / `since` ranges. A broader newer fold supersedes every fully covered narrower breadcrumb; equal scopes keep the newer gist. Partial overlaps remain separate.
 
@@ -128,8 +128,8 @@ The efficient path is:
 
 1. Discover capabilities with `apropos` / `doc` when they are not already advertised.
 2. Locate relevant files and symbols with `grep`.
-3. Map supported code with `struct_index`, then read only the needed body with `cat`.
-4. Edit with `struct_patch`; fall back to anchored `patch` only when structure is unavailable.
+3. Map supported code with `struct_index`, then read only the needed body with `struct_nodes`.
+4. Edit with `struct_patch`; fall back to a `python_execution` write only when structure is unavailable.
 5. Keep batch intermediates in `python_execution`.
 6. Fold completed prior-turn noise while preserving durable evidence.
 

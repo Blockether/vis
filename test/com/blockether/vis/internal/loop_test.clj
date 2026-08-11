@@ -3359,7 +3359,7 @@
 
 (defdescribe
   strip-echo-diffs-test
-  ;; A patch/struct_patch result carries a per-file unified `"diff"`. On a
+  ;; A struct_patch result carries a per-file unified `"diff"`. On a
   ;; successful edit that diff merely re-describes the bytes the model supplied,
   ;; so it is stripped from the MODEL wire. The human card keeps it.
   (let [strip @#'lp/strip-echo-diffs]
@@ -3381,13 +3381,11 @@
         ;; the un-stripped summary DOES carry the diff (human card keeps it)
         (expect (contains? summary "diff"))
         ;; struct_patch wraps it as `[summary]` — the echo diff is stripped on the
-        ;; model wire, but the line COUNTS and the fresh `anchors` survive (the
-        ;; counts are then the only statement of how big the edit was).
+        ;; model wire, but the line COUNTS survive (they are then the only
+        ;; statement of how big the edit was).
         (expect (= [{"path" "a.clj" "op" "update" "changed" true
-                     "lines" {"added" 0 "removed" 0 "modified" 1}
-                     "anchors" (get summary "anchors")}]
-                   (strip [summary])))
-        (expect (= {"1:467" {"text" "(defn foo [a] (* a 2))"}} (into {} (get summary "anchors"))))))
+                     "lines" {"added" 0 "removed" 0 "modified" 1}}]
+                   (strip [summary])))))
     (it "leaves a non-edit result untouched"
         (let [r {"hit_count" 3 "matches" {}}]
           (expect (= r (strip r)))))
@@ -3397,7 +3395,7 @@
 
 (defdescribe printed-result-op-test
              ;; Which renderer a PRINTED tool result resolves to. A map answers with its
-             ;; stamped `"op"`; a patch/struct_patch return is a LIST of per-file rows
+             ;; stamped `"op"`; a struct_patch return is a LIST of per-file rows
              ;; with no top-level op — it must still resolve (they share ONE renderer), or
              ;; a printed edit silently loses its card.
              (let [op @#'lp/printed-result-op]

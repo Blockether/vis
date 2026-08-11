@@ -18,7 +18,6 @@
    only plain Clojure data escapes."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.foundation.editing.index :as index]
-            [com.blockether.vis.internal.foundation.editing.patch :as patch]
             ;; Side-effecting require: selects + loads the platform native lib.
             [com.blockether.tree-sitter-language-pack])
   (:import [dev.kreuzberg.treesitterlanguagepack Parser Tree Node Point]
@@ -131,7 +130,7 @@
 (defn syntax-broken?
   "True when `source` parses to a tree whose root carries an ERROR node (nil when
    the language can't be parsed at all — fail-open, so callers never block on an
-   unparseable input). Public so `patch` can re-parse its result and refuse a
+   unparseable input). Public so a caller can re-parse its result and refuse a
    syntax-breaking edit, the same guard `struct_patch` already runs."
   [^String lang ^String source]
   (when-let [^Tree t (parse-tree lang source)]
@@ -518,7 +517,7 @@
    Opens/closes every native handle; returns `(f …)` data or `{:error …}`."
   [lang source at f]
   (if-not lang
-    {:error {:reason :unknown-language :message "unknown language for this file — use patch(...)"}}
+    {:error {:reason :unknown-language :message "unknown language for this file"}}
     (let
       [src-bytes
        (utf8 source)
@@ -934,18 +933,16 @@
      "index" (when i (long i))
      "siblings" (when pc (long pc))}))
 
-;; ── ANCHOR → PATH — enter the zipper straight from a `lineno:hash` row ──────────
-;; The `lineno:hash` anchor every struct_index / cat row carries IS the
-;; zipper entry handle (vis's `@eXXXX`): validate it against live source (the same
-;; staleness guard `patch` uses — the hash must still agree with the stated line),
-;; then resolve to the NAMED-child index path of the node that begins there. One
+;; ── LINE → PATH — enter the zipper straight from a struct_index row ───────────
+;; The 1-based line every struct_index row carries IS the zipper entry handle:
+;; resolve it to the NAMED-child index path of the node that begins there. One
 ;; hop from a listed row to its structural cursor, no `nav [{find …}]` text-probe.
 
 (defn- named-path-at-line
   "Pre-order DFS for the OUTERMOST named node whose 1-based START line == `line`.
    Returns its named-child index path (a vector), or nil. The file `root` itself
    (empty `path`) is never a match — we want a node WITHIN the file. Outermost:
-   a node is checked BEFORE its children, so an anchor on `(defn foo …` resolves
+   a node is checked BEFORE its children, so a line on `(defn foo …` resolves
    to the whole def form, not an inner symbol that happens to share the line."
   [^Node node ^long line path]
   (if (and (seq path) (= line (inc (long (.row (.startPosition node))))))
@@ -961,40 +958,28 @@
                 (or res (recur (inc i))))
               (recur (inc i)))))))))
 
-(defn path-at-anchor
-  "Resolve a `lineno:hash` `anchor` (a struct_index / cat row's SOLE
-   position) to a named-child index PATH — the zipper entry point for that row.
-   The hash is verified against `source` with the SAME machinery `patch` uses
-   (`patch/resolve-anchor-range`): a stale / misplaced anchor is refused, not
-   silently mis-resolved. On success the OUTERMOST named node beginning on the
-   anchored line is located. Returns `{:ok? true :path [...] :line L}` or
+(defn path-at-line
+  "Resolve a 1-based `line` (a struct_index row's SOLE position) to a named-child
+   index PATH — the zipper entry point for that row. The OUTERMOST named node
+   beginning on that line is located. Returns `{:ok? true :path [...] :line L}` or
    `{:error {:reason KW :message S}}`. Language-neutral (every tree-sitter lang)."
-  [lang source anchor]
-  (if-not lang
-    {:error {:reason :unknown-language :message "unknown language for this file — use patch(...)"}}
-    (let [res (patch/resolve-anchor-range source anchor nil)]
-      (if (:error res)
-        (let [reason (get-in res [:error :reason])]
-          {:error {:reason reason
-                   :message (str "anchor " (pr-str anchor)
-                                 " did not resolve (" (name reason)
-                                 ") — re-read with cat(path) for a " "fresh lineno:hash anchor.")}})
-        (let
-          [line (long (:from-line res))
-           ^Tree tree (parse-tree lang source)]
-
-          (if-not tree
-            {:error {:reason :parse-failed :message (str "could not parse as " lang)}}
-            (try (let [^Node root (.rootNode tree)]
-                   (try (if-let [p (named-path-at-line root line [])]
-                          {:ok? true :path p :line line}
-                          {:error {:reason :anchor-no-node
-                                   :message (str "no structural node begins at line "
-                                                 line
-                                                 " (anchor "
-                                                 (pr-str anchor)
-                                                 ") — the anchor "
-                                                 "points INSIDE a form, not at its start; use "
-                                                 "struct_nodes and nav to the node instead.")}})
-                        (finally (.close root))))
-                 (finally (.close tree)))))))))
+  [lang source line]
+  (let [line (long (or line 0))]
+    (cond (not lang) {:error {:reason :unknown-language :message "unknown language for this file"}}
+          (< line 1) {:error {:reason :invalid-line
+                              :message (str "line " line " is not a 1-based line number")}}
+          :else (let [^Tree tree (parse-tree lang source)]
+                  (if-not tree
+                    {:error {:reason :parse-failed :message (str "could not parse as " lang)}}
+                    (try (let [^Node root (.rootNode tree)]
+                           (try (if-let [p (named-path-at-line root line [])]
+                                  {:ok? true :path p :line line}
+                                  {:error {:reason :line-no-node
+                                           :message
+                                           (str "no structural node begins at line "
+                                                line
+                                                " — the line points INSIDE a form, not at its "
+                                                "start; use struct_nodes and nav to the node "
+                                                "instead.")}})
+                                (finally (.close root))))
+                         (finally (.close tree))))))))

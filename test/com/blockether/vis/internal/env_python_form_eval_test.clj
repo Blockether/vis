@@ -1197,7 +1197,7 @@ await patch({'path': css})" "t1/i1")]
 (defdescribe
   sandbox-denial-hint-test
   "A sandbox capability denial (filesystem / native / process) maps to an
-   ACTIONABLE hint steering to cat / repl_eval — not the opaque PermissionError /
+   ACTIONABLE hint steering to grep / struct_index / repl_eval — not the opaque PermissionError /
    `SecurityException: Operation is not allowed for:` the model kept hitting when
    it reached for importlib.exec_module / open() on a project file."
   (let
@@ -1210,7 +1210,7 @@ await patch({'path': css})" "t1/i1")]
           (expect (some? m))
           (expect (clojure.string/includes? (str m) "Sandbox policy denied file-read"))
           (expect (clojure.string/includes? (str m) "outside approved filesystem roots"))
-          (expect (clojure.string/includes? (str m) "cat(path)"))
+          (expect (clojure.string/includes? (str m) "grep(query)"))
           (expect (clojure.string/includes? (str m) "repl_eval"))
           (expect (clojure.string/includes? (str m) "workspace.filesystem"))
           (expect (clojure.string/includes? (str m) "vis.yml"))

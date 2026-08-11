@@ -384,7 +384,7 @@ class __vis_Call__:
     # ALWAYS a single-expression use of that ONE call's result — there is no
     # concurrency to forfeit (unlike a batchable set of calls), so we settle it
     # synchronously right here instead of raising 'not subscriptable'. This kills
-    # the `shell(...)["stdout"]` / `cat(...)["anchors"]` papercut. We deliberately
+    # the `shell(...)["stdout"]` / `grep(...)["matches"]` papercut. We deliberately
     # do NOT add `__iter__`: iteration is exactly the batch-me-instead case the
     # loud repr must keep nudging toward `await gather(...)`.
     def __getitem__(self, k):
@@ -451,7 +451,7 @@ class __vis_Already__:
 def __vis_awaitable__(v):
     # Normalize the operand of `await` so awaiting a NON-awaitable just returns
     # it instead of raising `TypeError: object X can't be used in 'await'
-    # expression`. The classic trap: `x = patch(...)` AUTO-SETTLES on assignment
+    # expression`. The classic trap: `x = grep(...)` AUTO-SETTLES on assignment
     # (so `x` already holds the real ForeignList result), then `await x` blows
     # up. With this, the stray `await` is harmless — we simply don't care.
     # Real awaitables (a deferred `__vis_Call__`, a `gather` `__vis_Gather__`,
@@ -636,8 +636,8 @@ class __VisShell__(__VisResult__):
 
 
 class __VisResultList__(list):
-    # A native tool result whose TOP-LEVEL shape is a LIST (patch / struct_patch
-    # return one row per file; some tools return a list of hits). It stays a
+    # A native tool result whose TOP-LEVEL shape is a LIST (struct_patch
+    # returns one row per file; some tools return a list of hits). It stays a
     # REAL list — index / iterate / len / json.dumps / {**_}-free code all behave —
     # but ALSO answers the dict probes (.get/.keys/.items/.values) so a uniform
     # `res.get('op')` probe NEVER trips on it. A list has no top-level 'op', so .get
@@ -849,7 +849,7 @@ def __vis_settle__(v):
     if isinstance(v, __vis_Call__):
         # TOP-LEVEL tool result: re-type a list/str payload to the probeable
         # subclass. Without this a
-        # `patch`/`struct_patch` return was a PLAIN list, so the documented
+        # `struct_patch` return was a PLAIN list, so the documented
         # uniform `res.get('op')` probe blew up with `'list' object has no attribute
         # 'get'` and the print-capture below could not recognise it as a result.
         return __vis_as_result__(__vis_pyify__(__vis_exec_call__(v)))
@@ -1414,7 +1414,7 @@ def __vis_assigned_names__(body):
     # scope keeps `for line in ...` and `with open(p) as fh` alive after the
     # statement, so they are declared global as well. Clobbering a TOOL is still
     # impossible: a protected name lands in `__vis_shadow__` below and stays
-    # block-local, so `with open(p) as patch:` shadows `patch` only for this
+    # block-local, so `with open(p) as grep:` shadows `grep` only for this
     # block.
     walk_stmts(body)
     return names
@@ -1817,7 +1817,7 @@ class __vis_AsyncDefFix__(__vis_ast__.NodeTransformer):
 class __vis_AwaitFix__(__vis_ast__.NodeTransformer):
     # Wrap the operand of every `await EXPR` as `await __vis_awaitable__(EXPR)`
     # so awaiting a value that is NOT a real awaitable (a tool result that
-    # already settled — `x = patch(...); await x`) returns the value instead of
+    # already settled — `x = grep(...); await x`) returns the value instead of
     # raising. Visits the WHOLE tree so a nested `await` (inside `print(...)`,
     # an arg, a comprehension) is fixed too; real awaitables are untouched.
     def visit_Await(self, node):
@@ -1894,7 +1894,7 @@ def __vis_run_async__(src):
 
     # AUTO-SETTLE inline, exactly like the sync per-form path: wrap the value of
     # every TOP-LEVEL assignment / bare expression in `__vis_settle__(...)` so a
-    # bare deferred tool call (`res = patch(...)`, or a lone `patch(...)`) RUNS
+    # bare deferred tool call (`res = grep(...)`, or a lone `grep(...)`) RUNS
     # in place — later statements (and `print(res)`) then see the real value,
     # not a `__vis_Call__` thunk. settle is identity for plain values and
     # idempotent for thunks already consumed by `await`/`gather`, so wrapping is
@@ -2011,7 +2011,7 @@ def __vis_kwargs_direct_tools__():
             g[__vis_n__] = __vis_direct_kwargs__(g[__vis_n__], __vis_n__)
 
 
-# ── echo-diff strip for a printed edit result: a patch/struct_patch result
+# ── echo-diff strip for a printed edit result: a struct_patch result
 # printed to stdout merely re-describes the bytes the model just authored, so drop
 # each file summary's redundant 'diff' for DISPLAY only. The captured original is
 # untouched, so the host op-card still renders the full diff.
@@ -2068,7 +2068,7 @@ def __vis_print__(*__vis_a__, **__vis_kw__):
     )
     if __vis_kw__.get("file") is None:
         for __vis_x__ in __vis_a__:
-            # A LIST-shaped result (patch / struct_patch: one row per file)
+            # A LIST-shaped result (struct_patch: one row per file)
             # is a tool result too — `__VisResultList__` is its unforgeable marker.
             # Missing it made a printed edit BOTH card-less and a card-killer: the
             # block no longer counted as results-ONLY, so every OTHER printed card in it

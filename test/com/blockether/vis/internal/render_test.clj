@@ -191,7 +191,7 @@
       (let [src "javascript:(function(){var o=\"http://127.0.0.1\";window.__spel.connect();})();"]
         (expect (= [:ast {} [:code {} src]] (render/markdown->ast (str "`" src "`"))))))
   (it "keeps a long lone file-path code span as an inline :c chip"
-      ;; rg/patch/outline op-cards title every per-file section with a lone
+      ;; grep/struct_patch/outline op-cards title every per-file section with a lone
       ;; `` `path` `` paragraph. Real repo paths routinely exceed the
       ;; promotion threshold; promoting them to :code blocks silently drops
       ;; the path-chip styling in every channel. Path-like literals (no

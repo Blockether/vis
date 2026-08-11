@@ -4,12 +4,10 @@
    Format/test/REPL are exposed through the generic language facade
    (`format`, `test`, `repl_eval`, `repl`, `repl_stop`) —
    `format` here does parinfer delimiter repair + cljfmt. The pack also registers
-   cross-cutting op-hooks that parinfer-repair `.clj` source rejected by the
-   foundation's struct_patch / patch, so unbalanced delimiters never fail an
-   edit."
+   a cross-cutting op-hook that parinfer-repairs `.clj` source rejected by the
+   foundation's struct_patch, so unbalanced delimiters never fail an edit."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.set :as set]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.environment.languages :as languages]
@@ -22,7 +20,6 @@
             [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
             [com.blockether.vis.ext.language-clojure.test-runner :as test-runner]
             [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.foundation.editing.core :as editing]
             [com.blockether.vis.internal.foundation.surface-contract :as contract]
             [taoensso.telemere :as tel]))
 
@@ -928,13 +925,6 @@
                                                       (seq targets)
                                                       (assoc "targets" (vec targets))))})))))
 
-;; ── Shared helper for the delimiter-repair middlewares ──────────────────────
-
-(defn- resolve-under-root
-  ^java.io.File [env path]
-  (let [f (io/file (str path))]
-    (if (.isAbsolute f) f (io/file (or (:workspace/root env) ".") (str path)))))
-
 (defn clj-struct-patch-no-fail-around
   "MIDDLEWARE (:around) on struct_patch so a Clojure structural edit does NOT
    fail on unbalanced delimiters. If the call throws and it targeted a `.clj`
@@ -971,143 +961,6 @@
               (throw e))) ; repaired retry failed → original
           (throw e))))))
 
-(defn- lint-error-frequencies
-  [code]
-  (try (->> (get (lint/lint-code (str code)) "findings")
-            (filter #(= "error" (get % "level")))
-            (map #(select-keys % ["type" "message"]))
-            frequencies)
-       (catch Throwable t
-         (tel/log!
-           {:level :warn :id :clojure-patch-repair-lint-failed :data {:error (.getMessage t)}}
-           "Clojure patch repair lint check failed; treating repair as unsafe")
-         ::lint-failed)))
-
-(defn- new-lint-errors-after-repair
-  [before after]
-  (let
-    [before-errors
-     (lint-error-frequencies (or before ""))
-
-     after-errors
-     (lint-error-frequencies after)]
-
-    (if (or (= ::lint-failed before-errors) (= ::lint-failed after-errors))
-      [{"type" "lint-check-failed"
-        "message" "clj-kondo lint check failed while validating parinfer repair"}]
-      (->> (set/union (set (keys before-errors)) (set (keys after-errors)))
-           (keep (fn [finding]
-                   (let
-                     [extra (- (long (get after-errors finding 0))
-                               (long (get before-errors finding 0)))]
-                     (when (pos? extra) (assoc finding "count" extra)))))
-           vec))))
-
-(defn clj-patch-no-fail-around
-  "MIDDLEWARE (:around) on patch — the anchored-edit mirror of
-   `clj-struct-patch-no-fail-around`. A raw `patch` whose `:replace` leaves a
-   cleanly-parsing `.clj` file with unbalanced delimiters is REFUSED by the
-   foundation's re-parse guard (a `{:success? false … :reason :syntax-error}`
-   envelope, nothing written). The refusal's `:metadata` carries the
-   WHOLE-BATCH `:candidate-plans` (every planned file with its edits applied,
-   unwritten) plus `:broken-paths`.
-
-   Here we parinfer-repair each broken candidate as a WHOLE SOURCE — fragment
-   repair cannot fix CONTEXTUAL imbalance (a replacement that is locally
-   balanced but swallows or duplicates an enclosing closer only shows up in
-   the full file) — and, when every broken file is Clojure and every one
-   repairs clean, COMMIT the whole batch ourselves and return a success
-   envelope with the SAME per-file `diff`/`changed` result shape as a normal
-   successful patch. The `:after` repair+format hook then cljfmt-polishes the
-   files and re-diffs from `:metadata :file-befores`, so the displayed
-   collapsible changes describe the FINAL bytes on disk. If any broken file is
-   not Clojure, or any repair fails, the ORIGINAL refusal is surfaced untouched
-   — we never bury a real failure. The baseline is always 'nothing written'."
-  [env _op-kw args next]
-  (let [result (next args)]
-    (if (and (map? result)
-             (false? (:success? result))
-             (= :syntax-error (get-in result [:error :reason]))
-             (seq (get-in result [:metadata :candidate-plans])))
-      (let
-        [plans (get-in result [:metadata :candidate-plans])
-         broken (set (get-in result [:metadata :broken-paths]))
-         repaired-plans
-         (reduce
-           (fn [acc {:keys [path before after] :as plan}]
-             (if-not (contains? broken path)
-               (conj acc plan)
-               (let
-                 [fixed
-                  (when (clj-source-file? path)
-                    (try
-                      (repair/fix-delimiters (str after))
-                      (catch Throwable repair-t
-                        (tel/log!
-                          {:level :warn
-                           :id :clojure-patch-candidate-repair-failed
-                           :data {:path path :error (.getMessage repair-t)}}
-                          "Clojure patch candidate delimiter repair failed; preserving original syntax refusal")
-                        nil)))
-                  lint-errors (when (and (string? fixed) (not= fixed (str after)))
-                                (new-lint-errors-after-repair before fixed))]
-
-                 ;; unchanged output means the brokenness was not a
-                 ;; delimiter problem — nothing we can fix here. If
-                 ;; the repair introduces new lint errors, it likely
-                 ;; absorbed orphan forms (e.g. duplicate requires)
-                 ;; instead of preserving the user's intended edit.
-                 (cond
-                   (not (and (string? fixed) (not= fixed (str after)))) (reduced nil)
-                   (seq lint-errors)
-                   (do
-                     (tel/log!
-                       {:level :warn
-                        :id :clojure-patch-repair-introduced-lint-errors
-                        :data {:path path :findings (vec (take 5 lint-errors))}}
-                       "Clojure patch delimiter repair introduced lint errors; preserving original syntax refusal")
-                     (reduced nil))
-                   :else (conj acc
-                               (assoc plan
-                                 :after fixed
-                                 :repaired? true))))))
-           []
-           plans)]
-
-        (if (nil? repaired-plans)
-          result
-          (do (doseq [{:keys [path after]} repaired-plans]
-                (let [f (resolve-under-root env path)]
-                  (io/make-parents f)
-                  (spit f after)))
-              (extension/success
-                ;; `:op`/`:metadata` are ENVELOPE fields (op-tag + internal
-                ;; timing/aux) — keyword. The `:result` VALUE is the model-facing
-                ;; per-file summary that crosses the strings-only boundary → STRING
-                ;; keys + STRING enum values.
-                {:op :patch
-                 :path (or (:path (first repaired-plans)) ".")
-                 :kind :file
-                 :result (mapv
-                           (fn [{:keys [path before after repaired?]}]
-                             (let
-                               [summary (editing/refresh-file-summary
-                                          {"path" path "op" "update" "changed" true}
-                                          before
-                                          after)]
-                               (cond-> summary
-                                 repaired?
-                                 (assoc "repaired"
-                                   true "note"
-                                   "unbalanced delimiters auto-repaired (parinfer) before write"))))
-                           repaired-plans)
-                 :metadata {:file-count (count repaired-plans)
-                            :changed-count (count repaired-plans)
-                            :auto-repaired-paths (mapv :path (filter :repaired? repaired-plans))
-                            :file-befores (mapv #(select-keys % [:path :before])
-                                                repaired-plans)}}))))
-      result)))
-
 ;; =============================================================================
 ;; Extension manifest
 ;; =============================================================================
@@ -1136,12 +989,10 @@
                                             (repl-start-fn env op opts))}]
      ;; Declarative cross-cutting op-hooks — registered/unregistered WITH this
      ;; extension's lifecycle (no imperative side effects at ns load). They make
-     ;; struct_patch AND patch NOT fail on unbalanced delimiters (struct_patch:
-     ;; an :around that repairs the :code + retries; patch: an :around that
-     ;; WHOLE-SOURCE-repairs the refusal's candidate plans and commits the
-     ;; batch). :owner is set to this extension automatically.
-     :ext/op-hooks [{:op :struct_patch :phase :around :fn clj-struct-patch-no-fail-around}
-                    {:op :patch :phase :around :fn clj-patch-no-fail-around}]
+     ;; struct_patch NOT fail on unbalanced delimiters: an :around that
+     ;; parinfer-repairs the `:code` and retries once. :owner is set to this
+     ;; extension automatically.
+     :ext/op-hooks [{:op :struct_patch :phase :around :fn clj-struct-patch-no-fail-around}]
      :ext/kind "language"}))
 
 (vis/register-extension! vis-extension)

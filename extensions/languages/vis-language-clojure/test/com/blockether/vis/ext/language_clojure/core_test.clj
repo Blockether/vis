@@ -6,7 +6,6 @@
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.language-clojure.core :as core]
-            [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.surface-contract :as contract]
             [com.blockether.vis.ext.language-clojure.format :as fmt]
             [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
@@ -120,9 +119,9 @@
                     ops
                     (set (map (juxt :op :phase) hooks))]
 
-                   (expect (= 2 (count hooks)))
+                   (expect (= 1 (count hooks)))
                    (expect (contains? ops [:struct_patch :around]))
-                   (expect (contains? ops [:patch :around]))
+                   (expect (not (contains? ops [:patch :around])))
                    ;; every entry names a real fn — no imperative register-op-hook! at load
                    (expect (every? ifn? (map :fn hooks))))))
 
@@ -584,141 +583,3 @@
                                                               next-fn)
                         nil
                         (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
-
-(defdescribe
-  patch-no-fail-test
-  "The :around middleware rescues an anchored `patch` that the foundation's
-   re-parse guard REFUSED: the refusal's `:metadata` carries the WHOLE-BATCH
-   `:candidate-plans` + `:broken-paths`; the hook parinfer-repairs each broken
-   candidate as a WHOLE SOURCE (fragment repair can't fix contextual imbalance
-   — the session-9c829d10 class: a locally-balanced replacement with a stray
-   closer), commits the batch itself, and substitutes a success envelope."
-  (it "whole-source-repairs the broken candidate, writes the WHOLE batch, returns success"
-      ;; The SUCCESS envelope the hook substitutes carries the op's mandatory
-      ;; observation/mutation tag, and `:patch` is tagged by the FOUNDATION's
-      ;; symbol registry — which this standalone pack JVM never loads on its own,
-      ;; so the op-tag lookup failed closed with `:extension/unregistered-op`.
-      ;; `discover-extensions!` pulls the foundation in from its built-in list
-      ;; (idempotent; same move as the engine's own foundation test).
-      (extension/discover-extensions!)
-      (let [root (tmp-dir)]
-        (try
-          ;; the failing class from session 9c829d10: the replacement line is
-          ;; locally balanced but carries a stray `]` — only the FULL file
-          ;; shows the imbalance, so fragment repair is a no-op on it.
-          (let
-            [before-a "(def entries\n  [])\n"
-             before-b "(def other 0)\n"
-             broken-candidate "(def entries\n  [{:id :a :label \"A\"}\n   {:id :b :label \"B\"}]]\n"
-             clean-candidate "(def other 1)\n"
-             refusal {:success? false
-                      :error {:reason :syntax-error :message "would leave a.clj SYNTAX ERROR"}
-                      :metadata {:candidate-plans
-                                 [{:path "a.clj" :before before-a :after broken-candidate}
-                                  {:path "b.clj" :before before-b :after clean-candidate}]
-                                 :broken-paths ["a.clj"]}}
-             calls (atom 0)
-             out (core/clj-patch-no-fail-around
-                   {:workspace/root (.getPath root)}
-                   :patch
-                   [[{:path "a.clj" :from_anchor "1:abc" :replace "x"}]]
-                   (fn [_]
-                     (swap! calls inc)
-                     refusal))]
-
-            (expect (true? (:success? out)))
-            (expect (= 1 @calls)) ; no retry — the hook commits itself
-            ;; the broken file landed REPAIRED (balanced), the clean one verbatim
-            (let [a (slurp (io/file root "a.clj"))]
-              (expect (balanced? a))
-              (expect (= (count (re-seq #"\[" a)) (count (re-seq #"\]" a)))))
-            (expect (= "(def other 1)\n" (slurp (io/file root "b.clj"))))
-            ;; the summary marks the repaired file (result vector is STRING-keyed)
-            ;; and still carries the same diff body a normal successful patch would render.
-            (expect (= [true nil] (mapv #(get % "repaired") (:result out))))
-            (expect (= [true true] (mapv #(boolean (seq (get % "diff"))) (:result out))))
-            (expect (= [{:path "a.clj" :before before-a} {:path "b.clj" :before before-b}]
-                       (get-in out [:metadata :file-befores]))))
-          (finally (cleanup root)))))
-  (it
-    "surfaces the ORIGINAL refusal when repair would introduce lint errors"
-    (let [root (tmp-dir)]
-      (try
-        ;; This is the git.clj failure mode: the model's replacement closed
-        ;; `:require` early, leaving old require vectors as orphan forms.
-        ;; Parinfer can make that parse by absorbing the orphan vectors back
-        ;; into `:require`, but that produces duplicate requires/conflicting
-        ;; aliases — a semantic regression, not a safe delimiter repair.
-        (let
-          [before
-           "(ns demo.core\n  (:require [clojure.string :as str]))\n\n(defn blank? [s]\n  (str/blank? s))\n"
-           broken-candidate
-           "(ns demo.core\n  (:require [clojure.string :as str]\n            [clojure.set :as set])\n            [clojure.string :as str])\n\n(defn blank? [s]\n  (str/blank? s))\n"
-           refusal {:success? false
-                    :error {:reason :syntax-error :message "orig"}
-                    :metadata {:candidate-plans
-                               [{:path "x.clj" :before before :after broken-candidate}]
-                               :broken-paths ["x.clj"]}}
-           out (core/clj-patch-no-fail-around {:workspace/root (.getPath root)}
-                                              :patch
-                                              [[{:path "x.clj"}]]
-                                              (fn [_]
-                                                refusal))]
-
-          (expect (false? (:success? out)))
-          (expect (= "orig" (get-in out [:error :message])))
-          (expect (not (.exists (io/file root "x.clj")))))
-        (finally (cleanup root)))))
-  (it "surfaces the ORIGINAL refusal when a broken candidate is NOT delimiter-repairable"
-      (let [root (tmp-dir)]
-        (try
-          ;; a candidate with NO delimiter error (fix-delimiters returns it
-          ;; unchanged) — the guard flagged it for some non-delimiter reason,
-          ;; so the hook must NOT bury the refusal (and must write NOTHING).
-          (let
-            [refusal {:success? false
-                      :error {:reason :syntax-error :message "orig"}
-                      :metadata {:candidate-plans [{:path "a.clj" :after "(def x 1)\n"}]
-                                 :broken-paths ["a.clj"]}}
-             out (core/clj-patch-no-fail-around {:workspace/root (.getPath root)}
-                                                :patch
-                                                [[{:path "a.clj"}]]
-                                                (fn [_]
-                                                  refusal))]
-
-            (expect (false? (:success? out)))
-            (expect (= "orig" (get-in out [:error :message])))
-            (expect (not (.exists (io/file root "a.clj")))))
-          (finally (cleanup root)))))
-  (it "surfaces the ORIGINAL refusal when a broken file is NOT Clojure"
-      (let [root (tmp-dir)]
-        (try (let
-               [refusal {:success? false
-                         :error {:reason :syntax-error}
-                         :metadata {:candidate-plans [{:path "x.py" :after "def f(:\n"}]
-                                    :broken-paths ["x.py"]}}
-                out (core/clj-patch-no-fail-around {:workspace/root (.getPath root)}
-                                                   :patch
-                                                   [[{:path "x.py"}]]
-                                                   (fn [_]
-                                                     refusal))]
-
-               (expect (false? (:success? out)))
-               (expect (not (.exists (io/file root "x.py")))))
-             (finally (cleanup root)))))
-  (it "passes a NON-syntax failure straight through"
-      (let
-        [out (core/clj-patch-no-fail-around {}
-                                            :patch
-                                            [[{:path "x.clj"}]]
-                                            (fn [_]
-                                              {:success? false :error {:reason :stale}}))]
-        (expect (= :stale (get-in out [:error :reason])))))
-  (it "passes a syntax refusal without repair candidates straight through"
-      (let
-        [out (core/clj-patch-no-fail-around {}
-                                            :patch
-                                            [[{:path "x.clj"}]]
-                                            (fn [_]
-                                              {:success? false :error {:reason :syntax-error}}))]
-        (expect (false? (:success? out))))))

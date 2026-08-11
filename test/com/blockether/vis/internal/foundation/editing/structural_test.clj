@@ -6,7 +6,6 @@
    com.blockether.tree-sitter-language-pack."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.foundation.editing.index :as index]
-            [com.blockether.vis.internal.foundation.editing.patch :as patch]
             [com.blockether.vis.internal.foundation.editing.structural :as structural]
             [com.blockether.vis.internal.foundation.editing.zipper :as zipper]
             [lazytest.core :refer [defdescribe expect it describe]]))
@@ -25,7 +24,7 @@
 
 (defdescribe
   outline-test
-  (it "Clojure outline lists defs with anchors"
+  (it "Clojure outline lists defs with line ranges"
       (let [s (index/file-skeleton "demo.clj" clj-src)]
         ;; Clojure defs carry a structured visibility + a clean name — no
         ;; `^:private` glued on (pack >= .25). Public is the default, so the
@@ -33,7 +32,7 @@
         (expect (str/includes? s "function add"))
         (expect (str/includes? s "function sub"))
         (expect (not (str/includes? s "public")))
-        (expect (re-find #"@\d+:\w+\.\.\d+:\w+" s))))
+        (expect (re-find #"@\d+\.\.\d+" s))))
   (it "Clojure outline shows clean names, visibility, and docstrings"
       (let
         [s (index/file-skeleton
@@ -52,7 +51,7 @@
   (it "unknown language yields no skeleton"
       (expect (nil? (index/file-skeleton "x.unknownext" "blah"))))
   (it
-    "definitions returns STRUCTURED rows — same fields as an occurrences def (name/kind/visibility/signature/doc/anchor/end-anchor) plus nesting depth"
+    "definitions returns STRUCTURED rows — same fields as an occurrences def (name/kind/visibility/signature/doc/line/end-line) plus nesting depth"
     (let
       [defs
        (index/definitions clj-src "clojure")
@@ -65,31 +64,27 @@
       (expect (= "public" (:visibility add-def)))
       (expect (= "[a b]" (:signature add-def)))
       (expect (= 0 (:depth add-def)))
-      (expect (some? (:anchor add-def)))
-      (expect (some? (:end-anchor add-def))))
+      (expect (= 2 (:line add-def)))
+      (expect (= 2 (:end-line add-def))))
     ;; NESTING: a Python class's methods report depth 1 under the depth-0 class
     (let [defs (index/definitions "class C:\n    def m(self):\n        return 1\n" "python")]
       (expect (= 0 (:depth (first (filter #(= "C" (:name %)) defs)))))
       (expect (= 1 (:depth (first (filter #(= "m" (:name %)) defs))))))))
 
-(defdescribe zipper-anchor-path-test
+(defdescribe zipper-line-path-test
              (let [src "(ns demo)\n\n(defn foo [x]\n  (+ x 1))\n\n(defn bar [y]\n  (* y 2))\n"]
-               (it "resolves a fresh lineno:hash anchor to the node path for that row"
-                   (let
-                     [anchor (patch/line-anchor 6 "(defn bar [y]")
-                      r (zipper/path-at-anchor "clojure" src anchor)]
-
+               (it "resolves a struct_index row's line to the node path for that row"
+                   (let [r (zipper/path-at-line "clojure" src 6)]
                      (expect (:ok? r))
                      ;; root named children: ns, foo, bar
                      (expect (= [2] (:path r)))
                      (expect (= 6 (:line r)))))
-               (it "refuses a stale anchor instead of silently landing on the line"
-                   (let
-                     [stale (patch/line-anchor 6 "(defn bar [y]")
-                      changed (str/replace src "(defn bar [y]" "(defn bar [z]")
-                      r (zipper/path-at-anchor "clojure" changed stale)]
-
-                     (expect (= :hashline-not-found (get-in r [:error :reason])))))))
+               (it "refuses a line that starts no node instead of guessing one"
+                   (let [r (zipper/path-at-line "clojure" src 5)]
+                     (expect (= :line-no-node (get-in r [:error :reason])))))
+               (it "refuses a line number that is not 1-based"
+                   (expect (= :invalid-line
+                              (get-in (zipper/path-at-line "clojure" src 0) [:error :reason]))))))
 
 (defdescribe
   code-language-allowlist-test
@@ -136,13 +131,13 @@
                    (expect (= 3 (count occ))) ;; 1 def + 2 uses
                    (expect (= 1 (count defs)))
                    (let [d (first defs)]
-                     (expect (= 1 (patch/anchor->line (:anchor d)))) ;; anchor IS the position
+                     (expect (= 1 (:line d))) ;; the line IS the position
                      (expect (= "fn" (:kind d)))
                      (expect (= "public" (:visibility d)))
                      (expect (= "[a b]" (:signature d)))
-                     (expect (some? (:anchor d)))
-                     (expect (some? (:end-anchor d)))) ;; span = :anchor..:end-anchor
-                   (expect (every? #(and (:anchor %) (nil? (:is-definition %))) uses))))
+                     (expect (some? (:line d)))
+                     (expect (some? (:end-line d)))) ;; span = :line..:end-line
+                   (expect (every? #(and (:line %) (nil? (:is-definition %))) uses))))
              (it "Python: the def is marked even under a decorator; uses are not"
                  (let
                    [src
@@ -156,7 +151,7 @@
 
                    (expect (= 1 (count defs)))
                    (expect (= "fn" (:kind (first defs))))
-                   (expect (= 2 (patch/anchor->line (:anchor (first defs))))))) ;; the `def` line, not @decorator
+                   (expect (= 2 (:line (first defs)))))) ;; the `def` line, not @decorator
              (it "Rust: the def is marked"
                  (let
                    [src

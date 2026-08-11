@@ -10,7 +10,7 @@
             [com.blockether.vis.internal.foundation.core]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(defdescribe patch-diagnosis-contract-test
+(defdescribe struct-patch-diagnosis-contract-test
              (let
                [classify
                 @#'introspection/classify-expression-failure
@@ -18,12 +18,12 @@
                 advice
                 @#'introspection/advice-for-classification]
 
-               (it "classifies stale anchors and recommends the anchor-only contract"
-                   (expect (= :patch-stale-anchor
-                              (classify "patch([...])" "anchors no longer match the file")))
-                   (let [message (advice :patch-stale-anchor)]
-                     (expect (str/includes? message "lineno:hash"))
-                     (expect (not (str/includes? message "SEARCH")))))))
+               (it "classifies unbalanced struct_patch code and says how to re-emit it"
+                   (expect (= :struct-patch-invalid-code
+                              (classify "struct_patch({...})" "unmatched delimiter in code")))
+                   (let [message (advice :struct-patch-invalid-code)]
+                     (expect (str/includes? message "triple-quoted"))
+                     (expect (not (str/includes? message "anchor")))))))
 
 (defdescribe
   introspection-public-surface-test

@@ -3150,7 +3150,7 @@
         (str "\nhint: " hint)))))
 
 (defn- patch-file-summary?
-  "True when `m` is a patch/struct_patch PER-FILE summary — the
+  "True when `m` is a struct_patch PER-FILE summary — the
    `{\"path\" \"op\" \"changed\" …}` shape `patch-result-file-summary` emits. Used to
    recognise an edit result at the model-wire crossing without touching any other
    tool's `:result`."
@@ -3165,7 +3165,7 @@
   (dissoc m "diff"))
 
 (defn- strip-echo-diffs
-  "Model-wire compaction for a patch/struct_patch `:result`: strip each
+  "Model-wire compaction for a struct_patch `:result`: strip each
    byte-exact file summary's redundant `\"diff\"` (see `strip-echo-diff`). A no-op
    for any non-edit `:result` (only touched when EVERY element is a file summary)."
   [result]
@@ -4026,16 +4026,16 @@
         rather than travelling on to call synthesis, receipts and persistence.
 
    DEEP: keys are normalized at EVERY depth, not just the top level. Tools like
-   `patch` carry NESTED dicts (`edits [{\":from_anchor\" …}]`); a shallow pass
+   `struct_patch` carry NESTED dicts (`edits [{\":target\" …}]`); a shallow pass
    left the drift colon on those nested keys, so the synthesized Python call
-   leaked `patch([{\":from_anchor\": …}])`.
+   leaked `struct_patch({\"edits\": [{\":target\": …}]})`.
 
    VALUES TOO, at every depth: a keyword/symbol VALUE (`{\"op\" :delete}` out of
    extension EDN) is stringified HERE — `:delete` -> `\"delete\"`, `:a/b` ->
    `\"a/b\"` — because the sandbox boundary refuses a keyword value and
    throws `boundary-violation!`, which killed the whole tool call instead of
-   running it. Everything else (edit `replace` text, anchors, paths, numbers,
-   booleans) passes through verbatim."
+   running it. Everything else (edit `code` text, paths, numbers, booleans)
+   passes through verbatim."
   [input]
   (letfn [(nk [k] (env/normalize-dict-key (if (keyword? k) (subs (str k) 1) (str k))))
           (nv [x] (if (keyword? x) (subs (str x) 1) (str x)))

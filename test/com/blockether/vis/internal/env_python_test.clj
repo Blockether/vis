@@ -236,7 +236,7 @@
           (expect (str/includes? out "GET None True")))) ;; .get silent, still a real dict
     (it
       "EVERY settled tool value is dict-probeable: a list/str result answers .get without a type guard"
-      ;; A capability return can be a LIST (patch/struct_patch/write rows) or a
+      ;; A capability return can be a LIST (struct_patch/write rows) or a
       ;; bare STRING, not only a dict. The TOP-LEVEL settle normalizes each so a
       ;; uniform `res.get('op')` probe never trips — while the value keeps its
       ;; native list/str behaviour (index/iterate/len/concat).
@@ -275,8 +275,8 @@
         (expect (not (:only-printed-results? mixed)))   ;; mixed → show full stdout
         (expect (= 1 (count (:printed-results mixed)))) ;; the result is still captured
         (expect (re-find #"FOUND:" (str (:stdout mixed))))))
-    (it "a printed patch/write/struct_patch result drops its echo-diff from stdout"
-        ;; A patch/write/struct_patch return is a LIST of `{path op changed diff}`
+    (it "a printed write/struct_patch result drops its echo-diff from stdout"
+        ;; A write/struct_patch return is a LIST of `{path op changed diff}`
         ;; file summaries. Printed to stdout that diff merely re-describes the bytes
         ;; the model supplied, so it is stripped for DISPLAY exactly like the
         ;; model-wire `strip-echo-diffs`.
@@ -289,7 +289,7 @@
           (expect (str/includes? (str (:stdout result)) "a.clj"))
           (expect (str/includes? (str (:stdout result)) "'changed': True"))))
     (it
-      "a LIST-shaped tool result is dict-probeable AND captured (patch/write/struct_patch rows)"
+      "a LIST-shaped tool result is dict-probeable AND captured (write/struct_patch rows)"
       ;; `patch`/`write`/`struct_patch` return a LIST of per-file rows. At the
       ;; TOP-LEVEL settle of a tool call that list must be re-typed to
       ;; `__VisResultList__`: otherwise the
@@ -402,11 +402,11 @@
     (it "apropos('') lists real tools but not builtins or the asyncio shim"
         (let
           [out (run (str "a=apropos('')\n" "print('asyncio='+str('asyncio' in a),"
-                         "'len='+str('len' in a)," "'cat='+str('cat' in a),"
+                         "'len='+str('len' in a)," "'ls='+str('ls' in a),"
                          "'grep='+str('grep' in a)," "'struct_patch='+str('struct_patch' in a))"))]
           (expect (re-find #"asyncio=False" out))
           (expect (re-find #"len=False" out))
-          (expect (re-find #"cat=True" out))
+          (expect (re-find #"ls=True" out))
           ;; `rg`/`find_files` were replaced by `grep` (name + content search in one tool)
           (expect (re-find #"grep=True" out))
           (expect (re-find #"struct_patch=True" out))))
@@ -415,13 +415,13 @@
     ;; a body-only hit last.
     (it "apropos searches the whole document, not just the name"
         (let
-          [out (run (str "print('anchors='+str('cat' in apropos('anchors')))\n"
+          [out (run (str "print('skeleton='+str('struct_index' in apropos('skeleton')))\n"
                          "print('names='+','.join(list(apropos('struct_patch'))[:1]))"))]
-          (expect (str/includes? out "anchors=True"))
+          (expect (str/includes? out "skeleton=True"))
           (expect (str/includes? out "names=struct_patch"))))
     (it "apropos ANDs its terms"
         (let
-          [out (run (str "wide = len(apropos('file'))\n" "narrow = len(apropos('file anchors'))\n"
+          [out (run (str "wide = len(apropos('file'))\n" "narrow = len(apropos('file skeleton'))\n"
                          "print('wide='+str(wide), 'narrow='+str(narrow),"
                          " 'shrinks='+str(narrow < wide))"))]
           (expect (str/includes? out "shrinks=True"))))
@@ -515,14 +515,14 @@
   boundary-key-shape-test
   "STRINGS-ONLY boundary: every dict key is a VERBATIM string in BOTH
    directions — no keywordizing, no regex key-shape sniffing. A path, a
-   `lineno:hash` anchor, an option key, a git status code: all plain strings.
+   line number, an option key, a git status code: all plain strings.
    A keyword or symbol ANYWHERE (key or value, any depth) is a producer bug
    and throws. Pure `boundary-view`, no context needed."
-  (it "every key stays a verbatim string — paths, anchors, option keys alike"
+  (it "every key stays a verbatim string — paths, line numbers, option keys alike"
       (let
         [raw
-         {"matches" {"extensions/channels/vis-channel-tui/src/a.clj" {"2361:abc" "x"}
-                     "src/com/foo-bar.clj" {"44:f14" "y"}}
+         {"matches" {"extensions/channels/vis-channel-tui/src/a.clj" {"2361" "x"}
+                     "src/com/foo-bar.clj" {"44" "y"}}
           "hit_count" 2
           "files" ["a-b/c.clj"]}
 
@@ -893,7 +893,7 @@
              (it "keeps the function's own contract when a document claims its name"
                  (try (doc-corpus/register-source! ::collision
                                                    (fn []
-                                                     [{:name "cat" :text "PAGE THAT MUST LOSE"}]))
+                                                     [{:name "ls" :text "PAGE THAT MUST LOSE"}]))
                       (let
                         [ctx
                          (:python-context (ep/create-python-context (ext/builtin-sandbox-bindings
@@ -901,8 +901,8 @@
                                                                         nil))))
 
                          out
-                         (str (:stdout (ep/run-python-block ctx "print(doc('cat'))")))]
+                         (str (:stdout (ep/run-python-block ctx "print(doc('ls'))")))]
 
                         (expect (not (str/includes? out "PAGE THAT MUST LOSE")))
-                        (expect (str/includes? out "cat")))
+                        (expect (str/includes? out "ls")))
                       (finally (doc-corpus/register-source! ::collision (constantly []))))))

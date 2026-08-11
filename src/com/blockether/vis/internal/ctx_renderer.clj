@@ -257,9 +257,9 @@
 
    `:op` (the call head) is stripped from maps since the call is already
    visible in the assistant replay; `src` is accepted for call-site
-   compatibility but no longer affects the output. File reads return `:anchors`
-   as an ordered `{\"ln:hash\" text}` map — the key IS the `patch from_anchor`
-   — so editing resolves straight off this structured data."
+   compatibility but no longer affects the output. Structural results carry
+   plain 1-based `line`/`end_line` numbers, so editing resolves straight off
+   this structured data."
   ^String [_src v]
   ;; A bare STRING result is prose/markdown (`doc(name)`, a corpus document):
   ;; render it VERBATIM so newlines, headers, and pipe-tables display as written —

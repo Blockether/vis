@@ -77,8 +77,7 @@
       (let
         [steps (mapv #(str/index-of text %)
                      ["`grep` locates unknown code" "`struct_index` every known file"
-                      "read bodies in ONE call" "`struct_nodes`" "`cat` `ranges`"
-                      "`struct_patch`"])]
+                      "read bodies in ONE call" "`struct_nodes`" "`struct_patch`"])]
         (expect (every? some? steps))
         (expect (apply < steps)))
       (expect (str/includes? text "`grep` FIRST"))
@@ -128,7 +127,7 @@
           "Commit, push, publish" "Treat context as a budget" "at most two targeted"
           "named unresolved decision blocks the edit" "no repeated search/read"
           "Fold obsolete settled work" "one broad `through`/range fold"
-          "When edit-ready and headroom permits, patch before folding"
+          "When edit-ready and headroom permits, edit before folding"
           "Before unavoidable folds, checkpoint"
           "paths/symbols, hypothesis, edit/test, and dirty files"
           "decisions, verification, recovery IDs" "exact paths; confirm reduction"
@@ -308,7 +307,7 @@
           (expect (str/includes? text "VIS-RULE"))
           (expect (str/includes? text "~/spel — guidance: ~/spel/AGENTS.md"))
           (expect (str/includes? text "guidance is not loaded yet"))
-          (expect (str/includes? text "read its exact guidance path with `cat`"))
+          (expect (str/includes? text "read its exact guidance path in `python_execution`"))
           (expect (not (str/includes? text "SPEL-RULE"))))))
   (it "falls back to CLAUDE.md when primary AGENTS.md is absent"
       (with-redefs
