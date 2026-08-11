@@ -74,7 +74,7 @@ describe("deleting one session confirms inside its own row", () => {
         "button[aria-label='Delete']",
       )!,
     );
-    fireEvent.click(await screen.findByText("No, keep it"));
+    fireEvent.click(await screen.findByText("No, keep"));
 
     await waitFor(() =>
       expect(screen.queryByRole("group", { name: "Delete First?" })).toBeNull(),

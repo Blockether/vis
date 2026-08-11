@@ -2018,7 +2018,7 @@ const SessionRow = memo(function SessionRow({
             className="flex flex-1 items-center justify-center bg-panel-2 font-mono text-meta font-bold uppercase tracking-[0.08em] text-white/70 transition-colors duration-150 hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none"
             onClick={onCancelDelete}
           >
-            No, keep it
+            No, keep
           </button>
           <button
             type="button"
@@ -2026,7 +2026,7 @@ const SessionRow = memo(function SessionRow({
             className="flex flex-1 items-center justify-center border-l border-err-edge bg-err-surface font-mono text-meta font-bold uppercase tracking-[0.08em] text-err-ink transition-colors duration-150 hover:bg-err hover:text-white active:bg-err active:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-err/70 disabled:opacity-60 motion-reduce:transition-none"
             onClick={onConfirmDelete}
           >
-            {deleteBusy ? 'Deleting...' : live ? 'Yes, stop and delete' : 'Yes, delete'}
+            {deleteBusy ? 'Deleting...' : 'Yes, delete'}
           </button>
         </div>
       ) : (
