@@ -25,28 +25,43 @@
 ;; Frontmatter parsing — minimal, no YAML dependency
 ;; =============================================================================
 
+(defn- fold-value
+  "Normalize one folded frontmatter value. Frontmatter is YAML-ISH, not YAML:
+   a block-scalar indicator (`description: >`, `|`, `>-`) only OPENS the fold,
+   so it must not survive as the first word of the description, and a quoted
+   scalar is unwrapped once the whole fold is joined."
+  [v]
+  (let [v (str/trim (str/replace (str/trim (str v)) #"\A[>|][-+]?\d*(\s+|\z)" ""))]
+    (if (and (>= (count v) 2) (#{\" \'} (first v)) (= (first v) (last v)))
+      (str/trim (subs v 1 (dec (count v))))
+      v)))
+
 (defn parse-frontmatter
   "Split a markdown doc into `{:meta {kw str} :body str}`. A leading
    `---`-fenced block is parsed as `key: value` lines; a line with no
    `key:` head CONTINUES the previous value (folded multi-line description).
-   No frontmatter → `{:meta {} :body <whole>}`. Keys are lower-cased keywords."
+   Values pass through `fold-value`. No frontmatter → `{:meta {} :body
+   <whole>}`. Keys are lower-cased keywords."
   [content]
   (let [content (str content)]
     (if-let [[_ fm body] (re-find #"(?s)\A---\r?\n(.*?)\r?\n---\r?\n?(.*)\z" content)]
-      {:meta (loop
-               [lines (str/split-lines fm)
-                k nil
-                acc {}]
+      {:meta
+       (update-vals
+         (loop
+           [lines (str/split-lines fm)
+            k nil
+            acc {}]
 
-               (if (empty? lines)
-                 acc
-                 (let [line (first lines)]
-                   (if-let [[_ key val] (re-matches #"\s*([A-Za-z][\w-]*)\s*:\s*(.*)" line)]
-                     (let [kw (keyword (str/lower-case key))]
-                       (recur (rest lines) kw (assoc acc kw (str/trim val))))
-                     (if (and k (not (str/blank? line)))
-                       (recur (rest lines) k (update acc k #(str/trim (str % " " (str/trim line)))))
-                       (recur (rest lines) k acc))))))
+           (if (empty? lines)
+             acc
+             (let [line (first lines)]
+               (if-let [[_ key val] (re-matches #"\s*([A-Za-z][\w-]*)\s*:\s*(.*)" line)]
+                 (let [kw (keyword (str/lower-case key))]
+                   (recur (rest lines) kw (assoc acc kw (str/trim val))))
+                 (if (and k (not (str/blank? line)))
+                   (recur (rest lines) k (update acc k #(str/trim (str % " " (str/trim line)))))
+                   (recur (rest lines) k acc))))))
+         fold-value)
        :body (str/triml body)}
       {:meta {} :body (str/triml content)})))
 

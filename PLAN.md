@@ -795,6 +795,35 @@ savings landed somewhere unmeasured — find it before claiming the phase done.
   7.4 lint enough? Answer after the after-measurement shows what that block actually costs.
 
 
+## Phase 8 — Move pushed area doctrine into pulled skills, and measure
+
+**Rationale.** Phase 7 measured the first-request prefix and found the tool payload was no longer the
+problem: `AGENTS.md` was 32,553 chars — 64% of a 50,590-char prefix, bigger than the CORE prompt, the
+shim block and the tool payload combined. 13,648 of it was Companion/UI doctrine and 7,000 more was
+per-area contract (HITL, TUI paint, `PLAN.md`, shims) that rides into every request of every session,
+including sessions that never open a browser, a dialog or a terminal grid. The file's own preamble
+already says a rule owned by one place is only POINTED AT from here; skills are the repo's existing
+PULL mechanism (`doc("name")` reads, `await skill("name")` activates) and cost one clipped 180-char
+line each in the prompt. Without this phase the tool-schema win is spent back on prose.
+
+**Data.** None. Nothing crosses a boundary: markdown moves between files and a frontmatter value is
+normalized in memory before it reaches the same `{:name :description}` skill entry as before.
+
+**Acceptance criteria.**
+- `AGENTS.md` — repo-wide invariants only, plus one "Area doctrine is PULLED" index; 32,305 → 9,799 chars.
+- `apps/vis-companion/.agents/skills/companion-ui/SKILL.md` — the four Companion sections, verbatim.
+- `.agents/skills/{human-input,tui-rendering,plan-md,python-shims}/SKILL.md` — the four per-area contracts, verbatim.
+- `src/…/foundation/harness/discovery.clj` — `fold-value` drops a YAML block-scalar indicator and unwraps a
+  quoted scalar, so `description: >` stops reaching the prompt as a literal `> ` (it did for every folded
+  skill) and `issue-triage`/`spel` stop leading with a stray quote.
+- Test: `discovery-test` gains the block-scalar and quoted-scalar cases; `prompt-test`, `agents-test`,
+  `env-digest-test`, `harness.core-test` and `private-deployment-hygiene-test` stay green.
+- Measured prefix: 50,590 → 29,554 chars (-41.6%), PROJECT-INSTRUCTIONS 32,553 → 10,047 (-69%), paid for
+  with +1,470 in the skills listing.
+
+**Unknowns.** None. A rule now reaches the model only when the session pulls its skill — the index in
+`AGENTS.md` is what makes that reachable, so if a future area is added its skill goes in that list.
+
 ## Cross-validation — the SECOND inventory (measured against the tree; phases 1-7 missed these)
 
 Every figure below was counted this pass — balanced-brace spans and full-tree greps, not recall.
@@ -1207,7 +1236,12 @@ about `ntr[…]`-carrying metric bullets).
 
 ## State of the plan
 
-**REQUIRES WORK** — phases 1-7 have LANDED. What is left is the cross-cutting cleanup list (steps 45-53, the `:schema` literals, `form.clj`'s reduction, `extension_bootstrap.py`, the wire's `tool_name`/`result_render` columns, the tool wall, the replay policy, `:tag`) and the two pieces of shipped-UI evidence (56b's `spel` figures, 57's `cap/shot!` PNG).
+**REQUIRES WORK** — phases 1-8 have LANDED. What is left is the cross-cutting cleanup list (steps 45-53, the `:schema` literals, `form.clj`'s reduction, `extension_bootstrap.py`, the wire's `tool_name`/`result_render` columns, the tool wall, the replay policy, `:tag`) and the two pieces of shipped-UI evidence (56b's `spel` figures, 57's `cap/shot!` PNG).
+
+**Phase 8 — pushed doctrine becomes pulled skills: DONE.** `AGENTS.md` 32,305 → 9,799 chars; five
+SKILL.md files carry the Companion UI, HITL, TUI-paint, `PLAN.md` and shim contracts verbatim;
+`discovery/fold-value` fixes the folded-frontmatter descriptions the prompt was rendering as `> …`.
+First-request prefix 50,590 → 29,554 chars (~14,050 → ~8,200 tokens).
 
 **Phase 1 — advertise only `python_execution`: DONE** (commit `118237e6b`).
 `loop.clj/native-tools` takes `caps` alone and returns the one finalized `python_execution` tool;

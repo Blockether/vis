@@ -13,21 +13,39 @@
        "model: opus\n" "tools: Read, Grep\n"
        "---\n\n" "You are an elite code review expert.\n\n## Purpose\nReview code.\n"))
 
-(defdescribe parse-frontmatter-test
-             (it "splits the --- fenced head from the body"
-                 (let [{:keys [meta body]} (d/parse-frontmatter agent-md)]
-                   (expect (= "code-reviewer" (:name meta)))
-                   (expect (= "opus" (:model meta)))
-                   (expect (= "Read, Grep" (:tools meta)))
-                   (expect (re-find #"elite code review expert" body))
-                   (expect (not (re-find #"(?m)^---" body)))))
-             (it "folds a continuation line into the previous value"
-                 (let [{:keys [meta]} (d/parse-frontmatter agent-md)]
-                   (expect (re-find #"static analysis and security scanning" (:description meta)))))
-             (it "no frontmatter → empty meta, whole content is the body"
-                 (let [{:keys [meta body]} (d/parse-frontmatter "# Just a doc\nhello")]
-                   (expect (= {} meta))
-                   (expect (= "# Just a doc\nhello" body)))))
+(defdescribe
+  parse-frontmatter-test
+  (it "splits the --- fenced head from the body"
+      (let [{:keys [meta body]} (d/parse-frontmatter agent-md)]
+        (expect (= "code-reviewer" (:name meta)))
+        (expect (= "opus" (:model meta)))
+        (expect (= "Read, Grep" (:tools meta)))
+        (expect (re-find #"elite code review expert" body))
+        (expect (not (re-find #"(?m)^---" body)))))
+  (it "folds a continuation line into the previous value"
+      (let [{:keys [meta]} (d/parse-frontmatter agent-md)]
+        (expect (re-find #"static analysis and security scanning" (:description meta)))))
+  (it "drops a YAML block-scalar indicator instead of rendering it"
+      (let
+        [{:keys [meta]} (d/parse-frontmatter
+                          (str "---\n"
+                               "name: ponytail\n" "description: >\n"
+                               "  Forces the laziest solution that actually works,\n"
+                               "  simplest and shortest.\n"
+                               "---\n\n" "body\n"))]
+        (expect (= "Forces the laziest solution that actually works, simplest and shortest."
+                   (:description meta)))))
+  (it "unwraps a quoted scalar after the fold is joined"
+      (let
+        [{:keys [meta]} (d/parse-frontmatter (str "---\n" "name: triage\n"
+                                                  "description: \"Triage issues ONE AT A TIME,\n"
+                                                  "  reproduction-first.\"\n"
+                                                  "---\n\n" "body\n"))]
+        (expect (= "Triage issues ONE AT A TIME, reproduction-first." (:description meta)))))
+  (it "no frontmatter → empty meta, whole content is the body"
+      (let [{:keys [meta body]} (d/parse-frontmatter "# Just a doc\nhello")]
+        (expect (= {} meta))
+        (expect (= "# Just a doc\nhello" body)))))
 
 (defdescribe
   parse-agent-test
