@@ -78,7 +78,9 @@ For prose, unsupported code, a new file, or a wholesale replacement, write from 
 
 ## Keep intermediate data in Python
 
-Use a native call for one operation. Use `python_execution` for batches, filters, or transforms: raw results stay in Python vars and only explicit `print()` output reaches context. Run independent calls concurrently with `await gather(...)`; keep dependent chains sequential.
+Every capability is a Python function, so one operation and a batch of fifty cost the same one call: raw results stay in Python vars and only explicit `print()` output reaches context. Run independent calls concurrently with `await gather(...)`; keep dependent chains sequential.
+
+Printing is the whole cost model, and it cuts both ways. An unprinted value costs no context — and it is also gone once the block ends, because nothing stores a result the next block could re-read. Print the slice the answer needs, then keep working from the variable while the block is still running.
 
 ```python
 rows = await gather(*(struct_index({"path": path}) for path in paths))
@@ -105,9 +107,9 @@ A useful gist records the durable finding, rationale or consequence, and a works
 
 Targets may be step ids, whole prior turns, or `through` / `from`+`to` / `since` ranges. A broader newer fold supersedes every fully covered narrower breadcrumb; equal scopes keep the newer gist. Partial overlaps remain separate.
 
-### Recovery is lossless
+### Folding changes rendering, not storage
 
-Folding changes rendering, not storage. There is no destructive `unfold` command:
+A folded step is not re-readable inline, and there is no destructive `unfold` command:
 
 - Current conversation: `s = await session_state()`, select `s["transcript"]["turns"]` by numeric `position`, then filter `['iterations'][...]['blocks']` for the raw code/results.
 - Another conversation: `await sessions()` to find its id, then `await session_state(id)` and filter the same path.
@@ -126,7 +128,7 @@ When handled context climbs above the ceiling, `session["utilization"]["hint"]` 
 
 The efficient path is:
 
-1. Discover capabilities with `apropos` / `doc` when they are not already advertised.
+1. Discover capabilities with `apropos`, then read the one contract with `doc`.
 2. Locate relevant files and symbols with `grep`.
 3. Map supported code with `struct_index`, then read only the needed body with `struct_nodes`.
 4. Edit with `struct_patch`; fall back to a `python_execution` write only when structure is unavailable.

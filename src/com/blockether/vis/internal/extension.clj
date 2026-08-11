@@ -1380,11 +1380,14 @@
       (str/join "\n" collapsed))))
 
 (defn render-prompt
-  "Render canonical `:ext/prompt-fn` text for Python-only symbols.
+  "Render canonical `:ext/prompt-fn` text for an extension's symbols.
 
-   Native symbols are omitted: their compact description and JSON Schema already
-   ride the provider tool surface, and repeating implementation docs here creates
-   two conflicting contracts.
+   A prompt fragment states ROUTING and POLICY only: when this extension is the
+   right approach, and what it refuses. It NEVER restates a signature, an
+   argument name, a return shape or an example call — that text is the symbol's
+   own `:ext.symbol/description`, reached on demand with `doc(name)`. A fragment
+   is pushed into EVERY request; a docstring is pulled once, so a signature
+   copied up here is paid for on every turn and drifts from the one that runs.
 
    Accepts an extension map or any map with:
    - :ext/description      or :heading

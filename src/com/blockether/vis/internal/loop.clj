@@ -3883,13 +3883,11 @@
                    :else (count (str (:stdout f)))))]
     (long (min n (long MAX_FORM_WIRE_CHARS)))))
 
-;; ── Native tool surface (maki-style HYBRID) ──────────────────────────────────
-;; Prefer `python_execution` for batched / filtered / chained workflows; a single
-;; simple operation may use its native tool directly. Each native schema mirrors
-;; the SAME function bound into GraalPy, and native dispatch synthesizes a call to
-;; that function, so both surfaces share confinement, anchors, rendering, and
-;; docs. Explicitly native-only handler tools are the exception. Replying with
-;; plain text and NO tool call ends the turn.
+;; ── The model-facing surface: ONE tool ───────────────────────────────────────
+;; `python_execution` is the only call the provider ever sees. Every capability is
+;; a plain Python name bound into GraalPy inside it, so confinement, rendering and
+;; docs have exactly one home and the model never routes between surfaces.
+;; Replying with plain text and NO tool call ends the turn.
 
 (defn- python-execution-capability-line
   "Describe confirmed sandbox capabilities without duplicating the detailed,
@@ -3911,8 +3909,8 @@
 
        fs-part
        (if (:fs? caps)
-         "FS: see `session[\"access\"][\"filesystem\"]` for effective roots and modes; prefer native file tools."
-         "FS: unavailable; use native file tools.")
+         "FS: see `session[\"access\"][\"filesystem\"]` for effective roots and modes; prefer `ls`/`grep` over shell."
+         "FS: unavailable.")
 
        net-part
        (cond (not net-on?) "Network: off."
@@ -3924,17 +3922,17 @@
 
 
 (defn- python-execution-tool
-  "The engine-level `python_execution` tool schema. Preferred for batched,
-   transformed, filtered, chained, and structural workflows so intermediate data
-   never lands in context. Active engine-bound native tools share this sandbox;
-   explicitly native-only handlers are the exception. The capability line is
+  "The engine-level `python_execution` tool schema — the ONLY tool the provider
+   is given. Batched, transformed, filtered, chained and structural workflows all
+   run here, so intermediate data never lands in context. The capability line is
    built from `caps` so fs/network claims match what the sandbox can actually do."
   [caps]
   {:name "python_execution"
    :description
    (str
-     "Run Python in the session sandbox to batch, filter, and chain capabilities: `await gather(...)` "
-     "independent calls, then print only needed output. State persists; project packages need a project REPL. "
+     "Run Python in the session sandbox — the only call. Batch, filter and chain work here, then print "
+     "only what the answer needs: `await gather(...)` runs independent calls together. State persists; "
+     "project packages need a project REPL. "
      "Only `print` returns; bare expressions drop and errors surface. Every capability is a plain Python "
      "name here, so a result is an ordinary value you keep in a variable — but a value you never printed "
      "is gone from the transcript once the block ends. A shell is WATCHED here: `sh = await shell(...)`, then a BOUNDED "

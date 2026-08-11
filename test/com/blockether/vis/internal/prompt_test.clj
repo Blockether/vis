@@ -56,10 +56,14 @@
 
 (defdescribe
   prompt-core-test
-  (it "keeps live native contracts authoritative"
+  ;; With one tool there is no schema to be authoritative: a capability's OWN
+  ;; document is the contract, and the core prompt has to say where it lives or
+  ;; the model invents a call shape instead of pulling one.
+  (it "points authority at the document a capability carries"
       (let [text (prompt/build-system-prompt {})]
-        (expect (str/includes? text "Native descriptions and JSON Schemas are authoritative"))
-        (expect (str/includes? text "hard preconditions"))
+        (expect (str/includes? text "`doc(name)` returns"))
+        (expect (str/includes? text "the authoritative contract"))
+        (expect (str/includes? text "obey its stated preconditions"))
         (expect (not (str/includes? text "Session titles are host-generated")))))
   (it
     "keeps the sectioned core contract explicit and non-contradictory"
@@ -73,6 +77,12 @@
       ;; 4.7k → 4.75k exactly once more, when the merged `shell`/`fs` mega-tools split into
       ;; named verbs: §2's non-blocking rule and §3's five filesystem names are what stop the
       ;; model guessing an `op` discriminator that no longer exists.
+      ;; The ceiling has never moved UP for a rewrite: when eighteen tools became one,
+      ;; §1 lost `vis_docs` and the JSON-Schema clause, §2 lost the native-vs-Python routing
+      ;; fork, and what replaced them — "ONE call exists", the discovery contract and the
+      ;; folding truth — had to fit UNDER the existing budget. It does, at 4 729 chars.
+      ;; The win of that change is not here; it is the provider `:tools` payload, which
+      ;; went from eighteen JSON Schemas to one.
       (expect (< (count text) 4750))
       (let
         [steps (mapv #(str/index-of text %)
@@ -80,23 +90,23 @@
                       "read bodies in ONE call" "`struct_nodes`" "`struct_patch`"])]
         (expect (every? some? steps))
         (expect (apply < steps)))
-      (expect (str/includes? text "`grep` FIRST"))
+      (expect (str/includes? text "`grep(...)` FIRST"))
       ;; Session introspection (gateway event journals, session_state) is toggle-
       ;; gated and lives in the `foundation-introspection` extension prompt, NOT core.
       (expect (not (str/includes? text "`~/.vis/gateway/events/<id>.ndjson`")))
       (expect (str/includes? text "scoped to real paths"))
-      (expect (str/includes? text "only for product questions"))
       (expect (str/includes? text "locates unknown code"))
-      (expect (str/includes? text "**Filesystem work goes through native tools**"))
+      (expect (str/includes? text "**Filesystem work is Python**"))
       ;; The routing rule sends every filesystem CHANGE to Python; naming the deleted
       ;; native verbs again would re-open the `mkdir -p`/`test -f` reflex it exists to close.
       (doseq [verb ["`copy`" "`move`" "`delete`" "`create_directory`" "`file_exists`"]]
         (expect (not (str/includes? text verb))))
       (expect (str/includes? text "CHANGING the tree is plain Python"))
       ;; The shell is a Python call now, not a native tool: the core must say WHERE it lives.
-      (expect (str/includes? text "`shell(...)` in Python runs programs"))
+      (expect (str/includes? text "`shell(...)` runs programs"))
       (expect (str/includes? text "No shell TOOL"))
-      (expect (< (str/index-of text "`grep` FIRST") (str/index-of text "`apropos(text)` SEARCHES")))
+      (expect (< (str/index-of text "`grep(...)` FIRST")
+                 (str/index-of text "`apropos(text)` full-text searches")))
       (doseq
         [heading ["## 1. Identity + Epistemic stance" "## 2. Execution surfaces" "## 3. Inspect"
                   "## 4. Edit + verify" "## 5. Act autonomously" "## 6. Manage context"
@@ -107,31 +117,34 @@
       ;; first-class step of the code workflow, not a specialist tool.
       (expect (str/includes? text "`struct_nodes`"))
       (doseq
-        [required
-         ["Host project default" "`apropos(text)` SEARCHES" "`doc(name)` prints one whole"
-          "runtime > source > docs > assumption"
-          "Native descriptions and JSON Schemas are authoritative" "follow the documented contract"
-          "hard preconditions" "`python_execution`" "`await gather(...)` only for independent calls"
-          "Direct native tools: single operations" "default for most Python/data work"
-          ;; No tool blocks on the model's behalf: the old `shell` op `wait`/`until`
-          ;; is gone, so core routes to background + a poll the model can read.
-          "No shell TOOL" "`sh.logs()`" "`sh.wait(s)`"
-          "functions that accept or return\n  callables"
-          "NEVER paste a near-identical loop or block twice" "define once and reuse"
-          "second occurrence factor it out and call it" "ordinary Python value"
-          "An unprinted value costs no context" "gone when the block ends"
-          "Inspect shape before indexing" "status only when absent or stale"
-          "tests-only work starts with `run_tests`" "interactive work uses `repl_eval`"
-          "Keep reproduction as a suite test" "rerun after the fix"
-          "unverified until a test covers it" "BATCH every tool" "Write only files the task asked"
-          "Commit, push, publish" "Treat context as a budget" "at most two targeted"
-          "named unresolved decision blocks the edit" "no repeated search/read"
-          "Fold obsolete settled work" "one broad `through`/range fold"
-          "When edit-ready and headroom permits, edit before folding"
-          "Before unavoidable folds, checkpoint"
-          "paths/symbols, hypothesis, edit/test, and dirty files"
-          "decisions, verification, recovery IDs" "exact paths; confirm reduction"
-          "Fold only settled steps through the last completed scope"]]
+        [required ["Host project default" "`apropos(text)` full-text searches" "`doc(name)` returns"
+                   "runtime > source > docs > assumption" "obey its stated preconditions"
+                   "the curated index" "Read a skill with `doc`, work under it with `skill`"
+                   "`python_execution`" "ONE call exists" "there is no tool to choose"
+                   "Batch independent work in ONE block" "`await gather(...)` for"
+                   ;; No tool blocks on the model's behalf: the old `shell` op `wait`/`until`
+                   ;; is gone, so core routes to background + a poll the model can read.
+                   "No shell TOOL" "`sh.logs()`" "`sh.wait(s)`"
+                   "functions that accept or return\n  callables"
+                   "NEVER paste a near-identical loop or block twice" "Define once and reuse"
+                   "second occurrence factor it out and call it" "ordinary Python value"
+                   "an unprinted value costs no context" "gone when the block ends"
+                   "Inspect shape before indexing" "status only when absent or stale"
+                   "tests-only work starts with `run_tests`" "interactive work uses `repl_eval`"
+                   "Keep reproduction as a suite test" "rerun after the fix"
+                   "unverified until a test covers it" "BATCH inside one block"
+                   "Write only files the task asked" "Commit, push, publish"
+                   "Treat context as a budget" "at most two targeted"
+                   "named unresolved decision blocks the edit" "no repeated search/read"
+                   "Fold obsolete settled work" "one broad `through`/range fold"
+                   ;; Nothing stores a folded step for later: the gist is the whole survivor,
+                   ;; and a prompt that hints otherwise buys a fold the model regrets.
+                   "a folded step is NOT re-readable, so the gist is what survives"
+                   "When edit-ready and headroom permits, edit before folding"
+                   "Before unavoidable folds, checkpoint"
+                   "paths/symbols, hypothesis, edit/test, and dirty files"
+                   "Keep decisions, verification and" "exact paths; confirm reduction"
+                   "Fold only settled steps through the last completed scope"]]
         (expect (str/includes? text required)))
       ;; Regression, user report: blanket resource cleanup stopped a healthy dev server
       ;; that the user had explicitly asked the agent to open and keep available.
@@ -148,8 +161,11 @@
       ;; promise one again.
       (doseq
         [surplus ["Keep managed REPLs across turns" "ntr[" "# saved:" "ntr.describe()"
-                  "Raise vis bugs/issues" "After 3 failures" "Complete tasks autonomously"
-                  "canonical decision table" "anything complicated"
+                  ;; The vocabulary of eighteen doors: naming any of it again re-opens
+                  ;; the routing question that having ONE call exists to close.
+                  "native tool" "Native tool" "JSON Schema" "vis_docs" "advertised"
+                  "Direct native tools" "Raise vis bugs/issues" "After 3 failures"
+                  "Complete tasks autonomously" "canonical decision table" "anything complicated"
                   ;; schema-owned or removed contracts stay out of the core prompt
                   "stales anchors" "benchmark/profile" "Route vis issues upstream"
                   "Before every `session_fold`" "`await session_state" "≤120 words"
@@ -339,6 +355,69 @@
                                                             {:active-extensions []})
                     prompt/stable-prompt-text)]
           (expect (not (str/includes? text "PROJECT-INSTRUCTIONS")))))))
+
+(defdescribe prompt-names-one-tool-test
+             ;; The whole surface is ONE call now. Any sentence that still names a second
+             ;; door, a schema or a stored result re-opens a routing question the model can
+             ;; no longer act on, so the assembled prompt is checked for the old vocabulary
+             ;; rather than only the core string.
+             (it "names `python_execution`, and nothing from the eighteen-door vocabulary"
+                 (#'extension/load-builtin-extensions!)
+                 (let
+                   [text (prompt/stable-prompt-text (prompt/assemble-stable-prompt-messages
+                                                      {}
+                                                      {:active-extensions
+                                                       (vec (extension/registered-extensions))}))]
+                   (expect (str/includes? text "python_execution"))
+                   (doseq
+                     [gone ["ntr[" "# saved:" "vis_docs" "native tool" "Native tool" "native tools"
+                            "JSON Schema" "JSON schema" "advertised tool"]]
+                     (expect (not (str/includes? text gone)))))))
+
+(defdescribe extension-fragments-do-not-restate-doc-text-test
+             ;; An `:ext/prompt-fn` fragment is PUSHED into every request; a symbol's own
+             ;; document is PULLED once with `doc(name)`. Pasting a signature, a return
+             ;; shape or a description up here is exactly how the tokens the one-tool
+             ;; surface saved come straight back — and it makes a second contract that
+             ;; drifts from the one that runs.
+             (it "keeps every active fragment free of the text `doc(name)` already answers"
+                 (#'extension/load-builtin-extensions!)
+                 (let
+                   [exts
+                    (vec (extension/registered-extensions))
+
+                    block
+                    (str (#'prompt/extensions-prompt-block {} exts))
+
+                    entries
+                    (vec (for
+                           [ext
+                            exts
+
+                            entry
+                            (extension/ext-symbols ext)]
+
+                           entry))
+
+                    doc-first-lines
+                    (into #{}
+                          (comp (keep extension/symbol-doc-text)
+                                (map #(str/trim (first (str/split-lines %))))
+                                (remove str/blank?))
+                          entries)
+
+                    fragment-lines
+                    (into [] (comp (map str/trim) (remove str/blank?)) (str/split-lines block))]
+
+                   (expect (seq entries))
+                   (expect (seq doc-first-lines))
+                   (expect (not (str/blank? block)))
+                   ;; a doc's own first line, copied into the prompt
+                   (expect (empty? (filter doc-first-lines fragment-lines)))
+                   ;; the raw-result contract belongs to `doc(name)`, never to a fragment
+                   (expect (not (str/includes? block "Raw result:")))
+                   ;; a declared signature: `name(args) -> shape`
+                   (expect (nil? (re-find #"\w\([^)\n]*\)\s*->" block))))))
 
 (defdescribe extension-activation-test
              (it "assembles from precomputed active extensions without activating again"

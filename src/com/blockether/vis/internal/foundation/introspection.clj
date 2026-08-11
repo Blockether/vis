@@ -1292,7 +1292,7 @@ String-keyed rows: `{id,channel,title,turn_count,created_at,modified_at}`; optio
     "## Session introspection\n"
     "- Raw wire history: `~/.vis/gateway/events/<id>.ndjson`; never grep `.`.\n"
     "- Call `await session_state()` once. `usage` summarizes per-turn/iteration/tool/provider routing; tool rows overlap, never sum them.\n"
-    "- Current transcript and folded-content recovery: `transcript/turns/iterations/blocks` (`code`/`result`).\n"
+    "- Folded content is readable ONLY here: `transcript/turns/iterations/blocks` (`code`/`result`).\n"
     "- Other conversation: `await sessions()`, then `await session_state(id)`.\n"
     "- Filter in `python_execution`; never dump whole structures.\n"))
 

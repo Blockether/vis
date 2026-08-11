@@ -333,7 +333,8 @@
         "\n"
         (cons
           (str
-            "Harness SKILLS available — call skill(\"name\") to load the FULL instructions on demand"
+            "Harness SKILLS available — `doc(\"name\")` reads a skill, `await skill(\"name\")` activates it"
+            " (session effect: sets its project root, cwd and resources)"
             " (a `[project]` tag names the nested project that OWNS a skill — work under that"
             " directory when you use it):")
           (for [s ss]

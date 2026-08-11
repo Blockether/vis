@@ -106,7 +106,7 @@
 (defn capability-matrix
   "AUTO capability matrix for the system prompt — the active packs' facade verbs
    + a CERTAIN statement of when each is the tool. nil when no pack is active.
-     LANGUAGE TOOLS (active packs; call via the facade, language first):
+     LANGUAGE TOOLS (active packs; language first):
        clojure : format_code · run_tests · repl_eval · repl
        python  : repl_eval · repl"
   [env]
