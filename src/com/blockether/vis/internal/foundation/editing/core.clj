@@ -454,6 +454,14 @@
                      :path (paths/abbreviate-home (.getPath f))})))
   f)
 
+(defn- canonical-path
+  "Canonical `java.nio.file.Path` for `x` — absolute, normalized, symlinks resolved.
+   The address a listing RENDERS (`rel-path`) and the ownership question it ASKS
+   (`workspace-dir?`) have to agree on every byte, so both read a path through this
+   one function."
+  ^java.nio.file.Path [x]
+  (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path (str x))))))))
+
 (defn- rel-path
   [^File f]
   ;; Reverse of safe-path's remap so the address the model SEES round-trips:
@@ -461,12 +469,8 @@
   ;; CLONE renders as its REAL (trunk) absolute path — never the ~/.vis/drafts
   ;; clone path. Anything else falls back to the absolute path.
   (let
-    [canon
-     (fn ^java.nio.file.Path [x]
-       (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path (str x))))))))
-
-     ^java.nio.file.Path cwd-canon
-     (canon (workspace/cwd))
+    [^java.nio.file.Path cwd-canon
+     (canonical-path (workspace/cwd))
 
      ^java.nio.file.Path p
      (.toPath (.getCanonicalFile f))]
@@ -476,16 +480,38 @@
           :else (or (some (fn [{:keys [trunk clone]}]
                             (let
                               [^java.nio.file.Path cp
-                               (canon clone)
+                               (canonical-path clone)
 
                                ^java.nio.file.Path tp
-                               (canon trunk)]
+                               (canonical-path trunk)]
 
                               (when (.startsWith p cp)
                                 (paths/unixify (.resolve tp (.relativize cp p))))))
                           (workspace/filesystem-root-mappings))
                     (str p)))))
 
+(defn- workspace-dir?
+  "True when `f` lies INSIDE this session's workspace: under the primary cwd, or under
+   either side of a bound context-clone mapping — a draft clone IS the workspace,
+   mounted elsewhere.
+
+   The RENDERED address cannot answer this, which is why the question is asked of the
+   FILE. `rel-path` deliberately renders a clone as its TRUNK absolute path, so the
+   workspace itself reads exactly like `/etc` does. Only a directory that is ours has a
+   warm index to ride and a `vis.yml` overlay to rebase."
+  [^File f]
+  (let
+    [^java.nio.file.Path p
+     (canonical-path f)
+
+     under?
+     (fn [x]
+       (.startsWith p ^java.nio.file.Path (canonical-path x)))]
+
+    (boolean (or (under? (workspace/cwd))
+                 (some (fn [{:keys [trunk clone]}]
+                         (or (under? clone) (under? trunk)))
+                       (workspace/filesystem-root-mappings))))))
 
 (defn- nearest-existing-dir
   "Climb `f` to its nearest ancestor that EXISTS as a directory AND still lies
@@ -1443,13 +1469,15 @@
             (update :exclude-globs rebase)
             (update :unignore-globs rebase))))
 
-(defn- outside-workspace?
-  "True when `rel-path` answered an ABSOLUTE path for the listed directory — the one
-   signal that it lies outside the workspace and outside every context-clone
-   mapping. Such a directory has no warm index to ride and no `vis.yml` overlay to
-   rebase, so nothing there is worth an index: `ls` LISTS it."
+(defn- workspace-relative-address?
+  "True when `rel-path` rendered a RELATIVE address for the listed directory, so
+   `target-rel` is a usable PREFIX into the workspace index's own records.
+
+   This is a question about the ADDRESS, never about ownership: a context clone renders
+   as its trunk ABSOLUTE path and so answers false while still being the workspace —
+   `workspace-dir?` is what decides whether a directory may be indexed at all."
   [target-rel]
-  (str/starts-with? (str target-rel) "/"))
+  (not (str/starts-with? (str target-rel) "/")))
 
 (defn- warm-ls-lease
   "The pooled WORKSPACE-root index — the one `grep` and `find` already keep hot — but
@@ -1481,7 +1509,7 @@
    coverage, so an empty-but-indexed directory answers here instead of paying for a
    fallback index."
   [^File root target-rel ^long levels is-hidden?]
-  (when (and (seq target-rel) (not (outside-workspace? target-rel)))
+  (when (and (seq target-rel) (workspace-relative-address? target-rel))
     (when-let [lease (warm-ls-lease)]
       (let
         [prefix (str target-rel "/")
@@ -1533,11 +1561,13 @@
    this code only rebuilds the documented tree shape. Four fff sources, and which
    one answers is decided FIRST by whether the directory is even ours:
 
-   1. a directory OUTSIDE the workspace is LISTED, never indexed — naming a few
-      entries must not cost a recursive walk, a live filesystem watcher and a
-      bigram CONTENT index over whatever lives there. `~/.vis/models` is ~790 MB
-      of model weights, and indexing it to answer `ls` is what turned that
-      listing into minutes and then a `fff-scan-timeout`;
+   1. a directory that is not OURS — under neither the primary cwd nor any bound
+      context-clone root, which only the FILE can say (`workspace-dir?`) — is
+      LISTED, never indexed. Naming a few entries must not cost a recursive walk,
+      a live filesystem watcher and a bigram CONTENT index over whatever lives
+      there: `~/.vis/models` is ~790 MB of model weights, and indexing it to
+      answer `ls` is what turned that listing into minutes and then a
+      `fff-scan-timeout`;
    2. inside the workspace, the WARM workspace index `grep`/`find` already
       maintain, prefix-filtered — no new index and no new watcher;
    3. otherwise an index rooted at the directory itself, which is also what keeps
@@ -1568,7 +1598,7 @@
      (boolean is_hidden)
 
      items
-     (if (outside-workspace? target-rel)
+     (if-not (workspace-dir? root)
        (fff-ls-listing-items root levels is-hidden?)
        (or (fff-ls-workspace-items root target-rel levels is-hidden?)
            (try (fff-ls-target-items root target-rel levels is-hidden?)

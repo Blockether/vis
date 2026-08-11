@@ -6186,7 +6186,39 @@
         ;; same listing whether or not it was set
         (let [root (outside!)]
           (expect (contains? (names (list-dir root {:depth 1 :is_hidden true})) ".hidden"))
-          (expect (not (contains? (names (list-dir root {:depth 1})) ".hidden")))))))
+          (expect (not (contains? (names (list-dir root {:depth 1})) ".hidden")))))
+    ;; Regression: `ls` decided ownership from the RENDERED address, and `rel-path`
+    ;; renders a context clone as its TRUNK absolute path — so the workspace itself,
+    ;; mounted as a draft clone, read exactly like `/etc` and every listing inside it
+    ;; silently lost the index path along with the `vis.yml` overlay it applies.
+    (it "treats a context clone as the workspace it is, not as an outside tree"
+        (let
+          [clone
+           (fs/path (System/getProperty "java.io.tmpdir") "vis-ls-clone-test")
+
+           _
+           (do (fs/delete-tree clone)
+               (fs/create-dirs (fs/path clone "sub"))
+               (spit (fs/file (fs/path clone "a.txt")) "a"))
+
+           root
+           (.getCanonicalFile (fs/file clone))
+
+           indexed
+           (atom 0)]
+
+          (with-redefs
+            [workspace/filesystem-root-mappings
+             (fn []
+               [{:trunk "/somewhere/else/trunk" :clone (.getPath root)}])
+
+             editing/fff-ls-target-items
+             (fn [_ _ ^long _ _]
+               (swap! indexed inc)
+               [{:relative-path "a.txt" :directory? false :size 1}])]
+
+            (expect (= #{"a.txt"} (names (list-dir root {:depth 1}))))
+            (expect (= 1 @indexed)))))))
 
 (defdescribe
   grep-large-file-and-deadline-test
