@@ -55,18 +55,27 @@
 (defn- ch "A printable character event." [c] {:kind :char :char c})
 
 (defn- virtual-screen
-  "A started 80x30 virtual screen plus its text graphics."
-  []
-  (Thread/interrupted)
-  (let
-    [terminal
-     (DefaultVirtualTerminal. (TerminalSize. 80 30))
+  "A started virtual screen plus its text graphics — 80 columns, and 30 rows
+   unless a taller probe is asked for."
+  ([] (virtual-screen 30))
+  ([rows]
+   (Thread/interrupted)
+   (let
+     [terminal
+      (DefaultVirtualTerminal. (TerminalSize. 80 (int rows)))
 
-     screen
-     (TerminalScreen. terminal)]
+      screen
+      (TerminalScreen. terminal)]
 
-    (.startScreen screen)
-    {:screen screen :g (.newTextGraphics screen)}))
+     (.startScreen screen)
+     {:screen screen :g (.newTextGraphics screen)})))
+
+(def ^:private probe-rows
+  "Rows the VOCABULARY probes paint into. These tests ask what a row is MADE of,
+   never how many of them fit, so the probe screen is tall enough to hold the
+   whole sample form — the band's capacity and its scrolling are pinned by
+   `band-test` instead."
+  32)
 
 (defn- band-paper
   "The paper an in-session BAND lays its rows on — the terminal's own, with no
@@ -472,16 +481,16 @@
   [form needle]
   (let
     [{:keys [screen g]}
-     (virtual-screen)
+     (virtual-screen probe-rows)
 
      _
-     (hi/paint! g 80 30 form)]
+     (hi/paint! g 80 probe-rows form)]
 
     (into []
           (keep (fn [y]
                   (let [row (str/trim (str/replace (screen-row screen y) "│" " "))]
                     (when (str/includes? row needle) row))))
-          (range 30))))
+          (range probe-rows))))
 
 (defdescribe
   canonical-presentation-test
@@ -613,18 +622,18 @@
   [form needle]
   (let
     [{:keys [screen g]}
-     (virtual-screen)
+     (virtual-screen probe-rows)
 
      ^TerminalScreen screen
      screen
 
      _
-     (hi/paint! g 80 30 form)
+     (hi/paint! g 80 probe-rows form)
 
      y
      (first (keep (fn [y]
                     (when (str/includes? (screen-row screen y) needle) y))
-                  (range 30)))]
+                  (range probe-rows)))]
 
     (when y
       {:text (screen-row screen y)
@@ -852,6 +861,56 @@
                           (range (inc (long top)) bottom)))
           (expect (not (str/includes? text "├")))
           (expect (not (str/includes? text "┤"))))))
+  ;; Regression: the band framed the form with no margin of its own — a focused
+  ;; row's `▎` ring was painted in the column against the rail, and the pinned
+  ;; caps grew straight out of whatever field the body ended on.
+  (it
+    "insets the body off both rails and keeps a blank row above the pinned caps"
+    (let
+      [{:keys [screen g]}
+       (virtual-screen)
+
+       _
+       (hi/paint! g 80 30 (assoc (hi/init-form (request)) :focus 2))
+
+       {:keys [left inner-w]}
+       (tr/band-region 80 30 1)
+
+       left
+       (long left)
+
+       right
+       (+ left (long inner-w) 1)
+
+       rows
+       (mapv #(screen-row screen %) (range 30))
+
+       at
+       (fn [pred]
+         (long (first (keep-indexed (fn [y r]
+                                      (when (pred r) y))
+                                    rows))))
+
+       inner
+       (fn [y]
+         (str/join (map #(char-at screen % y) (range (inc left) right))))
+
+       ring-y
+       (at #(str/includes? % "▎"))
+
+       caps-y
+       (at #(str/includes? % " Submit "))]
+
+      ;; The rail, then a clear column, and only then the ring a focused row
+      ;; wears — the ring is the LAST of the lead, never painted on the box.
+      (expect (= "│" (char-at screen left ring-y)))
+      (expect (= " " (char-at screen (inc left) ring-y)))
+      (expect (= "▎" (char-at screen (+ left 2) ring-y)))
+      ;; The same lead answers on the right: no row's surface reaches the rail.
+      (expect (every? #(= " " (char-at screen (dec right) %)) (range ring-y caps-y)))
+      ;; The caps stand off the body on a row of the band's own paper.
+      (expect (str/blank? (inner (dec caps-y))))
+      (expect (not (str/blank? (inner caps-y))))))
   (it "anchors the band on the prompt's closing rule at any height"
       ;; PURE: the band sits ABOVE the prompt, so its hint row is
       ;; `rows - prompt-h - 3` — never on top of the input box.

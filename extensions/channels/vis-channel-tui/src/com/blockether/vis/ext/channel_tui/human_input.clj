@@ -1274,17 +1274,21 @@
    `prompt-h` is the live height of that input box (`screen`'s `input-box-h`),
    which is what decides where the band's floor is.
 
-   The body starts one column INSIDE the rails, because the accent ring `▎` a
-   focused row wears lives in the column before its text: given the frame's own
-   edge column it would be painted over the rail, and the rail over it.
+   The body is inset by `transient/pane-lead`, the very lead the hydra gives its
+   own panes: the accent ring `▎` a focused row wears takes the LAST of those
+   columns and the text starts after it, so a focused row is fenced off the rail
+   by a clear column instead of painting its ring against it — and the form's
+   text column then lands exactly where a transient's items do.
 
    The scrollbar rides the RIGHT RAIL — its track IS the rail, so the thumb marks
    the position on the box the band already has. A scrollbar in a column of its
    own stood beside the rail as a second bar and cost the prose a column, which
    the form then had to be wrapped twice to pay for.
 
-   The action bar is PINNED: only the fields scroll under it, so the `Submit`
-   and `Cancel` caps stay on screen for a form of any length."
+   The action bar is PINNED under a blank row of its own: only the fields scroll
+   under it, so the `Submit` and `Cancel` caps stay on screen for a form of any
+   length, and the row of air above them keeps the caps from growing out of
+   whatever field the scroll happens to end on."
   ([g cols rows form] (paint! g cols rows form 1 tr/prompt-rows))
   ([g cols rows form content-top] (paint! g cols rows form content-top tr/prompt-rows))
   ;; NOTE: no primitive hints on these arities — Clojure caps primitive-taking fns
@@ -1301,19 +1305,22 @@
        (let
          [left (long left)
           inner-w (long inner-w)
-          ;; The rails own the two edge columns, so the body — its ring gutter
-          ;; included — starts one column inside them and is one narrower.
-          body-left (inc left)
-          body-w (dec inner-w)
+          ;; The rails own the two edge columns, and the body takes the hydra's
+          ;; own pane lead inside them — the ring gutter is the last of those
+          ;; columns, so nothing the form paints ever touches a rail.
+          body-left (+ left (long tr/pane-lead))
+          body-w (- inner-w (long tr/pane-lead) 1)
           baz (hint form)
           actions (action-bar form)
+          ;; The pinned bar costs its own row plus the blank one above it.
+          actions-h (if actions 2 0)
           plan
           ;; Sizing pass: how many rows the form wants decides where the band's
-          ;; top rule lands. The pinned action bar asks for one row of its own,
-          ;; and the fenced hint bar asks for the rule above it.
+          ;; top rule lands. The pinned action bar asks for its two rows, and the
+          ;; fenced hint bar asks for the rule above it.
           (form-rows form (prose-width body-w))
           {:keys [sep-row body-top foot-rule-row foot-row visible top-limit]}
-          (tr/band-geometry region (+ (count plan) (if actions 1 0) 1) false)
+          (tr/band-geometry region (+ (count plan) (long actions-h) 1) false)
           ;; The band CLOSES below its footer, exactly like a sideless transient:
           ;; the hint bar takes the row the closing rule used to own and the rule
           ;; drops onto the host's hint row, so the footer is inside the box.
@@ -1321,7 +1328,7 @@
           rule-at (long foot-row)
           hint-rule-at (dec hint-at)
           visible (max 1 (dec (long visible)))
-          body-visible (max 0 (- visible (if actions 1 0)))
+          body-visible (max 0 (- visible (long actions-h)))
           total (count plan)
           is-overflowing (> total body-visible)
           start (long (if (= :action (:kind (focused-stop form)))
@@ -1348,7 +1355,8 @@
            (doseq [i (range (count shown) body-visible)]
              (paint-row! g body-left (+ (long body-top) (long i)) body-w {:kind :blank}))
            (when actions
-             (paint-row! g body-left (+ (long body-top) (long body-visible)) body-w actions))
+             (paint-row! g body-left (+ (long body-top) (long body-visible)) body-w {:kind :blank})
+             (paint-row! g body-left (+ (long body-top) (long body-visible) 1) body-w actions))
            (dialogs/draw-hint-bar! g left hint-at inner-w baz)
            (tr/draw-band-border! g region sep-row rule-at top-limit)
            ;; After the border, because the thumb rides ON the right rail.
