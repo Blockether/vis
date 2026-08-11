@@ -30,6 +30,7 @@
             [com.blockether.vis.internal.provider-error :as provider-error]
             [com.blockether.vis.internal.resources :as resources]
             [com.blockether.vis.internal.shell-log :as shell-log]
+            [com.blockether.vis.internal.strutil :as strutil]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel]))
 
@@ -997,20 +998,6 @@
         (and hint (not (str/includes? msg (str hint))))
         (str "\nhint: " hint)))))
 
-(defn- normalize-thinking-text
-  "Canonical thinking text for every gateway surface. Reasoning streams can
-  arrive with paragraph-style blank-line runs and whitespace-padded blank rows;
-  normalize that once at the gateway boundary so SSE, poll/replay, and session
-  consumers all see the same compact trace."
-  [text]
-  (when-let
-    [s (some-> text
-               str)]
-    (not-empty (-> s
-                   (str/replace #"[ \t\r\f\v]+\r?\n" "\n")
-                   (str/replace #"(?:\r?\n){2,}" "\n")
-                   str/trim))))
-
 (defn iteration-attachments
   "Ordered OUTBOUND artifacts (matplotlib figures / produced images) a tool call
    persisted under iteration `iid` as METADATA ONLY — the
@@ -1268,7 +1255,7 @@
          ;; The iteration's complete reasoning + complete assistant prose ride
          ;; the boundary event too — the canonical, PERSISTED final text.
          :iteration-final
-         (cond-> {:done (boolean done?) :thinking (normalize-thinking-text thinking)}
+         (cond-> {:done (boolean done?) :thinking (strutil/normalize-thinking-text thinking)}
            (some-> assistant-prose
                    str
                    str/trim
@@ -1284,7 +1271,7 @@
          ;; `:vis/provider-error-data`).
          (cond->
            {:error (when (some? error) (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
-            :thinking (normalize-thinking-text thinking)}
+            :thinking (strutil/normalize-thinking-text thinking)}
            (map? error)
            (assoc :error-data (select-keys error [:type :message :status :cause-class]))
 
@@ -1755,7 +1742,7 @@
   (cond->
     (-> iteration
         (dissoc :llm-assistant-message)
-        (update :thinking normalize-thinking-text))
+        (update :thinking strutil/normalize-thinking-text))
     (seq (:forms iteration))
     (update :forms #(mapv form/with-display-code %))))
 
@@ -2744,21 +2731,36 @@
                   streaming?
                   (assoc :stream-block-id
                     block-id :stream-delta
-                    delta))]
+                    delta))
 
-               (when streaming?
-                 (when (and (not= phase :tool-preview) (not (contains? @started-blocks block-id)))
-                   (vswap! started-blocks conj block-id)
-                   (vswap! open-blocks conj block-id)
-                   (append-event! sid
-                                  "content.block.started"
-                                  {:turn_id tid
-                                   :block (if (= phase :reasoning)
-                                            (content/reasoning block-id "" "private")
-                                            (content/prose block-id ""))}))
-                 (vswap! last-delta-ms assoc stream-key {:ms now :len (count cumulative)}))
-               (let [[type store? payload] (chunk->event chunk)]
-                 (append-event! sid type (assoc payload :turn_id tid) {:store? store?}))
+                ;; A streaming phase that has said NOTHING yet is not content.
+                ;; Opening its block on the first empty tick is what filled the
+                ;; journals with reasoning noise: 1009 of 1227 reasoning blocks
+                ;; were `started -> "" delta -> completed` inside ~200ms, one
+                ;; per iteration, whether or not the model thought at all. Stay
+                ;; silent until the provider actually says something — the first
+                ;; non-blank tick opens the block AND carries its text, so no
+                ;; consumer ever sees a delta for a block it was not told about.
+                nothing-said?
+                (and streaming?
+                     (not= phase :tool-preview)
+                     (not (contains? @started-blocks block-id))
+                     (str/blank? cumulative))]
+
+               (when-not nothing-said?
+                 (when streaming?
+                   (when (and (not= phase :tool-preview) (not (contains? @started-blocks block-id)))
+                     (vswap! started-blocks conj block-id)
+                     (vswap! open-blocks conj block-id)
+                     (append-event! sid
+                                    "content.block.started"
+                                    {:turn_id tid
+                                     :block (if (= phase :reasoning)
+                                              (content/reasoning block-id "" "private")
+                                              (content/prose block-id ""))}))
+                   (vswap! last-delta-ms assoc stream-key {:ms now :len (count cumulative)}))
+                 (let [[type store? payload] (chunk->event chunk)]
+                   (append-event! sid type (assoc payload :turn_id tid) {:store? store?})))
                ;; The iteration is over — its live blocks are settled text now.
                (when (= phase :iteration-final) (close-iteration-blocks! (:iteration chunk))))))
          (catch Throwable t
@@ -2847,19 +2849,19 @@
                                 ;; result :error, which on a validation-throw
                                 ;; path is the misleading canonical-content
                                 ;; string rather than the actual cause.
-                                (when (some? terminal-error)
-                                  (some-> (provider-error/provider-error-title terminal-error)
-                                          str/trim
-                                          not-empty))
-                                (some-> (:error result)
-                                        str
+                              (when (some? terminal-error)
+                                (some-> (provider-error/provider-error-title terminal-error)
                                         str/trim
-                                        not-empty)
-                                (some-> (:message result)
-                                        str
-                                        str/trim
-                                        not-empty)
-                                "The turn failed before producing any output."))
+                                        not-empty))
+                              (some-> (:error result)
+                                      str
+                                      str/trim
+                                      not-empty)
+                              (some-> (:message result)
+                                      str
+                                      str/trim
+                                      not-empty)
+                              "The turn failed before producing any output."))
 
          patch
          {:status status

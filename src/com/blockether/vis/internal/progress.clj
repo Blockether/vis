@@ -82,7 +82,8 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.form :as form]
-            [com.blockether.vis.internal.iteration :as iteration]))
+            [com.blockether.vis.internal.iteration :as iteration]
+            [com.blockether.vis.internal.strutil :as strutil]))
 
 (defn- empty-iteration-entry
   [iteration]
@@ -156,9 +157,13 @@
 
 (defn- form-result-detail [chunk] (tool-result-detail (:result chunk)))
 
-(defn- normalize-thinking-text
-  [thinking]
-  (some-> thinking
+(defn- trimmed-text
+  "Plain trim, for streamed provider PROSE. Thinking goes through
+   `strutil/normalize-thinking-text` instead: reasoning also carries blank-line
+   runs and the provider's trailing elision marker, neither of which prose may
+   lose."
+  [text]
+  (some-> text
           str
           str/trim))
 
@@ -367,8 +372,8 @@
 
     :reasoning
     (let
-      [next-thinking (or (normalize-thinking-text (:thinking chunk))
-                         (normalize-thinking-text (:thinking entry)))]
+      [next-thinking (or (strutil/normalize-thinking-text (:thinking chunk))
+                         (strutil/normalize-thinking-text (:thinking entry)))]
       (-> entry
           (assoc :thinking next-thinking
                  :activity nil)
@@ -379,7 +384,7 @@
     ;; `:content-stream` so the live bubble can render it below the
     ;; reasoning text. Cleared by :response-parse :done and
     ;; :iteration-final once the parsed block takes over.
-    (let [next-content (or (normalize-thinking-text (:content chunk)) (:content-stream entry))]
+    (let [next-content (or (trimmed-text (:content chunk)) (:content-stream entry))]
       (-> entry
           (assoc :content-stream next-content
                  :activity nil)
@@ -460,8 +465,8 @@
 
        base
        (assoc entry
-         :thinking (or (normalize-thinking-text (:thinking chunk))
-                       (normalize-thinking-text (:thinking entry)))
+         :thinking (or (strutil/normalize-thinking-text (:thinking chunk))
+                       (strutil/normalize-thinking-text (:thinking entry)))
          :assistant-prose (or (some-> (:assistant-prose chunk)
                                       str
                                       str/trim
@@ -500,8 +505,8 @@
 
     :iteration-error
     (assoc entry
-      :thinking (or (normalize-thinking-text (:thinking chunk))
-                    (normalize-thinking-text (:thinking entry)))
+      :thinking (or (strutil/normalize-thinking-text (:thinking chunk))
+                    (strutil/normalize-thinking-text (:thinking entry)))
       :activity nil
       :error (:error chunk)
       :done? true)

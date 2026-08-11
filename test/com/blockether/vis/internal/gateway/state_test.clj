@@ -3682,3 +3682,72 @@
         (let [row (state/soul "s-quiet")]
           (expect (false? (get row "live")))
           (expect (= "idle" (get row "status")))))))
+
+
+(defdescribe
+  silent-reasoning-opens-no-block-test
+  "A reasoning block exists only when the provider actually said something.
+
+   Vis used to open one per iteration on the first stream tick, empty or not:
+   1009 of 1227 reasoning blocks in the session journals were
+   `started -> \"\" delta -> completed` inside ~200ms — pure noise every consumer
+   had to paint around. The first NON-BLANK tick opens the block and carries its
+   text, so no consumer ever sees a delta for a block it was not told about."
+  (it
+    "opens no block for an iteration that only ticked empty reasoning"
+    (let
+      [sid
+       (str (random-uuid))
+
+       tid
+       (str (random-uuid))]
+
+      (swap! @#'state/registry assoc
+        sid
+        {:next-seq 0
+         :events []
+         :subscribers {}
+         :turns {tid {:turn_id tid :status "running"}}
+         :turn-order [tid]
+         :current-turn tid})
+      (with-redefs
+        [lp/send!
+         (fn [_ _ opts]
+           (let [on-chunk (get-in opts [:hooks :on-chunk])]
+             ;; Iteration 1 thought nothing: empty ticks only.
+             (on-chunk {:phase :reasoning :iteration 1 :thinking ""})
+             (on-chunk {:phase :reasoning :iteration 1 :thinking "" :done? true})
+             (on-chunk {:phase :iteration-final :iteration 1 :thinking "" :done? false})
+             ;; Iteration 2 starts silent, then speaks.
+             (on-chunk {:phase :reasoning :iteration 2 :thinking ""})
+             (on-chunk {:phase :reasoning :iteration 2 :thinking "beta thought."})
+             (on-chunk
+               {:phase :iteration-final :iteration 2 :thinking "beta thought." :done? true}))
+           {:status :ok :answer nil})]
+        (#'state/run-turn! sid tid "hi" {}))
+      (let
+        [events
+         (:events (get @@#'state/registry sid))
+
+         of-type
+         (fn [type]
+           (filterv #(= type (get % "type")) events))
+
+         started
+         (of-type "content.block.started")
+
+         deltas
+         (of-type "content.block.delta")]
+
+        ;; Iteration 1 never became a block, and neither did iteration 2's
+        ;; silent lead-in.
+        (expect (= 1 (count started)))
+        (expect (str/ends-with? (str (get-in (first started) ["block" "id"])) ":reasoning:2"))
+        ;; Every delta belongs to a block the consumer was told about, and none
+        ;; of them is empty.
+        (expect (seq deltas))
+        (expect (= #{(get-in (first started) ["block" "id"])}
+                   (set (map #(get % "block_id") deltas))))
+        (expect (every? #(seq (str (get % "text"))) deltas))
+        ;; …and the block that DID open still closes exactly once.
+        (expect (= (count started) (count (of-type "content.block.completed"))))))))

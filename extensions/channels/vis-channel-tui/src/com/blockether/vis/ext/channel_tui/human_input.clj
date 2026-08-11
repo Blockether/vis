@@ -1280,10 +1280,13 @@
    by a clear column instead of painting its ring against it — and the form's
    text column then lands exactly where a transient's items do.
 
-   The scrollbar rides the RIGHT RAIL — its track IS the rail, so the thumb marks
-   the position on the box the band already has. A scrollbar in a column of its
-   own stood beside the rail as a second bar and cost the prose a column, which
-   the form then had to be wrapped twice to pay for.
+   The scrollbar sits in the LANE every other scrollable dialog uses — the last
+   column INSIDE the right rail (`left + inner-w`), painted by the shared
+   `scrollbar/draw!`. That lane is the clear column the body's right lead already
+   reserves, so the bar costs the prose nothing and needs no second wrap pass. A
+   thumb painted ON the rail turned the band's own border into a control: the box
+   gained a moving glyph no other dialog's border has, and there was no gutter
+   between the frame and the position marker.
 
    The action bar is PINNED under a blank row of its own: only the fields scroll
    under it, so the `Submit` and `Cancel` caps stay on screen for a form of any
@@ -1360,16 +1363,17 @@
              (paint-row! g body-left (+ (long body-top) (long body-visible)) body-w {:kind :blank})
              (paint-row! g body-left (+ (long body-top) (long body-visible) 1) body-w actions))
            (dialogs/draw-hint-bar! g left hint-at inner-w baz)
-           (tr/draw-band-border! g region sep-row rule-at top-limit)
-           ;; After the border, because the thumb rides ON the right rail.
+           ;; The gutter lane every scrollable dialog draws its bar in: the last
+           ;; column inside the right rail, which the body's own lead keeps clear.
            (when is-overflowing
              (scrollbar/draw! g
-                              {:col (+ left inner-w 1)
+                              {:col (+ left inner-w)
                                :top body-top
                                :track-h body-visible
                                :total-h total
                                :inner-h body-visible
                                :scroll start
                                :track-fg t/border-fg}))
+           (tr/draw-band-border! g region sep-row rule-at top-limit)
            (p/clear-styles! g)
            cursor))))))

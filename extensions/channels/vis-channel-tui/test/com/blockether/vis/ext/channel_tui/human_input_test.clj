@@ -907,11 +907,47 @@
       (expect (= "│" (char-at screen left ring-y)))
       (expect (= " " (char-at screen (inc left) ring-y)))
       (expect (= "▎" (char-at screen (+ left 2) ring-y)))
-      ;; The same lead answers on the right: no row's surface reaches the rail.
-      (expect (every? #(= " " (char-at screen (dec right) %)) (range ring-y caps-y)))
+      ;; The same lead answers on the right: the column against the rail is the
+      ;; scrollbar's own gutter, so it holds the shared bar or nothing at all —
+      ;; never a row's surface.
+      (expect (every? #(contains? #{" " "│" "█"} (char-at screen (dec right) %))
+                      (range ring-y caps-y)))
       ;; The caps stand off the body on a row of the band's own paper.
       (expect (str/blank? (inner (dec caps-y))))
       (expect (not (str/blank? (inner caps-y))))))
+  ;; Regression: the scrollbar's thumb was painted ON the band's right rail, so
+  ;; the border itself carried a moving glyph and the bar had no gutter of its
+  ;; own — every other scrollable dialog draws it one column INSIDE the frame.
+  (it "draws the scrollbar in the gutter lane inside the right rail, never on it"
+      (let
+        [{:keys [screen g]}
+         (virtual-screen)
+
+         _
+         (hi/paint! g 80 16 (assoc (hi/init-form (request)) :focus 7))
+
+         {:keys [left inner-w]}
+         (tr/band-region 80 16 1)
+
+         lane
+         (+ (long left) (long inner-w))
+
+         rail
+         (inc (long lane))
+
+         ys
+         (range 16)
+
+         thumb-y
+         (long (first (filter #(= "█" (char-at screen lane %)) ys)))]
+
+        ;; The thumb rides in the lane, one column inside the frame …
+        (expect (= "█" (char-at screen lane thumb-y)))
+        ;; … the rail beside it is plain border on that very row …
+        (expect (= "│" (char-at screen rail thumb-y)))
+        ;; … and neither rail ever wears a thumb of its own.
+        (expect (every? #(not= "█" (char-at screen rail %)) ys))
+        (expect (every? #(not= "█" (char-at screen (long left) %)) ys))))
   ;; Regression: the band's box hung one column OUTSIDE the prompt's rules on
   ;; each side — the rails sat in the terminal's own margin, so the form read as
   ;; nailed to the screen edge instead of standing on the prompt under it.

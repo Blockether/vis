@@ -48,3 +48,33 @@
                  (expect (= "```\n\n```" (su/fenced nil)))
                  (expect (= "```\n42\n```" (su/fenced 42)))
                  (expect (= (su/fenced "x") (su/fenced "x" nil)))))
+
+
+;; Regression: Anthropic's summarized extended thinking ends every block with a
+;; `thinking_delta` whose whole payload is `…`, so a two-word summary was
+;; persisted and painted as `I need…` — reading exactly like Vis had truncated
+;; the thought mid-word.
+(defdescribe strip-elision-marker-test
+             (it "drops the provider's trailing elision marker"
+                 (expect (= "I need" (su/strip-elision-marker "I need…")))
+                 (expect (= "I need" (su/strip-elision-marker "I need …")))
+                 (expect (= "I need" (su/strip-elision-marker "I need…  ")))
+                 (expect (= "" (su/strip-elision-marker "…"))))
+             (it "leaves text the model actually wrote alone"
+                 (expect (= "wait… then go" (su/strip-elision-marker "wait… then go")))
+                 (expect (= "I need..." (su/strip-elision-marker "I need...")))
+                 (expect (= "I need" (su/strip-elision-marker "I need")))
+                 (expect (nil? (su/strip-elision-marker nil)))))
+
+(defdescribe normalize-thinking-text-test
+             (it "collapses blank-line runs and padded blank rows"
+                 (expect (= "alpha\n beta\n gamma"
+                            (su/normalize-thinking-text " alpha\n\n\n beta  \n\t\n gamma "))))
+             (it "strips the elision marker the stream ends with"
+                 (expect (= "I need" (su/normalize-thinking-text "I need…")))
+                 (expect (= "first\nsecond" (su/normalize-thinking-text "first\n\nsecond …"))))
+             (it "answers nil for nothing, so a blank tick never wipes the screen"
+                 (expect (nil? (su/normalize-thinking-text nil)))
+                 (expect (nil? (su/normalize-thinking-text "")))
+                 (expect (nil? (su/normalize-thinking-text "   \n\n ")))
+                 (expect (nil? (su/normalize-thinking-text "…")))))

@@ -4390,53 +4390,58 @@
        reset-stream-state! (fn []
                              (vreset! reasoning-len-volatile 0)
                              (vreset! content-len-volatile 0))
-       streaming-fn (when on-chunk
-                      (fn [{:keys [reasoning content done?] :as chunk}]
-                        (cond (:event/type chunk) (on-chunk {:phase :provider-fallback
-                                                             :iteration iteration-position
-                                                             :event chunk})
-                              :else (do (when (or (some? reasoning) done?)
-                                          (let
-                                            [thinking (some-> reasoning
-                                                              str)
-                                             prev-len (long @reasoning-len-volatile)
-                                             cur-len (long (count (or thinking "")))
-                                             delta (cond (nil? thinking) nil
-                                                         (< cur-len prev-len) thinking
-                                                         (= cur-len prev-len) ""
-                                                         :else (subs thinking prev-len))]
+       streaming-fn
+       (when on-chunk
+         (fn [{:keys [reasoning content done?] :as chunk}]
+           (cond (:event/type chunk)
+                 (on-chunk {:phase :provider-fallback :iteration iteration-position :event chunk})
+                 :else (do (when (or (some? reasoning) done?)
+                             (let
+                               [;; The provider's trailing `…` is the summary-elision
+                                ;; MARKER, not text the model wrote; strip it at the
+                                ;; producer so the live stream, the CLI trace rail and
+                                ;; every gateway consumer agree on one clean string.
+                                thinking (some-> reasoning
+                                                 str
+                                                 strutil/strip-elision-marker)
+                                prev-len (long @reasoning-len-volatile)
+                                cur-len (long (count (or thinking "")))
+                                delta (cond (nil? thinking) nil
+                                            (< cur-len prev-len) thinking
+                                            (= cur-len prev-len) ""
+                                            :else (subs thinking prev-len))]
 
-                                            (vreset! reasoning-len-volatile cur-len)
-                                            (on-chunk {:phase :reasoning
-                                                       :iteration iteration-position
-                                                       :thinking thinking
-                                                       :delta delta
-                                                       :done? (boolean done?)})))
-                                        (when (some? content)
-                                          ;; Stream provider content (the answer
-                                          ;; markdown) so the bubble surfaces live
-                                          ;; progress between reasoning and parsed
-                                          ;; forms. Same delta math as
-                                          ;; reasoning; consumers redraw or append.
-                                          (let
-                                            [content-s (some-> content
-                                                               str)
-                                             prev-len (long @content-len-volatile)
-                                             cur-len (long (count (or content-s "")))
-                                             delta (cond (nil? content-s) nil
-                                                         (< cur-len prev-len) content-s
-                                                         (= cur-len prev-len) ""
-                                                         :else (subs content-s prev-len))]
+                               (vreset! reasoning-len-volatile cur-len)
+                               (on-chunk {:phase :reasoning
+                                          :iteration iteration-position
+                                          :thinking thinking
+                                          :delta delta
+                                          :done? (boolean done?)})))
+                           (when (some? content)
+                             ;; Stream provider content (the answer
+                             ;; markdown) so the bubble surfaces live
+                             ;; progress between reasoning and parsed
+                             ;; forms. Same delta math as
+                             ;; reasoning; consumers redraw or append.
+                             (let
+                               [content-s (some-> content
+                                                  str)
+                                prev-len (long @content-len-volatile)
+                                cur-len (long (count (or content-s "")))
+                                delta (cond (nil? content-s) nil
+                                            (< cur-len prev-len) content-s
+                                            (= cur-len prev-len) ""
+                                            :else (subs content-s prev-len))]
 
-                                            (vreset! content-len-volatile cur-len)
-                                            (on-chunk {:phase :content
-                                                       :iteration iteration-position
-                                                       :content content-s
-                                                       :delta delta
-                                                       :done? (boolean done?)})))
-                                        ;; Native tool input previews are intentionally not
-                                        ;; surfaced: no teal "native_call" preview card.
-                                        nil))))
+                               (vreset! content-len-volatile cur-len)
+                               (on-chunk {:phase :content
+                                          :iteration iteration-position
+                                          :content content-s
+                                          :delta delta
+                                          :done? (boolean done?)})))
+                           ;; Native tool input previews are intentionally not
+                           ;; surfaced: no teal "native_call" preview card.
+                           nil))))
        copilot-initiator (copilot-initiator-for-iteration iteration)
        effective-llm-headers
        (not-empty (merge (copilot-llm-headers resolved-model copilot-initiator) llm-headers))
