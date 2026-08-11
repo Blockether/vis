@@ -252,15 +252,13 @@
     "engine_warnings" []}))
 
 (defn strip-ephemeral
-  "Remove transient context keys before Nippy-snapshotting. Engine bookkeeping
-   and live gateway resources must never become durable session state; the next
-   render rebuilds resources from the in-memory registry."
+  "Remove transient context keys before Nippy-snapshotting: engine bookkeeping
+   must never become durable session state."
   [ctx]
   (when ctx
     (into {}
           (remove (fn [[k _]]
-                    (or (= k "session_resources")
-                        (and (string? k) (str/starts-with? k "engine_")))))
+                    (and (string? k) (str/starts-with? k "engine_"))))
           ctx)))
 ;; =============================================================================
 ;; Iter-scope parsing + comparator
@@ -326,7 +324,7 @@
   "EXACT set of `session_*` keys the model is meant to see. Security access is
    included as an environment-derived value; engine bookkeeping remains hidden."
   ["session_id" "session_turn" "session_scope" "session_workspace" "session_access" "session_env"
-   "session_routing" "session_language_tools" "session_resources" "session_symbols"])
+   "session_routing" "session_language_tools" "session_symbols"])
 
 (defn scope-key
   "Ordered key for a scope so ranges can compare scopes: `\"t1/i2\"` or

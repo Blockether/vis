@@ -129,7 +129,7 @@
                    "NEVER paste a near-identical loop or block twice" "Define once and reuse"
                    "second occurrence factor it out and call it" "ordinary Python value"
                    "an unprinted value costs no context" "gone when the block ends"
-                   "Inspect shape before indexing" "status only when absent or stale"
+                   "Inspect shape before indexing" "nothing lists one for you"
                    "tests-only work starts with `run_tests`" "interactive work uses `repl_eval`"
                    "Keep reproduction as a suite test" "rerun after the fix"
                    "unverified until a test covers it" "BATCH inside one block"
@@ -161,6 +161,9 @@
       ;; promise one again.
       (doseq
         [surplus ["Keep managed REPLs across turns" "ntr[" "# saved:" "ntr.describe()"
+                  ;; Regression, issue #ctx-resources: live shells/REPLs left ctx entirely,
+                  ;; so no prompt may send the model to a `session["resources"]` that is gone.
+                  "session[\"resources\"]"
                   ;; The vocabulary of eighteen doors: naming any of it again re-opens
                   ;; the routing question that having ONE call exists to close.
                   "native tool" "Native tool" "JSON Schema" "vis_docs" "advertised"

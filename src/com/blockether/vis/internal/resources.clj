@@ -3,8 +3,6 @@
    long-lived thing vis spawns registers here so the agent, footer, and shutdown
    all share one live view. Resources are deliberately not persisted: their
    processes belong to the gateway and die when the gateway dies."
-  (:require [clojure.java.io :as io]
-            [clojure.string :as str])
   (:import (java.lang ProcessHandle)))
 
 ;; ---------------------------------------------------------------------------
@@ -290,119 +288,12 @@
 (defn list-resources
   "Vector of live resource DATA maps for `session`, dead ones pruned and every
    health-capable `status` refreshed first (parallel, hard-timeout probes).
-   This is what the footer renders and what `:session/resources` carries into
-   ctx — ONLY the calling session's resources."
+   This is what the footer renders and what `repl` status answers from — ONLY
+   the calling session's resources. Nothing about a resource rides in ctx."
   [session]
   (prune! session)
   (refresh-health! session)
   (mapv :data (vals (get @registry (skey session)))))
-
-(defn- repl-kind? [kind] (str/ends-with? (str/lower-case (str kind)) "repl"))
-
-(defn- model-dir
-  "Canonical workspace-relative REPL directory for model lookup. The workspace
-   root is `\".\"`; nested dirs use forward slashes; external dirs stay absolute."
-  [root dir]
-  (try (let
-         [root
-          (some-> root
-                  io/file
-                  .getCanonicalFile)
-
-          target
-          (cond (and dir (.isAbsolute (io/file (str dir)))) (.getCanonicalFile (io/file (str dir)))
-                root (.getCanonicalFile (io/file root (str (or dir ""))))
-                dir (.getCanonicalFile (io/file (str dir)))
-                :else nil)]
-
-         (cond (nil? target) "."
-               (nil? root) (.getPath target)
-               (.startsWith (.toPath target) (.toPath root))
-               (let [rel (str (.relativize (.toPath root) (.toPath target)))]
-                 (if (str/blank? rel) "." (str/replace rel java.io.File/separator "/")))
-               :else (.getPath target)))
-       (catch Throwable _
-         (or (some-> dir
-                     str)
-             "."))))
-
-(def ^:private repl-ctx-keys
-  "Model-facing REPL leaf keys, in render order. `language`/`cwd` are already the
-   PATH, `id` addresses the REPL, `status` decides reuse vs start,
-   `can_stop` is the TEARDOWN affordance — the agent has to leave nothing of its
-   own running, and a leaf that never says it is stoppable is one the agent
-   forgets to stop — and `port`/`external`/`host` say whether vis may kill it or
-   only detach. Everything else a pack records (versions, aliases, dialect, label,
-   log, tool, kind, pid, owner, created_at, nrepl session id) is one
-   `repl` status call away and changes no decision — carried in ctx it cost ~190
-   tokens PER LIVE REPL on every request."
-  ["id" "status" "can_stop" "port" "external" "host"])
-
-(def ^:private other-ctx-keys
-  "Model-facing leaf keys for non-REPL resources (`[\"other\"][kind][id]`): what to
-   address, whether it is alive, what it is running, and whether the agent can —
-   and therefore must — stop it before it finishes. Only resources that still ask
-   for a decision reach this projection; `model-view` says which."
-  ["id" "status" "can_stop" "detail" "pid"])
-
-(defn- ctx-leaf
-  "Project a registry DATA map onto `ks`, dropping absent keys and preserving `ks`
-   order so the ctx delta stays stable."
-  [ks m]
-  (reduce (fn [acc k]
-            (if (contains? m k) (assoc acc k (get m k)) acc))
-          (array-map)
-          ks))
-
-(defn model-view
-  "Nested model-facing resource ground truth. REPLs are directly addressable as
-   `[\"repls\"][language][workspace-relative-dir]`; active languages are seeded
-   with empty maps so absence at a dir means inactive. Non-REPL resources live
-   under `[\"other\"][kind][id]`. Leaves are PROJECTED to the decision-bearing keys
-   (`repl-ctx-keys` / `other-ctx-keys`); the registry, the footer and the `repl`
-   status result keep the full flat DATA API.
-
-   A background shell that ran to completion (`status` `\"exited\"`) is dropped
-   HERE and nowhere else. Its exit code and output already went back to the caller
-   that started it, its log keeps answering by id long after any record goes, and
-   the registry deliberately retains the card so the footer can still open it —
-   so in ctx it is a line the agent can neither act on nor learn from, and it
-   never leaves on its own: one working session accumulated 67 of them, 10.5k
-   chars of `exit 0` reprinted on every request. Anything still RUNNING stays,
-   and so does a `failed` one: both change what the agent does next."
-  [resource-data {:keys [root languages]}]
-  (let
-    [seed-repls
-     (into (sorted-map)
-           (map (fn [language]
-                  [(str/lower-case (str language)) (sorted-map)]))
-           languages)
-
-     {:keys [repls other]}
-     (reduce (fn [{:keys [repls other] :as acc} resource]
-               (let [kind (get resource "kind")]
-                 (cond (repl-kind? kind)
-                       (let
-                         [language (str/lower-case (str (or (get resource "language") "unknown")))
-                          detail (or (get resource "detail") {})
-                          dir (model-dir root (get detail "cwd"))
-                          leaf (ctx-leaf repl-ctx-keys (merge (dissoc resource "detail") detail))]
-
-                         (assoc acc :repls (assoc-in repls [language dir] leaf)))
-                       (= "exited" (get resource "status")) acc
-                       :else (assoc acc
-                               :other (assoc-in other
-                                        [(str kind) (get resource "id")]
-                                        (ctx-leaf other-ctx-keys resource))))))
-             {:repls seed-repls :other (sorted-map)}
-             (sort-by #(get % "id") resource-data))]
-
-    (cond-> (array-map)
-      (seq repls)
-      (assoc "repls" repls)
-
-      (seq other)
-      (assoc "other" other))))
 
 (defn get-resource
   "DATA map for `session`+`id`, or nil."
@@ -586,9 +477,10 @@
 
 ;; ---------------------------------------------------------------------------
 ;; Agent surface — B-dispatch. The sandbox gets ONE engine-builtin tool,
-;; CLOSED OVER the owning session, that acts on a resource purely by its `:id`;
-;; ctx (`session["resources"]`) already advertises which ids are
-;; `can_stop`. Wired by the loop via env/set-python-binding!,
+;; CLOSED OVER the owning session, that acts on a resource purely by its `:id`.
+;; The id comes from the caller that started the resource — a `shell` handle or
+;; a `repl` status result — never from ctx, which carries no resource at all.
+;; Wired by the loop via env/set-python-binding!,
 ;; which snake-cases the symbol: `resource-stop` -> `resource_stop(id)`.
 ;; ---------------------------------------------------------------------------
 

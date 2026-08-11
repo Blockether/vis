@@ -880,6 +880,41 @@ projection, used by `ctx_loop/enrich-ctx` and nothing else — drops a non-REPL 
 and the detail string ("logs retained until resource_stop") is a promise to the human reader, not to the
 model.
 
+## Phase 11 — Remove `session["resources"]` from the model-facing session entirely
+
+**Rationale.** Phase 10 treated the symptom. The mechanism was the disease: `render-turn-boundary`
+re-assigned `session["resources"]` **in full, unconditionally, once per turn**, deliberately opting out
+of the structural delta that every other ctx key gets — so the block could only ever grow, and one
+session reached 74 entries / 12,214 chars. The comment defending that special case is wrong on both
+counts. Its stated fear — a resumed turn inheriting the previous gateway's shell/REPL list — cannot
+happen: `ctx-engine/strip-ephemeral` already removed `session_resources` before the Nippy snapshot, the
+delta baseline lives in the loop process and dies with it, and gateway lease teardown STOPS background
+resources anyway. And its fallback `[]` was a LIST where every real value is a MAP, so the clearing case
+rendered a `session["resources"]` that would raise on the first subscript.
+
+Nothing in ctx was load-bearing. The id an agent needs comes from the caller that started the resource —
+a `shell` handle (`sh.logs()`/`sh.wait()`/`sh.stop()`, each carrying status) or a `repl` `status` result
+— never from a list it reads back. This is the same push→pull move as phases 8 and 9, applied to live
+state instead of prose.
+
+**Data.** `session_resources` is gone from `ctx-loop/enrich-ctx`, `ctx-renderer/project-ctx`,
+`static-context-keys`, `render-turn-boundary` and `ctx-engine/model-facing-keys`; `strip-ephemeral` is
+back to engine bookkeeping only. `resources/model-view` and its projection helpers (`repl-ctx-keys`,
+`other-ctx-keys`, `ctx-leaf`, `model-dir`, `repl-kind?`) are deleted — 4,949 chars, the whole ctx-only
+half of the namespace. The registry, `list-resources`, the footer, `/resources`, `resource_stop` and
+every `shell` handle op are untouched.
+
+**Acceptance criteria.**
+- Nothing renders resources: turn boundary, static ctx map, `enrich-ctx` and `model-facing-keys` — one
+  regression test in `ctx-cache-test` covers all four.
+- The two docs that sent the model to the dead key say the live door instead: `repl`'s description
+  ("Nothing lists live REPLs for you: `status` is the only answer") and CORE §2 ("Reuse a live REPL;
+  nothing lists one for you — `repl` `status` does").
+- `prompt-test`'s surplus list forbids `session["resources"]` from ever re-entering the core prompt.
+
+**Unknowns.** None. The teardown obligation (§7, "stop managed REPLs you started") is unchanged — it is
+now discharged from the handle the agent already holds rather than from a list it re-reads.
+
 ## Cross-validation — the SECOND inventory (measured against the tree; phases 1-7 missed these)
 
 Every figure below was counted this pass — balanced-brace spans and full-tree greps, not recall.
@@ -1292,7 +1327,19 @@ about `ntr[…]`-carrying metric bullets).
 
 ## State of the plan
 
-**REQUIRES WORK** — phases 1-10 have LANDED. What is left is the cross-cutting cleanup list (steps 45-53, the `:schema` literals, `form.clj`'s reduction, `extension_bootstrap.py`, the wire's `tool_name`/`result_render` columns, the tool wall, the replay policy, `:tag`) and the two pieces of shipped-UI evidence (56b's `spel` figures, 57's `cap/shot!` PNG).
+**REQUIRES WORK** — phases 1-11 have LANDED. What is left is the cross-cutting cleanup list (steps 45-53, the `:schema` literals, `form.clj`'s reduction, `extension_bootstrap.py`, the wire's `tool_name`/`result_render` columns, the tool wall, the replay policy, `:tag`) and the two pieces of shipped-UI evidence (56b's `spel` figures, 57's `cap/shot!` PNG).
+
+**Phase 11 — `session["resources"]` is gone from the model-facing session: DONE.** Phase 10 treated
+the symptom; the mechanism was `render-turn-boundary` re-assigning the whole registry once per turn,
+unconditionally, opting out of the delta every other ctx key gets — so the block could only grow (74
+entries / 12,214 chars in one session), and its clearing fallback rendered `[]`, a LIST where every real
+value is a MAP. The special case defended a state that cannot occur: `strip-ephemeral` already kept
+resources out of the snapshot, the delta baseline dies with the loop process, and lease teardown stops
+background resources. `session_resources` is now absent from `enrich-ctx`, `project-ctx`,
+`static-context-keys`, the turn boundary and `model-facing-keys`, and `resources/model-view` plus its
+five projection helpers are deleted (4,949 chars). The id an agent acts on comes from the `shell` handle
+or a `repl` `status` result — both untouched, along with the registry, the footer, `/resources` and
+`resource_stop`. `prompt-test` now forbids `session["resources"]` from re-entering the core prompt.
 
 **Phase 10 — finished background shells leave ctx: DONE.** `session["resources"]["other"]` stays — a
 running background shell is the one thing an agent starts that outlives its own call — but a shell that

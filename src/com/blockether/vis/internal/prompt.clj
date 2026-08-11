@@ -230,7 +230,7 @@
     "  an unprinted value costs no context, and one you did not print is gone when the block ends.\n"
     "  Inspect shape before indexing; after an error inspect keys/types, then adapt.\n"
     "- State persists between blocks; `session` is a live read-only map, inspect it directly.\n"
-    "  Reuse a live REPL; query status only when absent or stale.\n\n" "## 3. Inspect\n"
+    "  Reuse a live REPL; nothing lists one for you — `repl` `status` does.\n\n" "## 3. Inspect\n"
     "- **Filesystem work is Python**: `grep(...)` searches, `shell(...)` runs programs, `ls(dir)` maps an\n"
     "  unknown tree FIRST (`depth` descends) so no path is guessed. READING a whole file is `Path.read_text`;\n"
     "  CHANGING the tree is plain Python (`Path.write_text`, `os`, `shutil`).\n"

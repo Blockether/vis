@@ -884,7 +884,7 @@
        (atom {:block "old cached prefix" :baseline {"old" true}})
 
        current
-       {"turn" 2 "resources" {"repls" {}}}
+       {"turn" 2 "workspace" {"root" "/repo"}}
 
        sf
        (get (compaction-verbs ctx rebase) 'session-fold)]
@@ -900,7 +900,7 @@
         (expect (= current (:baseline @standing)))
         (expect (str/includes? (:block @standing) "session ="))
         (expect (str/includes? delta "session[\"turn\"] = 2"))
-        (expect (str/includes? delta "session[\"resources\"]")))))
+        (expect (str/includes? delta "session[\"workspace\"]")))))
   (it "a broader re-fold charges only scopes newly visible since the earlier fold"
       ;; Multiple `session_fold` calls can happen before the next provider projection
       ;; re-stamps `engine_iter_weights`. The second card and rebase ledger must not

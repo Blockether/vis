@@ -602,9 +602,9 @@
        "`{result,id,message}`.")
      :description
      (str
-       "REPL lifecycle. Check `session[\"resources\"][\"repls\"][language][cwd]` first: reuse `up`, recheck "
-       "`starting`, start when absent/down/failed. There is NO restart op: a wedged REPL is `stop` "
-       "then `start`. `status` reports that "
+       "REPL lifecycle. Nothing lists live REPLs for you: `status` is the only answer — reuse `up`, "
+       "recheck `starting`, start when absent/down/failed. There is NO restart op: a wedged REPL is "
+       "`stop` then `start`. `status` reports that "
        "directory's state; `stop` ends a managed REPL; `connect` attaches an external REPL by port and only detaches it.")
      :call {:lead-opt "language" :rest :always}
      :inject-env? true

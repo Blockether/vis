@@ -111,7 +111,10 @@
          stop
          (:ext.symbol/description language-surface/repl-stop-symbol)]
 
-        (expect (str/includes? start "[language][cwd]"))
+        ;; Regression, issue #ctx-resources: the doc used to send the model to
+        ;; `session["resources"]["repls"][language][cwd]`, a ctx key that no longer exists.
+        (expect (not (str/includes? start "session[\"resources\"]")))
+        (expect (str/includes? start "`status` is the only answer"))
         (expect (str/includes? start "absent/down/failed"))
         (expect (str/includes? start "`stop` ends a managed REPL"))
         (expect (str/includes? start "`status` reports that directory's state"))

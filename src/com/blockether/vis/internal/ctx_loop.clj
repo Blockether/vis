@@ -3,14 +3,15 @@
 
    The loop keeps a per-session `:ctx-atom` for stable model-facing context
    and a separate `:turn-state-atom` for live turn/iteration/form counters.
-   This namespace stamps the cursor, enriches context with env/resources/routing,
-   and renders the standing context block."
+   This namespace stamps the cursor, enriches context with env/access/routing,
+   and renders the standing context block. Live resources (background shells,
+   managed REPLs) are deliberately NOT part of ctx: a handle or `repl` status
+   answers for them, so nothing about them is reprinted on every request."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.ctx-engine :as eng]
             [com.blockether.vis.internal.env-digest :as env-digest]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.prompt :as prompt]
-            [com.blockether.vis.internal.resources :as resources]
             [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -205,17 +206,6 @@
             (tel/log! {:level :warn :id ::env-digest-failed :data {:error (ex-message t)}})
             nil))
 
-     ;; Session-scoped live resources — same registry the footer reads, so
-     ;; `session["resources"]` and the footer can never disagree.
-     rsrc
-     (try (resources/list-resources (:session-id env)) (catch Throwable _ nil))
-
-     rsrc-view
-     (resources/model-view rsrc
-                           {:root (or (:workspace/root env)
-                                      (get-in ext-ctx ["session_workspace" "root"]))
-                            :languages (keys (get ext-ctx "session_language_tools"))})
-
      access-view
      (try (when-let [f (:access-view-fn env)]
             (f))
@@ -226,9 +216,6 @@
     (cond-> (env-digest/deep-merge ctx (dissoc ext-ctx "session_env"))
       (seq env-block)
       (assoc "session_env" env-block)
-
-      true
-      (assoc "session_resources" rsrc-view)
 
       (seq access-view)
       (assoc "session_access" access-view)
@@ -243,7 +230,7 @@
   "Read-only data mirror of the Python `session` dict bound in the sandbox.
 
    Built to MATCH the rendered shape, NOT the raw atom: stamps the live cursor,
-   runs the shared `enrich-ctx` (so workspace/env/resources/routing are present
+   runs the shared `enrich-ctx` (so workspace/env/access/routing are present
    exactly as in the rendered `<context>` TEXT), then delegates to the canonical
    `eng/session-view` projection. Returns nil when ctx-atom is absent."
   [env]
@@ -252,7 +239,7 @@
 
 (defn render-block!
   "Build the standing `<context>` block for the next user message. Pure data
-   flow, with extension/env/resource/routing enrichments recomputed each render
+   flow, with extension/env/access/routing enrichments recomputed each render
    so transient state stays fresh without pushing it back into `ctx-atom`."
   [env renderer-fn]
   (when-let [ctx (current-ctx env)]

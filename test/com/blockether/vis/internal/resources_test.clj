@@ -79,66 +79,6 @@
                         (finally (resources/unregister! sid "r5"))))))
 
 (defdescribe
-  model-view-test
-  (it
-    "indexes REPL state by language and workspace-relative dir without a flat mirror"
-    (let
-      [view (resources/model-view
-              [{"id" "main"
-                "kind" "nrepl"
-                "language" "clojure"
-                "status" "up"
-                "label" "nREPL repo :dev"
-                "can_stop" true
-                "created_at" 1
-                "session" "sid"
-                "detail" {"cwd" "/repo" "port" 7888 "managed" true "versions" {"clojure" "1.12.4"}}}
-               {"id" "api"
-                "kind" "repl"
-                "language" "python"
-                "status" "starting"
-                "detail" {"cwd" "/repo/apps/api" "cmd" "python -i"}}]
-              {:root "/repo" :languages ["clojure" "python" "typescript"]})]
-      (expect (= "up" (get-in view ["repls" "clojure" "." "status"])))
-      (expect (= 7888 (get-in view ["repls" "clojure" "." "port"])))
-      (expect (= "starting" (get-in view ["repls" "python" "apps/api" "status"])))
-      (expect (= {} (get-in view ["repls" "typescript"])))
-      ;; Ctx carries only what changes a decision: id/status/can_stop/port.
-      ;; `can_stop` STAYS: it is the teardown affordance the agent acts on before
-      ;; finishing, and a leaf that never advertises it is a REPL nobody stops.
-      ;; The pack's label/versions/created_at noise stays out.
-      (expect (= ["id" "status" "can_stop" "port"]
-                 (vec (keys (get-in view ["repls" "clojure" "."])))))
-      (expect (true? (get-in view ["repls" "clojure" "." "can_stop"])))
-      (expect (= ["id" "status"] (vec (keys (get-in view ["repls" "python" "apps/api"])))))
-      (expect (not (vector? view)))))
-  (it "groups non-REPL resources without reviving the flat legacy shape"
-      (let
-        [resource
-         {"id" "server" "kind" "process" "status" "up" "created_at" 1 "can_stop" true}
-
-         view
-         (resources/model-view [resource] {:root "/repo"})]
-
-        (expect (= {"id" "server" "status" "up" "can_stop" true}
-                   (get-in view ["other" "process" "server"])))
-        (expect (nil? (get view "repls")))))
-  (it "drops a background shell that already exited and keeps the ones still worth a decision"
-      (let
-        [view (resources/model-view
-                [{"id" "done" "kind" "shell" "status" "exited" "can_stop" true "detail" "exit 0"}
-                 {"id" "live" "kind" "shell" "status" "running" "can_stop" true "pid" 42}
-                 {"id" "bad" "kind" "shell" "status" "failed" "can_stop" true "detail" "exit 3"}]
-                {:root "/repo"})]
-        (expect (nil? (get-in view ["other" "shell" "done"])))
-        (expect (= #{"live" "bad"} (set (keys (get-in view ["other" "shell"])))))))
-  (it "omits `other` entirely once every background shell has finished"
-      (expect (nil? (get (resources/model-view
-                           [{"id" "done" "kind" "shell" "status" "exited" "can_stop" true}]
-                           {:root "/repo"})
-                         "other")))))
-
-(defdescribe
   lifecycle-race-test
   (it
     "does not unregister a replacement created while the old stop callback is blocked"

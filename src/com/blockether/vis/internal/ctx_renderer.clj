@@ -13,7 +13,7 @@
 ;; =============================================================================
 
 ;; Context rendering is intentionally narrow: stable session identity,
-;; workspace/env/routing/resources/symbols, and utilization. Tool outputs are
+;; workspace/env/access/routing/symbols, and utilization. Tool outputs are
 ;; rendered as append-only `r["tN/iN/fN"] = …` assignments by the loop, not here.
 
 ;; =============================================================================
@@ -73,16 +73,13 @@
      (not-empty (get view "session_routing"))
      (assoc "routing" (get view "session_routing"))
 
-     (not-empty (get view "session_resources"))
-     (assoc "resources" (get view "session_resources"))
-
      (not-empty (get view "session_symbols"))
      (assoc "symbols" (get view "session_symbols")))))
 
 (def ^:private static-context-keys
   "Ambient session keys embedded once in the cached prefix. Runtime changes are
    emitted as structural deltas; access changes only on reload or workspace overlay updates."
-  ["workspace" "access" "env" "routing" "resources" "symbols"])
+  ["workspace" "access" "env" "routing" "symbols"])
 
 (defn project-ctx-static
   "`project-ctx` limited to `static-context-keys`, canonical order preserved.
@@ -116,7 +113,7 @@
 
 (defn render-ctx-static
   "Render the standing session context (workspace / access / env / routing /
-   resources / symbols) as a FENCED PYTHON block that binds `session` to its initial value —
+   symbols) as a FENCED PYTHON block that binds `session` to its initial value —
    embedded once in the system prompt. The same `session` dict is live in the
    sandbox; mid-session changes arrive as `session[...] = …` / `del session[...]` delta
    lines (`render-ctx-delta`), so the embed and the deltas are one coherent
@@ -167,18 +164,10 @@
      (get view "session_turn")
 
      utilization
-     (get view "session_utilization")
-
-     ;; Resources are live gateway state. Re-assign them at the turn boundary so
-     ;; a resumed turn cannot carry a stale shell/REPL list across a gateway
-     ;; restart. The empty vector is intentional: it also clears a prior value.
-     resources
-     (or (get view "session_resources") [])]
+     (get view "session_utilization")]
 
     (str "session[\"turn\"] = "
          (env/ctx->python-str turn)
-         "\nsession[\"resources\"] = "
-         (env/ctx->python-str resources)
          (when utilization
            (str "\nsession[\"utilization\"] = " (env/ctx->python-str utilization))))))
 

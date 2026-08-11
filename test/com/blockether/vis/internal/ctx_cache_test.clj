@@ -26,7 +26,6 @@
             [com.blockether.vis.internal.prompt :as prompt]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.env-digest :as env-digest]
-            [com.blockether.vis.internal.resources :as resources]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private base-ctx
@@ -94,69 +93,44 @@
         (expect (= ["~/vis" "~/spel"] (get-in m ["access" "filesystem" "read_write"])))
         (expect (= "reload" (get-in m ["access" "changes_require"])))
         (expect (not (contains? m "session_access")))))
-  ;; Regression, issue #gateway-restart-resources: a resumed turn used to leave
-  ;; the previous gateway's shell/REPL entries in the live session binding.
-  (it "refreshes resources at the turn boundary, including clearing a restart's stale list"
-      (let
-        [with-resources
-         (cr/render-turn-boundary {:ctx (assoc base-ctx
-                                          "session_turn" 7
-                                          "session_resources" [{"id" "shell-1"}])})
+  ;; Regression, issue #ctx-resources: the live shell/REPL registry used to be
+  ;; re-rendered into `session["resources"]` on every turn boundary, so one working
+  ;; session accumulated 74 finished shells — 12k chars of `exit 0` on every request.
+  (it
+    "never renders live resources into the model-facing session"
+    (let
+      [boundary
+       (cr/render-turn-boundary {:ctx (assoc base-ctx
+                                        "session_turn" 7
+                                        "session_resources" [{"id" "shell-1"}])})
 
-         without-resources
-         (cr/render-turn-boundary {:ctx (assoc base-ctx "session_turn" 8)})]
+       enriched
+       (with-redefs
+         [prompt/active-extensions
+          (fn [_]
+            [])
 
-        (expect (str/includes? with-resources "session[\"resources\"] = [{\"id\": \"shell-1\"}]"))
-        (expect (str/includes? without-resources "session[\"resources\"] = []"))))
-  ;; Regression, issue #gateway-restart-resources: a resumed ctx snapshot used to
-  ;; retain the previous gateway's persisted resource view when the live registry was empty.
-  (it "replaces persisted resources with the empty live registry on resume"
-      (with-redefs
-        [prompt/active-extensions
-         (fn [_]
-           [])
+          extension/ctx-contributions
+          (fn [_ _]
+            {})
 
-         extension/ctx-contributions
-         (fn [_ _]
-           {})
+          env-digest/base-digest
+          (fn [_]
+            {})
 
-         env-digest/base-digest
-         (fn [_]
-           {})
+          env-digest/deep-merge
+          (fn [& xs]
+            (apply merge xs))]
 
-         env-digest/deep-merge
-         (fn [& xs]
-           (apply merge xs))
+         (ctx-loop/enrich-ctx {:session-id "s1"} base-ctx))]
 
-         resources/list-resources
-         (fn [_]
-           [])
-
-         resources/model-view
-         (fn [_ _]
-           {})]
-
-        (expect (= {}
-                   (get (ctx-loop/enrich-ctx {:session-id "s1"}
-                                             {"session_resources" {"repls" {"clojure"
-                                                                            {"." {"id" "old"}}}}})
-                        "session_resources")))))
-  ;; Regression, issue #gateway-restart-resources: live resources used to be
-  ;; serialized into the resumed context even though their gateway processes die.
-  (it "strips live resources from the context snapshot"
-      (let
-        [ctx
-         {"session_id" "s1"
-          "session_resources" {"repls" {"clojure" {"." {"id" "live"}}}}
-          "engine_warnings" []
-          "session_workspace" {"root" "/repo"}}
-
-         clean
-         (ctx-engine/strip-ephemeral ctx)]
-
-        (expect (not (contains? clean "session_resources")))
-        (expect (not (contains? clean "engine_warnings")))
-        (expect (= {"root" "/repo"} (get clean "session_workspace")))))
+      (expect (not (str/includes? boundary "resources")))
+      (expect (not (contains? enriched "session_resources")))
+      (expect (not (contains? (cr/ctx-static-map {:ctx (assoc base-ctx
+                                                         "session_resources" {"repls" {"clojure"
+                                                                                       {}}})})
+                              "resources")))
+      (expect (not (contains? (set ctx-engine/model-facing-keys) "session_resources")))))
   (it "renders turn and utilization explicitly for iteration 1"
       (let
         [boundary (cr/render-turn-boundary {:ctx (assoc base-ctx
