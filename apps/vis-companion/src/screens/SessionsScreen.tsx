@@ -981,10 +981,14 @@ export function SessionsScreen({
   // taken back, but the SCREEN must always come back: a confirm dialog that
   // refuses to close until the gateway answers reads as a frozen app (and with
   // an unreachable machine it stayed up for the full request timeout).
-  function closeRowAction() {
+  const cancelDelete = useCallback(() => {
     setRowAction(null);
     setActionError(null);
     setActionProgress(null);
+  }, []);
+
+  function closeRowAction() {
+    cancelDelete();
   }
 
   async function commitRowAction() {
@@ -1050,6 +1054,14 @@ export function SessionsScreen({
   }
 
   const rowCopy = rowAction ? rowActionCopy(rowAction, machineLabel(rowAction.conn)) : null;
+
+  // Deleting ONE session is confirmed IN the row, so the confirm has to reach
+  // `commitRowAction` from inside a memoised row. Through a ref, not a fresh
+  // closure per paint: that would re-render every row of a 700-row list on
+  // every poll.
+  const commitRef = useRef<() => void>(() => {});
+  commitRef.current = () => void commitRowAction();
+  const confirmDelete = useCallback(() => commitRef.current(), []);
 
   const pageSize = useSessionsPerPage();
 
@@ -1380,6 +1392,15 @@ export function SessionsScreen({
                           onOpen={onOpen}
                           onRename={startRename}
                           onDelete={startDelete}
+                          pendingDeleteId={
+                            rowAction?.mode === 'delete' && machineKey(rowAction.conn) === key
+                              ? rowAction.session.id
+                              : null
+                          }
+                          deleteBusy={actionBusy}
+                          deleteError={actionError}
+                          onConfirmDelete={confirmDelete}
+                          onCancelDelete={cancelDelete}
                           onNewSession={(root) => void createSession({ kind: 'trunk' }, machine.conn, root)}
                           creating={creating}
                           // A draft is not a preference: every project header offers
@@ -1408,7 +1429,9 @@ export function SessionsScreen({
         )}
       </div>
 
-      {rowAction && rowCopy && (
+      {/* Renaming and the group purge keep the dialog. Deleting ONE session does
+          not: its confirm is the row itself — see `SessionRow`. */}
+      {rowAction && rowCopy && rowAction.mode !== 'delete' && (
         <Modal size="fit" onDismiss={closeRowAction}>
             <DialogFrame title={rowCopy.title} onClose={closeRowAction}>
               <div className="space-y-3 p-4">
@@ -1745,6 +1768,11 @@ const ProjectGroup = memo(function ProjectGroup({
   onOpen,
   onRename,
   onDelete,
+  pendingDeleteId,
+  deleteBusy,
+  deleteError,
+  onConfirmDelete,
+  onCancelDelete,
   onNewSession,
   creating,
   onNewDraft,
@@ -1760,6 +1788,12 @@ const ProjectGroup = memo(function ProjectGroup({
   onOpen: Props['onOpen'];
   onRename: (session: Session, conn: GatewayConn) => void;
   onDelete: (session: Session, conn: GatewayConn) => void;
+  /** The row of THIS machine that is currently asking to be deleted, if any. */
+  pendingDeleteId: string | null;
+  deleteBusy: boolean;
+  deleteError: string | null;
+  onConfirmDelete: () => void;
+  onCancelDelete: () => void;
   onNewSession: (root: string) => void;
   /**
    * The create this very project header started, so its own button can say the word
@@ -1850,6 +1884,11 @@ const ProjectGroup = memo(function ProjectGroup({
               onOpen={onOpen}
               onRename={renameRow}
               onDelete={deleteRow}
+              isConfirmingDelete={pendingDeleteId === session.id}
+              deleteBusy={deleteBusy}
+              deleteError={pendingDeleteId === session.id ? deleteError : null}
+              onConfirmDelete={onConfirmDelete}
+              onCancelDelete={onCancelDelete}
             />
           ))}
           <Pager page={shownPage} pageCount={pageCount} onPage={setPage} label={`${project} sessions`} />
@@ -1874,6 +1913,11 @@ const SessionRow = memo(function SessionRow({
   onOpen,
   onRename,
   onDelete,
+  isConfirmingDelete,
+  deleteBusy,
+  deleteError,
+  onConfirmDelete,
+  onCancelDelete,
 }: {
   session: Session;
   /** This device's unsent composer content for the session; EMPTY when there is none. */
@@ -1884,6 +1928,12 @@ const SessionRow = memo(function SessionRow({
   onOpen: Props['onOpen'];
   onRename: (session: Session) => void;
   onDelete: (session: Session) => void;
+  /** This row IS the confirm: it asks in place instead of behind a dialog. */
+  isConfirmingDelete: boolean;
+  deleteBusy: boolean;
+  deleteError: string | null;
+  onConfirmDelete: () => void;
+  onCancelDelete: () => void;
 }) {
   const status = statusLabel(session);
   const timestamp = session.modified_at ?? session.last_active_at ?? session.created_at;
@@ -1951,6 +2001,35 @@ const SessionRow = memo(function SessionRow({
 
   return (
     <div ref={rowRef} className="[&+&]:border-t [&+&]:border-dialog-edge">
+      {/* The confirm IS the row. The two answers split the row's own width and
+          stand its full height, so the question is answered exactly where it
+          was asked — and neither answer is a 28px target inside a dialog that
+          hid the list behind a scrim. Renaming and the group purge, which
+          state a wider blast radius, still ask in a dialog. */}
+      {isConfirmingDelete ? (
+        <div
+          role="group"
+          aria-label={`Delete ${title}?`}
+          className="flex min-h-12 items-stretch mouse:min-h-8"
+        >
+          <button
+            type="button"
+            autoFocus
+            className="flex flex-1 items-center justify-center border-r border-dialog-edge bg-panel-2 font-mono text-meta font-bold uppercase tracking-[0.08em] text-accent-ink transition-colors duration-150 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none"
+            onClick={onCancelDelete}
+          >
+            No, keep it
+          </button>
+          <button
+            type="button"
+            disabled={deleteBusy}
+            className="flex flex-1 items-center justify-center bg-err/15 font-mono text-meta font-bold uppercase tracking-[0.08em] text-err transition-colors duration-150 hover:bg-err hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 disabled:opacity-60 motion-reduce:transition-none"
+            onClick={onConfirmDelete}
+          >
+            {deleteBusy ? 'Deleting...' : live ? 'Yes, stop and delete' : 'Yes, delete'}
+          </button>
+        </div>
+      ) : (
       <SwipeActions
         label={title}
         actions={[
@@ -2100,6 +2179,12 @@ const SessionRow = memo(function SessionRow({
         </HeaderActions>
       </div>
       </SwipeActions>
+      )}
+      {isConfirmingDelete && deleteError && (
+        <div className="px-3 pb-2">
+          <Banner kind="err">{deleteError}</Banner>
+        </div>
+      )}
       {/* Height eases through a 0fr -> 1fr grid track: the one pure-CSS way to
           animate to CONTENT height without measuring it, and unlike a mount it
           plays in BOTH directions. The inner clip keeps the rollup from
