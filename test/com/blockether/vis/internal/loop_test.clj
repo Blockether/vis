@@ -3837,7 +3837,7 @@
         ;; lint_code takes a whole dict → it declares NO :call and uses the default.
         (expect (nil? (get real-call-shapes "lint_code")))
         ;; Every shell verb is a one-map call; none may grow a positional shape.
-        (doseq [n ["shell" "_shell_status" "_shell_logs" "_shell_wait" "_shell_type" "_shell_stop"]]
+        (doseq [n ["shell" "_shell_logs" "_shell_wait" "_shell_type" "_shell_stop"]]
           (expect (nil? (get real-call-shapes n)))))
     (it "a tool with NO :call gets the generic whole-dict call"
         (expect (= "rg({\"query\": [\"x\"]})" (synth {:name "rg" :input {"query" ["x"]}})))
