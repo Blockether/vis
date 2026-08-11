@@ -1153,30 +1153,35 @@
 
           (expect (true? (:collapsed? (second (nth out 0)))))
           (expect (nil? (:collapsed? (second (nth out 1)))))))
-    (it "derives a live skill activation from the provider-visible full-body result"
+    ;; A skill body reaches the tape only through a PRINTED result, which
+    ;; survives on its form as a card titled by its own op — the form itself is
+    ;; always `python_execution` now, and its result is the block's value.
+    (it "keeps a skill live while the iteration that PRINTED its body is on the wire"
         (let
-          [trailer
+          [digest
+           (extension/sha256-hex "BODY")
+
+           trailer
            [[0
              {:forms-vec
-              [{:scope "t1/i1" :vis/tool-name "skill" :result {"name" "demo" "body" "BODY"}}]}]]
+              [{:scope "t1/i1" :vis/tool-name "python_execution" :cards [{:op "skill"}]}]}]]
 
            ca
-           (atom {})]
+           (atom {"session_active_skills" {"demo" {"name" "demo" "digest" digest "scope" "t1/i1"}}})]
 
           (stamp-iter-universe! ca trailer)
-          (expect (= {"name" "demo" "digest" (extension/sha256-hex "BODY") "scope" "t1/i1"}
+          (expect (= {"name" "demo" "digest" digest "scope" "t1/i1"}
                      (get-in @ca ["engine_live_skill_activations" "demo"])))
           (expect (= #{"t1/i1"} (get @ca "engine_protected_iter_scopes")))
           (expect (= (get @ca "engine_live_skill_activations") (get @ca "session_active_skills")))))
-    (it "a legacy-folded skill has no phantom activation and can rehydrate once"
+    (it "drops an activation whose printing iteration left the wire, so it can rehydrate"
         (let
           [trailer
-           [[0
-             {:forms-vec
-              [{:scope "t1/i1" :vis/tool-name "skill" :result {"name" "demo" "body" "BODY"}}]}]]
+           [[0 {:forms-vec [{:scope "t1/i1" :vis/tool-name "python_execution" :summary? true}]}]]
 
            ca
-           (atom {"session_summaries" [{"scopes" #{"t1/i1"} "gist" "old fold"}]})]
+           (atom {"session_active_skills"
+                  {"demo" {"name" "demo" "digest" (extension/sha256-hex "BODY") "scope" "t1/i1"}}})]
 
           (stamp-iter-universe! ca trailer)
           (expect (= {} (get @ca "engine_live_skill_activations")))
@@ -1190,8 +1195,8 @@
            trailer
            [[0
              {:forms-vec
-              [{:scope "t1/i1" :vis/tool-name "skill" :result {"name" "demo" "body" "BODY"}}]}]
-            [1 {:forms-vec [{:scope "t1/i2" :vis/tool-name "cat" :result "noise"}]}]]
+              [{:scope "t1/i1" :vis/tool-name "python_execution" :cards [{:op "skill"}]}]}]
+            [1 {:forms-vec [{:scope "t1/i2" :vis/tool-name "python_execution" :result "noise"}]}]]
 
            ca
            (atom {"session_active_skills" {"demo" {"name" "demo" "digest" digest "scope" "t1/i1"}}
@@ -1202,21 +1207,22 @@
             [out (apply-summaries trailer
                                   (get @ca "session_summaries")
                                   (get @ca "engine_protected_iter_scopes"))]
-            ;; The original skill tool result stays byte-for-byte. Its sibling
-            ;; iteration still folds normally.
+            ;; The iteration that printed the skill stays byte-for-byte. Its
+            ;; sibling iteration still folds normally.
             (expect (= (second (first trailer)) (second (first out))))
             (expect (nil? (:collapsed? (second (first out)))))
             (expect (true? (:collapsed? (second (second out))))))))
-    (it "a cross-turn DB seed is not a live skill body because its tool result is not replayed"
+    (it "a cross-turn DB seed is not a live skill body because its iteration is not replayed"
         (let
           [trailer
            [[0
              {:preserved-thinking/replay? false
               :forms-vec
-              [{:scope "t1/i1" :vis/tool-name "skill" :result {"name" "demo" "body" "BODY"}}]}]]
+              [{:scope "t1/i1" :vis/tool-name "python_execution" :cards [{:op "skill"}]}]}]]
 
            ca
-           (atom {})]
+           (atom {"session_active_skills"
+                  {"demo" {"name" "demo" "digest" (extension/sha256-hex "BODY") "scope" "t1/i1"}}})]
 
           (stamp-iter-universe! ca trailer)
           (expect (= {} (get @ca "engine_live_skill_activations")))

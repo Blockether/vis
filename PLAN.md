@@ -1381,6 +1381,24 @@ so the surplus vector names `ntr[`, `ntr.describe()` and `# saved:`.
 Green on a clean JVM (`clojure -M:test`): 6433 cases, SIX failures, all pre-existing and named above.
 `format_code` and `lint_code` clean on every touched file.
 
+**Cross-validation of phases 1-5 (this pass).** Clean JVM `clojure -M:test`: 6435 cases, SIX
+failures, all the pre-existing ones named above; `vis-channel-tui` 1659/1659. One REAL regression
+was found and fixed in the same commit: `stamp-iter-universe!` still derived skill activations from
+`(= "skill" (:vis/tool-name form))`, a shape phase 1 removed — every form is `python_execution`
+now, so `engine_live_skill_activations`, `engine_protected_iter_scopes` and `session_active_skills`
+were stamped EMPTY on every request. `skill(...)` therefore repeated the whole body on every call
+and a fold could collapse the iteration holding it. The activation is now the durable pointer
+(`harness/skill-result` stamps name + digest + scope at the call) held live for exactly as long as
+the iteration that PRINTED the body is on the wire — proven by the form's `:op "skill"` CARD, since
+the form's own result is the block's value. Four `loop_test` items rewritten to the shipped shape
+(they fail against unfixed `HEAD` for that reason). Two prose corrections to the phase blocks
+above: `tool_name` left the gateway PAYLOAD only — `:vis/tool-name` still rides `loop.clj`,
+`ctx_engine.clj`, `introspection.clj` and the sqlite tally, and `result_render` still rides
+`types.ts`/`ChatContent.tsx`, which is step 48's work, not phase 3's; and `toolLabel` survives in
+`ChatContent.tsx` as the op→badge function (it mirrors `form/card-label`), so step 56's zero-grep
+covers the label TABLE, not the name. `resources/examples/python-extensions/README.md` lost its
+last `vis_docs` reference.
+
 TODO — one checkable step per line, in order. Each step names the file, the thing it does to it, and
 the test that flips. A step is done when its own tests are green; a PHASE is done when its whole
 block is green, lint and format are clean, and it is committed with its tests.

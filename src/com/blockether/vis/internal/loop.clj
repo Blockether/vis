@@ -1795,9 +1795,11 @@
 (defn- stamp-iter-universe!
   "Record the raw iteration universe and live skill activations, while pricing
    only `wire-iters` — the CURRENT provider-visible
-   projection. `wire-iters` defaults to `trailer-iters`. A matching durable skill
-   pointer protects its exact scope from a newly recorded fold; stale,
-   already-folded, and cross-turn non-replayed activations are discarded."
+   projection. `wire-iters` defaults to `trailer-iters`. A skill activation is
+   live while the iteration that PRINTED its body is still on the wire, and its
+   scope is then protected from a fold; activations whose iteration left the
+   trailer, and cross-turn non-replayed ones, are discarded so the next
+   `skill(...)` hands the body back."
   [ctx-atom trailer-iters & [wire-iters]]
   (when ctx-atom
     (let
@@ -1848,61 +1850,49 @@
                             (transient {})
                             (map vector trailer-iters (or wire-iters trailer-iters))))
 
-       skill-candidates
-       (into []
-             (comp (keep (fn [[_ rec]]
-                           (when (not= false (:preserved-thinking/replay? rec))
-                             (when-let [scope (scope-of rec)]
-                               [scope (:forms-vec rec)]))))
-                   (mapcat
-                     (fn [[scope forms]]
-                       (keep (fn [form]
-                               (let
-                                 [result
-                                  (:result form)
-
-                                  name
-                                  (get result "name")
-
-                                  body
-                                  (get result "body")]
-
-                                 (when (and (= "skill" (:vis/tool-name form))
-                                            (map? result)
-                                            (not (str/blank? (str name)))
-                                            (string? body))
-                                   {"name" (str name)
-                                    "digest" (extension/sha256-hex body)
-                                    "scope" scope})))
-                             forms))))
-             trailer-iters)
-
        ctx
        @ctx-atom
 
+       ;; The durable activation pointers `harness/skill-result` stamps at the
+       ;; call itself: the skill NAME, the digest of its body, and the scope of
+       ;; the iteration that emitted it.
        pointers
        (or (get ctx "session_active_skills") {})
 
-       pointer-protected
+       ;; A skill body reaches the provider tape only when the block PRINTED the
+       ;; result, and a printed result survives on its form as a CARD titled by
+       ;; its own op. So the wire answers "is that body still on the tape" and
+       ;; the pointer answers "which skill, which bytes": with
+       ;; `python_execution` the only call, a form's own name is always
+       ;; `python_execution` and its result is the block's value, so neither
+       ;; question can be asked of the form itself any more.
+       printed-skill-scopes
        (into #{}
-             (keep (fn [activation]
-                     (let [name (get activation "name")]
-                       (when (= activation (get pointers name)) (get activation "scope")))))
-             skill-candidates)
+             (keep (fn [[_ rec]]
+                     (when (not= false (:preserved-thinking/replay? rec))
+                       (when-let [scope (scope-of rec)]
+                         (when (some (fn [form]
+                                       (some #(= "skill" (str (:op %))) (:cards form)))
+                                     (:forms-vec rec))
+                           scope)))))
+             trailer-iters)
 
-       resolved-summaries
-       (ctx-engine/expand-through (get ctx "session_summaries") uni)
-
-       collapsed
-       (into #{} (comp (mapcat #(get % "scopes")) (remove pointer-protected)) resolved-summaries)
-
+       ;; An activation is LIVE exactly while the iteration that printed its body
+       ;; is still on the wire. Its scope is then protected from a later fold —
+       ;; folding away instructions the model was told it still has is what the
+       ;; protection exists to prevent — and an activation whose iteration left
+       ;; the trailer drops, so the next `skill(...)` hands the body back.
        live-skills
-       (reduce (fn [m activation]
-                 (if (contains? collapsed (get activation "scope"))
-                   m
-                   (assoc m (get activation "name") activation)))
+       (reduce (fn [m [_ activation]]
+                 (let [nm (str (get activation "name"))]
+                   (if (and (map? activation)
+                            (not (str/blank? nm))
+                            (not (str/blank? (str (get activation "digest"))))
+                            (contains? printed-skill-scopes (get activation "scope")))
+                     (assoc m nm activation)
+                     m)))
                {}
-               skill-candidates)
+               pointers)
 
        protected-scopes
        (into #{} (map #(get % "scope")) (vals live-skills))]

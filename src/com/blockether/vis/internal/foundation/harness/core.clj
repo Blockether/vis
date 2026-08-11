@@ -110,11 +110,12 @@
 
 (defn- skill-result
   "Return a skill body only when it is not already present on the live provider
-   tape (or its content digest changed). `stamp-iter-universe!` derives
-   `engine_live_skill_activations` from the post-fold wire before every request;
-   `session_active_skills` is only the durable pointer to the exact activation
-   scope. A same-iteration second call is handled by that pointer before the
-   first result has entered the trailer."
+   tape (or its content digest changed). This call stamps the durable pointer —
+   name, body digest, and the scope that emits it — and `stamp-iter-universe!`
+   keeps it in `engine_live_skill_activations` for exactly as long as the
+   iteration that PRINTED the body is still on the post-fold wire. A
+   same-iteration second call is answered by that pointer before the first
+   result has entered the trailer."
   [env nm]
   (if-let [s (d/skill-by-name nm)]
     (let
