@@ -2,6 +2,7 @@
   "GraalPy sandbox behaviour that needs a REAL context: the proxy→dict boundary
    fix and the print-capture of tool results. Boots ONE context for the ns."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.doc-corpus :as doc-corpus]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.extension :as ext]
             [com.blockether.vis.test-python-context :as tpc]
@@ -364,7 +365,7 @@
                          "for n in ["
                          (str/join ", " (map pr-str native))
                          "]:\n"
-                         "    d = doc(n)\n" "    if ('<not found>' in d) or (not d.strip()):\n"
+                         "    d = doc(n)\n" "    if ('is not a handle' in d) or (not d.strip()):\n"
                          "        bad.append(n)\n" "print('BAD='+json.dumps(bad))"))]
           (expect (re-find #"BAD=\[\]" out))))
     (it "apropos('') lists real tools but not builtins or the asyncio shim"
@@ -378,25 +379,27 @@
           ;; `rg`/`find_files` were replaced by `grep` (name + content search in one tool)
           (expect (re-find #"grep=True" out))
           (expect (re-find #"struct_patch=True" out))))
-    ;; `python_execution` is the ONLY advertised tool, so the rendered table
-    ;; suppresses nothing: it and the in-Python dict answer the identical set.
-    (it "the apropos table renders every match — no name is ever suppressed"
+    ;; `apropos` is FULL TEXT now: a query that appears in no NAME at all still
+    ;; answers, and rank is the "where did it match" answer — an exact name first,
+    ;; a body-only hit last.
+    (it "apropos searches the whole document, not just the name"
         (let
-          [out (run (str "print('raw='+','.join(sorted(apropos('find').keys())))\n"
-                         "print('native-find='+__vis_apropos_table__('find'))\n"
-                         "print('native-struct='+__vis_apropos_table__('struct_patch'))"))]
-          (expect (str/includes? out "raw=find,find_files"))
-          (expect (str/includes? out "native-find=### "))
-          (expect (str/includes? out "| `find` |"))
-          (expect (str/includes? out "| `find_files` |"))
-          (expect (str/includes? out "native-struct=### "))
-          (expect (str/includes? out "| capability | gist |"))
-          (expect (str/includes? out "| `struct_patch` |"))))
+          [out (run (str "print('anchors='+str('cat' in apropos('anchors')))\n"
+                         "print('names='+','.join(list(apropos('struct_patch'))[:1]))"))]
+          (expect (str/includes? out "anchors=True"))
+          (expect (str/includes? out "names=struct_patch"))))
+    (it "apropos ANDs its terms"
+        (let
+          [out (run (str "wide = len(apropos('file'))\n" "narrow = len(apropos('file anchors'))\n"
+                         "print('wide='+str(wide), 'narrow='+str(narrow),"
+                         " 'shrinks='+str(narrow < wide))"))]
+          (expect (str/includes? out "shrinks=True"))))
     (it "apropos and doc describe their own callable contracts"
         (let [out (run (str "print(doc('apropos'))\n" "print(doc('doc'))"))]
           (expect (str/includes? out "apropos(query='')"))
-          (expect (str/includes? out "doc(name)"))
-          (expect (str/includes? out "result shape"))))
+          (expect (str/includes? out "FULL-TEXT SEARCH over every document"))
+          (expect (str/includes? out "doc(target) -> str"))
+          (expect (str/includes? out "`doc(name)` reads, `await skill(name)` works under it"))))
     (it "gather exposes its concurrency contract through apropos and doc"
         (let [out (run (str "print(apropos('gather')['gather'])\n" "print(doc('gather'))"))]
           (expect (str/includes? out "gather(*awaitables) -> list"))
@@ -748,14 +751,12 @@
            (finally (run! #(.delete ^java.io.File %) [end-file mid-file raw-file dir]))))))
 
 
-;; Groups make `apropos` answerable without knowing a single tool name, and a
-;; BARE sandbox verb (`_shell_logs`) is called from Python with no provider schema
-;; in front of it — so `doc(name)` is the only place its result keys are stated.
+;; A BARE sandbox verb (`_shell_logs`) is called from Python with no schema in
+;; front of it — so `doc(name)` is the only place its result keys are stated.
 (defdescribe
-  apropos-groups-and-bare-verb-docs-test
-  "`apropos` files every capability under the GROUP of its owning extension,
-   matches a whole group name as a query, and `doc` states the raw-result
-   contract for non-native sandbox verbs as well as native tools."
+  bare-verb-docs-test
+  "`doc` states the raw-result contract for the private handle transports, which
+   no listing advertises."
   (let
     [bind
      (ext/builtin-sandbox-bindings (fn []
@@ -768,27 +769,12 @@
      (fn [code]
        (str (:stdout (ep/run-python-block ctx code))))]
 
-    (it "every bound tool is filed under a group"
+    (it "the private handle transports stay out of every listing"
         (let
-          [out (run (str "g = __vis_groups__\n" "print('shell='+g.get('shell','?'))\n"
-                         "print('logs='+g.get('_shell_logs','?'))\n"
-                         "print('hidden='+str('_shell_logs' in apropos('')))\n"
-                         "print('cat='+g.get('cat','?'))\n" "print('yaml='+g.get('yaml','?'))"))]
-          (expect (str/includes? out "shell=shell"))
-          (expect (str/includes? out "logs=shell"))
-          ;; Phase 8: the handle transports are PRIVATE — grouped, never listed.
+          [out (run (str "print('hidden='+str('_shell_logs' in apropos('')))\n"
+                         "print('shell='+str('shell' in apropos('')))"))]
           (expect (str/includes? out "hidden=False"))
-          (expect (str/includes? out "cat=filesystem"))
-          (expect (str/includes? out "yaml=shims"))))
-    ;; "filesystem" is nowhere in a tool NAME, so a hit proves the query matched
-    ;; the GROUP and nothing else.
-    (it "a bare group name is a valid apropos query"
-        (let
-          [out (run (str "print('fs='+','.join(sorted(apropos('filesystem'))))\n"
-                         "print('table='+__vis_apropos_table__('filesystem'))"))]
-          (expect (str/includes? out "cat"))
-          (expect (str/includes? out "table=### filesystem"))
-          (expect (str/includes? out "Groups: `filesystem`."))))
+          (expect (str/includes? out "shell=True"))))
     (it "the handle verbs carry their raw-result contract in doc"
         (let
           [out (run (str "print('LOGS<'+doc('_shell_logs')+'>')\n"
@@ -798,3 +784,94 @@
           (expect (str/includes? out "The same shell result shape as every other stage"))
           (expect (str/includes? out "`stdout` is the window this read returned"))
           (expect (str/includes? out "(`stage` \"stop\"): `stopped`, `status`, `exit`."))))))
+
+;; ONE corpus, two verbs. `apropos` SEARCHES every document the session can
+;; reach — function contracts, Vis' own documentation pages, whole `SKILL.md`
+;; bodies, MCP tool descriptions — and `doc` RETRIEVES one of them whole. There
+;; is no third verb: `vis_docs` is gone, and a page is reachable by the same
+;; `doc(name)` a function answers.
+(defdescribe
+  discovery-is-two-verbs-test
+  "The sandbox's whole discovery surface: `apropos(query)` ranks full text,
+   `doc(target)` returns one document, and bare `doc()` prints the curated index
+   rather than dumping the corpus."
+  (let
+    [bind
+     (ext/builtin-sandbox-bindings (fn []
+                                     nil))
+
+     ctx
+     (:python-context (ep/create-python-context bind))
+
+     run
+     (fn [code]
+       (str (:stdout (ep/run-python-block ctx code))))]
+
+    (it "the third verb is gone and nothing carries a group any more"
+        (let
+          [out (run (str "print('vis_docs='+str('vis_docs' in globals()))\n"
+                         "print('groups='+str('__vis_groups__' in globals()))\n"
+                         "print('table='+str('__vis_apropos_table__' in globals()))"))]
+          (expect (str/includes? out "vis_docs=False"))
+          (expect (str/includes? out "groups=False"))
+          (expect (str/includes? out "table=False"))))
+    (it "a word that lives only in a page BODY finds that page"
+        ;; "Truffle" is in no tool name and in no gist — only inside the pages.
+        (let
+          [out (run (str "hits = apropos('truffle')\n"
+                         "print('n='+str(len(hits)))\n"
+                         "print('graalpython='+str('graalpython' in hits))"))]
+          (expect (str/includes? out "graalpython=True"))))
+    (it "doc retrieves a documentation page by slug, forgiving case and `.md`"
+        (let
+          [out (run (str "a = doc('gateway')\n"
+                         "b = doc('Gateway.MD')\n" "print('same='+str(a == b))\n"
+                         "print('head='+a.splitlines()[0])\n"
+                         "print('body='+str('pairing' in a.lower()))"))]
+          (expect (str/includes? out "same=True"))
+          (expect (str/includes? out "head=# gateway"))
+          (expect (str/includes? out "body=True"))))
+    (it "doc returns a skill WHOLE and says how to work under it, without activating it"
+        (let
+          [out (run (str
+                      "d = doc('spel')\n" "print('call='+str('await skill(\"spel\")' in d))\n"
+                      "print('long='+str(len(d) > 2000))\n"
+                      "print('active='+str(globals().get('__vis_active_skill__') is not None))"))]
+          (expect (str/includes? out "call=True"))
+          (expect (str/includes? out "long=True"))
+          (expect (str/includes? out "active=False"))))
+    (it "bare doc() is the curated index, not the corpus"
+        (let
+          [out (run (str "idx = doc()\n"
+                         "print('rows='+str(len(idx.splitlines())))\n"
+                         "print('curated='+str(idx.count(' — ') < len(apropos(''))))\n"
+                         "print('grep='+str('grep — ' in idx))\n"
+                         "print('points='+str('apropos(text)' in idx))"))]
+          (expect (str/includes? out "curated=True"))
+          (expect (str/includes? out "grep=True"))
+          (expect (str/includes? out "points=True"))))
+    (it "a miss answers with the closest documents instead of a dead end"
+        (let [out (run "print(doc('gatewa'))")]
+          (expect (str/includes? out "is not a handle"))
+          (expect (str/includes? out "gateway"))
+          (expect (str/includes? out "doc(name)"))))))
+
+;; Regression: a documentation slug must never shadow a bound function — the
+;; corpus is seeded with `setdefault`, so the callable contract wins its name.
+(defdescribe a-page-never-shadows-a-function-test
+             (it "keeps the function's own contract when a document claims its name"
+                 (try (doc-corpus/register-source! ::collision
+                                                   (fn []
+                                                     [{:name "cat" :text "PAGE THAT MUST LOSE"}]))
+                      (let
+                        [ctx
+                         (:python-context (ep/create-python-context (ext/builtin-sandbox-bindings
+                                                                      (fn []
+                                                                        nil))))
+
+                         out
+                         (str (:stdout (ep/run-python-block ctx "print(doc('cat'))")))]
+
+                        (expect (not (str/includes? out "PAGE THAT MUST LOSE")))
+                        (expect (str/includes? out "cat")))
+                      (finally (doc-corpus/register-source! ::collision (constantly []))))))

@@ -21,6 +21,7 @@
             [clojure.java.io :as io]
             [clojure.set :as set]
             [clojure.string :as str]
+            [com.blockether.vis.internal.doc-corpus :as doc-corpus]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
@@ -963,6 +964,51 @@
 ;; Python sandbox context creation
 ;; =============================================================================
 
+(defn- value->str-map
+  "A GraalPy dict `Value` as a Clojure `{string string}`. Missing / null / not-a
+   -dict answers `{}`, because a discovery surface must never be the reason a
+   block fails."
+  [^Value d]
+  (if-not (and d (not (.isNull d)) (.hasHashEntries d))
+    {}
+    (let [^Value it (.getHashEntriesIterator d)]
+      (loop [m (transient {})]
+        (if-not (.hasIteratorNextElement it)
+          (persistent! m)
+          (let
+            [^Value e (.getIteratorNextElement it)
+             ^Value v (.getArrayElement e 1)]
+
+            ;; `.asString`, never `str`: `Value.toString` on a guest string is its
+            ;; Python REPR, which quoted every gist the index printed.
+            (recur (assoc! m
+                           (.asString ^Value (.getArrayElement e 0))
+                           (if (.isString v) (.asString v) (str v))))))))))
+
+(defn- sandbox-corpus
+  "The whole corpus as `doc-corpus` entries, read LIVE off the globals so a
+   per-turn extension activation is searchable the moment it binds:
+   `__vis_docs__` holds one document per handle (function contracts seeded from
+   the extension registry, plus every documentation page, skill and MCP tool),
+   `__vis_calls__` holds the expression that uses the handles which are not
+   themselves Python names. A bound function with no registered document still
+   appears — by name, with an empty gist — because a callable the model can
+   type must never be invisible."
+  [^Value g names-fn]
+  (let
+    [docs
+     (value->str-map (.getMember g "__vis_docs__"))
+
+     calls
+     (value->str-map (.getMember g "__vis_calls__"))]
+
+    (into []
+          (map (fn [nm]
+                 (cond-> {:name nm :text (get docs nm "")}
+                   (seq (str (get calls nm)))
+                   (assoc :call (get calls nm)))))
+          (distinct (concat (names-fn) (sort (keys docs)))))))
+
 (defn- install-introspection!
   "Wire Python `apropos(pat)` and `doc(name)` over the live globals — the
    sandbox's own discovery surface. Both read
@@ -1021,107 +1067,71 @@
         ProxyExecutable
           (execute [_ args]
             (let
-              [pat
+              [query
                (if (pos? (alength args)) (.asString ^Value (aget args 0)) "")
 
-               ;; `{name -> group}` seeded by `build-agent-context`; read live so a
-               ;; per-turn extension activation is groupable the moment it binds.
-               groups
-               (let [d (.getMember g "__vis_groups__")]
-                 (when (and d (not (.isNull d)) (.hasHashEntries d)) d))
+               ;; Underscore-prefixed handles (`_shell_logs`, the deferred
+               ;; transports) are PRIVATE: `doc(name)` still states their result
+               ;; contract, but no listing advertises them.
+               hits
+               (into []
+                     (remove #(str/starts-with? (str (:name %)) "_"))
+                     (doc-corpus/search (sandbox-corpus g names) query))]
 
-               group-of
-               (fn [nm]
-                 (if (and groups (.hasHashEntry groups (->py nm)))
-                   (.asString (.getHashValue groups (->py nm)))
-                   "engine"))
-
-               ;; A query matches a NAME or its GROUP, so `apropos("providers")`
-               ;; and `apropos("filesystem")` answer without knowing one tool name.
-               needle
-               (str/lower-case pat)
-
-               matched
-               (filterv (fn [nm]
-                          (or (str/includes? (str/lower-case nm) needle)
-                              (str/includes? (str/lower-case (group-of nm)) needle)))
-                 (names))
-
-               docs
-               (let [d (.getMember g "__vis_docs__")]
-                 (when (and d (not (.isNull d)) (.hasHashEntries d)) d))
-
-               gist
-               (fn [nm]
-                 ;; first non-blank line of the registered doc, capped so
-                 ;; `apropos` stays a scannable name -> gist index while still
-                 ;; carrying enough essence to read (the TUI table-cell wrapper
-                 ;; wraps it across rows; full text is `doc(name)`).
-                 (let
-                   [full
-                    (when (and docs (.hasHashEntry docs (->py nm)))
-                      (.asString (.getHashValue docs (->py nm))))
-
-                    line
-                    (when (seq (str full))
-                      (first (remove str/blank? (str/split-lines (str full)))))]
-
-                   (cond (str/blank? (str line)) ""
-                         (> (count line) 240) (str (subs line 0 239) "…")
-                         :else line)))]
-
-              ;; Return a REAL native Python dict {name -> gist} (order preserved)
-              ;; by zipping two parallel arrays guest-side — no ProxyHashMap crosses
+              ;; Return a REAL native Python dict {name -> gist} in RANK order by
+              ;; zipping two parallel arrays guest-side — no ProxyHashMap crosses
               ;; the boundary, so `list()/in/sorted/set/**` all behave natively.
-              (.putMember g "__vis_apropos_names__" (->py matched))
-              (.putMember g "__vis_apropos_gists__" (->py (mapv gist matched)))
+              (.putMember g "__vis_apropos_names__" (->py (mapv :name hits)))
+              (.putMember g "__vis_apropos_gists__" (->py (mapv #(doc-corpus/gist (:text %)) hits)))
               (try (.eval ctx
                           "python"
                           "dict(zip(list(__vis_apropos_names__), list(__vis_apropos_gists__)))")
                    (finally (.putMember g "__vis_apropos_names__" nil)
                             (.putMember g "__vis_apropos_gists__" nil)))))))
-    (.putMember
-      g
-      "doc"
-      (reify
-        ProxyExecutable
-          (execute [_ args]
-            (let
-              [nm
-               (when (pos? (alength args)) (.asString ^Value (aget args 0)))
+    (.putMember g
+                "doc"
+                (reify
+                  ProxyExecutable
+                    (execute [_ args]
+                      (let
+                        [target
+                         (when (pos? (alength args)) (.asString ^Value (aget args 0)))
 
-               m
-               (when nm (.getMember g nm))
+                         es
+                         (sandbox-corpus g names)]
 
-               docs
-               (let [d (.getMember g "__vis_docs__")]
-                 (when (and d (not (.isNull d)) (.hasHashEntries d) nm (.hasHashEntry d (->py nm)))
-                   (.asString (.getHashValue d (->py nm)))))]
+                        (if (str/blank? (str target))
+                          (doc-corpus/index-text es)
+                          (let
+                            [wanted
+                             (doc-corpus/normalize-name target)
 
-              (cond (nil? nm) "doc(name): describe a sandbox global"
-                    (and (or (nil? m) (.isNull m)) (nil? docs))
-                    (str nm ": <not found> — try apropos(\"\")")
-                    :else (str "# "
-                               nm
-                               (when (and m (not (.isNull m)) (.canExecute m)) "  ·  callable")
-                               (when docs (str "\n\n" docs))))))))
-    ;; Native `apropos` dispatch renders a scannable markdown table and omits
-    ;; capabilities already present in the provider-native schema. In-Python
-    ;; `apropos(query)` remains the complete real dict for composition/filtering.
-    ;; Underscore-prefixed helper stays absent from its own index.
-    (try (.eval ^Context ctx "python" (runtime-python-src "vis-python/apropos_table.py"))
-         (catch Throwable _ nil))
+                             ;; Resolution order is precedence: the exact handle, then the
+                             ;; forgiving one (case, whitespace, a trailing `.md`), so a
+                             ;; function name always wins a documentation slug.
+                             hit
+                             (or (first (filter #(= (str target) (:name %)) es))
+                                 (first (filter #(= wanted (doc-corpus/normalize-name (:name %)))
+                                                es)))
+
+                             m
+                             (when hit (.getMember g ^String (:name hit)))]
+
+                            (if hit
+                              (doc-corpus/entry-text hit
+                                                     (when (and m (not (.isNull m)) (.canExecute m))
+                                                       "callable"))
+                              (doc-corpus/miss-text es target))))))))
     ;; These two helpers are installed by the engine rather than the extension
-    ;; registry, so seed their own docs here. This keeps native `doc` and
-    ;; in-Python `doc(...)` equally useful without a copied prompt table.
+    ;; registry, so seed their own docs here.
     (set-python-binding-doc!
       ctx
       'apropos
-      "apropos(query='') -> {name: gist}. List sandbox tools; the query matches a name substring OR a whole GROUP (filesystem, shell, providers, mcp, languages, shims, \u2026). Groups: `__vis_groups__`.")
+      "apropos(query='') -> {name: gist}. FULL-TEXT SEARCH over every document this session can reach — every function's contract, every skill's whole SKILL.md, every Vis documentation page, every MCP tool's description. Whitespace-separated terms are ANDed; hits come back in RANK order (an exact name, then a name substring, then the first line, then the body), each as its one-line gist. `apropos('')` is everything. Read one whole with `doc(name)`.")
     (set-python-binding-doc!
       ctx
       'doc
-      "doc(name) -> str. Show a sandbox tool's callable contract, arguments, result shape, and mechanics.")
+      "doc(target) -> str. RETRIEVE one document whole: a function name, a Vis documentation slug or a skill name — case, whitespace and a trailing `.md` do not matter, and a function wins a name collision. `doc()` with no argument prints the curated index of the verbs a session starts from. Reading a skill does NOT activate it: `doc(name)` reads, `await skill(name)` works under it.")
     (set-python-binding-doc!
       ctx
       'gather
@@ -1129,7 +1139,7 @@
     (set-python-binding-doc!
       ctx
       'session-fold
-      "session_fold(target, gist=None) -> str. Collapse SETTLED steps: prior turns and the current turn only through its last completed iteration; live/future steps cannot fold. Targets: step/turn ids or through/from/to/since selectors. Folding changes rendering, not storage; there is no destructive unfold command, and a folded step is not re-readable inline \u2014 its GIST is what survives. With introspection on, `s = await session_state()` and filter `['transcript']['turns'][...]['iterations'][...]['blocks']`. A broader newer fold supersedes fully covered breadcrumbs; equal scope keeps newer. Partial overlaps remain separate.")))
+      "session_fold(target, gist=None) -> str. Collapse SETTLED steps: prior turns and the current turn only through its last completed iteration; live/future steps cannot fold. Targets: step/turn ids or through/from/to/since selectors. Folding changes rendering, not storage; there is no destructive unfold command, and a folded step is not re-readable inline — its GIST is what survives. With introspection on, `s = await session_state()` and filter `['transcript']['turns'][...]['iterations'][...]['blocks']`. A broader newer fold supersedes fully covered breadcrumbs; equal scope keeps newer. Partial overlaps remain separate.")))
 
 
 (def PROCESS_SURFACE
@@ -1141,8 +1151,9 @@
        `os.popen` is called;
      - a live handle that cannot be driven (`__VisShell__.__vis_op__` in
        `vis-python/async_runtime.py`);
-     - the `apropos` table (`vis-python/apropos_table.py`), when the shell tools are
-       off and a shell-shaped query would otherwise answer with silence.
+     - the corpus entry named `shell` (`env-python/create-python-context`), when the
+       shell tools are off and `apropos(\"shell\")` / `doc(\"shell\")` would otherwise
+       answer with silence.
 
    Every copy of one fact drifts, and the copy the model reads at the moment it
    is blocked is the one that must be right. Composed, never concatenated ad hoc:
@@ -1941,27 +1952,10 @@
         [sym->doc
          (extension/sandbox-symbol-docs)
 
-         sym->group
-         (extension/sandbox-symbol-groups)
-
          py-docs
          (reduce (fn [m [sym _]]
                    (if-let [d (get sym->doc sym)]
                      (reduce #(assoc %1 %2 d) m (cons (sym->py-name sym) (py-aliases-for-sym sym)))
-                     m))
-                 {}
-                 (or custom-bindings {}))
-
-         ;; The discovery GROUP of each bound symbol, keyed by the SAME python
-         ;; names — `apropos` files its table under these headings and matches a
-         ;; query against them, so "providers" or "filesystem" is a question the
-         ;; sandbox can answer without knowing a single tool name.
-         py-groups
-         (reduce (fn [m [sym _]]
-                   (if-let [grp (get sym->group sym)]
-                     (reduce #(assoc %1 %2 grp)
-                             m
-                             (cons (sym->py-name sym) (py-aliases-for-sym sym)))
                      m))
                  {}
                  (or custom-bindings {}))]
@@ -1971,14 +1965,7 @@
           (.eval ctx
                  "python"
                  "globals().setdefault('__vis_docs__', {}).update(json.loads(__vis_docs_json__))")
-          (.putMember g "__vis_docs_json__" nil))
-        (when (seq py-groups)
-          (.putMember g "__vis_groups_json__" (json/write-json-str py-groups))
-          (.eval
-            ctx
-            "python"
-            "globals().setdefault('__vis_groups__', {}).update(json.loads(__vis_groups_json__))")
-          (.putMember g "__vis_groups_json__" nil)))
+          (.putMember g "__vis_docs_json__" nil)))
       (catch Throwable _ nil))
     ;; POSIX refusal: subprocess / os.system / os.popen point at the `shell`
     ;; tool instead of spawning. Eval'd BEFORE the initial-ns-keys snapshot so
@@ -2026,13 +2013,6 @@
           (.putMember g "__vis_shims_json__" (json/write-json-str names))
           (.eval ctx "python" "globals()['__vis_shims__'] = json.loads(__vis_shims_json__)")
           (.putMember g "__vis_shims_json__" nil))
-        (when (seq names)
-          (.putMember g "__vis_groups_json__" (json/write-json-str (zipmap names (repeat "shims"))))
-          (.eval
-            ctx
-            "python"
-            "globals().setdefault('__vis_groups__', {}).update(json.loads(__vis_groups_json__))")
-          (.putMember g "__vis_groups_json__" nil))
         (when (seq docs)
           (.putMember g "__vis_docs_json__" (json/write-json-str docs))
           (.eval ctx
@@ -2041,6 +2021,54 @@
                       "for _k, _v in json.loads(__vis_docs_json__).items():\n"
                       "    _vis_docs.setdefault(_k, _v)\n" "del _vis_docs, _k, _v"))
           (.putMember g "__vis_docs_json__" nil)))
+      (catch Throwable _ nil))
+    ;; DOCUMENTS: every skill's whole `SKILL.md`, every Vis documentation page and
+    ;; every MCP tool description join the SAME `__vis_docs__` dict the function
+    ;; contracts live in — ONE corpus, so `apropos` is one search and `doc` is one
+    ;; lookup. `setdefault` IS the precedence rule: a callable name always wins a
+    ;; documentation slug. `__vis_calls__` carries the expression that uses a
+    ;; handle which is not itself a Python name (`await skill("spel")`,
+    ;; `mcp__call(...)`). Best-effort: a discovery hiccup must never break context
+    ;; creation.
+    (try
+      (let
+        [es
+         (doc-corpus/entries)
+
+         ;; With the shell tools OFF the `shell` verb is simply not bound, and a
+         ;; shell-shaped query would answer with silence — which reads as "no
+         ;; process can be started in this product". It can: the toggle closes the
+         ;; MODEL's door only. Same sentences as the POSIX refusal, never a copy.
+         shell-off?
+         (not (some (fn [[sym _]]
+                      (= "shell" (sym->py-name sym)))
+                    (or custom-bindings {})))
+
+         docs
+         (cond-> (into {} (map (juxt :name :text)) es)
+           shell-off?
+           (assoc "shell" (str (get PROCESS_SURFACE "off") " " (get PROCESS_SURFACE "extension"))))
+
+         calls
+         (into {}
+               (keep (fn [e]
+                       (when (:call e) [(:name e) (:call e)])))
+               es)]
+
+        (when (seq docs)
+          (.putMember g "__vis_docs_json__" (json/write-json-str docs))
+          (.eval ctx
+                 "python"
+                 (str "_vis_docs = globals().setdefault('__vis_docs__', {})\n"
+                      "for _k, _v in json.loads(__vis_docs_json__).items():\n"
+                      "    _vis_docs.setdefault(_k, _v)\n" "del _vis_docs, _k, _v"))
+          (.putMember g "__vis_docs_json__" nil))
+        (when (seq calls)
+          (.putMember g "__vis_calls_json__" (json/write-json-str calls))
+          (.eval ctx
+                 "python"
+                 "globals().setdefault('__vis_calls__', {}).update(json.loads(__vis_calls_json__))")
+          (.putMember g "__vis_calls_json__" nil)))
       (catch Throwable _ nil))
     ;; ASYNC-BY-DEFAULT runtime: install the trampoline + `gather`, then DEFER
     ;; every tool binding (so `await cat(x)` / `gather(cat(x), cat(y))` work).

@@ -1114,10 +1114,10 @@
        "-H:IncludeResources=db/.*"
        ;; The WHOLE embedded docs corpus (markdown pages + manifest +
        ;; woff2 fonts/logos) — ALL read at RUNTIME via io/resource
-       ;; (gateway /docs site AND the model-facing `vis_docs` tool), and
-       ;; NONE of it in the agent-traced metadata (the trace never called
-       ;; vis_docs), so without this pattern vis_docs returns zero pages
-       ;; in the native binary.
+       ;; (gateway /docs site AND the `doc-corpus` documents `apropos`/`doc`
+       ;; search), and NONE of it in the agent-traced metadata (the trace never
+       ;; read a page), so without this pattern the corpus holds zero pages in
+       ;; the native binary.
        "-H:IncludeResources=vis-docs/.*"
        ;; Python SHIM sources (resources/vis-shims/*.py), slurped at sandbox
        ;; context creation via io/resource. Without this pattern EVERY shim

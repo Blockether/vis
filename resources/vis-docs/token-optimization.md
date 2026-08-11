@@ -4,18 +4,20 @@ Vis follows one rule: **do not pay tokens for data that can stay addressable.** 
 
 ## Discover before guessing
 
-The live runtime is the source of truth. `apropos` finds capabilities by name **or by group** — `filesystem`, `shell`, `mcp`, `providers`, `languages`, `shims`, `engine` — and `doc` returns one exact contract:
+The live runtime is the source of truth, and it answers exactly two questions. `apropos(text)` **searches** every document the session can reach — each function's whole contract, every Vis documentation page, every skill's whole `SKILL.md`, every MCP tool's description — and `doc(target)` **retrieves** one of them whole:
 
 ```python
-apropos("")            # every group, one section each
-apropos("providers")   # one whole family, no tool name needed
-apropos("struct")      # name substring
-doc("struct_patch")    # description + raw result + params
+apropos("anchors")       # full text: the word need not be in any name
+apropos("wire contract") # terms are ANDed, hits come back ranked
+doc("struct_patch")      # one function's whole contract
+doc("gateway")           # a Vis documentation page, by slug
+doc("spel")              # a skill, whole — reading it does not activate it
+doc()                    # the curated index: the verbs a session starts from
 ```
 
-A group is the extension that owns the capability, so a newly registered extension is groupable the moment it binds. `doc` states the raw-result shape for bare sandbox verbs too (`doc("resource_stop")`), which have no provider schema in front of them.
+Rank is the answer to "where did it match": an exact name outranks a name substring, which outranks the first line, which outranks the body. `doc` states the raw-result shape for bare sandbox verbs too (`doc("resource_stop")`), which nothing else describes.
 
-Use them before inventing a tool name or call shape. They read the same live registry that generates native tool descriptions, so extensions appear immediately and copied catalogs cannot go stale.
+Use them before inventing a name or a call shape. They read the live registry and the live document corpus, so an extension appears the moment it binds and a copied catalog cannot go stale.
 
 ## Read structure before bytes
 

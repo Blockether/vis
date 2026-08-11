@@ -37,6 +37,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.doc-corpus :as doc-corpus]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.mcp.client :as mcp]
             [com.blockether.vis.internal.foundation.mcp.oauth :as mcp-oauth]
@@ -968,6 +969,39 @@
            "description" (get t "description")
            "input_schema" (get t "inputSchema")})
         (conn-tools conn)))
+
+(defn- doc-corpus-entries
+  "Every tool of every VISIBLE MCP server as a `doc-corpus` entry, so
+   `apropos(\"jira\")` reaches a server-supplied description — the only place
+   that text survives now that `mcp__call` carries no schema.
+
+   Reads the conn's CACHED listing ONLY: assembling the corpus must never cost
+   an RPC, so a server nobody has listed yet contributes nothing until it does."
+  []
+  (into []
+        (mapcat
+          (fn [[server _spec]]
+            (let
+              [cached (or (some-> (:tools (conn-of server))
+                                  deref)
+                          [])]
+              (keep (fn [t]
+                      (when-let [nm (not-empty (str (get t "name")))]
+                        {:name (str server "/" nm)
+                         :call (str "mcp__call(" (pr-str (str server)) ", " (pr-str nm) ", {})")
+                         :text (str "MCP tool `"
+                                    nm
+                                    "` on server `"
+                                    server
+                                    "`."
+                                    (when-let [d (not-empty (str (get t "description")))]
+                                      (str "\n\n" d))
+                                    (when-let [sch (get t "inputSchema")]
+                                      (str "\n\nInput schema: " (pr-str sch))))}))
+                    cached))))
+        (visible-servers nil)))
+
+(doc-corpus/register-source! :mcp-tools #'doc-corpus-entries)
 
 (defn- call-failed-err
   "Turn anything thrown below this point into a typed refusal. A tool call

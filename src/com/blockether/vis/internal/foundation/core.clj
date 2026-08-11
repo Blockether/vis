@@ -4,7 +4,6 @@
             [com.blockether.vis.internal.foundation.editing.core :as editing]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
             [com.blockether.vis.internal.foundation.language-surface :as language-surface]
-            [com.blockether.vis.internal.foundation.self-docs :as self-docs]
             [com.blockether.vis.internal.foundation.workspace-ctx :as workspace-ctx]
             [com.blockether.vis.internal.foundation.workspace-slashes :as workspace-slashes]
             [com.blockether.vis.internal.foundation.session-slashes :as session-slashes]
@@ -83,7 +82,7 @@
   (vis/extension
     {:ext/name "foundation-core"
      :ext/description
-     "Foundation kernel: language facade; file and structural editing; session workspace/VCS and project-shape helpers; `main_agent_instructions`; embedded `vis_docs`. Session introspection lives in `foundation-introspection` behind its toggle; sandbox `doc`/`apropos` are engine calls. Bare Python functions return plain Markdown."
+     "Foundation kernel: language facade; file and structural editing; session workspace/VCS and project-shape helpers; `main_agent_instructions`. Session introspection lives in `foundation-introspection` behind its toggle; Vis' own documentation pages are corpus entries the engine verbs `apropos`/`doc` search and retrieve. Bare Python functions return plain Markdown."
      :ext/version "0.7.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -96,8 +95,7 @@
      :ext/engine {:ext.engine/builtin? true
                   :ext.engine/symbols (vec (concat language-surface/symbols
                                                    (editing/available-editing-symbols)
-                                                   environment/environment-symbols
-                                                   self-docs/symbols))}
+                                                   environment/environment-symbols))}
      :ext/kind "foundation"
      :ext/slash-commands (into workspace-slashes/specs session-slashes/specs)
      :ext/ctx-fn combined-ctx

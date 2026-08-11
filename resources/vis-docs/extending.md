@@ -1276,7 +1276,7 @@ stripped from the field before any surface sees it.
 
 ### Shipping doc pages
 
-Any extension can add pages to Vis's embedded docs — the same corpus the `/docs` site renders and the model reads through its `vis_docs` tool. Drop markdown under `resources/vis-docs/` with a manifest:
+Any extension can add pages to Vis's embedded docs — the same corpus the `/docs` site renders and the model searches with `apropos(text)` and reads with `doc(slug)`. Drop markdown under `resources/vis-docs/` with a manifest:
 
 ```clojure
 ;; resources/vis-docs/vis-docs.edn

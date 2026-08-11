@@ -403,8 +403,9 @@ model reads, so they are specified before the code:
   `apropos-searches-mcp-tool-descriptions-test`, `apropos-ranks-name-above-body-test`,
   `apropos-ands-multiple-terms-test`, `doc-no-arg-returns-curated-index-test`,
   `doc-resolves-page-slug-test`, `doc-resolves-skill-name-test`,
-  `doc-returns-whole-skill-body-test` (the string `doc` answers for a skill is byte-identical to
-  `discovery.clj` `:content`, and no shorter skill description exists in the corpus),
+  `doc-returns-whole-skill-body-test` (the text `doc` answers for a skill ENDS WITH
+  `discovery.clj` `:content` verbatim — the frontmatter description is its first line, which is
+  what the index prints — and no shorter skill description exists in the corpus),
   `doc-resolves-function-before-page-test`, and `every-entry-has-a-usable-first-line-test` (the
   lint that replaces the gist field: first line non-empty, one sentence, <= 240 chars, for every
   seeded entry); `test/com/blockether/vis/internal/foundation/self_docs_test.clj` is rewritten
@@ -1206,7 +1207,7 @@ about `ntr[…]`-carrying metric bullets).
 
 ## State of the plan
 
-**REQUIRES WORK** — phases 1-3 have LANDED; phases 4-7 are written and unstarted.
+**REQUIRES WORK** — phases 1-4 have LANDED; phases 5-7 are written and unstarted.
 
 **Phase 1 — advertise only `python_execution`: DONE** (commit `118237e6b`).
 `loop.clj/native-tools` takes `caps` alone and returns the one finalized `python_execution` tool;
@@ -1298,6 +1299,54 @@ them touches a form, a card or a display projection. `format_code` and `lint_cod
 `npm run lint`, `tsc`, `vitest` and `build` green. REMAINING for this phase, tracked as steps 56b
 and 57: the `spel` shipped-UI numbers at 390/1440 and one `cap/shot!` PNG.
 
+**Phase 4 — two discovery verbs: DONE.** The corpus is its own namespace,
+`src/com/blockether/vis/internal/doc_corpus.clj` (253 lines), not a lump inside `env_python.clj`: the
+`clojure.spec.alpha` block (`:vis.doc/entry` = `name` + `text` + optional `call`, `:vis.apropos/hit` =
+entry + `score`) is written there before the code because the record crosses into GraalPy. Sources are a
+registry, not a `case`: `register-source!` replaces by id, the namespace itself registers
+`:documentation-pages` (`internal.docs/collect`) and `:skills` (`harness.discovery/skills` — text is the
+frontmatter description plus the WHOLE `:body`, `call` is `await skill("name")`), and
+`foundation/mcp/core.clj` registers `:mcp-tools` from the CACHED `(:tools conn)` only, so discovery never
+starts a server. A fifth seeder is a `register-source!` call, never a new verb.
+
+`apropos(query)` is ranked full text over the one corpus: terms are ANDed, a name hit scores 100, a name
+substring 50, the gist 10 and the body 1, ties break by name, and a blank query lists everything by name.
+It answers a guest dict `{name: gist}` in RANK order — `sorted(...)` sees the names, `list(...)` sees the
+ranking. `doc(target)` resolves the exact name, then the normalized one (trim / `.md` / lowercase), and
+prints the whole text with a "callable" line when the entry carries a `call`; bare `doc()` prints the
+curated index (one hand-ordered vector of 19 names, first lines only, capped at 140 chars); a miss says so
+and points at `apropos`. There is no second description anywhere: an entry's FIRST LINE is its gist, which
+`doc_corpus_test/every-entry-has-a-usable-first-line-test` enforces.
+
+Deleted with their behaviour: `foundation/self_docs.clj` and its `vis_docs` symbol in
+`foundation/core.clj`, `resources/vis-python/apropos_table.py` (the whole group table), and
+`extension.clj`'s `ext-group-overrides` / `ext-group-label` / `sandbox-symbol-groups` — a group was a
+hand-maintained bucket that a full-text query answers better. One real bug fell out of the port:
+`sandbox-corpus` reads `__vis_docs__` with `.asString`, never `str`, because `Value.toString` on a guest
+string is the Python `repr` and was quoting every doc body.
+
+Tests: `foundation/self_docs_test.clj` deleted (whole file); `doc_corpus_test.clj` ADDED (8 describes —
+entry shape, first-line lint, a skill entry carrying its whole body, `reading-a-skill-does-not-activate-it`
+proven by scanning the namespace source for `harness.core`, ranking, AND-ing, blank query, curated index);
+`env_python_test` gained `discovery-is-two-verbs-test` and `a-page-never-shadows-a-function-test` and lost
+`apropos-groups-and-bare-verb-docs-test` (now `bare-verb-docs-test`). `shim_attach_test:313,329` reads the
+first N of the RANKED answer instead of the whole set, because full text now also matches every document
+that merely mentions attaching. `posix_refusal_shim_test` moved from `__vis_apropos_table__` to
+`doc('shell')`: with the toggle off, `shell` is still a corpus entry whose text carries both
+`PROCESS_SURFACE` sentences, and with the tool bound the extension-door sentence is absent.
+
+One Phase-7 sentence was pulled forward because the ratchet at `prompt_test.clj:76` (< 4750 chars) left no
+room: §1's discovery lines are the SHORT form ("`apropos(text)` SEARCHES every document; `doc(name)`
+prints one whole, bare `doc()` the index; a Vis doc page only for product questions"), and §2's "Call
+advertised native tools directly; use `apropos`/`doc` only for unadvertised capabilities" is deleted as a
+direct contradiction of it. CORE is 4735 chars. Phase 7 restores the skill clause once it deletes the
+`ntr` block and the JSON-Schema line.
+
+Green: the whole suite 4131/4137. SIX failures are pre-existing and belong to other work — the five
+already listed, plus `loop-test/providers-router-rebuild-hook-wiring-test`, which fails whenever the whole
+namespace runs (two loads of `loop.clj` give `identical?` two distinct fn objects) and passes with
+`--var`; verified against a clean `HEAD` worktree, so it is not this phase's.
+
 TODO — one checkable step per line, in order. Each step names the file, the thing it does to it, and
 the test that flips. A step is done when its own tests are green; a PHASE is done when its whole
 block is green, lint and format are clean, and it is committed with its tests.
@@ -1332,13 +1381,13 @@ block is green, lint and format are clean, and it is committed with its tests.
 
 **Phase 4 — `apropos` searches, `doc` retrieves.**
 
-20. Write the `clojure.spec.alpha` block (`:vis.doc/entry` = `name` + `text` + optional `call`; `:vis.apropos/hit` = entry + `score`) into `env_python.clj` BEFORE the implementation — it crosses into GraalPy.
-21. `env_python.clj` — one corpus builder, four seeders (function registrations, `self_docs/pages`, `harness/discovery` `:content`, MCP tool descriptions), assembled once per env and cached with the docs registry.
-22. `env_python.clj:1050-1080` — `apropos` becomes ranked full text over name/aliases + whole `text`; delete the group column and `__vis_groups__`; delete `resources/vis-python/apropos_table.py`'s group machinery (or the file, if nothing else remains).
-23. `env_python.clj:1092-1116` — `doc(target)` resolves function → documentation page slug → skill name, returns the WHOLE text; bare `doc()` returns the curated index (one hand-ordered name vector beside the seeders); a miss answers with top `apropos` hits.
-24. `extension.clj:3822-3939` — delete group assembly from `symbol-doc-text` / `sandbox-symbol-docs`; the first line of `:description` becomes the gist.
-25. `foundation/self_docs.clj:52,94` and its symbol in `foundation/core.clj:100` — delete `vis_docs`; `pages`/`listing` survive as a seeding source only.
-26. Tests: delete `self_docs_test.clj` (whole file) and `env_python_test/apropos-groups-and-bare-verb-docs-test`; rewrite `doc-apropos-surface-test` and `harness/core_test/skill-native-tool-test`; adjust `shim_attach_test:313`, `shim_ls_test:87`, `sandbox_shim_contract_test:120`, `posix_refusal_shim_test:78,139`; ADD the six phase-4 describes. Run `…env-python-test`, `…foundation.harness.core-test`, `…posix-refusal-shim-test`, the two shim tests. Commit.
+20. DONE — the `clojure.spec.alpha` block lives in the NEW `src/com/blockether/vis/internal/doc_corpus.clj` (`:vis.doc/entry` = `name` + `text` + optional `call`; `:vis.apropos/hit` = entry + `score`), written before the implementation because the record crosses into GraalPy.
+21. DONE — `doc_corpus.clj` is the corpus builder and a SOURCE REGISTRY (`register-source!`, replace-by-id): `:documentation-pages` (`internal.docs/collect`) and `:skills` (`harness.discovery/skills`, text = description + whole `:body`, call = `await skill("name")`) register in the namespace itself, `:mcp-tools` registers from `foundation/mcp/core.clj` off the CACHED `(:tools conn)` so discovery starts no server, and the sandbox globals (`__vis_docs__` / `__vis_calls__`) are read LIVE per call by `env_python/sandbox-corpus`. `entries` dedupes by name, first source wins.
+22. DONE — `env_python.clj` `apropos` is ranked full text (AND-ed terms; name 100 / name-substring 50 / gist 10 / body 1; ties by name; blank query lists all), answering a guest dict `{name: gist}` in rank order and hiding `_`-prefixed names. `__vis_groups__`, `sym->group` and `resources/vis-python/apropos_table.py` are DELETED, and with them `extension.clj`'s `ext-group-overrides` / `ext-group-label` / `sandbox-symbol-groups`.
+23. DONE — `doc(target)` resolves the exact name, then the normalized one (trim / `.md` / lowercase), and prints the WHOLE text plus a `callable` line when the entry has a `call`; bare `doc()` prints the curated index (19 names, first lines, 140-char cap); a miss says the handle is unknown and points at `apropos(text)`. `doc('shell')` with the toggle off is a synthetic entry carrying both `PROCESS_SURFACE` sentences.
+24. DONE — group assembly is gone from `extension.clj`; an entry's FIRST LINE is its gist (`doc_corpus/gist`, 240 chars, 140 in the index), pinned by `doc_corpus_test/every-entry-has-a-usable-first-line-test`.
+25. DONE — `foundation/self_docs.clj` DELETED with its `vis_docs` symbol in `foundation/core.clj`; pages are seeded through `internal.docs/collect` instead. `ctx_renderer.clj`, `build.clj`, `resources/vis-docs/{index,extending,token-optimization}.md` follow.
+26. DONE — `foundation/self_docs_test.clj` deleted; `doc_corpus_test.clj` ADDED (8 describes, incl. `reading-a-skill-does-not-activate-it`); `env_python_test` rewritten (+`discovery-is-two-verbs-test`, +`a-page-never-shadows-a-function-test`, `apropos-groups-and-bare-verb-docs-test` → `bare-verb-docs-test`); `shim_attach_test:313,329` reads the first N of the RANKED answer; `posix_refusal_shim_test` moved from `__vis_apropos_table__` to `doc('shell')`. Green: `doc-corpus-test` 8/8, `env-python-test` 58/58, `prompt-test`, `posix-refusal-shim-test`, `shim-attach-test`; whole suite 4131/4137 with only pre-existing failures.
 
 **Phase 5 — retire `ntr`.**
 

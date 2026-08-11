@@ -191,4 +191,4 @@ memory.
 - **[Content-block protocol](content-blocks.md)**: the canonical role-labelled message, typed block, persistence, and streaming contract.
 - **[Reporting bugs](reporting-bugs.md)**: filing an issue that is reproducible for us and safe for you — what to include, what never to paste, and how to sanitize a session export.
 
-Vis can also answer these questions itself: ask a running `vis-agent` how to configure or extend it and it reads these same pages through its `vis_docs` tool.
+Vis can also answer these questions itself: ask a running `vis-agent` how to configure or extend it and it reads these same pages through `apropos(text)` and `doc(slug)` — they are documents in the same corpus as every function contract.

@@ -261,7 +261,7 @@
    as an ordered `{\"ln:hash\" text}` map — the key IS the `patch from_anchor`
    — so editing resolves straight off this structured data."
   ^String [_src v]
-  ;; A bare STRING result is prose/markdown (doc(name), apropos's table, self-docs):
+  ;; A bare STRING result is prose/markdown (`doc(name)`, a corpus document):
   ;; render it VERBATIM so newlines, headers, and pipe-tables display as written —
   ;; a Python string literal would escape `\n`/`\t` and collapse it to one line.
   ;; Structured values (maps/vectors) stay canonical Python literals.

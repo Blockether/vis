@@ -97,7 +97,7 @@
       ;; The shell is a Python call now, not a native tool: the core must say WHERE it lives.
       (expect (str/includes? text "`shell(...)` in Python runs programs"))
       (expect (str/includes? text "No shell TOOL"))
-      (expect (< (str/index-of text "`grep` FIRST") (str/index-of text "`vis_docs()`")))
+      (expect (< (str/index-of text "`grep` FIRST") (str/index-of text "`apropos(text)` SEARCHES")))
       (doseq
         [heading ["## 1. Identity + Epistemic stance" "## 2. Execution surfaces" "## 3. Inspect"
                   "## 4. Edit + verify" "## 5. Act autonomously" "## 6. Manage context"
@@ -109,7 +109,8 @@
       (expect (str/includes? text "`struct_nodes`"))
       (doseq
         [required
-         ["Host project default" "`vis_docs()`" "runtime > source > docs > assumption"
+         ["Host project default" "`apropos(text)` SEARCHES" "`doc(name)` prints one whole"
+          "runtime > source > docs > assumption"
           "Native descriptions and JSON Schemas are authoritative" "follow the documented contract"
           "hard preconditions" "`python_execution`" "`await gather(...)` only for independent calls"
           "Direct native tools: single operations" "default for most Python/data work"

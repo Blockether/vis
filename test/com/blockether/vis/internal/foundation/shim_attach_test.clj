@@ -312,9 +312,11 @@
   attach-discovery-test
   (it "surfaces attach / list_attachments via apropos and doc"
       (let [pctx (ctx-with-root (temp-root))]
+        ;; `apropos` is FULL TEXT and ranked: the five name hits come before every
+        ;; document that merely mentions attaching.
         (expect (= ["attach" "get_attachment" "list_attachments" "read_attachment"
                     "show_attachment"]
-                   (vec (ev pctx "sorted(apropos('attach'))"))))
+                   (vec (ev pctx "sorted(list(apropos('attach'))[:5])"))))
         (expect (false? (ev pctx "'attachments' in apropos('attach')")))
         (expect (true? (ev pctx "'callable' in doc('attach')")))
         (expect (true? (ev pctx "'callable' in doc('show_attachment')")))))
@@ -326,7 +328,8 @@
                                                :shim/description "Synthetic discovery contract."
                                                :shim/source "vis-shims-test/discovery.py"}])]
         (let [pctx (ctx-with-root (temp-root))]
-          (expect (= ["actual_global" "actual_module"] (vec (ev pctx "sorted(apropos('actual'))"))))
+          (expect (= ["actual_global" "actual_module"]
+                     (vec (ev pctx "sorted(list(apropos('actual'))[:2])"))))
           (expect (= 42 (ev pctx "import actual_module; actual_module.answer")))
           (expect (= 42 (ev pctx "actual_global()")))
           (expect (false? (ev pctx "'internal-id' in apropos('internal')")))
@@ -575,9 +578,7 @@
             mpl-capture/*attachment-reinspection-sink*
             sink]
 
-           (block
-             pctx
-             "r = show_attachment('a1')\nprint(r['id'], r['media_type'])"))]
+           (block pctx "r = show_attachment('a1')\nprint(r['id'], r['media_type'])"))]
 
         (expect (nil? (:error out)))
         (expect (re-find #"a1 image/png" (str (:stdout out))))

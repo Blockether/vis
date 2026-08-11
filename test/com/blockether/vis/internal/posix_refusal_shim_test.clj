@@ -5,7 +5,7 @@
    up at CALL time, so the same file also answers the toggle-off state, where it
    must say that BOTH doors are closed rather than offering subprocess as a way
    around a disabled shell — and the same host sentences answer the DISCOVERY
-   surface, `apropos`, whose `shell` group vanishes with the toggle."
+   surface, where `doc` on `shell` reads the toggle state instead of a binding."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.env-python :as ep]
@@ -74,27 +74,31 @@
           (expect (str/includes? msg "DISABLED"))
           (expect (str/includes? msg "`shell` is not bound"))
           (expect (str/includes? msg "Shell commands")))))
-  ;; Regression, discovery audit: with the toggle off the whole `shell` group left
-  ;; `apropos`, so a shell-shaped query answered "no unadvertised capabilities
-  ;; match" — silence the model read as "nothing here can start a process at all".
-  (it "answers a shell-shaped `apropos` with the toggle state AND the door it leaves open"
+  ;; Regression, discovery audit: with the toggle off `shell` left the discovery
+  ;; corpus entirely, so a shell-shaped query answered nothing — silence the model
+  ;; read as "nothing here can start a process at all".
+  (it "keeps `shell` in the corpus with the toggle state AND the door it leaves open"
       (let
         [^Context ctx
          (:python-context (ep/create-python-context {}))
 
-         table
+         hits
          (fn [q]
-           (.asString (.eval ctx "python" ^String (str "__vis_apropos_table__(" (pr-str q) ")"))))]
+           (str/split (.asString
+                        (.eval ctx "python" ^String (str "','.join(apropos(" (pr-str q) "))")))
+                      #","))
 
-        (doseq [q ["shell" "she" ""]]
-          (expect (str/includes? (table q) (get ep/PROCESS_SURFACE "off")) q)
-          (expect (str/includes? (table q) (get ep/PROCESS_SURFACE "extension")) q))
-        ;; A query that is not shell-shaped keeps the plain miss.
-        (expect (= "apropos('mcp'): nothing matches." (table "mcp")))))
+         doc-text
+         (fn [q]
+           (.asString (.eval ctx "python" ^String (str "doc(" (pr-str q) ")"))))]
+
+        (doseq [q ["shell" "she"]]
+          (expect (some #{"shell"} (hits q)) q))
+        (expect (str/includes? (doc-text "shell") (get ep/PROCESS_SURFACE "off")))
+        (expect (str/includes? (doc-text "shell") (get ep/PROCESS_SURFACE "extension")))))
   (it "says nothing about the extension door while the shell tool is bound"
       (let [^Context ctx (shell-bound-context)]
-        (expect (not (str/includes? (.asString
-                                      (.eval ctx "python" "__vis_apropos_table__('shell')"))
+        (expect (not (str/includes? (.asString (.eval ctx "python" "doc('shell')"))
                                     (get ep/PROCESS_SURFACE "extension"))))))
   (it "does not leak shim internals into the live-vars baseline"
       (let [{:keys [initial-ns-keys]} (ep/create-python-context {})]
@@ -102,42 +106,41 @@
         (expect (not (contains? initial-ns-keys "subprocess")))
         (expect (not (contains? initial-ns-keys "__vis_install_posix_compat__"))))))
 
-(defdescribe
-  process-surface-is-said-once-test
-  ;; Regression, prompt audit: the same fact about this sandbox's process surface
-  ;; was worded four times - the prompt block, the `subprocess` refusal, the
-  ;; toggle-off refusal and the handle refusal each had their own sentence, so
-  ;; fixing one left the model reading a different rule from the next.
-  (it "gives the prompt, `subprocess` and a live handle the SAME host sentences"
-      (let
-        [ban
-         (get ep/PROCESS_SURFACE "ban")
+(defdescribe process-surface-is-said-once-test
+             ;; Regression, prompt audit: the same fact about this sandbox's process surface
+             ;; was worded four times - the prompt block, the `subprocess` refusal, the
+             ;; toggle-off refusal and the handle refusal each had their own sentence, so
+             ;; fixing one left the model reading a different rule from the next.
+             (it "gives the prompt, `subprocess` and a live handle the SAME host sentences"
+                 (let
+                   [ban
+                    (get ep/PROCESS_SURFACE "ban")
 
-         use'
-         (get ep/PROCESS_SURFACE "use")
+                    use'
+                    (get ep/PROCESS_SURFACE "use")
 
-         off
-         (get ep/PROCESS_SURFACE "off")]
+                    off
+                    (get ep/PROCESS_SURFACE "off")]
 
-        ;; The prompt says the rule, never the invocation grammar.
-        (expect (str/includes? (#'prompt/sandbox-shims-prompt-block
-                                [{:ext/name "foundation-shell"}])
-                               ban))
-        (expect (str/includes? (#'prompt/sandbox-shims-prompt-block []) off))
-        ;; The call site says the rule AND how to do the work instead.
-        (let [ctx (shell-bound-context)]
-          (.eval ctx "python" "import subprocess")
-          (expect (= (str ban " " use') (raised ctx "subprocess.run('ls')"))))
-        ;; No shell tool: one sentence for the tool, `subprocess` and the handle.
-        (let [ctx (:python-context (ep/create-python-context {}))]
-          (.eval ctx "python" "import subprocess")
-          (expect (= off (raised ctx "subprocess.run('ls')")))
-          (expect (= off (raised ctx "__VisShell__({'id': 'p1'}).logs()"))))))
-  (it "keeps the wording out of the Python files that say it"
-      ;; All of them read `__vis_process_surface__`; a literal copy in any file is a
-      ;; second source of truth that drifts on the next edit.
-      (doseq [f ["vis-shims/posix.py" "vis-python/async_runtime.py" "vis-python/apropos_table.py"]]
-        (let [src (slurp (io/resource f))]
-          (expect (str/includes? src "__vis_process_surface__") f)
-          (doseq [copy ["never spawn in the vis sandbox" "Shell commands are DISABLED"]]
-            (expect (not (str/includes? src copy)) (str f " " copy)))))))
+                   ;; The prompt says the rule, never the invocation grammar.
+                   (expect (str/includes? (#'prompt/sandbox-shims-prompt-block
+                                           [{:ext/name "foundation-shell"}])
+                                          ban))
+                   (expect (str/includes? (#'prompt/sandbox-shims-prompt-block []) off))
+                   ;; The call site says the rule AND how to do the work instead.
+                   (let [ctx (shell-bound-context)]
+                     (.eval ctx "python" "import subprocess")
+                     (expect (= (str ban " " use') (raised ctx "subprocess.run('ls')"))))
+                   ;; No shell tool: one sentence for the tool, `subprocess` and the handle.
+                   (let [ctx (:python-context (ep/create-python-context {}))]
+                     (.eval ctx "python" "import subprocess")
+                     (expect (= off (raised ctx "subprocess.run('ls')")))
+                     (expect (= off (raised ctx "__VisShell__({'id': 'p1'}).logs()"))))))
+             (it "keeps the wording out of the Python files that say it"
+                 ;; All of them read `__vis_process_surface__`; a literal copy in any file is a
+                 ;; second source of truth that drifts on the next edit.
+                 (doseq [f ["vis-shims/posix.py" "vis-python/async_runtime.py"]]
+                   (let [src (slurp (io/resource f))]
+                     (expect (str/includes? src "__vis_process_surface__") f)
+                     (doseq [copy ["never spawn in the vis sandbox" "Shell commands are DISABLED"]]
+                       (expect (not (str/includes? src copy)) (str f " " copy)))))))
