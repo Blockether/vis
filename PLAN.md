@@ -1206,7 +1206,19 @@ about `ntr[…]`-carrying metric bullets).
 
 ## State of the plan
 
-**REQUIRES WORK** — written, not yet reviewed; no phase has landed. Nothing is done.
+**REQUIRES WORK** — phase 1 has LANDED; phases 2-7 are written and unstarted.
+
+**Phase 1 — advertise only `python_execution`: DONE** (commit `118237e6b`).
+`loop.clj/native-tools` takes `caps` alone and returns the one finalized `python_execution` tool;
+`advertised-native-capability-names`, `apropos-tool`, `doc-tool`, `session-fold-tool` and
+`env_python/set-advertised-native-tools!` with its `__vis_advertised_native_tools__` global are deleted;
+`apropos_table.py` suppresses nothing and says so. Tests: `native-introspection-tools-test` became
+`loop_test/only-python-execution-is-advertised-test` (exactly one advertised tool, unconstrained, one
+`Raw result:` per description); `native_tool_provider_contract_test.clj` deleted, since its whole subject
+was per-tool schema portability across four providers; the engine-schema `it` in `compaction_verbs_test`
+and the suppression `it` in `env_python_test` are rewritten. Nine failures in
+`env-python-test`/`loop-test` are PRE-EXISTING on `ffeaa9db0` — verified by stashing the phase and
+re-running — seven of them the `ntr`/fold describes phase 5 deletes.
 
 TODO — one checkable step per line, in order. Each step names the file, the thing it does to it, and
 the test that flips. A step is done when its own tests are green; a PHASE is done when its whole
@@ -1214,11 +1226,11 @@ block is green, lint and format are clean, and it is committed with its tests.
 
 **Phase 1 — advertise only `python_execution`.**
 
-1. `loop.clj:4843` — `native-tools` returns `[(finalize-engine-native-tool (python-execution-tool caps))]`; delete the `apropos`, `doc` and `session_fold` entries and the `native-tools-for` splice.
-2. `loop.clj:4856` + call site `:5371` — delete `advertised-native-capability-names` and the `env/set-advertised-native-tools!` call.
-3. `env_python.clj:939,945` — delete `set-advertised-native-tools!` and the `__vis_advertised_native_tools__` global.
-4. `resources/vis-python/apropos_table.py` — delete the "already advertised, suppress it" branch that read that global.
-5. ADD `loop_test/only-python-execution-is-advertised-test`; run `…loop-test`. Commit.
+1. DONE — `loop.clj:4843` — `native-tools` returns `[(finalize-engine-native-tool (python-execution-tool caps))]`; delete the `apropos`, `doc` and `session_fold` entries and the `native-tools-for` splice.
+2. DONE — `loop.clj:4856` + call site `:5371` — delete `advertised-native-capability-names` and the `env/set-advertised-native-tools!` call.
+3. DONE — `env_python.clj:939,945` — delete `set-advertised-native-tools!` and the `__vis_advertised_native_tools__` global.
+4. DONE — `resources/vis-python/apropos_table.py` — delete the "already advertised, suppress it" branch that read that global.
+5. DONE — ADD `loop_test/only-python-execution-is-advertised-test`; delete `native_tool_provider_contract_test.clj`; run `…loop-test`, `…env-python-test`, `…compaction-verbs-test`, `…prompt-test`, `…foundation.surface-contract-test`, `…extension-test`. Commit.
 
 **Phase 2 — delete the declaration and dispatch machinery.**
 

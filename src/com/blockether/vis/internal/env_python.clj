@@ -936,15 +936,6 @@
   [env sym val]
   (set-python-binding! (:python-context env) sym val))
 
-(defn set-advertised-native-tools!
-  "Update names already visible in the provider's native tool schema. Native
-   `apropos` suppresses these names; in-Python `apropos()` remains a complete,
-   filterable sandbox index. Best-effort so discovery metadata cannot break eval."
-  [python-context names]
-  (try (let [g (python-globals python-context)]
-         (.putMember g "__vis_advertised_native_tools__" (->py (vec (sort (set (map str names))))))
-         true)
-       (catch Throwable _ false)))
 
 (defn bind-and-bump-with-doc!
   "Like `bind-and-bump!` but also records `doc` in the side `__vis_docs__` dict

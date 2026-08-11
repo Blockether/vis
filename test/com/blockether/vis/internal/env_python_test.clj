@@ -381,17 +381,17 @@
           ;; `rg`/`find_files` were replaced by `grep` (name + content search in one tool)
           (expect (re-find #"grep=True" out))
           (expect (re-find #"struct_patch=True" out))))
-    (it "native apropos hides advertised canonical names and compatibility aliases only"
-        ;; In-Python apropos remains a complete composable index. Only the native
-        ;; markdown renderer suppresses capabilities whose schema is already visible.
-        (ep/set-advertised-native-tools! ctx ["cat" "grep" "find_files" "find"])
+    ;; `python_execution` is the ONLY advertised tool, so the rendered table
+    ;; suppresses nothing: it and the in-Python dict answer the identical set.
+    (it "the apropos table renders every match — no name is ever suppressed"
         (let
           [out (run (str "print('raw='+','.join(sorted(apropos('find').keys())))\n"
                          "print('native-find='+__vis_apropos_table__('find'))\n"
                          "print('native-struct='+__vis_apropos_table__('struct_patch'))"))]
           (expect (str/includes? out "raw=find,find_files"))
-          (expect
-            (str/includes? out "native-find=apropos('find'): no unadvertised capabilities match."))
+          (expect (str/includes? out "native-find=### "))
+          (expect (str/includes? out "| `find` |"))
+          (expect (str/includes? out "| `find_files` |"))
           (expect (str/includes? out "native-struct=### "))
           (expect (str/includes? out "| capability | gist |"))
           (expect (str/includes? out "| `struct_patch` |"))))

@@ -1,23 +1,22 @@
-# The scannable `apropos` TABLE rendered by the native dispatch. Capabilities the
-# provider schema already advertises are omitted here; in-Python `apropos(query)`
-# stays the complete dict.
+# The scannable `apropos` TABLE. `python_execution` is the only advertised tool, so
+# nothing is ever suppressed here: every capability the sandbox binds is a row, and
+# in-Python `apropos(query)` returns the same set as a filterable dict.
 #
 # ONE answer is not a table. With the shell tools OFF the whole `shell` group is
-# gone, so a shell-shaped query used to answer "no unadvertised capabilities
-# match" — silence the model reads as "no process can be started in this product".
+# gone, so a shell-shaped query used to answer with silence — which the model reads
+# as "no process can be started in this product".
 # It can: that toggle closes the MODEL's door only, and a trusted Python extension
 # keeps `vis.shell`. The sentences come from `__vis_process_surface__` (the Python
 # view of `env_python/PROCESS_SURFACE`), so no wording is spelled twice.
 
 
 def __vis_apropos_table__(query=""):
-    hidden = set(globals().get("__vis_advertised_native_tools__") or ())
-    d = {k: v for k, v in apropos(query).items() if k not in hidden}
+    d = dict(apropos(query))
 
     def __shell_note():
         # Looked up at CALL time, like the POSIX refusal: the toggle can flip
-        # between two blocks of one session. Bound means advertised, and an
-        # advertised tool needs no note.
+        # between two blocks of one session. Bound means reachable, and a
+        # reachable verb needs no note.
         if globals().get("shell") is not None:
             return None
         q = str(query or "").strip().lower()
@@ -35,7 +34,7 @@ def __vis_apropos_table__(query=""):
     if not d:
         if note:
             return note
-        return "apropos(" + repr(query) + "): no unadvertised capabilities match."
+        return "apropos(" + repr(query) + "): nothing matches."
 
     groups = globals().get("__vis_groups__") or {}
 

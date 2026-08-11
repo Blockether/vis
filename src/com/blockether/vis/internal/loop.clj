@@ -4767,78 +4767,8 @@
             :additionalProperties false}})
 
 
-(defn- session-fold-tool
-  "Engine-level schema for the context-compaction verb shared by native dispatch
-   and sandbox Python."
-  []
-  {:name "session_fold"
-   :description
-   (str
-     "Collapse SETTLED wire steps into a breadcrumb; folding changes rendering, not storage. "
-     "Settled = prior turns plus this turn's finished iterations (see `session[\"turn\"]`); fold a step "
-     "once its takeaway is captured. The live iteration and future steps are refused. "
-     "Folded data-tool results stay recoverable at their `# saved:` coordinate (`ntr[\"tN/iM/fK\"]`, "
-     "no rerun, survives restart), but "
-     "`ntr` never stores fold receipts"
-     (if (toggles/enabled? "introspection")
-       "; `await session_state()` keeps `transcript/turns/iterations/blocks` (`code`/`result`)"
-       "")
-     ". Broader/newer folds supersede fully covered breadcrumbs; equal scopes keep the newer gist; "
-     "partial overlaps remain.")
-   :result
-   "String receipt naming the folded scope and, when available, its `ntr.describe()` results."
-   :schema
-   {:type "object"
-    :properties
-    {"target" {:description
-               (str
-                 "List of ids [\"t2/i3\",\"t2/i4\"] (bare \"t2\" = whole turn), or ONE selector: "
-                 "{\"through\":\"tN/iN\"}; {\"from\":\"tA/iA\",\"to\":\"tB/iB\"} inclusive window "
-                 "(either bound optional); {\"since\":\"tN/iN\"} through newest.")}
-     "gist" {:type "string"
-             :description (str "Durable one-line takeaway: finding, consequence, and a useful "
-                               "path:line/symbol/anchor. Omit when none.")}}
-    :required ["target"]
-    :additionalProperties false}})
 
-(defn- apropos-tool
-  "Engine-level native schema for the sandbox's existing `apropos(query)`
-   discovery function. Native dispatch synthesizes the same Python call, so the
-   direct and `python_execution` surfaces always list the same live bindings."
-  []
-  {:name "apropos"
-   :description
-   (str
-     "Discover sandbox capabilities not advertised as native tools; never preflight visible "
-     "tools. The result is filed by GROUP — `filesystem`, `shell`, `mcp`, `providers`, "
-     "`languages`, `shims`, `engine` — and a bare group name is a valid query, so "
-     "`apropos(\"providers\")` lists that family without knowing one tool name. Then `doc(name)` "
-     "for the one contract; in-Python `apropos()` is a filterable dict.")
-   :result
-   (str "Markdown sections, one per group, of matching capability names to compact gist strings, "
-        "then the list of groups. In-Python the same call returns `{name: gist}`; the group of "
-        "each name is `__vis_groups__`.")
-   :schema {:type "object"
-            :properties {"query" {:type "string"
-                                  :description "Tool-name substring OR a group name."}}
-            :additionalProperties false}})
 
-(defn- doc-tool
-  "Engine-level native schema for the sandbox's existing `doc(name)` function.
-   Native dispatch synthesizes the same Python call; documentation therefore
-   stays sourced from the live sandbox registry rather than a copied table."
-  []
-  {:name "doc"
-   :description
-   "Read a discovered capability's authoritative contract; never preflight visible tools."
-   :result (str
-             "Authoritative docs string: the capability's contract, its raw-result shape and its "
-             "params block — for a bare sandbox verb this is the only "
-             "place the result keys are stated.")
-   :schema {:type "object"
-            :properties {"name" {:type "string" :description "Exact capability name from apropos."}}
-            :required ["name"]
-            :additionalProperties false}})
 
 (def ^:private engine-native-tool-call-shapes
   {"apropos" {:py-name "__vis_apropos_table__" :opt-pos ["query"]}
@@ -4846,28 +4776,19 @@
    "session_fold" {:pos ["target"] :opt-pos ["gist"]}})
 
 (defn- native-tools
-  "The complete provider-visible native surface. Extension tools arrive finalized
-   by `native-tool-schemas`; every engine-owned tool is finalized here, so no tool
-   can be advertised without an explicit raw-result contract.
+  "The ONE provider-visible tool. `python_execution` IS the model-facing surface:
+   every other capability is already a bare Python name inside that sandbox, so a
+   second JSON schema advertises a door the model can open anyway — and charges
+   for it on every request. Discovery of the rest is pulled, not pushed:
+   `apropos(text)` searches and `doc(name)` retrieves, both from inside a block.
 
-   Nothing here is advertised `strict`: `advertise-tool` explains why a per-wire
-   grammar opt-in has no place on a surface that must reach every provider."
-  [active-extensions caps env]
-  (let [engine-tools [(apropos-tool) (doc-tool) (session-fold-tool) (python-execution-tool caps)]]
-    (into (extension/native-tool-schemas active-extensions env)
-          (map finalize-engine-native-tool)
-          engine-tools)))
+   Finalized here, so the one tool still cannot reach a provider without an
+   explicit raw-result contract. Nothing is advertised `strict`: `advertise-tool`
+   explains why a per-wire grammar opt-in has no place on a surface that must
+   reach every provider."
+  [caps]
+  [(finalize-engine-native-tool (python-execution-tool caps))])
 
-(defn- advertised-native-capability-names
-  "Provider-visible names plus Python compatibility names for active extension
-   natives. Native `apropos` suppresses this set to avoid rediscovering tools whose
-   authoritative schema is already in the model request."
-  [active-extensions environment provider-tools]
-  (into (set (map :name provider-tools))
-        (comp (filter :active?)
-              (mapcat (fn [{:keys [symbol]}]
-                        (when symbol (env/python-binding-names symbol)))))
-        (extension/native-tools-for active-extensions environment)))
 
 (defn- py-literal
   "Render a JSON-ish value as a PYTHON literal string (`True`/`False`/`None`,
@@ -5372,10 +5293,7 @@
        ;; surfaced on the routing trace, same as an empty-reply resend.
        refusal-fallback-events (atom [])
        refusal-fallbacks (refusal-fallbacks-for resolved-model)
-       provider-tools (native-tools active-extensions (:sandbox-caps environment) environment)
-       _ (env/set-advertised-native-tools!
-           (:python-context environment)
-           (advertised-native-capability-names active-extensions environment provider-tools))
+       provider-tools (native-tools (:sandbox-caps environment))
        ask-opts
        (rt/with-default-ask-code-idle-timeout
          (cond->

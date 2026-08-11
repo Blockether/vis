@@ -3714,39 +3714,31 @@
          {"mcp__call" {:pos ["server"] :opt-pos ["tool" "args"]}}))
 
 (defdescribe
-  native-introspection-tools-test
+  only-python-execution-is-advertised-test
+  ;; ONE tool reaches the provider. Every other capability is already a bare Python
+  ;; name inside that sandbox — found with `apropos(text)`, read with `doc(name)`,
+  ;; called from inside a block — so a second JSON schema advertises a door the
+  ;; model can open anyway and charges for it on every single request.
   (it
-    "advertises apropos and doc as native tools before the execution tools"
+    "advertises exactly one tool, and it is python_execution"
     (let
-      [editing-ext
-       {:ext/name "foundation.editing" :ext/engine {:ext.engine/symbols @ed/editing-symbols}}
+      [tools
+       (@#'lp/native-tools nil)]
 
-       tools
-       (@#'lp/native-tools [editing-ext] nil nil)
-
-       by-name
-       (into {} (map (juxt :name identity)) tools)]
-
-      (expect (= ["apropos" "doc" "session_fold" "python_execution"]
-                 (->> tools
-                      (mapv :name)
-                      (take-last 4)
-                      vec)))
-      (expect (not (contains? by-name "retry_native")))
+      (expect (= ["python_execution"] (mapv :name tools)))
+      ;; No extension can add a tool: `native-tools` does not take extensions at
+      ;; all any more, which is the proof rather than an assertion about them.
+      (expect (= 1 (count tools)))
+      ;; Regression: `github-copilot`/`gpt-5.6-terra` 400ed the WHOLE request over a
+      ;; `:strict true` flag Vis derived from Anthropic's own grammar subset, so every
+      ;; turn failed before a token. The one tool is advertised unconstrained.
+      (expect (not-any? :strict tools))
       (doseq [tool tools]
         (expect (= 1 (count (re-seq #"Raw result:" (:description tool)))))
         (expect (not (contains? tool :result))))
-      (expect (contains? (get-in by-name ["apropos" :schema :properties]) "query"))
-      (expect (= ["name"] (get-in by-name ["doc" :schema :required])))
-      ;; Discovery is for sandbox-only capabilities, not a mandatory two-call
-      ;; preflight before every native tool whose full schema is already visible.
-      (doseq [tool-name ["apropos" "doc"]]
-        (expect (str/includes? (get-in by-name [tool-name :description])
-                               "never preflight visible tools")))
-      (let [python-description (get-in by-name ["python_execution" :description])]
+      (let [python-description (:description (first tools))]
         (doseq
-          [fact ["project packages need a project REPL" "ntr[\"t5/i1/f2\"]" "bare snake_case"
-                 "errors surface"
+          [fact ["project packages need a project REPL" "bare snake_case" "errors surface"
                  ;; The sleep/poll prohibition lives HERE and nowhere else: the core
                  ;; prompt deliberately dropped its duplicate copy.
                  "`sh.logs()`" "no tool waits for you"
@@ -3758,9 +3750,7 @@
                  ;; cheapest fix is the block never leaking in the first place.
                  "Close what you open" "with open(...)" "leaked descriptors"
                  "VIS_PY_MAX_OPEN_FILES"]]
-          (expect (str/includes? python-description fact))))
-      (expect (str/includes? (get-in by-name ["session_fold" :description])
-                             "finished iterations"))))
+          (expect (str/includes? python-description fact))))))
   (it "rejects engine-owned native tools without description or raw-result contracts"
       (doseq
         [[tool expected-type]
@@ -3783,29 +3773,6 @@
                     nil
                     (catch clojure.lang.ExceptionInfo e e))]
           (expect (= expected-type (:type (ex-data err)))))))
-  ;; Regression: `github-copilot`/`gpt-5.6-terra` 400ed the WHOLE request over a
-  ;; `:strict true` flag Vis derived from Anthropic's own grammar subset, so every
-  ;; turn failed before a token. No native tool is advertised strict on any wire.
-  (it "advertises every native tool unconstrained — nothing carries :strict"
-      (let [editing-ext {:ext/name "foundation.editing"
-                         :ext/engine {:ext.engine/symbols @ed/editing-symbols}}]
-        (expect (not-any? :strict (@#'lp/native-tools [editing-ext] nil nil)))))
-  (it "deduplicates provider names and Python compatibility aliases from native apropos"
-      (let
-        [editing-ext
-         {:ext/name "foundation.editing" :ext/engine {:ext.engine/symbols @ed/editing-symbols}}
-
-         tools
-         (@#'lp/native-tools [editing-ext] nil nil)
-
-         names
-         (@#'lp/advertised-native-capability-names [editing-ext] nil tools)]
-
-        (doseq [name (map :name tools)]
-          (expect (contains? names name)))
-        (expect (contains? names "grep"))
-        (expect (contains? names "find_files"))
-        (expect (contains? names "find"))))
   (it "dispatches native discovery through the existing Python functions"
       (let
         [shapes

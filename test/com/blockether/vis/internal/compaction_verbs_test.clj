@@ -21,7 +21,6 @@
             [com.blockether.vis.internal.ctx-renderer :as cr]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.loop :as lp]
-            [com.blockether.vis.internal.toggles :as toggles]
             [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -33,7 +32,6 @@
 
 (def ^:private expand-through (var-get #'eng/expand-through))
 
-(def ^:private session-fold-tool (var-get #'lp/session-fold-tool))
 
 (def ^:private session-fold-card (var-get #'lp/session-fold-card))
 
@@ -570,53 +568,34 @@
 
 (def ^:private native-shapes {"session_fold" {:pos ["target"] :opt-pos ["gist"]}})
 
-(defdescribe
-  session-fold-native-tool-test
-  (it "the native schema advertises session_fold with a target property"
-      (let [t (session-fold-tool)]
-        (expect (= "session_fold" (:name t)))
-        (expect (str/starts-with? (:description t) "Collapse SETTLED wire steps"))
-        (expect (str/includes? (:description t) "fold a step once its takeaway is captured"))
-        (expect (str/includes? (:description t) "The live iteration and future steps are refused"))
-        (expect (str/includes? (:description t) "this turn's finished iterations"))
-        (expect (str/includes? (:description t) "folding changes rendering, not storage"))
-        ;; The `session_state` recovery hint is INTROSPECTION-gated: session
-        ;; self-inspection only exists while the `introspection` toggle is ON
-        ;; (default OFF), so the description must not advertise it otherwise.
-        (expect (not (str/includes? (:description t) "`await session_state()`")))
-        (let
-          [on (with-redefs [toggles/enabled? (constantly true)]
-                (session-fold-tool))]
-          (expect (str/includes? (:description on) "`await session_state()`"))
-          (expect (str/includes? (:description on) "`transcript/turns/iterations/blocks`")))
-        (expect (str/includes? (:description t)
-                               "Broader/newer folds supersede fully covered breadcrumbs"))
-        (expect (str/includes? (:description t) "partial overlaps remain"))
-        (expect (contains? (:properties (:schema t)) "target"))
-        (expect (= ["target"] (:required (:schema t))))))
-  (it "native dispatch synthesizes a POSITIONAL call for a list target + gist"
-      (expect (= "session_fold([\"t1/i2\", \"t1/i3\"], \"G\")"
-                 (tool-call->python-source native-shapes
-                                           {:name "session_fold"
-                                            :input {"target" ["t1/i2" "t1/i3"] "gist" "G"}}))))
-  (it "native dispatch synthesizes a DICT selector target, gist omitted"
-      (expect (= "session_fold({\"through\": \"t1/i2\"})"
-                 (tool-call->python-source native-shapes
-                                           {:name "session_fold"
-                                            :input {"target" {"through" "t1/i2"}}}))))
-  (it "the synthesized native source runs the SAME bound verb (records the intent)"
-      (let
-        [[ca ev]
-         (with-verbs)
+(defdescribe session-fold-native-tool-test
+             ;; The session_fold CONTRACT is the sandbox binding's own docstring
+             ;; (`env_python/set-python-binding-doc!`), reached with `doc("session_fold")` —
+             ;; there is no second JSON schema to advertise it.
+             (it "native dispatch synthesizes a POSITIONAL call for a list target + gist"
+                 (expect (= "session_fold([\"t1/i2\", \"t1/i3\"], \"G\")"
+                            (tool-call->python-source native-shapes
+                                                      {:name "session_fold"
+                                                       :input {"target" ["t1/i2" "t1/i3"]
+                                                               "gist" "G"}}))))
+             (it "native dispatch synthesizes a DICT selector target, gist omitted"
+                 (expect (= "session_fold({\"through\": \"t1/i2\"})"
+                            (tool-call->python-source native-shapes
+                                                      {:name "session_fold"
+                                                       :input {"target" {"through" "t1/i2"}}}))))
+             (it "the synthesized native source runs the SAME bound verb (records the intent)"
+                 (let
+                   [[ca ev]
+                    (with-verbs)
 
-         src
-         (tool-call->python-source native-shapes
-                                   {:name "session_fold"
-                                    :input {"target" ["t2/i4"] "gist" "native"}})]
+                    src
+                    (tool-call->python-source native-shapes
+                                              {:name "session_fold"
+                                               :input {"target" ["t2/i4"] "gist" "native"}})]
 
-        (ev src)
-        (expect (= [{"scopes" #{"t2/i4"} "issued_turn" 99 "at_turn" 99 "gist" "native"}]
-                   (get @ca "session_summaries"))))))
+                   (ev src)
+                   (expect (= [{"scopes" #{"t2/i4"} "issued_turn" 99 "at_turn" 99 "gist" "native"}]
+                              (get @ca "session_summaries"))))))
 
 ;; ── layer 5: session-bag reflection (the CTX delta) ──────────────────────────
 
