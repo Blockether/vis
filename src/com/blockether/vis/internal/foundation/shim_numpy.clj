@@ -38,11 +38,10 @@
      [{:shim/name "numpy"
        :shim/imports ["numpy"]
        :shim/description
-       (str "Pure-Python `numpy` subset: ndarray/broadcasting; reductions with keepdims/tuple "
-            "axis; linalg norm/det/inv/solve; random/split/take/repeat/histogram. "
-            "Not supported: C speed or shared-memory slice views; eig/svd/qr; >2-D axis "
-            "median/cumsum/sort/flip and tuple-rep tile; >1-D pad; dstack "
-            "(`NotImplementedError`).")
+       (str
+         "Pure-Python `numpy` subset: ndarray, broadcasting, reductions, `linalg` "
+         "norm/det/inv/solve, random, histogram. No C speed or shared-memory views. Not supported: "
+         "eig/svd/qr, >2-D axis median/cumsum/sort/flip, >1-D pad, dstack (`NotImplementedError`).")
        :shim/source "vis-shims/numpy.py"}]}))
 
 (vis/register-extension! vis-extension)

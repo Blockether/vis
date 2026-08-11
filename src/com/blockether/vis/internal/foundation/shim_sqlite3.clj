@@ -319,8 +319,9 @@
      [{:shim/name "sqlite3"
        :shim/imports ["sqlite3"]
        :shim/description
-       (str "JVM xerial sqlite-jdbc `sqlite3` DB-API 2.0; connections use integer handles. "
-            "Bindings support int/float/str/None only, else `InterfaceError`.")
+       (str
+         "JVM xerial sqlite-jdbc `sqlite3` DB-API 2.0; connections use integer handles. Bindings "
+         "support int/float/str/None only, else `InterfaceError`.")
        :shim/bindings sqlite-bridge-bindings
        :shim/source "vis-shims/sqlite3.py"}]}))
 

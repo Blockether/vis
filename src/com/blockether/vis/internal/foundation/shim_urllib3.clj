@@ -41,9 +41,10 @@
      [{:shim/name "urllib3"
        :shim/imports ["urllib3"]
        :shim/description
-       (str "`urllib3` as a package: `PoolManager`/`ProxyManager`, `HTTPResponse`, `request`, "
-            "`util` (`Retry`, `Timeout`, `parse_url`, `make_headers`), `fields`, `filepost`, "
-            "`exceptions`. Retries, pooling, and low-level TLS options are best-effort no-ops.")
+       (str
+         "`urllib3` as a package: `PoolManager`/`ProxyManager`, `HTTPResponse`, `request`, `util`, "
+         "`fields`, `filepost`, `exceptions`. Retries, pooling and low-level TLS options are "
+         "best-effort no-ops.")
        :shim/source "vis-shims/urllib3.py"}]}))
 
 (vis/register-extension! vis-extension)

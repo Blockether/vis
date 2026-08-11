@@ -824,6 +824,36 @@ normalized in memory before it reaches the same `{:name :description}` skill ent
 **Unknowns.** None. A rule now reaches the model only when the session pulls its skill — the index in
 `AGENTS.md` is what makes that reachable, so if a future area is added its skill goes in that list.
 
+## Phase 9 — Split the shim block into a pushed line and a pulled page, and measure
+
+**Rationale.** After phase 8 the shim block was the biggest thing left in the prefix that is not
+`AGENTS.md`: 10,397 chars, 8,694 of them the 23 `:shim/description` values. Those values were carrying
+`doc()` pages — `anydoc` alone was 1,842 chars of query-language reference (field scopes, `NEAR(a b, 5)`,
+error types), pushed into every request of every session including the ones that never open a document.
+The push/pull split phase 8 applied to prose applies here unchanged: the description is what a model
+must know to NOT write against the upstream library (surface + refusals), everything else is what it
+needs once it is already calling the shim, and `doc(name)` already answers from the sandbox.
+
+**Data.** None crosses a boundary. `:shim/docs` is a new OPTIONAL string on the existing shim spec;
+`env-python`'s `__vis_docs__` seeding reads `(or :shim/docs :shim/description)`, and a shim's own Python
+`__vis_docs__` still wins over both.
+
+**Acceptance criteria.**
+- Every one of the 23 `:shim/description` values is one tight line: what it reimplements and what it
+  refuses. Total 8,694 → 4,865 chars.
+- The 7 shims that lost real contract detail (`anydoc`, `attach`, `pytest`, `paramiko`, `matplotlib`,
+  `bs4`, `ruff`) carry the ORIGINAL text verbatim as `:shim/docs`; nothing was deleted.
+- `extension.clj` — `:shim/docs` spec + the push/pull authoring rule in the shim-spec comment;
+  `env_python.clj` — the seeding prefers it; `extending.md` — the authoring example shows both keys.
+- The prompt preamble stops claiming the line "is its whole supported surface".
+- Test: `sandbox-shim-contract-test` caps `:shim/description` at 340 chars (the ratchet — a line that
+  wants to teach a query language has outgrown the prompt) and proves the pull path end to end by
+  reading `__vis_docs__` out of a real sandbox context.
+- Measured: sandbox-shims block 10,397 → 6,539 chars (-37.1%, ~1,070 tokens off every request).
+
+**Unknowns.** None. `attach`'s SAME DOCUMENT, SAME NAME rule stays PUSHED on purpose — its test pins it
+in the description because a model reads it BEFORE attaching, not while calling.
+
 ## Cross-validation — the SECOND inventory (measured against the tree; phases 1-7 missed these)
 
 Every figure below was counted this pass — balanced-brace spans and full-tree greps, not recall.
@@ -1236,7 +1266,14 @@ about `ntr[…]`-carrying metric bullets).
 
 ## State of the plan
 
-**REQUIRES WORK** — phases 1-8 have LANDED. What is left is the cross-cutting cleanup list (steps 45-53, the `:schema` literals, `form.clj`'s reduction, `extension_bootstrap.py`, the wire's `tool_name`/`result_render` columns, the tool wall, the replay policy, `:tag`) and the two pieces of shipped-UI evidence (56b's `spel` figures, 57's `cap/shot!` PNG).
+**REQUIRES WORK** — phases 1-9 have LANDED. What is left is the cross-cutting cleanup list (steps 45-53, the `:schema` literals, `form.clj`'s reduction, `extension_bootstrap.py`, the wire's `tool_name`/`result_render` columns, the tool wall, the replay policy, `:tag`) and the two pieces of shipped-UI evidence (56b's `spel` figures, 57's `cap/shot!` PNG).
+
+**Phase 9 — the shim block splits into a pushed line and a pulled page: DONE.** All 23
+`:shim/description` values are one tight line (surface + refusals), 8,694 → 4,865 chars; the 7 that lost
+contract detail keep it verbatim as the new OPTIONAL `:shim/docs`, which `env-python` seeds into the
+sandbox's `__vis_docs__` so `doc(name)` still answers in full. Sandbox-shims block 10,397 → 6,539 chars
+(-37.1%). `sandbox-shim-contract-test` caps the pushed line at 340 chars and reads the pulled page out
+of a real sandbox.
 
 **Phase 8 — pushed doctrine becomes pulled skills: DONE.** `AGENTS.md` 32,305 → 9,799 chars; five
 SKILL.md files carry the Companion UI, HITL, TUI-paint, `PLAN.md` and shim contracts verbatim;

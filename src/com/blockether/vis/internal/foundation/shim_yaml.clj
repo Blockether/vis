@@ -57,9 +57,8 @@
      [{:shim/name "yaml"
        :shim/imports ["yaml"]
        :shim/description
-       (str "PyYAML-compatible `yaml` via pure-Clojure YAMLStar (YAML 1.2). "
-            "Limits: map keys return as strings; no custom tags/`!!python` or arbitrary-object "
-            "(de)serialization.")
+       (str "PyYAML-compatible `yaml` via pure-Clojure YAMLStar (YAML 1.2). Map keys return as "
+            "strings; no custom tags, `!!python` or arbitrary-object (de)serialization.")
        :shim/bindings yaml-bridge-bindings
        :shim/source "vis-shims/yaml.py"}]}))
 

@@ -563,10 +563,10 @@
 
    NAMES alone are a trap: every shim is a REIMPLEMENTATION, so a model that only
    reads `numpy` writes against the real numpy and hits `NotImplementedError` at
-   runtime. `:shim/description` is that shim's supported surface and its refusals,
-   and this is the only place it reaches the model — `env_python`'s `__vis_docs__`
-   seeding is a `doc()` fallback the shim's own Python usually overrides. One line
-   per shim, keyed by the very names advertised above it.
+   runtime. So one line per shim, keyed by the very names advertised above it,
+   carrying the surface and the refusals — and nothing else. The rest of a shim's
+   contract is PULLED: `:shim/docs` answers `doc(name)`, costs no request that
+   never calls that shim, and is where a query language or a fixture list belongs.
 
    The process surface is stated either way, and it is NOT worded here: the
    sentences are `env-python/PROCESS_SURFACE`, the same ones `subprocess` raises
@@ -619,26 +619,27 @@
 
     (prompt-block
       "sandbox-shims"
-      (str "Auto-imported by `python_execution` (no `import`): `"
-           auto-imports
-           "`."
-           (when (seq shim-imports)
-             (str "\nPreinstalled shim modules (no pip; import before use and alias in "
-                  "the same block, e.g. `import numpy as np`; `np`/`pd` are never "
-                  "auto-created): `"
-                  (str/join "`, `" shim-imports)
-                  "`."))
-           (when (seq shim-globals)
-             (str "\nPrebound shim globals (use directly; never import them): `"
-                  (str/join "`, `" shim-globals)
-                  "`."))
-           (when (seq shim-capabilities)
-             (str "\nEach of these is a Vis REIMPLEMENTATION, not the upstream package: the line "
-                  "is its whole supported surface and what it refuses, so trust it over your "
-                  "memory of the library and do not reach for an API it does not claim.\n"
-                  (str/join "\n" shim-capabilities)))
-           "\n"
-           (get env-python/PROCESS_SURFACE (if shell? "ban" "off"))))))
+      (str
+        "Auto-imported by `python_execution` (no `import`): `"
+        auto-imports
+        "`."
+        (when (seq shim-imports)
+          (str "\nPreinstalled shim modules (no pip; import before use and alias in "
+               "the same block, e.g. `import numpy as np`; `np`/`pd` are never "
+               "auto-created): `"
+               (str/join "`, `" shim-imports)
+               "`."))
+        (when (seq shim-globals)
+          (str "\nPrebound shim globals (use directly; never import them): `"
+               (str/join "`, `" shim-globals)
+               "`."))
+        (when (seq shim-capabilities)
+          (str
+            "\nEach is a Vis REIMPLEMENTATION, not the upstream package: the line is its surface "
+            "and its refusals, so trust it over your memory of the library and never reach "
+            "for an API it does not claim.\n" (str/join "\n" shim-capabilities)))
+        "\n"
+        (get env-python/PROCESS_SURFACE (if shell? "ban" "off"))))))
 
 (defn- turn-system-context-block
   "Turn-scoped system context that can be rebuilt/replaced as runtime

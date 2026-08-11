@@ -205,6 +205,12 @@
        :shim/globals ["attach" "list_attachments" "get_attachment" "read_attachment"
                       "show_attachment"]
        :shim/description
+       (str "Persists artifacts (images, tables, JSON, PDF, audio) as durable attachments. SAME "
+            "DOCUMENT, SAME NAME — a revision goes back under its OWN filename as that artifact's "
+            "next VERSION, never `report_v2.png`; a fresh name is a different document. "
+            "`read_attachment` is the only door to the bytes. Addressing and versions: "
+            "`doc(\"attach\")`.")
+       :shim/docs
        (str "`attach` persists artifacts (images, CSV/TSV tables, JSON, PDF, audio) as durable "
             "DB-owned iteration attachments with sniffed media types, surviving restarts. "
             "SAME DOCUMENT, SAME NAME — a revision goes back under its OWN filename as that "

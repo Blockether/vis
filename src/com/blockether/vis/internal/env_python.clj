@@ -1977,6 +1977,9 @@
     (install-sandbox-shims! ctx g)
     ;; Advertise exact import names and direct globals to the sandbox's discovery
     ;; surface. `:shim/name` is registry identity only and must never imply importability.
+    ;; `doc()` answers with `:shim/docs` when the shim declares one — the full
+    ;; surface, PULLED — and falls back to the short `:shim/description` the
+    ;; system prompt pushes; a shim's own Python `__vis_docs__` still wins.
     ;; Same JSON-hop marshalling as the tool docs above. Best-effort: a registry
     ;; hiccup must never break context creation.
     (try
@@ -1995,7 +1998,7 @@
          (reduce (fn [m s]
                    (let
                      [d
-                      (:shim/description s)
+                      (or (:shim/docs s) (:shim/description s))
 
                       base
                       (if (and (string? d) (not (str/blank? d)))

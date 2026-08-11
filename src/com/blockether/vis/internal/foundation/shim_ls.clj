@@ -67,14 +67,10 @@
        :shim/globals ["ls"]
        :shim/description
        (str
-         "`ls(paths, depth=1, is_hidden=False)` maps a tree without spending a tool call: "
-         "`ls(dir)` returns that directory's entries `{name, path, type, size}` (directories "
-         "first, then alphabetical, nested rows under `children` when `depth` > 1), and "
-         "`ls([dir, ...])` one `{path, entries}` row per directory in request order. Dotfiles "
-         "need `is_hidden=True`; gitignored entries are never listed. A file raises "
-         "`NotADirectoryError` (read it in `python_execution`), a path that does not exist raises "
-         "`FileNotFoundError` naming the nearest existing directory, and a path an extension "
-         "protects raises `PermissionError`.")
+         "`ls(paths, depth=1, is_hidden=False)` maps a tree from the host's ignore-aware walk: "
+         "entries `{name, path, type, size}`, directories first, nested under `children` when "
+         "`depth` > 1. Dotfiles need `is_hidden=True`; gitignored entries are never listed; a file "
+         "raises `NotADirectoryError`.")
        :shim/bindings ls-bridge-bindings
        :shim/source "vis-shims/ls.py"}]}))
 

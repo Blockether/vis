@@ -118,11 +118,10 @@
        :shim/imports ["nippy"]
        :shim/globals ["nippy_decode" "nippy_encode"]
        :shim/description
-       (str "Lazy globals `nippy_decode`/`nippy_encode` (also nippy.decode/encode) round-trip "
-            "trusted Vis Nippy bytes and plain Python data; nippy-stream Vectorz vectors decode "
-            "as lists and codecs install on first use. Not supported: "
-            "exact Clojure type preservation, Java Serializable fallback, encryption, untrusted "
-            "input.")
+       (str
+         "`nippy_decode`/`nippy_encode` round-trip trusted Vis Nippy bytes and plain Python data; "
+         "Vectorz vectors decode as lists. Not supported: exact Clojure type preservation, Java "
+         "Serializable fallback, encryption, untrusted input.")
        :shim/bindings nippy-bridge-bindings
        :shim/source "vis-shims/nippy.py"}]}))
 

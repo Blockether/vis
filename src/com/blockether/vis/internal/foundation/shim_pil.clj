@@ -2224,11 +2224,11 @@
      [{:shim/name "pil"
        :shim/imports ["PIL"]
        :shim/description
-       (str "Pillow-compatible `PIL`, Rust-backed without java.desktop: "
-            "Image, ImageDraw, ImageFilter, ImageOps, ImageColor, ImageEnhance, ImageChops, "
-            "ImageFont; animated GIF seek/n_frames/save_all; JPEG/WebP quality; adaptive "
-            "quantization; EXIF. Rejects images over 512 MiB RGBA. "
-            "Not supported: some color conversions and `Image.transform` methods (`ValueError`).")
+       (str
+         "Pillow-compatible `PIL` (Image, ImageDraw, ImageFilter, ImageOps, ImageColor, "
+         "ImageEnhance, ImageChops, ImageFont, animated GIF, EXIF, quality and quantization), "
+         "Rust-backed without java.desktop. Rejects images over 512 MiB RGBA. Not supported: some "
+         "color conversions and `Image.transform` methods (`ValueError`).")
        :shim/bindings pil-bridge-bindings
        :shim/source "vis-shims/pil.py"}]}))
 

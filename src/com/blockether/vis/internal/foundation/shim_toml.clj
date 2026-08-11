@@ -33,8 +33,9 @@
      [{:shim/name "toml"
        :shim/imports ["toml"]
        :shim/description
-       (str "`toml`: `loads`/`load` via stdlib tomllib; `dumps`/`dump` via pure Python. "
-            "Reads are spec-correct; no comment preservation or exotic writer formatting.")
+       (str
+         "`toml`: spec-correct `loads`/`load` via stdlib tomllib, pure-Python `dumps`/`dump`. No "
+         "comment preservation or exotic writer formatting.")
        :shim/source "vis-shims/toml.py"}]}))
 
 (vis/register-extension! vis-extension)

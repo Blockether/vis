@@ -273,6 +273,12 @@
      [{:shim/name "anydoc"
        :shim/imports ["anydoc"]
        :shim/description
+       (str
+         "Reads .doc .docx .odt .rtf .pdf .epub .ppt .pptx .odp .xls .xlsx .xlsm .xlsb .ods .csv "
+         "as Markdown (`to_markdown`, `to_document`) and BM25-searches one document or a whole "
+         "directory with page/section/line citations (`search`). Not supported: writing documents, "
+         "OCR, embeddings. Query language and `Citation` fields: `doc(\"anydoc\")`.")
+       :shim/docs
        (str "`anydoc.to_markdown(path)` / `to_markdown_bytes(data)` render .doc .docx .odt .rtf "
             ".pdf .epub .ppt .pptx .odp .xls .xlsx .xlsm .xlsb .ods .csv as GitHub-Flavored "
             "Markdown; `to_document`/`read(path)` add the detected format, embedded assets as "

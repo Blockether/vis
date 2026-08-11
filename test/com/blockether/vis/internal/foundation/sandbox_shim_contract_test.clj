@@ -11,9 +11,11 @@
    runtime, so it is checked here rather than discovered in the field."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.extension :as extension]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [java.io File]))
+  (:import [java.io File]
+           [org.graalvm.polyglot Context]))
 
 (def ^:private shim-ns-dir "src/com/blockether/vis/internal/foundation")
 
@@ -123,7 +125,19 @@
   (it "keeps every shim description a single line"
       (doseq [{:shim/keys [name description]} (registered-shims)]
         (expect (not (str/includes? (str description) "\n"))
-                (str name " :shim/description spans lines — write it as (str \"…\" \"…\")")))))
+                (str name " :shim/description spans lines — write it as (str \"…\" \"…\")"))))
+  ;; The description is PUSHED into the system prompt of every request, whether or
+  ;; not the session ever imports the shim; `:shim/docs` is PULLED by `doc(name)`
+  ;; and costs nothing. So the budget is a ratchet: a line that wants to teach a
+  ;; query language, every fixture name or a server API has outgrown the prompt
+  ;; and belongs in `:shim/docs`, with the description pointing at it.
+  (it "keeps every pushed shim description under the prompt budget"
+      (doseq [{:shim/keys [name description]} (registered-shims)]
+        (expect (<= (count (str description)) 340)
+                (str name
+                     " :shim/description is "
+                     (count (str description))
+                     " chars — move the detail to :shim/docs")))))
 
 (defdescribe shim-resource-test
              (it "has a shim declaring every resources/vis-shims/*.py"
@@ -153,3 +167,30 @@
                  ;; Without this native-image argument every shim resolves in dev and none
                  ;; of them resolves in the shipped binary.
                  (expect (str/includes? (slurp "build.clj") "-H:IncludeResources=vis-shims/.*"))))
+
+(defdescribe
+  shim-docs-are-pulled-test
+  "The detail a description no longer carries has to be reachable, or cutting it
+   was a deletion. `:shim/docs` is what `doc(name)` answers inside the sandbox."
+  (it
+    "answers `doc(name)` with :shim/docs, not the pushed prompt line"
+    (let
+      [shim
+       (->> (registered-shims)
+            (filter :shim/docs)
+            first)
+
+       ^Context ctx
+       (:python-context (ep/create-python-context {}))
+
+       name
+       (first (concat (:shim/imports shim) (:shim/globals shim)))
+
+       doc
+       (:stdout (ep/run-python-block ctx (str "print(__vis_docs__[" (pr-str name) "])") "t1/i1"))]
+
+      (expect (some? shim) "no shim declares :shim/docs — the pull path is untested")
+      (expect (str/includes? doc (subs (:shim/docs shim) 0 60))
+              (str name " doc() does not serve :shim/docs"))
+      (expect (not (str/includes? doc (:shim/description shim)))
+              (str name " doc() still serves the pushed description")))))

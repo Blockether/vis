@@ -832,21 +832,28 @@
 ;;   :shim/globals     exact names users call directly without importing (optional).
 ;;                     These two fields drive prompt and `apropos` discovery; do not
 ;;                     infer either from :shim/name.
-;;   :shim/description prose (REQUIRED): what library it shims AND what is
-;;                     NOT supported, e.g. "... Not supported: X, Y." — a shim
-;;                     with no caveat is 100% compatible. It RIDES THE SYSTEM
-;;                     PROMPT: `prompt/sandbox-shims-prompt-block` prints one
-;;                     bullet per shim, keyed by the very names above, because a
-;;                     bare name makes the model write against the UPSTREAM
-;;                     library and meet the hole at runtime. env-python also
-;;                     seeds it into the sandbox's `__vis_docs__` as the
-;;                     `doc`/`apropos` gist of every name this shim contributes
-;;                     that the shim's own Python did not already document. The
-;;                     VALUE is therefore ONE line — no newline may reach a
-;;                     prompt bullet — written as a multi-line `(str "…" "…")`
-;;                     so a human edits one sentence, not a 700-char literal.
-;;                     It is model-facing context with a real token price: say
-;;                     the surface and the refusals, nothing else.
+;;   :shim/description prose (REQUIRED): the PUSHED line — what library it shims
+;;                     AND what is NOT supported, e.g. "... Not supported: X, Y."
+;;                     A shim with no caveat is 100% compatible. It RIDES THE
+;;                     SYSTEM PROMPT of every request: `prompt/sandbox-shims-prompt-block`
+;;                     prints one bullet per shim, keyed by the very names above,
+;;                     because a bare name makes the model write against the
+;;                     UPSTREAM library and meet the hole at runtime. Every
+;;                     request pays for it, so it stays ONE tight line (the
+;;                     contract test caps it) — no newline may reach a prompt
+;;                     bullet — written as a multi-line `(str "…" "…")` so a
+;;                     human edits one sentence, not a 340-char literal.
+;;   :shim/docs        prose (OPTIONAL): the PULLED page — the full surface a
+;;                     model needs only once it is actually calling this shim
+;;                     (a query language, every fixture name, the server API).
+;;                     env-python seeds `:shim/docs` when present, else
+;;                     `:shim/description`, into the sandbox's `__vis_docs__` as
+;;                     the `doc`/`apropos` answer for every name this shim
+;;                     contributes that the shim's own Python did not already
+;;                     document. Nothing pushed, so detail here is free; detail
+;;                     in the description is not. Point at it from the
+;;                     description (`doc("anydoc")`) when you cut something a
+;;                     caller cannot guess.
 ;;   :shim/bindings    host callables the shim's Python delegates to — either a map
 ;;                     {py-name -> host-fn} or a 0-arg fn returning that map.
 ;;                     Each fn is wired onto the sandbox globals as a Python
@@ -871,6 +878,8 @@
 
 (s/def :shim/description non-blank-string?)
 
+(s/def :shim/docs non-blank-string?)
+
 (s/def :shim/bindings
   (s/or :map (s/map-of string? ifn?)
         :fn ifn?))
@@ -879,7 +888,7 @@
 
 (s/def ::sandbox-shim
   (s/keys :req [:shim/name :shim/source]
-          :opt [:shim/imports :shim/globals :shim/description :shim/bindings]))
+          :opt [:shim/imports :shim/globals :shim/description :shim/docs :shim/bindings]))
 
 (s/def :ext/sandbox-shims (s/coll-of ::sandbox-shim :kind vector?))
 ;; Python sandbox contribution.

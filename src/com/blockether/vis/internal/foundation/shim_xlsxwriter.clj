@@ -47,8 +47,9 @@
      [{:shim/name "xlsxwriter"
        :shim/imports ["xlsxwriter"]
        :shim/description
-       (str "Rust-backed `xlsxwriter` .xlsx writer: models workbooks in Python and builds on "
-            "close. No `constant_memory` streaming, VBA, charts, or data validation.")
+       (str
+         "Rust-backed `xlsxwriter` .xlsx writer: model the workbook in Python, built on close. Not "
+         "supported: `constant_memory` streaming, VBA, charts, data validation.")
        :shim/bindings xlsxwriter-bridge-bindings
        :shim/source "vis-shims/xlsxwriter.py"}]}))
 

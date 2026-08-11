@@ -1132,7 +1132,11 @@ List one or more shim specs under `:ext/sandbox-shims`:
 
 ```clojure
 {:shim/name        "yaml"
- :shim/description "PyYAML-compatible module backed by YAMLStar."
+ ;; PUSHED into every request's system prompt: one line, the surface and what it
+ ;; does NOT support. Detail a caller needs only while calling belongs in
+ ;; `:shim/docs`, which nothing pushes and `doc("yaml")` answers.
+ :shim/description "PyYAML-compatible module backed by YAMLStar. No custom tags."
+ :shim/docs        "PyYAML-compatible `yaml` ... every option, in full."
  ;; Host callables the shim's Python delegates to — a `{py-name -> fn}` map (or a
  ;; 0-arg fn returning one). Each is wired onto the sandbox globals as a Python
  ;; callable (args marshalled Python->Clojure, result back) BEFORE the `.py` source

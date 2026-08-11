@@ -100,6 +100,11 @@
      [{:shim/name "ruff"
        :shim/imports ["ruff"]
        :shim/description
+       (str
+         "In-process Ruff, no pip or PATH: `python -m ruff check|format <paths>` (`--fix`, "
+         "`--check`, `--diff`) and the `format_/check_/fix_{str,file}` import API, honouring the "
+         "nearest config per file. A reduced in-process shim, not a full Ruff wheel.")
+       :shim/docs
        (str "In-process Ruff, no pip/PATH: `python -m ruff check|format <paths>` (`check --fix`, "
             "safe and configured unsafe fixes, plus `format --check/--diff`). Import API: "
             "format_/check_/fix_{str,file}, config_for, version. Finds nearest config per file, "
