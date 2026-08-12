@@ -185,6 +185,8 @@
         (expect (= :cx (:prefix armed)))
         (expect (= :cycle-model (:action (input/handle-key (char-key (Character. \m)) armed))))
         (expect (= :cycle-reasoning (:action (input/handle-key (char-key (Character. \r)) armed))))
+        (expect (= :toggle-codex-fast
+                   (:action (input/handle-key (char-key (Character. \q)) armed))))
         (expect (= :cycle-verbosity (:action (input/handle-key (char-key (Character. \l)) armed))))
         (expect (= :search-open (:action (input/handle-key (char-key (Character. \f)) armed))))
         (expect (= :pick-file (:action (input/handle-key (char-key (Character. \a)) armed))))

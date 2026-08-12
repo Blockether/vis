@@ -1224,6 +1224,14 @@
   (boolean (some-> (session-model-info db)
                    vis/verbosity-configurable?)))
 
+(defn- codex-session?
+  "True only when this session's resolved route uses the Codex OAuth provider."
+  [db]
+  (= :openai-codex
+     (some-> (session-model-info db)
+             :provider
+             keyword)))
+
 (defn init!
   "Initialize app-db with default state. The persisted layer now
    has two halves: `~/.vis/config.edn :tui-settings` holds the
@@ -1318,7 +1326,8 @@
    `virtual/invalidate-heights!` drops every sticky height, the whole
    transcript falls back to estimates and the view visibly jumps while the
    background re-warm lands. Cycling reasoning effort with Ctrl+X r must not
-   repaint history."
+   repaint history. Fast mode is deliberately NOT listed: its footer chip must
+   repaint immediately even though it still skips transcript-cache invalidation."
   #{"reasoning_level" "verbosity"})
 
 (reg-event-db
@@ -1363,7 +1372,9 @@
       ;; restart cleared the process caches. The local-settings
       ;; path already busts fmt-cache via `apply-settings-update!`;
       ;; the registry path needs the same on both caches.
-      (when-not render-neutral? (render/invalidate-cache!) (virtual/invalidate-heights!))
+      (when-not (or render-neutral? (= "codex_fast_mode" (some-> toggle-id name)))
+        (render/invalidate-cache!)
+        (virtual/invalidate-heights!))
       (let
         [settings (merge (migrated-toggle-projection)
                          (select-keys (:settings db) (keys default-settings)))]
@@ -1374,7 +1385,9 @@
         ;; land mid-scroll and jump the scrollbar thumb. Width comes
         ;; from the last published layout; a nil layout (no frame yet)
         ;; skips - the startup warm is still in flight then anyway.
-        (when-let [cols (and (not render-neutral?) (:cols (:layout db)))]
+        (when-let [cols (and (not (or render-neutral?
+                                       (= "codex_fast_mode" (some-> toggle-id name))))
+                             (:cols (:layout db)))]
           (virtual/rewarm! (:messages db)
                            (max 1 (- (long cols) (long render/MESSAGE_SIDE_PAD)))
                            settings
@@ -1409,6 +1422,14 @@
                          settings-notification-ttl-ms]]}
                   ;; Effect, not an in-swap mutation - see :cycle-reasoning-level.
                   {:db db :fx [[:cycle-toggle "verbosity" "Verbosity"]]})))
+
+(reg-event-fx :toggle-codex-fast-mode
+              (fn [db _]
+                (if-not (codex-session? db)
+                  {:db db
+                   :fx [[:notify "Fast mode is available only for OpenAI Codex" :warn
+                         settings-notification-ttl-ms]]}
+                  {:db db :fx [[:toggle-boolean "codex_fast_mode" "Fast mode"]]})))
 
 (reg-event-fx :cycle-model
               ;; Ctrl+T cycles the ACTIVE SESSION's model preference — the SAME unified,
@@ -3373,11 +3394,16 @@
                     (assoc db :scroll (scroll/to-y offset max-s))))))
 
 (defn- turn-extra-body
-  "Per-turn wire extras for the model THIS SESSION routes to. `text.verbosity` is
-   a field of the OpenAI Responses wire, so it rides only when svar stamped the
-   model with a `:verbosity-style` — never because a provider id matched."
+  "Per-turn wire extras captured when the turn is enqueued. `text.verbosity` is
+   capability-gated; `service_tier` is provider-specific and rides only for a
+   Codex session while its persisted Fast mode switch is on."
   [{:keys [settings] :as db}]
-  (when (verbosity-configurable? db) {:text {:verbosity (name (or (:verbosity settings) "low"))}}))
+  (not-empty (cond-> {}
+               (verbosity-configurable? db)
+               (assoc-in [:text :verbosity] (name (or (:verbosity settings) "low")))
+
+               (and (codex-session? db) (vis/toggle-value "codex_fast_mode"))
+               (assoc :service_tier "priority"))))
 
 (defonce ^:private process-submission-id (str (java.util.UUID/randomUUID)))
 
@@ -5171,6 +5197,15 @@
             ;; the id is carried through (render-neutral = no cache bust).
             (dispatch [:resync-toggle-settings toggle-id])
             (vis/notify! (str label ": " (name next))
+                         :level :info
+                         :ttl-ms settings-notification-ttl-ms))))
+
+(reg-fx :toggle-boolean
+        (fn [toggle-id label]
+          (let [enabled? (not (boolean (vis/toggle-value toggle-id)))]
+            (vis/toggle-set-value! toggle-id enabled?)
+            (dispatch [:resync-toggle-settings toggle-id])
+            (vis/notify! (str label (if enabled? " enabled" " disabled"))
                          :level :info
                          :ttl-ms settings-notification-ttl-ms))))
 

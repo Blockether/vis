@@ -603,6 +603,9 @@
      verbosity
      (or (:verbosity settings) default-verbosity)
 
+     codex-fast?
+     (and (= :openai-codex (:provider info)) (boolean (lp/toggle-value "codex_fast_mode")))
+
      ws
      (:workspace db)
 
@@ -630,6 +633,9 @@
                            (str ws-root))))]
 
     (cond-> (vec git-spans)
+      codex-fast?
+      (conj {:text "fast" :fg t/footer-fg-strong :bold? true :region :left :priority 2})
+
       ;; ── LEFT ──────────────────────────────────────────────────────────────
       ;; Model display + (Ctrl+T) hint moved to builtin_hooks.clj
       ;; (`:tui.builtin.model/footer`).

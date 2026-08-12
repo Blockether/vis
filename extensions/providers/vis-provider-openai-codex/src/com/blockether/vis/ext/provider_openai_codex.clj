@@ -597,6 +597,17 @@
 
 (require '[com.blockether.svar.core :as svar])
 
+(vis/register-toggle! {:id "codex_fast_mode"
+                       :label "Fast mode"
+                       :description
+                       "Route eligible OpenAI Codex turns through the priority service tier."
+                       :type :boolean
+                       :settings? false
+                       :default false
+                       :owner "openai-codex"
+                       :group :provider
+                       :persist? true})
+
 ;; ---------------------------------------------------------------------------
 ;; A new Codex model svar's pinned catalog doesn't know yet can still be offered
 ;; with its real window declared INLINE on `:default-models` as

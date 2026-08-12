@@ -626,6 +626,7 @@
     :rows [[(keymap/label-for :cycle-model) "Cycle model"]
            [(keymap/label-for :pick-model) "Pick model (search)"]
            [(keymap/label-for :cycle-reasoning) "Cycle reasoning effort"]
+           [(keymap/label-for :toggle-codex-fast) "Toggle Codex Fast mode"]
            [(keymap/label-for :cycle-verbosity) "Cycle answer length"]
            [(keymap/label-for :search-open) "Search in session"]
            [(keymap/label-for :pick-file) "Attach file"]

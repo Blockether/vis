@@ -271,6 +271,12 @@
                    (expect (= 272000 (:context (get by-name "gpt-5.6-terra")))))))
 
 (defdescribe codex-extension-settings-test
+             (it "registers the persisted Fast mode provider knob"
+                 (let [spec (vis/toggle-spec "codex_fast_mode")]
+                   (expect (= :boolean (:type spec)))
+                   (expect (false? (:default spec)))
+                   (expect (true? (:persist? spec)))
+                   (expect (false? (:settings? spec)))))
              (it "does not declare legacy TUI settings metadata"
                  (let
                    [ext (first (filter #(= "provider-openai-codex" (:ext/name %))

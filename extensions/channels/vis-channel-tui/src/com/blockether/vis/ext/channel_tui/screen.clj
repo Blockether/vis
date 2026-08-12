@@ -7044,6 +7044,9 @@
                                   :cycle-reasoning
                                   (state/dispatch [:cycle-reasoning-level])
 
+                                  :toggle-codex-fast
+                                  (state/dispatch [:toggle-codex-fast-mode])
+
                                   :cycle-verbosity
                                   (state/dispatch [:cycle-verbosity])
 
@@ -7325,6 +7328,9 @@
 
                          :cycle-reasoning
                          (do (state/dispatch [:cycle-reasoning-level]) (recur))
+
+                         :toggle-codex-fast
+                         (do (state/dispatch [:toggle-codex-fast-mode]) (recur))
 
                          :cycle-verbosity
                          (do (state/dispatch [:cycle-verbosity]) (recur))

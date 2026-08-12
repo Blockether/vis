@@ -28,6 +28,7 @@
                  (expect (= :cycle-model (keymap/prefix-action-for \m)))
                  (expect (= :cycle-model (keymap/prefix-action-for \M)))
                  (expect (= :cycle-reasoning (keymap/prefix-action-for \r)))
+                 (expect (= :toggle-codex-fast (keymap/prefix-action-for \q)))
                  (expect (= :cycle-verbosity (keymap/prefix-action-for \l)))
                  (expect (= :open-drafts (keymap/prefix-action-for \d)))
                  (expect (nil? (keymap/prefix-action-for \e)))
@@ -46,7 +47,7 @@
                  ;; C-x t → fork the session AT a chosen turn; C-x z → vim-style jump labels.
                  (expect (= :fork-at-turn (keymap/prefix-action-for \t)))
                  (expect (= :toggle-detail-labels (keymap/prefix-action-for \z)))
-                 (expect (nil? (keymap/prefix-action-for \q)))
+                 (expect (nil? (keymap/prefix-action-for \i)))
                  (expect (= \x keymap/prefix-key)))
              (it "no emacs editing key is a direct app verb (action-for returns nil)"
                  ;; The C-x prefix's second-keys (m/r/v/d/s) live behind C-x — a different
@@ -63,6 +64,7 @@
                  ;; Ctrl+M is Enter, so a Ctrl'd second key is unusable for some letters.
                  (expect (= "C-x m" (keymap/label-for :cycle-model)))
                  (expect (= "C-x r" (keymap/label-for :cycle-reasoning)))
+                 (expect (= "C-x q" (keymap/label-for :toggle-codex-fast)))
                  (expect (= "C-x l" (keymap/label-for :cycle-verbosity)))
                  (expect (= "C-x f" (keymap/label-for :search-open)))
                  (expect (= "C-x a" (keymap/label-for :pick-file)))

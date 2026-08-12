@@ -64,7 +64,65 @@
                                  {:session {:id "s1"}
                                   :session-model-pref {:provider (name provider)
                                                        :model "gpt-5.6-sol"}
-                                  :settings {:verbosity "high"}})))))))
+                                  :settings {:verbosity "high"}}))))))
+             (it "adds priority only for Codex while Fast mode is enabled"
+                 (try
+                   (vis/toggle-set-value! "codex_fast_mode" true)
+                   (doseq [[provider expected]
+                           [[:openai-codex {:text {:verbosity "high"}
+                                           :service_tier "priority"}]
+                            [:github-copilot {:text {:verbosity "high"}}]]]
+                     (with-redefs
+                       [vis/get-router
+                        (constantly :router)
+
+                        vis/resolve-model-info
+                        (fn [_ _provider _model]
+                          {:provider provider
+                           :name "gpt-5.6-sol"
+                           :verbosity-style :openai-text})]
+
+                       (expect (= expected
+                                  (#'state/turn-extra-body
+                                   {:session {:id "s1"}
+                                    :session-model-pref {:provider (name provider)
+                                                         :model "gpt-5.6-sol"}
+                                    :settings {:verbosity "high"}})))))
+                   (finally (vis/toggle-reset-to-default! "codex_fast_mode"))))
+             (it "omits priority when Fast mode is disabled"
+                 (try
+                   (vis/toggle-set-value! "codex_fast_mode" false)
+                   (with-redefs
+                     [vis/get-router
+                      (constantly :router)
+
+                      vis/resolve-model-info
+                      (fn [& _]
+                        {:provider :openai-codex :name "gpt-5.6-sol"})]
+
+                     (expect (nil? (#'state/turn-extra-body
+                                    {:session {:id "s1"}
+                                     :session-model-pref {:provider "openai-codex"
+                                                          :model "gpt-5.6-sol"}
+                                     :settings {}}))))
+                   (finally (vis/toggle-reset-to-default! "codex_fast_mode"))))
+             (it "toggles Fast for Codex and refuses other providers"
+                 (let [handler (-> #'state/event-registry deref deref
+                                   (get :toggle-codex-fast-mode) :fn)]
+                   (with-redefs
+                     [vis/get-router (constantly :router)
+                      vis/resolve-model-info
+                      (fn [_ provider _model] {:provider (keyword provider)})]
+                     (expect (= [[:toggle-boolean "codex_fast_mode" "Fast mode"]]
+                                (:fx (handler {:session-model-pref
+                                               {:provider "openai-codex" :model "gpt"}}
+                                              [:toggle-codex-fast-mode]))))
+                     (expect (= [[:notify
+                                  "Fast mode is available only for OpenAI Codex"
+                                  :warn 1500]]
+                                (:fx (handler {:session-model-pref
+                                               {:provider "github-copilot" :model "gpt"}}
+                                              [:toggle-codex-fast-mode]))))))))
 
 (defdescribe always-on-display-test
              (it "thinking, full trace, silent calls, and timestamps are ALWAYS shown"

@@ -1549,6 +1549,10 @@ export function SessionScreen({
     client.cachedSetting("reasoning_level"),
   );
   const [reasoningBusy, setReasoningBusy] = useState(false);
+  const [codexFast, setCodexFast] = useState<Toggle | null>(() =>
+    client.cachedSetting("codex_fast_mode"),
+  );
+  const [codexFastBusy, setCodexFastBusy] = useState(false);
   // The level the user just asked for, shown until the gateway confirms it.
   const [pendingLevel, setPendingLevel] = useState<string | null>(null);
 
@@ -1562,6 +1566,31 @@ export function SessionScreen({
       });
     return () => controller.abort();
   }, [client]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void client
+      .setting("codex_fast_mode", controller.signal)
+      .then((toggle) => setCodexFast(toggle))
+      .catch(() => {
+        // Provider extension may be absent; then there is no Fast switch.
+      });
+    return () => controller.abort();
+  }, [client]);
+
+  async function toggleCodexFast() {
+    if (!codexFast || codexFastBusy) return;
+    setCodexFastBusy(true);
+    try {
+      setCodexFast(
+        await client.setSetting(codexFast.id, "toggle"),
+      );
+    } catch (e) {
+      setComposerNotice((e as Error).message);
+    } finally {
+      setCodexFastBusy(false);
+    }
+  }
 
   // One tap = next choice. Cycling beats a popover for a two-to-four value
   // enum, and the gateway owns the order (`cycle` action) — but it also HANDS
@@ -1595,6 +1624,10 @@ export function SessionScreen({
   // gateway's own value the rest of the time. Never empty — that is the whole
   // point of the swap.
   const reasoningLevel = pendingLevel ?? reasoning?.value ?? "default";
+  const activeProvider = modelPref?.provider ?? defaultPref?.provider;
+  const codexFastAvailable = activeProvider === "openai-codex" && codexFast;
+  const turnExtraBody =
+    codexFastAvailable && codexFast.enabled ? { service_tier: "priority" } : undefined;
 
   // The header chip shows whatever model this session actually runs on, so read
   // the gateway's answer rather than assuming the global default.
@@ -3900,6 +3933,7 @@ export function SessionScreen({
         const submitted = await client.submitTurn(sid, request, {
           displayRequest,
           attachments: sent,
+          extraBody: turnExtraBody,
         });
         const queuedId = submitted.turn_id ?? submitted.id;
         rememberSent(queuedId, sent);
@@ -3981,6 +4015,7 @@ export function SessionScreen({
       const submitted = await client.submitTurn(sid, request, {
         displayRequest,
         attachments: sent,
+        extraBody: turnExtraBody,
       });
       const submittedId = submitted.turn_id ?? submitted.id;
       rememberSent(submittedId, sent);
@@ -5319,6 +5354,24 @@ export function SessionScreen({
             >
               {modelPref?.model ?? defaultPref?.model ?? "model"}
             </MetaButton>
+
+            {codexFastAvailable && (
+              <>
+                <span aria-hidden="true" className="h-2.5 w-px shrink-0 bg-dialog-edge" />
+                <MetaButton
+                  className="shrink-0"
+                  onMouseDown={keepKeyboard}
+                  onClick={() => void toggleCodexFast()}
+                  disabled={codexFastBusy}
+                  aria-busy={codexFastBusy}
+                  aria-pressed={codexFast.enabled ?? false}
+                  aria-label={`Fast mode — ${codexFast.enabled ? "on" : "off"}`}
+                  title={`Fast mode: ${codexFast.enabled ? "on" : "off"}`}
+                >
+                  {codexFast.enabled ? "fast" : "standard"}
+                </MetaButton>
+              </>
+            )}
 
             {reasoning && (reasoning.choices?.length ?? 0) > 0 && (
               <>
