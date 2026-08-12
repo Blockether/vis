@@ -1887,7 +1887,23 @@
                                                     "output" 69
                                                     "cached" 0
                                                     "cache_created" 8777
-                                                    "input_regular" 112}}))))))
+                                                    "input_regular" 112}}))))
+    (it "applies an explicit service-tier cost multiplier to every billed token class"
+        (let [estimate (deref #'lp/estimate-token-cost)
+              usage {:input-tokens 8298 :output-tokens 6}
+              standard (estimate "gpt-5.6-sol" 8298 6 {:api-usage usage})
+              priority (estimate "gpt-5.6-sol" 8298 6
+                                 {:api-usage usage :cost-multiplier 2.0})]
+          (doseq [k ["input_cost" "output_cost" "total_cost"]]
+            (expect (< (Math/abs (- (* 2.0 (double (get standard k)))
+                                    (double (get priority k))))
+                       1.0E-12)))))
+    (it "recognizes Priority pricing only for the Codex provider"
+        (let [multiplier (deref (ns-resolve 'com.blockether.vis.internal.loop 'codex-fast-cost-multiplier))]
+          (expect (= 2.0 (multiplier {:service_tier "priority"} :openai-codex)))
+          (expect (= 2.0 (multiplier {"service_tier" "PRIORITY"} "openai-codex")))
+          (expect (= 1.0 (multiplier {:service_tier "priority"} :openai)))
+          (expect (= 1.0 (multiplier {} :openai-codex)))))))
 
 (defdescribe ask-code-block-observation-test
              (it "reports the block count (lenient mode: only the count is meaningful)"

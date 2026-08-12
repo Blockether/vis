@@ -6084,23 +6084,66 @@
 
 (def ^:private balanced-reasoning :balanced)
 
-(do (defn- status->id [status] (when status (keyword "rlm.status" (name status))))
-    (def ^:private cost-map-keys
-      ["input_cost" "input_uncached_cost" "input_cached_cost" "input_cache_write_cost"
-       "cache_read_cost" "cache_write_cost" "output_cost" "total_cost"])
-    (defn- estimate-token-cost
-      "Estimate cost from provider usage while preserving cached/non-cached input split."
-      ([model input-tokens output-tokens] (estimate-token-cost model input-tokens output-tokens {}))
-      ([model input-tokens output-tokens opts]
-       (try (wire/canonical (svar-router/estimate-cost model
-                                                       input-tokens
-                                                       output-tokens
-                                                       svar-router/MODEL_PRICING
-                                                       (or opts {})))
-            (catch Throwable _ nil))))
-    (defn- merge-cost-maps
-      [acc extra-cost]
-      (merge-with + (select-keys acc cost-map-keys) (select-keys extra-cost cost-map-keys))))
+(do
+  (defn- status->id [status] (when status (keyword "rlm.status" (name status))))
+  (def ^:private cost-map-keys
+    ["input_cost" "input_uncached_cost" "input_cached_cost" "input_cache_write_cost"
+     "cache_read_cost" "cache_write_cost" "output_cost" "total_cost"])
+  (def ^:private codex-fast-price-multiplier 2.0)
+  (defn- codex-fast-cost-multiplier
+    "OpenAI Codex Fast mode uses Priority processing, currently billed at 2x
+       Standard for input, cached input, cache writes, and output. Keep the
+       multiplier provider-gated: `service_tier` is an open wire extension and
+       must not change another provider's accounting if a caller sends it there."
+    [extra-body provider]
+    (let
+      [tier
+       (or (:service_tier extra-body)
+           (get extra-body "service_tier")
+           (:service-tier extra-body)
+           (get extra-body "service-tier"))
+
+       provider-id
+       (cond (keyword? provider) (name provider)
+             (some? provider) (str provider))]
+
+      (if (and (= "priority"
+                  (some-> tier
+                          str
+                          str/lower-case))
+               (= "openai-codex" provider-id))
+        codex-fast-price-multiplier
+        1.0)))
+  (defn- estimate-token-cost
+    "Estimate cost from provider usage while preserving cached/non-cached input split.
+       `:cost-multiplier` scales every monetary component after svar prices the
+       canonical usage; token counts remain untouched."
+    ([model input-tokens output-tokens] (estimate-token-cost model input-tokens output-tokens {}))
+    ([model input-tokens output-tokens opts]
+     (try (let
+            [opts
+             (or opts {})
+
+             multiplier
+             (double (or (:cost-multiplier opts) 1.0))
+
+             cost-map
+             (wire/canonical (svar-router/estimate-cost model
+                                                        input-tokens
+                                                        output-tokens
+                                                        svar-router/MODEL_PRICING
+                                                        (dissoc opts :cost-multiplier)))]
+
+            (if (and (map? cost-map) (not= 1.0 multiplier))
+              (reduce (fn [m k]
+                        (update m k #(if (number? %) (* multiplier (double %)) %)))
+                      cost-map
+                      cost-map-keys)
+              cost-map))
+          (catch Throwable _ nil))))
+  (defn- merge-cost-maps
+    [acc extra-cost]
+    (merge-with + (select-keys acc cost-map-keys) (select-keys extra-cost cost-map-keys))))
 
 (defn model-pricing
   "Per-model price table entry (USD per MILLION tokens) for `model`, looked up
@@ -6430,6 +6473,9 @@
      effective-model
      (:name resolved-model)
 
+     root-cost-multiplier
+     (codex-fast-cost-multiplier extra-body (:provider resolved-model))
+
      _
      (assert effective-model "Router must resolve a root model")
 
@@ -6680,8 +6726,8 @@
      ;; landed), in which case the persistance layer leaves the
      ;; columns NULL.
      iteration-token-cost
-     (fn iteration-token-cost ([api-usage] (iteration-token-cost api-usage nil))
-       ([api-usage actual-model]
+     (fn iteration-token-cost ([api-usage] (iteration-token-cost api-usage nil nil))
+       ([api-usage actual-model actual-provider]
         (when api-usage
           (let
             [in
@@ -6719,7 +6765,13 @@
                                       effective-model)
                                   in
                                   out
-                                  {:api-usage api-usage})
+                                  {:api-usage api-usage
+                                   :cost-multiplier (codex-fast-cost-multiplier
+                                                      extra-body
+                                                      (or actual-provider
+                                                          (:llm-provider api-usage)
+                                                          (:provider api-usage)
+                                                          (:provider resolved-model)))})
 
              total
              (when (map? cost-map) (get cost-map "total_cost"))]
@@ -6752,7 +6804,8 @@
                                    input-tokens
                                    output-tokens
                                    {:cached-tokens cached-tokens
-                                    :cache-creation-tokens cache-creation-tokens}))]
+                                    :cache-creation-tokens cache-creation-tokens
+                                    :cost-multiplier root-cost-multiplier}))]
 
          {:tokens (cond->
                     {"input" input-tokens
@@ -7320,7 +7373,10 @@
                        err-iteration-id
                        (persistance/db-store-iteration!
                          (:db-info environment)
-                         (let [tc (iteration-token-cost err-api-usage)]
+                         (let
+                           [tc (iteration-token-cost err-api-usage
+                                                     (:name resolved-model)
+                                                     (:provider resolved-model))]
                            (cond->
                              {:session-turn-id session-turn-id
                               :vars []
@@ -7484,7 +7540,8 @@
                        ;; model's rates.
                        (let
                          [tc (iteration-token-cost (:api-usage iteration-result)
-                                                   (:llm-model iteration-result))]
+                                                   (:llm-model iteration-result)
+                                                   (:llm-provider iteration-result))]
                          (cond->
                            {:session-turn-id session-turn-id
                             :code (or block-code "")
