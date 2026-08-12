@@ -1609,9 +1609,14 @@ export function SectionHeader({
  * group scrolls out its own shelf must pass UNDER the next header rather than over
  * it.
  *
- * It WRAPS. On a 320px screen a 100-page pager is 284px of steps and numbers, which
- * leaves nothing for the count beside it; a second line is honest, a truncated
- * count is not, and both children keep their full ink at every width.
+ * It is ONE LINE on a phone, and it stays one line at every page. It used to wrap:
+ * a 100-page pager asks for 304px of steps and numbers, the count beside it 115px,
+ * and a 430px screen has 400 — so stepping from page 1 to page 4 opened the window,
+ * broke the row in two and grew a STICKY strip from 41px to 59px under the thumb
+ * that pressed it, with the count marooned beside 300px of empty paper. The pager
+ * carries a phone form of fixed width for exactly this reason (see `Pager`), so the
+ * shelf holds its height; `flex-wrap` remains for the honest case, a count so long
+ * it cannot share the line, because a truncated count is not an option.
  *
  * The count lives here rather than in the header's trailing cluster for the same
  * reason the qualifier moved under the name: measured on a 320px screen, `699
@@ -1893,9 +1898,11 @@ export function pageWindow(page: number, pageCount: number, span = 1): (number |
  * which is the report this shelf exists for. The shelf also STICKS, so the control
  * that walks a 794-session project is still on screen at row 40 of that project.
  *
- * What the pager owns is the steps at its ends and the NUMBERS between them — every
- * one of them pressable, so page 5 of 73 is ONE tap and not four; the paper, the
- * two list edges and the closing hairline belong to the shelf. Below one page it
+ * What the pager owns is the steps at its ends and what stands between them: from
+ * `sm` up the NUMBERS, every one of them pressable, so page 5 of 73 is ONE tap and
+ * not four; on a phone, where the numbers cannot share a line with the group's
+ * count, the position itself (`4 / 80`) at a width that never changes. The paper,
+ * the two list edges and the closing hairline belong to the shelf. Below one page it
  * renders nothing at all — a pager for a project with four sessions is a control
  * that can never be pressed, and its shelf then carries only the group's count.
  *
@@ -1944,52 +1951,85 @@ export function Pager({
   return (
     <nav
       aria-label={`Pages of ${label}`}
-      // The shelf is a flex row that WRAPS, so the cluster's own content width is
-      // what decides whether the count and the pages share one line: `grow` with an
-      // automatic basis, never `flex-1`, whose zero basis would let 284px of steps
-      // and numbers overflow a 320px screen rather than take a second line.
-      className="flex min-w-0 grow justify-end"
+      // On a phone the cluster is exactly as wide as its own content and never grows
+      // (`shrink-0`, no basis to negotiate); from `sm` up it takes the shelf's trailing
+      // end. The shelf is a flex row that WRAPS, and a pager that asks for 304px there
+      // is a pager that pushes the group's count onto a line of its own — see the two
+      // forms below.
+      className="flex min-w-0 shrink-0 justify-end sm:grow"
     >
+      {/* The pager is LIVE: pressing a step or a number changes nothing else on the
+          shelf, so without this a screen reader hears silence after the press. It is
+          the ONE voice of the position — both visible forms below are drawn from it,
+          and neither is announced a second time. */}
+      <span aria-live="polite" className="sr-only">
+        Page {page} of {pageCount}
+      </span>
       {/* The shelf runs the width of the list; the CONTROL does not. Steps pinned to
           the paper's two edges put `<` and `>` 360px apart on a phone, so paging is a
           two-handed reach and no thumb can rest between them — you cannot tap `>`
-          twice without moving. The cluster is capped and held at the shelf's trailing
-          end instead, which puts the two steps a thumb's width from the numbers they
-          belong to and in the column every other trailing control already uses. It is
-          a FIXED cap, not `w-fit`: a window that grows from `1 2 … 73` to
-          `1 … 5 6 7 … 73` would otherwise slide `>` out from under the finger. */}
-      <div className="flex w-full max-w-[19rem] items-center gap-1">
+          twice without moving. The cluster is held at the shelf's trailing end
+          instead, which puts the two steps a thumb's width from the numbers they
+          belong to and in the column every other trailing control already uses.
+
+          It is sized by its CONTENT, and `>` is what that buys: `>` ends the cluster,
+          the cluster ends at the shelf's trailing edge, so `>` is at the same x on
+          every page of every project and the window can only breathe to the LEFT. A
+          capped box (`w-full max-w-[19rem]`) promised the same thing and did not keep
+          it — measured at 768px, `1 2 3 4 5 … 80` needs 319px of a 304px cap, and
+          because a flex item cannot shrink below its own content the box simply
+          overflowed: on page 4, and only on page 4, `>` sat 15px right of where it
+          sits on every other page, outside the trailing column it shares with the
+          `⋯` of the rows below. The step the list is walked with does not move. */}
+      <div className="flex items-center gap-1">
         {step(page - 1, true)}
-      {/* The strip is LIVE: pressing a number changes nothing else on the band, so
-          without this a screen reader hears silence after the press. */}
-      <span aria-live="polite" className="flex flex-1 items-center justify-center gap-1">
-        <span className="sr-only">
-          Page {page} of {pageCount}
+        {/* THE PHONE FORM: the position itself, printed between the two steps.
+
+            Reported from a phone, with a screenshot: on page 4 of a 798-session
+            project the shelf was two lines with a hole in it — the count alone on the
+            first beside 300px of empty paper, the numbers alone on the second — and
+            it CHANGED HEIGHT as the reader paged. Measured at 430px: page 1 asks for
+            277px and fits beside the 115px count on one 41px line, page 4 opens the
+            window to `1 2 3 4 5 … 80`, asks for 304px, and the shelf wraps to 59px.
+            A sticky strip grew 18px under the thumb that had just pressed it.
+
+            No phone line holds both: at 390px the count and the widest window want
+            431px of a 362px line. The numbers are the half that can be said in fewer
+            characters, so below `sm` they become `4 / 80` — 56px, the SAME 56px on
+            every page of every project, so the shelf keeps one line and one height
+            for the whole walk. `<` and `>` still step, and the strip comes back whole
+            at `sm`, where a number is a tap and not a squeeze between two others. */}
+        <span
+          aria-hidden="true"
+          className="min-w-14 px-1 text-center font-mono text-meta text-dialog-hint tabular-nums sm:hidden"
+        >
+          {page} / {pageCount}
         </span>
-        {pageWindow(page, pageCount).map((entry, index) =>
-          entry === null ? (
-            <span
-              key={`gap-${index}`}
-              aria-hidden
-              className="px-1 font-mono text-chip text-dialog-hint"
-            >
-              &#8230;
-            </span>
-          ) : (
-            <Button
-              key={entry}
-              variant={entry === page ? 'primary' : 'quiet'}
-              density="compact"
-              aria-label={`Page ${entry}`}
-              aria-current={entry === page ? 'page' : undefined}
-              onClick={() => onPage(entry)}
-              className="min-w-7 px-1 font-mono tabular-nums sm:min-w-8 sm:px-1.5"
-            >
-              {entry}
-            </Button>
-          ),
-        )}
-      </span>
+        <span className="hidden flex-1 items-center justify-center gap-1 sm:flex">
+          {pageWindow(page, pageCount).map((entry, index) =>
+            entry === null ? (
+              <span
+                key={`gap-${index}`}
+                aria-hidden
+                className="px-1 font-mono text-chip text-dialog-hint"
+              >
+                &#8230;
+              </span>
+            ) : (
+              <Button
+                key={entry}
+                variant={entry === page ? 'primary' : 'quiet'}
+                density="compact"
+                aria-label={`Page ${entry}`}
+                aria-current={entry === page ? 'page' : undefined}
+                onClick={() => onPage(entry)}
+                className="min-w-7 px-1 font-mono tabular-nums sm:min-w-8 sm:px-1.5"
+              >
+                {entry}
+              </Button>
+            ),
+          )}
+        </span>
         {step(page + 1, false)}
       </div>
     </nav>

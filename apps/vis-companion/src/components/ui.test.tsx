@@ -738,15 +738,52 @@ describe("Pager", () => {
   // Regression, user report: the `<` and `>` were spread the full width of the
   // list, "too much and hard to click" — 360px apart on a phone, so no thumb can
   // reach both and click-click-click through pages. The shelf still runs the full
-  // width; the control on it is capped and held at its trailing end.
+  // width; the control on it is content-sized and held at its trailing end.
+  //
+  // Regression, user report with a screenshot of a phone: the capped cluster
+  // (`w-full max-w-[19rem]`) could not keep the promise the cap was for. A flex item
+  // cannot shrink below its own content, so on page 4 — where the window opens to
+  // `1 2 3 4 5 … 80`, 319px of a 304px cap — the box overflowed and `>` sat 15px
+  // right of where it sits on every other page, outside the trailing column.
   it("keeps the two steps within a thumb's reach of the numbers", () => {
     const html = renderToStaticMarkup(
       <Pager page={4} pageCount={73} onPage={() => {}} label="vis sessions" />,
     );
-    // A FIXED cap, not `w-fit`: a cluster that sizes to its own window re-centres
-    // whenever the window grows, which is what slid `>` out from under the finger.
-    expect(html).toContain("flex w-full max-w-[19rem] items-center gap-1");
-    expect(html).toContain('class="flex min-w-0 grow justify-end"');
+    // Content-sized: `>` ends the cluster, the cluster ends at the shelf's trailing
+    // edge, so the window can only breathe to the LEFT.
+    expect(html).toContain('class="flex items-center gap-1"');
+    expect(html).not.toContain("max-w-[19rem]");
+    // It never grows and never negotiates a basis on the shelf's wrapping row; from
+    // `sm` up, where the numbers are painted, it takes the shelf's trailing end.
+    expect(html).toContain('class="flex min-w-0 shrink-0 justify-end sm:grow"');
+  });
+
+  // Regression, user report with a screenshot of a phone ("this is not looking
+  // good"): on page 4 of a 798-session project the shelf was TWO lines with a hole
+  // in it — the count alone on the first beside 300px of empty paper, the numbers
+  // alone on the second — and the sticky strip grew from 41px to 59px as the reader
+  // paged, measured at 430px. A phone line cannot hold both: at 390px the 115px
+  // count and the 304px window need 431px of 362px.
+  it("says the position in six characters where the numbers cannot fit", () => {
+    const html = renderToStaticMarkup(
+      <Pager page={4} pageCount={80} onPage={() => {}} label="vis sessions" />,
+    );
+    // The phone form: `4 / 80`, in the shelf's own meta voice, in a box whose width
+    // is the same on every page of every project — so the shelf holds its height.
+    expect(html).toContain("min-w-14");
+    expect(html).toContain("tabular-nums");
+    expect(html).toContain("4 / 80");
+    // The two forms are exclusive, and the numbers are the half that gives way.
+    const label = /<span aria-hidden="true" class="([^"]*)"/.exec(html)?.[1] ?? "";
+    expect(label).toContain("sm:hidden");
+    expect(html).toContain('class="hidden flex-1 items-center justify-center gap-1 sm:flex"');
+    // `display: none` takes the numbers out of the accessibility tree too, so the
+    // position is announced ONCE, by the live region both forms are drawn from.
+    expect(html.match(/Page 4 of 80/g)?.length).toBe(1);
+    expect(html).toContain('<span aria-live="polite" class="sr-only">');
+    // Both steps are still there to walk with.
+    expect(isPainted(html, "Previous page")).toBe(true);
+    expect(isPainted(html, "Next page")).toBe(true);
   });
 
   it("makes every printed page a one-tap jump, current one marked", () => {
@@ -815,9 +852,20 @@ describe("SectionShelf", () => {
     expect(face).toContain("mouse:min-h-8");
   });
 
-  it("wraps rather than crushing either of its two halves", () => {
-    // 284px of steps and numbers plus a count does not fit a 320px screen; the
-    // second line is honest, a count truncated to nothing is not.
+  // Regression, user report with a screenshot of a phone: the shelf wrapped as soon
+  // as the pager's window opened, so it was 41px on page 1 and 59px on page 4 — a
+  // STICKY strip changing height under the thumb that pressed it, with the count
+  // stranded beside 300px of empty paper. The pager carries a fixed-width phone form
+  // now, so both halves share one line at 320px.
+  it("holds one line, and wraps rather than crushing either of its two halves", () => {
+    const pager = renderToStaticMarkup(
+      <Pager page={4} pageCount={100} onPage={() => {}} label="vis sessions" />,
+    );
+    // The phone form is 56px on every page: 115px of count and 132px of pager fit a
+    // 320px line with room to spare.
+    expect(pager).toContain("min-w-14");
+    expect(pager).toContain("shrink-0");
+    // Kept for the honest case only — a count so long it cannot share the line.
     expect(face).toContain("flex-wrap");
     expect(html).toContain("794 sessions");
     expect(face).not.toContain("truncate");
@@ -834,9 +882,9 @@ describe("SectionShelf", () => {
     expect(pager).not.toContain("pl-3");
     expect(pager).not.toContain("pr-3");
     expect(pager).not.toContain("border-t border-dialog-edge");
-    // `grow` with an automatic basis, so the wrap is decided by the cluster's own
-    // width; `flex-1` would zero that basis and overflow the screen instead.
-    expect(pager).toContain('class="flex min-w-0 grow justify-end"');
+    // It never grows on the phone line it shares with the count, and takes the
+    // shelf's trailing end from `sm` up, where its numbers are painted.
+    expect(pager).toContain('class="flex min-w-0 shrink-0 justify-end sm:grow"');
   });
 
   it("carries the group's count, which the header's cluster no longer does", () => {
