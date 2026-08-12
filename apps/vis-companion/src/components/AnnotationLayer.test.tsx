@@ -257,3 +257,29 @@ it("drops the stroke in progress when its owner cancels it", () => {
   act(() => surface(ref).cancelStroke());
   expect(onStrokesChange).toHaveBeenLastCalledWith(1);
 });
+
+// Regression, reported from an iPad: drawing circles worked, but HANDWRITING on
+// the picture selected it instead of writing on it — the many short, quick
+// strokes of letters are what WebKit reads as its own tap-drag selection.
+it("refuses to be selected, so letters are written and not highlighted", () => {
+  mount(<AnnotationLayer active color="--err" />);
+  const canvas = layer();
+  expect(canvas.className).toContain("select-none");
+  expect(canvas.className).toContain("[-webkit-touch-callout:none]");
+
+  // And a highlight already on the page does not survive the next stroke.
+  const prose = document.createElement("p");
+  prose.textContent = "selected a moment ago";
+  document.body.append(prose);
+  const range = document.createRange();
+  range.selectNodeContents(prose);
+  window.getSelection()?.removeAllRanges();
+  window.getSelection()?.addRange(range);
+  expect(window.getSelection()?.rangeCount).toBe(1);
+
+  canvas.width = 100;
+  canvas.height = 100;
+  pointer(canvas, "pointerdown", 5, 5);
+  expect(window.getSelection()?.rangeCount).toBe(0);
+  prose.remove();
+});

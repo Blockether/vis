@@ -92,6 +92,11 @@ export function AnnotationLayer({
     changed.current?.(strokesRef.current.length);
   }
 
+  function dropSelection(): void {
+    const selection = window.getSelection?.();
+    if (selection && selection.rangeCount > 0) selection.removeAllRanges();
+  }
+
   function repaint(): void {
     const canvas = canvasRef.current;
     const context = canvas?.getContext("2d");
@@ -109,6 +114,11 @@ export function AnnotationLayer({
     if (!activeRef.current || drawingRef.current || !canvas) return false;
     const point = canvasPoint(canvas, clientX, clientY);
     if (!point) return false;
+    // A selection that WebKit already made outlives the gesture that made it and
+    // keeps growing with the next stroke, so the picture stays washed blue while
+    // the pen writes over it. The pen owns the surface: taking the sheet drops
+    // whatever was highlighted.
+    dropSelection();
     const stroke: Stroke = {
       color: paletteColor(colorRef.current),
       width: strokeWidthFor(canvas.width, canvas.height),
@@ -208,12 +218,21 @@ export function AnnotationLayer({
     if (stopStroke()) event.preventDefault();
   }
 
+  // A PEN IS NEVER A SELECTION.
+  //
+  // Reported from an iPad: circles drew fine, but HANDWRITING selected the
+  // picture instead of writing on it. Letters are many short, quick strokes in
+  // one small patch, which is exactly what WebKit's own touch recogniser reads
+  // as tap-tap-drag — the gesture that selects — and `touch-action` and a
+  // cancelled `pointerdown` do not speak to it. Selection needs SELECTABLE
+  // content under the touch, so the sheet declares it has none, and the
+  // callout that a paused letter would otherwise raise is refused with it.
   return (
     <canvas
       ref={canvasRef}
       aria-label={label}
       data-annotation={active ? "active" : "idle"}
-      className={`[touch-action:none] ${active ? "pointer-events-auto cursor-crosshair" : "pointer-events-none"} ${className}`}
+      className={`[touch-action:none] select-none [-webkit-touch-callout:none] ${active ? "pointer-events-auto cursor-crosshair" : "pointer-events-none"} ${className}`}
       onPointerDown={begin}
       onPointerMove={extend}
       onPointerUp={finish}

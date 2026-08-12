@@ -613,3 +613,17 @@ describe("the grid is the gallery", () => {
     expect(document.querySelector('[aria-label="Gallery controls"]')).toBeNull();
   });
 });
+
+// Regression, reported from an iPad: writing by hand on an open picture selected
+// the picture instead of drawing on it. A stroke may begin on the dark margin,
+// so the viewport that owns that stroke has to refuse selection as well as the
+// sheet over the picture does.
+it("refuses selection under the pen, margin included", () => {
+  const viewport = document.querySelector<HTMLDivElement>(
+    '[role="dialog"] .cursor-grab',
+  );
+  const canvas = document.querySelector("canvas");
+  if (!viewport || !canvas) throw new Error("viewer surface not found");
+  expect(viewport.className).toContain("select-none");
+  expect(canvas.className).toContain("select-none");
+});

@@ -569,8 +569,17 @@ export function ImageViewer({
         className="absolute inset-x-0 top-0 z-20"
       />
 
+      {/* HANDWRITING IS NOT A SELECTION.
+
+          Reported from an iPad: circles drew fine, but writing letters selected
+          the picture instead of marking it. Letters are many short, quick
+          strokes in one small patch — what WebKit's touch recogniser reads as
+          the tap-drag that SELECTS, which neither `touch-action` nor a cancelled
+          `pointerdown` speaks to. A stroke may start on the dark margin, so the
+          viewport declares itself unselectable too, not only the sheet over the
+          picture. */}
       <div
-        className={`absolute inset-0 grid cursor-grab place-items-center overflow-hidden overscroll-none px-4 pt-20 active:cursor-grabbing [touch-action:none] ${drawing ? "pb-36" : "pb-24"}`}
+        className={`absolute inset-0 grid cursor-grab select-none place-items-center overflow-hidden overscroll-none px-4 pt-20 active:cursor-grabbing [touch-action:none] ${drawing ? "pb-36" : "pb-24"}`}
         onPointerDownCapture={beginGesture}
         onPointerMove={moveGesture}
         onPointerUp={endGesture}
