@@ -295,29 +295,34 @@ the opaque Security message as the only evidence.
 
 ## Environment scrubbing
 
-A confined child does **not** inherit the operator's environment. Only an
-allowlist of non-secret variables is passed through (`PATH`, `HOME`, `USER`,
-`SHELL`, `LANG`/`LC_*`, `TERM`, `TZ`, `TMPDIR`, `PWD`, …) plus this session's
-proxy and CA variables; every `*_KEY` / `*_TOKEN` / `*_SECRET` / `*_PASSWORD`
-and other operator credential is dropped before the process starts. This covers
-the sandbox's `shell(...)` call (every stage), trusted extension `subprocess`, and every managed
+A confined child does **not** inherit the operator's environment. It gets
+exactly three things: an allowlist of non-secret variables (`PATH`, `HOME`,
+`USER`, `SHELL`, `LANG`/`LC_*`, `TERM`, `TZ`, `TMPDIR`, `PWD`, …), **the
+project's own environment** — the workspace's `.env`/`.env.local` plus the
+`environment:` declarations, see `configuration.md` — and this session's proxy
+and CA variables. Every other `*_KEY` / `*_TOKEN` / `*_SECRET` / `*_PASSWORD`
+and operator credential is dropped before the process starts. This covers the
+sandbox's `shell(...)` call (every stage), trusted extension `subprocess`, and every managed
 language REPL / test runner.
 
-To give a confined child a specific variable, **declare it in `environment:`**
-(see `configuration.md`) — the same block that says where the value comes from.
-Declared names are injected with their resolved values, so a variable that lives
-in `.env`, the keychain or a helper command reaches the child even though the
-operator's shell never exported it:
+The project's `.env` is *not* withheld from a confined child on purpose: the
+child was granted the workspace and can read that file itself, so dropping the
+values would confine nothing. What the jail draws a line around is the
+environment of the operator who started Vis.
+
+To give a confined child something the project files do not contain — an ambient
+variable, a keychain item, a helper command — **declare it in `environment:`**:
 
 ```yaml
 environment:
-  CI: {env: CI}                     # pass an ambient variable through
-  MY_BUILD_TOKEN: {dotenv: MY_BUILD_TOKEN}   # …or one that only `.env` knows
+  CI: {env: CI}                        # re-admit an ambient variable
+  MY_BUILD_TOKEN: {keychain: vis-build}   # …or one only the keychain knows
 ```
 
-Everything not declared stays dropped, and `LD_*`, `DYLD_*`, `PERL*`,
-`BASH_ENV` and friends are refused even when declared: they run code in the
-unconfined hops that install the jail, so they never reach the child anyway.
+Everything else of the operator's environment stays dropped, and `LD_*`,
+`DYLD_*`, `PERL*`, `BASH_ENV` and friends are refused from either source: they
+run code in the unconfined hops that install the jail, so they never reach the
+child anyway.
 
 File **metadata** (existence, size, mtime) is likewise scoped: a child may stat
 its granted roots and the directory ancestors it needs to resolve paths, but not

@@ -10089,7 +10089,7 @@
                    :net-enabled? net-on?
                    ;; Resolved per spawn (never baked into the session snapshot), so a
                    ;; `.env` edit or a refreshed keychain item reaches the next child.
-                   :env-values (config/declared-environment-values)
+                   :env-values (config/child-environment-values)
                    :proxy-port proxy-port
                    :proxy-token (when proxy? sandbox-token)
                    :repl-proxy-port repl-proxy-port

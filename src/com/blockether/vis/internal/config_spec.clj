@@ -266,11 +266,13 @@
   ["~/Library/Keychains" "/Library/Keychains"])
 
 (def jail-keys #{"enabled" "filesystem" "network" "deny_exec" "mach_services"})
-;; There is no `jail.env`: `environment:` is the ONE place a variable is named,
-;; and every name declared there reaches Vis' children with the value its own
-;; source produced. A second list of the same names bought nothing — it could
-;; only re-admit an AMBIENT variable, never a `dotenv:`/`keychain:`/`command:`
-;; value, so the two blocks disagreed exactly where it mattered.
+;; There is no `jail.env`: the PROJECT names its variables (the workspace's
+;; `.env`, plus `environment:` for what a dotenv file cannot say), and every one
+;; of them reaches Vis' children — confined or not — with the value its own
+;; source produced. What `jail.enabled` decides is whether the OPERATOR's ambient
+;; environment comes too. A second list of the same names bought nothing: it
+;; could only re-admit an ambient variable, never a `dotenv:`/`keychain:`/
+;; `command:` value, so the two blocks disagreed exactly where it mattered.
 (def jail-schema
   {"enabled" boolean?
    "filesystem" (spec-pred ::jail-filesystem)
@@ -431,14 +433,17 @@
 (def titling-schema {"mode" titling-modes "provider" non-blank-string? "model" non-blank-string?})
 (s/def ::titling #(closed-map? titling-schema %))
 
-;; ── `environment:` — where each variable's value COMES FROM ───────────────────
+;; ── `environment:` — what the workspace's `.env` CANNOT say ───────────────────
 ;;
-;; Every entry NAMES ITS SOURCE, and names exactly one: `env:` (the process
-;; environment, optionally under a different name), `dotenv:` (the working
-;; directory's `.env`/`.env.local`), `keychain:` (the OS credential store) or
-;; `command:` (a helper's stdout). There is no precedence chain and no ambient
-;; fallback to remember — a config that does not SAY where a value comes from is
-;; exactly what this block exists to abolish.
+;; The working directory's `.env`/`.env.local` are loaded by default, whole, with
+;; no declaration at all (`config/workspace-environment-values`). This block is
+;; for everything a dotenv file cannot express, and every entry NAMES ITS SOURCE,
+;; exactly one: `env:` (the process environment, optionally under a different
+;; name — also the ONLY way to re-admit an ambient variable into a CONFINED
+;; child), `dotenv:` (a dotenv name, for a RENAME), `keychain:` (the OS
+;; credential store) or `command:` (a helper's stdout). A declaration WINS over
+;; the dotenv files and over the ambient environment; below it there is one fixed
+;; order and no per-entry precedence chain to remember.
 ;;
 ;; The value itself is never carried here. A literal is refused on purpose: every
 ;; read-modify-write into `~/.vis/state.yml` passes the loaded config back
@@ -446,12 +451,12 @@
 ;; — which is what `${NAME}` and `api_key_command` exist to prevent. A keychain
 ;; item and a helper command never hold a value in the file at all.
 ;;
-;; Declaring IS the exposure decision: a name written here is resolved from its
-;; own source and handed to Vis' own children — Python extensions, the shell's
+;; The project IS the exposure decision: a name in `.env` or written here is
+;; resolved and handed to Vis' own children — Python extensions, the shell's
 ;; subprocesses (confined or not) and managed language processes. Nothing else
-;; of the operator's environment reaches a CONFINED child; the names that run
+;; of the OPERATOR's environment reaches a CONFINED child; the names that run
 ;; code during another program's startup (`LD_*`, `DYLD_*`, `PERL*`, `BASH_ENV`
-;; …) are refused even when declared (`process-jail/jailed-child-env`).
+;; …) are refused from either source (`process-jail/jailed-child-env`).
 
 (def environment-source-schema
   {;; The process environment, read under this name — also the rename knob.

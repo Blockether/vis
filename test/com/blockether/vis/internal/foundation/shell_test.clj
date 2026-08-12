@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.foundation.shell-test
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.extension :as extension]
@@ -151,7 +152,29 @@
 
           (expect (= "from-declaration" (get r "stdout")))
           (expect (= declared
-                     (process-jail/child-env-additions {:disabled? true :env-values declared})))))))
+                     (process-jail/child-env-additions {:disabled? true :env-values declared}))))))
+  ;; The workspace's own `.env` needs no declaration at all: it is loaded whole
+  ;; and layered onto the child's environment, which is what every other tool in
+  ;; the project already does.
+  (it "a workspace `.env` value reaches the child with nothing declared"
+      (let
+        [env-path
+         (str (System/getProperty "java.io.tmpdir") "/vis-shell-dotenv-" (System/nanoTime))]
+        (try (spit env-path "VIS_TEST_DOTENV=from-the-project-file\n")
+             (binding
+               [workspace/*workspace-root* (workspace/trunk-root)
+                config/*extension-dotenv-path* env-path
+                config/*extension-dotenv-local-path* nil]
+
+               ;; The SAME `:env-values` the spawn path builds (`latest-jail-policy`).
+               (let
+                 [r (shell-run* {:session-id "t"
+                                 :jail-policy-fn (constantly {:disabled? true
+                                                              :env-values
+                                                              (config/child-environment-values)})}
+                                "printf %s \"$VIS_TEST_DOTENV\"")]
+                 (expect (= "from-the-project-file" (get r "stdout")))))
+             (finally (io/delete-file env-path true))))))
 
 ;; Regression: a background `git stash list` came back with a stray `=` above the
 ;; output, a `>` welded to the next command's first line and long paths broken

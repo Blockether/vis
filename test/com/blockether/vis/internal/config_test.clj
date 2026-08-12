@@ -732,64 +732,82 @@
          (finally (.delete (io/file env-path)) (.delete (io/file local-path))))))
 
 (defn- dotenv-status
-  "Status for `name` DECLARED as `dotenv:` — the only way `.env` is ever read."
+  "Status for `name` DECLARED as `dotenv:` — the RENAME form of the same file."
   [name]
   (with-declared-environment {name {"dotenv" name}}
                              (fn []
                                (config/extension-env-status name))))
 
 (defdescribe
-  extension-environment-test
-  "`.env` is a source a variable has to NAME, never an ambient fallback."
-  (it "reads .env only for a name declared with `dotenv:`"
+  workspace-dotenv-test
+  "The workspace's `.env` is loaded by DEFAULT, whole, with nothing declared: the
+   project file is part of the project, and a confined child can read it out of
+   the workspace it was granted anyway."
+  (it "answers an undeclared name from `.env`"
       (with-dotenv "# comment\nexport VIS_TEST_EXTENSION_TOKEN = quoted\nVIS_TEST_EMPTY=\n"
                    nil
                    (fn []
                      (expect (= {:name "VIS_TEST_EXTENSION_TOKEN" :source :dotenv :value "quoted"}
-                                (dotenv-status "VIS_TEST_EXTENSION_TOKEN")))
-                     (expect (nil? (:value (dotenv-status "VIS_TEST_EMPTY"))))
-                     ;; Undeclared: the file is right there and is still not consulted.
-                     (expect (= {:name "VIS_TEST_EXTENSION_TOKEN" :source :unset :value nil}
-                                (config/extension-env-status "VIS_TEST_EXTENSION_TOKEN"))))))
+                                (config/extension-env-status "VIS_TEST_EXTENSION_TOKEN")))
+                     ;; A blank assignment is no value: the name stays UNSET.
+                     (expect (= {:name "VIS_TEST_EMPTY" :source :unset :value nil}
+                                (config/extension-env-status "VIS_TEST_EMPTY")))
+                     ;; …and the same file, as the whole map a child is handed.
+                     (expect (= {"VIS_TEST_EXTENSION_TOKEN" "quoted"}
+                                (config/workspace-environment-values))))))
   (it "uses the final .env assignment, including an explicit blank override"
       (with-dotenv (str "VIS_TEST_OVERRIDE=first\nVIS_TEST_OVERRIDE=second\n"
                         "VIS_TEST_BLANK=first\nVIS_TEST_BLANK=\n")
                    nil
                    (fn []
                      (expect (= {:name "VIS_TEST_OVERRIDE" :source :dotenv :value "second"}
-                                (dotenv-status "VIS_TEST_OVERRIDE")))
+                                (config/extension-env-status "VIS_TEST_OVERRIDE")))
                      (expect (= {:name "VIS_TEST_BLANK" :source :unset :value nil}
-                                (dotenv-status "VIS_TEST_BLANK"))))))
+                                (config/extension-env-status "VIS_TEST_BLANK")))
+                     (expect (= {"VIS_TEST_OVERRIDE" "second"}
+                                (config/workspace-environment-values))))))
   (it ".env overrides .env.local, including with an explicit blank value"
       (with-dotenv (str "VIS_TEST_ENV_PRIORITY=from-env\n" "VIS_TEST_ENV_BLANK=\n")
                    (str "VIS_TEST_ENV_PRIORITY=from-local\n"
                         "VIS_TEST_ENV_BLANK=from-local\n"
                         "VIS_TEST_LOCAL_ONLY=from-local\n")
                    (fn []
-                     (expect (= {:name "VIS_TEST_ENV_PRIORITY" :source :dotenv :value "from-env"}
-                                (dotenv-status "VIS_TEST_ENV_PRIORITY")))
+                     (expect (= {"VIS_TEST_ENV_PRIORITY" "from-env"
+                                 "VIS_TEST_LOCAL_ONLY" "from-local"}
+                                (config/workspace-environment-values)))
                      (expect (= {:name "VIS_TEST_ENV_BLANK" :source :unset :value nil}
-                                (dotenv-status "VIS_TEST_ENV_BLANK")))
+                                (config/extension-env-status "VIS_TEST_ENV_BLANK")))
                      (expect (= {:name "VIS_TEST_LOCAL_ONLY" :source :dotenv :value "from-local"}
-                                (dotenv-status "VIS_TEST_LOCAL_ONLY"))))))
-  (it "answers an undeclared name from the process environment alone"
-      (with-dotenv "PATH=from-dotenv\n"
-                   nil
-                   (fn []
-                     (expect (= :env (:source (config/extension-env-status "PATH"))))
-                     (expect (= (System/getenv "PATH") (config/extension-env-value "PATH")))
-                     ;; A declared source is not a fallback: `dotenv:` BEATS the live value.
-                     (expect (= {:name "PATH" :source :dotenv :value "from-dotenv"}
-                                (dotenv-status "PATH"))))))
+                                (config/extension-env-status "VIS_TEST_LOCAL_ONLY"))))))
+  (it "layers `.env` ON TOP of the ambient value, and a declaration on top of both"
+      (binding
+        [config/*extension-getenv* {"VIS_TEST_LAYER" "from-ambient" "VIS_TEST_OUTER" "from-outer"}]
+        (with-dotenv "VIS_TEST_LAYER=from-dotenv\n"
+                     nil
+                     (fn []
+                       (expect (= {:name "VIS_TEST_LAYER" :source :dotenv :value "from-dotenv"}
+                                  (config/extension-env-status "VIS_TEST_LAYER")))
+                       ;; A name no project file mentions still comes from the process.
+                       (expect (= {:name "VIS_TEST_OUTER" :source :env :value "from-outer"}
+                                  (config/extension-env-status "VIS_TEST_OUTER")))
+                       ;; A declaration NAMES its source, so it beats the file.
+                       (with-declared-environment
+                         {"VIS_TEST_LAYER" {"env" "VIS_TEST_OUTER"}}
+                         (fn []
+                           (expect (= {:name "VIS_TEST_LAYER" :source :env :value "from-outer"}
+                                      (config/extension-env-status "VIS_TEST_LAYER")))))
+                       ;; …and `dotenv:` is now only worth writing for a RENAME.
+                       (expect (= "from-dotenv" (:value (dotenv-status "VIS_TEST_LAYER"))))))))
   (it "handles a BOM, an inline comment and a quoted value"
       (with-dotenv (str "\uFEFFVIS_TEST_BOM=ok\r\n"
                         "VIS_TEST_INLINE=bare # comment\n"
                         "VIS_TEST_QUOTED=\"quoted # value\" # comment\n")
                    nil
                    (fn []
-                     (expect (= "ok" (:value (dotenv-status "VIS_TEST_BOM"))))
-                     (expect (= "bare" (:value (dotenv-status "VIS_TEST_INLINE"))))
-                     (expect (= "quoted # value" (:value (dotenv-status "VIS_TEST_QUOTED"))))))))
+                     (expect (= {"VIS_TEST_BOM" "ok"
+                                 "VIS_TEST_INLINE" "bare"
+                                 "VIS_TEST_QUOTED" "quoted # value"}
+                                (config/workspace-environment-values)))))))
 
 (defdescribe
   declared-environment-test
@@ -835,8 +853,8 @@
                        (config/extension-env-status "VIS_TEST_DECLARED_MISSING")))))))
   ;; `jail.env` used to have to REPEAT every declared name before a confined child
   ;; saw one, and repeating a `dotenv:`/`keychain:` name there did nothing at all:
-  ;; that list could only re-admit an AMBIENT variable. One block, one resolution.
-  (it "resolves the whole block into the map every child process is handed"
+  ;; that list could only re-admit an AMBIENT variable. One resolution, one map.
+  (it "resolves the whole block into resolved values"
       (binding [config/*extension-getenv* {"WORK_OPENAI_KEY" "outer" "VIS_TEST_BLANK_OUTER" ""}]
         (with-declared-environment {"OPENAI_API_KEY" {"env" "WORK_OPENAI_KEY"}
                                     "FROM_HELPER" {"command" ["/bin/echo" "helper-value"]}
@@ -846,6 +864,16 @@
                                      (expect (= {"OPENAI_API_KEY" "outer"
                                                  "FROM_HELPER" "helper-value"}
                                                 (config/declared-environment-values)))))))
+  (it "hands a child the workspace `.env` with the declarations layered on top"
+      (binding [config/*extension-getenv* {"WORK_OPENAI_KEY" "outer"}]
+        (with-dotenv (str "FROM_DOTENV=file-value\n" "OPENAI_API_KEY=stale-file-value\n")
+                     nil
+                     (fn []
+                       (with-declared-environment
+                         {"OPENAI_API_KEY" {"env" "WORK_OPENAI_KEY"}}
+                         (fn []
+                           (expect (= {"FROM_DOTENV" "file-value" "OPENAI_API_KEY" "outer"}
+                                      (config/child-environment-values)))))))))
   (it "never persists a value: the block survives the write round trip unchanged"
       (let [block {"environment" {"P" {"env" "PATH"} "Q" {"keychain" "vis-exa"}}}]
         (expect (= block (config/interpolate-env block)))

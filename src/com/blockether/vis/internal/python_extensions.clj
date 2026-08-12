@@ -215,13 +215,13 @@
 ;;
 ;; An extension DECLARES the environment variables it needs; the host resolves
 ;; them through `config/extension-env-status` (the `environment:` declaration for
-;; a declared name, the process environment for one nobody declared) and injects
-;; ONLY those into the extension
-;; context. There is no blanket passthrough of the HOST environment — that would
-;; hand every third-party extension the user's AWS/Gerrit/GitHub credentials. The
-;; user's own config is the exception, and an explicit one: a name written under
-;; `environment:` was declared by the operator for exactly this purpose, so it is
-;; offered to extensions as well.
+;; a declared name, then the workspace's `.env`, then the process environment)
+;; and injects ONLY those into the extension context. There is no blanket
+;; passthrough of the HOST environment — that would hand every third-party
+;; extension the user's AWS/Gerrit/GitHub credentials. The PROJECT's own
+;; variables are the exception, and an explicit one: a name written under
+;; `environment:` or in the workspace's `.env` belongs to the project the
+;; extension is running in, so it is offered alongside the declared names.
 ;; =============================================================================
 
 (def ^:private env-name-re #"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -242,15 +242,19 @@
    under another name, `.env`/`.env.local`, a keychain item or a helper command —
    and otherwise the process environment.
 
-   Two sources of NAMES, unioned: what the extension DECLARED and what the user
-   declared under `environment:`. The latter is the user's own config, so it is
-   an opt-in by construction; a name nobody declared stays unreachable no matter
-   what the extension asks for.
+   Three sources of NAMES, unioned: what the extension DECLARED, what the user
+   declared under `environment:`, and what the workspace's `.env` assigns. The
+   last two are the project's own files, so they are an opt-in by construction; a
+   host variable none of them names stays unreachable no matter what the
+   extension asks for.
 
    Names that resolve to nothing are simply absent from the result (never an
    empty string, so an extension's `os.environ.get(...) or default` still works)."
   [declared]
-  (let [names (normalize-env-names (concat (or declared []) (config/declared-environment-names)))]
+  (let
+    [names (normalize-env-names (concat (or declared [])
+                                        (config/declared-environment-names)
+                                        (keys (config/workspace-environment-values))))]
     (into {}
           (keep (fn [n]
                   (when-let [v (config/extension-env-value n)]

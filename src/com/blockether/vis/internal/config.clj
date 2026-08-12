@@ -1561,35 +1561,68 @@
       (some-> (first (str/split value #"\s+#" 2))
               str/trim))))
 
-(defn- dotenv-assignment
-  "Return the final assignment for `name` in `path`, including a blank value."
-  [path name]
+(defn- dotenv-file-map
+  "Every assignment in dotenv file `path` as `{\"NAME\" \"value\"}`, or nil when the
+   file is absent or unreadable. A later assignment wins, following shell
+   semantics, and an explicitly blank value is PRESERVED so it can mask the same
+   name in a lower-precedence file."
+  [path]
   (when path
     (try (with-open [reader (io/reader path)]
-           ;; `.env` follows shell assignment semantics: a later declaration wins.
-           ;; Preserve an explicitly blank final assignment so it masks lower-precedence files.
-           (some (fn [line]
-                   (let
-                     [line (-> line
-                               (str/replace-first #"^﻿" "")
-                               str/trim
-                               (str/replace-first #"^export\s+" ""))]
-                     (when-let
-                       [[_ key value] (re-matches #"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)" line)]
-                       (when (= key name) {:value (dotenv-value-text value)}))))
-                 (reverse (vec (line-seq reader)))))
+           (reduce (fn [acc line]
+                     (let
+                       [line (-> line
+                                 (str/replace-first #"^\uFEFF" "")
+                                 str/trim
+                                 (str/replace-first #"^export\s+" ""))]
+                       (if-let
+                         [[_ key value] (re-matches #"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)" line)]
+                         (assoc acc key (str (dotenv-value-text value)))
+                         acc)))
+                   {}
+                   (line-seq reader)))
          (catch java.io.FileNotFoundException _ nil)
          (catch java.io.IOException _ nil))))
+
+(defn- dotenv-maps
+  "The workspace's `.env` then `.env.local`, in precedence order."
+  []
+  [(dotenv-file-map (dotenv-path *extension-dotenv-path* "/.env"))
+   (dotenv-file-map (dotenv-path *extension-dotenv-local-path* "/.env.local"))])
 
 (defn- dotenv-value
   [name]
   ;; `.env` deliberately takes precedence over `.env.local`; an explicit blank
   ;; assignment in `.env` masks a value from `.env.local`.
-  (some-> (some #(dotenv-assignment % name)
-                [(dotenv-path *extension-dotenv-path* "/.env")
-                 (dotenv-path *extension-dotenv-local-path* "/.env.local")])
-          :value
-          not-empty))
+  (not-empty (or (some (fn [m]
+                         (when (contains? m name) (get m name)))
+                       (dotenv-maps))
+                 "")))
+
+(defn workspace-environment-values
+  "`{\"NAME\" \"value\"}` for the WORKSPACE's own `.env` / `.env.local`, loaded
+   without anything being declared — the project file is part of the project, so
+   Vis reads it the way every other tool does.
+
+   `.env` beats `.env.local`, a later assignment beats an earlier one, and a
+   blank value is no value: it masks a lower-precedence file and leaves the name
+   absent rather than empty.
+
+   These values are OVERLAID on the environment a child process inherits and are
+   BELOW an `environment:` declaration for the same name. Never throws: it runs
+   on the spawn path.
+
+   The jail does not change this: a confined child can read `.env` out of the
+   workspace it was given, so withholding the values would confine nothing. What
+   the jail drops is the OPERATOR's ambient environment, which is not in the
+   workspace."
+  []
+  (try (let [[env local] (dotenv-maps)]
+         (into {}
+               (remove (fn [[_ v]]
+                         (str/blank? v)))
+               (merge local env)))
+       (catch Throwable _ {})))
 
 (defn resolve-db-spec
   "Resolve DB spec: explicit -> JVM property -> environment -> validated YAML -> default."
@@ -1631,22 +1664,30 @@
         cfg)))
 
 ;; =============================================================================
-;; Declared environment (`environment:`) and variable resolution
+;; Environment resolution: the workspace's `.env`, then `environment:`
 ;;
-;; ONE block names every variable Vis may resolve and says WHERE each value
-;; comes from: another process variable (`env:`), the working directory's
-;; `.env`/`.env.local` (`dotenv:`), the OS keychain, or a helper command. The
-;; declaration is the ONLY source for that name — nothing falls through to
-;; something the file never mentioned, and `.env` is read only for a name that
-;; asked for it. It never carries the value: `config-spec/::environment` refuses
-;; a literal, because every read-modify-write into `~/.vis/state.yml` hands the
-;; loaded config back to `save-config!`.
+;; TWO sources, in one order, for every child of Vis and every surface that
+;; reads a variable:
+;;
+;;   1. the WORKSPACE's `.env` / `.env.local`, loaded whole and by default
+;;      ([[workspace-environment-values]]) — no declaration, because the project
+;;      file is part of the project;
+;;   2. an `environment:` DECLARATION, which wins over both the dotenv files and
+;;      the ambient process environment, and says WHERE its value comes from:
+;;      another process variable (`env:`), a dotenv name (`dotenv:`, for a
+;;      RENAME), the OS keychain, or a helper command.
+;;
+;; A declaration never carries the value: `config-spec/::environment` refuses a
+;; literal, because every read-modify-write into `~/.vis/state.yml` hands the
+;; loaded config back to `save-config!`. So the block exists for what `.env`
+;; cannot say — a rename, a keychain item, a helper command, or re-admitting an
+;; ambient host variable into a CONFINED child.
 ;;
 ;; `extension-env-status` is the ONE funnel — the extension host, the TUI's
 ;; env-var settings row and every builtin that reads a key go through it, so a
 ;; variable resolves identically in Clojure, in Python and in the dialog that
-;; reports it. `declared-environment-values` is that funnel applied to the whole
-;; block: it is what every CHILD process of Vis is handed, so there is no second
+;; reports it. `child-environment-values` is that funnel applied to everything at
+;; once: it is what every CHILD process of Vis is handed, so there is no second
 ;; list to keep in sync (`jail.env` used to be one, and could only ever re-admit
 ;; an ambient variable — never a `dotenv:`/`keychain:`/`command:` value).
 ;; =============================================================================
@@ -1738,11 +1779,11 @@
   "Source and value metadata for variable `name`, for EVERY surface that resolves
    one: the Python extension host, a Clojure extension, the TUI settings row.
 
-   `environment:` DECIDES. A declared name resolves from the source its own
-   declaration names and from nowhere else; a name nobody declared is answered by
-   the process environment alone, and `.env`/`.env.local` are read only for a
-   name declared with `dotenv:`. A blank value is no value, whatever produced it
-   — an operator's explicit `FOO=` means \"not this one\".
+   Order: an `environment:` declaration DECIDES — a declared name resolves from
+   the source its own declaration names and from nowhere else. Otherwise the
+   workspace's `.env`/`.env.local` answer, and only then the process environment.
+   A blank value is no value, whatever produced it — an operator's explicit
+   `FOO=` means \"not this one\".
 
    `:source` is `:env`, `:dotenv`, `:keychain`, `:command` or `:unset`; `:value`
    is nil unless that source produced a non-blank string."
@@ -1750,9 +1791,11 @@
   (let [name' (str name)]
     (if-let [entry (get (declared-environment) name')]
       (declared-env-status name' entry)
-      (if-let [value (not-empty (str/trim (str (*extension-getenv* name'))))]
-        {:name name' :source :env :value value}
-        {:name name' :source :unset :value nil}))))
+      (if-let [value (dotenv-value name')]
+        {:name name' :source :dotenv :value value}
+        (if-let [value (not-empty (str/trim (str (*extension-getenv* name'))))]
+          {:name name' :source :env :value value}
+          {:name name' :source :unset :value nil})))))
 
 (defn extension-env-value
   "Resolved value for `name`, or nil when no source produced a non-blank one."
@@ -1761,14 +1804,8 @@
 
 (defn declared-environment-values
   "`{\"NAME\" \"value\"}` for every `environment:` declaration that resolves, the
-   value coming from the source that declaration NAMES.
-
-   This is what a child process of Vis is given: the shell's subprocesses
-   (confined or not), managed language processes and Python extensions all read
-   the same map, so `.env`, a keychain item or a helper command reaches a tool
-   the agent runs without the operator having exported anything into the shell
-   that launched Vis. A name that resolves to nothing is simply absent — an
-   unset variable, never an empty one.
+   value coming from the source that declaration NAMES. A name that resolves to
+   nothing is simply absent — an unset variable, never an empty one.
 
    Never throws: it runs on the spawn path, where an unreadable config must not
    take a child process down with it."
@@ -1779,6 +1816,21 @@
                        [name value])))
              (declared-environment-names))
        (catch Throwable _ {})))
+
+(defn child-environment-values
+  "`{\"NAME\" \"value\"}` handed to EVERY child process of Vis: the workspace's
+   `.env`/`.env.local` with the `environment:` declarations overlaid on top.
+
+   The shell's subprocesses (confined or not), managed language processes and
+   Python extensions all read this one map, so a project variable, a keychain
+   item or a helper command reaches a tool the agent runs without the operator
+   having exported anything into the shell that launched Vis.
+
+   With the jail OFF this is merged ONTO the inherited host environment; with the
+   jail ON it is merged onto the non-secret basics allowlist instead, and the
+   operator's ambient environment is dropped (`process-jail/jailed-child-env`)."
+  []
+  (merge (workspace-environment-values) (declared-environment-values)))
 
 (defn active-provider
   "Return the first (primary) provider from config, or nil."

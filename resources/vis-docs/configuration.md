@@ -128,19 +128,27 @@ environment:
 
 ## Environment
 
-`environment:` declares the variables Vis may resolve and **names the source of
-each one**. It never carries the value itself: a literal is rejected, because
+**The workspace's `.env` and `.env.local` are loaded by default** — the whole
+file, with nothing declared, because the project file is part of the project.
+Every variable in it reaches Vis' own children: `shell(...)` (confined or not),
+managed REPLs, test runners, and Python extensions.
+
+Within the dotenv files the usual rules apply — a later assignment wins, `.env`
+beats `.env.local`, an explicit blank masks a lower one, and `NAME=value`,
+`export NAME=value`, quotes, comments, CRLF and a UTF-8 BOM are all understood.
+
+`environment:` is for **what a dotenv file cannot say**, and it names the source
+of each entry. It never carries the value itself: a literal is rejected, because
 every read-modify-write into `~/.vis/state.yml` passes the loaded config back
 through the writer, and a secret typed here would land on disk in plaintext.
 
 ```yaml
 environment:
   # 1. another process variable, passed through or renamed
-  ANTHROPIC_API_KEY: {env: ANTHROPIC_API_KEY}
   OPENAI_API_KEY: {env: WORK_OPENAI_KEY}
 
-  # 2. the working directory's `.env`, then `.env.local`
-  STRIPE_KEY: {dotenv: STRIPE_KEY}
+  # 2. a dotenv name under a different name (a plain `.env` entry needs nothing)
+  STRIPE_KEY: {dotenv: STRIPE_TEST_KEY}
 
   # 3. the OS credential store (macOS Keychain; `secret-tool` elsewhere)
   EXA_API_KEY:
@@ -153,32 +161,26 @@ environment:
 ```
 
 Exactly one source per entry, and **that declaration is the only source for the
-name** — nothing falls through to a place the file never mentioned. A name that
-appears nowhere in the block is answered by the process environment alone, so
-`.env` and `.env.local` are read only for a name declared with `dotenv:`. A blank
-value is no value, whatever produced it: an explicit `FOO=` means "not this one".
+name** — a declared name never falls back to `.env` or to the ambient
+environment. A blank value is no value, whatever produced it: an explicit `FOO=`
+means "not this one".
 
-Within the dotenv files the usual rules still apply — a later assignment wins,
-`.env` beats `.env.local`, and an explicit blank in `.env` masks `.env.local`.
-
-A declared name resolves the same way everywhere: a Clojure extension, a Python
-extension, the TUI's settings row.
+So the resolution order for any variable is: **`environment:` declaration →
+workspace `.env`, then `.env.local` → the environment that started Vis.** It is
+the same order everywhere: a Clojure extension, a Python extension, the TUI's
+settings row, and every child process.
 
 A `command:`/`keychain:` value is fetched by running the argv directly — never
 through a shell — cached briefly and single-flighted, so a keychain prompt or a
 vault helper is not forked once per turn. Its stdout is never logged, never
 persisted and never placed in an error message.
 
-**One block, one list.** A declared name is what Vis hands to its own children:
-Python extensions receive it in `os.environ` alongside the names they declare
-with `vis.extension(env=[...])`, and every process Vis spawns — `shell(...)`,
-managed REPLs, test runners — gets it with the value its declared source
-produced, jail on or off. There is no second allowlist to repeat it in.
-
-Everything *else* in the operator's environment is still dropped for a confined
-child (see `sandbox.md`), and `LD_*`, `DYLD_*`, `PERL*`, `BASH_ENV` and friends
-are refused unconditionally — declaring one changes nothing, because those names
-are consumed before the jail exists.
+**The jail does not change any of this** — it decides what comes *besides* the
+project. With `jail.enabled: true` the operator's ambient environment is dropped
+(see `sandbox.md`) and only the project's variables plus a non-secret basics
+allowlist remain, so `{env: NAME}` is how an ambient variable is re-admitted to a
+confined child. `LD_*`, `DYLD_*`, `PERL*`, `BASH_ENV` and friends are refused
+from either source — they are consumed before the jail exists.
 
 ## Providers and models
 
@@ -594,7 +596,7 @@ argument on the call still wins.
 
 ## Extension environment
 
-Extensions may declare the environment variables they read so Vis can report whether they are available. Their values never come from `vis.yml` itself — the file only says where to fetch them. A name declared under [`environment:`](#environment) resolves from the source that declaration names; a name nobody declared is answered by the environment that started Vis. The working directory's `.env` / `.env.local` are read only for a name declared with `dotenv:`; there, `.env` beats `.env.local` and a blank value intentionally masks a lower one. Dotenv files support `NAME=value` and `export NAME=value`, quoted values, comments, CRLF, and a UTF-8 BOM:
+Extensions may declare the environment variables they read so Vis can report whether they are available. Their values never come from `vis.yml` itself — the file only says where to fetch them. Resolution is the one order described under [`environment:`](#environment): a declaration first, then the workspace's `.env` / `.env.local`, then the environment that started Vis. An extension receives the names it declared plus the project's own — everything in `environment:` and in `.env` — and nothing else of the host environment. Dotenv files support `NAME=value` and `export NAME=value`, quoted values, comments, CRLF, and a UTF-8 BOM:
 
 ```dotenv
 ANTHROPIC_API_KEY=…

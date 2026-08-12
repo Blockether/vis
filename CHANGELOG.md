@@ -20,11 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   instructions still have to be fetched is the model's call, since only the model can see whether
   that text is still in front of it. Every skill surface is now stateless: two `/<name>`s expand
   identically and nothing is recorded between them.
-- `environment:` is the ONE place a variable is named, and a declared name now reaches every
-  child process Vis spawns — `shell(...)` (jailed or not), managed REPLs, test runners and Python
-  extensions — carrying the value its own source produced. A `dotenv:`, `keychain:` or `command:`
-  declaration therefore works for a tool the agent runs without the operator's shell having
-  exported anything.
+- The workspace's `.env` / `.env.local` are now loaded BY DEFAULT, whole, with nothing declared,
+  and reach every child Vis spawns — `shell(...)` (jailed or not), managed REPLs, test runners and
+  Python extensions. Resolution order everywhere is `environment:` declaration, then `.env`, then
+  the environment that started Vis. `environment:` is now only for what a dotenv file cannot say:
+  a rename, a keychain item, a helper command, or re-admitting an ambient variable to a confined
+  child.
+- The jail no longer withholds the project's `.env` from a confined child. The child was granted
+  the workspace and can read that file itself, so dropping the values confined nothing; what
+  `jail.enabled` draws a line around is the OPERATOR's ambient environment, which is still
+  deny-by-default. `LD_*`, `DYLD_*`, `PERL*`, `BASH_ENV` and friends are refused from a project
+  `.env` exactly as they are from a declaration.
 
 - `jail` is the ONLY word for confinement, in config and in the model's own session map.
   The read-only `session["access"]` view reports `is_jailed` instead of `sandboxed`, and

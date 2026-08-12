@@ -2386,11 +2386,12 @@
   [env opts]
   (shell-dispatch (-> (or env {})
                       (assoc :shell-origin "trusted-extension")
-                      ;; Unconfined, but the operator's `environment:` declarations still
-                      ;; apply: they say where a variable comes from, not who may see it.
+                      ;; Unconfined, but the workspace's `.env` and the operator's
+                      ;; `environment:` declarations still apply: they say where a variable
+                      ;; comes from, not who may see it.
                       (assoc :jail-policy-fn (constantly {:disabled? true
                                                           :env-values
-                                                          (config/declared-environment-values)}))
+                                                          (config/child-environment-values)}))
                       (assoc-in [:security-policy :jail-enabled] false))
                   opts))
 
@@ -2422,7 +2423,7 @@
      (:process-jail security)]
 
     (if (or (false? (:jail-enabled security)) (:disabled? jail-config))
-      {:disabled? true :env-values (config/declared-environment-values) ::environment latest-env}
+      {:disabled? true :env-values (config/child-environment-values) ::environment latest-env}
       (let
         [entries
          (workspace/env-filesystem-roots latest-env)
@@ -2479,7 +2480,7 @@
                        :proxy-token token
                        :ca-file ca-file
                        ;; Resolved per spawn: a `.env` edit lands on the next child.
-                       :env-values (config/declared-environment-values)
+                       :env-values (config/child-environment-values)
                        ::environment latest-env
                        ::cleanup cleanup}))
              (catch Throwable t (cleanup) (throw t)))))))
