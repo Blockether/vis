@@ -403,16 +403,16 @@ namespace may not mount it. Work through these instead:
    No package, no daemon, no setuid helper, no privilege retained at runtime.
 3. **Otherwise work in trunk.** Vis runs normally without a qualifying
    filesystem; `/draft` is what becomes unavailable, not the agent. Trunk
-   sessions keep every other guard rail, including the sandbox — process
-   jailing is a separate mechanism with no copy-on-write requirement.
+   sessions keep every other guard rail, including the jail — process
+   confinement is a separate mechanism with no copy-on-write requirement.
 
 Vis does not guess from the mount table: the backend probes the actual pair of
 directories by cloning a throwaway directory from the root into the store, so
 what it reports for your layout is measured, not assumed.
 
-The Linux sandbox packages (`bubblewrap`, `passt`) are a **separate** concern:
+The Linux jail packages (`bubblewrap`, `passt`) are a **separate** concern:
 they confine model-spawned child processes and neither enable nor block drafts.
-See [Process sandbox and gateway egress](sandbox.md).
+See [Process jail and gateway egress](jail.md).
 
 A **linked Git worktree** (a `.git` *file* pointing at another directory) is also
 not forkable; run the session from the main worktree.

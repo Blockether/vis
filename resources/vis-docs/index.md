@@ -183,7 +183,7 @@ memory.
 
 - **[Token optimization](token-optimization.md)**: the context-as-environment model and the tools that make it cheap.
 - **[GraalPython sandbox](graalpython.md)**: the in-process interpreter that executes the agent's actions.
-- **[Process sandbox and gateway egress](sandbox.md)**: Seatbelt, filesystem/network policy, MITM, managed processes, trust boundaries, and verification.
+- **[Process jail and gateway egress](jail.md)**: Seatbelt, filesystem/network policy, MITM, managed processes, trust boundaries, and verification.
 - **[JVM & native-image](jvm-native-image.md)**: how the Clojure core becomes the wrapper's private native runtime.
 - **[Runtime distributions](distributions.md)**: wrapper bundles, runtime selection, and platform builds.
 - **[Configuration](configuration.md)**: providers and models, system_prompt overrides, router tuning, the database.

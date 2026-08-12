@@ -1,4 +1,4 @@
-# Process sandbox and gateway egress
+# Process jail and gateway egress
 
 Vis treats model-started processes as untrusted. On macOS, every managed shell,
 nested shell, Python `subprocess`, managed Clojure/Python/Bun REPL, and project
@@ -52,7 +52,7 @@ Omitting `jail.enabled` (or setting it `false`) leaves confinement off. Setting 
 context. `python_execution` still has its Truffle filesystem and host/socket
 restrictions.
 
-## Installing the sandbox dependencies
+## Installing the jail dependencies
 
 **macOS** — nothing to install. `sandbox-exec` ships with the OS.
 
@@ -105,7 +105,7 @@ sudo adduser --disabled-password --gecos "" visgw
 sudo -u visgw mkdir -p /home/visgw/workspace /home/visgw/.vis
 ```
 
-2. Install the sandbox dependencies once, as root:
+2. Install the jail dependencies once, as root:
 
 ```bash
 sudo apt-get install -y bubblewrap passt
@@ -163,7 +163,7 @@ Notes:
 - The egress proxy and its MITM CA live **inside** the gateway process. Nothing is
   written to the host trust store; each session gets an ephemeral CA.
 - `bwrap` and `pasta` are invoked per child spawn — they run no daemon of their own.
-- Leave the systemd unit itself unsandboxed; the jail is applied downward to model
+- Leave the systemd unit itself unconfined; the jail is applied downward to model
   children, not to the gateway.
 
 ## Filesystem policy
@@ -267,7 +267,7 @@ override that (e.g. `access: read-only`).
 
 `/cd` changes the active workspace root. To add filesystem locations, edit the
 `workspace.filesystem` catalog in `vis.yml` and run `/reload`; `jail.filesystem.allow`
-independently controls which catalog entries a sandbox may access.
+independently controls which catalog entries a confined child may access.
 
 ## macOS Keychain and Mach services
 
@@ -602,7 +602,7 @@ its surface as narrow as the policy it bypasses.
 
 **Caveat — an inherited kernel Seatbelt closes the hole.** This asymmetry exists
 only when Vis's own JVM is not itself launched under an ambient Seatbelt profile.
-When it is (`VIS_SEATBELT_ACTIVE=1`, as in a sandboxed harness session), the
+When it is (`VIS_SEATBELT_ACTIVE=1`, as in a jailed harness session), the
 kernel enforces the parent profile on the **entire** process tree; Seatbelt
 inheritance is one-way, so children — extension subprocesses included — can only
 tighten it, never loosen it. In that mode no extension can escape, because the
@@ -620,8 +620,9 @@ kernel owns the JVM, and `wrap-argv` deliberately skips re-wrapping
   Vis did not spawn it and cannot retroactively apply Seatbelt. Stopping the
   resource detaches; it never kills that process.
 - Python extension files are intentionally trusted plugins. Their separate
-  contexts have real filesystem, network, inherited environment, threads, and
-  process creation. They have no arbitrary Java/native/polyglot interop. Review
+  contexts have real filesystem, network, threads, and process creation; their
+  environment is the DECLARED one (`vis.extension(env=[...])` plus the project's
+  own `environment:` and `.env`), not a copy of the host's. They have no arbitrary Java/native/polyglot interop. Review
   project `.vis/extensions/` with the same care as executable build files.
 - The OS enforcer is implemented on macOS (Seatbelt) and Linux/WSL2 (bubblewrap +
   pasta); WSL1 has none. There the gateway policy remains useful but
@@ -687,5 +688,5 @@ The focused suites cover:
 - fail-loud passthrough + reason when a jail is requested on a host that cannot enforce it.
 
 Run the relevant namespaces through the Clojure language pack or the full CI job.
-A test JVM already started by a sandboxed session validates its inherited profile
+A test JVM already started by a jailed session validates its inherited profile
 but cannot substitute for the unconfined enforcement run.

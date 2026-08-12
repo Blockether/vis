@@ -8,7 +8,7 @@ GraalPy is a Truffle language on the GraalVM runtime, so the interpreter shares 
 
 ## Sandboxed by design
 
-The Context is **deny-by-default**: no host-class access, native access off, polyglot access off, and filesystem IO either confined to workspace roots or disabled. HTTP clients are routed through the gateway egress policy and programmable network filters; a socket-level host guard remains the floor for raw sockets. GraalPy is in-process, so Seatbelt cannot be applied to only its JVM thread. Dangerous builtins (`exec`, `eval`, `compile`, `__import__`) are refused before a block runs, and each eval is bounded by a wall-clock timeout. See [Process sandbox and gateway egress](sandbox.md) for the complete boundary.
+The Context is **deny-by-default**: no host-class access, native access off, polyglot access off, and filesystem IO either confined to workspace roots or disabled. HTTP clients are routed through the gateway egress policy and programmable network filters; a socket-level host guard remains the floor for raw sockets. GraalPy is in-process, so Seatbelt cannot be applied to only its JVM thread. Dangerous builtins (`exec`, `eval`, `compile`, `__import__`) are refused before a block runs, and each eval is bounded by a wall-clock timeout. See [Process jail and gateway egress](jail.md) for the complete boundary.
 
 ## Two Python surfaces, on purpose
 

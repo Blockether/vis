@@ -103,9 +103,42 @@ Exactly one call per file. Keyword arguments:
 | `network_filters` | list of `vis.network_filter(...)` | Request/response policy at the gateway's decrypted HTTP boundary. |
 | `providers` | list of `vis.provider(...)` | LLM providers the router can select. |
 | `ctx` | callable | `(env) -> dict`, evaluated per turn; the returned dict is deep-merged into the model's `session` bag. See [Session context](#session-context). |
+| `env` | list of str | Host environment variables this file may read. See [Environment](#environment). |
 
 The **env dict** passed to `prompt`/`activation` callables is deliberately
-small: `{"cwd", "session_id", "channel"}`.
+small: `{"cwd", "session_id", "channel"}` — unrelated to `env=` below.
+
+### Environment
+
+An extension context gets **no blanket copy of the host environment**; that
+would hand every third-party file your AWS, GitHub and Gerrit credentials.
+Name what you need and the host injects those values — and only those — into
+this context's `os.environ` before the file's first line runs:
+
+```python
+import os, vis
+
+vis.extension(
+    name="acme",
+    description="Acme integration.",
+    env=["ACME_API_KEY"],
+)
+
+key = os.environ.get("ACME_API_KEY")   # resolved by the host, or absent
+```
+
+Each name resolves through the one funnel every Vis surface uses:
+**an `environment:` declaration → the workspace's `.env`, then `.env.local` →
+the environment that started Vis** (see
+[Configuration](configuration.md#environment)). A name nothing resolves is
+simply *absent* from `os.environ` — never an empty string, so
+`os.environ.get(name) or default` still works.
+
+The **project's own variables need no declaration**: every name written under
+`environment:` and every name assigned in the workspace's `.env`/`.env.local`
+is offered to the extension alongside what it declared, because those files
+belong to the project the extension is running in. `env=` is what a *third*
+party's variable needs.
 
 ### Session context
 
@@ -617,6 +650,7 @@ models), and any of the credential callables:
 import os, vis
 
 def _token():
+    # `env=["ACME_API_KEY"]` below is what puts this in os.environ.
     key = os.environ.get("ACME_API_KEY")
     if not key:
         raise ValueError("set ACME_API_KEY")
@@ -629,6 +663,7 @@ def _status():
 vis.extension(
     name="provider-acme",
     description="Acme AI (OpenAI-compatible) provider.",
+    env=["ACME_API_KEY"],
     providers=[
         vis.provider(
             id="acme",
@@ -709,15 +744,17 @@ from the model's sandbox:
 | --- | --- | --- |
 | Who writes the code | the model | **you** |
 | Filesystem | confined to workspace roots | **real, unrestricted** |
-| Network / env vars / subprocess | gateway policy / restricted | **real, inherited, unrestricted** — output captured, not on your terminal |
+| Network / subprocess | gateway policy / restricted | **real, unrestricted** — output captured, not on your terminal |
+| Environment variables | resolved project + declared values | declared (`env=`) + the project's own `environment:` / `.env`; never a blanket copy of the host's |
 | Lifetime | per session | process (rebuilt on `/reload`) |
 
 This is an intentional trust decision, not a missing sandbox feature. Extension
-contexts allow full IO, process creation, threads, sockets, and inherited
-environment variables because they are user-installed plugins. They still deny
+contexts allow full IO, process creation, threads and sockets because they are
+user-installed plugins; their environment stays the declared one
+([Environment](#environment)). They still deny
 arbitrary host-class, native, and polyglot interop; host access is limited to the
 bound `vis` API. The model can call an exported tool but cannot evaluate code in
-the extension context. See [Process sandbox and gateway egress](sandbox.md).
+the extension context. See [Process jail and gateway egress](jail.md).
 
 **Output is captured, never inherited.** Unrestricted means the process runs with
 your permissions, not that it owns Vis' terminal. Any stream the extension does
@@ -1085,7 +1122,7 @@ my-extension/
 | `:ext/sandbox-shims` | Vec of Python **shim** specs — host-backed modules published into the model's Python sandbox (below). |
 | `:ext/slash-commands` | Vec of slash-command specs (below). |
 | `:ext/doctor-fn` | `(fn [env] -> [checks])` — health checks for `vis-agent doctor`. |
-| `:ext/settings` `:ext/env` | Declared settings / environment variables (configurable via `~/.vis/config.yml` `environment`). |
+| `:ext/settings` `:ext/env` | Declared settings / environment variables, resolved exactly as a Python extension's `env=` is ([Environment](#environment)). |
 
 Channels, providers, persistence backends, and workspace backends register through their own keys (`:ext/channels`, `:ext/providers`, `:ext/persistance`, `:ext/workspace-backends`) — read a first-party extension of the matching kind as the reference implementation.
 

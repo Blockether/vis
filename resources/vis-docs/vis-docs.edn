@@ -10,7 +10,7 @@
           :blurb "How Vis keeps the context window small by holding state in a live runtime instead of the transcript."}
          {:file "graalpython.md" :title "GraalPython sandbox" :section "How it works" :order 20
           :blurb "The GraalPython sandbox that executes the model's Python tool code."}
-         {:file "sandbox.md" :title "Process sandbox & egress" :section "How it works" :order 25
+         {:file "jail.md" :title "Process jail & egress" :section "How it works" :order 25
           :blurb "The OS jail and gateway egress proxy: filesystem admission, network policy, managed processes, and how to verify them."}
          {:file "content-blocks.md" :title "Content-block protocol" :section "How it works" :order 28
           :blurb "The canonical role-labelled message, typed block, persistence, and streaming contract."}

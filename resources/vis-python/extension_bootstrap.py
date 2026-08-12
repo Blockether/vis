@@ -20,13 +20,15 @@ def extension(name=None, description=None, version=None, kind=None, alias=None,
     if ctx is not None and not callable(ctx):
         raise ValueError('vis.extension(...) ctx= must be a callable (env) -> dict of session contributions')
     # DECLARED HOST ENV. The extension names the environment variables it
-    # needs; the host resolves each one (process env -> the `environment:`
-    # block of the config -> .env -> .env.local) and injects ONLY the resolved
-    # values into this context's os.environ. No blanket passthrough of the host
+    # needs; the host resolves each one in the ONE order every Vis surface uses
+    # (an `environment:` declaration -> the workspace's .env, then .env.local ->
+    # the environment that started Vis) and injects ONLY the resolved values
+    # into this context's os.environ. No blanket passthrough of the host
     # environment: an undeclared variable stays invisible to extension code.
-    # Names the USER declared in their own config are the deliberate exception
-    # and always arrive, so `environment:` is written once and read from Python
-    # without every extension repeating the list.
+    # The PROJECT's own names are the deliberate exception and always arrive --
+    # anything under `environment:` or assigned in the workspace's .env -- so
+    # those are written once and read from Python without every extension
+    # repeating the list.
     if env is not None:
         if isinstance(env, str) or not hasattr(env, '__iter__'):
             raise ValueError('vis.extension(...) env= must be a list of environment variable names')

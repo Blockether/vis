@@ -177,7 +177,7 @@ persisted and never placed in an error message.
 
 **The jail does not change any of this** — it decides what comes *besides* the
 project. With `jail.enabled: true` the operator's ambient environment is dropped
-(see `sandbox.md`) and only the project's variables plus a non-secret basics
+(see `jail.md`) and only the project's variables plus a non-secret basics
 allowlist remain, so `{env: NAME}` is how an ambient variable is re-admitted to a
 confined child. `LD_*`, `DYLD_*`, `PERL*`, `BASH_ENV` and friends are refused
 from either source — they are consumed before the jail exists.
@@ -392,7 +392,7 @@ router:
 
 Omit it and built-in defaults apply. Unknown keys are rejected by the configuration spec.
 
-## Sandbox, filesystem, and network
+## Jail, filesystem, and network
 
 The process jail is **off by default** and opt-in via `jail.enabled: true`.
 **Strongly recommended** whenever the model runs untrusted code: without it,
@@ -467,7 +467,7 @@ jail:
       - 5273
 ```
 
-[Process sandbox and gateway egress](sandbox.md) is the single authoritative
+[Process jail and gateway egress](jail.md) is the single authoritative
 reference for this boundary: the `workspace.filesystem` catalog and
 `jail.filesystem.allow` admission model, the network model (HTTPS method/path
 policy, MITM behavior, SSRF denial, programmable filters), `jail.network.inbound_ports`,
@@ -522,7 +522,7 @@ Resolution order for the cache root:
 3. `~/.vis/cache/graal-resources` — always preferred when writable. vis redirects
    here unconditionally rather than reusing the default
    `~/.cache/org.graalvm.polyglot` root, so behavior is identical whether or not a
-   sandbox happens to whitelist that root. This directory is git-ignored.
+   jail happens to admit that root. This directory is git-ignored.
 4. Final fallback: `./.graal-resources` under the working directory (also
    git-ignored) when even `~/.vis` is unwritable.
 

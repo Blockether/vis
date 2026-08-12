@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   back.
 
 ### Changed
+- The process-jail doc page is `jail.md` ("Process jail & egress"), not `sandbox.md`: in this
+  repo *sandbox* now names only the in-process GraalPy sandbox, and *jail* names OS confinement —
+  the same split the config keys and `session["access"]` already use. Every in-tree link moved
+  with it.
 - `grep` and `struct_nodes` take ONE options map and nothing else — `grep({"query": q, "paths":
   ["src"]})`, `struct_nodes({"path": p, "line": n})` — the same shape `struct_index` and
   `struct_patch` already had, and the shape Python kwargs (`grep(query=q, paths=["src"])`) fold

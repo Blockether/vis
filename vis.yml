@@ -111,3 +111,38 @@ toggles:
 #     # Empty / unset = no extra inbound ports (the secure default).
 #     inbound_ports:
 #       - 5273
+#
+#   # What of the OPERATOR's ambient environment a confined child keeps:
+#   #   declared (default) nothing but a non-secret basics allowlist
+#   #                      (PATH, HOME, USER, SHELL, LANG/LC_*, TERM, TZ, TMPDIR …)
+#   #   inherit            the whole ambient environment, secrets included, with
+#   #                      filesystem, network, exec and Mach confinement untouched.
+#   # The PROJECT's own variables (.env and the `environment:` block below) reach
+#   # the child in BOTH modes; LD_*, DYLD_*, PERL*, BASH_ENV … are refused in both.
+#   environment: declared
+
+
+# ── Environment ──────────────────────────────────────────────────────────────
+# The workspace's `.env` and `.env.local` are loaded BY DEFAULT — the whole file,
+# with nothing declared — and reach every child Vis spawns: shell(...) (confined
+# or not), managed REPLs, test runners and Python extensions.
+#
+# `environment:` is for what a dotenv file cannot say. It names the SOURCE of a
+# value, never the value itself (a literal is refused: config is rewritten to
+# disk, and a secret typed here would land there in plaintext).
+#
+# Resolution order for any name, everywhere:
+#   `environment:` declaration → .env, then .env.local → the environment that
+#   started Vis.
+#
+# environment:
+#   # another process variable, passed through or renamed
+#   OPENAI_API_KEY: {env: WORK_OPENAI_KEY}
+#   # a dotenv name under a different name (a plain .env entry needs nothing)
+#   STRIPE_KEY: {dotenv: STRIPE_TEST_KEY}
+#   # the OS credential store (macOS Keychain; secret-tool elsewhere)
+#   EXA_API_KEY:
+#     keychain: vis-exa
+#     account: alice
+#   # a helper command — argv, never a shell line; trimmed stdout IS the value
+#   GITHUB_TOKEN: {command: [gh, auth, token]}
