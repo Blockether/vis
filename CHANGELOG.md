@@ -21,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   back.
 
 ### Changed
+- A shell result has NO `stderr` field (issue #137). Every command runs under a real pty, where
+  stdout and stderr are physically ONE stream, so `stderr` could only ever answer `nil` — a
+  caller reading it to diagnose a failure got nothing while the message sat in `stdout`. The
+  internal blocking runner merges the two streams the same way, so one shape and one reading of
+  "the bytes" hold everywhere; `stderr_omitted_chars` and the card's STDERR section are gone with
+  it.
+- The agent prompt and the shell docstrings spell the keystroke method `sh.type("y")`, never a
+  bare `sh.type()` (issue #137): it SENDS text and its argument is required, so the old spelling
+  among the status accessors raised a `TypeError` for anyone who followed it.
 - The process-jail doc page is `jail.md` ("Process jail & egress"), not `sandbox.md`: in this
   repo *sandbox* now names only the in-process GraalPy sandbox, and *jail* names OS confinement —
   the same split the config keys and `session["access"]` already use. Every in-tree link moved

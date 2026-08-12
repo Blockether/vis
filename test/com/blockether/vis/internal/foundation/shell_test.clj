@@ -265,9 +265,14 @@
       (with-shell-on
         (fn []
           (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            ;; Regression, issue #137: the result carried a `stderr` key that was
+            ;; ALWAYS nil — every command runs under a pty, so what a command wrote
+            ;; to fd 2 arrived on `stdout` — and a caller reading `stderr` to
+            ;; diagnose a failure silently got nothing.
             (let [r (shell-run* {} "echo out; echo err 1>&2; exit 3")]
-              (expect (= "out\n" (get r "stdout")))
-              (expect (= "err\n" (get r "stderr")))
+              (expect (= "out\nerr\n" (get r "stdout")))
+              (expect (not (contains? r "stderr")))
+              (expect (not (contains? r "stderr_omitted_chars")))
               (expect (= 3 (get r "exit")))
               (expect (number? (get r "duration_ms")))
               ;; ONE result shape: every key of `shell-result-base` is present on every
@@ -277,25 +282,22 @@
               (expect (false? (get r "timed_out")))
               (expect (false? (get r "timed_out")))
               (expect (= 0 (get r "stdout_omitted_chars")))
-              (expect (= 0 (get r "stderr_omitted_chars")))
               ;; Request scope rides the SAME map — one shape, no envelope to unwrap.
               (expect (contains? r "cwd"))
               (expect (contains? r "timeout_secs"))
               (expect (= "run" (get r "stage")))
               ;; …and no truncation flag beside the counts: 0 already IS "nothing lost".
               (expect (not (contains? r "stdout_truncated")))
-              (expect (not (contains? r "stderr_truncated")))
               (expect (= 120 (:timeout-secs (meta r))))
               (expect (string? (:dir (meta r)))))))))
-  (it "always carries a TOTAL stderr/exit (empty stderr is \"\", not a missing key) and a real cwd"
+  (it "always carries a TOTAL stdout/exit (no output is \"\", not a missing key) and a real cwd"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
                          (let [r (shell-run* {} "echo only-out")]
                            (expect (= "only-out\n" (get r "stdout")))
-                           ;; TOTAL shape: model Python indexes r["stderr"]/r["exit"]
+                           ;; TOTAL shape: model Python indexes r["stdout"]/r["exit"]
                            ;; directly — a missing key used to KeyError and spin.
-                           (expect (= "" (get r "stderr")))
-                           (expect (contains? r "stderr"))
+                           (expect (contains? r "stdout"))
                            (expect (= 0 (get r "exit"))))
                          (let [r (shell-run* {} "pwd" {"cwd" "src"})]
                            (expect (string? (:dir (meta r))))
@@ -305,7 +307,7 @@
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
                          ;; shell-run-impl answers the command's own entry, never a tool
                          ;; envelope: a non-zero exit is data ON THAT ENTRY, so a model
-                         ;; reading its stdout/stderr/exit never branches on shape.
+                         ;; reading its stdout/exit never branches on shape.
                          (let [r (shell-run* {} "exit 42")]
                            (expect (= 42 (get r "exit")))
                            (expect (true? (get r "started"))))))))
@@ -1870,24 +1872,20 @@
   (it "names the config key when a live jail denied the Mach lookup"
       (let
         [note (command-note {:jail-policy-fn (constantly {:disabled? false :mach-services []})}
-                            {:text ""}
                             {:text (str "security: SecKeychainSearchCreateFromAttributes:"
                                         " The specified item could not be found")})]
         (expect (str/includes? note "jail.mach_services.keychain"))))
   (it "silent when the grant is present, the jail is off, or there is no jail at all"
-      (let [err {:text "SecKeychainSearchCreateFromAttributes: nope"}]
+      (let [out {:text "SecKeychainSearchCreateFromAttributes: nope"}]
         (expect (nil? (command-note {:jail-policy-fn (constantly {:disabled? false
                                                                   :mach-services
                                                                   ["com.apple.SecurityServer"]})}
-                                    {:text ""}
-                                    err)))
-        (expect (nil?
-                  (command-note {:jail-policy-fn (constantly {:disabled? true})} {:text ""} err)))
-        (expect (nil? (command-note {} {:text ""} err)))))
+                                    out)))
+        (expect (nil? (command-note {:jail-policy-fn (constantly {:disabled? true})} out)))
+        (expect (nil? (command-note {} out)))))
   (it "ordinary output carries no note"
       (expect (nil? (command-note {:jail-policy-fn (constantly {:disabled? false})}
-                                  {:text "hello"}
-                                  {:text ""})))))
+                                  {:text "hello"})))))
 
 ;; Phase 5: a run IS a handle — the wait expires, the process does not.
 (defdescribe

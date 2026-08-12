@@ -207,18 +207,12 @@
    into the text, so the stream is no longer valid JSON/CSV — say so, and say
    what to do, instead of leaving a caller to decode a parser's
    \"Invalid control character\" on its own. nil when nothing was dropped."
-  [out err]
-  (let
-    [dropped
-     (fn [label m]
-       (let [n (long (or (:omitted m) 0))]
-         (when (pos? n) (str label " truncated · " n " chars dropped from the middle"))))
-
-     parts
-     (keep identity [(dropped "stdout" out) (dropped "stderr" err)])]
-
-    (when (seq parts)
-      (str (str/join " · " parts)
+  [out]
+  (let [n (long (or (:omitted out) 0))]
+    (when (pos? n)
+      (str "stdout truncated · "
+           n
+           " chars dropped from the middle"
            " — the text carries an inline marker and no longer parses; narrow the output"
            " (`--jq`, `--limit`, `head -c`) or redirect it to a file and read that."))))
 
@@ -382,7 +376,7 @@
   "The ONE reading of a PTY capture, shared by every consumer: ANSI/VT escapes and
    non-printing controls removed, tabs and line feeds kept, and a redrawn line
    resolved to the frame the terminal was left showing. What a human sitting at
-   that terminal SAW is what `stdout`/`stderr` carries and what the card prints —
+   that terminal SAW is what `stdout` carries and what the card prints —
    a colour reset git wrote ONLY because our pty made isatty() true is invisible
    to a human and a literal `[m` to everyone reading the string, and half-cleaning
    it left the two readings disagreeing. The raw stream stays whole on disk at
@@ -421,13 +415,13 @@
    whether the text parses at all; otherwise a denied macOS Keychain lookup is
    named, since a confined `gh`/`git`/`security` otherwise fails with an opaque
    Security-framework message and no mention of the jail."
-  [env out err]
-  (or (truncation-note out err)
-      (when (process-jail/keychain-denial? (:text out) (:text err))
+  [env out]
+  (or (truncation-note out)
+      (when (process-jail/keychain-denial? (:text out))
         ;; No policy fn means no jail: an opaque Security failure is then a real
         ;; Keychain miss and blaming confinement would send the caller the wrong way.
         (when-let [policy (try (jail-policy env) (catch Throwable _ nil))]
-          (process-jail/keychain-denial-hint policy (:text out) (:text err))))))
+          (process-jail/keychain-denial-hint policy (:text out))))))
 
 (defn- fd-exhaustion?
   "True when `t` (or any cause under it) is the OS refusing a spawn because THIS
@@ -489,7 +483,7 @@
        (catch Throwable t (cleanup-jail-policy! policy) (throw t))))
 
 (defn- spawn!
-  ^Process [cmd ^File dir merge-err? policy]
+  ^Process [cmd ^File dir policy]
   (try
     (let
       [^java.util.List args
@@ -519,7 +513,10 @@
           (.putAll e ^java.util.Map full))
         (let [pe (process-jail/child-env-additions policy)]
           (when (seq pe) (.putAll (.environment pb) ^java.util.Map pe))))
-      (when merge-err? (.redirectErrorStream pb true))
+      ;; ONE stream, exactly like the pty path every model-facing run takes: a
+      ;; terminal has no separate error channel, so a result that offered a second
+      ;; one could only ever answer nil and be read as "nothing went wrong".
+      (.redirectErrorStream pb true)
       (let [^Process p (spawn-retrying-fds #(.start pb))]
         (when (::cleanup policy)
           (let [^java.util.concurrent.CompletableFuture done (.onExit p)]
@@ -559,7 +556,8 @@
    pipe (browser-auth prompts, password `read`, REPLs) actually run. Returns the
    pty HANDLE MAP (`:pid :in :send :wait :alive? :destroy`) that the pump /
    kill-tree! / wait path below consume. stdout+stderr share the one PTY stream
-   (a real terminal has no separate error channel), so no merge-err? knob.
+   — a real terminal has no separate error channel, which is why a shell result
+   has no `stderr` field at all.
    `policy` is the jail policy value applied to this spawn; a fresh-config policy
    carries an idempotent cleanup callback retained for the process lifetime."
   [cmd ^File dir policy]
@@ -697,15 +695,16 @@
    "rss_bytes" nil
    "timed_out" false
    "timeout_secs" nil
-   ;; OUTPUT, under one name everywhere: what a foreground run captured, and what a
-   ;; log read returned. There is no second spelling of \"the bytes\" to learn.
+   ;; OUTPUT, under ONE name everywhere: what a run captured, and what a log read
+   ;; returned. There is no second spelling of \"the bytes\" to learn — and no
+   ;; `stderr`: every command runs under a real pty, where stdout and stderr ARE
+   ;; ONE stream, so a second field could only ever answer nil and be misread as
+   ;; \"nothing went wrong\".
    "stdout" nil
-   "stderr" nil
    ;; A truncated stream has an inline \"…[N chars omitted]…\" marker spliced into
    ;; its MIDDLE, so it no longer parses — the count says exactly how much is gone,
    ;; and 0 means nothing was.
    "stdout_omitted_chars" 0
-   "stderr_omitted_chars" 0
    ;; The log CURSOR: a read is a window on a file and the caller owns the cursor.
    "offset" 0
    "next_offset" 0
@@ -781,21 +780,18 @@
         (now-ms)
 
         p
-        (spawn! (or argv cmd) dir false policy)
+        (spawn! (or argv cmd) dir policy)
 
         _
         (when on-spawn (on-spawn p))
 
-        ;; Separate reader futures per stream — avoids the classic full-pipe
-        ;; deadlock on chatty commands. `capped-capture` bounds memory to the
-        ;; head+tail budget per stream at READ time (dropping only the MIDDLE
-        ;; of a huge stream, not its start), so a megabyte-then-killed command
-        ;; can't balloon the heap yet the opening context survives — and it can
-        ;; be snapshotted while the process is still printing.
+        ;; ONE reader future on the ONE merged stream — avoids the classic
+        ;; full-pipe deadlock on chatty commands. `capped-capture` bounds memory
+        ;; to the head+tail budget at READ time (dropping only the MIDDLE of a
+        ;; huge stream, not its start), so a megabyte-then-killed command can't
+        ;; balloon the heap yet the opening context survives — and it can be
+        ;; snapshotted while the process is still printing.
         out-cap
-        (capped-capture max-sync-head-chars max-sync-tail-chars)
-
-        err-cap
         (capped-capture max-sync-head-chars max-sync-tail-chars)
 
         ;; Every captured byte is written through to the log file, so the handle's
@@ -807,9 +803,6 @@
         out-f
         (future ((:drain! out-cap) (reader-of (.getInputStream p))))
 
-        err-f
-        (future ((:drain! err-cap) (reader-of (.getErrorStream p))))
-
         finished?
         (try (.waitFor p timeout-secs TimeUnit/SECONDS)
              (catch InterruptedException ie
@@ -820,19 +813,15 @@
 
        (when (and (not finished?) (nil? sink))
          (kill-tree! p)
-         ;; Closing the streams unblocks the reader futures on a wedged child
-         ;; so their threads don't linger past our 5s deref ceiling.
-         (doseq [^java.io.InputStream s [(.getInputStream p) (.getErrorStream p)]]
-           (try (.close s) (catch Throwable _ nil))))
+         ;; Closing the stream unblocks the reader future on a wedged child
+         ;; so its thread doesn't linger past our 5s deref ceiling.
+         (try (.close (.getInputStream p)) (catch Throwable _ nil)))
        ;; A handled run that timed out is STILL PRINTING: waiting on its drains
        ;; would be waiting on the very command whose wait already expired.
-       (when (or finished? (nil? sink)) (deref out-f 5000 nil) (deref err-f 5000 nil))
+       (when (or finished? (nil? sink)) (deref out-f 5000 nil))
        (let
          [out
           ((:snapshot out-cap))
-
-          err
-          ((:snapshot err-cap))
 
           exit
           (when finished? (.exitValue p))
@@ -843,7 +832,7 @@
          (with-meta (shell-result "run"
                                   ;; TOTAL shape ([[shell-result-base]]). The old "lean" map dropped a
                                   ;; key whenever it carried no signal, so ordinary model Python
-                                  ;; (`c[\"stderr\"]`, `c[\"timed_out\"]`) died with a bare `KeyError` — read as
+                                  ;; (`c[\"stdout\"]`, `c[\"timed_out\"]`) died with a bare `KeyError` — read as
                                   ;; "the tool broke", retried with cosmetic variations, and spun.
                                   {"command" cmd
                                    ;; The child exists: distinct from a command whose launch failed
@@ -858,7 +847,6 @@
                                    ;; What the terminal SHOWED, not the control stream that
                                    ;; painted it: `log_path` still holds every byte.
                                    "stdout" (normalize-terminal-output (:text out))
-                                   "stderr" (normalize-terminal-output (:text err))
                                    "exit" exit
                                    "duration_ms" (- t1 t0)
                                    "started_at" t0
@@ -867,10 +855,9 @@
                                    ;; 0 exactly when nothing was dropped, so no truncation flag is owed
                                    ;; beside it.
                                    "stdout_omitted_chars" (long (or (:omitted out) 0))
-                                   "stderr_omitted_chars" (long (or (:omitted err) 0))
                                    ;; A dropped middle makes the stream unparseable: name it here rather
                                    ;; than let a caller's parser fail with an opaque message.
-                                   "note" (command-note env out err)})
+                                   "note" (command-note env out)})
            ;; Request scope, IDENTICAL for every entry of a batch: carried as metadata
            ;; so the group summarises one `cwd`/`timeout_secs` instead of every entry
            ;; repeating them, and nothing extra crosses to Python. A relative dir is
@@ -879,7 +866,7 @@
            {:dir (paths/unixify (.getPath dir))
             :timeout-secs timeout-secs
             :process (when-not finished? p)
-            :drains [out-f err-f]}))))))
+            :drains [out-f]}))))))
 
 (defn- command-line
   "ONE bash line from the caller's `command`. A string IS the line. An array of tokens —
@@ -2221,7 +2208,7 @@
    caller authors an options map by hand and therefore genuinely needs an `op`
    discriminator. The MODEL never reaches this: it calls the `shell` PYTHON verb —
    one call that spawns one command — and drives what came back through the
-   HANDLE's own methods (`sh.logs()`, `sh.wait()`, `sh.type()`, `sh.stop()`), so one
+   HANDLE's own methods (`sh.logs()`, `sh.wait()`, `sh.type(\"y\")`, `sh.stop()`), so one
    disambiguate."
   [env opts]
   (when-not (opts-arg? opts)
@@ -2830,7 +2817,7 @@
 
    Collapsed: `$ npm test (success) · 1.2s` or
    `$ grep x missing (failure) · exit 2 · 34ms`.
-   Expanded: labeled COMMAND / STATUS / STDOUT / STDERR sections. The body is
+   Expanded: labeled COMMAND / STATUS / STDOUT sections. The body is
    always present so shell cards are collapsible even when the command produced no
    output; the full command and metadata stay available behind the disclosure."
   [r]
@@ -2864,16 +2851,12 @@
                 ;; so name the stream and the exact number of characters lost.
                 ["stdout"
                  (let [n (get r "stdout_omitted_chars")]
-                   (when (and n (pos? (long n))) (str "truncated · " n " chars omitted")))]
-                ["stderr"
-                 (let [n (get r "stderr_omitted_chars")]
                    (when (and n (pos? (long n))) (str "truncated · " n " chars omitted")))]])
 
      body
      (->> [(shell-section "COMMAND" (format-shell-command (get r "command")) "bash")
            (shell-section "STATUS" status)
-           (shell-section "STDOUT" (clip-stream (get r "stdout")) "bash")
-           (shell-section "STDERR" (clip-stream (get r "stderr")))]
+           (shell-section "STDOUT" (clip-stream (get r "stdout")) "bash")]
           (remove nil?)
           (str/join "\n\n"))]
 
@@ -2990,7 +2973,7 @@
      :name "shell"
      :result
      (str "A HANDLE: ONE result shape for every shell answer — `{stage, id, cwd, command, "
-          "status, exit, stdout, stderr, duration_ms, timed_out, offset, next_offset, is_eof, "
+          "status, exit, stdout, duration_ms, timed_out, offset, next_offset, is_eof, "
           "started_at, finished_at, log_path, cpu_ms, cpu_percent, rss_bytes, note, …}` plus the "
           "methods below. A fresh run has no `exit`; nonzero exit is data.")
      :description
@@ -3079,7 +3062,7 @@
   ;; `shell` is an engine-bound sandbox verb; `_shell_logs` / `_shell_wait` /
   ;; `_shell_type` / `_shell_stop` are PRIVATE transport (underscore-prefixed so
   ;; `apropos` never lists them): the model calls the handle's own `sh.logs()` /
-  ;; `sh.wait()` / `sh.type()` / `sh.stop()`, because operations on an object the
+  ;; `sh.wait()` / `sh.type(\"y\")` / `sh.stop()`, because operations on an object the
   ;; caller already holds are control flow, not more schemas to disambiguate before
   ;; running a command. There is no status transport at all: every stage's answer
   ;; already carries the status block.
@@ -3140,7 +3123,7 @@
   (vis/extension
     {:ext/name "foundation-shell"
      :ext/description
-     "No native shell tool: the `shell` PYTHON verb spawns ONE command under a pty and answers with a live handle (`sh.logs()` / `sh.wait()` / `sh.type()` / `sh.stop()`) whose every answer carries the shell's status; `resource_stop` also stops PTYs. Default-on behind the `shell` toggle and OS process jail."
+     "No native shell tool: the `shell` PYTHON verb spawns ONE command under a pty and answers with a live handle (`sh.logs()` / `sh.wait()` / `sh.type(\"y\")` / `sh.stop()`) whose every answer carries the shell's status; `resource_stop` also stops PTYs. Default-on behind the `shell` toggle and OS process jail."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

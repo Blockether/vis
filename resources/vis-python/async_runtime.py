@@ -512,7 +512,7 @@ def __vis_exec_call__(c):
 
 def __vis_key_hint__(__vis_d__, __vis_k__):
     # A missing key on a TOOL RESULT is a LOOKUP mistake, not a broken tool: shapes
-    # differ per tool (shell -> stdout/stderr/exit/duration_ms, run_tests -> output,
+    # differ per tool (shell -> stdout/exit/duration_ms, run_tests -> output,
     # grep -> matches/hit_count). A bare `KeyError: 'output'` reads as a broken tool, so
     # the model guesses another name and spins. Name the tool, the near miss, and every
     # key it DID return — one wrong guess then ends the guessing.

@@ -137,7 +137,10 @@
                    "Batch independent work in ONE block" "`await gather(...)` for"
                    ;; No tool blocks on the model's behalf: the old `shell` op `wait`/`until`
                    ;; is gone, so core routes to background + a poll the model can read.
-                   "No shell TOOL" "`sh.logs()`" "`sh.wait(s)`"
+                   ;; Regression, issue #137: the handle line spelled `sh.type()` among the
+                   ;; status accessors, so following it verbatim raised a TypeError —
+                   ;; `type` SENDS keystrokes and its text argument is required.
+                   "No shell TOOL" "`sh.logs()`" "`sh.wait(s)`" "`sh.type(\"y\")`"
                    "functions that accept or return\n  callables"
                    "NEVER paste a near-identical loop or block twice" "Define once and reuse"
                    "second occurrence factor it out and call it" "ordinary Python value"

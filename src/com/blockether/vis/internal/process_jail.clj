@@ -406,9 +406,10 @@
 (defn keychain-denial?
   "True when captured output shows a macOS Keychain lookup that failed the way a
    denied Mach lookup fails. Pure text test; `keychain-denial-hint` decides
-   whether confinement is the explanation."
-  [out err]
-  (let [text (str out "\n" err)]
+   whether confinement is the explanation. ONE `output` string, because a command
+   runs under a pty where stdout and stderr are one stream."
+  [output]
+  (let [text (str output)]
     (boolean (some #(str/includes? text %) keychain-denial-markers))))
 
 (defn keychain-denial-hint
@@ -416,10 +417,10 @@
    denied, else nil. Silent when the jail is off (`:disabled?`) or the keychain
    services are already granted — the failure is then a real Keychain miss and
    naming the sandbox would send the caller the wrong way."
-  [{:keys [disabled? mach-services]} out err]
+  [{:keys [disabled? mach-services]} output]
   (when (and (not disabled?)
              (not (some #{"com.apple.SecurityServer"} mach-services))
-             (keychain-denial? out err))
+             (keychain-denial? output))
     (str "Keychain lookup blocked by the sandbox: Seatbelt denies every Mach lookup by default."
          " Set jail.mach_services.keychain: true in config to grant com.apple.SecurityServer,"
          " com.apple.ocspd and com.apple.trustd.agent plus read access to the keychain"

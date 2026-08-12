@@ -1163,18 +1163,15 @@
     (let
       [hint (pj/keychain-denial-hint
               {:disabled? false :mach-services []}
-              ""
               "SecKeychainSearchCreateFromAttributes: parameters passed are not valid")]
       (is (str/includes? hint "jail.mach_services.keychain"))
       (is (str/includes? hint "com.apple.SecurityServer"))))
   (testing "silent when the jail is off or the keychain services are already granted"
     (is (nil? (pj/keychain-denial-hint {:disabled? true}
-                                       ""
                                        "SecKeychainSearchCreateFromAttributes: nope")))
     (is (nil? (pj/keychain-denial-hint {:disabled? false
                                         :mach-services ["com.apple.SecurityServer"]}
-                                       ""
                                        "SecKeychainSearchCreateFromAttributes: nope"))))
   (testing "unrelated output is never annotated"
-    (is (false? (pj/keychain-denial? "hello" "world")))
-    (is (nil? (pj/keychain-denial-hint {:disabled? false :mach-services []} "hello" "world")))))
+    (is (false? (pj/keychain-denial? "hello world")))
+    (is (nil? (pj/keychain-denial-hint {:disabled? false :mach-services []} "hello world")))))
