@@ -4764,13 +4764,6 @@
 
 (defn available-editing-symbols [] [index-symbol grep-symbol struct-patch-symbol nodes-symbol])
 
-(defn available-editing-prompt
-  "No separate editing prompt: each symbol's own documentation owns routing and
-   inputs, reachable through `doc(name)`. Structural tools are already omitted by
-   their activation gate when unsupported, so repeating that matrix would waste tokens."
-  []
-  "")
-
 (def editing-symbols
   "Default editing symbol set for docs/tests. A `delay` so the language/env
    scan it triggers runs on first deref (tests, docs) and NEVER at namespace
@@ -4778,8 +4771,3 @@
    agent thread-pool and native-image refuses that started thread in the image
    heap. Deref with `@editing-symbols`."
   (delay (available-editing-symbols)))
-
-(def editing-prompt
-  "Compatibility view of the now-empty editing prompt. Native tool contracts
-   replaced this duplicated prompt fragment."
-  (delay (available-editing-prompt)))

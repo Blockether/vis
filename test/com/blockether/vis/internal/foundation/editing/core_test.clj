@@ -253,17 +253,9 @@
 
 (defdescribe
   editing-extension-loads-test
-  (it "bash tool fully removed: no symbol, no helpers, no prompt mention"
-      (let
-        [symbols
-         (map :ext.symbol/symbol (editing/available-editing-symbols))
-
-         prompt
-         (editing/available-editing-prompt)]
-
+  (it "bash tool fully removed: no symbol, no helpers"
+      (let [symbols (map :ext.symbol/symbol (editing/available-editing-symbols))]
         (expect (not-any? #{'bash} symbols))
-        (expect (not (string/includes? prompt "v/bash")))
-        (expect (not (string/includes? prompt "bash")))
         (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
                                        "bash-tool"))))
         (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
@@ -302,11 +294,7 @@
         (expect (string? doc))
         (expect (not (string/blank? doc)))
         (expect (or (vector? arglists) (seq? arglists)))))
-  (it "emits no duplicated editing prompt fragment"
-      (expect (string? @editing/editing-prompt))
-      (expect (string/blank? @editing/editing-prompt)))
-  (it "editing prompt has no v/preview references (tool retired)"
-      (expect (not (string/includes? @editing/editing-prompt "v/preview")))
+  (it "preview tool retired: no symbol advertises it"
       (expect (nil? (some #(when (= 'preview (:ext.symbol/symbol %)) %) @editing/editing-symbols))))
   (it "keeps routing in compact native descriptions and inputs in schemas"
       (doseq
@@ -3150,14 +3138,7 @@
         (doseq [s struct-syms]
           (expect (false? (active? s ["markdown" "text"]))))
         (doseq [s [editing/grep-symbol]]
-          (expect (true? (active? s ["markdown" "text"]))))
-        (with-redefs
-          [environment/snapshot (fn []
-                                  {:languages {:languages [{:language "markdown"}
-                                                           {:language "text"}]}})]
-          (let [prompt (editing/available-editing-prompt)]
-            (doseq [name ["struct_index" "struct_patch" "struct_nodes" "struct_occurrences"]]
-              (expect (not (string/includes? prompt name)))))))
+          (expect (true? (active? s ["markdown" "text"])))))
     (it "a mixed repo with ANY supported language keeps them (markdown + json)"
         (expect (true? (active? editing/struct-patch-symbol ["markdown" "json"]))))
     (it "shell reconciles to bash (scan says `shell`, tree-sitter says `bash`)"
