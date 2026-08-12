@@ -214,6 +214,26 @@
   (let [data (or (:data err) (ex-data err) err)]
     (:stop-details data)))
 
+(defn fd-exhaustion-error?
+  "True when the REAL cause is THIS process running out of file descriptors
+   (EMFILE) — `Too many open files` / `error=24`. Under GraalPy a file opened
+   without `with open(...)` is not closed by refcounting the way CPython does
+   (the JVM GC closes it later), so a sandbox tool that reads many files can
+   exhaust the JVM's SHARED descriptor table and starve the provider auth
+   sockets, git, and cancel — surfacing here as a misleading provider failure
+   (vis session 7d3f9026). Scans the message + body + any nested cause text so
+   an FD-exhaustion that tunnelled through the auth/transport path is named for
+   what it is instead of blamed on the provider. Dispatches on TEXT because the
+   JDK reports EMFILE as a plain IOException, not a typed error."
+  [err]
+  (let [data (or (:data err) (ex-data err) err)
+        text (str (or (ex-message err) (:message err) "")
+                  "\n" (some-> (:body data) str)
+                  "\n" (some-> (:cause data) str)
+                  "\n" (some-> (:original-message data) str))]
+    (boolean (or (re-find #"(?i)too many open files" text)
+                 (re-find #"(?i)\berror[=:]\s?24\b" text)))))
+
 (defn stream-timeout-error?
   "True when the failure is one of svar's TYPED stream watchdogs firing:
    `:svar.core/stream-semantic-timeout` (transport alive, zero model/progress
@@ -362,6 +382,14 @@
      (output-budget-too-small-error? status (str provider-message "\n" message))]
 
     (cond
+      (fd-exhaustion-error? err)
+      (str "WHAT HAPPENED: this Vis process ran out of file descriptors (the OS "
+           "open-file limit), so it could no longer open sockets or files — the "
+           "provider auth token could not be refreshed and the call surfaced as a "
+           "provider failure. This is NOT a provider outage. Usual cause: a sandbox "
+           "tool that opened many files WITHOUT closing them — under GraalPy a file "
+           "dropped without `with open(...) as f:` is not closed until GC, so "
+           "walking a large tree reading files exhausts the shared descriptor table.")
       (context-overflow-error? err)
       (str "WHAT HAPPENED: the request exceeded the model's context window."
            (when-let [input (:input-tokens data)]
@@ -501,6 +529,9 @@
       :empty-content
       "Model returned an empty response"
 
+      :file-descriptors-exhausted
+      "Out of file descriptors"
+
       :refusal
       (if-let [category (get (refusal-stop-details err) "category")]
         (str "Model declined this request (" category ")")
@@ -564,6 +595,14 @@
      (or (:data err) (ex-data err) err)]
 
     (case (provider-error-kind err)
+      :file-descriptors-exhausted
+      (str "NEXT STEP: free the leaked descriptors and retry — stop chatty background "
+           "shells (`sh.stop()`), and in sandbox Python always `with open(...) as f:` "
+           "(a dropped file object is NOT closed under GraalPy). A fresh turn also "
+           "reclaims them once GC runs. If it recurs, raise the process open-file "
+           "limit (Vis raises it at launch, but a very large tree walk can still "
+           "exhaust it).")
+
       :context-overflow
       "NEXT STEP: fold older settled history, choose a larger-context model, or start a fresh session."
 
@@ -693,7 +732,8 @@
      (provider-body-message (some-> (:body data)
                                     str))]
 
-    (cond (context-overflow-error? err) :context-overflow
+    (cond (fd-exhaustion-error? err) :file-descriptors-exhausted
+          (context-overflow-error? err) :context-overflow
           (stream-timeout-error? err) :stream-timeout
           (refusal-error? err) :refusal
           (empty-content-error? err) :empty-content

@@ -745,34 +745,72 @@
         (expect (= [:a] (perr/auth-failed-provider-ids p))))))
 
 (defdescribe failed-turn-masking-test
-  ;; Regression: a turn that dies on provider exhaustion (Anthropic 529
-  ;; overloaded, retries spent) hands back a NON-answer-shaped fallback. The old
-  ;; path ran that through answer-content, threw "Final answer must be canonical
-  ;; content or Markdown prose", and that misleading string MASKED the real
-  ;; provider failure (which lives as the last error in the turn trace). The fix
-  ;; surfaces the trace's provider error for both the card and the headline.
-  (it "the real 529 provider error surfaces, not the canonical-content string"
-      (let [terminal-error {:message "Provider stream failed (overloaded_error): Overloaded"
-                            :data {:type :svar.core/stream-failed
-                                   :status 529
-                                   :provider-message "Overloaded"}
-                            :status 529}
-            title (perr/provider-error-title terminal-error)
-            card  (first (perr/provider-error-content terminal-error))]
-        ;; classifies as a genuine provider failure, not :generic
-        (expect (not= :generic (perr/provider-error-kind terminal-error)))
-        ;; headline + card never leak the internal validation string
-        (expect (nil? (re-find #"(?i)canonical content" (str title))))
-        (expect (nil? (re-find #"(?i)canonical content" (str (get card "message")))))
-        ;; the card is a real provider_ error block, not a bare turn_failed
-        (expect (= "error" (get card "type")))
-        (expect (str/starts-with? (str (get card "code")) "provider_"))))
-  (it "answer-content still rejects a non-answer-shaped fallback (the masking trigger)"
-      ;; documents WHY the guard exists: a raw non-answer value on the failure
-      ;; path throws here, so the loop must NOT let that throw escape send!.
-      (require 'com.blockether.vis.internal.content)
-      (let [answer-content (resolve 'com.blockether.vis.internal.content/answer-content)
-            outcome (try (answer-content {:overloaded true :status 529})
+             ;; Regression: a turn that dies on provider exhaustion (Anthropic 529
+             ;; overloaded, retries spent) hands back a NON-answer-shaped fallback. The old
+             ;; path ran that through answer-content, threw "Final answer must be canonical
+             ;; content or Markdown prose", and that misleading string MASKED the real
+             ;; provider failure (which lives as the last error in the turn trace). The fix
+             ;; surfaces the trace's provider error for both the card and the headline.
+             (it "the real 529 provider error surfaces, not the canonical-content string"
+                 (let
+                   [terminal-error
+                    {:message "Provider stream failed (overloaded_error): Overloaded"
+                     :data
+                     {:type :svar.core/stream-failed :status 529 :provider-message "Overloaded"}
+                     :status 529}
+
+                    title
+                    (perr/provider-error-title terminal-error)
+
+                    card
+                    (first (perr/provider-error-content terminal-error))]
+
+                   ;; classifies as a genuine provider failure, not :generic
+                   (expect (not= :generic (perr/provider-error-kind terminal-error)))
+                   ;; headline + card never leak the internal validation string
+                   (expect (nil? (re-find #"(?i)canonical content" (str title))))
+                   (expect (nil? (re-find #"(?i)canonical content" (str (get card "message")))))
+                   ;; the card is a real provider_ error block, not a bare turn_failed
+                   (expect (= "error" (get card "type")))
+                   (expect (str/starts-with? (str (get card "code")) "provider_"))))
+             (it "answer-content still rejects a non-answer-shaped fallback (the masking trigger)"
+                 ;; documents WHY the guard exists: a raw non-answer value on the failure
+                 ;; path throws here, so the loop must NOT let that throw escape send!.
+                 (require 'com.blockether.vis.internal.content)
+                 (let
+                   [answer-content
+                    (resolve 'com.blockether.vis.internal.content/answer-content)
+
+                    outcome
+                    (try (answer-content {:overloaded true :status 529})
                          ::no-throw
                          (catch clojure.lang.ExceptionInfo _ ::threw))]
-        (expect (= ::threw outcome)))))
+
+                   (expect (= ::threw outcome)))))
+
+(defdescribe fd-exhaustion-kind-test
+  ;; Regression: vis session 7d3f9026 — a sandbox os.walk that did
+  ;; `open(fp).read()` without `with` leaked file descriptors under GraalPy,
+  ;; exhausting the JVM's shared descriptor table. That broke the OAuth refresh
+  ;; SOCKET, so the turn failed and surfaced as a generic "Provider unavailable"
+  ;; — masking the real cause. The FD signature must be recognised wherever it
+  ;; tunnels (message, body, or cause) and named honestly.
+  (it "an FD-exhaustion tunnelled through the provider path is named, not masked"
+      (let [err {:message "Provider unavailable"
+                 :data {:type :svar.llm/provider-unavailable
+                        :body "git run-git failed ... Bad file descriptor, error: 24 (Too many open files)"}}]
+        (expect (= :file-descriptors-exhausted (perr/provider-error-kind err)))
+        (expect (= "Out of file descriptors" (perr/provider-error-title err)))
+        (expect (re-find #"(?i)file descriptors" (perr/provider-error-explanation err)))
+        (expect (re-find #"GraalPy" (perr/provider-error-explanation err)))
+        (expect (nil? (re-find #"(?i)provider outage|rejected the request"
+                               (perr/provider-error-explanation err))))
+        (expect (re-find #"with open" (perr/provider-error-next-step err)))
+        (expect (str/starts-with? (str (get (first (perr/provider-error-content err)) "code"))
+                                  "provider_file-descriptors"))))
+  (it "matches the bare `Too many open files` phrase too"
+      (let [err {:message "java.io.IOException: Too many open files" :data {}}]
+        (expect (= :file-descriptors-exhausted (perr/provider-error-kind err)))))
+  (it "does NOT trip on an ordinary provider failure with no FD signature"
+      (let [err {:message "Provider unavailable" :data {:type :svar.llm/provider-unavailable :status 500}}]
+        (expect (not= :file-descriptors-exhausted (perr/provider-error-kind err))))))

@@ -24,6 +24,35 @@
 
 set -euo pipefail
 
+# Raise the open-file (descriptor) soft limit for Vis and every child it spawns
+# (the client, the detached gateway daemon, sandbox subprocesses). Vis runs
+# Python on GraalPy, where a file object dropped WITHOUT `with open(...)` is not
+# closed by refcounting the way CPython does — the JVM GC closes it later — so a
+# tool that walks a large tree reading files can pile up thousands of live
+# descriptors before GC catches up. The JVM's descriptor table is SHARED across
+# everything (classpath jars, the HTTP server, SQLite, git spawns, the provider
+# auth sockets), so one leak starves the control plane and wedges the session
+# (vis session 7d3f9026: a sandbox os.walk without `with` hit EMFILE, which then
+# broke credential hydration, the OAuth refresh socket, git, and cancel). The
+# default soft cap (often ~256–10240 on macOS) is far too small a cushion; raise
+# it toward the OS per-process hard cap. rlimits inherit across fork/exec, so
+# setting it once here covers the whole tree. Best-effort: never fail launch.
+if command -v ulimit >/dev/null 2>&1; then
+  _vis_fd_target=65536
+  _vis_fd_soft="$(ulimit -Sn 2>/dev/null || echo 0)"
+  _vis_fd_hard="$(ulimit -Hn 2>/dev/null || echo unlimited)"
+  # Only ever RAISE: never lower an already-generous inherited soft limit.
+  if [[ "$_vis_fd_soft" =~ ^[0-9]+$ && "$_vis_fd_soft" -gt "$_vis_fd_target" ]]; then
+    _vis_fd_target="$_vis_fd_soft"
+  fi
+  # Never exceed the OS per-process hard cap.
+  if [[ "$_vis_fd_hard" =~ ^[0-9]+$ && "$_vis_fd_hard" -lt "$_vis_fd_target" ]]; then
+    _vis_fd_target="$_vis_fd_hard"
+  fi
+  ulimit -n "$_vis_fd_target" 2>/dev/null || true
+  unset _vis_fd_target _vis_fd_soft _vis_fd_hard
+fi
+
 invocation_cwd="$PWD"
 
 vis_home="${VIS_HOME:-$HOME/.vis}"

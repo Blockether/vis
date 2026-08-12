@@ -4084,6 +4084,53 @@
    :model (some-> (:name resolved-model)
                   str)})
 
+(def ^:private FD_RECLAIM_THRESHOLD
+  "Reclaim leaked file descriptors once open FDs cross this fraction of the
+   process limit. Below it, the per-iteration check is just a cheap OS-bean read;
+   at/above it, a GC pass closes file objects the sandbox dropped WITHOUT
+   `with open(...)` — GraalPy does not refcount-close a dropped file object, so
+   an os.walk that reads a large tree can pile up thousands of descriptors before
+   GC catches up, starving the JVM's SHARED descriptor table (auth sockets, git,
+   cancel) and wedging the session (vis session 7d3f9026). Proactive reclaim
+   keeps a leaky sandbox block from ever reaching EMFILE."
+  0.6)
+
+(defn- fd-usage
+  "[open-count max-count] file descriptors for THIS process via the JVM OS bean,
+   or nil when the platform bean is not a `UnixOperatingSystemMXBean` (e.g.
+   Windows) or reports no limit. Cheap — a couple of native counter reads."
+  []
+  (let [bean (java.lang.management.ManagementFactory/getOperatingSystemMXBean)]
+    (when (instance? com.sun.management.UnixOperatingSystemMXBean bean)
+      (let [b ^com.sun.management.UnixOperatingSystemMXBean bean
+            m (.getMaxFileDescriptorCount b)]
+        (when (pos? m) [(.getOpenFileDescriptorCount b) m])))))
+
+(defn reclaim-fds-under-pressure!
+  "When open FDs exceed `FD_RECLAIM_THRESHOLD` of the process limit, force a GC +
+   finalization pass so descriptors held by unreachable (leaked) file objects are
+   CLOSED — the sandbox's cheapest safety net against open-without-close Python
+   (mirrors the on-demand reclaim `shell`'s spawn path already does, but PROACTIVE
+   at the iteration boundary so the control plane never starves). No-op — one bean
+   read — when there is headroom. Returns the number of descriptors freed when it
+   acted, else nil."
+  []
+  (when-let [[open lim] (fd-usage)]
+    (when (> (/ (double open) (double lim)) FD_RECLAIM_THRESHOLD)
+      (System/gc)
+      (System/runFinalization)
+      ;; The Cleaner/finalizer threads need a beat to actually release the FDs
+      ;; after GC marks the file objects unreachable (same 100-150ms `shell`
+      ;; uses). Only paid under pressure, never on the common path.
+      (Thread/sleep 120)
+      (let [after (or (first (fd-usage)) open)
+            freed (max 0 (- (long open) (long after)))]
+        (tel/log! {:level :warn
+                   :id ::fd-reclaim
+                   :data {:before open :after after :limit lim :freed freed}
+                   :msg "file-descriptor pressure — GC reclaimed leaked handles"})
+        freed))))
+
 (defn run-iteration
   "Runs a single RLM iteration: ask! -> check final -> execute code.
    Returns map with :thinking :blocks :final-result :api-usage etc."
@@ -7038,6 +7085,12 @@
                      [attempt-env (hydrate-environment-router env)
                       result
                       (try
+                        ;; Cheap FD-pressure guard BEFORE the provider call: a
+                        ;; prior iteration's sandbox Python may have leaked
+                        ;; descriptors (open without `with`), and this call is
+                        ;; about to open an auth/refresh socket. Reclaim under
+                        ;; pressure so a leak never starves the control plane.
+                        (reclaim-fds-under-pressure!)
                         (reset! provider-output-started? false)
                         (run-iteration
                           attempt-env
