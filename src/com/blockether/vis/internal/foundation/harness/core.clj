@@ -7,25 +7,23 @@
    layer's POSIX compat. Vis reads its OWN project-local skills from
    `.vis/skills` (highest precedence).
 
-   Two bare verbs (bound like cat/rg via `:ext.engine/builtin? true`):
+   - SKILLS are DOCUMENTS, never a verb: the prompt lists every skill
+     `name — description` (cheap — always present) and the WHOLE `SKILL.md` is
+     one document in the `doc`/`apropos` corpus, so `apropos(text)` finds it and
+     `doc(name)` prints it whole. Reading a skill has no session effect: there
+     is nothing to activate, nothing to re-read and no activation receipt.
 
-   - SKILLS are PROGRESSIVE: the prompt lists every skill `name — description`
-     (cheap — always present), and
-     `skill(name)` loads the FULL `SKILL.md` + its bundled resource PATHS on
-     demand so the model spends tokens only on the one it uses.
+   - AGENTS are the layer's one bare verb (bound like cat/rg via
+     `:ext.engine/builtin? true`) and an ALIAS to `sub_loop`:
+     `agent(name, prompt)` runs the named agent as a CHILD loop whose system
+     prompt IS that agent's markdown body, on its declared model.
 
-   - AGENTS are an ALIAS to `sub_loop`: `agent(name, prompt)` runs the named
-     agent as a CHILD loop whose system prompt IS that agent's markdown body,
-     on its declared model.
-
-   Both bare verbs are unconditionally available — skills/agents/commands have
-   no user toggle; the layer is always active."
+   Skills/agents/commands have no user toggle; the layer is always active."
   ;; `agent` is the bare model-facing verb; deliberately shadow clojure.core/agent
   ;; (unused here) so loading this ns is warning-free.
   (:refer-clojure :exclude [agent])
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.ctx-loop :as ctx-loop]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
@@ -42,7 +40,7 @@
     (if (> (count s) n) (str (subs s 0 (max 0 (dec n))) "…") s)))
 
 ;; =============================================================================
-;; skill(name) — activate one SKILL.md on demand, once per live provider tape
+;; Skill ownership — the nested project a SKILL.md was written for
 ;; =============================================================================
 
 (defn- canonical-path
@@ -84,6 +82,8 @@
         owner))))
 
 (defn- skill-payload
+  "The skill as data for a `/<name>` slash expansion: its body, the directory it
+   lives in and its bundled resource paths."
   [s]
   (let [owner (owner-root s)]
     (cond->
@@ -98,100 +98,6 @@
       owner
       (assoc "note" (owner-note owner)))))
 
-(defn- current-iter-scope
-  [env]
-  (some-> (ctx-loop/synthesize-scope env)
-          (str/split #"/f")
-          first))
-
-(defn- same-activation?
-  [activation digest]
-  (and (= digest (get activation "digest")) (not (str/blank? (str (get activation "scope"))))))
-
-(defn- skill-result
-  "Return a skill body only when it is not already present on the live provider
-   tape (or its content digest changed). This call stamps the durable pointer —
-   name, body digest, and the scope that emits it — and `stamp-iter-universe!`
-   keeps it in `engine_live_skill_activations` for exactly as long as the
-   iteration that PRINTED the body is still on the post-fold wire. A
-   same-iteration second call is answered by that pointer before the first
-   result has entered the trailer."
-  [env nm]
-  (if-let [s (d/skill-by-name nm)]
-    (let
-      [skill-name (:name s)
-       digest (extension/sha256-hex (:body s))
-       scope (current-iter-scope env)
-       ctx (some-> (:ctx-atom env)
-                   deref)
-       live (get-in ctx ["engine_live_skill_activations" skill-name])
-       pending (get-in ctx ["session_active_skills" skill-name])
-       already-live? (or (same-activation? live digest)
-                         (and (same-activation? pending digest) (= scope (get pending "scope"))))]
-
-      (if already-live?
-        {"name" skill-name
-         "status" "already-active"
-         "scope" (or (get live "scope") (get pending "scope"))
-         "note" "Instructions already remain on the live provider tape; body not repeated."}
-        (do (when-let [ca (:ctx-atom env)]
-              (swap! ca assoc-in
-                ["session_active_skills" skill-name]
-                {"name" skill-name "digest" digest "scope" scope}))
-            (skill-payload s))))
-    {"error" (str "No skill named " (pr-str (str nm)) ".") "available" (mapv :name (d/skills))}))
-
-(defn- skill-name-arg
-  "The skill NAME across BOTH call surfaces: the native tool's `{\"name\" …}` input
-   map, the SAME shape when Python kwargs (`skill(name=\"x\")`) fold into one
-   trailing dict, or a bare positional `skill(\"x\")` string."
-  [input]
-  (if (map? input) (or (get input "name") (get input :name)) input))
-
-(defn skill-tool
-  "Host callback: raw input map in, RAW result map out (the provider tape reads
-   that map directly — no envelope here)."
-  [env input]
-  (skill-result env (skill-name-arg input)))
-
-(def
-  ^{:doc
-    (str
-      "await skill(name)\n"
-      "Activate a harness SKILL from `python_execution` — the same verb as the "
-      "native tool. First load on the live provider tape returns the full SKILL.md "
-      "as {\"name\", \"description\", \"body\", \"cwd\", \"resources\"} — plus \"project_root\" and a "
-      "\"note\" naming the nested project that owns it; a repeat returns "
-      "{\"name\", \"status\", \"scope\", \"note\"}; an unknown name returns "
-      "{\"error\", \"available\": [names]}.")
-    :arglists '([name])}
-  skill
-  ;; The ENGINE-BOUND twin of `skill-tool`: identical semantics, wrapped in the
-  ;; canonical envelope `invoke-symbol-wrapper` asserts on every bound verb.
-  (fn skill-impl [env input]
-    (extension/success {:result (skill-tool env input)})))
-
-(def skill-symbol
-  ;; Everything on the SYMBOL. `skill` is a bare Python verb in the sandbox, so a
-  ;; `python_execution` block can activate a skill inside a `gather(...)` batch.
-  ;; Compact semantics live in :description; `doc("skill")` answers the contract.
-  (vis/symbol
-    #'skill
-    {:symbol 'skill
-     :inject-env? true
-     :active-fn (fn [_env]
-                  true)
-     :tag :observation
-     :result
-     (str "Loaded `{name,description,body,cwd,resources}`, plus `project_root` and a `note` when a "
-          "nested project owns the skill; active `{name,status,scope,note}`; "
-          "unknown `{error,available}`. All have string keys and `op`.")
-     :name "skill"
-     :description
-     (str "Activate an advertised skill. First load on a live provider tape returns full SKILL.md; "
-          "repeats return an already-active receipt. Changed/evicted bodies return again. "
-          "In `python_execution`, call `await skill(name)`.")}))
-
 ;; =============================================================================
 ;; /<name> — user-invokable skill templates (pi-style)
 ;; =============================================================================
@@ -204,9 +110,8 @@
   [_env s args]
   (let
     [r
-     ;; A slash invocation is an explicit USER-authored injection, not a model
-     ;; tool activation. Keep it literal and do not mutate the tool activation
-     ;; index; its body lives in the current user message.
+     ;; A slash invocation is an explicit USER-authored injection: the whole
+     ;; SKILL.md lands in the current user message, literally.
      (skill-payload s)
 
      note
@@ -333,8 +238,8 @@
         "\n"
         (cons
           (str
-            "Harness SKILLS available — `doc(\"name\")` reads a skill, `await skill(\"name\")` activates it"
-            " (session effect: sets its project root, cwd and resources)"
+            "Harness SKILLS available — `doc(\"name\")` prints one whole SKILL.md, `apropos(text)`"
+            " searches them all; reading one has no session effect"
             " (a `[project]` tag names the nested project that OWNS a skill — work under that"
             " directory when you use it):")
           (for [s ss]
@@ -370,18 +275,18 @@
   (vis/extension
     {:ext/name "foundation-harness"
      :ext/description
-     "Discovers on-disk Claude Code/opencode skills and agents: `skill(name)` loads full SKILL.md on demand; `agent(name,prompt)` dispatches a `sub_loop` child. Always available."
+     "Discovers on-disk Claude Code/opencode skills and agents: every SKILL.md is a `doc`/`apropos` document; `agent(name,prompt)` dispatches a `sub_loop` child. Always available."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
      :ext/license "Apache-2.0"
      :ext/kind "foundation"
-     ;; Always active — the skill/agent verbs are unconditionally available
-     ;; (their user toggles were removed).
+     ;; Always active — the agent verb and the skill listing are unconditionally
+     ;; available (their user toggles were removed).
      :ext/activation-fn (fn [_env]
                           true)
-     ;; builtin? → symbols bind BARE (skill / agent, not harness_skill).
-     :ext/engine {:ext.engine/builtin? true :ext.engine/symbols [skill-symbol agent-symbol]}
+     ;; builtin? → the symbol binds BARE (agent, not harness_agent).
+     :ext/engine {:ext.engine/builtin? true :ext.engine/symbols [agent-symbol]}
      :ext/prompt-fn harness-prompt}))
 
 (vis/register-extension! vis-extension)

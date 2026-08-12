@@ -17,9 +17,9 @@
    There is no `kind` and no `group`. A taxonomy is not actionable: what a hit
    actually needs is the expression that uses it, so `call` is the field and it
    spells the vocabulary out — a function answers `grep(query=…)`, an MCP tool
-   answers `mcp__call(\"server\", \"tool\", {…})`, a skill answers
-   `await skill(\"spel\")`, and a documentation page answers NOTHING, because a
-   missing `call` is exactly \"this is prose, read it\".
+   answers `mcp__call(\"server\", \"tool\", {…})`, and a skill or a documentation
+   page answers NOTHING, because a missing `call` is exactly \"this is prose,
+   read it\".
 
    There is no stored `gist` either. Two texts for one entry are two places to
    drift, invisibly, because nothing reads both at once: `gist` is a RENDERING
@@ -153,14 +153,14 @@
    the file's own summary, not a second one — and the body follows verbatim, so
    `doc(name)` answers the same string `apropos` searched.
 
-   Reading a skill NEVER activates it: this reads the discovery cache and never
-   calls the `skill` verb, so search has no effect on the tape."
+   A skill is PROSE, exactly like a documentation page: it carries no `call`,
+   because there is no verb to invoke — reading it IS using it, and this reads
+   the discovery cache, so search has no effect on the session."
   []
   (into []
         (keep (fn [{:keys [name description body]}]
                 (when (seq (str name))
                   {:name (str name)
-                   :call (str "await skill(" (pr-str (str name)) ")")
                    :text (str (when (seq (str description)) (str description "\n\n")) body)})))
         (discovery/skills)))
 
@@ -249,8 +249,7 @@
    that is not in the corpus is simply skipped, so this vector never has to
    track which extensions are active."
   ["apropos" "doc" "session_state" "session_fold" "ls" "grep" "struct_index" "struct_nodes"
-   "struct_patch" "shell" "run_tests" "repl_eval" "lint_code" "format_code" "skill" "attach"
-   "mcp__call"])
+   "struct_patch" "shell" "run_tests" "repl_eval" "lint_code" "format_code" "attach" "mcp__call"])
 
 ;; =============================================================================
 ;; The three things the two verbs PRINT

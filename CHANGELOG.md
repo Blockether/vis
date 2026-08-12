@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   back.
 
 ### Removed
+- The `skill` verb. A skill is a document like any other: `apropos(text)` finds it, `doc("name")`
+  prints the whole `SKILL.md`, and reading it is the whole of using it. There is no activation, no
+  `status`/`scope`/`note` receipt, no idempotent re-read and no fold protection for an "active"
+  body. Skill DISCOVERY is unchanged — every skill is still listed in the prompt by name,
+  description and owning project.
 - The `git` tool. There is no model-facing Git schema, no `git` binding in the sandbox and no
   `foundation-git` extension: a Git command is an ordinary `shell` command, run by the same
   jail, capture and timeout as everything else. Workspace Git FACTS (footer status, environment

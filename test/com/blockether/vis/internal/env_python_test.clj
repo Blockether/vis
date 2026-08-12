@@ -430,7 +430,7 @@
           (expect (str/includes? out "apropos(query='')"))
           (expect (str/includes? out "FULL-TEXT SEARCH over every document"))
           (expect (str/includes? out "doc(target) -> str"))
-          (expect (str/includes? out "`doc(name)` reads, `await skill(name)` works under it"))))
+          (expect (str/includes? out "A skill is one of these documents and nothing more"))))
     (it "gather exposes its concurrency contract through apropos and doc"
         (let [out (run (str "print(apropos('gather')['gather'])\n" "print(doc('gather'))"))]
           (expect (str/includes? out "gather(*awaitables) -> list"))
@@ -862,15 +862,16 @@
           (expect (str/includes? out "same=True"))
           (expect (str/includes? out "head=# gateway"))
           (expect (str/includes? out "body=True"))))
-    (it "doc returns a skill WHOLE and says how to work under it, without activating it"
+    ;; A skill is a document like any other: `doc` prints the whole SKILL.md and
+    ;; there is no verb to call, so the entry carries no call line at all.
+    (it "doc returns a skill WHOLE, with no verb to invoke and no session effect"
         (let
-          [out (run (str
-                      "d = doc('spel')\n" "print('call='+str('await skill(\"spel\")' in d))\n"
-                      "print('long='+str(len(d) > 2000))\n"
-                      "print('active='+str(globals().get('__vis_active_skill__') is not None))"))]
-          (expect (str/includes? out "call=True"))
+          [out (run (str "d = doc('spel')\n" "print('call='+str('skill(' in d))\n"
+                         "print('long='+str(len(d) > 2000))\n"
+                         "print('bound='+str('skill' in globals()))"))]
+          (expect (str/includes? out "call=False"))
           (expect (str/includes? out "long=True"))
-          (expect (str/includes? out "active=False"))))
+          (expect (str/includes? out "bound=False"))))
     (it "bare doc() is the curated index, not the corpus"
         (let
           [out (run (str "idx = doc()\n"

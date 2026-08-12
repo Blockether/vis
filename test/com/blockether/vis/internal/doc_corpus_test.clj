@@ -38,7 +38,7 @@
   skill-entries-test
   "A skill's text IS its `SKILL.md`: the frontmatter summary, then the whole body
    verbatim. There is no second, shorter description anywhere to drift from it."
-  (it "carries the whole body and the activation expression"
+  (it "carries the whole body and no call — a skill is prose"
       (let
         [skills
          (discovery/skills)
@@ -51,13 +51,14 @@
           (let [e (get by-name (:name s))]
             (expect (some? e))
             (expect (str/ends-with? (:text e) (str (:body s))))
-            (expect (= (str "await skill(" (pr-str (:name s)) ")") (:call e))))))))
+            ;; No `call`: there is no skill verb. `doc(name)` IS the whole use.
+            (expect (nil? (:call e))))))))
 
 (defdescribe
-  reading-a-skill-does-not-activate-it-test
-  "Search has no tape effect: the corpus reads the discovery registry and never
-   the `skill` verb, so no `apropos`/`doc` call can mark a skill active."
-  (it "never reaches the activation namespace"
+  reading-a-skill-has-no-session-effect-test
+  "A skill is a DOCUMENT: the corpus reads the discovery registry directly, so
+   `apropos`/`doc` can neither activate nor mark anything."
+  (it "never reaches the harness verb namespace"
       (let [src (slurp (io/resource "com/blockether/vis/internal/doc_corpus.clj"))]
         (expect (not (str/includes? src "harness.core")))
         (expect (not (str/includes? src "harness-core"))))))

@@ -1793,13 +1793,9 @@
                           (dissoc "engine_overbudget_hint_turn")))))))
 
 (defn- stamp-iter-universe!
-  "Record the raw iteration universe and live skill activations, while pricing
-   only `wire-iters` — the CURRENT provider-visible
-   projection. `wire-iters` defaults to `trailer-iters`. A skill activation is
-   live while the iteration that PRINTED its body is still on the wire, and its
-   scope is then protected from a fold; activations whose iteration left the
-   trailer, and cross-turn non-replayed ones, are discarded so the next
-   `skill(...)` hands the body back."
+  "Record the raw iteration universe while pricing only `wire-iters` — the
+   CURRENT provider-visible projection. `wire-iters` defaults to
+   `trailer-iters`."
   [ctx-atom trailer-iters & [wire-iters]]
   (when ctx-atom
     (let
@@ -1848,61 +1844,9 @@
                                   (assoc! m sc (+ (long (get m sc 0)) (quot (long chars) 4))))
                                 m))
                             (transient {})
-                            (map vector trailer-iters (or wire-iters trailer-iters))))
+                            (map vector trailer-iters (or wire-iters trailer-iters))))]
 
-       ctx
-       @ctx-atom
-
-       ;; The durable activation pointers `harness/skill-result` stamps at the
-       ;; call itself: the skill NAME, the digest of its body, and the scope of
-       ;; the iteration that emitted it.
-       pointers
-       (or (get ctx "session_active_skills") {})
-
-       ;; A skill body reaches the provider tape only when the block PRINTED the
-       ;; result, and a printed result survives on its form as a CARD titled by
-       ;; its own op. So the wire answers "is that body still on the tape" and
-       ;; the pointer answers "which skill, which bytes": with
-       ;; `python_execution` the only call, a form's own name is always
-       ;; `python_execution` and its result is the block's value, so neither
-       ;; question can be asked of the form itself any more.
-       printed-skill-scopes
-       (into #{}
-             (keep (fn [[_ rec]]
-                     (when (not= false (:preserved-thinking/replay? rec))
-                       (when-let [scope (scope-of rec)]
-                         (when (some (fn [form]
-                                       (some #(= "skill" (str (:op %))) (:cards form)))
-                                     (:forms-vec rec))
-                           scope)))))
-             trailer-iters)
-
-       ;; An activation is LIVE exactly while the iteration that printed its body
-       ;; is still on the wire. Its scope is then protected from a later fold —
-       ;; folding away instructions the model was told it still has is what the
-       ;; protection exists to prevent — and an activation whose iteration left
-       ;; the trailer drops, so the next `skill(...)` hands the body back.
-       live-skills
-       (reduce (fn [m [_ activation]]
-                 (let [nm (str (get activation "name"))]
-                   (if (and (map? activation)
-                            (not (str/blank? nm))
-                            (not (str/blank? (str (get activation "digest"))))
-                            (contains? printed-skill-scopes (get activation "scope")))
-                     (assoc m nm activation)
-                     m)))
-               {}
-               pointers)
-
-       protected-scopes
-       (into #{} (map #(get % "scope")) (vals live-skills))]
-
-      (swap! ctx-atom assoc
-        "engine_iter_universe" uni
-        "engine_iter_weights" weights
-        "engine_live_skill_activations" live-skills
-        "engine_protected_iter_scopes" protected-scopes
-        "session_active_skills" live-skills))))
+      (swap! ctx-atom assoc "engine_iter_universe" uni "engine_iter_weights" weights))))
 
 (defn- runtime-turn-prefix
   [environment]
@@ -2561,37 +2505,6 @@
            (let [ss (->set scopes)]
              (when (seq ss) [{"scopes" ss} (str/join ", " (sort ss))])))))
 
-     exclude-protected
-     (fn [intent]
-       (let
-         [ctx
-          (some-> ctx-atom
-                  deref)
-
-          universe
-          (or (get ctx "engine_iter_universe") [])
-
-          protected
-          (set (get ctx "engine_protected_iter_scopes"))
-
-          resolved
-          (first (ctx-engine/expand-through [intent] universe))
-
-          selected
-          (set (get resolved "scopes"))
-
-          omitted
-          (set/intersection selected protected)
-
-          kept
-          (set/difference selected omitted)]
-
-         [(if (seq omitted)
-            (-> intent
-                (dissoc "through" "from" "to" "since")
-                (assoc "scopes" kept))
-            intent) omitted]))
-
      current-turn
      (fn []
        (let
@@ -2930,44 +2843,37 @@
                          :current-turn turn
                          :blocked-scopes live-scopes})))
              (let
-               [[base omitted] (exclude-protected base)
-                kept-note (when (seq omitted)
-                            (str " · kept active skill " (str/join ", " (sort omitted))))
-                g (some-> gist
+               [g (some-> gist
                           str
                           str/trim
-                          not-empty)]
+                          not-empty)
+                {:keys [note reclaimed-tokens]} (priced base)
+                ;; Stamp the ISSUING turn so `previous-turn-context` never lets
+                ;; a whole-turn fold recorded DURING turn N erase turn N's own
+                ;; Q/A recap next request (the answer is produced after the fold;
+                ;; the gist can't summarize it). `turn` is always non-nil here —
+                ;; the guard above throws when it can't prove the current turn.
+                intent (cond-> base
+                         turn
+                         (assoc "issued_turn" turn)
 
-               (if (and (seq omitted) (empty? (get base "scopes")))
-                 (str "session_fold: nothing else to fold" kept-note)
-                 (let
-                   [{:keys [note reclaimed-tokens]} (priced base)
-                    ;; Stamp the ISSUING turn so `previous-turn-context` never lets
-                    ;; a whole-turn fold recorded DURING turn N erase turn N's own
-                    ;; Q/A recap next request (the answer is produced after the fold;
-                    ;; the gist can't summarize it). `turn` is always non-nil here —
-                    ;; the guard above throws when it can't prove the current turn.
-                    intent (cond-> base
-                             turn
-                             (assoc "issued_turn" turn)
+                         g
+                         (assoc "gist" g)
 
-                             g
-                             (assoc "gist" g)
+                         (not (str/blank? note))
+                         (assoc "note" note))]
 
-                             (not (str/blank? note))
-                             (assoc "note" note))]
-
-                   (record! intent)
-                   (when (and session-rebase-atom (pos? (long reclaimed-tokens)))
-                     (swap! session-rebase-atom
-                       (fn [{accumulated :reclaimed-tokens :as state}]
-                         (let [total (+ (long (or accumulated 0)) (long reclaimed-tokens))]
-                           (assoc state
-                             :reclaimed-tokens total
-                             :pending? (>= (long total) (long SESSION_REBASE_RECLAIMED_TOKENS)))))))
-                   (tel/log! {:level :info :id ::session-fold :data {:intent intent}}
-                             "model folded scopes")
-                   (str "folded " label note kept-note (when g (str " → " g)))))))
+               (record! intent)
+               (when (and session-rebase-atom (pos? (long reclaimed-tokens)))
+                 (swap! session-rebase-atom
+                   (fn [{accumulated :reclaimed-tokens :as state}]
+                     (let [total (+ (long (or accumulated 0)) (long reclaimed-tokens))]
+                       (assoc state
+                         :reclaimed-tokens total
+                         :pending? (>= (long total) (long SESSION_REBASE_RECLAIMED_TOKENS)))))))
+               (tel/log! {:level :info :id ::session-fold :data {:intent intent}}
+                         "model folded scopes")
+               (str "folded " label note (when g (str " → " g)))))
            (str "session_fold: nothing to fold — pass [\"t1/i2\", …] (a bare \"t1\" folds "
                 "the whole turn), or a selector {\"through\"|\"since\": \"t1/i2\"} / "
                 "{\"from\": \"t1/i2\", \"to\": \"t1/i5\"}"))))}))
@@ -2987,7 +2893,7 @@
 
    Pure and deterministic (same summaries → same output → prefix-cacheable).
    Operates on a COPY; persisted iter-records are untouched."
-  [trailer-iters summaries & [protected-scopes]]
+  [trailer-iters summaries]
   (if (empty? summaries)
     (vec trailer-iters)
     (let
@@ -3053,11 +2959,9 @@
             (keep (fn [summary]
                     (let
                       [scopes (into #{}
-                                    (comp (remove (set protected-scopes))
-                                          (remove (fn [s]
-                                                    (and (get summary "__stale_live")
-                                                         (= live-turn
-                                                            (first (ctx-engine/scope-key s)))))))
+                                    (remove (fn [s]
+                                              (and (get summary "__stale_live")
+                                                   (= live-turn (first (ctx-engine/scope-key s))))))
                                     (get summary "scopes"))]
                       (when (seq scopes)
                         (-> summary
@@ -6276,7 +6180,7 @@
    authoritative and are not replaced by the mechanical gist. The gate uses Svar's
    message-token estimator, not serialized characters; the retry itself repeats Svar's
    provider-aware exact preflight before any send."
-  [base-messages trailer-iters summaries protected-scopes replay-target model budget-fn]
+  [base-messages trailer-iters summaries replay-target model budget-fn]
   (let
     [universe
      (into []
@@ -6284,15 +6188,12 @@
                    (some iter-of-scope (keep :scope (:forms-vec rec)))))
            trailer-iters)
 
-     protected
-     (set protected-scopes)
-
      already-folded
      (into #{} (mapcat #(get % "scopes")) (ctx-engine/expand-through summaries universe))
 
      ;; Chronological (the trailer is ordered), so a prefix is always the OLDEST work.
      foldable
-     (into [] (comp (distinct) (remove (into protected already-folded))) universe)
+     (into [] (comp (distinct) (remove already-folded)) universe)
 
      live-turn
      (some->> universe
@@ -6334,7 +6235,7 @@
                 (assoc "at_turn" live-turn))
 
               folded-trailer
-              (apply-summaries trailer-iters (conj (vec summaries) intent) protected)
+              (apply-summaries trailer-iters (conj (vec summaries) intent))
 
               messages
               (into (vec base-messages) (conversation-suffix folded-trailer replay-target))]
@@ -6399,7 +6300,7 @@
    one; without progress the retry would resend a request the provider already refused,
    so the iteration goes terminal instead."
   [{:keys [error output-started? recovery-state ctx-atom turn-input-tokens base-messages
-           trailer-iters summaries protected-scopes replay-target model]}]
+           trailer-iters summaries replay-target model]}]
   (let [overflow (ex-data error)]
     (when (and (contains? perr/CONTEXT_OVERFLOW_TYPES (:type overflow)) (not @output-started?))
       (let
@@ -6417,7 +6318,6 @@
                           base-messages
                           trailer-iters
                           summaries
-                          protected-scopes
                           replay-target
                           model
                           (fn [local-tokens]
@@ -7093,20 +6993,16 @@
                  ;; near the start (placed by `assemble-initial-messages`); we
                  ;; never repeat it. Matches z.ai's canonical preserved-thinking
                  ;; shape (user → asst → user → asst → user).
-                 ;; First derive protected live-skill scopes from the canonical raw
-                 ;; trailer; then apply folds and re-stamp token weights from exactly
-                 ;; the provider-visible projection. Raw universe/NTR recovery stays
+                 ;; First stamp the universe from the canonical raw trailer; then
+                 ;; apply folds and re-stamp token weights from exactly the
+                 ;; provider-visible projection. Raw universe/NTR recovery stays
                  ;; intact, while an already-collapsed payload is never priced twice.
                  _raw-iter-state (stamp-iter-universe! (:ctx-atom environment) trailer-iters)
                  replay-target (replay-context pre-resolved-model)
                  summarized-trailer-iters (apply-summaries trailer-iters
                                                            (some-> (:ctx-atom environment)
                                                                    deref
-                                                                   (get "session_summaries"))
-                                                           (some->
-                                                             (:ctx-atom environment)
-                                                             deref
-                                                             (get "engine_protected_iter_scopes")))
+                                                                   (get "session_summaries")))
                  _visible-iter-state (stamp-iter-universe! (:ctx-atom environment)
                                                            trailer-iters
                                                            summarized-trailer-iters)
@@ -7248,23 +7144,20 @@
                               {::retry-auth-fallback fallback-routing})
                             :else
                             (if-let
-                              [recovery
-                               (context-overflow-recovery!
-                                 {:error e
-                                  :output-started? provider-output-started?
-                                  :recovery-state context-recovery-state
-                                  :ctx-atom (:ctx-atom environment)
-                                  :turn-input-tokens (:input-tokens @usage-atom)
-                                  :base-messages messages
-                                  :trailer-iters trailer-iters
-                                  :summaries (some-> (:ctx-atom environment)
-                                                     deref
-                                                     (get "session_summaries"))
-                                  :protected-scopes (some-> (:ctx-atom environment)
-                                                            deref
-                                                            (get "engine_protected_iter_scopes"))
-                                  :replay-target replay-target
-                                  :model (or (:name resolved-model) (:model resolved-model))})]
+                              [recovery (context-overflow-recovery!
+                                          {:error e
+                                           :output-started? provider-output-started?
+                                           :recovery-state context-recovery-state
+                                           :ctx-atom (:ctx-atom environment)
+                                           :turn-input-tokens (:input-tokens @usage-atom)
+                                           :base-messages messages
+                                           :trailer-iters trailer-iters
+                                           :summaries (some-> (:ctx-atom environment)
+                                                              deref
+                                                              (get "session_summaries"))
+                                           :replay-target replay-target
+                                           :model (or (:name resolved-model)
+                                                      (:model resolved-model))})]
                               (do (reset! effective-messages-atom (:messages recovery))
                                   (tel/log!
                                     {:level :warn

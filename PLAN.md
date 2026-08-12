@@ -315,8 +315,8 @@ says:
 
 - a `function` answers `grep(query=...)`,
 - an `mcp_tool` answers `mcp__call("server", "tool", {...})`,
-- a `skill` answers `await skill("spel")`, so the activation effect stays visible without a tag
-  warning about it,
+- a `skill` answers NOTHING either, since phase 12: a skill is prose, and reading it is the whole
+  of using it,
 - a `documentation_page` answers NOTHING; a missing `call` is exactly "this is prose, read it".
 
 **A skill's `text` IS its `SKILL.md`, in full — no gist, no metadata stub.** Every entry, whatever
@@ -915,6 +915,46 @@ every `shell` handle op are untouched.
 **Unknowns.** None. The teardown obligation (§7, "stop managed REPLs you started") is unchanged — it is
 now discharged from the handle the agent already holds rather than from a list it re-reads.
 
+## Phase 12 — Delete the `skill` verb: a skill is prose, and `doc` reads it
+
+**Rationale.** A skill body is text. Once `doc(name)` has printed it, the rules are in context and in
+effect; there is no second state in which they are obeyed harder. `skill(name)` nonetheless carried a
+state machine around that text: an `:op "skill"` result with `{name, status, scope, note,
+project_root, resources}`, an ACTIVE record per iteration (`current-iter-scope`, `same-activation?`),
+an idempotent re-read that answered a RECEIPT instead of the body, and a fold-protection path
+(`exclude-protected` plus a `protected-scopes` argument threaded through `apply-summaries`,
+`emergency-fold-projection`, `context-overflow-recovery!` and `ctx-engine/folds-view`) whose only job
+was keeping an activated body off the fold list. All of it is bookkeeping ABOUT text. Worse, it
+undoes phase 4: the discovery surface was reduced to two verbs with one job each — `apropos` SEARCHES,
+`doc` RETRIEVES — and a third verb that also delivers a document puts the model back to choosing.
+Reading a skill is the whole of using it; the `cwd` effect that was the one real difference is an
+ordinary directory to work in, which the `[project]` tag in the pushed listing already names.
+
+**Data.** None. The phase only deletes. The discovered skill entry
+(`:name`, `:description`, `:body`, `:dir`, `:tool`, `:resources`) crosses no boundary and is
+unchanged — it loses only the `:call` the corpus used to attach to it.
+
+**Acceptance criteria.**
+- `foundation/harness/core.clj`: `skill-result`, `skill-tool`, `skill`, `skill-symbol`,
+  `current-iter-scope` and `same-activation?` are deleted and the extension binds `agent-symbol`
+  alone; `discovery`, `agents-prompt` and the slash templates are untouched. `skills-prompt` keeps the
+  name — description listing and its 180-char clip, and now heads it "`doc("name")` prints one whole
+  SKILL.md, `apropos(text)` searches them all; reading one has no session effect".
+- `loop.clj`: `stamp-iter-universe!` stamps `engine_iter_universe` and the weights only;
+  `exclude-protected` and every `protected-scopes` parameter are gone from `apply-summaries`,
+  `emergency-fold-projection` and `context-overflow-recovery!`. `ctx_engine.clj`: `folds-view` loses
+  the same argument.
+- `doc_corpus.clj`: a skill entry carries no `:call`, and `"skill"` leaves the curated index.
+- `env_python.clj` `doc`'s own description and CORE §1 stop teaching the read-versus-activate split;
+  `resources/vis-docs/skills.md`, `context-and-prompts.md`, `index.md` and `AGENTS.md` say `doc("name")`
+  wherever they said `skill("name")`.
+- Tests: `harness/core_test` pins that no prompt line advertises `skill(` and that the extension binds
+  one symbol; `compaction_verbs_test` and `loop_test` lose the protection describes; `doc_corpus_test`
+  pins a skill entry WITHOUT a `call`; `env_python_test` and `prompt_test` pin the new wording.
+
+**Unknowns.** None. Skill DISCOVERY stays exactly as it is — the pushed one-line listing is what makes
+a skill findable without reading it, and it is the cheapest half of the mechanism.
+
 ## Cross-validation — the SECOND inventory (measured against the tree; phases 1-7 missed these)
 
 Every figure below was counted this pass — balanced-brace spans and full-tree greps, not recall.
@@ -1327,7 +1367,19 @@ about `ntr[…]`-carrying metric bullets).
 
 ## State of the plan
 
-**REQUIRES WORK** — phases 1-11 have LANDED. What is left is the cross-cutting cleanup list (steps 45-53, the `:schema` literals, `form.clj`'s reduction, `extension_bootstrap.py`, the wire's `tool_name`/`result_render` columns, the tool wall, the replay policy, `:tag`) and the two pieces of shipped-UI evidence (56b's `spel` figures, 57's `cap/shot!` PNG).
+**REQUIRES WORK** — phases 1-12 have LANDED. What is left is the cross-cutting cleanup list (steps 45-53, the `:schema` literals, `form.clj`'s reduction, `extension_bootstrap.py`, the wire's `tool_name`/`result_render` columns, the tool wall, the replay policy, `:tag`) and the two pieces of shipped-UI evidence (56b's `spel` figures, 57's `cap/shot!` PNG).
+
+**Phase 12 — the `skill` verb is deleted: DONE.** A skill is a document; `doc(name)` prints it and
+`apropos(text)` finds it, and that is the whole mechanism. Gone with the verb: `skill-result`,
+`skill-tool`, `skill`, `skill-symbol`, `current-iter-scope` and `same-activation?` in
+`harness/core.clj`; the `:op "skill"` card's activation receipt; and the fold-protection half that
+existed only to defend an activated body — `exclude-protected` and the `protected-scopes` argument
+threaded through `stamp-iter-universe!`, `apply-summaries`, `emergency-fold-projection`,
+`context-overflow-recovery!` and `ctx-engine/folds-view`. 634 deletions against 202 insertions across
+17 files, `loop.clj` -227 and `harness/core.clj` -143. Skill DISCOVERY is untouched: the pushed
+listing still names every skill with its clipped description and its `[project]` owner, and now
+points at `doc`/`apropos` instead of an activation. A skill entry in the corpus carries no `:call`,
+because a missing `call` already means "this is prose, read it".
 
 **Phase 11 — `session["resources"]` is gone from the model-facing session: DONE.** Phase 10 treated
 the symptom; the mechanism was `render-turn-boundary` re-assigning the whole registry once per turn,

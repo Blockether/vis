@@ -39,8 +39,8 @@ a working set, not a full transcript, on every turn.
 Vis hands the model exactly ONE tool — `python_execution` — and everything else is
 a function inside it:
 
-- **The sandbox** — every capability (`grep`, `struct_index`, `shell`, `attach`, a
-  skill, an MCP tool) is a bare Python name in an embedded GraalPython runtime. The
+- **The sandbox** — every capability (`grep`, `struct_index`, `shell`, `attach`, an
+  MCP tool) is a bare Python name in an embedded GraalPython runtime. The
   agent writes Python that runs many of them, filters and chains their output, and
   `print()`s only the slice worth keeping. Ten file reads, one search, and a
   transform happen in a single step — and the context only ever sees what the agent

@@ -216,7 +216,7 @@
     "- Trust order: runtime > source > docs > assumption; report what the tools showed.\n"
     "- `apropos(text)` full-text searches every function, skill and Vis doc page; `doc(name)` returns\n"
     "  one whole document and is the authoritative contract — obey its stated preconditions; bare\n"
-    "  `doc()` is the curated index. Read a skill with `doc`, work under it with `skill`.\n\n"
+    "  `doc()` is the curated index. A skill is one of those documents: `doc(name)` is all of it.\n\n"
     "## 2. Execution surfaces\n"
     "- ONE call exists: `python_execution` — every action (search, read, edit, test, shell, browse) is\n"
     "  Python in that sandbox, so there is no tool to choose. Data work (YAML/JSON/TOML/CSV) is Python,\n"

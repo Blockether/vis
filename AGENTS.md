@@ -1,6 +1,6 @@
 # Vis repository guidance
 
-Only what you would otherwise get wrong: repo decisions, local traps, and contracts you cannot infer from the code in front of you. General engineering practice is assumed, not restated. A rule owned by ONE namespace lives in that namespace's docstring and is only POINTED AT from here — the copy far from the code is the one that goes stale. Doctrine only some sessions need is a SKILL, PULLED with `skill("…")`; this file is PUSHED into every request of every session, so a paragraph here is paid for by every task that never touches its area.
+Only what you would otherwise get wrong: repo decisions, local traps, and contracts you cannot infer from the code in front of you. General engineering practice is assumed, not restated. A rule owned by ONE namespace lives in that namespace's docstring and is only POINTED AT from here — the copy far from the code is the one that goes stale. Doctrine only some sessions need is a SKILL, PULLED with `doc("…")`; this file is PUSHED into every request of every session, so a paragraph here is paid for by every task that never touches its area.
 
 ## Hard rules
 
@@ -15,9 +15,9 @@ Read the skill before working in its area — each one is the full contract, kep
 - `doc("human-input")` — the HITL contract: parser, spec vocabulary, five check seams, TUI/companion mirrors.
 - `doc("tui-rendering")` — TUI paint contracts, the virtual-terminal REPL, the screenshot gate.
 - `doc("python-shims")` — adding or changing a sandbox Python shim, and in-process ruff.
-- `skill("companion-ui")` — every Companion screen: control vocabulary, density, proposals, proof by numbers.
-- `skill("release-vis")` / `skill("release-companion-hotfix")` — a product release / an app-only rebuild.
-- `skill("issue-triage")`, `skill("ios-crash-triage")`, `skill("spel")` — triage and browser/native automation.
+- `doc("companion-ui")` — every Companion screen: control vocabulary, density, proposals, proof by numbers.
+- `doc("release-vis")` / `doc("release-companion-hotfix")` — a product release / an app-only rebuild.
+- `doc("issue-triage")`, `doc("ios-crash-triage")`, `doc("spel")` — triage and browser/native automation.
 
 ## Engineering defaults that differ from the usual ones
 
@@ -58,6 +58,6 @@ Reproduce from the report's own steps first; if it does not reproduce, that IS t
 
 ## Companion (`apps/vis-companion`)
 
-- **UI work pulls its doctrine first: `skill("companion-ui")`** — the closed `ui.tsx` control vocabulary, `className` may only POSITION, tokens, header bands, touch density, the fleet model, the dev server, RENDERED-and-ATTACHED design proposals, and proving a shipped screen with numbers off the live DOM. Verify there with `npm run lint` and `npm run build`; never edit generated `ios/` or `android/` — native behavior goes in the idempotent `scripts/ios-prepare.mjs` / `scripts/android-prepare.mjs`.
-- **Releases pull theirs**: `skill("release-vis")` for a product release, `skill("release-companion-hotfix")` for an app-only rebuild. `VIS_VERSION` is the single version source for CLI, native image, iOS and Android; app package/lock versions are mirrors stamped by `scripts/version.mjs`, so never hand-edit one store's marketing version. `CHANGELOG.md` is authoritative and hand-edited.
+- **UI work pulls its doctrine first: `doc("companion-ui")`** — the closed `ui.tsx` control vocabulary, `className` may only POSITION, tokens, header bands, touch density, the fleet model, the dev server, RENDERED-and-ATTACHED design proposals, and proving a shipped screen with numbers off the live DOM. Verify there with `npm run lint` and `npm run build`; never edit generated `ios/` or `android/` — native behavior goes in the idempotent `scripts/ios-prepare.mjs` / `scripts/android-prepare.mjs`.
+- **Releases pull theirs**: `doc("release-vis")` for a product release, `doc("release-companion-hotfix")` for an app-only rebuild. `VIS_VERSION` is the single version source for CLI, native image, iOS and Android; app package/lock versions are mirrors stamped by `scripts/version.mjs`, so never hand-edit one store's marketing version. `CHANGELOG.md` is authoritative and hand-edited.
 

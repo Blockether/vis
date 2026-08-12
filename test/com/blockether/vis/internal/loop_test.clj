@@ -1151,80 +1151,6 @@
 
           (expect (true? (:collapsed? (second (nth out 0)))))
           (expect (nil? (:collapsed? (second (nth out 1)))))))
-    ;; A skill body reaches the tape only through a PRINTED result, which
-    ;; survives on its form as a card titled by its own op — the form itself is
-    ;; always `python_execution` now, and its result is the block's value.
-    (it "keeps a skill live while the iteration that PRINTED its body is on the wire"
-        (let
-          [digest
-           (extension/sha256-hex "BODY")
-
-           trailer
-           [[0
-             {:forms-vec
-              [{:scope "t1/i1" :vis/tool-name "python_execution" :cards [{:op "skill"}]}]}]]
-
-           ca
-           (atom {"session_active_skills" {"demo" {"name" "demo" "digest" digest "scope" "t1/i1"}}})]
-
-          (stamp-iter-universe! ca trailer)
-          (expect (= {"name" "demo" "digest" digest "scope" "t1/i1"}
-                     (get-in @ca ["engine_live_skill_activations" "demo"])))
-          (expect (= #{"t1/i1"} (get @ca "engine_protected_iter_scopes")))
-          (expect (= (get @ca "engine_live_skill_activations") (get @ca "session_active_skills")))))
-    (it "drops an activation whose printing iteration left the wire, so it can rehydrate"
-        (let
-          [trailer
-           [[0 {:forms-vec [{:scope "t1/i1" :vis/tool-name "python_execution" :summary? true}]}]]
-
-           ca
-           (atom {"session_active_skills"
-                  {"demo" {"name" "demo" "digest" (extension/sha256-hex "BODY") "scope" "t1/i1"}}})]
-
-          (stamp-iter-universe! ca trailer)
-          (expect (= {} (get @ca "engine_live_skill_activations")))
-          (expect (= #{} (get @ca "engine_protected_iter_scopes")))
-          (expect (= {} (get @ca "session_active_skills")))))
-    (it "a durable pointer protects only its exact live skill body from a later broad fold"
-        (let
-          [digest
-           (extension/sha256-hex "BODY")
-
-           trailer
-           [[0
-             {:forms-vec
-              [{:scope "t1/i1" :vis/tool-name "python_execution" :cards [{:op "skill"}]}]}]
-            [1 {:forms-vec [{:scope "t1/i2" :vis/tool-name "python_execution" :result "noise"}]}]]
-
-           ca
-           (atom {"session_active_skills" {"demo" {"name" "demo" "digest" digest "scope" "t1/i1"}}
-                  "session_summaries" [{"through" "t1/i2" "gist" "compact"}]})]
-
-          (stamp-iter-universe! ca trailer)
-          (let
-            [out (apply-summaries trailer
-                                  (get @ca "session_summaries")
-                                  (get @ca "engine_protected_iter_scopes"))]
-            ;; The iteration that printed the skill stays byte-for-byte. Its
-            ;; sibling iteration still folds normally.
-            (expect (= (second (first trailer)) (second (first out))))
-            (expect (nil? (:collapsed? (second (first out)))))
-            (expect (true? (:collapsed? (second (second out))))))))
-    (it "a cross-turn DB seed is not a live skill body because its iteration is not replayed"
-        (let
-          [trailer
-           [[0
-             {:preserved-thinking/replay? false
-              :forms-vec
-              [{:scope "t1/i1" :vis/tool-name "python_execution" :cards [{:op "skill"}]}]}]]
-
-           ca
-           (atom {"session_active_skills"
-                  {"demo" {"name" "demo" "digest" (extension/sha256-hex "BODY") "scope" "t1/i1"}}})]
-
-          (stamp-iter-universe! ca trailer)
-          (expect (= {} (get @ca "engine_live_skill_activations")))
-          (expect (= #{} (get @ca "engine_protected_iter_scopes")))))
     (it "prior-turn-scope-index: gist applies via form->iter normalization, ONE deduped entry"
         ;; The path-A regression: a fold recorded at iteration scope (t1/i1) must
         ;; apply to forms carrying FORM scopes (t1/i1/f1, t1/i1/f2) and collapse to
@@ -4550,7 +4476,6 @@
          (emergency-fold-projection [{:role "system" :content "stable"}]
                                     trailer
                                     []
-                                    #{}
                                     {:provider :openai :model "gpt"}
                                     "gpt-4o"
                                     (constantly 1000000))]
@@ -4625,7 +4550,6 @@
                                           :base-messages []
                                           :trailer-iters trailer
                                           :summaries []
-                                          :protected-scopes #{}
                                           :replay-target {:provider :openai :model "gpt"}
                                           :replay-policies {}
                                           :model "gpt-4o"}))
@@ -4665,7 +4589,6 @@
              []
              trailer
              [{"scopes" #{"t1/i1"} "gist" "IMPORTANT ROOT CAUSE" "at_turn" 1}]
-             #{}
              {:provider :openai :model "gpt"}
              "gpt-4o"
              (constantly 1000000))
@@ -4676,26 +4599,6 @@
           (expect (= #{"t1/i2"} (:scopes recovery)))
           (expect (some #(str/includes? % "IMPORTANT ROOT CAUSE") contents))
           (expect (some #(str/includes? % "Emergency transport fold") contents))))
-    (it "protects live skill scopes and refuses a no-op rescue"
-        (let
-          [trailer
-           [(stub-tool-iter {:id 1 :content (apply str (repeat 5000 "x"))})]
-
-           scope
-           (-> trailer
-               first
-               second
-               :forms-vec
-               first
-               :scope)]
-
-          (expect (nil? (emergency-fold-projection []
-                                                   trailer
-                                                   []
-                                                   #{scope}
-                                                   {:provider :openai :model "gpt"}
-                                                   "gpt-4o"
-                                                   (constantly 1000000))))))
     (it "refuses a retry whose folded estimate still exceeds the provider budget"
         (let
           [content
@@ -4708,7 +4611,6 @@
           (expect (nil? (emergency-fold-projection []
                                                    trailer
                                                    []
-                                                   #{}
                                                    {:provider :openai :model "gpt"}
                                                    "gpt-4o"
                                                    (constantly 1))))))
@@ -4769,7 +4671,6 @@
                                                       :base-messages base
                                                       :trailer-iters canonical
                                                       :summaries []
-                                                      :protected-scopes #{}
                                                       :replay-target {:provider :openai
                                                                       :model "gpt"}
                                                       :replay-policies {}

@@ -97,9 +97,8 @@ for the model to pick it:
 ```
 
 The expansion explicitly injects the full `SKILL.md` plus its bundled resource
-paths into that user message. The model-facing `skill(name)` verb is
-cache-aware: it returns a full body once while live, then compact
-`already-active` receipts until the body leaves the provider tape or changes.
+paths into that user message. The model reaches the same text on its own with
+`doc(name)` — a skill is a document in the retrieval corpus, never a verb.
 
 ## Shell shortcuts: `!` and `!&`
 

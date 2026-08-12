@@ -695,15 +695,11 @@
    breadcrumbs still carry every gist until the next send re-stamps the universe.
    The token clause is best-effort: no `weights` (or a scope not yet weighed)
    simply omits `~<toks> tok`, leaving the scope counts — never breaks the line.
-   `protected-scopes` (optional fifth arg) are live skill-body iterations; they
-   are excluded from the collapsed set so the ledger describes the exact wire.
-   `turn-weights` (optional sixth arg, `{turn-number → ~tokens}`) prices the
+   `turn-weights` (optional fifth arg, `{turn-number → ~tokens}`) prices the
    removed Q/A recap of every whole-turn-folded turn into the same clause.
    Pure."
-  ([summaries universe weights util] (folds-view summaries universe weights util #{} nil))
-  ([summaries universe weights util protected-scopes]
-   (folds-view summaries universe weights util protected-scopes nil))
-  ([summaries universe weights util protected-scopes turn-weights]
+  ([summaries universe weights util] (folds-view summaries universe weights util nil))
+  ([summaries universe weights util turn-weights]
    (let
      [universe
       (into [] (comp (filter string?) (distinct)) universe)
@@ -718,7 +714,7 @@
       (set universe)
 
       collapsed-set
-      (into #{} (comp (mapcat #(get % "scopes")) (remove (set protected-scopes))) resolved)
+      (into #{} (mapcat #(get % "scopes")) resolved)
 
       live
       (into [] (remove collapsed-set) universe)
@@ -846,7 +842,6 @@
                     (get ctx "engine_iter_universe")
                     (get ctx "engine_iter_weights")
                     (get ctx "engine_utilization")
-                    (get ctx "engine_protected_iter_scopes")
                     (get ctx "engine_turn_weights")))
 
       hint

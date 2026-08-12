@@ -7,75 +7,9 @@
             [com.blockether.vis.internal.workspace :as workspace]
             [lazytest.core :refer [defdescribe it expect]]))
 
-(def ^:private skill-result @#'core/skill-result)
-
 (def ^:private skill-template-text @#'core/skill-template-text)
 
 (def ^:private skill-template-entries @#'core/skill-template-entries)
-
-(defn- skill-env
-  ([ctx] (skill-env ctx 1 1))
-  ([ctx turn iter]
-   {:ctx-atom (atom ctx)
-    :turn-state-atom (atom {:turn-position turn :iteration iter :form-idx 0})}))
-
-(defdescribe
-  skill-result-test
-  (it "an unknown name returns {\"error\" \"available\"}"
-      (let [r (skill-result {} "definitely-not-a-real-skill-zzz")]
-        (expect (string? (get r "error")))
-        (expect (vector? (get r "available")))))
-  (it "returns the full body once, then a compact receipt in the same live iteration"
-      (with-redefs
-        [d/skill-by-name (fn [_]
-                           {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []})]
-        (let
-          [env (skill-env {})
-           r1 (skill-result env "demo")
-           r2 (skill-result env "demo")]
-
-          (expect (= "BODY" (get r1 "body")))
-          (expect (= "already-active" (get r2 "status")))
-          (expect (not (contains? r2 "body")))
-          (expect (= "t1/i1" (get r2 "scope"))))))
-  (it "dedupes only from the post-fold live-wire index, not a stale durable pointer"
-      (with-redefs
-        [d/skill-by-name (fn [_]
-                           {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []})]
-        (let
-          [digest (extension/sha256-hex "BODY")
-           stale {"session_active_skills" {"demo" {"name" "demo" "digest" digest "scope" "t1/i1"}}}
-           env (skill-env stale 2 1)
-           r (skill-result env "demo")]
-
-          ;; The old DB pointer is not on this turn's wire. Rehydrate
-          ;; exactly once and move the durable pointer to this scope.
-          (expect (= "BODY" (get r "body")))
-          (expect (= "t2/i1"
-                     (get-in @(get env :ctx-atom) ["session_active_skills" "demo" "scope"]))))))
-  (it "a matching post-fold live activation returns a receipt; a changed digest reactivates"
-      (let
-        [body
-         (atom "BODY")
-
-         digest
-         (extension/sha256-hex "BODY")
-
-         env
-         (skill-env
-           {"engine_live_skill_activations" {"demo" {"name" "demo" "digest" digest "scope" "t1/i1"}}
-            "session_active_skills" {"demo" {"name" "demo" "digest" digest "scope" "t1/i1"}}}
-           1
-           2)]
-
-        (with-redefs
-          [d/skill-by-name (fn [_]
-                             {:name "demo" :description "d" :body @body :dir "/x" :resources []})]
-          (expect (= "already-active" (get (skill-result env "demo") "status")))
-          (reset! body "BODY v2")
-          (expect (= "BODY v2" (get (skill-result env "demo") "body")))
-          (expect (= (extension/sha256-hex "BODY v2")
-                     (get-in @(get env :ctx-atom) ["session_active_skills" "demo" "digest"])))))))
 
 (defdescribe
   skill-template-text-test
@@ -112,11 +46,11 @@
         (expect (< (.indexOf ^String text "/repo/apps/demo") (.indexOf ^String text "BODY"))))))
 
 (defdescribe skill-ownership-test
-             ;; Regression: a repository-root session that activated a nested project's
+             ;; Regression: a repository-root session expanding a nested project's
              ;; skill (apps/vis-companion's `impeccable`) received a payload of
              ;; {name description body cwd resources} only — no key and no sentence said
              ;; the skill belonged to that app, so the model kept working at the root.
-             (it "the activation payload names the owning project and where to work"
+             (it "the slash payload names the owning project and where to work"
                  (let
                    [payload ((deref #'core/skill-payload)
                               {:name "demo"
@@ -145,54 +79,19 @@
                                                               "/apps/demo")}])]
                    (expect (str/includes? ((deref #'core/skills-prompt) {}) "demo [apps/demo]")))))
 
-(defdescribe
-  skill-activation-is-a-session-effect-test
-  ;; `skill` is not a lookup: activation MARKS the skill on the session, resolves its
-  ;; owning project root and bundled resources, and survives the iteration. Reading a
-  ;; skill is `doc(name)`; working under it is `skill(name)`.
-  (let [exts [core/vis-extension]]
-    (it "is a bare Python verb in the sandbox, handed the live env"
-        (let
-          [entry (first (filter #(= 'skill (:ext.symbol/symbol %))
-                                (mapcat extension/ext-symbols exts)))]
-          ;; Engine-bound (the default): a python_execution block can activate a
-          ;; skill inside a `gather(...)` batch.
-          (expect (nil? (:ext.symbol/engine-bound? entry)))
-          (expect (true? (:ext.symbol/inject-env? entry)))
-          (expect (contains? (extension/builtin-sandbox-bindings (fn []
-                                                                   nil))
-                             'skill))))
-    (it "activates once and answers a compact receipt on repeat"
-        (with-redefs
-          [d/skill-by-name (fn [_]
-                             {:name "demo" :body "B" :description "d" :dir "/x" :resources []})]
-          (let
-            [env (skill-env {})
-             r1 (core/skill env {"name" "demo"})
-             r2 (core/skill env {"name" "demo"})]
-
-            (expect (= "B" (get (:result r1) "body")))
-            (expect (= "already-active" (get (:result r2) "status")))
-            (expect (not (contains? (:result r2) "body"))))))
-    (it "takes kwargs or a bare name"
-        ;; `skill(name="x")` folds its kwargs into ONE trailing dict at the GraalPy
-        ;; boundary; `skill("x")` stays positional. Both bind identically, and the
-        ;; bound verb returns the canonical envelope the invoker asserts on.
-        (with-redefs
-          [d/skill-by-name (fn [_]
-                             {:name "demo" :body "B" :description "d" :dir "/x" :resources []})]
-          (let
-            [kw (core/skill (skill-env {}) {"name" "demo"})
-             pos (core/skill (skill-env {}) "demo")]
-
-            (expect (extension/envelope-success? kw))
-            (expect (= "B" (get (:result kw) "body")))
-            (expect (= "B" (get (:result pos) "body"))))))))
-
 (defdescribe skills-prompt-test
              (it "skills-prompt is a string listing skills when any exist"
                  (with-redefs [d/skills (constantly [{:name "demo" :description "Demo skill"}])]
-                   (expect (string? ((deref #'core/skills-prompt) {}))))))
+                   (expect (string? ((deref #'core/skills-prompt) {})))))
+             ;; A skill is a DOCUMENT, not a verb: the cheap listing may only point at
+             ;; the retrieval verbs, never at an activation that no longer exists.
+             (it "the listing points at doc/apropos and never at an activation verb"
+                 (with-redefs [d/skills (constantly [{:name "demo" :description "Demo skill"}])]
+                   (let [p ((deref #'core/skills-prompt) {})]
+                     (expect (str/includes? p "doc(\"name\")"))
+                     (expect (str/includes? p "apropos(text)"))
+                     (expect (not (str/includes? p "skill(")))
+                     (expect (not (str/includes? p "activates")))))))
 
 ;; ── agents surface (slice 3) ──────────────────────────────────────────────
 
@@ -271,31 +170,34 @@
         (expect (= "rejected" (get (:result (core/agent {} "code-reviewer" "x")) "status"))))))
 
 (defdescribe verb-shape-test
-             (let
-               [skill-entry (first (filter #(= 'skill (:ext.symbol/symbol %))
-                                           (mapcat extension/ext-symbols [core/vis-extension])))]
-               (it "skill verb is unconditionally active (no toggle gate)"
-                   (expect (extension/symbol-active? skill-entry nil)))
-               (it
-                 "agent verb is unconditionally active and declares :inject-env? with no before-fn"
+             (it "agent verb is unconditionally active and declares :inject-env? with no before-fn"
                  (expect (= true (:ext.symbol/inject-env? core/agent-symbol)))
                  (expect (nil? (:ext.symbol/before-fn core/agent-symbol)))
-                 (expect (extension/symbol-active? core/agent-symbol nil)))))
+                 (expect (extension/symbol-active? core/agent-symbol nil)))
+             ;; There is NO skill verb: a skill is retrieved with `doc(name)` and
+             ;; searched with `apropos(text)`, so nothing binds the name `skill` and
+             ;; nothing activates.
+             (it "no skill verb is bound anywhere"
+                 (expect (nil? (first (filter #(= 'skill (:ext.symbol/symbol %))
+                                              (mapcat extension/ext-symbols
+                                                      [core/vis-extension])))))
+                 (expect (not (contains? (extension/builtin-sandbox-bindings (fn []
+                                                                               nil))
+                                         'skill)))))
 
 (defdescribe extension-shape-test
-             (it
-               "binds BOTH bare verbs (skill + agent), builtin? no alias, prompt fn, always active"
-               (let
-                 [e
-                  core/vis-extension
+             (it "binds the one bare verb (agent), builtin? no alias, prompt fn, always active"
+                 (let
+                   [e
+                    core/vis-extension
 
-                  syms
-                  (get-in e [:ext/engine :ext.engine/symbols])]
+                    syms
+                    (get-in e [:ext/engine :ext.engine/symbols])]
 
-                 (expect (= "foundation-harness" (:ext/name e)))
-                 (expect (true? (get-in e [:ext/engine :ext.engine/builtin?])))
-                 (expect (nil? (get-in e [:ext/engine :ext.engine/alias])))
-                 (expect (= 2 (count syms)))
-                 (expect (fn? (:ext/prompt-fn e)))
-                 ;; always active now — no toggle gate
-                 (expect ((:ext/activation-fn e) {})))))
+                   (expect (= "foundation-harness" (:ext/name e)))
+                   (expect (true? (get-in e [:ext/engine :ext.engine/builtin?])))
+                   (expect (nil? (get-in e [:ext/engine :ext.engine/alias])))
+                   (expect (= 1 (count syms)))
+                   (expect (fn? (:ext/prompt-fn e)))
+                   ;; always active now — no toggle gate
+                   (expect ((:ext/activation-fn e) {})))))

@@ -7,9 +7,12 @@ always available). It is the sibling of the shell layer's POSIX compatibility, b
 skill markdown that Claude Code, pi, opencode, and the
 [agents standard](https://agentskills.io) already define.
 
-Skills are exposed through a model-facing verb, **`skill(name)`**, and a
-user-facing invocation, **`/<name> [task]`** (see
-[Context files & prompts](context-and-prompts.md)).
+A skill is a **document**, not a verb. Every discovered `SKILL.md` joins the one
+retrieval corpus, so the model finds it with **`apropos(text)`** and reads it
+whole with **`doc(name)`** — the same two verbs that answer for a function
+contract or a Vis documentation page. There is nothing to activate and no
+session state to undo. You can also inject one yourself with **`/<name> [task]`**
+(see [Context files & prompts](context-and-prompts.md)).
 
 ## What a skill is
 
@@ -51,23 +54,16 @@ Skills are **progressive**, so they cost almost nothing until used:
 
 1. The system prompt lists every skill as `name — description` (descriptions
    clipped to ~180 chars). This is the only always-present cost.
-2. When a task matches, the model calls `skill("name")`, which loads the **full
-   `SKILL.md` body** plus the absolute paths of every bundled resource.
-3. The model reads those resource paths with its normal file tools and follows
-   the instructions.
+2. When a task matches, the model calls `doc("name")` and gets the **whole
+   `SKILL.md`**: the frontmatter description as its first line, then the body
+   verbatim. `apropos(text)` searches those bodies, so a rule the description
+   never mentions is still findable.
+3. The model reads the skill's bundled files with its normal file tools and
+   follows the instructions.
 
-The first activation returns the **full `SKILL.md` body**. While that exact body
-remains on the provider-visible tape, another `skill("name")` call returns only
-a compact `already-active` receipt. The original tool call and result are left
-byte-for-byte in their append-only position, so deduplication does not rewrite
-the cached prefix.
-
-The activation index is rebuilt from the post-fold provider wire, not inferred
-from the mere existence of a database row. If a legacy fold removed the body,
-if a new user turn no longer replays that tool result, or if the file's digest
-changed, the next call returns the full body exactly once and establishes a new
-live activation. `session_fold` excludes a currently active skill iteration
-from broad fold targets; other selected iterations still compact normally.
+Reading is the whole of using: there is no activation call, no receipt, no
+`already-active` state, and no fold protection — a skill body is ordinary
+context that the model can re-read with `doc(name)` whenever it wants it back.
 
 ## Where skills come from
 
@@ -108,8 +104,8 @@ other-harness location — the natural place for skills specific to one project.
 
 ## Availability
 
-Skill discovery, the prompt catalog, and `skill(name)` are built in and always
-available. There is no skills feature toggle.
+Skill discovery, the prompt catalog, and the `doc`/`apropos` corpus entries are
+built in and always available. There is no skills feature toggle.
 
 ## Invoking a skill yourself
 

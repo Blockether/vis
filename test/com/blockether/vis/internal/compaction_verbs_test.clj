@@ -85,35 +85,6 @@
           (= [{"scopes" #{"t1/i2" "t1/i3"} "issued_turn" 99 "at_turn" 99 "gist" "encoded target"}]
              (get @ca "session_summaries")))
         (expect (str/includes? out "folded t1/i2, t1/i3"))))
-  (it "session_fold excludes an active skill scope and folds the remaining target"
-      (let
-        [[ca ev]
-         (with-verbs)
-
-         _
-         (swap! ca assoc
-           "engine_iter_universe" ["t1/i1" "t1/i2"]
-           "engine_protected_iter_scopes" #{"t1/i1"})
-
-         out
-         (ev "session_fold([\"t1/i1\", \"t1/i2\"], \"trim\")")]
-
-        (expect (= [{"scopes" #{"t1/i2"} "issued_turn" 99 "at_turn" 99 "gist" "trim"}]
-                   (get @ca "session_summaries")))
-        (expect (str/includes? out "kept active skill t1/i1"))))
-  (it "session_fold records nothing when every selected scope is an active skill"
-      (let
-        [[ca ev]
-         (with-verbs)
-
-         _
-         (swap! ca assoc "engine_iter_universe" ["t1/i1"] "engine_protected_iter_scopes" #{"t1/i1"})
-
-         out
-         (ev "session_fold([\"t1/i1\"], \"trim\")")]
-
-        (expect (nil? (get @ca "session_summaries")))
-        (expect (str/includes? out "nothing else to fold"))))
   (it "session_fold({\"through\": …}): the options DICT marshals to a \"through\" cursor"
       (let
         [[ca ev]
@@ -645,15 +616,6 @@
          (folds-view [{"through" "t1/i2"}] uni nil nil)]
 
         (expect (= {"now" "saved 2/3 (67%) · live t2/*"} out))))
-  (it "protected skill scopes remain live and are excluded from saved accounting"
-      (let
-        [uni
-         ["t1/i1" "t1/i2" "t2/i1"]
-
-         out
-         (folds-view [{"through" "t1/i2"}] uni {"t1/i1" 9000 "t1/i2" 1000} nil #{"t1/i1"})]
-
-        (expect (= {"now" "saved 1/3 (33%, ~1k tok) · live t1/i1 t2/*"} out))))
   (it "a partial-turn fold leaves the unfolded gaps live in `now`"
       (let
         [uni
@@ -705,7 +667,6 @@
                                uni
                                {"t1/i1" 4000 "t1/i2" 2000}
                                nil
-                               #{}
                                {1 6000})))
         ;; an enumerated fold carries NO whole-turn intent -> Q/A weight NOT added
         (expect (= {"now" "saved 2/3 (67%, ~6k tok) · live t2/*"}
@@ -713,11 +674,10 @@
                                uni
                                {"t1/i1" 4000 "t1/i2" 2000}
                                nil
-                               #{}
                                {1 6000})))
         ;; Q/A weight alone (no iteration weights) still yields the clause
         (expect (= {"now" "saved 2/3 (67%, ~6k tok) · live t2/*"}
-                   (folds-view [{"scopes" #{"t1"} "gist" "g"}] uni nil nil #{} {1 6000})))))
+                   (folds-view [{"scopes" #{"t1"} "gist" "g"}] uni nil nil {1 6000})))))
   (it "session-view merges only `now` INTO session_utilization — no top-level key, no `folds` leaf"
       (expect (not (contains? (eng/session-view base-ctx) "session_folds")))
       (let

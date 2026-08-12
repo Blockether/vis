@@ -119,8 +119,8 @@
       (doseq
         [required ["Host project default" "`apropos(text)` full-text searches" "`doc(name)` returns"
                    "runtime > source > docs > assumption" "obey its stated preconditions"
-                   "the curated index" "Read a skill with `doc`, work under it with `skill`"
-                   "`python_execution`" "ONE call exists" "there is no tool to choose"
+                   "the curated index" "A skill is one of those documents" "`python_execution`"
+                   "ONE call exists" "there is no tool to choose"
                    "Batch independent work in ONE block" "`await gather(...)` for"
                    ;; No tool blocks on the model's behalf: the old `shell` op `wait`/`until`
                    ;; is gone, so core routes to background + a poll the model can read.

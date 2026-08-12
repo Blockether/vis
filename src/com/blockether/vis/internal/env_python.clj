@@ -1128,7 +1128,7 @@
     (set-python-binding-doc!
       ctx
       'doc
-      "doc(target) -> str. RETRIEVE one document whole: a function name, a Vis documentation slug or a skill name — case, whitespace and a trailing `.md` do not matter, and a function wins a name collision. `doc()` with no argument prints the curated index of the verbs a session starts from. Reading a skill does NOT activate it: `doc(name)` reads, `await skill(name)` works under it.")
+      "doc(target) -> str. RETRIEVE one document whole: a function name, a Vis documentation slug or a skill name — case, whitespace and a trailing `.md` do not matter, and a function wins a name collision. `doc()` with no argument prints the curated index of the verbs a session starts from. A skill is one of these documents and nothing more: reading it is the whole of using it.")
     (set-python-binding-doc!
       ctx
       'gather
@@ -2027,9 +2027,9 @@
     ;; contracts live in — ONE corpus, so `apropos` is one search and `doc` is one
     ;; lookup. `setdefault` IS the precedence rule: a callable name always wins a
     ;; documentation slug. `__vis_calls__` carries the expression that uses a
-    ;; handle which is not itself a Python name (`await skill("spel")`,
-    ;; `mcp__call(...)`). Best-effort: a discovery hiccup must never break context
-    ;; creation.
+    ;; handle which is not itself a Python name (`mcp__call(...)`); a skill and a
+    ;; documentation page carry none, because both are prose. Best-effort: a
+    ;; discovery hiccup must never break context creation.
     (try
       (let
         [es
