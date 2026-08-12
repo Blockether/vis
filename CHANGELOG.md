@@ -87,6 +87,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   block, file picker) and the TUI Magit surface are unchanged.
 
 ### Fixed
+- A cancelled turn no longer keeps polling a shell wait to its own deadline. `sh.wait` samples the
+  process tree's usage on every iteration, and that sampler spawns `ps` and calls `.waitFor` inside
+  a best-effort `catch Throwable` — which caught the `InterruptedException` the JVM throws with the
+  interrupt flag already CLEARED, so a cancellation landing in that window was swallowed and the
+  wait ran on for up to ten minutes. The sampler now restores the flag and answers `nil`: the
+  measurement is worthless after a cancel, the cancellation is not.
 - The artifacts gallery no longer reads a wire key nobody sends. `collectArtifacts` asked each
   iteration for `tool_name` — a field that left the wire when the 21 native tools did — so it
   always answered `""` and the tile's screen-reader caption silently degraded from "produced in

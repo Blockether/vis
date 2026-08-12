@@ -280,7 +280,6 @@
               ;; never branches on which shape came back.
               (expect (true? (get r "started")))
               (expect (false? (get r "timed_out")))
-              (expect (false? (get r "timed_out")))
               (expect (= 0 (get r "stdout_omitted_chars")))
               ;; Request scope rides the SAME map — one shape, no envelope to unwrap.
               (expect (contains? r "cwd"))
@@ -1312,6 +1311,26 @@
                      (expect (= :interrupted (deref out 5000 :still-blocked)))
                      (expect (= "running" (get (:result (shell-logs* env "slow")) "status"))))
                    (finally (resources/stop-all! sid))))))))
+  (it "keeps a cancellation while it measures a live process tree"
+      ;; The wait polls usage on every iteration, and the sampler spawns `ps` and
+      ;; waits for it. That `.waitFor` throws InterruptedException — CLEARING the
+      ;; flag — and it was folded into the sampler's best-effort `catch Throwable`,
+      ;; so a turn cancelled during that window lost its interrupt and the wait
+      ;; polled on to its own deadline instead of unwinding.
+      (let
+        [kept
+         (promise)
+
+         t
+         (Thread. (fn []
+                    (.interrupt (Thread/currentThread))
+                    (try (@#'shell/process-usage (.pid (java.lang.ProcessHandle/current)))
+                         (catch InterruptedException _ nil))
+                    (deliver kept (.isInterrupted (Thread/currentThread)))))]
+
+        (.start t)
+        (.join t 20000)
+        (expect (true? (deref kept 5000 false)))))
   (it "leaves no shell or pty thread behind after a burst of waits"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
@@ -2050,7 +2069,7 @@
                      (expect (str/includes? (get r "stdout") "command not found"))
                      (expect (false? (get r "timed_out"))))
                    (finally (resources/stop-all! sid))))))))
-  (it "carries a non-zero exit and the STDERR that explains it"
+  (it "carries a non-zero exit and, on the ONE stream, the fd-2 line that explains it"
       (with-shell-on
         (fn []
           (binding [workspace/*workspace-root* (workspace/trunk-root)]

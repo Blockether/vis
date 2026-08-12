@@ -4107,8 +4107,10 @@
   []
   (let [bean (java.lang.management.ManagementFactory/getOperatingSystemMXBean)]
     (when (instance? com.sun.management.UnixOperatingSystemMXBean bean)
-      (let [b ^com.sun.management.UnixOperatingSystemMXBean bean
-            m (.getMaxFileDescriptorCount b)]
+      (let
+        [b ^com.sun.management.UnixOperatingSystemMXBean bean
+         m (.getMaxFileDescriptorCount b)]
+
         (when (pos? m) [(.getOpenFileDescriptorCount b) m])))))
 
 (defn reclaim-fds-under-pressure!
@@ -4128,8 +4130,10 @@
       ;; after GC marks the file objects unreachable (same 100-150ms `shell`
       ;; uses). Only paid under pressure, never on the common path.
       (Thread/sleep 120)
-      (let [after (or (first (fd-usage)) open)
-            freed (max 0 (- (long open) (long after)))]
+      (let
+        [after (or (first (fd-usage)) open)
+         freed (max 0 (- (long open) (long after)))]
+
         (tel/log! {:level :warn
                    :id ::fd-reclaim
                    :data {:before open :after after :limit lim :freed freed}
@@ -8265,7 +8269,7 @@
 
      display
      ;; A bang PRINTS its command's output, so the shell card — exit-code headline
-     ;; plus COMMAND / STATUS / STDOUT / STDERR — IS the answer here. It is built by
+     ;; plus COMMAND / STATUS / STDOUT — IS the answer here. It is built by
      ;; calling shell's renderer DIRECTLY: one function, no symbol table, no
      ;; registry lookup. Every other result is painted from its own data.
      (when (some? result-map)

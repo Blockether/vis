@@ -1263,6 +1263,13 @@
               ;; make two consecutive samples look different when they are not.
               "cpu_percent" (/ (Math/round (* 10.0 (double (reduce + (map second rows))))) 10.0)
               "cpu_ms" (reduce + (keep #(nth % 2) rows))}))
+         ;; CANCELLATION IS NOT A MEASUREMENT FAILURE. `.waitFor` throws
+         ;; InterruptedException and CLEARS the flag, so folding it into the
+         ;; best-effort `catch Throwable` below silently ate the interrupt: a
+         ;; cancelled turn whose wait happened to be sampling here kept polling
+         ;; until its own deadline instead of unwinding. Restore the flag and
+         ;; answer nil — the sample is worthless, the cancellation is not.
+         (catch InterruptedException _ (.interrupt (Thread/currentThread)) nil)
          (catch Throwable _ nil))))
 
 (defn- process-usage
