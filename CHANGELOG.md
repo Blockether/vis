@@ -95,6 +95,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   block, file picker) and the TUI Magit surface are unchanged.
 
 ### Fixed
+- The Android release preflight asks the question the build asks. It probed
+  `/usr/libexec/java_home -v 21`, which only reports JDKs registered under
+  `/Library/Java/JavaVirtualMachines` and is blind to SDKMAN — so a machine whose only
+  stock Temurin 21 lives in SDKMAN was declared unfit for the Play leg, even though
+  `release:android:store` searches SDKMAN itself and builds there happily.
+  `apps/vis-companion/scripts/jdk.mjs` now owns the rule (exactly 21, never GraalVM,
+  whose `jlink` breaks AGP's JdkImageTransform) and the search; `android-release.mjs`
+  imports it instead of carrying its own copy, and `node scripts/jdk.mjs` prints the JDK
+  Gradle will really use — the preflight and the build can no longer disagree.
+
 - The pty bridge is tested against a REAL pseudo-terminal. `pty_bridge_test` drove a hand-written
   `{:add-listener :send}` stand-in, which could only prove that `serve!` called two functions —
   never that a byte typed into the socket reaches a terminal and comes back. It now spawns `cat`

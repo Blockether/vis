@@ -27,7 +27,7 @@ habit — and the preflight is run before anything is announced:
 cd apps/vis-companion
 npm run --silent secrets -- doctor      # ASC key, Play service account, upload keystore
 xcodebuild -version                     # iOS leg
-/usr/libexec/java_home -v 21 >/dev/null # Android leg needs stock JDK 21, never GraalVM
+node scripts/jdk.mjs                    # Android leg: the stock JDK 21 Gradle will use
 ```
 
 - **Every line above green → release LOCALLY** (steps 5L–6L). No tag, no CI, no wait.

@@ -36,6 +36,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { JDK, jdkHelp, pickJdk } from './jdk.mjs';
 import { promoteBundle, publishBundle, tracks as readTracks } from './play.mjs';
 import { buildNotes } from './release-notes.mjs';
 import { syncPackageVersion } from './version.mjs';
@@ -147,56 +148,10 @@ if (!has('skip-web')) {
 // stamps the signing config + versions into the generated Gradle project.
 run('node', [join(appDir, 'scripts', 'android-prepare.mjs'), '--build', versionCode]);
 
-
-// Picking the JDK is not optional bookkeeping — three separate failures live here, and all
-// three only bite the RELEASE build, long after a debug run looked fine:
-//   • JDK 25 (this machine's SDKMAN default): Gradle 8.14 dies parsing the build script,
-//     "Unsupported class file major version 69".
-//   • JDK 17: Capacitor 8 compiles with `source 21` — "invalid source release: 21".
-//   • GraalVM (any version): AGP's JdkImageTransform shells out to `jlink --disable-plugin
-//     system-modules`, which Graal's jlink rejects.
-// So: exactly 21, and a stock JDK. CI's temurin 21 satisfies JAVA_HOME and skips the search.
-const JDK = 21;
-
-const javaProps = (home) => {
-  const bin = join(home, 'bin', 'java');
-  if (!existsSync(bin)) return { major: 0, graal: false };
-  const res = spawnSync(bin, ['-version'], { encoding: 'utf8' });
-  const out = `${res.stderr ?? ''}${res.stdout ?? ''}`;
-  return { major: Number(/version "(\d+)/.exec(out)?.[1] ?? 0), graal: /graal/i.test(out) };
-};
-
-const gradleJavaHome = () => {
-  const usable = (h) => {
-    if (!h || !existsSync(h)) return false;
-    const { major, graal } = javaProps(h);
-    return major === JDK && !graal;
-  };
-  if (usable(process.env.JAVA_HOME)) return process.env.JAVA_HOME;
-
-  const candidates = [];
-  for (const k of Object.keys(process.env)) if (/^JAVA_HOME_21/.test(k)) candidates.push(process.env[k]);
-  const mac = spawnSync('/usr/libexec/java_home', ['-v', String(JDK)], { encoding: 'utf8' });
-  if (mac.status === 0) candidates.push(mac.stdout.trim());
-  for (const root of [join(process.env.HOME ?? '', '.sdkman/candidates/java'), '/Library/Java/JavaVirtualMachines'])
-    if (existsSync(root))
-      for (const e of readdirSync(root).sort().reverse())
-        candidates.push(existsSync(join(root, e, 'Contents/Home')) ? join(root, e, 'Contents/Home') : join(root, e));
-
-  const found = candidates.find(usable);
-  if (!found) {
-    const here = javaProps(process.env.JAVA_HOME ?? '');
-    die(
-      `no stock JDK ${JDK} found (JAVA_HOME is ${process.env.JAVA_HOME ?? 'unset'}` +
-        `${here.major ? `, java ${here.major}${here.graal ? ' GraalVM' : ''}` : ''}).\n` +
-        `  Capacitor 8 needs source ${JDK}, and GraalVM's jlink breaks AGP. Install one:\n` +
-        '    sdk install java 21.0.11-tem      # or: brew install --cask temurin@21',
-    );
-  }
-  return found;
-};
-
-const javaHome = gradleJavaHome();
+// The JDK Gradle needs is stock 21 and nothing else — scripts/jdk.mjs owns that rule
+// and the search, so the preflight can ask the SAME question the build asks.
+const javaHome = pickJdk();
+if (!javaHome) die(jdkHelp());
 if (javaHome !== process.env.JAVA_HOME) console.log(`\n· JDK ${JDK} for Gradle: ${javaHome}`);
 
 const gradlew = join(androidDir, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
