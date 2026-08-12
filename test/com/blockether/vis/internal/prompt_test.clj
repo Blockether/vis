@@ -86,7 +86,13 @@
       ;; 4.75k → 4.8k exactly once more, for the fifty characters that make §6 executable:
       ;; the section ordered a fold and named no callable, so `session_fold`'s NAME and call
       ;; shape now ride inline. A rule the model cannot execute costs its whole section.
-      (expect (< (count text) 4800))
+      ;; 4.8k → 5k exactly once more, for the budget line: `session_utilization` reports
+      ;; `saturation`/`headroom_tokens` against the HARD per-call limit, while every fold
+      ;; trigger — the `hint` ladder, the breadcrumb's `% of budget` — is priced against
+      ;; `auto_compress_above`. On a 1M-window model 150k of the 200k operating budget reads
+      ;; as `saturation 15%, headroom 850k`, so "watch `session[\"utilization\"]`" pointed the
+      ;; model at the one pair of numbers that stays calm while the budget empties.
+      (expect (< (count text) 5000))
       (let
         [steps (mapv #(str/index-of text %)
                      ["`grep` locates unknown code" "`struct_index` every known file"
@@ -142,7 +148,17 @@
                    "unverified until a test covers it" "BATCH inside one block"
                    "Write only files the task asked" "Commit, push, publish"
                    "Treat context as a budget" "at most two targeted"
-                   "named unresolved decision blocks the edit" "no repeated search/read"
+                   ;; Regression, user report: cross-validating §6 against the runtime. The
+                   ;; utilization line named no field, and the two fields a model reads first
+                   ;; (`saturation`, `headroom_tokens`) are priced against the hard per-call
+                   ;; limit — calm at 15% while `over-budget-hint` is already saying FOLD SOON.
+                   ;; Name the ratio the fold triggers actually use.
+                   "pressure is `last_request_tokens`" "`auto_compress_above`"
+                   "`saturation`/`headroom_tokens` price" "`hint` only arms at 75% of it"
+                   ;; `session_drop` is gone: omitting the gist IS the discard, and a model
+                   ;; that does not know that writes a useless gist instead of dropping.
+                   "the gist discards outright" "named unresolved decision blocks the edit"
+                   "no repeated search/read"
                    ;; Regression, user report: sessions stopped folding. §6 ORDERED the fold
                    ;; but named no callable, so `session_fold` had to be remembered or
                    ;; rediscovered through `doc()` — every other verb in the core is named.
