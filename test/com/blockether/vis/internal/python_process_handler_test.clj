@@ -4,7 +4,13 @@
    `capture_output`, `stderr=STDOUT`, `os.popen`. The point of the namespace is
    that a stream nobody reads goes to the log instead of the JVM's fd 1/2 —
    which under a foreground gateway is the operator's terminal — WITHOUT ever
-   deadlocking on an undrained pipe."
+   deadlocking on an undrained pipe.
+
+   The last two namespaces cover the GUEST half
+   (`vis-python/process_redirect.py`): GraalPy discards a `stdout=`/`stderr=`/
+   `stdin=` file or descriptor before the handler can see it, so the file an
+   extension named stayed empty and a `stdin=` file hung the child on the
+   JVM's own stdin."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.python-extensions :as pyx]
@@ -380,3 +386,136 @@
               "guest print and both child streams are attributed, not written to a descriptor")
             (expect (= [] (lines-of seen "stderr")))
             (finally (.close ctx true))))))))
+
+
+;; =============================================================================
+;; The guest half — a redirect GraalPy discards
+;; =============================================================================
+
+(defn- guest-value
+  "Eval `code` in a real extension context; answer its `__vis_res__` string.
+   `@TMP@` in `code` is replaced by a fresh temp directory."
+  [label code]
+  (let
+    [dir
+     (str (Files/createTempDirectory "vis-redirect" (into-array FileAttribute [])))
+
+     ^Context ctx
+     (pyx/build-context label)]
+
+    (try (.eval ctx "python" ^String (str/replace code "@TMP@" dir))
+         (.asString (.getMember (.getBindings ctx "python") "__vis_res__"))
+         (finally (.close ctx true)))))
+
+(defdescribe
+  guest-redirect-repair-test
+  ;; Regression guard: GraalPy hands the host a plain INHERIT for every file
+  ;; or descriptor redirect, so an extension that redirected a CLI's output to
+  ;; a file got an EMPTY file and the bytes went to the JVM's fd 1 — the
+  ;; operator's terminal under a foreground gateway.
+  (it "writes a file-object redirect to the file the extension named"
+      (expect (= "'FILE-OBJ-OUT\\n'"
+                 (guest-value
+                   "redirect-file.py"
+                   (str "import os, subprocess\n"
+                        "p = os.path.join('@TMP@', 'out.txt')\n" "with open(p, 'w') as f:\n"
+                        "    subprocess.run(['/bin/sh', '-c', 'echo FILE-OBJ-OUT'], stdout=f)\n"
+                        "__vis_res__ = repr(open(p).read())\n")))))
+  (it "writes a raw descriptor redirect to that descriptor"
+      (expect (= "'RAW-FD-OUT\\n'"
+                 (guest-value "redirect-fd.py"
+                              (str
+                                "import os, subprocess\n" "p = os.path.join('@TMP@', 'out.txt')\n"
+                                "fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)\n"
+                                "subprocess.run(['/bin/sh', '-c', 'echo RAW-FD-OUT'], stdout=fd)\n"
+                                "os.close(fd)\n" "__vis_res__ = repr(open(p).read())\n")))))
+  (it "appends where the extension opened for append"
+      (expect (= "'PRE\\nAPPENDED\\n'"
+                 (guest-value "redirect-append.py"
+                              (str
+                                "import os, subprocess\n"
+                                "p = os.path.join('@TMP@', 'out.txt')\n" "with open(p, 'w') as f:\n"
+                                "    f.write('PRE\\n')\n" "with open(p, 'a') as f:\n"
+                                "    subprocess.run(['/bin/sh', '-c', 'echo APPENDED'], stdout=f)\n"
+                                "__vis_res__ = repr(open(p).read())\n")))))
+  (it "sends a stderr redirect to the file the extension named"
+      (expect (= "'FILE-ERR\\n'"
+                 (guest-value
+                   "redirect-stderr.py"
+                   (str "import os, subprocess\n"
+                        "p = os.path.join('@TMP@', 'err.txt')\n" "with open(p, 'w') as f:\n"
+                        "    subprocess.run(['/bin/sh', '-c', 'echo FILE-ERR 1>&2'], stderr=f)\n"
+                        "__vis_res__ = repr(open(p).read())\n")))))
+  ;; Regression guard: a discarded `stdin=` file is worse than a lost
+  ;; redirect — the child inherited the JVM's own stdin and blocked forever
+  ;; on input the extension had already supplied.
+  (it "feeds a stdin file to the child instead of leaving it on the terminal"
+      (expect (= "b'STDIN-FROM-FILE'"
+                 (guest-value "redirect-stdin.py"
+                              (str
+                                "import os, subprocess\n"
+                                "p = os.path.join('@TMP@', 'in.txt')\n" "with open(p, 'w') as f:\n"
+                                "    f.write('STDIN-FROM-FILE')\n"
+                                "done = subprocess.run(['/bin/sh', '-c', 'cat'], stdin=open(p),\n"
+                                "                      stdout=subprocess.PIPE, timeout=30)\n"
+                                "__vis_res__ = repr(done.stdout)\n")))))
+  (it "never blocks on a flood too large for the pipe buffer"
+      ;; The pump is what keeps this from deadlocking: 1 MB through a pipe
+      ;; whose buffer is about 64 KiB, with the file complete before `run`
+      ;; returns.
+      (expect (= "(0, 20000, 1000000)"
+                 (guest-value
+                   "redirect-flood.py"
+                   (str "import os, subprocess\n" "p = os.path.join('@TMP@', 'big.txt')\n"
+                        "with open(p, 'w') as f:\n" "    done = subprocess.run(\n"
+                        "        ['/bin/sh', '-c',\n" "         'for i in $(seq 1 20000); do echo "
+                        "0123456789012345678901234567890123456789012345678; done'],\n"
+                        "        stdout=f)\n"
+                        "lines = sum(1 for _ in open(p))\n"
+                        "__vis_res__ = repr((done.returncode, lines, os.path.getsize(p)))\n")))))
+  (it "leaves capture_output and DEVNULL exactly as subprocess handles them"
+      (expect
+        (= "(b'CAP\\n', b'', 0)"
+           (guest-value
+             "redirect-untouched.py"
+             (str "import subprocess\n"
+                  "captured = subprocess.run(['/bin/sh', '-c', 'echo CAP'], capture_output=True)\n"
+                  "quiet = subprocess.run(['/bin/sh', '-c', 'echo QUIET'],\n"
+                  "                       stdout=subprocess.DEVNULL)\n"
+                  "__vis_res__ = repr((captured.stdout, captured.stderr, quiet.returncode))\n")))))
+  (it "refuses a sink that has no descriptor instead of losing its bytes"
+      ;; CPython raises the same `UnsupportedOperation`; the alternative here
+      ;; was silence plus output on a descriptor nobody named.
+      (expect (= "'UnsupportedOperation'"
+                 (guest-value
+                   "redirect-no-fileno.py"
+                   (str "import io, subprocess\n" "try:\n"
+                        "    subprocess.run(['/bin/sh', '-c', 'echo X'], stdout=io.BytesIO())\n"
+                        "    __vis_res__ = 'NO-ERROR'\n"
+                        "except Exception as e:\n"
+                        "    __vis_res__ = repr(type(e).__name__)\n"))))))
+
+(defdescribe
+  standard-stream-redirect-test
+  (it "sends a redirect to sys.stdout into the extension's log, not descriptor 1"
+      ;; Descriptor 1 belongs to the JVM, not to this context: writing the
+      ;; child's bytes there would put them back on the operator's terminal,
+      ;; which is the leak the whole namespace exists to close.
+      (let [[seen emit] (recorder)]
+        (with-redefs
+          [process-handler/log-emit (fn [label]
+                                      (fn [stream line]
+                                        (emit stream (str label "|" line))))]
+          (let [^Context ctx (pyx/build-context "redirect-sys-stdout.py")]
+            (try (.eval
+                   ctx
+                   "python"
+                   (str
+                     "import subprocess, sys\n"
+                     "subprocess.run(['/bin/sh', '-c', 'echo TO-SYS-STDOUT'], stdout=sys.stdout)\n"
+                     "sys.stdout.flush()\n"))
+                 (expect (wait-until 10000
+                                     #(some (fn [line]
+                                              (str/includes? line "TO-SYS-STDOUT"))
+                                            (lines-of seen "stdout"))))
+                 (finally (.close ctx true))))))))

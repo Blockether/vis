@@ -85,6 +85,18 @@
    `-H:IncludeResources=vis-python/.*` (see `env-python/runtime-python-src`)."
   (env/runtime-python-src "vis-python/extension_bootstrap.py"))
 
+(def ^:no-doc redirect-repair-python
+  "The guest half of process containment, evaluated into every extension
+   context by `build-context`. GraalPy DISCARDS a `stdout=`/`stderr=`/`stdin=`
+   file or descriptor: the host receives a plain INHERIT, so an extension that
+   carefully redirected a CLI's output to a log file still sprays it on the
+   operator's terminal, and a `stdin=` file leaves the child blocked on the
+   JVM's own stdin. The choice is gone before `internal.python-process-handler`
+   can see it, so the repair has to happen while it is still a Python object -
+   `vis-python/process_redirect.py` turns it into a pipe pumped to the
+   descriptor the extension actually named."
+  (env/runtime-python-src "vis-python/process_redirect.py"))
+
 ;; =============================================================================
 ;; Marshalling helpers
 ;; =============================================================================
@@ -274,24 +286,36 @@
    and drains whatever the guest itself does not read. Both are required —
    the JVM stream swap in `internal.config/init-cli!` replaces PrintStreams
    and a child process writes to the file DESCRIPTOR, which under a
-   foreground gateway is the operator's terminal."
+   foreground gateway is the operator's terminal.
+
+   `redirect-repair-python` is evaluated into the finished context because
+   the host handler cannot see a redirect GraalPy already discarded - the two
+   halves together are what makes an extension's process output land where
+   the extension asked for it."
   ^Context [label]
-  (let [emit (process-handler/log-emit label)]
-    (-> (Context/newBuilder (into-array String ["python"]))
-        (.engine ^Engine @env/shared-engine)
-        (.allowAllAccess false)
-        (.allowIO IOAccess/ALL)
-        (.allowCreateThread true)
-        (.allowCreateProcess true)
-        (.allowNativeAccess false)
-        (.allowPolyglotAccess PolyglotAccess/NONE)
-        (.allowEnvironmentAccess EnvironmentAccess/INHERIT)
-        (.out (process-handler/line-sink-stream (fn [line]
-                                                  (emit "stdout" line))))
-        (.err (process-handler/line-sink-stream (fn [line]
-                                                  (emit "stderr" line))))
-        (.processHandler (process-handler/contained-handler emit))
-        (.build))))
+  (let
+    [emit
+     (process-handler/log-emit label)
+
+     ^Context ctx
+     (-> (Context/newBuilder (into-array String ["python"]))
+         (.engine ^Engine @env/shared-engine)
+         (.allowAllAccess false)
+         (.allowIO IOAccess/ALL)
+         (.allowCreateThread true)
+         (.allowCreateProcess true)
+         (.allowNativeAccess false)
+         (.allowPolyglotAccess PolyglotAccess/NONE)
+         (.allowEnvironmentAccess EnvironmentAccess/INHERIT)
+         (.out (process-handler/line-sink-stream (fn [line]
+                                                   (emit "stdout" line))))
+         (.err (process-handler/line-sink-stream (fn [line]
+                                                   (emit "stderr" line))))
+         (.processHandler (process-handler/contained-handler emit))
+         (.build))]
+
+    (.eval ctx "python" ^String redirect-repair-python)
+    ctx))
 
 ;; Python hands LEVEL as a string; the boundary is strings-only, so the
 ;; lookup maps string -> the INTERNAL telemere/notification level keyword.

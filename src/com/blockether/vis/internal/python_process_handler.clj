@@ -42,6 +42,13 @@
    streams a drain thread owns, so nothing downstream races the drainer for
    bytes.
 
+   This handler is only the HOST half. GraalPy discards a `stdout=`,
+   `stderr=` or `stdin=` file or descriptor before a `ProcessCommand` is ever
+   built, so that choice cannot be honoured from here; the guest half that
+   turns it back into a pumped pipe is `vis-python/process_redirect.py`,
+   evaluated into every extension context by `python-extensions/build-context`
+   (see `python-extensions/redirect-repair-python`).
+
    The cost is inherent, not a defect: an uncaptured stream is now a pipe, so
    `isatty` is false for it — progress bars render plain and a genuinely
    interactive child cannot work. Capturing output and staying a terminal are
