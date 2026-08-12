@@ -3018,8 +3018,9 @@
 
    `root-or-repos` is either ONE root (string/File — the classic single-repo
    buffer) or a vector of repo entries `{:root :label :draft?}` from
-   `magit/session-roots` — the session's primary workspace root plus every
-   Git repository nested below it (a mega-repo's `repositories/` clones). Each
+   `magit/session-roots` — the session's primary workspace root, every Git
+   repository nested below it (a mega-repo's `repositories/` clones) and every
+   repository declared in `vis.yml`'s `workspace.filesystem` catalog. Each
    entry gets a header row carrying its branch and dirty counts, and its own
    full section stack; a clean repo opens FOLDED to that one line and TAB
    unfolds it. For a DRAFT session the entries already point at the CLONES the

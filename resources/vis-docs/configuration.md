@@ -415,6 +415,12 @@ read and write. Draft isolation is independent of the jail and applies with
 Vis's own session folder `~/.vis` is granted implicitly (read/write, `search: false`)
 whatever the catalog and the allow list say; declare it to override that.
 
+A declared read-write root that holds a `.git` also appears in the TUI's `C-x g`
+status buffer, next to the project and the repositories nested inside it, so one
+buffer stages, commits and pushes across every repository the session works on.
+It is labelled by its catalog `id`; a `read-only` root is left out, and a drafted
+session sees the private copy of an isolated root instead of the real one.
+
 `when` and `optional` let ONE catalog serve several machines: `when.os` mounts a
 root only on `macos`, `linux`, `wsl` or `windows`, `when.exists` only when that
 path is present, and `optional: true` only when the root's own path is. A root

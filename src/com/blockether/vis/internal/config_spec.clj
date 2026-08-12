@@ -760,7 +760,9 @@
                 (distinct))
           names)))
 
-(defn- entry-read-only?
+(defn entry-read-only?
+  "True when the catalog entry declares READ-ONLY access. `access` defaults to
+   read-write, so only an explicit `read-only` / `readonly` / `ro` opts out."
   [entry]
   (contains? #{"read-only" "readonly" "ro"}
              (some-> (get entry "access")

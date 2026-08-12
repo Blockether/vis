@@ -20,8 +20,11 @@
    Keeping the model/actions/rows split pure means the whole magit feature is
    exercisable in tests against a throw-away repo, with zero lanterna."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.config-spec :as config-spec]
             [com.blockether.vis.internal.foundation.environment.repositories :as repositories]
-            [com.blockether.vis.internal.git :as git])
+            [com.blockether.vis.internal.git :as git]
+            [com.blockether.vis.internal.workspace :as workspace])
   (:import [java.io File]))
 
 ;; ============================================================================
@@ -1017,27 +1020,150 @@
                  {:root (str repo-root) :trunk (str repo-root) :label (str path) :draft? false})))
     []))
 
+(defn- canonical-path
+  "Canonical path of `root` — the identity two repo entries are compared by. A
+   path that cannot be resolved answers itself, so a comparison never throws."
+  [root]
+  (str (try (.getCanonicalPath (as-file root)) (catch Throwable _ root))))
+
+(defn- distinct-roots
+  "Repo entries with every duplicate DIRECTORY dropped, FIRST occurrence winning.
+   The primary entry is built first and owns the title, so a nested clone or a
+   declared catalog root that resolves to the same directory never earns a second
+   header."
+  [entries]
+  (:kept (reduce (fn [acc entry]
+                   (let [path (canonical-path (:root entry))]
+                     (if (contains? (:seen acc) path)
+                       acc
+                       (-> acc
+                           (update :seen conj path)
+                           (update :kept conj entry)))))
+                 {:seen #{} :kept []}
+                 entries)))
+
+(defn- draft-clones
+  "`{canonical-trunk -> canonical-clone}` for the per-root clones minted for THIS
+   workspace's draft, persisted on the workspace record as `filesystem-roots` /
+   `filesystem_roots`. Empty for an ordinary session, where every declared root is
+   worked on in place."
+  [ws]
+  (into {}
+        (keep (fn [entry]
+                (let
+                  [trunk
+                   (workspace/normalize-root (if (string? entry) entry (wget entry :trunk)))
+
+                   clone
+                   (workspace/normalize-root (when-not (string? entry) (wget entry :clone)))]
+
+                  (when trunk [trunk (or clone trunk)]))))
+        (wget ws :filesystem-roots)))
+
+(defn catalog-entries
+  "The `workspace.filesystem` catalog of the MERGED configuration — the global
+   `~/.vis/config.yml`, the project's own `vis.yml` and its `.vis/config.yml`
+   overlay — reduced to the entries that mount on THIS host (`when` / `optional`).
+   `load-config-raw` is memoized against the config files' mtimes, so an edited
+   `vis.yml` reaches the next status buffer without a `/reload`. Never throws: an
+   unreadable or invalid config simply declares nothing."
+  []
+  (try (config-spec/applicable-entries
+         (get-in (config/load-config-raw) ["workspace" "filesystem"] []))
+       (catch Throwable _ [])))
+
+(defn- repository-root?
+  "Cheap `stat` for a declared root: does it hold a `.git` (a directory, or the
+   file a worktree or submodule leaves behind)? The catalog also names dependency
+   caches and reference trees, and this keeps each of them from costing a
+   `status-model`'s worth of git subprocesses on every refresh."
+  [path]
+  (boolean (and path (.exists (File. (as-file path) ".git")))))
+
+(defn configured-roots
+  "Repo entries for the repositories DECLARED in the `workspace.filesystem`
+   catalog of `vis.yml` — the sibling checkouts a project binds into the session
+   (`- id: spel` / `path: ~/spel`). They live OUTSIDE the project tree, so
+   `nested-roots` can never discover them: the catalog is the only place they are
+   named. Each is labelled by its catalog `id`, the same name `vis doctor` and
+   `jail.filesystem.allow` use.
+
+   Two declared roots are skipped. A `read-only` one: the status buffer stages,
+   commits and pushes, so it is an ACTION surface and a reference tree is not
+   meant to be acted on. And one that holds no `.git`, which is every cache the
+   catalog grants.
+
+   Draft isolation is obeyed exactly as the tool layer obeys it. In a DRAFTED
+   session a `not-allowed` root is withheld entirely, and a `copy-only` /
+   `copy-and-apply` root shows the private clone minted for that draft — never
+   the real root — or is withheld when no clone was minted. A verb can therefore
+   never write through a root the draft promised to isolate."
+  ([ws] (configured-roots ws (catalog-entries)))
+  ([ws entries]
+   (let
+     [clones
+      (draft-clones ws)
+
+      drafted?
+      (let
+        [trunk
+         (wget ws :repo-root)
+
+         root
+         (wget ws :root)]
+
+        (boolean (and trunk root (not= (str trunk) (str root)))))]
+
+     (into []
+           (keep
+             (fn [entry]
+               (let
+                 [trunk
+                  (workspace/normalize-root (get entry "path"))
+
+                  policy
+                  (config-spec/entry-draft-policy entry)
+
+                  clone
+                  (get clones trunk)
+
+                  withheld?
+                  (and drafted?
+                       (or (= :not-allowed policy)
+                           (and (contains? workspace/isolating-draft-policies policy)
+                                (nil? clone))))]
+
+                 (when (and trunk
+                            (not withheld?)
+                            (not (config-spec/entry-read-only? entry))
+                            (repository-root? (or clone trunk)))
+                   {:root (or clone trunk)
+                    :trunk trunk
+                    :label (or (not-empty (str (get entry "id"))) (root-label trunk))
+                    :draft? (boolean (and clone (not= clone trunk)))}))))
+           entries))))
+
 (defn session-roots
-  "Every repository the status buffer shows for a session: the primary workspace
-   root (`workspace-roots`) followed by every Git repository `nested-roots`
-   finds below it — the clones a mega-repo keeps in a `repositories/` folder,
-   or any repo checked out inside the project outside `.gitmodules`.
+  "Every repository the status buffer shows for a session, in one list:
 
-   The primary entry stays FIRST (it owns the title and the fallback root) and a
-   nested root that duplicates it is dropped. Roots that turn out not to be git
-   repositories are dropped later, by `load-repos`."
-  [ws fallback-root]
-  (let
-    [primary
-     (workspace-roots ws fallback-root)
+   1. the primary workspace root (`workspace-roots`) — it owns the title and the
+      fallback root, so it stays FIRST;
+   2. every Git repository nested BELOW it (`nested-roots`) — the clones a
+      mega-repo keeps in a `repositories/` folder, or any repo checked out inside
+      the project outside `.gitmodules`;
+   3. every repository DECLARED in `vis.yml`'s `workspace.filesystem` catalog
+      (`configured-roots`) — the sibling checkouts bound to the session from
+      elsewhere on the filesystem.
 
-     seen
-     (into #{}
-           (map (fn [{:keys [root]}]
-                  (str (try (.getCanonicalPath (as-file root)) (catch Throwable _ root)))))
-           primary)]
-
-    (into primary (remove #(contains? seen (:root %))) (nested-roots (:root (first primary))))))
+   Duplicate directories are dropped, first occurrence winning, so a sibling that
+   is ALSO nested (or is the project itself) earns exactly one header. Roots that
+   turn out not to be git repositories are dropped later, by `load-repos`. Pass
+   `catalog` explicitly to resolve against something other than the live config."
+  ([ws fallback-root] (session-roots ws fallback-root (catalog-entries)))
+  ([ws fallback-root catalog]
+   (let [primary (workspace-roots ws fallback-root)]
+     (distinct-roots
+       (concat primary (nested-roots (:root (first primary))) (configured-roots ws catalog))))))
 
 (defn repo-dirty?
   "Has this repo anything to show? Working-tree changes, a conflict, or commits

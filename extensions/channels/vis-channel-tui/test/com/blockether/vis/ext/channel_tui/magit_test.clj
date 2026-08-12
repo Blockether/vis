@@ -48,6 +48,12 @@
       (init-repo-at! (str root "/repositories/" nm)))
     root))
 
+(defn- real-path
+  "Canonical path of `p` — a temp dir under macOS `/var` really lives in
+   `/private/var`, and the catalog roots resolve to their canonical form."
+  [p]
+  (.getCanonicalPath (io/file (str p))))
+
 (defn- add-bare-remote!
   "Create a bare repo and wire it as `origin` of `dir`. Returns its path."
   [dir]
@@ -1105,7 +1111,7 @@
          (mega-repo!)
 
          roots
-         (magit/session-roots nil root)]
+         (magit/session-roots nil root [])]
 
         (expect (= root (:root (first roots))))
         (expect (= 3 (count roots)))
@@ -1115,7 +1121,7 @@
         (expect (not-any? :draft? roots))))
   (it "a project with no nested repositories yields its own root alone"
       (let [root (init-repo!)]
-        (expect (= [root] (mapv :root (magit/session-roots nil root))))))
+        (expect (= [root] (mapv :root (magit/session-roots nil root []))))))
   (it "the primary root is never listed twice"
       (let
         [root
@@ -1126,13 +1132,109 @@
            (.getCanonicalPath (io/file (str p))))
 
          roots
-         (magit/session-roots {:root root} nil)]
+         (magit/session-roots {:root root} nil [])]
 
         (expect (= (count roots) (count (distinct (mapv (comp canonical :root) roots)))))))
   (it "a blank root discovers nothing instead of scanning the filesystem"
       (expect (= [] (magit/nested-roots nil)))
       (expect (= [] (magit/nested-roots "")))
-      (expect (= [] (magit/session-roots nil nil)))))
+      (expect (= [] (magit/session-roots nil nil [])))))
+
+;;; ── Declared repositories (vis.yml `workspace.filesystem` catalog) ──────────
+
+(defdescribe
+  configured-roots-test
+  (it "a repository declared in vis.yml is listed, labelled by its catalog id"
+      (let [sibling (init-repo!)]
+        (expect
+          (= [{:root (real-path sibling) :trunk (real-path sibling) :label "spel" :draft? false}]
+             (magit/configured-roots nil [{"id" "spel" "path" sibling}])))))
+  (it "a declared root that is not a repository never earns a header"
+      (let [cache (temp-dir!)]
+        ;; the catalog also grants caches (`~/.m2`) and paths that do not exist
+        (expect (= [] (magit/configured-roots nil [{"id" "m2" "path" cache}])))
+        (expect (= [] (magit/configured-roots nil [{"id" "gone" "path" (str cache "/missing")}])))))
+  (it "a read-only declared root is left out — the buffer is an action surface"
+      (let [reference (init-repo!)]
+        (expect (= []
+                   (magit/configured-roots
+                     nil
+                     [{"id" "reference" "path" reference "access" "read-only"}])))
+        (expect (= [(real-path reference)]
+                   (mapv :root
+                         (magit/configured-roots
+                           nil
+                           [{"id" "reference" "path" reference "access" "read-write"}]))))))
+  (it "a drafted session withholds a not-allowed root, an ordinary one shows it"
+      (let
+        [secret
+         (init-repo!)
+
+         entry
+         {"id" "secret" "path" secret "draft" "not-allowed"}]
+
+        (expect (= []
+                   (magit/configured-roots {:root "/clones/proj" :repo-root "/real/proj"} [entry])))
+        (expect (= [(real-path secret)] (mapv :root (magit/configured-roots nil [entry]))))))
+  (it "a drafted session shows the CLONE of an isolated root, never the trunk"
+      (let
+        [trunk
+         (init-repo!)
+
+         store
+         (temp-dir!)
+
+         clone
+         (str store "/sibling")]
+
+        (git-run! store "clone" "-q" trunk clone)
+        (let
+          [entry
+           {"id" "sibling" "path" trunk "draft" "copy-and-apply"}
+
+           roots
+           (magit/configured-roots {:root "/clones/proj"
+                                    :repo_root "/real/proj"
+                                    :filesystem_roots [{"trunk" trunk "clone" clone}]}
+                                   [entry])]
+
+          (expect (= [(real-path clone)] (mapv :root roots)))
+          (expect (= [(real-path trunk)] (mapv :trunk roots)))
+          (expect (every? :draft? roots))
+          ;; no clone minted for this draft ⇒ withheld, never written through
+          (expect (= []
+                     (magit/configured-roots {:root "/clones/proj" :repo_root "/real/proj"}
+                                             [entry]))))))
+  (it "session-roots lists the primary root, its nested repos, then the declared ones"
+      (let
+        [root
+         (mega-repo!)
+
+         sibling
+         (init-repo!)
+
+         roots
+         (magit/session-roots nil root [{"id" "sibling" "path" sibling}])]
+
+        (expect (= 4 (count roots)))
+        (expect (= root (:root (first roots))))
+        (expect (= ["repositories/alpha" "repositories/beta" "sibling"] (mapv :label (rest roots))))
+        (expect (= (real-path sibling) (:root (last roots))))))
+  (it "a declared root that is the project itself, or nested in it, is listed once"
+      (let
+        [root
+         (mega-repo!)
+
+         roots
+         (magit/session-roots nil
+                              root
+                              [{"id" "self" "path" root}
+                               {"id" "alpha" "path" (str root "/repositories/alpha")}])]
+
+        (expect (= 3 (count roots)))
+        (expect (= (count roots) (count (distinct (mapv (comp real-path :root) roots)))))))
+  (it "the live vis.yml catalog is read as a vector and never throws"
+      (expect (vector? (magit/catalog-entries)))))
 
 (defdescribe
   repo-fold-test
@@ -1208,7 +1310,7 @@
          (init-repo!)
 
          rows
-         (magit/multi-status-rows (magit/load-repos (magit/session-roots nil dir)) #{} nil)]
+         (magit/multi-status-rows (magit/load-repos (magit/session-roots nil dir [])) #{} nil)]
 
         (expect (not-any? #(= :repo (:kind %)) rows))
         (expect (some #(str/starts-with? (str (:text %)) "Head:") rows)))))
