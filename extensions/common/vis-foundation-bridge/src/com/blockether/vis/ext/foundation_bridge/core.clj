@@ -972,15 +972,13 @@
                                      :issue-count (:issue-count summary)
                                      :approval-status approval-status})))))))))
 
-(vis/register-toggle!
-  {:id "bridge"
-   :label "Bridge verification"
-   :description
-   "Expose Bridge verification and commit-gate tools. When OFF, the Bridge extension is not bound."
-   :default true
-   :owner :vis
-   :persist? true
-   :group :extensions})
+(vis/register-toggle! {:id "bridge"
+                       :label "Bridge verification"
+                       :description "Expose Bridge verification and commit-gate tools."
+                       :default true
+                       :owner :vis
+                       :persist? true
+                       :group :extensions})
 
 (def vis-extension
   (vis/extension

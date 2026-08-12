@@ -1779,15 +1779,13 @@
 ;; `:tag :observation` carried INLINE on each `vis/symbol` opts map
 ;; above; register-extension! auto-populates the op registry.
 
-(vis/register-toggle!
-  {:id "web_search"
-   :label "Web search"
-   :description
-   "Expose live research over Exa, GitHub Code Search/codeload, and arXiv. When OFF, the search extension is not bound."
-   :default true
-   :owner :vis
-   :persist? true
-   :group :extensions})
+(vis/register-toggle! {:id "web_search"
+                       :label "Web search"
+                       :description "Expose live research over Exa, GitHub Code Search, and arXiv."
+                       :default true
+                       :owner :vis
+                       :persist? true
+                       :group :extensions})
 
 (def vis-extension
   (vis/extension

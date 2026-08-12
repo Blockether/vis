@@ -30,6 +30,10 @@
      - Toggle ids are non-blank snake_case strings (`reasoning_level`,
        `shell`, ...) — no keywords, namespaces, slashes, or kebab-case.
        YAML config uses the same string verbatim (`reasoning_level: deep`).
+     - A `:description` is ONE line of at most `max-description-length`
+       characters (`settings-description?`) — the settings row is a label
+       plus a single sentence of help in every channel; longer rationale
+       lives in the owning namespace's docstring.
      - `enabled?` is cheap (single atom deref + string lookup), called
        per-paint per-row by the render layer; do not turn it into a
        function-call indirection.
@@ -55,7 +59,26 @@
 
 (s/def :toggle/label (s/and string? #(not (str/blank? %))))
 
-(s/def :toggle/description string?)
+(def max-description-length
+  "Longest settings-row description a toggle may register. A row is a LABEL
+   plus ONE line of help: every channel paints that line under the label on a
+   phone-width column, so prose that wraps to four lines buries the control it
+   describes. Rationale, refusal wording and the OFF-path story belong in the
+   owning namespace's docstring, not in the row."
+  100)
+
+(defn settings-description?
+  "True only for a settings-row description: one non-blank SENTENCE on a single
+   line, at most `max-description-length` characters. Multi-line prose and
+   over-long copy are rejected at the registry boundary, the same way a
+   non-canonical id is, so a settings UI never has to truncate."
+  [v]
+  (and (string? v)
+       (not (str/blank? v))
+       (nil? (re-find #"[\r\n]" v))
+       (<= (count v) (long max-description-length))))
+
+(s/def :toggle/description settings-description?)
 
 (s/def :toggle/default any?)            ;; cross-validated against :type below
 

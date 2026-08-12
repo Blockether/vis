@@ -208,3 +208,43 @@
                  ;; identical to web's `block-code`). Both display gates were retired.
                  (expect (nil? (t/toggle-spec "show_raw_code")))
                  (expect (nil? (t/toggle-spec "show_tool_results")))))
+
+(defdescribe
+  settings-description-test
+  (it "a one-line sentence within the cap registers"
+      (with-clean-state (fn []
+                          (t/register-toggle! {:id "test_short"
+                                               :label "Short"
+                                               :default false
+                                               :description "Expose the thing this row turns on."})
+                          (expect (= "Expose the thing this row turns on."
+                                     (:description (t/toggle-spec "test_short")))))))
+  (it "settings-description? draws the line at one line within the cap"
+      (expect (t/settings-description? (apply str (repeat t/max-description-length "x"))))
+      (expect (not (t/settings-description? (apply str
+                                              (repeat (inc t/max-description-length) "x")))))
+      (expect (not (t/settings-description? "two\nlines")))
+      (expect (not (t/settings-description? "   ")))
+      (expect (not (t/settings-description? nil))))
+  (it "a settings row is never a paragraph: over-long copy is refused"
+      ;; A settings row is a control plus ONE line of help; a paragraph of
+      ;; rationale buried the toggle it described in the TUI and the app.
+      (let
+        [thrown? (try (t/register-toggle! {:id "test_wordy"
+                                           :label "Wordy"
+                                           :default false
+                                           :description
+                                           (apply str (repeat (inc t/max-description-length) "x"))})
+                      false
+                      (catch clojure.lang.ExceptionInfo e
+                        (= :vis.toggles/invalid-spec (:type (ex-data e)))))]
+        (expect (true? thrown?))
+        (expect (nil? (t/toggle-spec "test_wordy")))))
+  (it "every registered toggle's description fits a settings row"
+      (doseq
+        [{:keys [description]}
+         (t/registered-toggles)
+
+         :when description]
+
+        (expect (t/settings-description? description)))))

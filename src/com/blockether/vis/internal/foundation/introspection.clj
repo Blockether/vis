@@ -1278,16 +1278,16 @@ String-keyed rows: `{id,channel,title,turn_count,created_at,modified_at}`; optio
 ;; (`toggles: { introspection: true }`) or from the settings dialog.
 ;; ---------------------------------------------------------------------------
 
-(vis/register-toggle!
-  {:id "introspection"
-   :label "Session introspection"
-   :description (str "Let the agent inspect its OWN history through `session_state` / `sessions`, "
-                     "plus the gateway event journals under `~/.vis/gateway/events`. OFF by "
-                     "default — enable it for debugging Vis itself, not for ordinary project work.")
-   :default false
-   :owner :vis
-   :persist? true
-   :group :sandbox})
+(vis/register-toggle! {:id "introspection"
+                       :label "Session introspection"
+                       ;; One line for the row; the "debugging Vis itself, not ordinary project
+                       ;; work" rationale is the section comment above.
+                       :description
+                       "Let the agent read its own session history and gateway event journals."
+                       :default false
+                       :owner :vis
+                       :persist? true
+                       :group :sandbox})
 
 (def ^:private INTROSPECTION_PROMPT
   (str

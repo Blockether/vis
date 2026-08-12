@@ -52,7 +52,10 @@
    the TOP level — there is no entry to unwrap and no second shape to learn.
 
 
-   The `shell` toggle is registered HERE, extension-owned under the vis namespace."
+   The `shell` toggle is registered HERE, extension-owned under the vis
+   namespace. It closes the MODEL's door only: an installed extension keeps its
+   own trusted process boundary (`vis.shell`, `subprocess`), which the toggle
+   does not gate."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
@@ -3123,14 +3126,11 @@
 (vis/register-toggle!
   {:id "shell"
    :label "Shell commands"
-   :description (str "Expose `shell` — the Python verb that spawns ONE command under a pty "
-                     "and answers with the live handle that drives it (`sh.logs()` / "
-                     "`sh.wait()` / `sh.type()` / `sh.stop()`). It is never a native tool: "
-                     "a process starts from Python or not at all. When OFF " "nothing is bound. "
-                     "Contained by the OS process jail whenever it is ON. "
-                     "This is the MODEL's door: an installed extension keeps its own "
-                     "trusted process boundary (`vis.shell`, `subprocess`), which this "
-                     "toggle does not gate.")
+   ;; One line: the row is a control, not documentation. The full contract —
+   ;; pty handle ops, "never a native tool", the jail, and the MODEL's-door
+   ;; limit that leaves an installed extension's own `vis.shell` / `subprocess`
+   ;; boundary ungated — lives in this namespace's docstring.
+   :description "Expose the Python `shell` verb; the model's commands run inside the OS jail."
    :default true
    :owner :vis
    :persist? true
