@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.35 (4042) — 2026-08-12
+<!-- commit: 59354fd64c245c588a43a67274e99ef54de33e54 -->
+
+- Native: every built-in extension ns reaches the image, or the binary dies
+- Wait for the pty child, and let the jail greet the Linux runner
+- The last red tests — the relay's name, a reloaded card, pasta's log
+- Native: no FFM TTY downcalls on Linux — the binaries ship again
+- Green the suite — the relay's name, a reloaded hook, a stack-safe scan
+- Name svar's unroutable failure instead of the generic provider card
+- Cancellation: a best-effort catch no longer eats the interrupt
+- Prompt: run_tests reloads what it RUNS, never its dependencies
+- Shell: a cancel during usage sampling is no longer swallowed
+- Companion: a starred row keeps its page, so the star lands where the thumb is
+- Companion: a star you can see on the row and read on the strip
+- Companion: drop the artifacts gallery's dead tool_name read
+- Pytest shim: capfd captures the real descriptor (#138)
+- Companion: a machine's dot reports a probe, not the memory of one
+- Shell: one stream, no dead stderr field (#137)
+- Companion: let the pen write on a picture instead of selecting it
+- Companion: give every band's way out the band's own cell
+- Show every nested repository in the magit status buffer
+- Price the fold trigger in the core prompt's budget line
+- Name session_fold in the rule that orders the fold
+
 ## 0.1.35 (4019) — 2026-08-12
 <!-- commit: 624ea44af361a3cb5d3d340b8a6aaec99ca1a521 -->
 
