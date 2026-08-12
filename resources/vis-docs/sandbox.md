@@ -616,7 +616,8 @@ re-snapshots from the current `vis.yml` on its **next** message, so an idle
 session keeps its old snapshot until you send it something.
 
 The same effective snapshot is exposed read-only as `session["access"]`. It includes
-a SHA-256 generation id, filesystem modes, network policy, inbound ports, and
+a SHA-256 generation id, `is_jailed` (whether `jail.enabled` confines this
+session), filesystem modes, network policy, inbound ports, and
 `changes_require: "reload"`. Live workspace roots are a controlled overlay and
 appear as context deltas. Paths beneath the user's home are displayed as `~` paths
 (for example `~/vis` and `~/spel`); enforcement always uses the resolved absolute

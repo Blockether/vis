@@ -121,7 +121,7 @@
                       m)))
 
       ;; Per-root DRAFT isolation policy, keyed by the SAME canonical path the
-      ;; filesystem grants use. Independent of `:sandbox`: a drafted session
+      ;; filesystem grants use. Independent of `:jail-enabled`: a drafted session
       ;; isolates catalog roots whether or not the OS jail confines them.
       draft-policies
       (into {}
@@ -131,7 +131,7 @@
             (config-spec/workspace-draft-policies config))
 
       policy
-      {:sandbox (not= false (get-in config ["jail" "enabled"]))
+      {:jail-enabled (not= false (get-in config ["jail" "enabled"]))
        :network network
        :process-jail jail
        :draft-policies draft-policies}
@@ -166,7 +166,7 @@
    configured allowlist. `allow-write` remains readable under the process-jail
    contract, so it belongs here too."
   [policy]
-  (if (:sandbox policy)
+  (if (:jail-enabled policy)
     (vec (distinct (concat (get-in policy [:process-jail :allow-read-write])
                            (get-in policy [:process-jail :allow-write]))))
     (host-filesystem-roots)))
@@ -176,7 +176,9 @@
    them. With the jail disabled, host filesystem roots are excluded so granting
    unrestricted explicit access does not make an unscoped grep crawl the machine."
   [policy]
-  (if (:sandbox policy) (vec (get-in policy [:process-jail :no-search])) (host-filesystem-roots)))
+  (if (:jail-enabled policy)
+    (vec (get-in policy [:process-jail :no-search]))
+    (host-filesystem-roots)))
 
 (defn access-view
   "Build the string-keyed model context from the exact enforcement snapshot.
@@ -231,7 +233,7 @@
 
     (cond->
       {"generation" (:generation policy)
-       "sandboxed" (boolean (:sandbox policy))
+       "is_jailed" (boolean (:jail-enabled policy))
        "filesystem" (cond->
                       {"read_write" rw
                        "process_read_only" ro

@@ -1341,7 +1341,7 @@ vis.extension(
 
                         env
                         {:session-id "jailed-session"
-                         :security-policy {:sandbox true}
+                         :security-policy {:jail-enabled true}
                          :jail-policy-fn
                          (fn []
                            (throw (ex-info "the regular extension shell touched the jail" {})))}]

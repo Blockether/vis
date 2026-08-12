@@ -1,4 +1,4 @@
-# vis.yml — project sandbox config (snapshotted when an environment is created).
+# vis.yml — project config (snapshotted when an environment is created).
 #
 # Everything below is commented out: this file documents every knob and its
 # default. To enable a block, copy the config lines (the ones indented under a

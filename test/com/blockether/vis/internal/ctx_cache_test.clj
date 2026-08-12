@@ -30,7 +30,7 @@
 
 (def ^:private base-ctx
   {"session_id" "s1"
-   "session_workspace" {"root" "/repo" "sandbox" false "vcs_kind" "git"}
+   "session_workspace" {"root" "/repo" "isolated" false "vcs_kind" "git"}
    "session_env" {"host" {"os" "macos"} "project" {"kind" "single"}}
    "session_language_tools" {"clojure" ["repl_eval" "repl"]}
    "session_routing" {"model" "gpt-5.5"}})
@@ -83,7 +83,7 @@
       (let
         [access
          {"generation" "sha256:abc"
-          "sandboxed" true
+          "is_jailed" true
           "filesystem" {"read_write" ["~/vis" "~/spel"]}
           "changes_require" "reload"}
 

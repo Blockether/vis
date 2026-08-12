@@ -130,7 +130,7 @@
                                      "echo escaped")))
         (expect (threw? #(shell-run* {:session-id "t" :jail-policy-fn (constantly nil)}
                                      "echo escaped")))))
-  (it "sandbox false is represented explicitly and still launches unwrapped"
+  (it "jail.enabled false is represented explicitly and still launches unwrapped"
       (binding [workspace/*workspace-root* (workspace/trunk-root)]
         (let
           [r (shell-run* {:session-id "t" :jail-policy-fn (constantly {:disabled? true})}
@@ -400,7 +400,7 @@
          (.getCanonicalPath (io/file (System/getProperty "user.home")))
 
          env
-         {:security-policy {:sandbox false} :jail-policy-fn (constantly {:disabled? true})}]
+         {:security-policy {:jail-enabled false} :jail-policy-fn (constantly {:disabled? true})}]
 
         (binding
           [workspace/*workspace-root*

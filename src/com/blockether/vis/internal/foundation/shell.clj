@@ -405,7 +405,7 @@
   "Resolve the per-session jail policy carried by `env`.
 
    A present policy function is security-critical: failures propagate and deny the
-   spawn instead of silently returning nil/unwrapped argv. `sandbox: false` is
+   spawn instead of silently returning nil/unwrapped argv. `jail.enabled: false` is
    represented explicitly by `{:disabled? true}` and remains the sole escape hatch."
   [env]
   (when-let [f (:jail-policy-fn env)]
@@ -2391,7 +2391,7 @@
                       (assoc :jail-policy-fn (constantly {:disabled? true
                                                           :env-values
                                                           (config/declared-environment-values)}))
-                      (assoc-in [:security-policy :sandbox] false))
+                      (assoc-in [:security-policy :jail-enabled] false))
                   opts))
 
 (defn- latest-jail-policy
@@ -2421,7 +2421,7 @@
      jail-config
      (:process-jail security)]
 
-    (if (or (false? (:sandbox security)) (:disabled? jail-config))
+    (if (or (false? (:jail-enabled security)) (:disabled? jail-config))
       {:disabled? true :env-values (config/declared-environment-values) ::environment latest-env}
       (let
         [entries

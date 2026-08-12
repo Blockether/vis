@@ -718,7 +718,8 @@
        (temp-dir "vis-di-pending")
 
        policy
-       {:sandbox true :draft-policies {copy :copy-and-apply secret :not-allowed pending :copy-only}}
+       {:jail-enabled true
+        :draft-policies {copy :copy-and-apply secret :not-allowed pending :copy-only}}
 
        configured
        [shared copy secret pending]]

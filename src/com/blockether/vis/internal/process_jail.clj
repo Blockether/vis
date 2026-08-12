@@ -129,7 +129,7 @@
   "True when the current OS can ENFORCE a jail. macOS: Seatbelt via the system
    `sandbox-exec`. Linux: bubblewrap (`bwrap`) namespaces. Other OSes: not
    supported -- callers keep the cooperative admission gate as the floor and
-   `unenforceable-reason` explains why so `sandbox: true` never silently no-ops."
+   `unenforceable-reason` explains why so `jail.enabled: true` never silently no-ops."
   []
   (case (os-kind)
     :macos
@@ -142,7 +142,7 @@
 
 (defn unenforceable-reason
   "Nil when `supported?`, else a human string explaining why the jail CANNOT be
-   enforced on this host -- so a requested `sandbox: true` fails LOUD instead of
+   enforced on this host -- so a requested `jail.enabled: true` fails LOUD instead of
    passing the child through unconfined. Distinguishes 'wrong OS' from 'right OS,
    enforcer binary missing' (the actionable case: install the tool)."
   []
@@ -560,13 +560,14 @@
 (defonce ^:private unenforceable-warned (atom false))
 
 (defn- warn-unenforceable!
-  "Emit ONE loud stderr line when a jail was requested (sandbox: true -> an enabled
+  "Emit ONE loud stderr line when a jail was requested (`jail.enabled: true` -> an enabled
    policy) but this host cannot enforce it, so the operator learns the child is
    running UNCONFINED instead of the failure being silent. Deduped per process."
   [reason]
   (when (compare-and-set! unenforceable-warned false true)
     (binding [*out* *err*]
-      (println (str "vis WARNING: sandbox is enabled but CANNOT be enforced on this host -- " reason
+      (println (str "vis WARNING: the jail is enabled but CANNOT be enforced on this host -- "
+                    reason
                     ". Shell/REPL children run UNCONFINED (full host access). "
                     "See `vis-docs sandbox`.")))))
 
@@ -591,7 +592,7 @@
    the kernel policy and are left unwrapped, since Seatbelt rejects a second
    application). Linux wraps with bubblewrap (`bwrap`) namespaces. When a jail is
    requested but the host cannot enforce it, the child is passed through UNWRAPPED
-   but a loud one-time warning fires -- `sandbox: true` never silently no-ops."
+   but a loud one-time warning fires -- `jail.enabled: true` never silently no-ops."
   [argv policy]
   (let [wanted? (and policy (not (:disabled? policy)))]
     (if (and wanted? (supported?) (not (inherited-jail?)))
@@ -824,7 +825,7 @@
 
    Returns nil when the policy is not enforcing — the caller keeps the parent
    environment and merges [[child-env-additions]] instead (unjailed
-   platforms/`sandbox: false`), so non-confined behavior is unchanged."
+   platforms/`jail.enabled: false`), so non-confined behavior is unchanged."
   [policy]
   (when (and policy (not (:disabled? policy)) (or (inherited-jail?) (supported?)))
     (let

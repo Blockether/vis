@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.foundation.workspace-ctx-test
-  "`\"session_workspace\"` CTX block render (STRING-KEYED). Sandbox-ness rides on
-   `\"sandbox\"`; `\"vcs_kind\"` reports the real underlying repo VCS
+  "`\"session_workspace\"` CTX block render (STRING-KEYED). Backend-workspace
+   isolation rides on `\"isolated\"`; `\"vcs_kind\"` reports the real underlying repo VCS
    (`\"git\"` inside a repo, else `\"none\"`) — never `\"rift\"` (a non-VCS)."
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.foundation.workspace-ctx :as wctx]
@@ -20,29 +20,29 @@
 
 (defdescribe
   render-block-test
-  (it "reports live trunk as non-sandboxed and keeps sandbox separate from VCS"
+  (it "reports live trunk as non-isolated and keeps isolation separate from VCS"
       (let [base (temp-dir "vis-wctx-id")]
         (try (let
                [block (wctx/render-block {:workspace
                                           {:id "ws-1" :root base :workspace-backend :live}})]
                (expect (= base (get block "root")))
-               (expect (false? (get block "sandbox")))
-               ;; temp dir is not a git repo → "none"; sandbox-ness is on "sandbox"
+               (expect (false? (get block "isolated")))
+               ;; temp dir is not a git repo → "none"; isolation is on "isolated"
                (expect (= "none" (get block "vcs_kind")))
                (expect (not= "rift" (get block "vcs_kind")))
                (expect (= "ws-1" (get block "id"))))
              (finally (delete-tree! base)))))
-  (it "reports backend workspaces as sandboxed"
-      (let [base (temp-dir "vis-wctx-sandbox")]
+  (it "reports backend workspaces as isolated"
+      (let [base (temp-dir "vis-wctx-isolated")]
         (try (let
                [block (wctx/render-block {:workspace
                                           {:id "ws-iso" :root base :workspace-backend :rift}})]
-               (expect (true? (get block "sandbox"))))
+               (expect (true? (get block "isolated"))))
              (finally (delete-tree! base)))))
-  (it "treats pre-migration fork rows without backend ids as sandboxed"
+  (it "treats pre-migration fork rows without backend ids as isolated"
       (let [base (temp-dir "vis-wctx-legacy-isolated")]
         (try (let [block (wctx/render-block {:workspace {:id "ws-legacy" :root base :fork-ms 1}})]
-               (expect (true? (get block "sandbox"))))
+               (expect (true? (get block "isolated"))))
              (finally (delete-tree! base)))))
   (it "reports \"vcs_kind\" \"git\" when the workspace root is inside a git repo"
       ;; the project cwd is a git repo
@@ -53,7 +53,7 @@
         (try (binding [workspace/*workspace-root* base]
                (let [block (wctx/render-block {:workspace nil})]
                  (expect (= base (get block "root")))
-                 (expect (false? (get block "sandbox")))
+                 (expect (false? (get block "isolated")))
                  (expect (= "none" (get block "vcs_kind")))))
              (finally (delete-tree! base)))))
   (it "surfaces since-fork changed paths (mtime newer than the fork ms)"

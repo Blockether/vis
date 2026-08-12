@@ -245,7 +245,7 @@
     "session_scope" {"turn" 1 "iter" 1 "next_form" 1}
     ;; Empty scaffold only. Prompt render replaces this through
     ;; foundation-core with a real workspace identity:
-    ;;   {"root" ... "sandbox" ... "vcs_kind" ...}
+    ;;   {"root" ... "isolated" ... "vcs_kind" ...}
     ;; `"vcs_kind" "none"` is reserved for an actual root with no supported VCS.
     "session_workspace" {}
     "session_symbols" {}

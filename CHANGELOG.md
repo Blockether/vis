@@ -26,7 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   declaration therefore works for a tool the agent runs without the operator's shell having
   exported anything.
 
+- `jail` is the ONLY word for confinement, in config and in the model's own session map.
+  The read-only `session["access"]` view reports `is_jailed` instead of `sandboxed`, and
+  `session["workspace"]` reports `isolated` (a backend workspace copy, which was never about
+  confinement) instead of `sandbox`. "Sandbox" now means only the Python sandbox.
+
 ### Removed
+- The top-level `sandbox:` and `filesystem:` config keys. Both were silently REWRITTEN into
+  `jail:` before the schema saw the file, so an operator's key became a different one and a
+  `sandbox: false` written next to a `jail:` block was quietly ignored. Write `jail.enabled` and
+  `jail.filesystem` — anything else is refused by name, loudly, on load.
 - `jail.env`. It was a second list of the same names that could only ever re-admit an AMBIENT
   variable — never a `dotenv:`/`keychain:`/`command:` value — so the two blocks disagreed exactly
   where it mattered. Declare the variable in `environment:` instead (`CI: {env: CI}` is the old

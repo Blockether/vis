@@ -267,7 +267,7 @@
                              "filesystem" {"allow" ["full" "read" "cache"]}
                              "network" {"allowed_domains" ["escaped.example"]
                                         "inbound_ports" [9999]}}})
-        (expect (= true (:sandbox snapshot)))
+        (expect (= true (:jail-enabled snapshot)))
         ;; Vis's own session folder is granted implicitly by the engine.
         (expect (= ["/approved/full" "/approved/cache" vis-home-root]
                    (get-in snapshot [:process-jail :allow-read-write])))

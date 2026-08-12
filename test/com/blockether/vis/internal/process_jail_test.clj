@@ -610,7 +610,7 @@
            (pj/wrap-argv ["bash" "-lc" "echo hi"] {:roots-fn (constantly [])}))
         "unsupported host => passthrough, never a fake-jailed argv")
     (is (some? (pj/unenforceable-reason))
-        "unsupported host must give a reason, so `sandbox: true` is not a silent no-op")))
+        "unsupported host must give a reason, so `jail.enabled: true` is not a silent no-op")))
 
 (deftest wsl-detection
   ;; WSL2 runs a real kernel (bwrap + pasta work) => treated as ordinary Linux.

@@ -555,7 +555,7 @@
     ;; web `role-time` hardcode these on.
     ;; NOTE: there is intentionally NO `:network/enabled` toggle. The Python sandbox
     ;; + shell/subprocess/managed children ALWAYS have host sockets; containment is the
-    ;; OS process jail + gateway egress proxy, turned off as a whole by `sandbox: false`
+    ;; OS process jail + gateway egress proxy, turned off as a whole by `jail.enabled: false`
     ;; in vis.yml. Per-host/verb policy lives under vis.yml `network:` (see below).
     (register-toggle! {:id "reasoning_level"
                        :label "Reasoning effort"

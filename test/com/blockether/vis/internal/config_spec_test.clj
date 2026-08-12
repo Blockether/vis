@@ -121,6 +121,9 @@
     "rejects keyword keys, aliases, unknown keys, and invalid security values"
     (expect (not (config-spec/valid? {:filesystem {}})))
     (expect (not (config-spec/valid? {"filesystem" {}})))
+    ;; `jail:` is the ONE confinement block — there is no top-level `sandbox:`.
+    (expect (not (config-spec/valid? {"sandbox" false})))
+    (expect (not (config-spec/valid? (assoc full-config "sandbox" true))))
     ;; `search` is a retired top-level config block; only `grep` configures grep.
     (expect (not (config-spec/valid? {"search" {"include_gitignored_paths" ["repositories/"]}})))
     ;; #50: snake_case is the ONLY accepted spelling — kebab-case keys are rejected.
@@ -342,6 +345,30 @@
              (let [data (try (read-yaml (.getPath file)) nil (catch Exception e (ex-data e)))]
                (expect (= :vis/invalid-config (:type data)))
                (expect (= (.getPath file) (:source data))))
+             (finally (io/delete-file file true)))))
+  ;; A top-level `sandbox:` / `filesystem:` used to be REWRITTEN into `jail:`
+  ;; before the schema ever saw the file, so an operator's key silently became a
+  ;; different one — and `sandbox: false` next to `jail:` was quietly ignored.
+  ;; The parser normalizes NOTHING now; the closed schema refuses both by name.
+  (it "refuses a top-level sandbox: / filesystem: instead of folding it into jail:"
+      (require 'com.blockether.vis.internal.config :reload)
+      (let
+        [file
+         (io/file "target/retired-key-vis-config.yml")
+
+         read-yaml
+         (var-get (ns-resolve 'com.blockether.vis.internal.config 'read-yaml-config-map))
+
+         refused
+         (fn [yaml]
+           (spit file yaml)
+           (try (read-yaml (.getPath file)) nil (catch Exception e (ex-data e))))]
+
+        (try (.mkdirs (.getParentFile file))
+             (expect (= :vis/invalid-config (:type (refused "sandbox: false\n"))))
+             (expect (= :vis/invalid-config
+                        (:type (refused "sandbox: true\njail:\n  enabled: false\n"))))
+             (expect (= :vis/invalid-config (:type (refused "filesystem:\n  allow: [vis]\n"))))
              (finally (io/delete-file file true))))))
 
 (defdescribe

@@ -68,6 +68,10 @@
                  (policy/draft-policies snapshot)))
       (expect (= [5273] (get-in view ["network" "inbound_ports"])))
       (expect (= "reload" (get view "changes_require")))
+      ;; Confinement is named `jail` end to end: the access view says `is_jailed`,
+      ;; never `sandboxed` (which read like the Python sandbox).
+      (expect (true? (get view "is_jailed")))
+      (expect (not (contains? view "sandboxed")))
       (expect (re-matches #"sha256:[0-9a-f]{64}" (get view "generation")))))
   (it
     "grants unrestricted explicit filesystem access when the jail is disabled"
@@ -93,7 +97,8 @@
        view
        (policy/access-view snapshot [base])]
 
-      (expect (false? (:sandbox snapshot)))
+      (expect (false? (:jail-enabled snapshot)))
+      (expect (false? (get view "is_jailed")))
       (expect (= host-roots (policy/read-write-roots snapshot)))
       (expect (= host-roots (policy/no-search-roots snapshot)))
       (expect (= (vec (distinct (concat ["~/vis"] host-roots)))

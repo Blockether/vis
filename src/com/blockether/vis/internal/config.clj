@@ -1012,40 +1012,19 @@
   (doto (interpolate-env raw) warn-unresolved-env-refs!))
 
 (defn- parse-yaml-config-map
-  "Parse+normalize one YAML file to its string-keyed representation WITHOUT spec
+  "Parse one YAML file to its string-keyed representation WITHOUT spec
    validation. nil when absent / malformed / not a map. Shared by the strict
-   `read-yaml-config-map` and the lenient machine-store fallback."
+   `read-yaml-config-map` and the lenient machine-store fallback.
+
+   NOTHING is rewritten on the way in: `jail:` is the ONE confinement block, so
+   a top-level `sandbox:` or `filesystem:` is not silently folded into it — the
+   closed schema refuses the key by name instead of an operator believing a word
+   Vis stopped reading."
   [path]
   (let [f (io/file path)]
     (when (.exists f)
       (let [raw (try (yamlstar/load (slurp f)) (catch Exception _ nil))]
-        (when (map? raw)
-          (let
-            [legacy-filesystem (get raw "filesystem")
-             legacy-sandbox (get raw "sandbox")
-             legacy-jail (or (get raw "jail") {})
-             legacy-jail* (if (map? legacy-jail) legacy-jail {})
-             normalized-filesystem (if legacy-filesystem
-                                     (-> raw
-                                         (dissoc "filesystem")
-                                         (assoc "jail" (assoc legacy-jail*
-                                                         "filesystem"
-                                                         (if (map? (get legacy-jail* "filesystem"))
-                                                           (merge (get legacy-jail* "filesystem")
-                                                                  legacy-filesystem)
-                                                           legacy-filesystem))))
-                                     (dissoc raw "filesystem"))
-             existing-jail (get normalized-filesystem "jail")
-             with-legacy-sandbox
-             (if (and (boolean? legacy-sandbox)
-                      (or (not (map? existing-jail)) (not (contains? existing-jail "enabled"))))
-               (assoc-in normalized-filesystem ["jail" "enabled"] legacy-sandbox)
-               normalized-filesystem)
-             strip-legacy-sandbox? (boolean? legacy-sandbox)]
-
-            (if strip-legacy-sandbox?
-              (dissoc with-legacy-sandbox "sandbox")
-              with-legacy-sandbox)))))))
+        (when (map? raw) raw)))))
 
 (defn- read-yaml-config-map
   "Parse one YAML file and validate its original string-keyed representation.

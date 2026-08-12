@@ -3,7 +3,8 @@
    Python boundary as `session[\"workspace\"]`).
 
    Sessions may work directly in trunk or inside an isolated backend
-   workspace. That distinction is reported on `\"sandbox\"`, NOT
+   workspace. That distinction is reported on `\"isolated\"` (the word
+   `sandbox` names the Python sandbox, and confinement is `jail`), NOT
    as a VCS. `\"vcs_kind\"` reports the underlying repository VCS (`\"git\"`
    when the root is inside a git repo, else `\"none\"`) so it matches the
    `git/` extension surface, which activates on the same predicate. The
@@ -32,11 +33,11 @@
    carries no keyword keys/values at any depth (`\"vcs_kind\"` is the
    stringified `git/vcs-kind`).
 
-   workspace identity — `\"root\"` `\"sandbox\"` `\"id\"` `\"label\"`
+   workspace identity — `\"root\"` `\"isolated\"` `\"id\"` `\"label\"`
      `\"filesystem_roots\"` (configured `workspace.filesystem` catalog entries,
      each with its `\"draft\"` isolation policy and whether this session sees an
      `\"isolated\"` private copy; the session's OWN trunk↔clone pair is folded
-     into `\"root\"`/`\"sandbox\"` instead)
+     into `\"root\"`/`\"isolated\"` instead)
    `\"changed\"` / `\"changed_paths\"` — since-fork edits
    session linkage — `\"session_state_id\"` `\"session_id\"` `\"session_title\"`
      `\"session_fork_of\"` (foreign namespaces stay folded)"
@@ -60,7 +61,7 @@
 
     (cond->
       {"root" root
-       "sandbox" isolated?
+       "isolated" isolated?
        "vcs_kind" (some-> (git-core/vcs-kind root)
                           name)}
       (:id workspace)

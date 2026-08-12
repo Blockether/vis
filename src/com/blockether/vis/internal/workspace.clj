@@ -200,7 +200,7 @@
      (map? env-or-roots)
 
      unrestricted?
-     (and environment? (false? (get-in env-or-roots [:security-policy :sandbox])))
+     (and environment? (false? (get-in env-or-roots [:security-policy :jail-enabled])))
 
      policies
      (when environment?

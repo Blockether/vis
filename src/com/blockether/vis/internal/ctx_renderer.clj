@@ -38,7 +38,7 @@
 
 (defn- normalize-workspace
   "Model-facing `workspace` map: drop internal UUID ids. Producers build the
-   map STRING-KEYED (`\"root\"`, `\"sandbox\"`, `\"vcs_kind\"`, ...) — no key
+   map STRING-KEYED (`\"root\"`, `\"isolated\"`, `\"vcs_kind\"`, ...) — no key
    rewriting happens here anymore. Source iteration order is preserved
    (array-map) so the ctx-delta stays stable."
   [ws]

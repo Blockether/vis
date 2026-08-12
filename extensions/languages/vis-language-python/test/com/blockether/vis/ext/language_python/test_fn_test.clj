@@ -4,6 +4,7 @@
    pytest shim. Requiring `shim-pytest` registers the shim so the runner can
    pull its preamble; the GraalPy engine is exercised end to end."
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.ext.language-python.core :as core]
             [com.blockether.vis.ext.language-python.interpreter :as interp]
             [com.blockether.vis.internal.process-jail :as process-jail]
@@ -280,3 +281,138 @@
              (it "reports nothing when the run printed no summary at all"
                  (expect (nil? (pytest-counts "")))
                  (expect (nil? (pytest-counts "ERROR: file or directory not found: nope.py")))))
+
+;; ── issue #136: counts with no node ids, and an output cut that said nothing ──
+(def ^:private clamp-output @#'core/clamp-output)
+
+(def ^:private junit-report @#'core/junit-report)
+
+(def ^:private output-char-cap @#'core/output-char-cap)
+
+;; Regression, issue #136: `run_tests("python", {"environment" "project"})`
+;; reported `fail: 1` with `failures: []` / `errors: []` — counts and not one
+;; node id, file or message — and its `output` was a tail slice behind a bare
+;; `…`, so a run with many failures came back with the summary line and no
+;; `=== FAILURES ===` section at all, with nothing to say it had been dropped.
+(defdescribe
+  output-clamp-test
+  "The transcript cap keeps BOTH ends and names what it dropped."
+  (it "leaves an output that fits untouched" (expect (= "short" (clamp-output "short" 8000))))
+  (it "keeps the head and the tail, and says how much went missing"
+      (let
+        [s
+         (str
+           "=== test session starts ===\n" (apply str (repeat 20000 "x"))
+           "\n=================================== FAILURES ===================================\n"
+           (apply str (repeat 20000 "y"))
+           "\n=== short test summary info ===\nFAILED tests/test_x.py::test_bad - assert 1 == 2\n"
+           "=== 40 failed in 1.23s ===")
+
+         out
+         (clamp-output s 8000)]
+
+        (expect (<= (count out) 8000))
+        (expect (str/starts-with? out "=== test session starts ==="))
+        (expect (str/ends-with? out "=== 40 failed in 1.23s ==="))
+        (expect (str/includes? out "characters omitted"))
+        (expect (str/includes? out (str (- (count s) (- 8000 96)))))))
+  (it "caps at output-char-cap chars" (expect (= 8000 output-char-cap))))
+
+(defdescribe
+  junit-report-test
+  "pytest's --junitxml report is what turns `1 failed` into a named test."
+  (it
+    "reads failures, errors, counts, resolved file and a 1-based line"
+    (let [root (tmp-dir)]
+      (try
+        (.mkdirs (io/file root "tests"))
+        (spit (io/file root "tests" "test_x.py") "def test_bad():\n    assert 1 == 2\n")
+        (spit
+          (io/file root "report.xml")
+          (str
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>" "<testsuites name=\"pytest tests\">"
+            "<testsuite name=\"pytest\" errors=\"1\" failures=\"1\" skipped=\"1\" tests=\"4\">"
+            "<testcase classname=\"tests.test_x\" name=\"test_ok\" file=\"tests/test_x.py\" line=\"0\"/>"
+            "<testcase classname=\"tests.test_x\" name=\"test_skip\" file=\"tests/test_x.py\" line=\"3\">"
+            "<skipped message=\"no reason\"/></testcase>"
+            "<testcase classname=\"tests.test_x\" name=\"test_bad\" file=\"tests/test_x.py\" line=\"5\">"
+            "<failure message=\"assert 1 == 2\">def test_bad():\n"
+            "&gt;       assert 1 == 2\nE       assert 1 == 2\n\ntests/test_x.py:7: AssertionError"
+            "</failure></testcase>"
+            "<testcase classname=\"tests.test_x.TestG\" name=\"test_err\" file=\"tests/test_x.py\" line=\"9\">"
+            "<error message=\"failed on setup with &quot;ValueError: boom&quot;\">"
+            "E       ValueError: boom</error></testcase>" "</testsuite></testsuites>"))
+        (let
+          [r (junit-report (.getPath root) (io/file root "report.xml"))
+           f (first (:failures r))
+           e (first (:errors r))]
+
+          (expect (= 1 (count (:failures r))))
+          (expect (= 1 (count (:errors r))))
+          (expect (= "test_bad" (get f "test")))
+          (expect (= "tests.test_x" (get f "ns")))
+          (expect (= "assert 1 == 2" (get f "message")))
+          (expect (= (.getCanonicalPath (io/file root "tests" "test_x.py")) (get f "file")))
+          ;; pytest writes a 0-based line index; the contract's line is 1-based.
+          (expect (= 6 (get f "line")))
+          (expect (= "test_err" (get e "test")))
+          (expect (str/includes? (get e "message") "ValueError: boom"))
+          (expect (= {"passed" 1 "failed" 1 "errored" 1 "skipped" 1} (:counts r))))
+        (finally (cleanup root)))))
+  (it "returns nothing (not a crash) for a report that was never written"
+      (let [root (tmp-dir)]
+        (try (expect (nil? (junit-report (.getPath root) (io/file root "absent.xml"))))
+             (spit (io/file root "junk.xml") "not xml at all <<<")
+             (expect (nil? (junit-report (.getPath root) (io/file root "junk.xml"))))
+             (finally (cleanup root))))))
+
+(defdescribe
+  faulted-run-test
+  "Both backends NAME every failing test, not just count it."
+  (it "reports the hermetic backend's failures with node id and file"
+      (let [root (tmp-dir)]
+        (try (.mkdirs (io/file root "tests"))
+             (spit (io/file root "tests" "test_sample.py")
+                   (str "def test_ok():\n" "    assert True\n\n"
+                        "def test_bad():\n" "    assert 1 == 2\n"))
+             (let
+               [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
+                                              {"runner" "graalpy"}))
+                f (first (get res "failures"))]
+
+               (expect (= 1 (count (get res "failures"))))
+               (expect (= [] (get res "errors")))
+               (expect (str/includes? (str (get f "test")) "test_bad"))
+               (expect (str/includes? (str (get f "file")) "test_sample.py"))
+               (expect (seq (str (get f "message")))))
+             (finally (cleanup root)))))
+  (it "reports the project backend's failures from pytest's own junit report"
+      (when (has-python?)
+        (let
+          [root
+           (tmp-dir)
+
+           session-id
+           (str "python-test-fn-" (random-uuid))]
+
+          (try (process-jail/register-session-jail!
+                 session-id
+                 (constantly
+                   {:roots-fn (constantly [(.getPath root)]) :net-enabled? true :disabled? true}))
+               (.mkdirs (io/file root "tests"))
+               (spit (io/file root "tests" "test_sample.py")
+                     (str "def test_ok():\n" "    assert True\n\n"
+                          "def test_bad():\n" "    assert 1 == 2\n"))
+               (let
+                 [res (:result (core/py-test-fn {:workspace/root (.getPath root)
+                                                 :session-id session-id}
+                                                {"environment" "project"}))]
+                 (expect (= "project" (get res "runner")))
+                 ;; pytest itself may be absent on the machine running this suite;
+                 ;; assert the faults only for a run that actually reported one.
+                 (when (= 1 (get res "failed"))
+                   (expect (= 1 (count (get res "failures"))))
+                   (expect (= "test_bad" (get-in res ["failures" 0 "test"])))
+                   (expect (str/includes? (get-in res ["failures" 0 "file"]) "test_sample.py"))
+                   (expect (str/includes? (get-in res ["failures" 0 "message"]) "assert 1 == 2"))))
+               (finally (process-jail/unregister-session-jail! session-id) (cleanup root)))))))

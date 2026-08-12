@@ -6,6 +6,7 @@
    a session resource so it shows in ctx + the footer and is stoppable by id."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [clojure.xml :as xml]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.language-python.interpreter :as interpreter]
             [com.blockether.vis.ext.language-python.repl-manager :as repl]
@@ -168,10 +169,190 @@
 ;; run_tests
 ;; =============================================================================
 
-(defn- tail-str
-  "Last `n` chars of `s`, ellipsized when truncated."
+(def ^:private output-char-cap
+  "Chars of the pytest transcript carried back in `output`. A long run prints
+   megabytes; what the cut drops is recoverable, because every fault also comes
+   back structured in `failures` / `errors`."
+  8000)
+
+(defn- clamp-output
+  "`s` capped at `n` chars, cut in the MIDDLE behind a marker that NAMES how much
+   went missing.
+
+   Regression, issue #136: the cut was a tail slice behind a bare `…`, so a run
+   with many failures came back with its summary line and no evidence at all —
+   the whole `=== FAILURES ===` section was gone, and nothing said so. Both ends
+   are load bearing: a collection error prints at the TOP, the verdict and the
+   `short test summary info` at the BOTTOM."
   [^String s n]
-  (if (<= (count s) (long n)) s (str "…" (subs s (- (count s) (long n))))))
+  (let
+    [len
+     (count s)
+
+     n
+     (long n)]
+
+    (if (<= len n)
+      s
+      ;; The marker itself is charged against the cap, so the result still fits.
+      (let
+        [kept
+         (max 0 (- n 96))
+
+         head-n
+         (quot kept 3)
+
+         tail-n
+         (- kept head-n)]
+
+        (str (subs s 0 head-n)
+             "\n\n… " (- len kept)
+             " characters omitted; every fault is listed in `failures` …\n\n"
+             (subs s (- len tail-n)))))))
+
+(defn- fault-headline
+  "One-line headline for a fault body: the assertion line pytest marks with `E `
+   when the body has one, else its first non-blank line. Capped — the full
+   traceback stays in `output`."
+  [s]
+  (let
+    [lines
+     (remove str/blank? (str/split-lines (str s)))
+
+     head
+     (str/trim (str (or (last (filter #(re-find #"^E\s" %) lines)) (first lines) "")))]
+
+    (if (> (count head) 400) (str (subs head 0 400) "…") head)))
+
+(defn- junit-fault
+  "One `<testcase>`'s `<failure>` / `<error>` child as the surface contract's
+   `{ns test message file line}`. `file` is resolved against the run's `cwd`
+   when it lands there (pytest writes it relative to its own rootdir), and
+   pytest's 0-based `line` becomes the contract's 1-based one."
+  [^String dir case-attrs fault]
+  (let
+    [rel
+     (str (or (:file case-attrs) ""))
+
+     resolved
+     (when (seq rel)
+       (let [^java.io.File f (io/file dir rel)]
+         (if (.exists f) (.getCanonicalPath f) rel)))
+
+     line
+     (some-> (:line case-attrs)
+             str
+             parse-long)
+
+     ns-name
+     (str (or (:classname case-attrs) ""))
+
+     attr-message
+     (str/trim (str (or (:message (:attrs fault)) "")))]
+
+    (cond->
+      {"test" (str (:name case-attrs))
+       "message" (fault-headline (if (seq attr-message) attr-message (apply str (:content fault))))}
+      (seq ns-name)
+      (assoc "ns" ns-name)
+
+      resolved
+      (assoc "file" resolved)
+
+      (and line (not (neg? (long line))))
+      (assoc "line" (inc (long line))))))
+
+(defn- junit-report
+  "pytest's `--junitxml` report as `{:failures [...] :errors [...] :counts {...}}`,
+   or nil when no readable report was written (a crash before pytest got there).
+
+   Issue #136: pytest's summary line carries COUNTS and no node ids, so the
+   project backend could report `1 failed` and nothing a model could open. The
+   XML is the only machine-readable per-test record pytest offers, and its
+   `<testsuite>` attributes also give counts for a run that printed no summary."
+  [^String dir ^java.io.File xml]
+  (when (.isFile xml)
+    (try
+      (let
+        [root
+         (with-open [in (io/input-stream xml)]
+           (xml/parse in))
+
+         suites
+         (if (= :testsuite (:tag root)) [root] (filterv #(= :testsuite (:tag %)) (:content root)))
+
+         cases
+         (for
+           [s
+            suites
+
+            c
+            (:content s)
+
+            :when (= :testcase (:tag c))]
+
+           c)
+
+         faults
+         (fn [tag]
+           (vec (for
+                  [c
+                   cases
+
+                   f
+                   (:content c)
+
+                   :when (= tag (:tag f))]
+
+                  (junit-fault dir (:attrs c) f))))
+
+         attr-sum
+         (fn ^long [k]
+           (long (reduce +
+                         0
+                         (keep #(some-> (get-in % [:attrs k])
+                                        str
+                                        parse-long)
+                               suites))))
+
+         tests
+         (long (attr-sum :tests))
+
+         failed
+         (long (attr-sum :failures))
+
+         errored
+         (long (attr-sum :errors))
+
+         skipped
+         (long (attr-sum :skipped))]
+
+        {:failures (faults :failure)
+         :errors (faults :error)
+         :counts {"passed" (max 0 (- tests failed errored skipped))
+                  "failed" failed
+                  "errored" errored
+                  "skipped" skipped}})
+      ;; A malformed or half-written report is not a reason to lose the run.
+      (catch Exception _ nil))))
+
+(defn- graalpy-faults
+  "The hermetic backend's per-test records as surface-contract faults — one map
+   per test whose `:outcome` is in `outcomes`, carrying the node id, its file and
+   the assertion headline. Same reason as the project backend (issue #136):
+   counts alone name nothing the reader can open."
+  [tests outcomes]
+  (vec (for
+         [{:keys [nodeid outcome message file]}
+          tests
+
+          :when (contains? outcomes outcome)]
+
+         (cond->
+           {"test" (or (second (str/split (str nodeid) #"::" 2)) (str nodeid))
+            "message" (fault-headline message)}
+           (seq (str file))
+           (assoc "file" (str file))))))
 
 (defn- resolve-test-paths
   "Absolute path strings to hand a test runner. Honors `{paths}` — FILES or
@@ -228,6 +409,8 @@
        "failed" (or (:failed res) 0)
        "errored" (or (:errored res) 0)
        "skipped" (or (:skipped res) 0)
+       "failures" (graalpy-faults (:tests res) #{:failed})
+       "errors" (graalpy-faults (:tests res) #{:errored})
        "output" (ptr/render-test-report res)}
       (:error res)
       (assoc "error" (:error res))
@@ -260,22 +443,23 @@
    nothing but a duration. Once pytest reported ANY outcome, the words it left out
    are ZERO."
   [s]
-  (let [n
-        (fn [re]
-          (some-> (second (re-find re (str s)))
-                  parse-long))
+  (let
+    [n
+     (fn [re]
+       (some-> (second (re-find re (str s)))
+               parse-long))
 
-        passed
-        (n #"(?m)(\d+) passed")
+     passed
+     (n #"(?m)(\d+) passed")
 
-        failed
-        (n #"(?m)(\d+) failed")
+     failed
+     (n #"(?m)(\d+) failed")
 
-        errored
-        (n #"(?m)(\d+) error(?:ed|s)?\b")
+     errored
+     (n #"(?m)(\d+) error(?:ed|s)?\b")
 
-        skipped
-        (n #"(?m)(\d+) skipped")]
+     skipped
+     (n #"(?m)(\d+) skipped")]
 
     (when (or passed failed errored skipped)
       {"passed" (or passed 0)
@@ -285,13 +469,23 @@
 
 (defn- project-test
   "Escape-hatch backend: shell the project interpreter's pytest (uv / poetry /
-   .venv / python3 `-m pytest <paths>`) in `cwd` so installed deps are visible."
+   .venv / python3 `-m pytest <paths>`) in `cwd` so installed deps are visible.
+
+   The argv also asks pytest for a `--junitxml` report in a temp file (the
+   `xunit1` family, the only one that still carries `file` / `line`), reads the
+   per-test faults out of it and deletes it. That report is the ONLY
+   machine-readable record pytest offers: without it the result could carry
+   counts and not one node id (issue #136)."
   [session-id ^String dir paths]
   (let
-    [cmd
+    [^java.io.File junit
+     (java.io.File/createTempFile "vis-pytest-" ".xml")
+
+     cmd
      (-> (interpreter/resolve-command dir)
          (conj "-m" "pytest")
-         (into paths))
+         (into paths)
+         (conj "-o" "junit_family=xunit1" (str "--junitxml=" (.getPath junit))))
 
      launch
      (vis/session-process-launch session-id cmd)
@@ -317,23 +511,33 @@
      (.waitFor p 300 java.util.concurrent.TimeUnit/SECONDS)]
 
     (when-not done? (.destroyForcibly p))
-    (let
-      [s
-       (str @out)
+    (try (let
+           [s
+            (str @out)
 
-          counts
-          (pytest-counts s)]
+            report
+            (junit-report dir junit)
 
-      (merge {"runner" "project"
-              "mode" "cli"
-              "framework" "pytest"
-              "tool" "pytest"
-              "cmd" (vec cmd)
-              "cwd" dir
-              "exit" (when done? (.exitValue p))
-              "timed_out" (not done?)
-              "output" (tail-str s 8000)}
-             counts))))
+            counts
+            (or (pytest-counts s) (:counts report))]
+
+           (cond->
+             (merge {"runner" "project"
+                     "mode" "cli"
+                     "framework" "pytest"
+                     "tool" "pytest"
+                     "cmd" (vec cmd)
+                     "cwd" dir
+                     "exit" (when done? (.exitValue p))
+                     "timed_out" (not done?)
+                     "output" (clamp-output s output-char-cap)}
+                    counts)
+             (seq (:failures report))
+             (assoc "failures" (:failures report))
+
+             (seq (:errors report))
+             (assoc "errors" (:errors report))))
+         (finally (.delete junit)))))
 
 (defn- select-runner
   "Which backend a `run_tests` call uses, in precedence order: an explicit
@@ -372,6 +576,10 @@
      - `{environment \"project\"}` shells the project interpreter's pytest
        (the argv pinned as `python.interpreter`, else `uv`/`poetry`/`.venv`/
        `python3` `-m pytest <paths>`) so installed test dependencies are visible.
+   BOTH backends name their faults: every failing/erroring test comes back in
+   `failures` / `errors` as `{ns test message file line}` (the project backend
+   reads pytest's own `--junitxml` report), and `output` carries the transcript
+   capped in the middle behind a marker that says how much it dropped.
    `python.runner` in merged config chooses the DEFAULT backend; an explicit
    `environment` / `runner` argument still wins.
    `runner` and `interpreter` remain private compatibility aliases."
