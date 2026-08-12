@@ -118,10 +118,11 @@
                   (str "  " lang " : " (str/join " · " tools))))
       (when (contains? data "clojure")
         (str
-          "\n  clojure REPL tests reuse the managed REPL and execute its already-loaded Vars;"
-          " they do NOT reload namespaces automatically. After edits `(require 'my.ns :reload)`"
-          " every changed production and test namespace, or tests may exercise stale code;"
-          " prefer a FRESH REPL (stop, then start) over `:reload-all`."
+          "\n  clojure run_tests REUSES this session's managed REPL: it reloads the namespaces it"
+          " RUNS but NEVER their dependencies, so a changed PRODUCTION ns still serves the Vars"
+          " already loaded and tests pass or fail against stale code. `repl_eval`"
+          " `(require 'my.prod.ns :reload)` for each production ns you edited before rerunning;"
+          " when several changed, a FRESH REPL (`repl` stop, then start) beats `:reload-all`."
           "\n  clojure lint_code runs clj-kondo + `general` REFLECTION/BOXED-MATH checks;"
           " whole-project lint (omit code/paths) includes both; no separate reflection check.")))))
 

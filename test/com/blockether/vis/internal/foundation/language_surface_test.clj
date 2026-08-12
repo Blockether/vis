@@ -282,11 +282,17 @@
 
         (expect (str/includes? m "clojure : format_code · run_tests · repl_eval · repl"))
         (expect (str/includes? m "python : repl_eval · repl"))
-        (expect (str/includes? m "reuse the managed REPL and execute its already-loaded Vars"))
-        (expect (str/includes? m "do NOT reload namespaces automatically"))
-        (expect (str/includes? m "tests may exercise stale code"))
-        (expect (str/includes? m "every changed production and test namespace"))
-        (expect (str/includes? m "prefer a FRESH REPL (stop, then start) over `:reload-all`"))
+        ;; The staleness note is the ONE thing about run_tests a session cannot
+        ;; infer from a result -- and it used to say the wrong thing. The runner
+        ;; `(require … :reload)`s every namespace it RUNS, so the trap is never
+        ;; the test namespace: it is the PRODUCTION namespace that test depends
+        ;; on, whose Vars the reused REPL keeps until someone reloads them.
+        (expect (str/includes? m "REUSES this session's managed REPL"))
+        (expect (str/includes? m "reloads the namespaces it RUNS but NEVER their dependencies"))
+        (expect (str/includes? m "changed PRODUCTION ns still serves the Vars"))
+        (expect (str/includes? m "(require 'my.prod.ns :reload)"))
+        (expect (str/includes? m "FRESH REPL (`repl` stop, then start) beats `:reload-all`"))
+        (expect (not (str/includes? m "do NOT reload namespaces automatically")))
         (expect (not (str/includes? m "session[\"resources\"]")))
         (expect (not (str/includes? m "Keep managed REPLs alive")))))
   (it "is nil when no language pack is active (nothing dead in the prompt)"

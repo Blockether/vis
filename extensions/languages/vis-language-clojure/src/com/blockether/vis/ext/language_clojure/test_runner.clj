@@ -31,7 +31,13 @@
   290000)
 
 (def ^{:private true} run-form
-  "Code evaled on the target nREPL. Loads each requested namespace, selecting
+  "Code evaled on the target nREPL. Loads each REQUESTED namespace FROM SOURCE
+   (`require :reload`, or `load-file` when ns-files carries its path) and ONLY
+   that namespace: `:reload` never touches its dependencies, so a production
+   namespace the caller edited keeps the Vars the REPL already holds and the
+   run measures stale code. Reloading those is the caller's move (`repl_eval`
+   `(require 'my.prod.ns :reload)`, or a fresh REPL) — never `:reload-all`
+   here, which would re-evaluate the whole graph under the test run. Selects
    tests by the lazytest-modeled selector map {:only :include :exclude} at VAR
    granularity. An :only entry matches either the bare var name or the
    fully-qualified ns/name form; a non-empty :only that matches NOTHING is an

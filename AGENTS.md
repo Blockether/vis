@@ -30,7 +30,7 @@ Read the skill before working in its area — each one is the full contract, kep
 
 - **Never require `clojure.test` — it is silently undiscovered**, so the tests appear to pass by not running. Use `[lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]`, and `lazytest.core/set-ns-context!` plus `around-each` instead of `use-fixtures`.
 - Prefer the smallest relevant `run_tests` namespace; `only` takes fully qualified top-level Lazytest vars. For tests-only verification call `run_tests` directly — its runner owns runtime setup. Use `repl_eval` when interactive inspection or stateful evaluation is part of the task.
-- A managed REPL retains Vars: reload every changed production namespace, then every changed test namespace, before rerunning. There is no restart op — `stop` then `start` when a clean load is safer.
+- A managed REPL retains Vars, and `run_tests` reloads the namespaces it RUNS but never their dependencies: reload every changed PRODUCTION namespace before rerunning. There is no restart op — `stop` then `start` when a clean load is safer.
 - Clean JVM: `clojure -M:test`, `--namespace my.ns-test`, `--var my.ns-test/my-test`.
 
 ## Fixing a reported bug

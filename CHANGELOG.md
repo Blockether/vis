@@ -87,6 +87,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   block, file picker) and the TUI Magit surface are unchanged.
 
 ### Fixed
+- The prompt's Clojure `run_tests` note said the opposite of what the runner does. It claimed the
+  managed REPL does "NOT reload namespaces automatically" and told a session to reload every
+  changed *test* namespace, while the runner already `(require … :reload)`s (or `load-file`s)
+  every namespace it RUNS — and never their dependencies. Proven at runtime: a poisoned Var in a
+  test namespace came back restored from a run, the poisoned Var in the production namespace that
+  test requires did not. The prompt line, `run-form`'s docstring and the repo guidance now name
+  the real trap: a changed PRODUCTION namespace keeps the Vars the reused REPL already holds.
 - A cancelled turn no longer keeps polling a shell wait to its own deadline. `sh.wait` samples the
   process tree's usage on every iteration, and that sampler spawns `ps` and calls `.waitFor` inside
   a best-effort `catch Throwable` — which caught the `InterruptedException` the JVM throws with the
