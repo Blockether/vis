@@ -60,6 +60,7 @@ import {
   TextButton,
   ProjectCrumb,
   RowDisclosure,
+  SearchField,
   SectionHeader,
   Spinner,
   UnreadBadge,
@@ -1942,6 +1943,52 @@ describe("every ✕ in the app", () => {
     expect(
       renderToStaticMarkup(<RemoveButton label="Remove notes.md" />),
     ).not.toContain("text-dialog-hint");
+  });
+});
+
+// Regression, user report ("the close buttons look bizarre and they are not the same —
+// the one in the queued messages is not black like the other close buttons"): the app
+// drew its ✕ at TWO sizes. `DialogClose` rendered the icon set's own 14px cross, while
+// `RemoveButton` — the way a queued message, a paste and an attachment leave the
+// composer — and the search field's Clear shrank it to `size-3`. A 24-unit mark scaled
+// to 12px carries a 0.9px stroke: measured on the live tray at 390px, the small cross
+// bottomed out at #3a3a3a where the ink it names (`--fg`) is #262626, so a mark that IS
+// black rendered grey beside the black one in the band above it, at 59% of its ink. The
+// same control washed amber (`bg-warn-surface`) under the pointer while every other way
+// out of something washed red.
+describe("one ✕, at one size, under one wash", () => {
+  const inButton = (html: string) => html.slice(html.indexOf("<button"));
+  const markOf = (html: string) =>
+    (/<svg[^>]*class="([^"]*)"/.exec(inButton(html))?.[1] ?? "").split(" ");
+  const boxOf = (html: string) =>
+    (/<button[^>]*class="([^"]*)"/.exec(inButton(html))?.[1] ?? "").split(" ");
+  const ways = {
+    "a band": renderToStaticMarkup(
+      <DialogClose label="Close artifacts" onClose={() => {}} />,
+    ),
+    "a queued message": renderToStaticMarkup(
+      <RemoveButton label="Remove queued message 1" />,
+    ),
+    "a query": renderToStaticMarkup(
+      <SearchField value="release" onValue={() => {}} label="Search sessions" />,
+    ),
+  };
+
+  it("draws the icon set's own cross on every surface it leaves", () => {
+    for (const [where, html] of Object.entries(ways)) {
+      expect(markOf(html), where).toContain("size-3.5");
+      expect(markOf(html), where).not.toContain("size-3");
+    }
+    // And no call site in the vocabulary shrinks it back down again.
+    expect(uiSource).not.toContain('<CloseIcon className="size-3"');
+  });
+
+  it("goes red under the pointer wherever it is drawn, never amber", () => {
+    for (const [where, html] of Object.entries(ways)) {
+      expect(boxOf(html), where).toContain("hover:bg-err/15");
+      expect(boxOf(html), where).toContain("hover:text-err");
+      expect(boxOf(html), where).not.toContain("hover:bg-warn-surface");
+    }
   });
 });
 

@@ -575,6 +575,16 @@ export function ChoiceRow({
  *
  * `edge` is the hairline a control grows when it ends a chip it shares with a
  * label — part of the face, so it is a prop rather than a class at the call site.
+ *
+ * IT DRAWS THE SAME CROSS AS EVERY OTHER WAY OUT, at the icon set's own size and
+ * with the icon set's own wash. It used to shrink the mark to `size-3` and wash
+ * amber on hover, and both of those made it a different control: a 24-unit cross
+ * scaled to 12px carries a 0.9px stroke, so measured on the queued tray at 390px
+ * its darkest pixel came out #3a3a3a where the ink it names (`--fg`) is #262626 —
+ * the mark never reached its own colour, which is why a black ✕ read as a grey
+ * one beside the 14px cross in the dialog band above it. The wash follows for the
+ * same reason: closing is the same gesture on a chip as it is on a band, so it
+ * goes red under the pointer (`err/15`) rather than amber.
  */
 export function RemoveButton({
   label,
@@ -592,12 +602,12 @@ export function RemoveButton({
       type="button"
       aria-label={label}
       title={label}
-      className={`grid min-h-7 w-7 shrink-0 place-items-center text-white transition-colors duration-150 hover:bg-warn-surface hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-white motion-reduce:transition-none ${
+      className={`grid min-h-7 w-7 shrink-0 place-items-center text-white transition-colors duration-150 hover:bg-err/15 hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-white motion-reduce:transition-none ${
         edge ? 'border-l border-code-edge' : ''
       } ${className}`}
       {...props}
     >
-      <CloseIcon className="size-3" />
+      <CloseIcon />
     </button>
   );
 }
@@ -1040,7 +1050,7 @@ export const SearchField = forwardRef<
             own.current?.focus();
           }}
         >
-          <CloseIcon className="size-3" />
+          <CloseIcon />
         </IconButton>
       ) : null}
     </label>
