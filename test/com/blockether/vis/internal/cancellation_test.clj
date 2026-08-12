@@ -214,7 +214,13 @@
                         (expect (true? (.isInterrupted (Thread/currentThread)))))
                       (finally (Thread/interrupted))))
              (it "the jail's detacher probe answers false without eating the interrupt"
-                 (try (.interrupt (Thread/currentThread))
-                      (expect (false? (#'process-jail/execs-in-place? [])))
-                      (expect (true? (.isInterrupted (Thread/currentThread))))
-                      (finally (Thread/interrupted)))))
+                 ;; A prefix that keeps the child ALIVE, so `.waitFor` is genuinely
+                 ;; waiting when the flag is already set. The bare probe
+                 ;; (`/bin/sh -c 'exit 77'`) can finish first on a fast Linux runner
+                 ;; and answer true without ever entering the wait -- green for the
+                 ;; wrong reason, and red on this assertion.
+                 (let [slow ["/bin/sh" "-c" "sleep 2; exec \"$@\"" "sh"]]
+                   (try (.interrupt (Thread/currentThread))
+                        (expect (false? (#'process-jail/execs-in-place? slow)))
+                        (expect (true? (.isInterrupted (Thread/currentThread))))
+                        (finally (Thread/interrupted))))))
