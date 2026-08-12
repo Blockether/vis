@@ -2,6 +2,12 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.35 (4044) — 2026-08-12
+<!-- commit: c83786fd6d61b4a9810ec08a04b090fd12901637 -->
+
+- List vis.yml's declared repositories in the magit buffer
+- One header per repository in the magit buffer, duplicates collapsed
+
 ## 0.1.35 (4042) — 2026-08-12
 <!-- commit: 59354fd64c245c588a43a67274e99ef54de33e54 -->
 
