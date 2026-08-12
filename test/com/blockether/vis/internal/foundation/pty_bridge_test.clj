@@ -1,5 +1,10 @@
 (ns com.blockether.vis.internal.foundation.pty-bridge-test
+  "The passthrough bridge against a REAL pseudo-terminal. There is no stand-in
+   handle here on purpose: a hand-written `{:add-listener :send}` map proves only
+   that `serve!` calls two functions, never that a byte typed into the socket
+   reaches a terminal and comes back out of it — which is the whole feature."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.foundation.pty :as pty]
             [com.blockether.vis.internal.foundation.pty-bridge :as pb]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.io File)
@@ -8,37 +13,24 @@
            (java.nio.channels SocketChannel)
            (java.nio.file Paths)))
 
-(defn- fake-pty
-  "A PTY-handle stand-in exposing just the surface `serve!` uses: `:add-listener`
-   (records subscribers so a test can drive live output) and `:send` (records
-   bytes forwarded from a client)."
+(defn- cat-binary
+  "`posix_spawn` takes a PATH, never a PATH lookup, so the smallest echoing child
+   is resolved by hand."
+  ^String []
+  (first (filter #(.exists (File. ^String %)) ["/bin/cat" "/usr/bin/cat"])))
+
+(defn- real-pty
+  "A REAL pty running `cat` — the exact handle map production hands `serve!`
+   (`internal.foundation.shell/pty-spawn!` returns this shape). Everything
+   written to the master is echoed by the terminal and repeated by `cat`, so one
+   round trip exercises `:send`, the reader loop and `:add-listener` together."
   []
-  (let
-    [listeners
-     (atom [])
+  (pty/spawn! {:command [(cat-binary)] :env {"PATH" "/usr/bin:/bin" "TERM" "dumb"}}))
 
-     sent
-     (atom [])
-
-     listener-added
-     (promise)
-
-     input-sent
-     (promise)]
-
-    {:listeners listeners
-     :sent sent
-     :listener-added listener-added
-     :input-sent input-sent
-     :handle {:add-listener (fn [f]
-                              (swap! listeners conj f)
-                              (deliver listener-added true)
-                              (fn []
-                                (swap! listeners (fn [ls]
-                                                   (vec (remove #(identical? % f) ls))))))
-              :send (fn [^bytes b]
-                      (swap! sent conj (String. b))
-                      (deliver input-sent true))}}))
+(defn- kill!
+  [pty]
+  (try ((:destroy pty) true) (catch Throwable _ nil))
+  (try ((:wait pty)) (catch Throwable _ nil)))
 
 (defn- tmp-sock
   []
@@ -47,74 +39,91 @@
 
 (defn- connect
   ^SocketChannel [path]
-  (SocketChannel/open (UnixDomainSocketAddress/of (Paths/get ^String path (make-array String 0)))))
+  (doto (SocketChannel/open (UnixDomainSocketAddress/of (Paths/get ^String path
+                                                                   (make-array String 0))))
+    (.configureBlocking false)))
 
-(defn- read-str
-  "Read the next available response from the blocking Unix socket."
-  [ch]
+(defn- type!
+  "Write every byte of `s` to the client socket, the way a human's terminal
+   would."
+  [^SocketChannel ch ^String s]
+  (let [buf (ByteBuffer/wrap (.getBytes s))]
+    (while (.hasRemaining buf) (.write ch buf))))
+
+(defn- read-until
+  "Accumulate what the bridge sends this client until `pred` holds on the text so
+   far, or `ms` elapses. Returns the text read — the ASSERTION decides whether
+   that was enough, so a timeout fails with the bytes that did arrive."
+  ^String [^SocketChannel ch pred ms]
   (let
     [buf
-     (ByteBuffer/allocate 1024)
+     (ByteBuffer/allocate 4096)
 
-     _n
-     (.read ch buf)]
+     deadline
+     (+ (System/currentTimeMillis) (long ms))]
 
-    (.flip buf)
-    (let [ba (byte-array (.remaining buf))]
-      (.get buf ba)
-      (String. ba))))
+    (loop [acc ""]
+      (.clear buf)
+      (let [n (.read ch buf)]
+        (cond (pos? n) (let
+                         [ba (byte-array n)
+                          _ (.flip buf)
+                          _ (.get buf ba)
+                          acc' (str acc (String. ba))]
 
-(defdescribe pty-bridge-test
-             (it "socket-path encodes session + id and find-socket matches by id suffix"
-                 (let [p (pb/socket-path "sess-abc" "dev-server")]
-                   (expect (str/ends-with? (str (.getFileName p)) "__dev-server.sock"))
-                   (expect (str/includes? (str (.getFileName p)) "sess-abc"))))
-             (it "replays recent output, tees live output, and forwards client input"
-                 (let
-                   [{:keys [sent handle listeners listener-added input-sent]}
-                    (fake-pty)
+                         (if (pred acc') acc' (recur acc')))
+              (neg? n) acc
+              (or (pred acc) (> (System/currentTimeMillis) deadline)) acc
+              :else (do (Thread/sleep 10) (recur acc)))))))
 
-                    path
-                    (tmp-sock)
+(defdescribe
+  pty-bridge-test
+  (it "socket-path encodes session + id and find-socket matches by id suffix"
+      (let [p (pb/socket-path "sess-abc" "dev-server")]
+        (expect (str/ends-with? (str (.getFileName p)) "__dev-server.sock"))
+        (expect (str/includes? (str (.getFileName p)) "sess-abc"))))
+  (it "replays buffered output, tees a real terminal's live output, and types into it"
+      (let
+        [pty
+         (real-pty)
 
-                    {:keys [stop] sp :path}
-                    (pb/serve! {:pty handle
-                                :path path
-                                :replay-fn (fn []
-                                             (.getBytes "REPLAY\n"))})]
+         path
+         (tmp-sock)
 
-                   (try (expect (.exists (File. ^String sp)))
-                        (with-open [ch (connect sp)]
-                          ;; late attacher gets the replay buffer
-                          (expect (= "REPLAY\n" (read-str ch)))
-                          ;; The client handler registered its live-output listener.
-                          (expect (= true (deref listener-added 1000 false)))
-                          ;; Live master output is teed to the attached client.
-                          (doseq [l @listeners]
-                            (l (.getBytes "LIVE\n")))
-                          (expect (= "LIVE\n" (read-str ch)))
-                          ;; bytes the human types flow into the pty master (:send)
-                          (.write ch (ByteBuffer/wrap (.getBytes "typed\n")))
-                          (expect (= true (deref input-sent 1000 false)))
-                          (expect (= ["typed\n"] @sent)))
-                        (finally (stop)))
-                   ;; stop unlinks the socket file
-                   (expect (not (.exists (File. ^String sp))))))
-             (it "find-socket resolves an explicit socket path"
-                 (let
-                   [{:keys [handle]}
-                    (fake-pty)
+         {:keys [stop] sp :path}
+         (pb/serve! {:pty pty
+                     :path path
+                     :replay-fn (fn []
+                                  (.getBytes "REPLAY\n"))})]
 
-                    path
-                    (tmp-sock)
+        (try (expect (.exists (File. ^String sp)))
+             (with-open [ch (connect sp)]
+               ;; a late attacher gets the replay buffer before anything live
+               (expect (str/includes? (read-until ch #(str/includes? % "REPLAY") 2000) "REPLAY"))
+               ;; bytes the human types cross the socket, reach the pty MASTER
+               ;; (`:send`) and come back out of the terminal as live output teed
+               ;; to this client — the whole loop, no stand-in anywhere in it
+               (type! ch "hello-from-the-bridge\n")
+               (expect (str/includes?
+                         (read-until ch #(str/includes? % "hello-from-the-bridge") 10000)
+                         "hello-from-the-bridge")))
+             (finally (stop) (kill! pty)))
+        ;; stop unlinks the socket file
+        (expect (not (.exists (File. ^String sp))))))
+  (it "find-socket resolves an explicit socket path"
+      (let
+        [pty
+         (real-pty)
 
-                    {:keys [stop] sp :path}
-                    (pb/serve! {:pty handle :path path})]
+         path
+         (tmp-sock)
 
-                   (try (expect (= sp (str (pb/find-socket {:socket sp})))) (finally (stop)))))
-             (it "attach! returns exit code 2 for a missing socket"
-                 (expect (= 2
-                            (pb/attach! {:socket (str (File. (System/getProperty "java.io.tmpdir")
-                                                             (str "vis-nope-"
-                                                                  (System/nanoTime)
-                                                                  ".sock")))})))))
+         {:keys [stop] sp :path}
+         (pb/serve! {:pty pty :path path})]
+
+        (try (expect (= sp (str (pb/find-socket {:socket sp})))) (finally (stop) (kill! pty)))))
+  (it "attach! returns exit code 2 for a missing socket"
+      (expect (= 2
+                 (pb/attach! {:socket (str (File.
+                                             (System/getProperty "java.io.tmpdir")
+                                             (str "vis-nope-" (System/nanoTime) ".sock")))})))))

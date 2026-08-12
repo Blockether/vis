@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   back.
 
 ### Changed
+- The macOS arm64 release build no longer runs on anyone's laptop. This repository registers no
+  self-hosted runner: the `macos` job of `.github/workflows/native-release.yml` takes its builder
+  from the repository variable `VIS_MACOS_ARM64_RUNNER`, which now holds a CLOUD Apple-silicon
+  runner LABEL (unset = the job is skipped and the asset is built by hand with
+  `bin/release-native --tag vX.Y.Z --upload`). A preflight step refuses any builder under 16 GiB
+  in seconds, with the measured numbers in the message, instead of thrashing for hours — every
+  GitHub-hosted macOS class, free or paid, is under that floor. The job also caches dependencies
+  and smoke-tests the gateway now, because a cloud runner is ephemeral.
 - A shell result has NO `stderr` field (issue #137). Every command runs under a real pty, where
   stdout and stderr are physically ONE stream, so `stderr` could only ever answer `nil` — a
   caller reading it to diagnose a failure got nothing while the message sat in `stdout`. The
@@ -87,6 +95,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   block, file picker) and the TUI Magit surface are unchanged.
 
 ### Fixed
+- The pty bridge is tested against a REAL pseudo-terminal. `pty_bridge_test` drove a hand-written
+  `{:add-listener :send}` stand-in, which could only prove that `serve!` called two functions —
+  never that a byte typed into the socket reaches a terminal and comes back. It now spawns `cat`
+  under `pty/spawn!` (the exact handle production hands the bridge) and asserts the whole loop:
+  replay, live tee, and typed input echoed back out of the master.
 
 - The native binary starts again. `build.clj` kept its own copy of the built-in extension
   namespaces vis `require`s at runtime, and every built-in added since — `foundation.introspection`

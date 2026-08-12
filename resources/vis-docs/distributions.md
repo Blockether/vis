@@ -177,7 +177,7 @@ release CI and local builds, so a hand-built asset and a CI asset are identical.
 |---|---|---|
 | Linux x86-64 | `vis-agent-linux-x64-community.tar.gz` | release CI, or a local container build (Rosetta-emulated on Apple silicon) |
 | Linux ARM64 | `vis-agent-linux-arm64-community.tar.gz` | release CI, or a local container build |
-| macOS ARM64 | `vis-agent-macos-arm64-community.tar.gz` | an Apple-silicon machine — no hosted macOS runner has the RAM |
+| macOS ARM64 | `vis-agent-macos-arm64-community.tar.gz` | an Apple-silicon machine, or a cloud Apple-silicon runner with at least 16 GiB (repository variable `VIS_MACOS_ARM64_RUNNER`) — no GitHub-hosted macOS runner has the RAM |
 
 Building the image needs GraalVM Community Edition 25.1.3 exactly (the repository
 pin is authoritative) and a machine with **32 GB of RAM**: the points-to analysis
