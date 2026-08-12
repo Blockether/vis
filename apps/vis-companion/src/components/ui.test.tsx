@@ -502,16 +502,32 @@ describe("CloseButton", () => {
     expect(html()).not.toContain('text-err"');
   });
 
-  // The box was the whole difference an eye could see: a mark centred in a 36×48 slot
-  // is not the same control as a mark centred in a 28×28 one.
-  it("is ONE column, welded to whatever it ends, and nothing else", () => {
-    expect(html()).toContain("w-8");
-    expect(html()).toContain("self-stretch");
-    expect(html()).toContain("min-h-8");
-    // None of the five old boxes survive.
-    for (const box of ["min-w-9", "mouse:min-w-8", "w-7", "min-h-7"]) {
+  // Regression, user report ("the close buttons in dialogs, etc or in the places like
+  // otp should have the same height and width"): the ✕ was one mark in one column, but
+  // the column still took its HEIGHT from whatever it ended — 48px on the dialog band
+  // a one-time-code request opens with, 44px on a menu band, 36px on the artifacts
+  // strip, 32px on a composer chip. One width, four heights, so no two ways out were
+  // the same box. The box is the whole difference an eye can see.
+  it("is ONE SQUARE, the same height as it is wide, on every band", () => {
+    expect(html()).toContain("size-8");
+    expect(html()).toContain("mouse:size-6");
+    expect(html()).toContain("self-center");
+    // Nothing may take its height from the thing it ends, and none of the five old
+    // boxes survive.
+    for (const box of [
+      "self-stretch",
+      "min-h-8",
+      "mouse:min-h-6",
+      "min-w-9",
+      "mouse:min-w-8",
+      "w-7",
+      "min-h-7",
+    ]) {
       expect(html(), box).not.toContain(box);
     }
+    // A square is declared once: no separate width, no separate height.
+    expect(/\bw-\d/.test(html()), "a width of its own").toBe(false);
+    expect(/\bh-\d/.test(html()), "a height of its own").toBe(false);
   });
 
   // Regression, user report ("Why not black like all buttons"): the artifacts sheet has
@@ -1630,8 +1646,13 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
         expect(element).not.toContain("edge");
         expect(element).not.toContain("tone=");
         const className = /className="([^"]*)"/.exec(element)?.[1];
-        // POSITION only: the attachment's ✕ hangs on the chip's right edge.
-        if (className) expect(className).toBe("absolute inset-y-0 right-0");
+        // POSITION only, and every token in it is a position: the attachment's ✕
+        // hangs on the chip's right edge (`my-auto` centres a square that no longer
+        // stretches between the chip's top and bottom), and the queued row's is
+        // pulled out of the row's own padding onto the tray's edge.
+        for (const token of className?.split(" ") ?? []) {
+          expect(token, token).toMatch(/^(absolute|inset-y-0|right-0|my-auto|-me-2\.5)$/);
+        }
       }
     });
   });

@@ -196,14 +196,15 @@ describe("the artifacts sheet", () => {
   // as a black block — one gesture drawn two ways on one screen. It was given a black
   // block of its own, which made it the only ✕ in the app wearing paper; the report
   // that followed ("can we not have just one close button that looks the same") took
-  // that back off, so it inherits the strip like every other ✕ and differs from the
-  // dialog band's only in the height of the row it ends.
+  // that back off, so it inherits the strip like every other ✕; the report after that
+  // ("should have the same height and width") took the last difference — the height of
+  // the row it ended — off too.
   it("opens on its filter strip and leaves by the app's one ✕", () => {
     const html = sheet([picture]);
     expect(html).not.toMatch(/<header/);
     const close = classesOf(html, 'aria-label="Close artifacts"');
-    expect(close).toContain("w-8");
-    expect(close).toContain("self-stretch");
+    expect(close).toContain("size-8");
+    expect(close).toContain("self-center");
     expect(close).toContain("text-current");
     // No second face for the same gesture anywhere on the sheet.
     expect(html).not.toContain("bg-dialog-title");

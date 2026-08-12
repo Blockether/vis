@@ -864,13 +864,14 @@ export function Switch({
  *
  * So there is one, and everything about its face is decided here:
  *
- * - ONE COLUMN, 32px wide (`w-8`) on every surface and every device, welded to the
- *   trailing edge of whatever it ends and stretched to that thing's height. The mark
- *   therefore sits at exactly the same place — centred, 16px in from the trailing edge
- *   — on a 48px dialog band and on a composer chip alike, which is the only geometry
- *   an eye compares across two screens. `min-h-8` is the floor (`mouse:min-h-6` beside
- *   a desktop field, whose own box is 24px): it lifts the composer's chip-enders off
- *   28px and still fits inside the search field.
+ * - ONE SQUARE, 32×32 (`size-8`, `mouse:size-6` beside a desktop field whose own box
+ *   is 24px) on every surface and every device. It is the box, not the mark, that an
+ *   eye compares across two screens, and stretching it to the height of whatever it
+ *   ended gave the one button five heights again — 48px welded to a dialog title,
+ *   44px on a menu band, 36px on the artifacts strip, 32px on a composer chip, 30px
+ *   in the fleet search — so it no longer stretches. It is centred (`self-center`) in
+ *   the band it ends and hung at that band's trailing edge, which is where a way out
+ *   is looked for; the hairline that welds it is now the square's own left edge.
  * - THE INK OF THE SURFACE IT STANDS ON (`text-current`), and that same ink at 20%
  *   for the hairline that welds it. A band declares its foreground once — a dialog
  *   title bar `text-dialog-title-foreground`, a menu's accent heading, a panel strip
@@ -901,7 +902,7 @@ export function CloseButton({
       type="button"
       aria-label={label}
       title={label}
-      className={`grid w-8 min-h-8 shrink-0 place-items-center self-stretch border-l border-current/20 text-current transition-colors duration-150 hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-current motion-reduce:transition-none mouse:min-h-6 ${className}`}
+      className={`grid size-8 shrink-0 place-items-center self-center border-l border-current/20 text-current transition-colors duration-150 hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-current motion-reduce:transition-none mouse:size-6 ${className}`}
       {...props}
     >
       <CloseIcon />

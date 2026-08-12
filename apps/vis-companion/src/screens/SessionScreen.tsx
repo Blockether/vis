@@ -4866,6 +4866,9 @@ export function SessionScreen({
                     )}
                     <CloseButton
                       label={`Remove queued message ${index + 1}`}
+                      // The row is padded for its "#1"; the way out is pulled back
+                      // out of that padding, so it hangs where every other ✕ hangs.
+                      className="-me-2.5"
                       disabled={busy}
                       onClick={() => {
                         setEditingQueued((current) =>
@@ -4948,7 +4951,7 @@ export function SessionScreen({
                     )}
                     <CloseButton
                       label={`Remove ${attachment.filename}`}
-                      className="absolute inset-y-0 right-0"
+                      className="absolute inset-y-0 right-0 my-auto"
                       onMouseDown={keepKeyboard}
                       onClick={() => removeAttachment(attachment.id)}
                     />
