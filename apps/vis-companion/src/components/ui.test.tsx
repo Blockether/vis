@@ -29,7 +29,7 @@ import {
   ChoiceRow,
   ComposerButton,
   CopyChip,
-  DialogClose,
+  CloseButton,
   DialogFrame,
   DialogHeader,
   HeaderActions,
@@ -55,7 +55,6 @@ import {
   OptionRow,
   Pill,
   Disclosure,
-  RemoveButton,
   Switch,
   TextButton,
   ProjectCrumb,
@@ -477,14 +476,22 @@ describe("IconButton", () => {
 // looks awful"): the artifacts sheet, an opened artifact and every dialog each spelled
 // their own close out again, so the sheet ended up wearing a bordered chip in a strip
 // of bordered chips where every other surface wears chrome.
-describe("DialogClose", () => {
-  const html = (props: Partial<Parameters<typeof DialogClose>[0]> = {}) =>
+//
+// Regression, user report ("can we not have just one close button that looks the same"):
+// three components and eight call sites later they were still five different boxes —
+// 36×48 on a dialog band, 36×44 on a menu band, 36×44 carrying its own black paper on
+// the artifacts strip, 28×28 on a queued turn and on a pasted block, 28×32 over an
+// attachment, 40×30 in the fleet search — measured on an iPhone 14 with the shipped
+// stylesheet. One component now, with no tone, no size and no hairline to choose.
+describe("CloseButton", () => {
+  const html = (props: Partial<Parameters<typeof CloseButton>[0]> = {}) =>
     renderToStaticMarkup(
-      <DialogClose label="Close artifacts" onClose={() => {}} {...props} />,
+      <CloseButton label="Close artifacts" onClick={() => {}} {...props} />,
     );
 
-  it("is welded to the band it closes, by that band’s own hairline", () => {
+  it("is welded to the band it closes, by that band's own hairline", () => {
     expect(html()).toContain("border-l");
+    expect(html()).toContain("border-current/20");
     expect(html()).not.toMatch(/class="[^"]*\bborder\s/);
   });
 
@@ -495,19 +502,45 @@ describe("DialogClose", () => {
     expect(html()).not.toContain('text-err"');
   });
 
-  it("changes nothing but the paper it sits on", () => {
-    expect(html()).toContain("border-dialog-title-foreground/20");
-    expect(html({ tone: "panel" })).toContain("border-dialog-edge");
+  // The box was the whole difference an eye could see: a mark centred in a 36×48 slot
+  // is not the same control as a mark centred in a 28×28 one.
+  it("is ONE column, welded to whatever it ends, and nothing else", () => {
+    expect(html()).toContain("w-8");
+    expect(html()).toContain("self-stretch");
+    expect(html()).toContain("min-h-8");
+    // None of the five old boxes survive.
+    for (const box of ["min-w-9", "mouse:min-w-8", "w-7", "min-h-7"]) {
+      expect(html(), box).not.toContain(box);
+    }
   });
 
   // Regression, user report ("Why not black like all buttons"): the artifacts sheet has
   // no title band to inherit a foreground from — its one row is the filter strip — so
-  // its ✕ rested as ink on paper beside a ‹ that is a black block.
-  it("brings the title band with it where a surface has none", () => {
-    const block = html({ tone: "block" });
-    expect(block).toContain("bg-dialog-title");
-    expect(block).toContain("text-dialog-title-foreground");
-    expect(block).not.toContain("text-current");
+  // its ✕ used to bring a black block of its own, which was a second look for the same
+  // gesture. It inherits the strip's ink like every other ✕ now.
+  it("takes only the ink it stands in, on every surface", () => {
+    expect(html()).toContain("text-current");
+    expect(html()).not.toContain("bg-dialog-title");
+    expect(html()).not.toContain("text-dialog-title-foreground");
+    expect(artifactsSheetSource).toContain("<CloseButton");
+    expect(artifactsSheetSource).not.toContain("tone=");
+  });
+
+  // A control with no face left to choose has nothing left to disagree about: the
+  // markup of two ways out may differ in NOTHING but the name of what they leave.
+  it("renders the same button wherever it is asked for", () => {
+    const band = html({ label: "Close artifacts" }).replaceAll(
+      "Close artifacts",
+      "X",
+    );
+    const chip = renderToStaticMarkup(
+      <CloseButton
+        label="Remove notes.md"
+        disabled={false}
+        onMouseDown={() => {}}
+      />,
+    ).replaceAll("Remove notes.md", "X");
+    expect(chip).toBe(band);
   });
 
   it("is named for what it closes", () => {
@@ -1239,9 +1272,9 @@ describe('SearchField', () => {
   // the field's inset, so the ✕ ink stopped about 20px short of the border while the
   // placeholder started 10px in — the asymmetry an eye reads as "far from right".
   it('lets Clear absorb the field’s own trailing inset', () => {
-    // The list rows' `edge` geometry: the box runs to the border and pads its glyph
-    // by exactly the inset the field gives its leading side, so both inks agree.
-    expect(field).toMatch(/<IconButton\s+edge/);
+    // The field gives back the inset the ✕ would otherwise sit inside, so the square
+    // runs to the border and centres its mark there, and both inks agree.
+    expect(field).toMatch(/<CloseButton[\s\S]*?className="-me-3 sm:-me-4"/);
     expect(box).toContain('px-3');
     expect(box).toContain('sm:px-4');
   });
@@ -1428,7 +1461,7 @@ describe("every surface uses the vocabulary's own controls", () => {
     expect(docSource).toContain("<DialogHeader");
     expect(docSource).toContain("closeLabel={`Close ${name}`}");
     // The X is the header's own; nothing hangs it off a caption strip.
-    expect(docSource).not.toContain("<DialogClose");
+    expect(docSource).not.toContain("<CloseButton");
     expect(docSource).not.toContain("self-stretch");
   });
 
@@ -1584,20 +1617,22 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
     });
   });
 
-  describe("RemoveButton", () => {
-    const html = (props: Partial<Parameters<typeof RemoveButton>[0]> = {}) =>
-      renderToStaticMarkup(<RemoveButton label="Remove notes.md" {...props} />);
-
-    it("is named, red only under the pointer, and a 28px target", () => {
-      expect(html()).toContain('aria-label="Remove notes.md"');
-      expect(first(html())).toContain("hover:text-err");
-      expect(first(html())).toContain("min-h-7");
-      expect(first(html())).toContain("w-7");
-    });
-
-    it("grows its divider by prop, never by a class at the call site", () => {
-      expect(first(html({ edge: true }))).toContain("border-l");
-      expect(first(html())).not.toContain("border-l");
+  describe("the composer's removes", () => {
+    // A queued turn, a pasted block and an attachment are dropped by the app's one
+    // ✕ — they used to be a 28×28 chip-ender with a hairline of its own.
+    it("are the one CloseButton, positioned and nothing more", () => {
+      const removes = [
+        ...sessionScreenSource.matchAll(/<CloseButton[\s\S]*?\/>/g),
+      ].map(([element]) => element);
+      expect(removes).toHaveLength(3);
+      for (const element of removes) {
+        expect(element).toContain("label=");
+        expect(element).not.toContain("edge");
+        expect(element).not.toContain("tone=");
+        const className = /className="([^"]*)"/.exec(element)?.[1];
+        // POSITION only: the attachment's ✕ hangs on the chip's right edge.
+        if (className) expect(className).toBe("absolute inset-y-0 right-0");
+      }
     });
   });
 });
@@ -1642,7 +1677,7 @@ describe("every screen uses the second vocabulary too", () => {
   });
 
   it("leaves the composer's three removes as one control and its menu as menu rows", () => {
-    expect(sessionScreenSource).toContain("<RemoveButton");
+    expect(sessionScreenSource).toContain("<CloseButton");
     expect(sessionScreenSource).toContain("<MenuItem");
     expect(sessionScreenSource).toContain("<CopyChip");
     expect(sessionScreenSource).not.toContain("hover:bg-warn-surface hover:text-err");
@@ -1667,7 +1702,7 @@ describe("the button's four ranks", () => {
 
   it("names the RANK of a verb, never the paint it happens to wear", () => {
     expect(uiSource).toContain(
-      "variant?: 'primary' | 'secondary' | 'quiet' | 'danger' | 'overlay' | 'close';",
+      "variant?: 'primary' | 'secondary' | 'quiet' | 'danger' | 'overlay' | 'remove';",
     );
     // `solid`/`ghost` described a fill; `inverse` was a fifth face with one call
     // site. A rank has to be choosable without knowing the palette.
@@ -1913,44 +1948,32 @@ describe("the session screen and the settings dialog spell no control out", () =
 // Regression, user report ("see the X element — it should be black like everywhere"):
 // the search field's Clear rendered rgb(111, 106, 99) (`text-dialog-hint`) beside a
 // query and a `Preferences` both at rgb(38, 38, 38), measured on the live bar. The same
-// faded ink was worn by every other ✕ in the app — `DialogClose` on both its papers (the
-// image viewer, the artifacts sheet, the menu sheet) and `RemoveButton` — so no ✕
+// faded ink was worn by every other ✕ in the app — the dialog band's, the image
+// viewer's, the artifacts sheet's, the menu sheet's and the composer's — so no ✕
 // anywhere carried the page's own ink. A ✕ IS INK: only the pointer turns it red.
 describe("every ✕ in the app", () => {
   it("rests in the ink of the surface it sits on, never in a hint", () => {
-    const clear = renderToStaticMarkup(
-      <Button variant="close" aria-label="Clear search" />,
+    const close = renderToStaticMarkup(
+      <CloseButton label="Clear search" onClick={() => {}} />,
     );
-    expect(clear).toContain("text-white");
-    expect(clear).toContain("hover:text-err");
-    expect(clear).not.toContain("text-dialog-hint");
+    expect(close).toContain("text-current");
+    expect(close).toContain("hover:text-err");
+    expect(close).not.toContain("text-dialog-hint");
 
     const field = uiSource.slice(
       uiSource.indexOf("export const SearchField"),
       uiSource.indexOf("export function Banner"),
     );
-    expect(field).toContain('variant="close"');
+    expect(field).toContain("<CloseButton");
     expect(field).not.toContain('variant="quiet"');
-
-    for (const tone of ["title", "panel"] as const) {
-      const close = renderToStaticMarkup(
-        <DialogClose label="Close artifacts" tone={tone} onClose={() => {}} />,
-      );
-      expect(close).not.toContain("text-dialog-hint");
-      expect(close).not.toContain("text-dialog-title-foreground/70");
-    }
-
-    expect(
-      renderToStaticMarkup(<RemoveButton label="Remove notes.md" />),
-    ).not.toContain("text-dialog-hint");
   });
 });
 
 // Regression, user report ("the close buttons look bizarre and they are not the same —
 // the one in the queued messages is not black like the other close buttons"): the app
-// drew its ✕ at TWO sizes. `DialogClose` rendered the icon set's own 14px cross, while
-// `RemoveButton` — the way a queued message, a paste and an attachment leave the
-// composer — and the search field's Clear shrank it to `size-3`. A 24-unit mark scaled
+// drew its ✕ at TWO sizes. The band's way out rendered the icon set's own 14px cross,
+// while the composer's — a queued message, a paste, an attachment — and the search
+// field's Clear shrank it to `size-3`. A 24-unit mark scaled
 // to 12px carries a 0.9px stroke: measured on the live tray at 390px, the small cross
 // bottomed out at #3a3a3a where the ink it names (`--fg`) is #262626, so a mark that IS
 // black rendered grey beside the black one in the band above it, at 59% of its ink. The
@@ -1964,13 +1987,17 @@ describe("one ✕, at one size, under one wash", () => {
     (/<button[^>]*class="([^"]*)"/.exec(inButton(html))?.[1] ?? "").split(" ");
   const ways = {
     "a band": renderToStaticMarkup(
-      <DialogClose label="Close artifacts" onClose={() => {}} />,
+      <CloseButton label="Close artifacts" onClick={() => {}} />,
     ),
     "a queued message": renderToStaticMarkup(
-      <RemoveButton label="Remove queued message 1" />,
+      <CloseButton label="Remove queued message 1" onClick={() => {}} />,
     ),
     "a query": renderToStaticMarkup(
-      <SearchField value="release" onValue={() => {}} label="Search sessions" />,
+      <SearchField
+        value="release"
+        onValue={() => {}}
+        label="Search sessions"
+      />,
     ),
   };
 
@@ -1990,10 +2017,39 @@ describe("one ✕, at one size, under one wash", () => {
       expect(boxOf(html), where).not.toContain("hover:bg-warn-surface");
     }
   });
+
+  // The report that finished the job: one component, so one box. Anything in the app
+  // that draws a ✕ has to be it — a second `<CloseIcon` at a call site is a second
+  // close button growing back.
+  it("is the only ✕ in the app, and the app has only one of it", () => {
+    const sources = import.meta.glob(["../**/*.tsx"], {
+      query: "?raw",
+      import: "default",
+      eager: true,
+    }) as Record<string, string>;
+    const drawn: string[] = [];
+    for (const [path, source] of Object.entries(sources)) {
+      if (path.endsWith(".test.tsx")) continue;
+      if (path.endsWith("/icons.tsx")) continue;
+      const marks = [...source.matchAll(/<CloseIcon\b/g)].length;
+      if (path.endsWith("/ui.tsx")) {
+        // The one component, and the one mark inside it.
+        expect(marks).toBe(1);
+        continue;
+      }
+      if (marks > 0) drawn.push(path);
+    }
+    expect(drawn).toEqual([]);
+    expect(uiSource).not.toContain("export function DialogClose");
+    expect(uiSource).not.toContain("export function RemoveButton");
+    expect([
+      ...uiSource.matchAll(/export function CloseButton\b/g),
+    ]).toHaveLength(1);
+  });
 });
 
 // Regression, user report ("some of the X are a different X than the dialog ones, and
-// white instead of black"): `DialogClose` painted its own resting ink — the page's
+// white instead of black"): the way out painted its own resting ink — the page's
 // `--fg` on a panel band — while the band under it painted `text-accent-foreground`.
 // Measured live on the "Add a project" menu heading, the mark disagreed with the words
 // beside it in five of the six shipped themes: a #f3f4f6 ✕ on the #ffc420 band of
@@ -2003,16 +2059,14 @@ describe("one ✕, at one size, under one wash", () => {
 // token instead of the page's.
 describe("the way out wears the ink of its band", () => {
   it("brings no resting ink of its own", () => {
-    for (const tone of ["title", "panel"] as const) {
-      const close = renderToStaticMarkup(
-        <DialogClose label="Close artifacts" tone={tone} onClose={() => {}} />,
-      );
-      expect(close).toContain("text-current");
-      // Only the pointer inks it, and only red.
-      expect(close.replace(/hover:text-\S+|focus-visible:text-\S+/g, "")).not.toMatch(
-        /\btext-(white|dialog-title-foreground|accent-foreground|dialog-hint)\b/,
-      );
-    }
+    const close = renderToStaticMarkup(
+      <CloseButton label="Close artifacts" onClick={() => {}} />,
+    );
+    expect(close).toContain("text-current");
+    // Only the pointer inks it, and only red.
+    expect(close.replace(/hover:text-\S+|focus-visible:text-\S+/g, "")).not.toMatch(
+      /\btext-(white|dialog-title-foreground|accent-foreground|dialog-hint)\b/,
+    );
   });
 
   // A band that hosts the mark has to SAY its foreground, or inheriting it means
@@ -2176,15 +2230,16 @@ describe("a call site positions, and the component paints", () => {
   });
 
   // The trash in "Manage projects" was the one destructive icon in the app that was
-  // red at REST, beside a `RemoveButton` and a `DialogClose` that are ink until the
-  // pointer arrives — one gesture wearing two faces on the same sheet.
+  // red at REST, beside a `CloseButton` that is ink until the pointer arrives — one
+  // gesture wearing two faces on the same sheet. The variant carries that ink for the
+  // marks that are NOT the ✕; the ✕ itself is `CloseButton` and never a variant.
   it("removes a project in the app's one destructive ink", () => {
-    expect(manageProjectsSource).toContain('variant="close"');
+    expect(manageProjectsSource).toContain('variant="remove"');
     expect(manageProjectsSource).not.toContain('className="text-err"');
   });
 });
 // The user's own words: "go over all close buttons and ensure we are using them
-// consistently". The MARK was already the app's one `DialogClose`, but its NAME was
+// consistently". The MARK was already the app's one way out, but its NAME was
 // not: `DialogFrame` welded "Close dialog" onto five different surfaces, a menu band
 // said plain "Close", and an artifact opened inside the artifacts sheet called the
 // same X "Back to artifacts" while the document opened beside it called it
@@ -2244,8 +2299,8 @@ describe("one way out, and it says what it closes", () => {
           }
         }
       }
-      for (const element of elementsOf(source, "DialogClose")) {
-        if (!element.includes("label")) unnamed.push(`${path} <DialogClose>`);
+      for (const element of elementsOf(source, "CloseButton")) {
+        if (!element.includes("label")) unnamed.push(`${path} <CloseButton>`);
       }
     }
     expect(unnamed).toEqual([]);

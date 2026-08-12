@@ -193,15 +193,20 @@ describe("the artifacts sheet", () => {
 
   // Regression, user report ("Why not black like all buttons"): the way out of the
   // sheet was ink on the strip's own paper, one row under a ‹ that leaves the session
-  // as a black block — one gesture drawn two ways on one screen.
-  it("opens on its filter strip and leaves by the app's own black block", () => {
+  // as a black block — one gesture drawn two ways on one screen. It was given a black
+  // block of its own, which made it the only ✕ in the app wearing paper; the report
+  // that followed ("can we not have just one close button that looks the same") took
+  // that back off, so it inherits the strip like every other ✕ and differs from the
+  // dialog band's only in the height of the row it ends.
+  it("opens on its filter strip and leaves by the app's one ✕", () => {
     const html = sheet([picture]);
     expect(html).not.toMatch(/<header/);
     const close = classesOf(html, 'aria-label="Close artifacts"');
-    expect(close).toContain("bg-dialog-title");
-    expect(close).toContain("text-dialog-title-foreground");
-    // The title paint is the MARK's own, never a band above the strip.
-    expect(html.match(/bg-dialog-title/g)).toHaveLength(1);
+    expect(close).toContain("w-8");
+    expect(close).toContain("self-stretch");
+    expect(close).toContain("text-current");
+    // No second face for the same gesture anywhere on the sheet.
+    expect(html).not.toContain("bg-dialog-title");
   });
 
   // Regression, user report ("big on Ipad we don't need this"): a permanent band under

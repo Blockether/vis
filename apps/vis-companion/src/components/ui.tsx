@@ -47,7 +47,7 @@ export const Button = forwardRef<
      * bring its own. It stays a variant because a face is decided here or it is
      * decided by Tailwind's emission order at a call site, never by a `className`.
      */
-    variant?: 'primary' | 'secondary' | 'quiet' | 'danger' | 'overlay' | 'close';
+    variant?: 'primary' | 'secondary' | 'quiet' | 'danger' | 'overlay' | 'remove';
     /**
      * Press feedback. `scale` is the default nudge; `none` is for a button that
      * ANCHORS something (a popover) or sits in a segmented group — a transform
@@ -120,14 +120,16 @@ export const Button = forwardRef<
     // already says "you are on it", and the keyboard still gets its own ring.
     quiet:
       'border-transparent bg-transparent text-dialog-hint hover:bg-hover disabled:border-transparent disabled:bg-transparent disabled:text-muted',
-    // THE WAY OUT OF SOMETHING — a query, a picture, a sheet — and it is INK.
+    // TAKING SOMETHING AWAY, when the mark is not the ✕ — a trash can that empties a
+    // project of its transcripts. THE WAY OUT ITSELF IS `CloseButton`, the app's one
+    // ✕, and never this: the variant carries only the INK the two share.
     //
     // It used to borrow `quiet`, whose ink is `text-dialog-hint` (#6f6a63): on the app
-    // bar that put a pale grey ✕ beside a query and a `Preferences` both at #262626,
-    // and an eye reads a faded mark as "disabled" rather than "press me to clear". A ✕
-    // carries the page's own ink at rest and turns red only under the pointer, exactly
-    // like `DialogClose` and `RemoveButton` — the three of them are one language.
-    close:
+    // bar that put a pale grey mark beside a query and a `Preferences` both at #262626,
+    // and an eye reads a faded mark as "disabled" rather than "press me". It carries the
+    // page's own ink at rest and turns red only under the pointer, exactly like
+    // `CloseButton` — one destructive language, one red.
+    remove:
       'border-transparent bg-transparent text-white hover:bg-err/15 hover:text-err disabled:border-transparent disabled:bg-transparent disabled:text-muted',
     // The red stays INK and the fill stays a wash, exactly as `MenuItem`'s danger
     // row does — one destructive language in both.
@@ -195,7 +197,7 @@ export const IconButton = forwardRef<
   ButtonHTMLAttributes<HTMLButtonElement> & {
     /** Icon-only, so the name is not optional. */
     label: string;
-    variant?: 'primary' | 'secondary' | 'quiet' | 'danger' | 'overlay' | 'close';
+    variant?: 'primary' | 'secondary' | 'quiet' | 'danger' | 'overlay' | 'remove';
     /** Passed through: a control over a thumbnail is not on a header's rhythm. */
     density?: 'default' | 'compact';
     /**
@@ -564,55 +566,6 @@ export function ChoiceRow({
 }
 
 /**
- * TAKE THIS ONE OUT, and there is only one of it.
- *
- * The composer is a row of things you can drop — a queued turn, a pasted block,
- * an attached image — and each `×` was written where it stood: a 24px grid box
- * here, a 28px one with a hairline there, an absolutely placed 24px one over a
- * thumbnail, all repeating the same `hover:bg-warn-surface hover:text-err` from
- * memory. Removal is one gesture, so it wears one face; only WHERE it sits is
- * the call site's business.
- *
- * `edge` is the hairline a control grows when it ends a chip it shares with a
- * label — part of the face, so it is a prop rather than a class at the call site.
- *
- * IT DRAWS THE SAME CROSS AS EVERY OTHER WAY OUT, at the icon set's own size and
- * with the icon set's own wash. It used to shrink the mark to `size-3` and wash
- * amber on hover, and both of those made it a different control: a 24-unit cross
- * scaled to 12px carries a 0.9px stroke, so measured on the queued tray at 390px
- * its darkest pixel came out #3a3a3a where the ink it names (`--fg`) is #262626 —
- * the mark never reached its own colour, which is why a black ✕ read as a grey
- * one beside the 14px cross in the dialog band above it. The wash follows for the
- * same reason: closing is the same gesture on a chip as it is on a band, so it
- * goes red under the pointer (`err/15`) rather than amber.
- */
-export function RemoveButton({
-  label,
-  edge = false,
-  className = '',
-  ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & {
-  /** Icon-only, so the name is not optional: "Remove notes.md". */
-  label: string;
-  /** Draws the divider between this and the label it ends. */
-  edge?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      className={`grid min-h-7 w-7 shrink-0 place-items-center text-white transition-colors duration-150 hover:bg-err/15 hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-white motion-reduce:transition-none ${
-        edge ? 'border-l border-code-edge' : ''
-      } ${className}`}
-      {...props}
-    >
-      <CloseIcon />
-    </button>
-  );
-}
-
-/**
  * THE WAY BACK, and there is only one of it.
  *
  * A full-screen surface that stands ON another one — a session over its list —
@@ -898,56 +851,58 @@ export function Switch({
 }
 
 /**
- * THE WAY OUT, and there is only one of it.
+ * THE ✕, AND THERE IS EXACTLY ONE OF IT.
  *
- * A dialog, an opened artifact and the artifacts sheet itself are all left the
- * same way: a close welded to the right edge of the band that titles them,
- * separated by that band's own hairline, going red only under the pointer —
- * closing is not a destructive act until you mean it. Every one of those three
- * surfaces used to spell the same forty classes out again, which is how the
- * artifacts sheet ended up wearing a bordered chip in a strip of bordered chips
- * where every other surface wears chrome.
+ * Eight surfaces were left by three different buttons in five different boxes,
+ * measured on an iPhone 14 with the shipped stylesheet: a 36×48 band-ender welded
+ * to a dialog title, the same button at 36×44 on a menu band, again at 36×44
+ * carrying its own black paper on the artifacts strip, a 28×28 chip-ender on a
+ * queued turn, 28×28 with a different hairline on a pasted block, 28×32 hung over
+ * an attachment thumbnail, and a 40×30 one inside the fleet search. Three ink
+ * rules and four hairlines between them. They had already been made one MARK; they
+ * were never one BUTTON, and an eye reads the box before it reads the stroke.
  *
- * IT WEARS THE INK OF THE BAND IT SITS IN, and never the page's own. A band
- * declares its foreground once — a dialog title bar `text-dialog-title-foreground`,
- * a menu's accent heading `text-accent-foreground`, a panel strip the page ink it
- * inherits anyway — and the mark inherits it, so one token moves both the words and
- * the way out of them. Spelling the page's `--fg` here instead put a #f3f4f6 ✕ on the
- * #ffc420 heading of `blockether-dark` at 1.5:1 while that band's own words were
- * #0f1117: measured on the live menu, the ✕ disagreed with its band in five of the
- * six shipped themes and agreed in one only by coincidence.
+ * So there is one, and everything about its face is decided here:
  *
- * `tone` is therefore mostly the hairline that welds it to the band: a dialog's title
- * bar draws it in its own foreground, every other band in `dialog-edge`.
+ * - ONE COLUMN, 32px wide (`w-8`) on every surface and every device, welded to the
+ *   trailing edge of whatever it ends and stretched to that thing's height. The mark
+ *   therefore sits at exactly the same place — centred, 16px in from the trailing edge
+ *   — on a 48px dialog band and on a composer chip alike, which is the only geometry
+ *   an eye compares across two screens. `min-h-8` is the floor (`mouse:min-h-6` beside
+ *   a desktop field, whose own box is 24px): it lifts the composer's chip-enders off
+ *   28px and still fits inside the search field.
+ * - THE INK OF THE SURFACE IT STANDS ON (`text-current`), and that same ink at 20%
+ *   for the hairline that welds it. A band declares its foreground once — a dialog
+ *   title bar `text-dialog-title-foreground`, a menu's accent heading, a panel strip
+ *   the page ink it inherits anyway — and the way out inherits the same token, so one
+ *   entry moves both the words and the ✕. Spelling the page's own `--fg` here instead
+ *   put a #f3f4f6 mark on the #ffc420 heading of `blockether-dark` at 1.5:1 while that
+ *   band's own words were #0f1117; measured on the live menu, the ✕ disagreed with its
+ *   band in five of the six shipped themes and agreed in one by coincidence.
+ * - RED ONLY UNDER THE POINTER, and as a wash rather than a fill: closing is not a
+ *   destructive act until you mean it. It is the same red `MenuItem`'s danger row
+ *   uses, so there is one destructive language in the app.
  *
- * `block` is the exception, for that very reason. A surface whose only row is its own
- * content — the artifacts sheet, which opens directly on its filter strip — has no
- * title band to inherit a foreground from, so the mark BRINGS one: the same black box
- * the `‹` that leaves a session already wears, which is what "black like every other
- * button" means. Paper and ink are one entry in the table, so they cannot disagree.
+ * WHERE it sits is the call site's only business: `className` may POSITION it (the
+ * attachment chip hangs it on the chip's right edge) and nothing else. There is no
+ * tone, no size and no hairline prop, because those three were the whole difference
+ * between the eight buttons this replaces.
  */
-export function DialogClose({
+export function CloseButton({
   label,
-  tone = 'title',
   className = '',
-  onClose,
-}: {
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  /** Icon-only, so the name is not optional: "Close artifacts", "Remove notes.md". */
   label: string;
-  tone?: 'title' | 'panel' | 'block';
-  className?: string;
-  onClose: () => void;
 }) {
-  const skin = {
-    title: 'border-dialog-title-foreground/20 text-current',
-    panel: 'border-dialog-edge text-current',
-    block: 'border-dialog-edge bg-dialog-title text-dialog-title-foreground',
-  }[tone];
   return (
     <button
       type="button"
-      onClick={onClose}
       aria-label={label}
-      className={`grid min-w-9 shrink-0 place-items-center border-l transition-colors duration-150 hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none motion-reduce:transition-none mouse:min-w-8 ${skin} ${className}`}
+      title={label}
+      className={`grid w-8 min-h-8 shrink-0 place-items-center self-stretch border-l border-current/20 text-current transition-colors duration-150 hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-current motion-reduce:transition-none mouse:min-h-6 ${className}`}
+      {...props}
     >
       <CloseIcon />
     </button>
@@ -994,12 +949,12 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
  * hand every press to the `<label>` and a press inside the text must place a caret
  * where it landed. A mouse gets no strips at all — they would only eat the row above.
  *
- * BOTH OF ITS INKS SIT AT THE SAME INSET. Clear is an `edge` IconButton — the list
- * rows' own geometry — so its box runs to the field's border and pads its glyph away
- * from it by exactly the inset the field gives its leading side (`px-3 sm:px-4`, the
- * same numbers `edge` absorbs). Centred in its own 28px box INSIDE that inset, the ✕
- * used to stop about 20px short of the border while the placeholder started 10px in,
- * and an eye reads that asymmetry as a control that missed its corner.
+ * BOTH OF ITS INKS SIT AT THE SAME INSET. Clear is the app's one `CloseButton`, and the
+ * field gives back the inset it would otherwise sit inside (`-me-3 sm:-me-4`, exactly the
+ * `px-3 sm:px-4` it pads with), so the square runs to the field's own border and centres
+ * its mark there. Centred in its own 28px box INSIDE that inset, the ✕ used to stop about
+ * 20px short of the border while the placeholder started 10px in, and an eye reads that
+ * asymmetry as a control that missed its corner.
  */
 export const SearchField = forwardRef<
   HTMLInputElement,
@@ -1041,17 +996,14 @@ export const SearchField = forwardRef<
         aria-label={label}
       />
       {value ? (
-        <IconButton
-          edge
-          variant="close"
+        <CloseButton
           label="Clear search"
+          className="-me-3 sm:-me-4"
           onClick={() => {
             onValue('');
             own.current?.focus();
           }}
-        >
-          <CloseIcon />
-        </IconButton>
+        />
       ) : null}
     </label>
   );
@@ -1172,7 +1124,7 @@ export function Modal({
  * (a centred title in `DialogFrame` and the artifact overlay; a left title with a
  * subtitle in machine settings, application settings, the model picker and the paste
  * editor), two paddings, and four close buttons hand-built at the call site in two
- * different boxes — none of them the `DialogClose` this file says is the only way out.
+ * different boxes — none of them the `CloseButton` this file says is the only way out.
  *
  * Left wins, because it is the only one of the two shapes that can hold a SUBTITLE,
  * and four of the seven needed one — the gateway a setting belongs to, the model
@@ -1264,7 +1216,7 @@ export function DialogHeader({
       {/* The two travel together by type; the second test is what TypeScript needs
           to see it, because a destructured union does not narrow on its own. */}
       {onClose && closeLabel && (
-        <DialogClose label={closeLabel} tone="title" onClose={onClose} />
+        <CloseButton label={closeLabel} onClick={onClose} />
       )}
     </header>
   );

@@ -47,7 +47,7 @@ import { readArtifactText } from "./TextArtifact";
 import { AlertIcon, ClipIcon, PlayIcon } from "./icons";
 import {
   Chip,
-  DialogClose,
+  CloseButton,
   DialogHeader,
   KebabButton,
   ListRow,
@@ -633,7 +633,7 @@ function FilterStrip({
       {/* The way out is the app's way out: welded to the band's right edge behind
           its own hairline, exactly as a dialog and an opened artifact are left.
           It used to be one more bordered chip in a strip of bordered chips. */}
-      <DialogClose label="Close artifacts" tone="block" onClose={onClose} />
+      <CloseButton label="Close artifacts" onClick={onClose} />
     </div>
   );
 }

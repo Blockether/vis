@@ -17,7 +17,7 @@ afterEach(() => {
 // and the artifact overlay against a left title with a subtitle in machine settings,
 // application settings, the model picker and the paste editor), two paddings — and FOUR
 // of the closes were hand-built at the call site, in two different boxes, none of them
-// the `DialogClose` this app says is its only way out.
+// the `CloseButton` this app says is its only way out.
 describe("every dialog header is the one dialog header", () => {
   const band = () => document.querySelector("header")!;
 

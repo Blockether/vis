@@ -22,7 +22,7 @@ import { createPortal } from 'react-dom';
 
 import type { MenuPosition } from '../lib/anchored-menu';
 import { ChevronIcon } from './icons';
-import { DialogClose } from './ui';
+import { CloseButton } from './ui';
 
 /**
  * The two widths an anchored panel comes in, each paired with the class that paints
@@ -165,7 +165,7 @@ export function MenuHeading({
        * The way out, for a panel that holds a TASK rather than a list of verbs. A menu
        * is left by picking from it or by tapping the paper around it, so it needs none;
        * a folder browser is a place you can be halfway through, and the scrim behind it
-       * on a phone is a 130px strip most thumbs never reach. It is `DialogClose` — the
+       * on a phone is a 130px strip most thumbs never reach. It is `CloseButton` — the
        * app has exactly one way out and this band does not get to invent a second.
        */
       onClose: () => void;
@@ -180,7 +180,7 @@ export function MenuHeading({
   return (
     <header className={`flex min-h-11 shrink-0 items-stretch mouse:min-h-9 ${skin}`}>
       <p className={`${BAND} min-w-0 flex-1 self-center truncate`}>{children}</p>
-      <DialogClose label={closeLabel} tone="panel" onClose={onClose} />
+      <CloseButton label={closeLabel} onClick={onClose} />
     </header>
   );
 }

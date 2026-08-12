@@ -335,7 +335,7 @@ export function ManageProjectsSheet({
                   action={
                     <IconButton
                       edge
-                      variant="close"
+                      variant="remove"
                       label={`Remove every transcript in ${entry.name}`}
                       onClick={() => onRemove(entry)}
                     >

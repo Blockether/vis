@@ -62,7 +62,7 @@ describe("ImageViewer", () => {
 
   // Regression, user report ("the close buttons, instead of being just the X mark,
   // are shown as `Close`"): the image viewer's header carried a secondary text button
-  // where every other surface wears `DialogClose`.
+  // where every other surface wears the app's one `CloseButton`.
   it("leaves through the app's one X, named after the picture", () => {
     const close = control("Close chart.png");
     expect(close.textContent).toBe("");
@@ -72,7 +72,7 @@ describe("ImageViewer", () => {
 
   // Regression, user report: the viewer's close looked nothing like the close in a
   // dialog — smaller, and the wrong colour. The viewer hand-built its own `bg-panel`
-  // band with a quiet `text-ui` filename and asked `DialogClose` for the panel tone,
+  // band with a quiet `text-ui` filename and asked for a panel-toned way out,
   // so the app's one way out wore two faces on two surfaces of the same screen.
   it("titles itself with the app's one dialog band", () => {
     const header = document.querySelector('[role="dialog"] header');
@@ -81,12 +81,12 @@ describe("ImageViewer", () => {
     expect(header?.className).toContain("items-stretch");
     expect(header?.querySelector("h2")?.textContent).toBe("chart.png");
 
-    // The one ✕: `DialogClose` on the title tone, inheriting the band's own full ink —
+    // The one ✕: `CloseButton`, inheriting the band's own full ink —
     // never the faded `/70` every close used to wear, and never an ink of its own.
     const close = control("Close chart.png");
     expect(header?.className).toContain("text-dialog-title-foreground");
     expect(header?.className).not.toContain("text-dialog-title-foreground/70");
-    expect(close.className).toContain("border-dialog-title-foreground/20");
+    expect(close.className).toContain("border-current/20");
     expect(close.className).toContain("text-current");
   });
 
