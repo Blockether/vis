@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   MACHINE_COLORS,
+  type MachineColor,
   assignMachineColors,
   machineColor,
   preferredColorIndex,
@@ -9,6 +10,25 @@ import {
 
 const keys = (count: number): string[] =>
   Array.from({ length: count }, (_, index) => `gateway-${index}`);
+
+/** Where a colour sits in the ramp, so a test can measure the gap between two. */
+const slot = (color: MachineColor | undefined): number => MACHINE_COLORS.indexOf(color!);
+
+/** The gap two machines show, measured the short way round the wheel. */
+const gap = (one: number, other: number): number => {
+  const direct = Math.abs(one - other) % MACHINE_COLORS.length;
+  return Math.min(direct, MACHINE_COLORS.length - direct);
+};
+
+/** The closest any two machines of an assignment come to each other. */
+const closestPair = (assigned: Map<string, MachineColor>): number => {
+  const slots = [...assigned.values()].map(slot);
+  let closest = MACHINE_COLORS.length;
+  for (let one = 0; one < slots.length; one += 1)
+    for (let other = one + 1; other < slots.length; other += 1)
+      closest = Math.min(closest, gap(slots[one]!, slots[other]!));
+  return closest;
+};
 
 describe('MACHINE_COLORS', () => {
   it('is a palette wide enough that a real fleet never runs out', () => {
@@ -42,14 +62,38 @@ describe('assignMachineColors', () => {
     );
   });
 
-  // The colour is the machine's identity: pairing another gateway, or the list
-  // arriving in a different order, must not repaint the machine you know.
-  it('keeps a machine on its own hue when the fleet around it changes', () => {
+  // The colour is the machine's identity, and the first machine of the fleet
+  // anchors it: gateways paired later spread around it, never the other way.
+  it('keeps the first machine on the hue it hashed to', () => {
     const alone = assignMachineColors(['aa11']).get('aa11');
-    const crowded = assignMachineColors(['zz99', 'aa11', 'bb22']).get('aa11');
+    const leading = assignMachineColors(['aa11', 'zz99', 'bb22']).get('aa11');
 
-    expect(alone).toBeDefined();
-    expect(crowded).toBe(alone);
+    expect(alone).toBe(MACHINE_COLORS[preferredColorIndex('aa11')]);
+    expect(leading).toBe(alone);
+  });
+
+  // Two gateways whose URLs hashed to neighbouring slots — coral #d95445 and
+  // orange #d26004 — each painted a red rail and a red block, and a fleet of two
+  // looked like one machine listed twice.
+  it('never lets two machines wear neighbouring hues', () => {
+    expect(preferredColorIndex('http://10.0.0.3:7890')).toBe(11);
+    expect(preferredColorIndex('http://10.0.0.8:7890')).toBe(12);
+
+    const adjacent = assignMachineColors(['http://10.0.0.3:7890', 'http://10.0.0.8:7890']);
+
+    expect(closestPair(adjacent)).toBe(MACHINE_COLORS.length / 2);
+  });
+
+  // A fleet spends the whole wheel: halves for two machines, thirds for three.
+  it('spaces a fleet across the palette, not merely off each other', () => {
+    for (let size = 2; size <= MACHINE_COLORS.length; size += 1) {
+      const assigned = assignMachineColors(keys(size));
+
+      expect(assigned.size).toBe(size);
+      expect(closestPair(assigned)).toBeGreaterThanOrEqual(
+        Math.floor(MACHINE_COLORS.length / size),
+      );
+    }
   });
 
   it('resolves a hash collision by taking the next free hue, not by sharing', () => {

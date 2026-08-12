@@ -17,6 +17,12 @@
  * green means LIVE on this screen, and a machine that happened to hash into green
  * would have been reporting a status it does not have.
  *
+ * The palette is a RAMP around the wheel, so two entries beside each other —
+ * coral #d95445 and orange #d26004 — read as one red. A fleet therefore never
+ * takes neighbours: `assignMachineColors` spends the whole wheel on the machines
+ * you actually have, so two paired gateways sit opposite each other and three
+ * sit on thirds.
+ *
  * Colour is redundancy, never the only cue: the machine's name is always next to
  * its block, and "offline" is a word, not a shade.
  */
@@ -71,23 +77,54 @@ export function preferredColorIndex(key: string): number {
   return hashKey(key) % MACHINE_COLORS.length;
 }
 
+/** Distance between two palette slots, the short way round the wheel. */
+function paletteDistance(one: number, other: number): number {
+  const direct = Math.abs(one - other) % MACHINE_COLORS.length;
+  return Math.min(direct, MACHINE_COLORS.length - direct);
+}
+
 /**
- * Give every machine in one fleet a colour, preferring its own hue and taking the
- * next free one when two machines hash to the same slot — two machines side by
- * side must never share a rail, and a fleet larger than the palette is the only
- * case where a hue repeats.
+ * The slots a fleet of this size stands on: evenly spread around the whole wheel
+ * from the anchor. Merely "not the same slot" is not a boundary a phone can read
+ * — neighbouring entries of the ramp are about 20° of hue apart, so a fleet of
+ * two that hashed next to each other wore two reds. Spending the wheel instead
+ * puts two machines opposite, three on thirds, and never leaves a pair closer
+ * than `floor(16 / fleet)` steps.
+ */
+function fleetSlots(anchor: number, fleetSize: number): number[] {
+  const size = Math.min(fleetSize, MACHINE_COLORS.length);
+  return Array.from({ length: size }, (_, step) => {
+    return (anchor + Math.round((step * MACHINE_COLORS.length) / size)) % MACHINE_COLORS.length;
+  });
+}
+
+/**
+ * Give every machine in one fleet a colour you can TELL APART, not merely a
+ * different one. The FIRST machine keeps the hue it hashed to and anchors the
+ * fleet; every other machine takes the free spread slot nearest its own hue, so
+ * the assignment is deterministic, independent of how the list is ordered after
+ * the anchor, and as close to each machine's preference as spacing allows. A
+ * fleet wider than the palette falls back to the hue each machine prefers, which
+ * is the only case where a hue repeats.
  */
 export function assignMachineColors(keys: readonly string[]): Map<string, MachineColor> {
   const colors = new Map<string, MachineColor>();
-  const taken = new Set<number>();
-  for (const key of keys) {
-    if (colors.has(key)) continue;
-    let index = preferredColorIndex(key);
-    if (taken.size < MACHINE_COLORS.length) {
-      while (taken.has(index)) index = (index + 1) % MACHINE_COLORS.length;
-      taken.add(index);
+  const fleet = [...new Set(keys)];
+  if (fleet.length === 0) return colors;
+  const free = new Set(fleetSlots(preferredColorIndex(fleet[0]), fleet.length));
+  for (const key of fleet) {
+    const preferred = preferredColorIndex(key);
+    let chosen = preferred;
+    let nearest = MACHINE_COLORS.length;
+    for (const slot of free) {
+      const distance = paletteDistance(preferred, slot);
+      if (distance < nearest) {
+        nearest = distance;
+        chosen = slot;
+      }
     }
-    colors.set(key, MACHINE_COLORS[index]);
+    free.delete(chosen);
+    colors.set(key, MACHINE_COLORS[chosen]);
   }
   return colors;
 }
