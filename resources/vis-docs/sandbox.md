@@ -324,6 +324,28 @@ Everything else of the operator's environment stays dropped, and `LD_*`,
 run code in the unconfined hops that install the jail, so they never reach the
 child anyway.
 
+### `jail.environment` — the one knob over the ambient environment
+
+```yaml
+jail:
+  enabled: true
+  environment: declared   # default — see above
+  # environment: inherit  # …or hand the child the whole ambient environment
+```
+
+`declared` is the default and needs no key. `inherit` gives the confined child
+the operator's environment **whole, secrets included** — filesystem, network,
+exec and Mach confinement are untouched, but ambient secrecy is given up. It
+exists for a toolchain that needs a pile of host variables (`JAVA_HOME`,
+`ANDROID_HOME`, `SSH_AUTH_SOCK`, …) and is worth replacing with a handful of
+`environment:` declarations as soon as you know which ones. `LD_*`, `DYLD_*`,
+`PERL*` and friends are still refused under `inherit`: that scrub protects the
+jail's own installation, not the child.
+
+The mode is inert with `jail.enabled: false` — nothing is confined, so nothing
+is withheld: children inherit the host environment with the project's own
+layered on top.
+
 File **metadata** (existence, size, mtime) is likewise scoped: a child may stat
 its granted roots and the directory ancestors it needs to resolve paths, but not
 read the size/mtime of files beneath `$HOME` such as `~/.ssh/id_ed25519`.

@@ -182,6 +182,11 @@ allowlist remain, so `{env: NAME}` is how an ambient variable is re-admitted to 
 confined child. `LD_*`, `DYLD_*`, `PERL*`, `BASH_ENV` and friends are refused
 from either source — they are consumed before the jail exists.
 
+`jail.environment: inherit` is the all-or-nothing alternative to re-admitting
+names one by one: the confined child keeps the operator's whole environment,
+secrets included, while every other confinement stays on. The default is
+`declared`.
+
 ## Providers and models
 
 The `providers` vector holds your configured AI providers; **the first entry is the active one**. You normally manage this through the TUI (provider picker / "Add Provider") or the companion app (**Settings → Providers → Add provider**), which know the presets — OpenAI, Anthropic (API and coding plan), OpenAI Codex, GitHub Copilot, Z.AI, plus local Ollama and LM Studio — and handle OAuth where needed. The on-disk shape, if you do edit it:
@@ -440,6 +445,10 @@ workspace:
       optional: true             # mounted only when it exists
 jail:
   enabled: true
+  # What of the OPERATOR's ambient environment a confined child keeps:
+  # `declared` (default, nothing) or `inherit` (all of it, secrets included).
+  # The project's own `.env` + `environment:` reach the child either way.
+  environment: declared
   filesystem:
     allow: [sibling, reference, m2, cuda, scratch]
   # macOS only: Mach lookups a confined child may make (deny by default).
@@ -589,7 +598,7 @@ path, and by the venv's own executable — never canonicalized into the base
 installation, which would leave `pyvenv.cfg` unread and the venv's packages
 (`pytest` among them) missing.
 
-`runner` chooses the default `run_tests("python")` backend: `graalpy`, the
+`runner` chooses the default `run_tests({"language": "python"})` backend: `graalpy`, the
 hermetic stdlib-only sandbox, or `project`, the interpreter's own pytest, where
 installed dependencies are visible. An explicit `environment` or `runner`
 argument on the call still wins.

@@ -71,6 +71,8 @@
                  {"id" "gen" "path" "~/generated"}
                  {"id" "cache" "path" "~/.m2" "search" false "description" "maven cache"}]}
    "jail" {"enabled" true
+           ;; Ambient-environment mode: `declared` (the default) or `inherit`.
+           "environment" "declared"
            "filesystem" {"allow" ["svar" "ref" "gen" "cache"]}
            ;; #90: macOS Mach lookups — an explicit allow list plus the keychain bundle.
            "mach_services" {"allow" ["com.example.agent"] "keychain" false}
@@ -173,6 +175,13 @@
     ;; the old list could only ever re-admit an ambient one — never a `dotenv:`,
     ;; `keychain:` or `command:` value — so the two blocks disagreed where it counted.
     (expect (not (config-spec/valid? (assoc-in full-config ["jail" "env"] ["CI"]))))
+    ;; What replaced it is a MODE over the operator's ambient environment, not a list:
+    ;; `declared` (default) or `inherit`, and nothing else.
+    (expect (config-spec/valid? (assoc-in full-config ["jail" "environment"] "declared")))
+    (expect (config-spec/valid? (assoc-in full-config ["jail" "environment"] "inherit")))
+    (expect (not (config-spec/valid? (assoc-in full-config ["jail" "environment"] "all"))))
+    (expect (not (config-spec/valid? (assoc-in full-config ["jail" "environment"] true))))
+    (expect (not (config-spec/valid? (assoc-in full-config ["jail" "environment"] ["CI"]))))
     ;; deny-exec: a list of executable names (or rooted paths) to block by read.
     (expect (config-spec/valid? (assoc-in full-config ["jail" "deny_exec"] ["curl" "ssh"])))
     (expect (not (config-spec/valid? (assoc-in full-config ["jail" "deny_exec"] "curl"))))
@@ -217,6 +226,7 @@
     (expect (not (config-spec/valid? (assoc-in full-config ["titling" "unknown"] 1)))))
   (it "derives process-jail and network maps from the same string contract"
       (expect (= {:disabled? false
+                  :inherit-host-env? false
                   :allow-read-write ["/opt/svar" "~/generated" "~/.m2" "~/.vis"]
                   :allow-read ["~/reference"]
                   :allow-write []
@@ -237,6 +247,15 @@
       ;; DEFAULT is OFF: absent `jail.enabled` key => jail disabled (opt-in).
       (expect (true? (:disabled? (config-spec/process-jail-config
                                    (update full-config "jail" dissoc "enabled")))))
+      ;; `jail.environment` defaults to `declared`: a confined child keeps NONE of the
+      ;; operator's ambient environment unless the operator asks for it by mode.
+      (expect (false? (:inherit-host-env? (config-spec/process-jail-config full-config))))
+      (expect (false? (:inherit-host-env? (config-spec/process-jail-config (assoc-in full-config
+                                                                             ["jail" "environment"]
+                                                                             "declared")))))
+      (expect (true? (:inherit-host-env? (config-spec/process-jail-config (assoc-in full-config
+                                                                            ["jail" "environment"]
+                                                                            "inherit")))))
       (expect (= {:allowed-domains ["github.com"]
                   :denied-domains ["example.invalid"]
                   :exclude-domains ["opaque.example"]

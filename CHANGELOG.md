@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `jail.environment` — one MODE, not a list, over the operator's ambient environment in a
+  confined child: `declared` (the default: only the project's own `.env` + `environment:` plus a
+  non-secret basics allowlist) or `inherit` (the whole ambient environment, secrets included,
+  with filesystem, network, exec and Mach confinement untouched). The escape hatch for a
+  toolchain that needs a pile of host variables instead of naming each one. `LD_*`, `DYLD_*`,
+  `PERL*`, `BASH_ENV` and friends are refused under `inherit` too — that scrub protects the
+  jail's own installation, not the child.
 - Trim to view in the Companion image viewer: zoom or pan to a detail and `Trim` makes that
   region the picture — cut at the ORIGINAL resolution, with any strokes flattened into it — so
   the pen, Copy, Share and Use edit all act on the detail. `Undo trim` brings the whole picture

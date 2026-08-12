@@ -458,6 +458,48 @@
                                     :roots-fn (fn []
                                                 ["/x"])})))))
 
+(deftest jail-environment-inherit-mode
+  (testing
+    "`jail.environment: inherit` (`:inherit-host-env?`) keeps the operator's
+            ambient environment in a confined child, while the default keeps only the
+            allowlist — everything else about the jail is unchanged"
+    (let
+      [ambient
+       (into {} (System/getenv))
+
+       ;; A real ambient name the default mode must drop: not on the passthrough
+       ;; allowlist, not a pre-exec hijack name.
+       outsider
+       (first (remove #(or (#'pj/env-passthrough? %) (#'pj/pre-exec-hijack? %)) (keys ambient)))
+
+       policy
+       {:roots-fn (constantly [])
+        :net-enabled? false
+        :env-values {"MY_DECLARED_TOKEN" "from-dotenv"}}
+
+       declared-env
+       (pj/jailed-child-env policy)
+
+       inherited-env
+       (pj/jailed-child-env (assoc policy :inherit-host-env? true))]
+
+      (is (some? outsider) "the host must export something outside the allowlist to test with")
+      (is (not (contains? declared-env outsider))
+          "the DEFAULT mode drops every ambient variable that is not a non-secret basic")
+      (is (= (get ambient outsider) (get inherited-env outsider))
+          "`inherit` hands the confined child the ambient value verbatim")
+      (is (= "from-dotenv" (get inherited-env "MY_DECLARED_TOKEN"))
+          "the project's own environment still applies on top under `inherit`")
+      (is (= "1" (get inherited-env "VIS_SEATBELT_ACTIVE"))
+          "`inherit` is an ENVIRONMENT mode only: the child is still confined")))
+  (testing "a pre-exec hijack name is refused under `inherit` too — that scrub is the jail itself"
+    (let
+      [env (pj/jailed-child-env {:roots-fn (constantly [])
+                                 :net-enabled? false
+                                 :inherit-host-env? true
+                                 :env-values {"LD_PRELOAD" "/tmp/x.so" "PERL5OPT" "-Mevil"}})]
+      (is (empty? (filter #'pj/pre-exec-hijack? (keys env)))))))
+
 (deftest metadata-scoped-to-roots
   (testing
     "file-read-metadata is scoped: no global grant; ancestors are literals,

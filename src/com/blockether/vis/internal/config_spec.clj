@@ -265,16 +265,38 @@
    are credentials, never grep fodder."
   ["~/Library/Keychains" "/Library/Keychains"])
 
-(def jail-keys #{"enabled" "filesystem" "network" "deny_exec" "mach_services"})
-;; There is no `jail.env`: the PROJECT names its variables (the workspace's
-;; `.env`, plus `environment:` for what a dotenv file cannot say), and every one
-;; of them reaches Vis' children — confined or not — with the value its own
-;; source produced. What `jail.enabled` decides is whether the OPERATOR's ambient
-;; environment comes too. A second list of the same names bought nothing: it
-;; could only re-admit an ambient variable, never a `dotenv:`/`keychain:`/
-;; `command:` value, so the two blocks disagreed exactly where it mattered.
+;; ── Jail environment mode ────────────────────────────────────────────────────
+;; `jail.environment` is the ONE knob over the OPERATOR's ambient environment —
+;; whatever was exported into the shell that launched Vis. It is deliberately a
+;; MODE and not a list of names: the PROJECT names its variables (the
+;; workspace's `.env`, plus `environment:` for what a dotenv file cannot say),
+;; and every one of them reaches Vis' children — confined or not — with the
+;; value its own source produced. A second list of the same names (the retired
+;; `jail.env`) bought nothing: it could only re-admit an ambient variable, never
+;; a `dotenv:`/`keychain:`/`command:` value.
+;;
+;;   "declared" (default) — the child gets the project's variables plus a fixed
+;;                          non-secret basics allowlist (`PATH`, `HOME`, `LANG`
+;;                          …). Nothing the operator exported comes along;
+;;                          re-admit one BY NAME with `environment: {CI: {env:
+;;                          CI}}`.
+;;   "inherit"            — the child additionally inherits the whole ambient
+;;                          environment. Filesystem, network, exec and Mach
+;;                          confinement are untouched, but every exported API key
+;;                          and token is then readable by anything the agent
+;;                          runs. The escape hatch for a toolchain that needs a
+;;                          pile of host variables (`JAVA_HOME`, `ANDROID_HOME`,
+;;                          `SSH_AUTH_SOCK`, …), never a default.
+;;
+;; Both modes still refuse every pre-exec hijack name (`LD_*`, `DYLD_*`,
+;; `PERL*`, `BASH_ENV`, `IFS` …): those execute in the UNCONFINED detacher /
+;; enforcer hops, so no mode and no declaration can buy them back
+;; (`process-jail/jailed-child-env`).
+(def jail-environment-values #{"declared" "inherit"})
+(def jail-keys #{"enabled" "environment" "filesystem" "network" "deny_exec" "mach_services"})
 (def jail-schema
   {"enabled" boolean?
+   "environment" (one-of jail-environment-values)
    "filesystem" (spec-pred ::jail-filesystem)
    "network" (spec-pred ::network)
    "deny_exec" string-list?
@@ -361,7 +383,7 @@
   ;; `repl` / `repl_eval` and the `project` test runner, pinned instead of
   ;; detected (uv / poetry / .venv / python3). A path-like entry resolves against
   ;; the project dir; `~` expands; a bare name is looked up on PATH.
-  ;; `runner`: default `run_tests("python")` backend -- the hermetic `graalpy`
+  ;; `runner`: default `run_tests({"language": "python"})` backend -- the hermetic `graalpy`
   ;; sandbox or the `project` interpreter's own pytest. Explicit call arguments
   ;; still win.
   {"resource_cache" non-blank-string?
@@ -685,13 +707,14 @@
                                         (::s/problems (explain-data config)))}))))))
 
 (def process-jail-config-keys
-  #{:disabled? :allow-read-write :allow-read :allow-write :deny-read :deny-write :deny-exec
-    :no-search :inbound-ports :path-descriptions :mach-services})
+  #{:disabled? :inherit-host-env? :allow-read-write :allow-read :allow-write :deny-read :deny-write
+    :deny-exec :no-search :inbound-ports :path-descriptions :mach-services})
 
 (s/def ::process-jail-config
   (s/and map?
          #(every? process-jail-config-keys (keys %))
          #(boolean? (:disabled? %))
+         #(boolean? (:inherit-host-env? %))
          #(every? rooted-path-list?
                   ((juxt :allow-read-write :allow-read :allow-write :deny-read :deny-write) %))
          #(rooted-path-list? (or (:no-search %) []))
@@ -973,6 +996,12 @@
    `when`-gated id may be listed in `allow` on every machine; pass an explicit
    `env` to resolve against something other than the live host.
 
+   `jail.environment` is the OPERATOR-environment mode: `declared` (the default)
+   confines the child to the project's own variables plus the non-secret basics
+   allowlist, `inherit` hands it the ambient environment too. It only applies to
+   a live jail — with the jail off nothing is confined, so nothing is withheld
+   either.
+
    `jail.mach_services` opens macOS Mach lookups. `keychain: true` additionally
    grants read access to the keychain databases (kept out of the search sweep),
    which is what makes `security`, `gh auth token` and
@@ -1045,6 +1074,7 @@
 
      (assert-process-jail-config!
        {:disabled? (not (true? (get jail "enabled")))
+        :inherit-host-env? (= "inherit" (get jail "environment"))
         :allow-read-write (into [] (comp (remove entry-read-only?) (map #(get % "path"))) allowed)
         :allow-read (into [] (distinct) (concat read-only (when keychain? keychain-read-paths)))
         :allow-write []
