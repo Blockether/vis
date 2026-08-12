@@ -527,12 +527,10 @@
   "A band that is ONE long list, the shape `C-x d`'s draft chooser has."
   {:title "Drafts"
    :groups [{:title "Switch to"
-             :items (mapv (fn [i]
-                            {:key (str i)
-                             :type :action
-                             :id (keyword (str "d" i))
-                             :label (str "draft " i)})
-                          (range 12))}]})
+             :items
+             (mapv (fn [i]
+                     {:key (str i) :type :action :id (keyword (str "d" i)) :label (str "draft " i)})
+                   (range 12))}]})
 
 ;; Regression, issue #C-x resolution-aware columns: the band took its column
 ;; count from how many categories the spec happened to have, so a one-group list
@@ -549,8 +547,7 @@
         ;; and every verb is still on the grid, in order
         (expect (= (mapv :id (:items (first (:groups list-spec))))
                    (mapv (comp :id :item)
-                         (filter #(= :item (:kind %))
-                                 (apply concat (:panes lay))))))))
+                         (filter #(= :item (:kind %)) (apply concat (:panes lay))))))))
   (it "THE WIDTH DECIDES how many of those four there is room for"
       (expect (= [1 2 3 4 4 4]
                  (mapv (fn [w]
@@ -559,11 +556,17 @@
   (it "at every resolution the panes fill the width and none is ellipsized"
       (expect (every? true?
                       (map (fn [w]
-                             (let [lay (tr/layout list-spec (assoc leader-band-region :inner-w w))
-                                   ws (:pane-ws lay)]
+                             (let
+                               [lay
+                                (tr/layout list-spec (assoc leader-band-region :inner-w w))
+
+                                ws
+                                (:pane-ws lay)]
+
                                (and (= (long w) (+ (reduce + 0 ws) (* 3 (dec (count ws)))))
                                     (every? true?
-                                            (map (fn [pw pane] (>= (long pw) (tr/pane-natural pane)))
+                                            (map (fn [pw pane]
+                                                   (>= (long pw) (tr/pane-natural pane)))
                                                  ws
                                                  (:panes lay))))))
                            [40 60 80 100 120 160]))))
@@ -578,86 +581,82 @@
 ;; into its left half and left the trailing third empty.
 (defdescribe
   transient-column-grid-test
-  (it
-    "verbs are INDENTED under their heading and the description clears the key"
-    (let
-      [grid
-       (transient-grid! commit-transient-spec 0 78 28)
+  (it "verbs are INDENTED under their heading and the description clears the key"
+      (let
+        [grid
+         (transient-grid! commit-transient-spec 0 78 28)
 
-       head
-       (some #(when (str/includes? % "Commands") %) grid)
+         head
+         (some #(when (str/includes? % "Commands") %) grid)
 
-       row
-       (some #(when (str/includes? % "Commit staged") %) grid)]
+         row
+         (some #(when (str/includes? % "Commit staged") %) grid)]
 
-      (expect (= (+ (long (str/index-of head "Commands")) (long tr/item-indent))
-                 (str/index-of row "c")))
-      (expect (= (+ (long (str/index-of row "c"))
-                    (long (:key-w (tr/columns commit-transient-spec)))
-                    (long tr/key-gap))
-                 (str/index-of row "Commit staged")))))
+        (expect (= (+ (long (str/index-of head "Commands")) (long tr/item-indent))
+                   (str/index-of row "c")))
+        (expect (= (+ (long (str/index-of row "c"))
+                      (long (:key-w (tr/columns commit-transient-spec)))
+                      (long tr/key-gap))
+                   (str/index-of row "Commit staged")))))
   ;; Regression, issue #C-x band grid: each column was sized in proportion to its
   ;; own widest verb, so four headings started at four unrelated offsets
   ;; (37/35/37/38 on a 160-column band) and every column trailed a ragged tail of
   ;; blanks — full width, and still not a grid.
-  (it
-    "the band is ONE GRID: equal columns, none narrower than its own verbs"
-    (let
-      [narrow
-       {:groups [{:title "A" :items [{:key "a" :type :action :id :a :label "go"}]}
-                 {:title "B"
-                  :items [{:key "b"
-                           :type :action
-                           :id :b
-                           :label "a very much longer verb indeed"}]}]}
+  (it "the band is ONE GRID: equal columns, none narrower than its own verbs"
+      (let
+        [narrow
+         {:groups [{:title "A" :items [{:key "a" :type :action :id :a :label "go"}]}
+                   {:title "B"
+                    :items
+                    [{:key "b" :type :action :id :b :label "a very much longer verb indeed"}]}]}
 
-       ws
-       (:pane-ws (tr/layout narrow leader-band-region))
+         ws
+         (:pane-ws (tr/layout narrow leader-band-region))
 
-       lay
-       (tr/layout leader-spec leader-band-region)
+         lay
+         (tr/layout leader-spec leader-band-region)
 
-       lws
-       (:pane-ws lay)]
+         lws
+         (:pane-ws lay)]
 
-      ;; a narrow category stands at the SAME stride as a wide one: the cells that
-      ;; do not divide are the only difference between two columns
-      (expect (>= 1 (- (long (apply max ws)) (long (apply min ws)))))
-      (expect (>= 1 (- (long (apply max lws)) (long (apply min lws)))))
-      ;; and no column is ever squeezed under what its own verbs need
-      (expect (every? true?
-                      (map (fn [w pane]
-                             (>= (long w) (tr/pane-natural pane)))
-                           lws
-                           (:panes lay))))
-      (expect (= 100 (+ (long (reduce + 0 lws)) (* 3 (dec (count lws))))))))
-  (it
-    "a pane is wide enough for its OWN widest verb, ellipsis and all"
-    (let
-      [wide
-       {:groups [{:title "A"
-                  :items [{:key "a" :type :action :id :a :label "a verb that fills its column"}]}]}
+        ;; a narrow category stands at the SAME stride as a wide one: the cells that
+        ;; do not divide are the only difference between two columns
+        (expect (>= 1 (- (long (apply max ws)) (long (apply min ws)))))
+        (expect (>= 1 (- (long (apply max lws)) (long (apply min lws)))))
+        ;; and no column is ever squeezed under what its own verbs need
+        (expect (every? true?
+                        (map (fn [w pane]
+                               (>= (long w) (tr/pane-natural pane)))
+                             lws
+                             (:panes lay))))
+        (expect (= 100 (+ (long (reduce + 0 lws)) (* 3 (dec (count lws))))))))
+  (it "a pane is wide enough for its OWN widest verb, ellipsis and all"
+      (let
+        [wide
+         {:groups [{:title "A"
+                    :items
+                    [{:key "a" :type :action :id :a :label "a verb that fills its column"}]}]}
 
-       grid
-       (transient-grid! wide 0 (+ 2 (tr/pane-natural (first (tr/panes wide 1)))) 28)]
+         grid
+         (transient-grid! wide 0 (+ 2 (tr/pane-natural (first (tr/panes wide 1)))) 28)]
 
-      (expect (some #(str/includes? % "a verb that fills its column") grid))))
-  (it
-    "side by side, the second heading starts exactly one gap past the first column"
-    (let
-      [grid
-       (transient-grid! commit-transient-spec 0 78 28 {:cols 80 :min-row 1 :is-sideless true})
+        (expect (some #(str/includes? % "a verb that fills its column") grid))))
+  (it "side by side, the second heading starts exactly one gap past the first column"
+      (let
+        [grid
+         (transient-grid! commit-transient-spec 0 78 28 {:cols 80 :min-row 1 :is-sideless true})
 
-       [w0]
-       (:pane-ws (tr/layout commit-transient-spec
-                            {:left 0 :inner-w 78 :text-w 70 :hint-row 28 :cols 80 :min-row 1
-                             :is-sideless true}))
+         [w0]
+         (:pane-ws
+           (tr/layout
+             commit-transient-spec
+             {:left 0 :inner-w 78 :text-w 70 :hint-row 28 :cols 80 :min-row 1 :is-sideless true}))
 
-       head
-       (some #(when (str/includes? % "Arguments") %) grid)]
+         head
+         (some #(when (str/includes? % "Arguments") %) grid)]
 
-      (expect (= (+ (long (str/index-of head "Arguments")) (long w0) 3)
-                 (str/index-of head "Commands"))))))
+        (expect (= (+ (long (str/index-of head "Arguments")) (long w0) 3)
+                   (str/index-of head "Commands"))))))
 
 (defdescribe
   transient-contract-test
@@ -762,24 +761,23 @@
 ;; Regression, issue #C-x band pointer: the hydra band vanished as soon as the
 ;; mouse moved — one MOVE report was taken as the chord's second key and the
 ;; resolver read it as an abort, so C-x could not survive a nudged cursor.
-(defdescribe
-  band-pointer-drift-test
-  (it
-    "pointer drift never answers the chord: the band waits for a real key"
-    (let
-      [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-       (term/virtual-screen)
+(defdescribe band-pointer-drift-test
+             (it "pointer drift never answers the chord: the band waits for a real key"
+                 (let
+                   [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+                    (term/virtual-screen)
 
-       drift
-       [MouseActionType/MOVE MouseActionType/DRAG MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN]]
+                    drift
+                    [MouseActionType/MOVE MouseActionType/DRAG MouseActionType/SCROLL_UP
+                     MouseActionType/SCROLL_DOWN]]
 
-      (doseq [^MouseActionType a drift]
-        (.addInput terminal (MouseAction. a 1 (TerminalPosition. 4 4))))
-      (.addInput terminal (term/keystroke \d))
-      (expect (= \d
-                 (.getCharacter (dlg/prefix-band! screen
-                                                  {:content-top 1 :prompt-h 3}
-                                                  leader-spec)))))))
+                   (doseq [^MouseActionType a drift]
+                     (.addInput terminal (MouseAction. a 1 (TerminalPosition. 4 4))))
+                   (.addInput terminal (term/keystroke \d))
+                   (expect (= \d
+                              (.getCharacter (dlg/prefix-band! screen
+                                                               {:content-top 1 :prompt-h 3}
+                                                               leader-spec)))))))
 
 ;; Regression, issue #C-x band width: the band washed its paper across the WHOLE
 ;; terminal width, so its background ran past both of its own rules to the screen

@@ -809,12 +809,11 @@
                                            :choices [:quick :balanced :deep]
                                            :label "Reasoning effort"}
                                           {:reasoning-level :deep})))
-        (expect (= "Verbosity: high"
-                   (settings-option-label {:key :verbosity
-                                           :type :choice
-                                           :choices [:low :medium :high]
-                                           :label "Verbosity"}
-                                          {:verbosity :high})))))
+        (expect
+          (= "Verbosity: high"
+             (settings-option-label
+               {:key :verbosity :type :choice :choices [:low :medium :high] :label "Verbosity"}
+               {:verbosity :high})))))
   (it "choice labels do not crash when row also carries a nil name field"
       (let [settings-option-label (var-get #'dlg/settings-option-label)]
         (expect (= "Reasoning effort: quick"
@@ -1009,10 +1008,8 @@
              :ext/settings [{:key :voice/tui-auto-read? :type :toggle :label "TUI auto-read"}]}
             {:ext/name "provider-openai-codex"
              :ext/providers [{:provider/id :openai-codex :provider/label "OpenAI Codex"}]
-             :ext/settings [{:key :verbosity
-                             :type :choice
-                             :choices [:low :medium :high]
-                             :label "Verbosity"}]}])]
+             :ext/settings
+             [{:key :verbosity :type :choice :choices [:low :medium :high] :label "Verbosity"}]}])]
 
         (let
           [rows (settings-rows)
@@ -1028,9 +1025,7 @@
           ;; same key smuggle a second copy of it back in.
           (expect (not (contains? toggles "verbosity")))
           (expect (contains? ids [:extension-setting "voice" :voice/tui-auto-read?]))
-          (expect (not (contains? ids
-                                  [:extension-setting "provider-openai-codex"
-                                   :verbosity])))))))
+          (expect (not (contains? ids [:extension-setting "provider-openai-codex" :verbosity])))))))
   (it "provider-declared legacy settings are ignored"
       (let [settings-rows (var-get #'dlg/settings-rows)]
         (with-redefs
@@ -1047,9 +1042,7 @@
                                                          :description "Output detail."}]}])]
 
           (let [rows (settings-rows)]
-            (expect (not-any? #(= [:extension-setting "provider-openai-codex"
-                                   :verbosity]
-                                  (:id %))
+            (expect (not-any? #(= [:extension-setting "provider-openai-codex" :verbosity] (:id %))
                               rows))))))
   (it "active Z.ai hides reasoning effort and Codex-only provider settings"
       (let [settings-rows (var-get #'dlg/settings-rows)]

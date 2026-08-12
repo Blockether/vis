@@ -109,7 +109,8 @@
    the chip and neither is named here. Fails CLOSED: with no resolved model,
    advertising a knob almost every wire rejects would promise a turn nothing."
   [info]
-  (boolean (some-> info lp/verbosity-configurable?)))
+  (boolean (some-> info
+                   lp/verbosity-configurable?)))
 
 (def ^:private git-label "git")
 

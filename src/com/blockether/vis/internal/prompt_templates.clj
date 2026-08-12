@@ -165,9 +165,7 @@
 
     (if (and c (= m (:marker c)))
       (:templates c)
-      (let
-        [fresh {:marker m
-                :templates (discover-project-dirs project-dirs (global-prompts-dir))}]
+      (let [fresh {:marker m :templates (discover-project-dirs project-dirs (global-prompts-dir))}]
         (swap! cache assoc root fresh)
         (:templates fresh)))))
 
