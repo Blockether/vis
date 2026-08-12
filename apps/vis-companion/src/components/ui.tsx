@@ -1657,7 +1657,8 @@ export function EditableName({
 
 /**
  * The leading half of a header that only NAMES its section: an optional mark, then the
- * name, truncated. It takes the width the trailing cluster leaves and no more.
+ * name, and under the name whatever qualifies it. It takes the width the trailing
+ * cluster leaves and no more, and it spends that width on one thing at a time.
  */
 export function HeaderTitle({
   mark,
@@ -1678,11 +1679,15 @@ export function HeaderTitle({
   /** What the pressable name is called to a screen reader. */
   renameLabel?: string;
   /**
-   * What the name alone cannot settle — the address behind a machine's label, the
-   * way a project header carries the path behind its folder name.
+   * What the name alone cannot settle — the path behind a project's folder name,
+   * the address behind a machine's label. It rides UNDER the name, never beside it.
    *
-   * All three levels of this list say the same sentence now: a NAME, then the thing
-   * that tells two of them apart, then what the row reports. Rendered nothing when a
+   * Beside the name it was the half that lost: the header's trailing cluster takes
+   * its width first, so a qualifier shared what was left of ONE line with the name
+   * and truncated mid-token — `~/vis/apps/vis-c…` on a 390px phone, and the name
+   * itself capped at 60% of that remainder to make room. The two say different
+   * things, so they are two lines: the name reads first, the path reads whole
+   * under it, and neither is rationed against the other. Rendered nothing when a
    * machine has no label of its own, because then the address IS the name and
    * printing it twice is not a hierarchy.
    */
@@ -1690,9 +1695,9 @@ export function HeaderTitle({
   qualifierTitle?: string;
 }) {
   return (
-    // The glyph centres against the LINE (`items-center`)
-    // while the name and its qualifier share a BASELINE inside it. Baseline-aligning
-    // the mark alongside them drops a 10px block below the ink it belongs to.
+    // The glyph centres against the STACK (`items-center`), which is the whole block
+    // it marks — a fold owns both lines of the name it folds. Baseline-aligning the
+    // mark alongside them drops a 10px block below the ink it belongs to.
     <span className={`flex min-w-0 flex-1 items-center gap-2 ${LIST_EDGE}`}>
       {/* The column is RESERVED, marked or not: the machine header wears a hue
           block here and the project header below it wears nothing, and a column
@@ -1700,17 +1705,21 @@ export function HeaderTitle({
           the project's at x=14 on a 390px iPhone — the deeper row starting
           further left, which is hierarchy read backwards. */}
       <span className={HEADER_GLYPH}>{mark}</span>
-      <span className="flex min-w-0 items-baseline gap-2">
+      {/* `items-start` keeps each line as wide as its own ink and no wider: the
+          name stays a word-sized press target rather than a full-width one, and
+          both lines still truncate, because shrink-to-fit is capped by the column
+          the trailing cluster leaves. */}
+      <span className="flex min-w-0 flex-col items-start">
         {onRename ? (
           <EditableName
-            face={`shrink-0 truncate bg-transparent p-0 font-mono font-bold text-white ${qualifier ? 'max-w-[60%]' : 'min-w-0'} ${HEADER_TYPE}`}
+            face={`min-w-0 truncate bg-transparent p-0 font-mono font-bold text-white ${HEADER_TYPE}`}
             label={renameLabel ?? 'Rename'}
             value={typeof name === 'string' ? name : ''}
             onCommit={onRename}
           />
         ) : (
           <span
-            className={`shrink-0 truncate font-mono font-bold text-white ${qualifier ? 'max-w-[60%]' : 'min-w-0'} ${HEADER_TYPE}`}
+            className={`min-w-0 truncate font-mono font-bold text-white ${HEADER_TYPE}`}
           >
             {name}
           </span>

@@ -1712,8 +1712,9 @@ const ProjectGroup = memo(function ProjectGroup({
           name above them rather than to the machine two bands up. */}
       <SectionHeader rule="border-accent">
         {/* The leading half NAMES the project and FOLDS it: folder name, the path that
-            tells two `vis` checkouts apart, and a chevron in the mark column the band
-            already reserves, so the name keeps the list's one leading edge. Paging
+            tells two `vis` checkouts apart UNDER it, and a chevron in the mark column
+            the band already reserves, so the name keeps the list's one leading edge
+            and the path gets the whole column instead of the crumbs of one. Paging
             walks a project's history; the fold decides whether it is on screen at
             all, which is what a reader with four checkouts on one machine needs. */}
         <ProjectCrumb
@@ -2262,14 +2263,15 @@ function NavigatorSkeleton() {
             {/* The list's OWN header band, so a loading screen can never stand at a
                 different height from the screen it turns into. */}
             <SectionHeader rule="border-accent">
-              {/* One line, because the header it stands in for is one line: a
-                  skeleton two lines tall collapses to one the moment data lands. */}
+              {/* Two lines, because the header it stands in for is two: a name over
+                  the path that qualifies it. A one-line skeleton grew by a line the
+                  moment data landed, which is a layout jump on every cold open — so
+                  the bars go through the same `name`/`qualifier` slots the real
+                  header uses rather than a hand-stacked pair. */}
               <HeaderTitle
-                name={
-                  <span className="flex items-baseline gap-2">
-                    <SkeletonBar type="text-ui" width="w-28" baz="h-2.5" tone="bg-muted/40" />
-                    <SkeletonBar type="text-chip" width="w-40" baz="h-1.5" tone="bg-muted/20" />
-                  </span>
+                name={<SkeletonBar type="text-title" width="w-28" baz="h-2.5" tone="bg-muted/40" />}
+                qualifier={
+                  <SkeletonBar type="text-chip" width="w-40" baz="h-1.5" tone="bg-muted/20" />
                 }
               />
               <HeaderActions>

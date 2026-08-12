@@ -814,9 +814,12 @@ describe("HeaderTitle rename", () => {
   );
 
   it("is INK, not a second control: the name keeps its own face", () => {
-    const face = "font-mono font-bold text-white max-w-[60%]";
+    const face = "font-mono font-bold text-white";
     expect(resting).toContain(face);
     expect(editable).toContain(face);
+    // Truncation moved onto the name itself when the qualifier left its line.
+    expect(resting).toContain("min-w-0 truncate");
+    expect(editable).toContain("min-w-0 truncate");
     // No border, no box, no height of its own — anything that paints a frame
     // around the name is a control competing with the two buttons beside it.
     expect(editable).not.toContain("border");
@@ -858,6 +861,34 @@ describe("the list grid", () => {
         ),
       ),
     ).toBe(true);
+  });
+
+  // Regression, user report ("this should go under", drawn on the `vis` header): the
+  // project header set its path on the SAME line as the folder name, so the two
+  // shared what the trailing cluster left — the name was capped at 60% of that
+  // remainder and the path truncated mid-token (`~/vis/apps/vis-c…` on a phone).
+  it("stacks a qualifier UNDER the name instead of rationing one line with it", () => {
+    const html = renderToStaticMarkup(
+      <HeaderTitle
+        name="companion"
+        qualifier="~/vis/apps/vis-companion"
+        qualifierTitle="/Users/dev/vis/apps/vis-companion"
+      />,
+    );
+
+    expect(html).toContain("flex-col");
+    // The two ways the old single line was paid for, both gone.
+    expect(html).not.toContain("items-baseline");
+    expect(html).not.toContain("max-w-[60%]");
+    // Name first, path under it, and each line still truncates in the column the
+    // trailing cluster leaves rather than pushing the header wider.
+    expect(html.indexOf(">companion<")).toBeLessThan(html.indexOf("~/vis/apps"));
+    expect(html.split("truncate").length - 1).toBe(2);
+    expect(html).toContain('title="/Users/dev/vis/apps/vis-companion"');
+    // The loading band stands in for the SAME two lines, through the same two
+    // slots: a one-line skeleton grows by a line the moment data lands.
+    expect(sessionsListSource).toMatch(/name=\{<SkeletonBar type="text-title"/);
+    expect(sessionsListSource).toMatch(/qualifier=\{\s*<SkeletonBar type="text-chip"/);
   });
 
   // The last 8px of the same misalignment: a mark sized to its own ink moved the
