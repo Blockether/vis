@@ -14,6 +14,8 @@ import {
   zoomedBy,
   wheelFactor,
   WHEEL_STEP_LIMIT,
+  partPixels,
+  visiblePart,
 } from "./zoom-pan";
 
 // The viewer's geometry, stated without a screen: pinching a phone used to be
@@ -180,6 +182,58 @@ describe("a wheel, a trackpad and a Safari pinch", () => {
       scale: MIN_SCALE,
       x: 0,
       y: 0,
+    });
+  });
+});
+// "Trim to view" is the answer to zooming into a detail and then wanting only
+// that detail: the region is chosen with the same pinch that reads it, and
+// stated here as two boxes so no phone is needed to find out what it keeps.
+describe("trim to view", () => {
+  const frame = { left: 0, top: 0, width: 400, height: 300 };
+
+  it("keeps only the part of the picture the frame shows", () => {
+    // Twice as wide and twice as tall as the frame, centred: the middle quarter
+    // is what is on screen.
+    const part = visiblePart(
+      { left: -200, top: -150, width: 800, height: 600 },
+      frame,
+    );
+    expect(part).toEqual({ x: 0.25, y: 0.25, width: 0.5, height: 0.5 });
+  });
+
+  it("follows a pan, so the crop is wherever the picture was dragged to", () => {
+    const part = visiblePart(
+      { left: -400, top: -300, width: 800, height: 600 },
+      frame,
+    );
+    expect(part).toEqual({ x: 0.5, y: 0.5, width: 0.5, height: 0.5 });
+  });
+
+  // A fitted picture has nothing outside the frame, and a pinch parks a
+  // fraction of a pixel off 1:1 constantly — cropping that is a tap wasted.
+  it("has nothing to trim when the whole picture is in view", () => {
+    expect(visiblePart({ left: 40, top: 20, width: 320, height: 260 }, frame)).toBeNull();
+    expect(
+      visiblePart({ left: -0.4, top: -0.3, width: 400.8, height: 300.6 }, frame),
+    ).toBeNull();
+  });
+
+  it("has nothing to trim when the picture is off screen or has no size", () => {
+    expect(visiblePart({ left: 900, top: 0, width: 200, height: 200 }, frame)).toBeNull();
+    expect(visiblePart({ left: 0, top: 0, width: 0, height: 0 }, frame)).toBeNull();
+  });
+
+  // The screen only says WHICH pixels: the crop is cut at the original's own
+  // resolution, never at the resolution it happened to be displayed with.
+  it("measures the crop in the picture's own pixels", () => {
+    expect(partPixels({ x: 0.25, y: 0.25, width: 0.5, height: 0.5 }, 4000, 3000)).toEqual({
+      width: 2000,
+      height: 1500,
+    });
+    // Never a zero-pixel image, however thin the sliver.
+    expect(partPixels({ x: 0, y: 0, width: 0.0001, height: 1 }, 100, 100)).toEqual({
+      width: 1,
+      height: 100,
     });
   });
 });

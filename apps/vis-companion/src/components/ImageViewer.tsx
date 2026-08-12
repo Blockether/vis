@@ -21,6 +21,8 @@ import {
   wheelFactor,
   zoomedAbout,
   zoomedBy,
+  partPixels,
+  visiblePart,
   type Gesture,
   type Point,
   type Transform,
@@ -182,7 +184,9 @@ export function ImageViewer({
   const [drawing, setDrawing] = useState(false);
   const [penColor, setPenColor] = useState<PenToken>(PEN_COLORS[0].token);
   const [strokeCount, setStrokeCount] = useState(0);
-  const [busy, setBusy] = useState<"copy" | "share" | "apply" | null>(null);
+  const [busy, setBusy] = useState<
+    "copy" | "share" | "apply" | "trim" | null
+  >(null);
   // Probed once per open: the sheet cannot appear or disappear mid-viewer.
   const [shareAction] = useState(shareVerb);
   const [status, setStatus] = useState("");
@@ -196,11 +200,27 @@ export function ImageViewer({
   // it. Until this picture is registered the props are the whole gallery of one
   // the viewer can show.
   const [shownSrc, setShownSrc] = useState(src);
+  // A trim REPLACES the picture on screen with the part of it that was in
+  // view: everything after it — the pen, copy, share, apply — belongs to
+  // those pixels. The original is never touched, so one tap gets it back.
+  const [trimmed, setTrimmed] = useState<{ src: string; name: string } | null>(
+    null,
+  );
+  const trimUrlsRef = useRef<string[]>([]);
+  const dropTrim = useCallback(() => {
+    for (const url of trimUrlsRef.current) URL.revokeObjectURL(url);
+    trimUrlsRef.current = [];
+    setTrimmed(null);
+  }, []);
+  // A trim lives in memory for as long as the viewer is open and not one
+  // moment longer — a closed dialog that keeps its blobs is a leak per tap.
+  useEffect(() => dropTrim, [dropTrim]);
   const found = gallery
     ? gallery.findIndex((picture) => picture.src === shownSrc)
     : -1;
   const step = found < 0 ? (at ?? 0) : found;
-  const shown = (found < 0 ? undefined : gallery?.[found]) ?? { src, name };
+  const untrimmed = (found < 0 ? undefined : gallery?.[found]) ?? { src, name };
+  const shown = trimmed ?? untrimmed;
 
   // The transform is written to style rather than to state: a pinch that
   // re-rendered React on every frame would stutter on exactly the devices that
@@ -235,11 +255,12 @@ export function ImageViewer({
       const target = Math.min(Math.max(next, 0), gallery.length - 1);
       if (target === step) return;
       annotationRef.current?.clear();
+      dropTrim();
       resetTransform();
       setStatus("");
       setShownSrc(gallery[target].src);
     },
-    [gallery, drawing, step, resetTransform],
+    [gallery, drawing, step, resetTransform, dropTrim],
   );
 
   useEffect(() => {
@@ -457,6 +478,53 @@ export function ImageViewer({
     else applyTransform({ scale: 2, x: 0, y: 0 });
   }
 
+  /**
+   * Trim the picture to what the frame is SHOWING.
+   *
+   * Zoom and pan already choose a region; this makes that region the picture,
+   * so a detail can be drawn on, copied, shared or sent without the page
+   * around it. The crop is taken at the ORIGINAL resolution — the screen only
+   * says WHICH pixels, never how many — and any strokes already on the layer
+   * are flattened into it, so a trim never throws a mark away.
+   */
+  async function trimToView() {
+    const image = imageRef.current;
+    const frame = viewportRef.current;
+    if (!image || !frame) return;
+    const part = visiblePart(
+      image.getBoundingClientRect(),
+      frame.getBoundingClientRect(),
+    );
+    if (!part) {
+      setStatus("Zoom in first — the whole picture is already in view.");
+      return;
+    }
+    setBusy("trim");
+    setStatus("Trimming…");
+    try {
+      const blob = await flattenAnnotations(
+        image,
+        annotationRef.current?.canvas() ?? null,
+        part,
+      );
+      const url = URL.createObjectURL(blob);
+      trimUrlsRef.current.push(url);
+      const size = partPixels(part, image.naturalWidth, image.naturalHeight);
+      // The strokes went INTO the trim; left on the layer they would be
+      // painted a second time, stretched across the pixels that survived.
+      annotationRef.current?.clear();
+      resetTransform();
+      setTrimmed({ src: url, name: shown.name });
+      setStatus(`Trimmed to ${size.width} × ${size.height}.`);
+    } catch (cause) {
+      setStatus(
+        cause instanceof Error ? cause.message : "Could not trim this image",
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
   function editedImage(): Promise<Blob> {
     const image = imageRef.current;
     if (!image) throw new Error("Image is not ready");
@@ -603,6 +671,31 @@ export function ImageViewer({
             {drawing ? "Done" : "Draw"}
           </Button>
 
+          <Button
+            variant="secondary"
+            onClick={trimToView}
+            disabled={drawing || busy !== null}
+            aria-label="Trim to view"
+          >
+            {busy === "trim" ? "Trimming…" : "Trim"}
+          </Button>
+
+          {trimmed && (
+            <Button
+              variant="secondary"
+              onClick={() => {
+                annotationRef.current?.clear();
+                dropTrim();
+                resetTransform();
+                setStatus("");
+              }}
+              disabled={busy !== null}
+              aria-label="Undo trim"
+            >
+              Undo trim
+            </Button>
+          )}
+
           <div className="ml-auto flex shrink-0 items-center gap-2">
             <Button
               variant="secondary"
@@ -672,7 +765,7 @@ export function ImageViewer({
                 : "Draw on the image, then copy or share it."
               : gallery
                 ? `${step + 1} of ${gallery.length} · press ← and → for the next image.`
-                : "Pinch, scroll, or double-click to zoom.")}
+                : "Pinch, scroll, or double-click to zoom, then Trim to keep just that.")}
         </div>
       </div>
     </div>

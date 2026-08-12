@@ -185,3 +185,60 @@ export function transformCss(transform: Transform): string {
 export function zoomLabel(transform: Transform): string {
   return `${Math.round(transform.scale * 100)}%`;
 }
+
+/** A rectangle in FRACTIONS of a picture: 0,0,1,1 is the whole of it. */
+export type Rect = { x: number; y: number; width: number; height: number };
+
+/** Any box in client coordinates — a `DOMRect` is one. */
+export type Box = { left: number; top: number; width: number; height: number };
+
+/**
+ * How much of a picture may be lost before "trim to view" has anything to do.
+ * A pinch parks the picture a fraction of a pixel off 1:1 all the time, and
+ * cropping half a pixel off a screenshot is a no-op the human paid a tap for.
+ */
+const TRIM_EPSILON = 0.005;
+
+/**
+ * The part of `picture` that `frame` actually SHOWS, as fractions of the
+ * picture's own pixels — the crop "trim to view" writes.
+ *
+ * It is read off the two boxes on screen rather than re-derived from the
+ * transform, so it stays true however the picture arrived at where it is:
+ * pinched, panned, wheeled, or laid out by the frame's own padding.
+ *
+ * `null` means there is nothing to trim — either the frame already shows the
+ * whole picture, or the picture has been panned entirely out of it.
+ */
+export function visiblePart(picture: Box, frame: Box): Rect | null {
+  if (picture.width <= 0 || picture.height <= 0) return null;
+  const left = Math.max(picture.left, frame.left);
+  const top = Math.max(picture.top, frame.top);
+  const right = Math.min(picture.left + picture.width, frame.left + frame.width);
+  const bottom = Math.min(picture.top + picture.height, frame.top + frame.height);
+  if (right <= left || bottom <= top) return null;
+  const part: Rect = {
+    x: (left - picture.left) / picture.width,
+    y: (top - picture.top) / picture.height,
+    width: (right - left) / picture.width,
+    height: (bottom - top) / picture.height,
+  };
+  const whole =
+    part.x <= TRIM_EPSILON &&
+    part.y <= TRIM_EPSILON &&
+    part.width >= 1 - TRIM_EPSILON &&
+    part.height >= 1 - TRIM_EPSILON;
+  return whole ? null : part;
+}
+
+/** What that crop measures in the picture's OWN pixels, rounded to whole ones. */
+export function partPixels(
+  part: Rect,
+  width: number,
+  height: number,
+): { width: number; height: number } {
+  return {
+    width: Math.max(1, Math.round(part.width * width)),
+    height: Math.max(1, Math.round(part.height * height)),
+  };
+}

@@ -126,6 +126,35 @@ describe("ImageViewer", () => {
     expect(control("Reset zoom").textContent).toBe("100%");
   });
 
+  // Zooming into a detail and wanting only that detail is one gesture short of
+  // a crop: Trim makes what the frame shows the picture, so the pen, copy,
+  // share and apply all act on that region instead of the page around it.
+  it("offers Trim beside Draw, and says so when there is nothing to trim", () => {
+    const trim = control("Trim to view");
+    expect(trim.textContent).toBe("Trim");
+    expect(document.querySelector('[aria-label="Undo trim"]')).toBeNull();
+    expect(
+      document.querySelector('[aria-live="polite"]')?.textContent,
+    ).toContain("Trim");
+
+    // jsdom gives every box a zero rect, which is exactly "the frame already
+    // shows the whole picture" — the tap must explain itself, never crop.
+    act(() => trim.click());
+    expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe(
+      "Zoom in first — the whole picture is already in view.",
+    );
+    expect(document.querySelector('[aria-label="Undo trim"]')).toBeNull();
+  });
+
+  // A stroke in flight owns the picture: cropping under the pen would flatten
+  // half a mark and leave the other half pointing at pixels that are gone.
+  it("holds Trim while the pen is out", () => {
+    act(() => named("Draw").click());
+    expect(control("Trim to view").disabled).toBe(true);
+    act(() => named("Done").click());
+    expect(control("Trim to view").disabled).toBe(false);
+  });
+
   it("mounts the shared annotation layer, inert until Draw is pressed", () => {
     const canvas = document.querySelector("canvas");
     expect(canvas?.getAttribute("aria-label")).toBe("Image annotation layer");

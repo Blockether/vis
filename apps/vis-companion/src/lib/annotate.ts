@@ -1,5 +1,5 @@
 import { canvasPngBlob } from './image-file';
-import type { Point } from './zoom-pan';
+import { partPixels, type Point, type Rect } from './zoom-pan';
 
 /**
  * Drawing ON something, as a model: what a stroke is, what colour it can be,
@@ -124,22 +124,56 @@ export function paintSegment(
  * The picture with its annotations burned in, at the picture's own resolution.
  * The original bytes are never touched: this is a NEW image, which is what lets
  * a drawn-on document page travel to the model while the document stays put.
+ *
+ * Given a `part` — a rectangle in fractions of the picture, from
+ * {@link visiblePart} — only that rectangle is written, at the resolution it
+ * has in the ORIGINAL: trimming to what is on screen keeps every pixel of the
+ * region it keeps, instead of re-encoding the screen's own view of it.
  */
 export function flattenAnnotations(
   picture: HTMLImageElement,
   annotations: HTMLCanvasElement | null,
+  part: Rect | null = null,
 ): Promise<Blob> {
   const width = picture.naturalWidth;
   const height = picture.naturalHeight;
   if (!width || !height) throw new Error('Image is not ready');
+  const crop = part ?? { x: 0, y: 0, width: 1, height: 1 };
+  const source = {
+    x: crop.x * width,
+    y: crop.y * height,
+    ...partPixels(crop, width, height),
+  };
   const output = document.createElement('canvas');
-  output.width = width;
-  output.height = height;
+  output.width = source.width;
+  output.height = source.height;
   const context = output.getContext('2d');
   if (!context) throw new Error('Image editing is unavailable');
-  context.drawImage(picture, 0, 0, width, height);
+  context.drawImage(
+    picture,
+    source.x,
+    source.y,
+    source.width,
+    source.height,
+    0,
+    0,
+    source.width,
+    source.height,
+  );
   if (annotations?.width && annotations.height) {
-    context.drawImage(annotations, 0, 0, width, height);
+    // The layer is fitted to the picture's own pixels, so the SAME rectangle
+    // cuts the strokes: a trim keeps the marks that were inside it.
+    context.drawImage(
+      annotations,
+      (crop.x * annotations.width),
+      (crop.y * annotations.height),
+      crop.width * annotations.width,
+      crop.height * annotations.height,
+      0,
+      0,
+      source.width,
+      source.height,
+    );
   }
   return canvasPngBlob(output);
 }

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Trim to view in the Companion image viewer: zoom or pan to a detail and `Trim` makes that
+  region the picture — cut at the ORIGINAL resolution, with any strokes flattened into it — so
+  the pen, Copy, Share and Use edit all act on the detail. `Undo trim` brings the whole picture
+  back.
+
 ### Removed
 - The `git` tool. There is no model-facing Git schema, no `git` binding in the sandbox and no
   `foundation-git` extension: a Git command is an ordinary `shell` command, run by the same
