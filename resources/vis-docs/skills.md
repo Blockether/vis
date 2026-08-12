@@ -115,6 +115,13 @@ one: every skill is also a prompt template named `<name>`, so typing
 `SKILL.md` directly into that user message and runs your task with it. Details in
 [Context files & prompts](context-and-prompts.md).
 
+That injection — and only that injection — is **idempotent per session**. The
+body lands in the conversation once; a later `/setup-pre-commit some other task`
+expands to a sentence pointing at the copy already there (and at `doc(name)` in
+case it has since been folded away), so re-invoking a skill to hand it a new
+task or to re-root the turn on its project never pastes the document twice. An
+edited `SKILL.md` is a different document and is injected again.
+
 ## Using skills from other harnesses
 
 Because discovery already scans Claude Code, pi, the agents standard, and

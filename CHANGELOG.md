@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   the pen, Copy, Share and Use edit all act on the detail. `Undo trim` brings the whole picture
   back.
 
+### Changed
+- `/<name>` injects a skill's `SKILL.md` ONCE per session. A later `/<name>` — how you hand a
+  skill a new task or re-root a turn on its project — expands to a sentence pointing at the copy
+  already in the conversation (and at `doc("name")` if it was folded away) instead of pasting the
+  document again. An edited `SKILL.md` is different content and is injected in full. This user
+  slash is the only skill surface with a session effect; `doc(name)` still prints the body every
+  time.
+
 ### Removed
 - The `skill` verb. A skill is a document like any other: `apropos(text)` finds it, `doc("name")`
   prints the whole `SKILL.md`, and reading it is the whole of using it. There is no activation, no

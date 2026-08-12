@@ -948,8 +948,17 @@ unchanged — it loses only the `:call` the corpus used to attach to it.
 - `env_python.clj` `doc`'s own description and CORE §1 stop teaching the read-versus-activate split;
   `resources/vis-docs/skills.md`, `context-and-prompts.md`, `index.md` and `AGENTS.md` say `doc("name")`
   wherever they said `skill("name")`.
-- Tests: `harness/core_test` pins that no prompt line advertises `skill(` and that the extension binds
-  one symbol; `compaction_verbs_test` and `loop_test` lose the protection describes; `doc_corpus_test`
+- The USER's `/<name>` slash keeps the one effect worth keeping and gets it explicitly: the body is
+  injected ONCE per session. `skill-template-text` digests the body, stamps
+  `session_slash_skills` (a `session_*` ctx key — durable across the turn, absent from
+  `ctx-engine/model-facing-keys`, so invisible to the model) and expands every later `/<name>` of
+  that same content to a pointer at the copy already in the conversation, naming `doc(name)` as the
+  way back if it has been folded away. An edited `SKILL.md` is different content and is injected in
+  full. This is a USER surface, not a model verb: it exists because `/<name>` is how a task or a
+  project re-root is handed over, and doing that twice must not paste the document twice.
+- Tests: `harness/core_test` pins that no prompt line advertises `skill(`, that the extension binds
+  one symbol, and that a second `/<name>` carries the pointer, the task and the owner sentence but
+  not the body; `compaction_verbs_test` and `loop_test` lose the protection describes; `doc_corpus_test`
   pins a skill entry WITHOUT a `call`; `env_python_test` and `prompt_test` pin the new wording.
 
 **Unknowns.** None. Skill DISCOVERY stays exactly as it is — the pushed one-line listing is what makes
@@ -1379,7 +1388,11 @@ threaded through `stamp-iter-universe!`, `apply-summaries`, `emergency-fold-proj
 17 files, `loop.clj` -227 and `harness/core.clj` -143. Skill DISCOVERY is untouched: the pushed
 listing still names every skill with its clipped description and its `[project]` owner, and now
 points at `doc`/`apropos` instead of an activation. A skill entry in the corpus carries no `:call`,
-because a missing `call` already means "this is prose, read it".
+because a missing `call` already means "this is prose, read it". One effect survives, on the USER
+surface only: `/<name>` injects a `SKILL.md` ONCE per session — `skill-template-text` keys a content
+digest into the model-invisible `session_slash_skills` ctx key and expands every later `/<name>` of
+the same body to a sentence pointing at the copy already in the conversation (and at `doc(name)` if
+it was folded away), so re-invoking a skill for a new task or a project re-root costs a sentence.
 
 **Phase 11 — `session["resources"]` is gone from the model-facing session: DONE.** Phase 10 treated
 the symptom; the mechanism was `render-turn-boundary` re-assigning the whole registry once per turn,

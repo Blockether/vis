@@ -45,6 +45,61 @@
         (expect (str/includes? text "/repo/apps/demo"))
         (expect (< (.indexOf ^String text "/repo/apps/demo") (.indexOf ^String text "BODY"))))))
 
+(defdescribe slash-skill-idempotence-test
+             ;; `/<name>` is the one skill surface with a session effect: the body is
+             ;; injected ONCE. Re-invoking to re-root a turn or hand over a new task used
+             ;; to paste the whole SKILL.md into the conversation a second time.
+             (it "a repeated slash invocation points at the injected body instead of repeating it"
+                 (let
+                   [s
+                    {:name "demo" :description "d" :body "BODY" :dir "/x" :resources ["ref.md"]}
+
+                    env
+                    {:ctx-atom (atom {"session_turn" 3})}
+
+                    first-text
+                    (skill-template-text env s "do x")
+
+                    again
+                    (skill-template-text env s "do y")]
+
+                   (expect (str/includes? first-text "BODY"))
+                   (expect (not (str/includes? again "BODY")))
+                   (expect (str/includes? again "already in this conversation"))
+                   (expect (str/includes? again "turn 3"))
+                   (expect (str/includes? again "doc(\"demo\")"))
+                   (expect (str/includes? again "Task: do y"))))
+             (it "an edited SKILL.md is injected again"
+                 (let
+                   [env
+                    {:ctx-atom (atom {"session_turn" 1})}
+
+                    s
+                    {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []}]
+
+                   (skill-template-text env s "")
+                   (expect (str/includes? (skill-template-text env (assoc s :body "NEW BODY") "")
+                                          "NEW BODY"))))
+             (it "a repeat still states the owning project of a nested skill"
+                 (let
+                   [env
+                    {:ctx-atom (atom {"session_turn" 1})}
+
+                    s
+                    {:name "demo"
+                     :description "d"
+                     :body "BODY"
+                     :dir "/repo/apps/demo/.agents/skills/demo"
+                     :project-root "/repo/apps/demo"
+                     :resources []}]
+
+                   (skill-template-text env s "")
+                   (expect (str/includes? (skill-template-text env s "") "/repo/apps/demo"))))
+             (it "without a session context every invocation injects the body"
+                 (let [s {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []}]
+                   (expect (str/includes? (skill-template-text {} s "") "BODY"))
+                   (expect (str/includes? (skill-template-text {} s "") "BODY")))))
+
 (defdescribe skill-ownership-test
              ;; Regression: a repository-root session expanding a nested project's
              ;; skill (apps/vis-companion's `impeccable`) received a payload of

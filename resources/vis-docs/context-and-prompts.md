@@ -100,6 +100,12 @@ The expansion explicitly injects the full `SKILL.md` plus its bundled resource
 paths into that user message. The model reaches the same text on its own with
 `doc(name)` — a skill is a document in the retrieval corpus, never a verb.
 
+The injection is **idempotent per session**: the first `/<name>` carries the
+body, every later one expands to a pointer at the copy already in the
+conversation plus your new task, so re-invoking a skill costs a sentence. The
+pointer names `doc(name)` as the way back if the earlier text has been folded
+away, and an edited `SKILL.md` (different content) is injected in full again.
+
 ## Shell shortcuts: `!` and `!&`
 
 A line that starts with `!` is a shell escape — the command runs directly,
