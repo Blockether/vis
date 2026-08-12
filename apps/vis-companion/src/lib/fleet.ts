@@ -626,6 +626,14 @@ export function startFlowPick(flow: StartFlow, on: GatewayConn): StartFlow {
   return flow.step === 'menu' ? { ...flow, on } : flow;
 }
 
+/**
+ * Take that answer back: the machine question again, with the order still open and
+ * every other answer in it untouched.
+ */
+export function startFlowUnpick(flow: StartFlow): StartFlow {
+  return flow.step === 'menu' ? { ...flow, on: null } : flow;
+}
+
 /** Hand the order to the name dialog, WITH the machine the fork happens on. */
 export function startFlowName(on: GatewayConn, clean: boolean): StartFlow {
   return { step: 'name', on, clean };

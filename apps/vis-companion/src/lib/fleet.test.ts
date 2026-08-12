@@ -33,6 +33,7 @@ import {
   startFlowOn,
   startFlowOpen,
   startFlowPick,
+  startFlowUnpick,
   type FleetMachine,
 } from './fleet';
 import type { GatewayConn, Session } from './types';
@@ -756,6 +757,20 @@ describe('StartFlow', () => {
     expect(startFlowOpen(startFlowPick(startFlowOpen(START_IDLE, at), studio), null)).toBe(
       START_IDLE,
     );
+  });
+
+  // The menu's own Back: the machine question again, with the order still open. It only
+  // exists because that answer was given HERE — a draft question opened from a project
+  // header was never asked which machine, and offers no Back at all.
+  it('takes the picked machine back without ending the order', () => {
+    const picked = startFlowPick(startFlowOpen(START_IDLE, at), tower);
+    const back = startFlowUnpick(picked);
+    expect(back).toEqual({ step: 'menu', at, on: null });
+    expect(startFlowOn(back)).toBeNull();
+    // Nothing else un-picks: a name dialog is past the question, not inside it.
+    const named = startFlowName(studio, true);
+    expect(startFlowUnpick(named)).toBe(named);
+    expect(startFlowUnpick(START_IDLE)).toBe(START_IDLE);
   });
 
   it('ignores a machine picked while no menu is asking', () => {

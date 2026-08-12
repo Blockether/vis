@@ -954,7 +954,6 @@ export function App() {
               subscriptions={subscriptions}
               onUnreachable={handleUnreachable}
               onOpen={openGatewaySession}
-              onMachineSettings={openSettings}
             />
           </div>
         )}

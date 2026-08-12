@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { listSession, renderSessionsScreen } from "./sessions-screen-harness";
 
@@ -59,28 +59,24 @@ describe('where "New session" lives', () => {
     expect(create?.body).toEqual({ channel: "web", root: "/Users/dev/project" });
   });
 
-  // Regression, user report ("when I open the ⋯ the view is not coherent between the one ⋯
-  // on the machine and another ⋯ on the project level"), and the follow-up ("these remove
-  // sessions do we really need to have it in the ⋯?"): two hand-built panels of different
-  // widths, and the project's held exactly ONE destructive row — a menu of one, repeated on
-  // every project header, standing permanently beside the verb that creates.
-  it("leaves the list exactly one overflow menu, and it belongs to the machine", async () => {
-    const onMachineSettings = vi.fn();
-    const view = renderSessionsScreen({ machines: alpha(), onMachineSettings });
+  // Regression, user report (paraphrased: take the `⋯` off the right of the machine row):
+  // the list's last overflow menu stood beside the switcher and held two rows — `Manage
+  // projects`, which is the sheet `New project` opens anyway, and `Machine settings`,
+  // which the Machines tab and the app bar's cog already open. A menu whose every answer
+  // was one tap away without it.
+  it("leaves the list no overflow menu at all", async () => {
+    const view = renderSessionsScreen({ machines: alpha() });
     restore = view.restore;
     await screen.findByText("First");
 
-    const kebabs = named(/^Actions for/);
-    expect(kebabs.map((button) => button.getAttribute("aria-label"))).toEqual([
-      "Actions for alpha",
-    ]);
+    expect(named(/^Actions for/)).toHaveLength(0);
     expect(named(/^Remove /)).toHaveLength(0);
+    expect(screen.queryByRole("menu")).toBeNull();
 
-    await userEvent.click(kebabs[0]!);
-    const menu = within(screen.getByRole("menu"));
-    expect(menu.getByRole("menuitem", { name: /Manage projects/ })).toBeTruthy();
-    await userEvent.click(menu.getByRole("menuitem", { name: /Machine settings/ }));
-    expect(onMachineSettings).toHaveBeenCalledWith(view.conns[0]);
+    // The one row it held that this screen owns is the sheet the amber verb opens.
+    await userEvent.click(screen.getByRole("button", { name: "New project on alpha" }));
+    const sheet = within(await screen.findByRole("dialog"));
+    expect(sheet.getByText(/New project/)).toBeTruthy();
   });
 
   // Regression, user report (paraphrased: put `+` and the gear on the band — that is add
@@ -112,18 +108,17 @@ describe('where "New session" lives', () => {
 
     // The counts the band carried are gone from the screen.
     expect(screen.queryByText(/\d+ projects?\s*·/)).toBeNull();
-    // The machine is named by the chips and the rail, never by a band of its own: with a
-    // solo fleet there is no chip strip either, so the name appears nowhere above the list.
+    // The machine is named by its tab and the rail, never by a band of its own.
     expect(screen.queryByRole("button", { name: "Rename alpha" })).toBeNull();
 
-    // Both verbs stand OUTSIDE the list card, on the row above it.
+    // The verb stands OUTSIDE the list card, on the row above it, after the switch.
     const create = screen.getByRole("button", { name: "New project on alpha" });
-    const kebab = screen.getByRole("button", { name: "Actions for alpha" });
+    const strip = screen.getByLabelText("Machines");
     const list = screen.getByLabelText("alpha projects");
     expect(create.closest("section")).toBe(screen.getByLabelText("Sessions"));
     expect(list.contains(create)).toBe(false);
-    expect(list.contains(kebab)).toBe(false);
-    expect(create.compareDocumentPosition(kebab) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(list.contains(strip)).toBe(false);
+    expect(strip.compareDocumentPosition(create) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
 
@@ -183,21 +178,25 @@ describe("machine, project and session are three different shapes", () => {
   });
 });
 
-// Regression, user report (paraphrased: unify the view whether the fleet holds one machine
-// or many): the strip appeared only above two machines and carried a pairing chip a solo
-// user saw instead of chips. A choice of one is not a choice, so with one gateway paired
-// the whole band goes — and pairing lives in Preferences, not on this strip.
+// Regression, user report (paraphrased: the machine tab must be rendered on the left
+// whether we have one machine or more): the strip appeared only above two machines, so a
+// solo user's list said nowhere which computer it was on, and pairing a second machine
+// rearranged the screen. Pairing itself still lives in Preferences, not on this strip.
 describe("the machine strip", () => {
   const fleet = [
     { label: "alpha", sessions: [listSession({ id: "a1", title: "First" })] },
     { label: "beta", sessions: [listSession({ id: "b1", title: "Second" })] },
   ];
 
-  it("costs a solo user nothing: no strip, no chips, no machine landmark", async () => {
+  it("stands for a fleet of one too: one tab, already pressed", async () => {
     const view = renderSessionsScreen({ machines: alpha() });
     restore = view.restore;
     await screen.findByText("First");
-    expect(screen.queryByLabelText("Machines")).toBeNull();
+
+    const strip = within(screen.getByLabelText("Machines"));
+    const tabs = strip.getAllByRole("button");
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["alpha"]);
+    expect(tabs[0]!.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("scopes to exactly one machine — this one or that one, never All", async () => {

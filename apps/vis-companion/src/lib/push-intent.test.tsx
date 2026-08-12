@@ -172,7 +172,7 @@ describe('resolvePushIntent', () => {
 describe('App wiring', () => {
   it('subscribes to taps once, at mount, so the retained cold-start tap is caught', async () => {
     const view = renderApp({ machines: [{ label: 'laptop' }] });
-    await screen.findByRole('button', { name: 'Actions for laptop' });
+    await screen.findByRole('button', { name: 'New project on laptop' });
     expect(taps).toHaveLength(1);
     // Re-subscribing when the shell's state changes would leave a window with no
     // listener attached — precisely when the launch tap is replayed.
@@ -186,7 +186,7 @@ describe('App wiring', () => {
 
   it('parks the tap and drains it onto the tapped session', async () => {
     const view = renderApp({ machines: [{ label: 'laptop' }] });
-    await screen.findByRole('button', { name: 'Actions for laptop' });
+    await screen.findByRole('button', { name: 'New project on laptop' });
     // The chrome is on screen: this is the list.
     expect(screen.getByRole('button', { name: 'Open preferences' })).toBeTruthy();
 
@@ -284,7 +284,7 @@ describe('web notification wiring', () => {
       serviceWorker: { register },
     });
     const view = renderApp({ machines: [{ label: 'laptop' }] });
-    await screen.findByRole('button', { name: 'Actions for laptop' });
+    await screen.findByRole('button', { name: 'New project on laptop' });
     await waitFor(() => expect(register).toHaveBeenCalledWith('/sw.js', { scope: '/' }));
     view.unmount();
     view.restore();

@@ -23,7 +23,6 @@ import {
   RowDisclosure,
   SectionHeader,
   Spinner,
-  KebabButton,
 } from '../components/ui';
 import {
   Menu,
@@ -58,8 +57,6 @@ import {
 } from '../components/ManageProjectsSheet';
 import {
   PencilIcon,
-  ProjectsIcon,
-  SettingsIcon,
   StarIcon,
   TrashIcon,
 } from '../components/icons';
@@ -112,6 +109,7 @@ import {
   startFlowBack,
   machineProject,
   startFlowPick,
+  startFlowUnpick,
   type StartFlow,
   type FleetMachine,
 } from '../lib/fleet';
@@ -229,8 +227,6 @@ interface Props {
   /** No machine is answering at all — the shell decides what to show instead. */
   onUnreachable?: (message: string | null) => void;
   onOpen: (conn: GatewayConn, sid: string, fresh?: boolean) => void | Promise<void>;
-  /** Open that machine's own settings — the last verb in its `⋯` menu. */
-  onMachineSettings?: (conn: GatewayConn) => void;
 }
 
 export function SessionsScreen({
@@ -240,7 +236,6 @@ export function SessionsScreen({
   subscriptions,
   onUnreachable,
   onOpen,
-  onMachineSettings,
 }: Props) {
   // A machine OWNS its projects: every row belongs to exactly one gateway, and a
   // project only exists inside the machine it lives on. The fleet is therefore
@@ -274,10 +269,10 @@ export function SessionsScreen({
     machine: FleetMachine;
     at: { top: number; left: number };
   } | null>(null);
-  // The `⋯` order — which machine, which workspace, what to call the draft — is ONE
-  // value, so leaving it anywhere forgets every answer in it. The yellow button beside
-  // it needs none of those answers: it starts where the machine already is. Portalled
-  // and viewport-anchored because the header panel clips its overflow.
+  // The start order — which machine, which workspace, what to call the draft — is ONE
+  // value, so leaving it anywhere forgets every answer in it. The yellow `New session`
+  // beside it needs none of those answers: it starts where the machine already is.
+  // Portalled and viewport-anchored because the header panel clips its overflow.
   const [startFlow, setStartFlow] = useState<StartFlow>(START_IDLE);
   // The menu and its draft sub-question share one surface, so both anchor from the
   // control the order started at. Browsing is NOT that surface: it takes the screen.
@@ -287,9 +282,9 @@ export function SessionsScreen({
   // Forking asks for the draft's name first: the gateway rejects a blank label, and
   // the name is what `/draft list` and every later resume will show.
   const namePrompt = startFlow.step === 'name' ? startFlow : null;
-  // The control the open order hangs from — a machine header's `⋯`, its New session
-  // button when that machine has no project yet, or the solo fleet bar's. An element,
-  // not a ref, because every header carries its own pair.
+  // The control the open order hangs from — a project header's draft half, or its
+  // New session button when that machine has no project yet. An element, not a ref,
+  // because every header carries its own pair.
   const startAnchorEl = useRef<HTMLElement | null>(null);
   // One entry per machine+repo, kept across openings; see `forgetParkedDrafts`.
   const [draftsCache, setDraftsCache] = useState<
@@ -683,7 +678,7 @@ export function SessionsScreen({
    * that has a workspace, and the menu NAMES that repo — a fleet spanning several
    * projects must not be told these drafts belong to whatever it creates next.
    */
-  // Which machine the `⋯` order is about while the bar speaks for the whole fleet: the
+  // Which machine the start order is about while the bar speaks for the whole fleet: the
   // scoped machine, or the only one paired. `null` means the app must ASK before it
   // can create anything.
   const scopeTarget = newSessionTarget(machines, scope);
@@ -691,6 +686,9 @@ export function SessionsScreen({
   // trunk — is what the workspace question below is then asked about.
   const ask = startAsk(machines, scopeTarget, startFlowOn(startFlow));
   const target = ask.on;
+  // That answer was given INSIDE this menu — not by the scope, and not by the project
+  // header the order started on — so it is the one answer the menu can take back.
+  const pickedHere = startFlow.step === 'menu' && startFlow.on !== null;
   const targetMachine = ask.machine;
   // Which project header opened the draft picker, so the list it reads is that
   // project's own and not merely the machine's most recent one.
@@ -723,8 +721,9 @@ export function SessionsScreen({
   }, [targetMachine]);
 
   // The parked drafts are read for the question that OFFERS them, and for nothing
-  // else: the verb menu never waits on a list it does not show.
-  const isDraftsOpen = startFlow.step === 'drafts';
+  // else: while the menu is still asking WHICH machine there is no repo to read them
+  // from, and it must not wait on a list it does not show.
+  const isWorkspaceAsk = startMenu !== null && target !== null;
   // WHAT the picker reads, as a value with a string identity. The effect below
   // depends on that identity and reaches the value through a ref, so the objects
   // changing underneath it — a background poll replacing the machine and its
@@ -758,30 +757,19 @@ export function SessionsScreen({
   }, []);
 
   /**
-   * Open the machine's menu under the control that was tapped — a machine header's
-   * `⋯`, or the solo fleet bar's. Passing `on` ANSWERS which machine at the same
-   * time, because a header can only ever mean its own gateway.
+   * Open — or RE-ANCHOR — the start order on the control it came from. Re-anchoring
+   * keeps every answer already in it: a resize is not an answer, and on a phone the
+   * on-screen keyboard fires one in the very tap that opens the menu.
    */
-  const openStartMenuAt = useCallback(
-    (anchor: HTMLElement | null, on: GatewayConn | null = null) => {
-      if (anchor) startAnchorEl.current = anchor;
-      const at = menuPosition(startAnchorEl.current?.getBoundingClientRect(), MENU_WIDTH);
-      setStartFlow((flow) => {
-        const opened = startFlowOpen(flow, at);
-        return on && opened.step === 'menu' ? startFlowPick(opened, on) : opened;
-      });
-    },
-    [],
-  );
-
-  // Re-anchoring an OPEN menu keeps every answer in it: a resize is not an answer, and
-  // on a phone the keyboard fires one in the very tap that opens it.
-  const openStartMenu = useCallback(() => openStartMenuAt(null), [openStartMenuAt]);
+  const openStartMenu = useCallback(() => {
+    const at = menuPosition(startAnchorEl.current?.getBoundingClientRect(), MENU_WIDTH);
+    setStartFlow((flow) => startFlowOpen(flow, at));
+  }, []);
 
   /**
    * The draft half of a project header's split button: one tap lands on the draft
-   * question with machine AND project already answered. It used to be a row inside the
-   * machine's `⋯`, two headers above the project it actually forks.
+   * question with machine AND project already answered. It used to be a row inside a
+   * machine-level menu, two headers above the project it actually forks.
    */
   const openDraftsAt = useCallback((anchor: HTMLElement, on: GatewayConn, root: string) => {
     startAnchorEl.current = anchor;
@@ -810,7 +798,7 @@ export function SessionsScreen({
   // the machine every few seconds. Depending on either aborted this request on the
   // frame it started, over and over, and the menu never left "Reading drafts...".
   useEffect(() => {
-    if (!isDraftsOpen || isDraftsRead) return;
+    if (!isWorkspaceAsk || isDraftsRead) return;
     const source = draftsSourceRef.current;
     // That machine's first session list has not landed: keep reading, do not
     // answer "nothing parked" on behalf of a project we have not seen yet.
@@ -831,7 +819,7 @@ export function SessionsScreen({
         remember([], (cause as Error).message);
       });
     return () => controller.abort();
-  }, [isDraftsOpen, isDraftsRead, draftsSourceKey]);
+  }, [isWorkspaceAsk, isDraftsRead, draftsSourceKey]);
 
   // An anchored popover whose anchor moved is a lie, so a resize RE-ANCHORS it to
   // the live caret; only a caret that has left the document closes it. Closing on
@@ -1103,51 +1091,58 @@ export function SessionsScreen({
           a segmented switch on the page's paper now: one track, the chosen machine a
           raised tile inside it. There is no "All": a scope is one machine, always.
 
-          THIS ROW HOLDS THE SWITCH AND THE MACHINE'S VERBS, AND NOTHING ELSE.
+          THE SWITCH IS ALWAYS THERE, EVEN FOR A FLEET OF ONE. It used to disappear
+          below two machines, on the reasoning that a choice of one is not a choice —
+          but the tile is not only a choice, it is the LABEL of everything under it:
+          which computer these projects and sessions are on, in the machine's own hue,
+          in the same place whatever the fleet size. Hiding it made a solo user's list
+          belong to nobody and made pairing a second machine rearrange the screen. One
+          machine is one tab, already pressed, and the second one lands beside it.
+
+          THIS ROW HOLDS THE SWITCH AND THE MACHINE'S ONE VERB, AND NOTHING ELSE.
           A second band used to stand inside the card under it: the machine's name
-          again, "2 projects - 1080 sessions", and these same two controls. It named a
+          again, "2 projects - 1080 sessions", and these same controls. It named a
           machine the chips had just named, counted what every project header below it
           already counts, and spent a whole row of a phone's glass doing it. The band
-          is gone. `New project` and the one `⋯` this list has stand up here on the row
-          that already answers "which machine", so the card starts at the first project.
+          is gone, so the card starts at the first project header.
 
-          A SOLO FLEET STILL HAS VERBS. With one gateway paired there is nothing to
-          switch, so the track, the chips and the `Machines` landmark all disappear and
-          the verbs keep the row to themselves — the switch costs a solo user nothing,
-          but the verbs it used to stand beside are not the switch.
+          NO OVERFLOW CONTROL STANDS HERE. A `⋯` beside the switch held two rows —
+          `Manage projects`, which is the sheet `New project` already opens, and
+          `Machine settings`, which the Machines tab and the app bar's own cog both
+          open — so it was a menu whose every answer was one tap away without it.
+          The row is a switch and a verb, and both say what they do.
 
-          ONE INSET PER EDGE. Standing on the page's paper means wearing the PAGE's
-          side edges, and the section above already spells them (`sm:px-6`). `px-3` is
-          here for the phone alone, where that section is full bleed and the ink edge
-          is the app bar's own 12px. The TRAILING side is the exception: the `⋯` is an
-          edge control and reclaims its row's gutter (`-mr-3 sm:-mr-4`) to put its ink
-          on the paper's edge, so at `sm` the row has to spell the 16px it takes back —
-          without it the glyph hung 16px outside the card, past the list's own trailing
-          ink. */}
+          ONE INSET PER EDGE, AND BOTH ENDS STAND ON THE PAPER. Standing on the page's
+          paper means wearing the PAGE's side edges, and the section above already
+          spells them (`sm:px-6`). `px-3` is here for the phone alone, where that
+          section is full bleed and the ink edge is the app bar's own 12px; `sm:pr-4`
+          keeps the same kind of inset once the card detaches. Nothing reclaims the
+          gutter any more — the `-mr-3 sm:-mr-4` edge treatment left with the `⋯` that
+          needed it, so the switch's left edge and the verb's right edge are the same
+          distance from the paper: 12 and 12 of a 390 phone (strip at 12, `New project`
+          ending at 378), and 984 inside a card that ends at 1000 on a 1024 desk. */}
       {scopeMachine && (
         <div className="relative z-10 flex items-center gap-1.5 px-3 pb-3 pt-6 sm:pb-4 sm:pl-0 sm:pr-4 sm:pt-8">
-          {machines.length > 1 && (
-            <div role="group" aria-label="Machines" className="flex min-w-0 shrink">
-              <MachineSwitcher>
-                {machines.map((machine) => {
-                  const key = machineKey(machine.conn);
-                  const tally = tallies.get(key);
-                  return (
-                    <MachineTab
-                      key={key}
-                      isOn={scope === key}
-                      hasUnread={(tally?.unread ?? 0) > 0}
-                      onClick={() => selectScope(key)}
-                    >
-                      <MachineMark color={machineColor(machineColors, key)} />
-                      {machineLabel(machine.conn)}
-                      {machine.error && <span className="opacity-70">offline</span>}
-                    </MachineTab>
-                  );
-                })}
-              </MachineSwitcher>
-            </div>
-          )}
+          <div role="group" aria-label="Machines" className="flex min-w-0 shrink">
+            <MachineSwitcher>
+              {machines.map((machine) => {
+                const key = machineKey(machine.conn);
+                const tally = tallies.get(key);
+                return (
+                  <MachineTab
+                    key={key}
+                    isOn={scope === key}
+                    hasUnread={(tally?.unread ?? 0) > 0}
+                    onClick={() => selectScope(key)}
+                  >
+                    <MachineMark color={machineColor(machineColors, key)} />
+                    {machineLabel(machine.conn)}
+                    {machine.error && <span className="opacity-70">offline</span>}
+                  </MachineTab>
+                );
+              })}
+            </MachineSwitcher>
+          </div>
           <div className="ml-auto flex shrink-0 items-center gap-2">
             {/* Only when no button can speak for it: a create started from this row's
                 own menu belongs to no project header. Every header-started create
@@ -1170,15 +1165,13 @@ export function SessionsScreen({
                 not answering
               </span>
             )}
-            {/* The machine's verbs, on the row that carries them: a NEW project, and the
-                rarer half behind the one `⋯` this list has.
+            {/* The machine's verb, on the row that carries it: a NEW project.
 
                 It is the amber primary here, the same fill the list's own create verb
                 wears, and it is spelled like it — `New project` beside `New session`,
-                one species of verb saying the same kind of word. `Machine settings` is
-                a row in the `⋯`, beside `Manage projects`, which is its own order of
-                rarity — and the `⋯` is the app's ONE overflow control, so the rarer
-                half of a surface is reached the same way everywhere. */}
+                one species of verb saying the same kind of word. The sheet it opens is
+                this machine's whole project list, so adding, choosing and removing one
+                are all behind the word that names the thing. */}
             {!scopeMachine.error && (
               <Button
                 variant="primary"
@@ -1195,11 +1188,6 @@ export function SessionsScreen({
                 }}
               >New project</Button>
             )}
-            <KebabButton
-              label={`Actions for ${machineLabel(scopeMachine.conn)}`}
-              isOpen={!!startMenu}
-              onClick={(event) => openStartMenuAt(event.currentTarget, scopeMachine.conn)}
-            />
           </div>
         </div>
       )}
@@ -1407,60 +1395,29 @@ export function SessionsScreen({
 
       {startMenu && (
         <Menu
-          label={
-            target
-              ? isDraftsOpen
-                ? 'Start the new session in'
-                : `Actions for ${machineLabel(target)}`
-              : 'Create the new session on'
-          }
+          label={target ? 'Start the new session in' : 'Create the new session on'}
           at={startMenu}
           onDismiss={() => leaveStart(true)}
         >
-          {target && !isDraftsOpen ? (
-            /* What is LEFT once the verb moved out to the project header: the yellow
-               button there already starts a session in the project it names, so this
-               menu holds the rarer half of the order — a private copy, this machine's
-               files, the machine itself. */
+          {target ? (
             <>
-              <MenuHeading>{machineLabel(target)}</MenuHeading>
-              {/* Managing a machine's project folders is a machine verb, so it is
-                  BEHIND this control with the other ones instead of sitting beside it
-                  as a second word-button in the header's right corner. */}
-              <MenuItem
-                icon={<ProjectsIcon className="size-4" />}
-                title="Manage projects"
-                hint="add, choose, and remove this machine's projects"
-                onSelect={(anchor) => {
-                  const at = menuPosition(anchor.getBoundingClientRect(), BROWSE_WIDTH);
-                  if (!at || !targetMachine) return;
-                  leaveStart();
-                  setManageProjects({ machine: targetMachine, at });
-                }}
-              />
-              {onMachineSettings && (
-                <MenuItem
-                  icon={<SettingsIcon className="size-4" />}
-                  title="Machine settings"
-                  hint="name, pairing, unpair"
-                  onSelect={() => {
-                    leaveStart();
-                    onMachineSettings(target);
-                  }}
-                />
+              {/* WHICH machine was answered inside this very menu, so that answer can be
+                  taken back without leaving the order. A draft question opened from a
+                  project header was never asked it: it gets a heading, never a Back to a
+                  question nobody answered. */}
+              {pickedHere ? (
+                <MenuBack
+                  label="Back to which machine runs this session"
+                  onBack={() => setStartFlow(startFlowUnpick)}
+                >
+                  Start the session in · {machineLabel(target)}
+                </MenuBack>
+              ) : (
+                <MenuHeading>
+                  Start the session in
+                  {machines.length > 1 ? ` · ${machineLabel(target)}` : ''}
+                </MenuHeading>
               )}
-            </>
-          ) : target ? (
-            <>
-              {/* A step INSIDE the same order, so it is left the way it was entered:
-                  back to the machine's verbs, never out to a blank screen. */}
-              <MenuBack
-                label={`Back to actions for ${machineLabel(target)}`}
-                onBack={() => setStartFlow(startFlowBack)}
-              >
-                Start the session in
-                {machines.length > 1 ? ` · ${machineLabel(target)}` : ''}
-              </MenuBack>
               <MenuItem
                 title="The project itself"
                 hint="Edits land straight in the repo — no isolated copy."
@@ -1535,8 +1492,8 @@ export function SessionsScreen({
       )}
 
       {/* The folder browser the start flow falls through to when a machine has no
-          project yet. `manageProjects` below is the same sheet reached deliberately
-          from a machine's `⋯`. */}
+          project yet. `manageProjects` below is the same sheet, reached deliberately
+          from `New project` on the row above the list. */}
       {target && browseAt && (
         <ManageProjectsSheet
           label={machineLabel(target)}
