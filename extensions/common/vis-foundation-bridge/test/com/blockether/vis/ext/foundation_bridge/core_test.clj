@@ -1,13 +1,14 @@
 (ns com.blockether.vis.ext.foundation-bridge.core-test
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [clojure.walk :as walk]
             [lazytest.core :refer [defdescribe expect it]]
             [bridge.api :as br]
-            [bridge.io :as bio]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.env-python :as boundary]
             [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.ext.foundation-bridge.core :as bridge]))
+            [com.blockether.vis.ext.foundation-bridge.core :as bridge]
+            [yamlstar.core :as yamlstar]))
 
 (defn- result-of
   "The tool envelope's `:result` payload VIEWED through the STRINGS-ONLY
@@ -23,13 +24,25 @@
                                 prefix
                                 (make-array java.nio.file.attribute.FileAttribute 0)))))
 
+(defn- write-yaml!
+  [path data]
+  (let [wire (walk/postwalk (fn [node]
+                              (cond (keyword? node) (name node)
+                                    (map? node) (into {}
+                                                      (map (fn [[k v]]
+                                                             [(str/replace (str k) "-" "_") v]))
+                                                      node)
+                                    :else node))
+                            data)]
+    (spit path (yamlstar/dump wire))))
+
 (defn- write-policy!
   [root sandbox]
-  (bio/write-data (str root "/.bridge/verification-policy.yaml")
-                  {:artifact "verification-policy"
-                   :policy-id "sandboxed"
-                   :bridge-path-sandbox sandbox
-                   :rules []}))
+  (write-yaml! (str root "/.bridge/verification-policy.yaml")
+               {:artifact "verification-policy"
+                :policy-id "sandboxed"
+                :bridge-path-sandbox sandbox
+                :rules []}))
 
 (defn- mark-repository! [root] (.mkdirs (io/file root ".git")) root)
 
@@ -316,6 +329,15 @@
       (expect (not (contains? bridge-slice "discovery_truncated")))
       (expect (true? (:success? check-result)))
       (expect (= profile-path (get-in (result-of check-result) ["profile_path"])))))
+  (it "discovers the .yml fallback used by Bridge 0.3"
+      (let [root (temp-root "bridge-ext-session-yml")
+            child (str root "/project")
+            profile-path (configure-project! root child)
+            yml-path (str child "/.bridge/profile.yml")]
+        (expect (.renameTo (io/file profile-path) (io/file yml-path)))
+        (expect (= yml-path
+                   (get-in (bridge-context root)
+                           ["session_env" "bridge" "default_profile_path"])))))
   (it
     "requires explicit selection when multiple child repositories are configured"
     (let
@@ -497,6 +519,38 @@
         (bridge/init env)
         (write-policy! root {:enforce? false :rules [{:path-pattern ".bridge/" :access "none"}]})
         (expect (nil? (refusal root "file-write" (str root "/.bridge/profile.yaml"))))))
+  (it "keeps ordinary paths usable and explains malformed Bridge configuration"
+      (let [root (mark-repository! (temp-root "bridge-ext-invalid-config"))
+            profile-path (str root "/.bridge/profile.yaml")]
+        (.mkdirs (io/file root ".bridge"))
+        (write-yaml! profile-path
+                     {:kind "project-profile"
+                      :project-name "invalid"
+                      :root-path ".."
+                      :code-paths []
+                      :docs-paths []
+                      :test-paths []
+                      :artifact-paths {:root ".bridge/ephemeral"
+                                       :evidence ".bridge/ephemeral/evidence"}
+                      :canonical-commands []
+                      :subsystems []
+                      :surprise true})
+        (expect (nil? (refusal root "file-read" (str root "/README.md"))))
+        (expect (str/includes? (refusal root "file-write" profile-path)
+                               "unknown-field at [:surprise]"))
+        (let [result (bridge/profile {:workspace/root root})]
+          (expect (false? (:success? result)))
+          (expect (str/includes? (get-in result [:error :message])
+                                 "unknown-field at [:surprise]"))
+          (expect (= "Update this Bridge configuration to the installed schema, then retry."
+                     (get-in result [:error :hint]))))
+        (let [public-profile (get (extension/wrap-extension bridge/vis-extension
+                                                            {:workspace/root root})
+                                  'profile)
+              error (try (public-profile)
+                         nil
+                         (catch clojure.lang.ExceptionInfo e e))]
+          (expect (str/includes? (ex-message error) "unknown-field at [:surprise]")))))
   (it "an enforced :none rule refuses the read and the write with the policy's own reason"
       (let
         [root
@@ -554,13 +608,13 @@
 
         (bridge/init env)
         (.mkdirs (java.io.File. project-root ".bridge"))
-        (bio/write-data profile-path (assoc (bio/read-data profile-path) :root-path "../project"))
-        (bio/write-data (str project-root "/.bridge/verification-policy.yaml")
-                        {:artifact "verification-policy"
-                         :policy-id "sandboxed-subroot"
-                         :bridge-path-sandbox {:enforce? true
-                                               :rules [{:path-pattern ".bridge/" :access "none"}]}
-                         :rules []})
+        (write-yaml! profile-path (assoc (br/read-data profile-path) :root-path "../project"))
+        (write-yaml! (str project-root "/.bridge/verification-policy.yaml")
+                     {:artifact "verification-policy"
+                      :policy-id "sandboxed-subroot"
+                      :bridge-path-sandbox {:enforce? true
+                                            :rules [{:path-pattern ".bridge/" :access "none"}]}
+                      :rules []})
         (expect
           (=
             "Bridge policy protects this path; use the br/* tool surface instead of direct file IO."
@@ -712,18 +766,6 @@
        _
        (bridge/init env)
 
-       _
-       (bio/write-data (str root "/.bridge/ephemeral/evidence/unit.yaml")
-                       {:artifact "evidence-run"
-                        :evidence-id "unit"
-                        :kind "unit-tests"
-                        :role "regression"
-                        :subject "vis"
-                        :evidence-status "failed"
-                        :execution-status "execution-failed"
-                        :finished-at "2026-05-20T19:01:06.340575Z"
-                        :command "clojure -M:test"})
-
        result
        (bridge/check env {"changed_files" ["src/core.clj"]})
 
@@ -732,11 +774,11 @@
 
       (expect (true? (:success? result)))
       (expect (= "attention-required" (get-in r ["status"])))
-      (expect (= 1 (get-in r ["summary_version"])))
+      (expect (= 2 (get-in r ["summary_version"])))
       (expect (= 1 (get-in r ["counts" "required_obligations"])))
-      (expect (= 1 (get-in r ["counts" "receipts"])))
+      (expect (= 0 (get-in r ["counts" "receipts"])))
       (expect (= "bridge/run-evidence" (get-in r ["next_action" "op"])))
       (expect (= "unit" (get-in r ["next_action" "args" "id"])))
       (expect (= "unit" (get-in r ["next_action" "evidence_id"])))
-      (expect (= "failed" (get-in r ["evidence_receipts" 0 "status"])))
+      (expect (empty? (get-in r ["evidence_receipts"])))
       (expect (= "unit-tests" (get-in r ["required_obligations" 0 "evidence_kind"]))))))

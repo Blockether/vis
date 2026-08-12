@@ -38,7 +38,7 @@ Observation tools:
   `{"tree": sha, "frontier": sha}` for a pinned candidate. A clear candidate
   is recorded only when `"is_approve": true`.
 - When configured, `br/check` returns Bridge's **canonical status summary**
-  (`:summary-version` 1, produced by `bridge.api/check` — the same shape as
+  (`:summary-version` 2, produced by `bridge.api/check` — the same shape as
   `bb bridge check --format json`): `:counts`, `:required-obligations`
   (flattened, failed first), `:recommended-obligations`,
   `:evidence-receipts`, and `:next-action`, plus the Vis envelope keys
@@ -62,6 +62,11 @@ to subtree globs such as `.bridge/**`; relative policy paths are resolved
 against the normalized Bridge profile root. In a multi-repository workspace,
 rules from every discovered Bridge project are combined, with nested project
 roots ordered before ancestors and then lexically.
+If a discovered profile or policy is malformed, ordinary project paths remain
+usable while that project's `.bridge/**` stays denied with the exact validation
+field path in both the `br/*` tool failure and filesystem refusal. A broken
+governance file must not crash unrelated filesystem reads or silently disable
+protection of Bridge-owned state.
 
 All tools accept an optional opts map where relevant:
 
@@ -168,9 +173,9 @@ immediately.
 For the active root and each discovered Git root, the extension checks:
 
 1. `.bridge/profile.yaml`
-2. `.bridge/persistent/profile.yaml`
-3. `.bridge/profile.edn`
-4. `.bridge/persistent/profile.edn`
+2. `.bridge/profile.yml`
+3. `.bridge/persistent/profile.yaml`
+4. `.bridge/persistent/profile.yml`
 
 Selection is deterministic and conservative:
 
@@ -200,7 +205,7 @@ Vis-owned:
 
 Bridge-owned:
 
-- `.bridge/profile.edn`
+- `.bridge/profile.yaml`
 - `.bridge/verification-policy.yaml`
 - subsystem and requirement matching
 - evidence command plans

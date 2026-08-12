@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   back.
 
 ### Changed
+- Prepare `vis-foundation-bridge` for Bridge 0.3: migrate the project profile and policy to the
+  reduced YAML schema, recognize every 0.3 profile filename, preserve exact validation paths, and
+  keep malformed Bridge configuration from crashing ordinary filesystem access.
 - The native release build is verifiable without spending a tag. `Native Release` dispatched
   from a BRANCH is now a dry run — it builds the image, stages the bundle and runs every smoke
   test and the native suite, and attaches nothing; only a `v*` ref publishes. It used to refuse

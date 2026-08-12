@@ -3,7 +3,7 @@
 
    Consumes Bridge exclusively through its public library API
    (`bridge.api`); `br/check` returns Bridge's canonical status summary
-   (`:summary-version` 1) plus the Vis envelope keys. This extension
+   (`:summary-version` 2) plus the Vis envelope keys. This extension
    adds no flattening of its own — meaning lives in the kernel."
   (:require [bridge.api :as br]
             [clojure.pprint :as pprint]
@@ -12,10 +12,9 @@
             [com.blockether.vis.internal.extension :as extension]))
 
 (def ^:private default-profile-paths
-  ;; Bridge writes YAML profiles; keep the legacy `.edn` names as
-  ;; fallbacks so older workspaces still resolve. Order = discovery priority.
-  [".bridge/profile.yaml" ".bridge/persistent/profile.yaml" ".bridge/profile.edn"
-   ".bridge/persistent/profile.edn"])
+  ;; Keep this order identical to Bridge's own 0.3 discovery contract.
+  [".bridge/profile.yaml" ".bridge/profile.yml" ".bridge/persistent/profile.yaml"
+   ".bridge/persistent/profile.yml"])
 
 (defn- now-ms ^long [] (System/currentTimeMillis))
 
@@ -361,6 +360,30 @@
   (let [reason (:reason rule)]
     (if (and (string? reason) (not (str/blank? reason))) reason protected-path-hint)))
 
+(defn- validation-error
+  [^Throwable t]
+  (let [{:keys [path validation]} (ex-data t)
+        errors (:errors validation)]
+    (when (seq errors)
+      (let [diagnostic (str/join "; "
+                                 (map (fn [{:keys [type path message]}]
+                                        (str (name type) " at " (pr-str path) ": " message))
+                                      errors))]
+        {:message (str (or (ex-message t) "Invalid Bridge configuration") ": " diagnostic)
+         :hint "Update this Bridge configuration to the installed schema, then retry."
+         :details {:path path :errors errors}}))))
+
+(defn- invalid-config-protected-path
+  [env project-root throwable]
+  (let [prefix (relative-to-workspace (workspace-root env) project-root)
+        error (validation-error throwable)]
+    {:glob (prefixed-glob prefix ".bridge/**")
+     :access :none
+     :hint (if error
+             (str (:message error) ". " (:hint error))
+             (str "Bridge configuration is invalid; "
+                  (or (ex-message throwable) "repair it outside Vis") "."))}))
+
 (defn- bridge-sandbox-rule->protected-path
   [env profile sandbox rule]
   (when-let [glob (policy-pattern->workspace-glob env profile (:path-pattern rule))]
@@ -377,15 +400,20 @@
                    (sort-by (fn [{:keys [root]}]
                               [(- (.getNameCount (.toPath (java.io.File. ^String root)))) root])))]
     (->> projects
-         (mapcat (fn [{:keys [profile-path]}]
-                   (let
-                     [{:keys [profile policy]} (load-profile+policy env {"profile" profile-path})
-                      sandbox (:bridge-path-sandbox policy)]
+         (mapcat (fn [{:keys [root profile-path]}]
+                   (try (let
+                          [{:keys [profile policy]}
+                           (load-profile+policy env {"profile" profile-path})
 
-                     (if (and sandbox (:enforce? sandbox))
-                       (keep #(bridge-sandbox-rule->protected-path env profile sandbox %)
-                             (:rules sandbox))
-                       []))))
+                          sandbox
+                          (:bridge-path-sandbox policy)]
+
+                          (if (and sandbox (:enforce? sandbox))
+                            (keep #(bridge-sandbox-rule->protected-path env profile sandbox %)
+                                  (:rules sandbox))
+                            []))
+                        (catch Throwable t
+                          [(invalid-config-protected-path env root t)]))))
          vec)))
 
 (def ^:private sandbox-rules-ttl-ms
@@ -556,7 +584,9 @@
                                started-at-ms
                                {:error (root-required-error (:bridge/root-required (ex-data t)))}
                                opts*)
-                 :else (tool-failure op started-at-ms {:throwable t} opts*))))))
+                 :else (if-let [error (validation-error t)]
+                         (tool-failure op started-at-ms {:error error} opts*)
+                         (tool-failure op started-at-ms {:throwable t} opts*)))))))
 
 (defn- init-root
   [env opts]
@@ -584,7 +614,7 @@
 
 (defn- bridge-check
   "Run Bridge's check and return its canonical status summary
-   (`:summary-version` 1, see bridge.summary) wrapped with the Vis
+   (`:summary-version` 2) wrapped with the Vis
    envelope keys (`:configured?`, `:profile-path`, `:policy-path`)."
   [env opts]
   (bridge-tool :br/check
