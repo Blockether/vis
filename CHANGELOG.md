@@ -53,6 +53,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   jail, capture and timeout as everything else. Workspace Git FACTS (footer status, environment
   block, file picker) and the TUI Magit surface are unchanged.
 
+### Fixed
+- `run_tests("python")` NAMES the tests that failed. Both backends now return every fault in
+  `failures` / `errors` as `{ns, test, message, file, line}` — the project backend reads pytest's
+  own `--junitxml` report, the hermetic GraalPy backend maps its per-test records — where before a
+  run could report `fail: 1` and not one node id, because pytest's summary line carries counts
+  only. The transcript cap in `output` is also cut in the MIDDLE now, keeping the session header
+  AND the `FAILURES` section, the short test summary and the counts line, behind a marker that
+  says how many characters it dropped; the old tail slice hid a whole `FAILURES` section behind a
+  bare ellipsis.
+
 ## [v0.1.35] - 2026-08-09
 
 ### Changed
