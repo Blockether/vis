@@ -2,6 +2,21 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.35 (4019) — 2026-08-12
+<!-- commit: 624ea44af361a3cb5d3d340b8a6aaec99ca1a521 -->
+
+- Companion: one meaning, one mark — the plus is a session and nothing else
+- Pin svar 0.7.115: a reasoning level never means "do not think"
+- Pin svar 0.7.114: ask each model for the depth its catalog sells
+- Companion: spread a fleet's hues around the wheel so no two machines wear one red
+- Send Copilot Claude the depth the caller asked for
+- Account for fast mode pricing
+- Drop the op-name badge from every result card
+- Stop a sandbox FD leak from wedging the whole process
+- Companion: keep a project's pager on one line at every page
+- Add fast mode switch
+- Companion: record the 0.1.35 (4008) TestFlight build
+
 ## 0.1.35 (4008) — 2026-08-12
 <!-- commit: ba43d093d0bce4dc4173f04bb651d77cea9477a6 -->
 
