@@ -2,6 +2,13 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.35 (4003) — 2026-08-12
+<!-- commit: 4a1a594e9f988b7d96d89c5a440b610cea2aa9da -->
+
+- Companion: the cog opens the machines, and pairing happens there
+- Companion: put a project header's path under its name
+- Companion: record the 0.1.35 (4000) TestFlight build
+
 ## 0.1.35 (4000) — 2026-08-12
 <!-- commit: 9523cf14b093199e1f2f2ead6dca13767978fa13 -->
 
