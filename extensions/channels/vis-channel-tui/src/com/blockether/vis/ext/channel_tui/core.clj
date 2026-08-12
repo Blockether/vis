@@ -45,9 +45,14 @@
               "reasoning"
               (get block "text")
 
-              ;; Mirrors `chat/content->markdown` (bold machine code + sentence,
-              ;; the companion's error card).
-              ("error" "notice")
+              ;; Mirrors `chat/content->markdown`: the machine code on its own
+              ;; line, the message (a whole provider card for a provider failure)
+              ;; as the next paragraph. A NOTICE is prose for a human and prints
+              ;; its message alone - lumping it in with the error branch made
+              ;; this projection shout `**turn_cancelled**` at someone who had
+              ;; just pressed Esc, the very thing `chat/content->markdown`
+              ;; stopped doing.
+              "error"
               (let
                 [message
                  (get block "message")
@@ -55,7 +60,10 @@
                  code
                  (get block "code")]
 
-                (if (and (seq code) (seq message)) (str "**" code "** " message) message))
+                (if (and (seq code) (seq message)) (str "**" code "**\n\n" message) message))
+
+              "notice"
+              (get block "message")
 
               "tool"
               (some-> (get block "output")

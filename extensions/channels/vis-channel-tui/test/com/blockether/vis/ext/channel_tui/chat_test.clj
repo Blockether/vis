@@ -502,10 +502,22 @@
                                            "type" "notice"
                                            "code" "turn_cancelled"
                                            "message" "Cancelled by user."}]))))
-  (it "still leads an error with its bold machine code"
-      (expect (= "**turn_failed** Turn failed."
+  ;; Regression: the code was glued to the front of the message, so a provider
+  ;; card opened `**provider_generic** Provider unavailable` — the machine token
+  ;; ran into the headline and the card's first line read as one sentence nobody
+  ;; wrote. The code keeps its line; the message starts the next paragraph.
+  (it "still leads an error with its bold machine code, on its own line"
+      (expect (= "**turn_failed**\n\nTurn failed."
                  (chat/content->markdown
-                   [{"id" "b1" "type" "error" "code" "turn_failed" "message" "Turn failed."}])))))
+                   [{"id" "b1" "type" "error" "code" "turn_failed" "message" "Turn failed."}]))))
+  (it "keeps a multi-paragraph provider card readable under its code"
+      (expect
+        (= "**provider_unroutable**\n\nNo provider could take this request\n\nWHAT HAPPENED: ..."
+           (chat/content->markdown
+             [{"id" "b1"
+               "type" "error"
+               "code" "provider_unroutable"
+               "message" "No provider could take this request\n\nWHAT HAPPENED: ..."}])))))
 
 (defdescribe
   gateway-event-chunk-test
@@ -680,9 +692,9 @@
                    (expect (= "error" (get-in out [0 "type"])))
                    (expect (str/includes? (get-in out [0 "message"]) "boom"))
                    ;; The `"code"` IS the bold label both the error card and the
-                   ;; companion paint in FRONT of the sentence, so the sentence
-                   ;; must not repeat it: `turn_failed ERROR: turn failed` said
-                   ;; the same word twice.
+                   ;; companion paint ABOVE the sentence, so the sentence must
+                   ;; not repeat it: `turn_failed ERROR: turn failed` said the
+                   ;; same word twice.
                    (expect (= "turn_failed" (get-in out [0 "code"])))
                    (expect (not (str/includes? (get-in out [0 "message"]) "ERROR:"))))))
 

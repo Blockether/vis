@@ -344,8 +344,8 @@
       [{"id" (str (java.util.UUID/randomUUID))
         "type" "error"
         "code" "turn_failed"
-        ;; The block's own `"code"` is the label both surfaces paint in FRONT of
-        ;; the sentence, so an `ERROR: ` prefix inside the sentence says the same
+        ;; The block's own `"code"` is the label both surfaces paint ABOVE the
+        ;; sentence, so an `ERROR: ` prefix inside the sentence says the same
         ;; word twice (`turn_failed ERROR: turn failed`). Keep the bare message.
         "message" (vis/error-message (get result "error"))
         "retryable" false}])))
@@ -372,6 +372,12 @@
              ;; a human - the companion prints its message alone, so the TUI does
              ;; too. "turn_cancelled Cancelled by user." said the same thing
              ;; twice, once in a token nobody outside this repo can read.
+             ;;
+             ;; The message starts its OWN paragraph. A provider failure's
+             ;; message is a whole card (headline, then `WHAT HAPPENED:`, then
+             ;; `NEXT STEP:`), and gluing the code in front of it ran the machine
+             ;; token into the headline - `provider_generic Provider unavailable` -
+             ;; so the first line read as one sentence nobody wrote.
              "error"
              (let
                [message
@@ -380,7 +386,7 @@
                 code
                 (get block "code")]
 
-               (if (and (seq code) (seq message)) (str "**" code "** " message) message))
+               (if (and (seq code) (seq message)) (str "**" code "**\n\n" message) message))
 
              "notice"
              (get block "message")

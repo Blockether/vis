@@ -226,11 +226,19 @@
    what it is instead of blamed on the provider. Dispatches on TEXT because the
    JDK reports EMFILE as a plain IOException, not a typed error."
   [err]
-  (let [data (or (:data err) (ex-data err) err)
-        text (str (or (ex-message err) (:message err) "")
-                  "\n" (some-> (:body data) str)
-                  "\n" (some-> (:cause data) str)
-                  "\n" (some-> (:original-message data) str))]
+  (let
+    [data
+     (or (:data err) (ex-data err) err)
+
+     text
+     (str (or (ex-message err) (:message err) "")
+          "\n" (some-> (:body data)
+                       str)
+          "\n" (some-> (:cause data)
+                       str)
+          "\n" (some-> (:original-message data)
+                       str))]
+
     (boolean (or (re-find #"(?i)too many open files" text)
                  (re-find #"(?i)\berror[=:]\s?24\b" text)))))
 
@@ -265,6 +273,58 @@
   "True only for a canonical typed context-window failure."
   [err]
   (contains? CONTEXT_OVERFLOW_TYPES (or (:type (:data err)) (:type err) (:type (ex-data err)))))
+
+(defn unroutable-error?
+  "True when svar's ROUTER gave up BEFORE sending anything and kept no upstream
+   evidence: its typed `:svar.llm/provider-unavailable` (thrown when
+   `select-and-claim!` finds no candidate at all — the pinned provider/model is
+   not in this session's routing config, every candidate was excluded earlier in
+   the turn, or a circuit breaker is still open) TOGETHER WITH svar's own
+   `:unknown` verdict, which is exactly what `classify` returns when that
+   terminal error carries no status, no body and no usable attempt row.
+
+   Emphatically NOT a rejection: nothing was sent, so no model ran and no
+   credential was checked. Presented as the generic failure it read
+   `Provider unavailable / the provider call failed / retry; if it persists,
+   switch provider/model` — three sentences that repeat each other, hide that
+   the request never left Vis, and advise the one thing that cannot help.
+
+   When svar DID keep upstream evidence (the router copies the last transient's
+   status/body, or the retained attempts classify unanimously) svar's concrete
+   category owns the presentation and this stays false."
+  [err]
+  (and (= :svar.llm/provider-unavailable (or (:type (:data err)) (:type err) (:type (ex-data err))))
+       (= :unknown (:category (svar-classification err)))))
+
+(defn- ->route-label
+  [value]
+  (when (some? value) (not-empty (str/trim (if (keyword? value) (name value) (str value))))))
+
+(defn requested-route
+  "`provider/model` svar was asked to route to, read from ITS routing ex-data
+   (`:prefs` `:force-provider` / `:force-model`, with the `:tried` provider ids
+   as the fallback for the provider half) — or nil when it recorded neither.
+   svar's own data, never a route reconstructed from message text."
+  [err]
+  (let
+    [data
+     (or (:data err) (ex-data err) err)
+
+     prefs
+     (:prefs data)
+
+     provider
+     (or (->route-label (:force-provider prefs))
+         (some->> (:tried data)
+                  (keep ->route-label)
+                  sort
+                  seq
+                  (str/join ", ")))
+
+     model
+     (->route-label (:force-model prefs))]
+
+    (not-empty (str/join "/" (remove nil? [provider model])))))
 
 (defn- provider-id-of [data] (or (:provider-id data) (:provider data) (:provider/id data)))
 
@@ -396,6 +456,14 @@
              (str " Input: " input " tokens."))
            (when-let [limit (:max-input-tokens data)]
              (str " Limit: " limit " tokens.")))
+      (unroutable-error? err)
+      (str "WHAT HAPPENED: the request was never sent — no configured provider could take it"
+           (when-let [route (requested-route err)]
+             (str " (requested: " route ")"))
+           ". Nothing reached a model, so nothing was rejected and no credential was "
+           "checked. Either the pinned provider/model is not in this session's routing "
+           "config, or every candidate was already out of rotation: dropped earlier in "
+           "this turn, or still cooling down after repeated failures.")
       (stream-timeout-error? err)
       (let
         [data
@@ -502,7 +570,15 @@
            "status, no provider message. Nothing here says the request was rejected; quote the "
            "id below if it keeps happening.")
       (= :unknown (:category (svar-classification err)))
-      (str "WHAT HAPPENED: " (or (:summary (svar-classification err)) "the provider call failed."))
+      ;; svar has no family for this one, so its summary is all the diagnosis
+      ;; there is — but the PROVIDER's own words, when the body carried any, are
+      ;; the most specific thing on the card. Dropping them here (this branch
+      ;; used to win over the `provider-message` one below) left a bare
+      ;; `the provider call failed` next to a body that said exactly what was
+      ;; wrong.
+      (str "WHAT HAPPENED: "
+           (or (:summary (svar-classification err)) "the provider call failed.")
+           (when (seq provider-message) (str " " provider-message)))
       (seq provider-message) (str "WHAT HAPPENED: the provider rejected the request. "
                                   provider-message)
       :else (str "WHAT HAPPENED: "
@@ -522,6 +598,9 @@
     (case (provider-error-kind err)
       :context-overflow
       "Context window exceeded"
+
+      :unroutable
+      "No provider could take this request"
 
       :stream-timeout
       "Stream went quiet — Vis timed out"
@@ -600,11 +679,17 @@
            "shells (`sh.stop()`), and in sandbox Python always `with open(...) as f:` "
            "(a dropped file object is NOT closed under GraalPy). A fresh turn also "
            "reclaims them once GC runs. If it recurs, raise the process open-file "
-           "limit (Vis raises it at launch, but a very large tree walk can still "
-           "exhaust it).")
+           "limit (Vis raises it at launch, but a very large tree walk can still " "exhaust it).")
 
       :context-overflow
       "NEXT STEP: fold older settled history, choose a larger-context model, or start a fresh session."
+
+      :unroutable
+      (str "NEXT STEP: read the FIRST provider failure of this session — it names the real "
+           "reason and this card is only its aftermath (a lapsed plan, for example, keeps "
+           "its premium models out of rotation for the whole cooldown). Then pick a model "
+           "this account can still use, or fix the provider/model pin; an unchanged retry "
+           "can only help once the cooldown ends.")
 
       :stream-timeout
       (if (= :svar.core/stream-semantic-timeout (:type data))
@@ -780,7 +865,7 @@
                   :stream-interrupted
                   :stream-interrupted
 
-                  :generic))))
+                  (if (unroutable-error? err) :unroutable :generic)))))
 
 
 
@@ -951,8 +1036,16 @@
      retryable?
      (provider-error-retryable? err)
 
+     attempts-line
+     ;; The per-provider reasons svar retained. They used to reach NO chat
+     ;; surface: the block's `attempts` field is structured data neither the TUI
+     ;; nor the companion renders, so the bubble showed three sentences of prose
+     ;; while the only concrete facts sat one key away.
+     (when-let [summary (provider-error-attempts-summary err)]
+       (str "PROVIDERS TRIED: " summary))
+
      message
-     (str/join "\n\n" (remove str/blank? [title explanation next-step]))]
+     (str/join "\n\n" (remove str/blank? [title explanation next-step attempts-line]))]
 
     [(cond-> (content/error (str "provider_" (name (or kind :failure))) message retryable?)
        status

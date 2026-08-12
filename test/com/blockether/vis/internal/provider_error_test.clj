@@ -110,6 +110,83 @@
                  (expect (not-any? #(= "Wrapper" (first %))
                                    (perr/provider-error-facts provider-unavailable-err)))))
 
+(def ^:private unroutable-err
+  "svar's router giving up BEFORE it sends anything: `select-and-claim!` found no
+   candidate at all, so the terminal ex-info is typed `:svar.llm/provider-unavailable`
+   and carries ONLY the routing prefs — no status, no body, no attempt row."
+  {:message "Provider unavailable"
+   :data {:type :svar.llm/provider-unavailable
+          :prefs {:force-provider :openai-codex :force-model "gpt-5.6-sol"}
+          :tried #{}
+          :attempts []}})
+
+;; Regression: this exact card read `Provider unavailable / WHAT HAPPENED: the
+;; provider call failed / NEXT STEP: retry; if it persists, switch
+;; provider/model` — three sentences that repeat each other, never say the
+;; request was never sent, never name the model that could not be routed, and
+;; advise the one thing that cannot help (a routing failure has no upstream to
+;; retry against until the cooldown ends).
+(defdescribe
+  unroutable-presentation-test
+  (it "is its own kind, not the catch-all generic card"
+      (expect (= :unknown (:category (perr/svar-classification unroutable-err))))
+      (expect (= :unroutable (perr/provider-error-kind unroutable-err))))
+  (it "names the failure as routing, not as a provider that answered"
+      (expect (= "No provider could take this request" (perr/provider-error-title unroutable-err))))
+  (it "says nothing was sent and names the route svar was asked for"
+      (let [ex (perr/provider-error-explanation unroutable-err)]
+        (expect (str/includes? ex "never sent"))
+        (expect (str/includes? ex "openai-codex/gpt-5.6-sol"))
+        (expect (not (str/includes? ex "the provider call failed")))
+        (expect (nil? (re-find #"(?i)provider rejected|rejected the request" ex)))))
+  (it "points at the FIRST failure of the session instead of a bare retry"
+      (let [step (perr/provider-error-next-step unroutable-err)]
+        (expect (str/includes? step "FIRST provider failure"))
+        (expect (str/includes? step "cooldown"))
+        (expect (not (str/includes? step "NEXT STEP: retry;")))))
+  (it "ships as its own machine code so a bug report can quote it"
+      (let [block (first (perr/provider-error-content unroutable-err))]
+        (expect (= "provider_unroutable" (get block "code")))
+        (expect (str/includes? (get block "message") "No provider could take this request"))))
+  (it "reads the route from :tried when nothing was pinned"
+      (expect (= "openai-codex"
+                 (perr/requested-route {:message "Provider unavailable"
+                                        :data {:type :svar.llm/provider-unavailable
+                                               :tried #{:openai-codex}}})))
+      (expect (nil? (perr/requested-route {:message "Provider unavailable" :data {}}))))
+  (it "svar's concrete verdict still wins when the router kept upstream evidence"
+      ;; The router copies the last transient's status/body onto the same typed
+      ;; error; that failure DID reach a provider and must keep its own card.
+      (expect (= :gateway-unavailable (perr/provider-error-kind provider-unavailable-err)))
+      (expect (false? (perr/unroutable-error? provider-unavailable-err)))))
+
+;; Regression: an `:unknown` verdict used to win over the provider-message
+;; branch, so a body that said exactly what was wrong was replaced by the bare
+;; `the provider call failed`.
+(defdescribe
+  unknown-category-keeps-provider-words-test
+  (it "appends the provider's own message to svar's summary"
+      (let
+        [err {:message "closed"
+              :data {:body "{\"error\":{\"message\":\"Your plan does not include this model.\"}}"}}]
+        (expect (= :unknown (:category (perr/svar-classification err))))
+        (expect (str/includes? (perr/provider-error-explanation err)
+                               "Your plan does not include this model.")))))
+
+;; Regression: svar retains one `:attempts` row per provider it tried, and the
+;; chat bubble rendered NONE of them — the block field is structured data no
+;; chat surface paints, so the card carried prose only.
+(defdescribe attempts-reach-the-chat-card-test
+             (it "puts the per-provider reasons in the block message"
+                 (let [message (get (first (perr/provider-error-content exhausted-err)) "message")]
+                   (expect (str/includes? message "PROVIDERS TRIED:"))
+                   (expect (str/includes? message "anthropic/claude-opus-4: 429 rate-limit"))
+                   (expect (str/includes? message "openai/gpt-5: 401 auth"))))
+             (it "adds no empty row when svar retained no attempts"
+                 (expect (not (str/includes?
+                                (get (first (perr/provider-error-content unroutable-err)) "message")
+                                "PROVIDERS TRIED")))))
+
 (defdescribe transport-error-test
              ;; A socket that dies before any response byte arrives ("HTTP/1.1 header
              ;; parser received no bytes") is a network/transport failure, NOT a rejection
@@ -715,7 +792,10 @@
   (it "a wrapper with no attempts is no auth verdict"
       (let [bare {:message "Provider unavailable" :data {:type :svar.llm/provider-unavailable}}]
         (expect (not (:all-attempts-category? (perr/svar-classification bare))))
-        (expect (= :generic (perr/provider-error-kind bare)))))
+        (expect (not= :auth (perr/provider-error-kind bare)))
+        ;; No attempt row and no status: svar sent NOTHING, so this is the
+        ;; routing failure, not the catch-all `:generic` card it used to be.
+        (expect (= :unroutable (perr/provider-error-kind bare)))))
   (it "a timeout fleet is still an upstream timeout, not auth"
       (let
         [t {:message "All providers exhausted"
@@ -788,7 +868,8 @@
 
                    (expect (= ::threw outcome)))))
 
-(defdescribe fd-exhaustion-kind-test
+(defdescribe
+  fd-exhaustion-kind-test
   ;; Regression: vis session 7d3f9026 — a sandbox os.walk that did
   ;; `open(fp).read()` without `with` leaked file descriptors under GraalPy,
   ;; exhausting the JVM's shared descriptor table. That broke the OAuth refresh
@@ -796,15 +877,20 @@
   ;; — masking the real cause. The FD signature must be recognised wherever it
   ;; tunnels (message, body, or cause) and named honestly.
   (it "an FD-exhaustion tunnelled through the provider path is named, not masked"
-      (let [err {:message "Provider unavailable"
-                 :data {:type :svar.llm/provider-unavailable
-                        :body "git run-git failed ... Bad file descriptor, error: 24 (Too many open files)"}}]
+      (let
+        [err {:message "Provider unavailable"
+              :data
+              {:type :svar.llm/provider-unavailable
+               :body
+               "git run-git failed ... Bad file descriptor, error: 24 (Too many open files)"}}]
         (expect (= :file-descriptors-exhausted (perr/provider-error-kind err)))
         (expect (= "Out of file descriptors" (perr/provider-error-title err)))
         (expect (re-find #"(?i)file descriptors" (perr/provider-error-explanation err)))
         (expect (re-find #"GraalPy" (perr/provider-error-explanation err)))
-        (expect (nil? (re-find #"(?i)provider outage|rejected the request"
-                               (perr/provider-error-explanation err))))
+        ;; The sentence DENIES an outage ("This is NOT a provider outage"), so the
+        ;; guard has to forbid the CLAIM, not the two words that carry the denial.
+        (expect (str/includes? (perr/provider-error-explanation err) "NOT a provider outage"))
+        (expect (nil? (re-find #"(?i)rejected the request" (perr/provider-error-explanation err))))
         (expect (re-find #"with open" (perr/provider-error-next-step err)))
         (expect (str/starts-with? (str (get (first (perr/provider-error-content err)) "code"))
                                   "provider_file-descriptors"))))
@@ -812,5 +898,7 @@
       (let [err {:message "java.io.IOException: Too many open files" :data {}}]
         (expect (= :file-descriptors-exhausted (perr/provider-error-kind err)))))
   (it "does NOT trip on an ordinary provider failure with no FD signature"
-      (let [err {:message "Provider unavailable" :data {:type :svar.llm/provider-unavailable :status 500}}]
+      (let
+        [err {:message "Provider unavailable"
+              :data {:type :svar.llm/provider-unavailable :status 500}}]
         (expect (not= :file-descriptors-exhausted (perr/provider-error-kind err))))))

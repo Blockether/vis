@@ -124,3 +124,22 @@
       (expect (= [] @resolve-calls))
       (expect (= 1 @init-calls))
       (expect (= ["deadbeef"] @exit-calls)))))
+
+;; Regression: this projection lumped `error` and `notice` together, so it
+;; glued the machine code to the front of the message (`**provider_generic**
+;; Provider unavailable` — the code ran into the card's headline) and shouted
+;; `**turn_cancelled**` at a human who had just pressed Esc.
+(defdescribe render-for-tui-error-test
+             (it "keeps the machine code on its own line, message in the next paragraph"
+                 (expect (= "**provider_unroutable**\n\nNo provider could take this request"
+                            (tui/render-for-tui [{"id" "b1"
+                                                  "type" "error"
+                                                  "code" "provider_unroutable"
+                                                  "message"
+                                                  "No provider could take this request"}]))))
+             (it "prints a notice's sentence alone, without its machine code"
+                 (expect (= "Cancelled by user."
+                            (tui/render-for-tui [{"id" "b1"
+                                                  "type" "notice"
+                                                  "code" "turn_cancelled"
+                                                  "message" "Cancelled by user."}])))))
