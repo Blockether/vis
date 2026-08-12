@@ -10,6 +10,7 @@ import {
   normalizeGatewayUrl,
   reachOf,
 } from '../lib/endpoints';
+import { onWake } from '../lib/wake';
 import { Banner, Button, Input, ListRow } from './ui';
 import { ChevronIcon } from './icons';
 
@@ -52,10 +53,27 @@ function prefetchScanner() {
  */
 const PROBE_TIMEOUT_MS = 9000;
 
+/** How often the sweep re-asks every saved gateway whether it is still there. */
+const PROBE_INTERVAL_MS = 6000;
+
+/**
+ * How long a verdict counts as EVIDENCE. Past this it is only a memory of a
+ * gateway, and a memory must never be painted as a fact: a laptop whose lid
+ * closes stops answering without telling anyone, so the last thing this app
+ * measured — "online, 50ms" — stays literally true and completely wrong.
+ *
+ * One sweep period plus one probe deadline is the longest a machine that is
+ * still answering can go without a fresh verdict, so anything older than that
+ * is not late, it is unknown, and the row says so.
+ */
+const HEALTH_FRESH_MS = PROBE_INTERVAL_MS + PROBE_TIMEOUT_MS;
+
 export type GwState = 'checking' | 'online' | 'offline' | 'auth';
 
 export interface GwHealth {
   state: GwState;
+  /** When this verdict was MEASURED. Required: a verdict with no age is a claim. */
+  at: number;
   ms?: number;
   /** Why the last probe failed — printed on the row so red is diagnosable. */
   why?: string;
@@ -65,8 +83,17 @@ export interface GwHealth {
  * Last probed verdict per gateway URL, kept for the app's lifetime. Both callers
  * unmount whenever their surface closes; without this, every return would repaint
  * each gateway as a pulsing "Checking…" until the next ping lands.
+ *
+ * It is a HEAD START, never a source of truth: `isFresh` decides whether an entry
+ * may still be shown, so re-entering a surface hours later shows "Checking…" and
+ * not the verdict from the last time the machine was alive.
  */
 const lastHealth: Record<string, GwHealth> = {};
+
+/** Is this verdict recent enough to be shown as the machine's state? */
+function isFresh(h?: GwHealth): h is GwHealth {
+  return h != null && Date.now() - h.at < HEALTH_FRESH_MS;
+}
 
 /**
  * A red dot with no reason is undiagnosable: "offline" looks identical whether
@@ -136,18 +163,28 @@ export function useFleetHealth(
     const remember = (url: string, entry: GwHealth) => {
       lastHealth[url] = entry;
       setHealth((h) => ({ ...h, [url]: entry }));
-      if (entry.state === 'online' && url === watchedUrlRef.current) recoverRef.current?.();
     };
     try {
       await Promise.all(
         list.map(async (conn) => {
-          remember(conn.url, {
-            state: lastHealth[conn.url]?.state ?? 'checking',
-            ms: lastHealth[conn.url]?.ms,
-          });
+          // While this probe is in flight the row keeps the previous verdict only
+          // while that verdict is still evidence; an expired one becomes
+          // "Checking…", because the honest answer to "is it up?" during the
+          // first probe after a wake is that nobody knows yet.
+          const known = lastHealth[conn.url];
+          if (!isFresh(known)) remember(conn.url, { state: 'checking', at: Date.now() });
           const started = Date.now();
           const { state, why } = await probeOnce(conn);
-          remember(conn.url, { state, ms: Date.now() - started, ...(why ? { why } : {}) });
+          remember(conn.url, {
+            state,
+            at: Date.now(),
+            ms: Date.now() - started,
+            ...(why ? { why } : {}),
+          });
+          // Recovery is declared by a PROBE, never by the memory of one: the
+          // offline gate lifts on this call, and lifting it on a remembered
+          // "online" put the shell in a mount/fail/gate loop.
+          if (state === 'online' && conn.url === watchedUrlRef.current) recoverRef.current?.();
         }),
       );
     } finally {
@@ -166,11 +203,19 @@ export function useFleetHealth(
   useEffect(() => {
     if (connsKey === '') return;
     void probe(connsRef.current);
-    const id = window.setInterval(() => {
-      if (document.visibilityState === 'hidden') return;
-      void probe(connsRef.current);
-    }, 6000);
-    return () => window.clearInterval(id);
+    // No `document.visibilityState` guard: a Capacitor iOS webview keeps
+    // reporting `hidden` after the app is already foreground (see `lib/wake`),
+    // so that guard skipped the sweep exactly while the reader was looking at
+    // the dots. A backgrounded app runs no timers anyway, which is the real
+    // reason this does not drain a phone.
+    const id = window.setInterval(() => void probe(connsRef.current), PROBE_INTERVAL_MS);
+    // A frozen app measures nothing, so every verdict a wake finds is as old as
+    // the sleep. Probe on the app's own wake bus rather than waiting out a tick.
+    const offWake = onWake(() => void probe(connsRef.current));
+    return () => {
+      window.clearInterval(id);
+      offWake();
+    };
   }, [connsKey, probe]);
 
   return health;
@@ -181,21 +226,32 @@ interface GwHealthView {
   glyph: string;
   label: string;
   ms?: number;
+  why?: string;
   dotClass: string;
   textClass: string;
 }
 
+/**
+ * The face of ONE machine's reachability, and the seam where a verdict stops
+ * being shown. Painting the last measurement forever is the report this exists
+ * for: the lid closed, nothing has answered since, and the dot stayed green
+ * wearing the latency of a machine that was already gone.
+ */
 function healthView(h?: GwHealth): GwHealthView {
-  const state = h?.state ?? 'checking';
+  // A latency and a reason belong to the verdict that measured them, so an
+  // expired verdict takes both with it — nothing below reads the stale entry.
+  const fresh = isFresh(h) ? h : undefined;
+  const state = fresh?.state ?? 'checking';
+  const { ms, why } = fresh ?? {};
   switch (state) {
     case 'online':
-      return { state, glyph: '\u25cf', label: 'Online', ms: h?.ms, dotClass: 'text-ok', textClass: 'text-dialog-hint' };
+      return { state, glyph: '\u25cf', label: 'Online', ms, why, dotClass: 'text-ok', textClass: 'text-dialog-hint' };
     case 'offline':
-      return { state, glyph: '\u25cf', label: 'Offline', ms: h?.ms, dotClass: 'text-err', textClass: 'text-err' };
+      return { state, glyph: '\u25cf', label: 'Offline', ms, why, dotClass: 'text-err', textClass: 'text-err' };
     case 'auth':
-      return { state, glyph: '\u25cf', label: 'Unauthorized', ms: h?.ms, dotClass: 'text-warn-strong', textClass: 'text-warn-strong' };
+      return { state, glyph: '\u25cf', label: 'Unauthorized', ms, why, dotClass: 'text-warn-strong', textClass: 'text-warn-strong' };
     default:
-      return { state, glyph: '\u25cc', label: 'Checking\u2026', ms: h?.ms, dotClass: 'text-dialog-hint', textClass: 'text-dialog-hint' };
+      return { state, glyph: '\u25cc', label: 'Checking\u2026', ms, why, dotClass: 'text-dialog-hint', textClass: 'text-dialog-hint' };
   }
 }
 
@@ -269,9 +325,9 @@ export function MachineRows({
                     ? (hv.ms != null ? `${hv.ms}ms` : '')
                     : hv.label}
                 </span>
-                {health[conn.url]?.why && hv.state !== 'online' && (
+                {hv.why && hv.state !== 'online' && (
                   <span className="min-w-0 truncate font-mono text-chip text-dialog-hint">
-                    {health[conn.url]?.why}
+                    {hv.why}
                   </span>
                 )}
               </span>
