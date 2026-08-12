@@ -30,6 +30,13 @@
      terminal they need instead of hanging on an invisible prompt.
    - **`isRedirectErrorStream` is honoured**, or a stream the guest
      deliberately merged comes back split.
+   - **A pipe the guest asked for is drained too**, into a bounded backlog the
+     guest then reads from. `Popen(stdout=PIPE)` followed by `wait()` is the
+     classic CPython deadlock — the child fills the OS buffer while the guest
+     waits for an exit that cannot come — and inside an extension it wedges the
+     agent, not a script. The backlog decouples the two; past its capacity the
+     child blocks again, which is exactly the unbuffered behaviour, so a child
+     streaming without end can never exhaust the heap.
 
    The `Process` handed to the guest answers `nullInputStream()` for the
    streams a drain thread owns, so nothing downstream races the drainer for
@@ -44,8 +51,9 @@
   (:import [java.io ByteArrayOutputStream InputStream OutputStream]
            [java.lang ProcessBuilder$Redirect]
            [java.nio.charset StandardCharsets]
-           [java.util List Map]
-           [java.util.concurrent TimeUnit]
+           [java.util Arrays List Map]
+           [java.util.concurrent LinkedBlockingQueue Semaphore TimeUnit]
+           [java.util.concurrent.atomic AtomicBoolean]
            [java.util.function Function]
            [org.graalvm.polyglot.io ProcessHandler ProcessHandler$ProcessCommand
             ProcessHandler$Redirect]))
@@ -124,16 +132,125 @@
       (line-sink-stream (fn [line]
                           (emit stream-name line)))))
 
+(def ^:private ^:const pump-chunk-bytes
+  "Bytes read from a pipe per hand-off. A chunk is handed over as soon as it
+   arrives and is never filled first, so a guest reading line by line sees no
+   added latency."
+  65536)
+
+(def ^:private ^:const guest-backlog-bytes
+  "How many bytes may sit unread in one guest stream's backlog before the child
+   blocks again — the ceiling this handler can hold on the heap per stream for
+   a guest that stopped reading. Counted in BYTES, never in chunks: a pipe
+   hands over whatever has arrived, so a chunk count is a ceiling only in the
+   best case and lets a child of small writes block far below it."
+  (* 8 1024 1024))
+
+(defn- buffered-guest-stream
+  "Pump `source` into a bounded backlog on a daemon thread and answer the
+   `InputStream` the guest reads instead. The child therefore writes to a
+   consumer that is always running, so it reaches exit even when the guest
+   never reads a byte, while the guest still receives every byte in order.
+   Past `guest-backlog-bytes` unread the pump waits and the child blocks on a
+   full pipe again, exactly as it would unbuffered. Closing the answered stream
+   abandons the backlog and closes `source`, so a guest that stops reading
+   early still breaks the child's pipe."
+  ^InputStream [^InputStream source ^String thread-name]
+  (let
+    [queue
+     (LinkedBlockingQueue.)
+
+     budget
+     (Semaphore. guest-backlog-bytes)
+
+     abandoned
+     (AtomicBoolean. false)
+
+     pump
+     (doto (Thread. ^Runnable
+                    (fn []
+                      (try (let [buffer (byte-array pump-chunk-bytes)]
+                             (loop []
+
+                               (let [n (.read source buffer)]
+                                 (when (pos? n)
+                                   (.acquire budget n)
+                                   (when-not (.get abandoned)
+                                     (.put queue (Arrays/copyOf buffer n))
+                                     (recur))))))
+                           (catch Throwable _ nil)
+                           (finally (try (.close source) (catch Throwable _ nil)))))
+                    thread-name)
+       (.setDaemon true)
+       (.start))
+
+     lock
+     (Object.)
+
+     current
+     (volatile! nil)
+
+     next-chunk!
+     (fn []
+       (loop []
+
+         (let [chunk (.poll queue 50 TimeUnit/MILLISECONDS)]
+           (cond (some? chunk) (do (.release budget (alength ^bytes chunk)) chunk)
+                 (.get abandoned) nil
+                 (.isAlive pump) (recur)
+                 ;; The pump exits after its last `put`, so one non-blocking
+                 ;; re-poll settles the race between that put and this check.
+                 :else (.poll queue)))))
+
+     ready
+     (fn []
+       (or @current
+           (when-let [chunk (next-chunk!)]
+             (vreset! current [chunk 0]))))
+
+     take-bytes!
+     (fn [^bytes destination ^long offset ^long length]
+       (locking lock
+         (if-let [[^bytes chunk position] (ready)]
+           (let [taken (min length (- (alength chunk) (long position)))]
+             (System/arraycopy chunk (int position) destination (int offset) (int taken))
+             (vreset! current
+                      (when (< (+ (long position) taken) (alength chunk))
+                        [chunk (+ (long position) taken)]))
+             taken)
+           -1)))]
+
+    (proxy [InputStream] []
+      (read
+        ([]
+         (let [one (byte-array 1)]
+           (if (neg? (long (take-bytes! one 0 1))) -1 (bit-and (int (aget one 0)) 0xff))))
+        ([b] (take-bytes! b 0 (alength ^bytes b)))
+        ([b off len] (if (zero? (long len)) 0 (take-bytes! b off len))))
+      (available []
+        (locking lock
+          (if-let [[^bytes chunk position] @current]
+            (- (alength chunk) (long position))
+            0)))
+      (close []
+        (.set abandoned true)
+        (.clear queue)
+        (locking lock (vreset! current nil))
+        (try (.close source) (catch Throwable _ nil))
+        (.interrupt pump)))))
+
 (defn- guest-facing-process
-  "Wrap `p` so the streams a drain thread owns read as empty. Every other
-   method delegates, including `destroyForcibly` and `onExit`, which answer the
-   wrapper rather than leaking the raw process (and with it the drained
-   streams) back to the guest."
-  ^Process [^Process p hide-out? hide-err?]
+  "Wrap `p` so the guest reads exactly the streams this handler decided it may:
+   `out-stream` and `err-stream` are the empty stream for anything a drain
+   thread owns and the backlog for anything the guest asked to read, never the
+   raw pipe. Every other method delegates, including `destroyForcibly` and
+   `onExit`, which answer the wrapper rather than leaking the raw process (and
+   with it those pipes) back to the guest."
+  ^Process [^Process p ^InputStream out-stream ^InputStream err-stream]
   (proxy [Process] []
     (getOutputStream [] (.getOutputStream p))
-    (getInputStream [] (if hide-out? (InputStream/nullInputStream) (.getInputStream p)))
-    (getErrorStream [] (if hide-err? (InputStream/nullInputStream) (.getErrorStream p)))
+    (getInputStream [] out-stream)
+    (getErrorStream [] err-stream)
     (waitFor ([] (.waitFor p)) ([timeout unit] (.waitFor p (long timeout) ^TimeUnit unit)))
     (exitValue [] (.exitValue p))
     (destroy [] (.destroy p))
@@ -153,8 +270,10 @@
                         (apply [_ _] self)))))))
 
 (defn- start-contained
-  "Start `command`'s process with every stream the guest does not read piped
-   and drained. Input redirect, working directory, environment and
+  "Start `command`'s process with every output stream piped and consumed by a
+   thread of its own — into the log or the guest's sink when nobody reads it,
+   into a bounded backlog when the guest does — so the child never blocks on a
+   full pipe. Input redirect, working directory, environment and
    `isRedirectErrorStream` are passed through exactly as the guest asked."
   ^Process [emit ^ProcessHandler$ProcessCommand command]
   (let
@@ -187,16 +306,30 @@
     (.redirectOutput builder ProcessBuilder$Redirect/PIPE)
     (.redirectError builder ProcessBuilder$Redirect/PIPE)
     (.redirectErrorStream builder merged?)
-    (let [process (.start builder)]
-      (when-not guest-reads-out?
-        (drain! (.getInputStream process)
-                (hidden-stream-sink out-redirect emit "stdout")
-                "vis-extension-process-stdout"))
-      (when-not (or merged? guest-reads-err?)
-        (drain! (.getErrorStream process)
-                (hidden-stream-sink err-redirect emit "stderr")
-                "vis-extension-process-stderr"))
-      (guest-facing-process process (not guest-reads-out?) (or merged? (not guest-reads-err?))))))
+    (let
+      [process
+       (.start builder)
+
+       out-stream
+       (if guest-reads-out?
+         (buffered-guest-stream (.getInputStream process) "vis-extension-process-stdout-backlog")
+         (do (drain! (.getInputStream process)
+                     (hidden-stream-sink out-redirect emit "stdout")
+                     "vis-extension-process-stdout")
+             (InputStream/nullInputStream)))
+
+       err-stream
+       (cond
+         ;; A merged stderr has no stream of its own to read or drain.
+         merged? (InputStream/nullInputStream)
+         guest-reads-err? (buffered-guest-stream (.getErrorStream process)
+                                                 "vis-extension-process-stderr-backlog")
+         :else (do (drain! (.getErrorStream process)
+                           (hidden-stream-sink err-redirect emit "stderr")
+                           "vis-extension-process-stderr")
+                   (InputStream/nullInputStream)))]
+
+      (guest-facing-process process out-stream err-stream))))
 
 (defn contained-handler
   "The `ProcessHandler` every extension context is built with. `emit` is

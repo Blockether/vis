@@ -724,16 +724,21 @@ your permissions, not that it owns Vis' terminal. Any stream the extension does
 not read itself — a child's stdout/stderr, the context's own `print()` and
 tracebacks — is piped, drained and logged under the extension's file name, so it
 lands in the diagnostic log instead of on whatever terminal happens to own the
-running Vis. Two consequences worth knowing before you write one:
+running Vis. Three consequences worth knowing before you write one:
 
 - A child that asks `isatty()` about an uncaptured stream now sees a pipe:
   progress bars render plain and a genuinely interactive child cannot work.
 - Read the bytes yourself when you need them (`capture_output=True`,
-  `stdout=subprocess.PIPE`, `check_output`) — those streams are passed straight
-  through and never touched. A file or descriptor redirect (`stdout=open(...)`,
+  `stdout=subprocess.PIPE`, `check_output`) — you get every byte, in order, as
+  it arrives. A file or descriptor redirect (`stdout=open(...)`,
   `stdout=os.open(...)`) does **not** reach that file: GraalPy hands it to the
   host as plain inheritance, so the bytes go to the log like any other
   uncaptured stream.
+- A stream you asked for but never read does **not** deadlock the child, unlike
+  CPython: Vis keeps reading the pipe into a backlog of up to 8 MiB per stream,
+  so `Popen(stdout=PIPE)` followed by `wait()` still completes. Beyond that the
+  child is throttled until you read — never dropped — so a child that streams
+  without end still needs you to read it or close the stream.
 
 Ordinary process paths stay trusted and unrestricted: `subprocess`, `os.system`,
 `os.popen`, and `vis.shell({...})` ignore the process jail even when a session has

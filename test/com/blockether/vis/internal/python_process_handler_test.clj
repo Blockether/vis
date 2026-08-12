@@ -204,6 +204,94 @@
                    (expect (zero? (.waitFor process))))))
 
 ;; =============================================================================
+;; A pipe the guest asked for is drained too — the CPython deadlock
+;; =============================================================================
+
+(defdescribe
+  guest-backlog-test
+  (it
+    "never blocks a child whose output the guest asked for and never reads"
+    ;; `Popen(stdout=PIPE)` then `wait()`: the child fills the OS pipe
+    ;; buffer and waits for a reader, the guest waits for an exit that
+    ;; therefore never comes. Handing the guest a backlog instead of the
+    ;; raw pipe means the pipe always has a reader.
+    (let
+      [[_ emit]
+       (recorder)
+
+       process
+       (start!
+         emit
+         {:command
+          ["/bin/sh" "-c"
+           "i=0; while [ $i -lt 20000 ]; do echo LINE-OF-FIFTY-CHARACTERS-0123456789-0123456789; i=$((i+1)); done"]
+          :out ProcessHandler$Redirect/PIPE})]
+
+      (expect (.waitFor process 60 TimeUnit/SECONDS)
+              "the child exits without the guest reading a byte")
+      (expect (zero? (.exitValue process)))))
+  (it
+    "hands the guest every byte of a flood larger than the backlog"
+    ;; Past its capacity the backlog throttles the child, and throttling
+    ;; must never become dropping.
+    (let
+      [[_ emit]
+       (recorder)
+
+       process
+       (start!
+         emit
+         {:command
+          ["/bin/sh" "-c"
+           "i=0; while [ $i -lt 200000 ]; do echo LINE-OF-FIFTY-CHARACTERS-0123456789-0123456789; i=$((i+1)); done"]
+          :out ProcessHandler$Redirect/PIPE})
+
+       text
+       (slurp-stream (.getInputStream process))]
+
+      (expect (zero? (.waitFor process)))
+      (expect (= 200000 (count (str/split-lines text))))
+      (expect (= #{"LINE-OF-FIFTY-CHARACTERS-0123456789-0123456789"}
+                 (set (str/split-lines text))))))
+  (it "gives the guest a line while the child is still running"
+      ;; A chunk is handed over as it arrives, so a guest streaming a
+      ;; long-running child's output does not wait for it to exit.
+      (let
+        [[_ emit]
+         (recorder)
+
+         process
+         (start! emit
+                 {:command ["/bin/sh" "-c" "echo FIRST-LINE; sleep 20; echo LAST-LINE"]
+                  :out ProcessHandler$Redirect/PIPE})
+
+         reader
+         (io/reader (.getInputStream process))]
+
+        (expect (= "FIRST-LINE" (.readLine ^java.io.BufferedReader reader)))
+        (expect (.isAlive process) "the line arrived before the child exited")
+        (.destroyForcibly process)
+        (expect (.waitFor process 20 TimeUnit/SECONDS))))
+  (it "breaks the child's pipe when the guest stops reading early"
+      ;; Closing the stream must reach the real pipe, or an endless child
+      ;; would keep running against a backlog nobody drains.
+      (let
+        [[_ emit]
+         (recorder)
+
+         process
+         (start! emit
+                 {:command ["/bin/sh" "-c" "while true; do echo SPAM; done"]
+                  :out ProcessHandler$Redirect/PIPE})
+
+         stream
+         (.getInputStream process)]
+
+        (expect (pos? (.read stream (byte-array 16))))
+        (.close stream)
+        (expect (.waitFor process 30 TimeUnit/SECONDS) "the child died on a broken pipe"))))
+
+;; =============================================================================
 ;; Everything else about the process is the guest's, unchanged
 ;; =============================================================================
 
