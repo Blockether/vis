@@ -2,7 +2,7 @@
   "Embedded-GraalPy sandbox machinery — the agent's action substrate. The agent
    writes **Python**; this ns embeds a GraalPy `org.graalvm.polyglot.Context`,
    marshals values across the Clojure↔Python boundary, wires the Clojure tool
-   fns into the Python globals as `ProxyExecutable`s (so `grep(\"x\")` in Python
+   fns into the Python globals as `ProxyExecutable`s (so `grep({\"query\": \"x\"})` in Python
    runs the Clojure `grep`), and runs the model's code block as ONE whole-block
    coroutine.
 
@@ -409,11 +409,11 @@
 (def ^:private async-runtime-python
   "ASYNC-BY-DEFAULT runtime (maki-style, on GraalPy — no asyncio/select/socket).
 
-   Tools are DEFERRED: calling `grep('x')` returns a `__vis_Call__` thunk instead
+   Tools are DEFERRED: calling `grep(spec)` returns a `__vis_Call__` thunk instead
    of running. You drive them three ways:
-     • `await grep('x')`                          — canonical, anywhere nested
+     • `await grep(spec)`                         — canonical, anywhere nested
      • `a, b = await gather(grep(x), grep(y))`    — CONCURRENT on bounded host workers
-     • bare top-level `grep('x')` / `x = grep(y)` — auto-SETTLED in place
+     • bare top-level `grep(spec)` / `x = grep(y)` — auto-SETTLED in place
    (via inline `__vis_settle__(...)` wrapping of every top-level assign/expr)
 
    `await` works because run-python-block AST-wraps an await-bearing program in
@@ -2744,14 +2744,14 @@
        (str
          "Sandbox policy denied " sandbox-denial-operation
          ": the resource is outside approved filesystem roots. "
-         "Use grep(query) or struct_index(paths) to read, struct_patch({\"path\": p, \"op\": o, \"target\": t, \"code\": s}) to edit, "
+         "Use grep({\"query\": q}) or struct_index({\"paths\": ps}) to read, struct_patch({\"path\": p, \"op\": o, \"target\": t, \"code\": s}) to edit, "
          "repl_eval(language, code) for project code, "
          "or ask the USER to add the path to workspace.filesystem in vis.yml and run /reload. Original error: ")
        sandbox-denied?
        (str
          "Your sandbox has NO real filesystem / native / process access — "
          "importlib + exec_module on a project file, open(), subprocess, and sockets "
-         "CANNOT run here. To READ a project file use grep(query) or struct_index(paths); to RUN project code "
+         "CANNOT run here. To READ a project file use grep({\"query\": q}) or struct_index({\"paths\": ps}); to RUN project code "
          "(import its modules, use its deps) use repl_eval(language, code) — that runs "
          "in the project's interpreter where the file is importable. Original error: "))
 

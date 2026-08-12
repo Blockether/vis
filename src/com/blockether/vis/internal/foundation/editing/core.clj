@@ -709,7 +709,6 @@
                       (when (sequential? ns) (keep entry-path ns))]
 
                      (vec (distinct (remove nil? (cons (get a "path") froms)))))
-          (some? a) [a]
           :else [])))
 
 (defn- balanced-json-prefix
@@ -810,13 +809,8 @@
     [a
      (first args)
 
-     opts
-     (second args)
-
      spec
-     (cond (map? a) a
-           (map? opts) opts
-           :else nil)
+     (when (map? a) a)
 
      paths
      (cond (contains? spec "paths") (get spec "paths")
@@ -1687,20 +1681,25 @@
     (if (empty? toks) 0.0 (transduce (map #(find-token-score % pnorm nnorm)) min 1.0 toks))))
 
 (defn- coerce-find-spec
+  "ONE canonical call shape: grep takes a SINGLE options map. Python kwargs fold
+   into that very map, so `grep(query=q, paths=[\"src\"])` and
+   `grep({\"query\": q, \"paths\": [\"src\"]})` are the same call. A positional query is
+   REFUSED because the second positional used to mean OPTIONS: the obvious
+   reading of `grep([\"a\" \"b\"], [\"src\" \"tools\"])` — needles, then scopes — died
+   on argument shape instead of searching."
   [args]
   (let
-    [[a b]
-     args
+    [spec
+     (first args)
 
-     spec
-     (cond (and (= 1 (count args)) (or (string? a) (sequential? a))) {"query" a}
-           (and (= 2 (count args)) (or (string? a) (sequential? a)) (map? b)) (assoc b "query" a)
-           (and (= 1 (count args)) (map? a)) a
-           :else (throw (ex-info
-                          "grep takes grep(query), grep(query, opts), or grep({\"query\": q, ...})."
-                          {:type :ext.foundation.editing/invalid-find-args
-                           :expected '([query] [query opts] [spec-map])
-                           :got args})))
+     _
+     (when-not (and (= 1 (count args)) (map? spec))
+       (throw
+         (ex-info
+           (str "grep takes ONE options map: grep({\"query\": q, \"paths\": [\"src\"]}) "
+                "— kwargs are that same map, grep(query=q, paths=[\"src\"]). "
+                "A positional query or paths argument is not accepted.")
+           {:type :ext.foundation.editing/invalid-find-args :expected '([spec-map]) :got args})))
 
      allowed-keys
      #{"query" "paths" "path" "limit" "offset" "include" "context" "is_hidden"}
@@ -2255,9 +2254,13 @@
   "Search file CONTENT and match file NAMES/PATHS in one call (bound as `grep`;
    `find_files`/`find` stay as compatibility aliases).
 
-     await grep(\"grep-tool\")
-     await grep(\"channel_tui render\", {\"paths\": [\"src\"], \"limit\": 20})
-     await grep([\"TODO\", \"FIXME\"], {\"include\": [\"**/*.clj\"], \"context\": 2})
+     await grep({\"query\": \"grep-tool\"})
+     await grep({\"query\": \"channel_tui render\", \"paths\": [\"src\"], \"limit\": 20})
+     await grep({\"query\": [\"TODO\", \"FIXME\"], \"include\": [\"**/*.clj\"], \"context\": 2})
+
+   ONE options map is the WHOLE call surface — kwargs
+   (`grep(query=…, paths=[…])`) fold into that same map. There is no positional
+   query and no second positional argument.
 
    CONTENT matching is smart-case literal substring; a query list is OR. Every
    hit lands in the CANONICAL flat result under `matches` —
@@ -4053,9 +4056,12 @@
        "`matches={path:{\"line:hash\":{\"text\":string,\"before\"?:[{\"line\",\"text\"}],\"after\"?:[…]}}}` "
        "never a list; empty `before`/`after` omitted.")
      :description
-     (str "Literal smart-case content plus fuzzy filenames; use first when location is unknown. "
-          "`query: \"\"` lists files; null `hits_truncated_by` means complete content. "
-          "Page with `offset`: null `next_offset` means this page is the whole answer.")
+     (str
+       "ONE options map is the whole call — `grep({\"query\": q, \"paths\": [\"src\"]})`, or that "
+       "same map as kwargs; never a positional query. "
+       "Literal smart-case content plus fuzzy filenames; use first when location is unknown. "
+       "`query: \"\"` lists files; null `hits_truncated_by` means complete content. "
+       "Page with `offset`: null `next_offset` means this page is the whole answer.")
      :before-fn (fs-access-before-fn :grep :dir "file-read" find-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :grep :dir)}))
@@ -4556,12 +4562,15 @@
     [a
      (first args)
 
-     ;; struct_nodes("p") / struct_nodes("p", {opts}) are the shorthand forms; the
-     ;; documented contract is the plural `nodes` argument.
-     a
-     (cond (string? a) (merge {"path" a} (when (map? (second args)) (second args)))
-           (map? a) a
-           :else {"path" a})
+     ;; ONE canonical call shape, like `struct_index` and `struct_patch`: a SINGLE
+     ;; options map (Python kwargs fold into that same map). No positional path,
+     ;; so a second argument can never be mistaken for the options map.
+     _
+     (when-not (and (= 1 (count args)) (map? a))
+       (throw (ex-info
+                (str "struct_nodes takes ONE options map: struct_nodes({\"path\": p, \"line\": n}) "
+                     "or struct_nodes({\"nodes\": [{\"path\": p, \"at\": [0]}]}).")
+                {:type :ext.foundation.editing/invalid-nodes-args :got args})))
 
      shared
      (dissoc a "nodes")
@@ -4621,7 +4630,9 @@
        "Misses add `error`/`reason`; other fields nil.")
      :active-fn structural-supported?
      :description
-     "Read nested tree-sitter node SOURCE and navigate when a named definition is too coarse."
+     (str "ONE options map is the whole call — `struct_nodes({\"path\": p, \"line\": n})` or "
+          "`struct_nodes({\"nodes\": [...]})`; never a positional path. "
+          "Read nested tree-sitter node SOURCE and navigate when a named definition is too coarse.")
      :before-fn (fs-access-before-fn :struct_nodes :file "file-read" nodes-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :struct_nodes :file)}))

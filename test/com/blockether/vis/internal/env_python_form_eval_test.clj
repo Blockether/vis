@@ -1210,7 +1210,7 @@ await patch({'path': css})" "t1/i1")]
           (expect (some? m))
           (expect (clojure.string/includes? (str m) "Sandbox policy denied file-read"))
           (expect (clojure.string/includes? (str m) "outside approved filesystem roots"))
-          (expect (clojure.string/includes? (str m) "grep(query)"))
+          (expect (clojure.string/includes? (str m) "grep({\"query\": q})"))
           (expect (clojure.string/includes? (str m) "repl_eval"))
           (expect (clojure.string/includes? (str m) "workspace.filesystem"))
           (expect (clojure.string/includes? (str m) "vis.yml"))

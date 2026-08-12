@@ -89,7 +89,7 @@
        (write-temp! "zip.clj" "(ns z)\n(defn g [x] (+ x 1))\n")
 
        root
-       (first (get (:result (sexpr path)) "results"))]
+       (first (get (:result (sexpr {"path" path})) "results"))]
 
       (expect (>= (get root "named_child_count") 2))
       (let
@@ -97,11 +97,11 @@
                    (when (str/includes? (str (get c "head")) "defn") (get c "idx")))
                  (get root "children"))]
         (expect (some? i))
-        (expect (str/includes? (get (first (get (:result (sexpr path {"at" [i]})) "results"))
+        (expect (str/includes? (get (first (get (:result (sexpr {"path" path "at" [i]})) "results"))
                                     "source")
                                "defn g"))
         ;; relative move sugar: at=[i], nav=["down"] resolves to [i 0]
-        (expect (:success? (sexpr path {"at" [i] "nav" ["down"]})))
+        (expect (:success? (sexpr {"path" path "at" [i] "nav" ["down"]})))
         ;; struct_patch takes the zipper PATH (sexpr_edit folded into it)
         (let [ed (struct-patch "path" path "at" [i] "op" "replace" "code" "(defn g [x] (* x 9))")]
           (expect (:success? ed))

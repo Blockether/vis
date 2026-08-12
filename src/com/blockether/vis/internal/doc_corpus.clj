@@ -12,11 +12,11 @@
 
      {:name \"grep\"          ;; the only handle
       :text \"...\"           ;; the whole document; its FIRST LINE is the gist
-      :call \"grep(query=…)\"} ;; the python that USES it; absent = prose
+      :call \"grep({\"query\": …})\"} ;; the python that USES it; absent = prose
 
    There is no `kind` and no `group`. A taxonomy is not actionable: what a hit
    actually needs is the expression that uses it, so `call` is the field and it
-   spells the vocabulary out — a function answers `grep(query=…)`, an MCP tool
+   spells the vocabulary out — a function answers `grep({\"query\": …})`, an MCP tool
    answers `mcp__call(\"server\", \"tool\", {…})`, and a skill or a documentation
    page answers NOTHING, because a missing `call` is exactly \"this is prose,
    read it\".

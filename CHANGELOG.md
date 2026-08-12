@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   back.
 
 ### Changed
+- `grep` and `struct_nodes` take ONE options map and nothing else — `grep({"query": q, "paths":
+  ["src"]})`, `struct_nodes({"path": p, "line": n})` — the same shape `struct_index` and
+  `struct_patch` already had, and the shape Python kwargs (`grep(query=q, paths=["src"])`) fold
+  into. The positional forms are gone: `grep("q")`, `grep("q", {opts})` and `struct_nodes("p")`
+  made the SECOND argument mean options, so the obvious `grep(["a", "b"], ["src", "tools"])` —
+  needles, then scopes — failed on argument shape instead of searching. The refusal now names the
+  one canonical call.
 - `/<name>` NAMES a skill instead of pasting it. The expansion is one sentence — use this skill,
   read it with `doc("name")` unless its `SKILL.md` is already in the conversation — plus your
   task, the owning project of a nested skill, and the paths of its bundled resources. Whether the

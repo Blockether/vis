@@ -344,7 +344,7 @@
     "Provider returned prose/string instead of the iteration map. Skip the SQLite trip - the raw preview is already here. Continue after the built-in schema retry, or switch model when this repeats."
 
     :regex-unsupported-escape
-    "grep matches literal substrings by default — no regex escaping needed. Pass a list of terms for OR: grep([\"foo\", \"bar\"]). Regex is not supported — filter the matches in Python."
+    "grep matches literal substrings by default — no regex escaping needed. Pass a list of terms for OR: grep({\"query\": [\"foo\", \"bar\"]}). grep takes ONE options map — never a positional query. Regex is not supported — filter the matches in Python."
 
     :regex-unescaped-quote
     "The regex string likely contains an unescaped inner quote. Escape it as \\\" or use a regex literal / simpler pattern."
@@ -669,9 +669,11 @@
           "Treat schema rejection as provider noise, not a reason to inspect SQLite. Use raw_preview from session_state()[\"failures\"] and retry/switch model only if it repeats.")
 
         (contains? classes :regex-unsupported-escape)
-        (conj (str "grep takes a term or a list of terms (OR), not regex strings. "
-                   "Use grep([\"foo\", \"bar\"]) for OR; filter complex matches in Python. "
-                   "Add \"paths\" and \"include\" in the same dict."))
+        (conj
+          (str
+            "grep takes ONE options map whose `query` is a term or a list of terms (OR), "
+            "not regex strings. Use grep({\"query\": [\"foo\", \"bar\"]}) for OR; filter complex "
+            "matches in Python. Add \"paths\" and \"include\" to that same map."))
 
         (contains? classes :regex-unescaped-quote)
         (conj

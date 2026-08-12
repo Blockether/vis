@@ -169,7 +169,7 @@
          (write-temp! "apifind.clj" "(ns z)\n(defn target [x] (+ x 1))\n(defn other [] 9)\n")
 
          r
-         (first (get (:result (sexpr path {"nav" [{"find" "defn other"}]})) "results"))]
+         (first (get (:result (sexpr {"path" path "nav" [{"find" "defn other"}]})) "results"))]
 
         (expect (str/includes? (get r "source") "defn other"))
         ;; the `can` map now carries next/prev + index/siblings

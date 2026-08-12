@@ -881,14 +881,16 @@
       ;; The private ENGINE (`rg-search`) still takes ONE spec map — a bare
       ;; positional string is not a map, so it throws :invalid-rg-spec.
       (expect (throws? clojure.lang.ExceptionInfo #(grep "needle")))
-      ;; The public rg now ACCEPTS a positional query + an options map:
-      ;; rg("x", {opts}) folds :query in and runs (no arity error).
+      ;; The public grep takes THAT SAME one options map and nothing else — a
+      ;; positional query, with or without a trailing options map, is refused.
+      (expect (throws? clojure.lang.ExceptionInfo #(rg "needle")))
+      (expect (throws? clojure.lang.ExceptionInfo #(rg "needle" {"include" ["*.clj"]})))
       (let
         [_
          (write-temp! "rgposopts/a.clj" "needle here\n")
 
          env
-         (rg "needle" {"paths" [(temp-dir-path "rgposopts")] "include" ["*.clj"]})]
+         (rg {"query" "needle" "paths" [(temp-dir-path "rgposopts")] "include" ["*.clj"]})]
 
         (expect (= :grep (:symbol env)))
         (expect (= 1 (get (:result env) "hit_count"))))
@@ -1803,7 +1805,7 @@
                         "(ns my.app)\n\n(defn foo [x]\n  (+ x 1))\n\n(defn bar [y]\n  (* y 2))\n")
 
            r
-           (sexpr-tool path {"line" 6})
+           (sexpr-tool {"path" path "line" 6})
 
            node
            (first (get-in r [:result "results"]))]
@@ -1909,7 +1911,7 @@
            (write-temp! "line-zipper/no-node.clj" "(ns my.app)\n\n(defn bar [y]\n  (* y 2))\n")
 
            r
-           (sexpr-tool path {"line" 2})]
+           (sexpr-tool {"path" path "line" 2})]
 
           (expect (false? (:success? r)))
           (expect (= :line-no-node (get-in r [:error :reason])))))))
@@ -2273,7 +2275,7 @@
            (str (temp-root) "/rge/a.clj")]
 
           (spit (fs/file f) "the model line\nthe cycle line\nunrelated\n")
-          (let [r (rg "model, cycle" {"paths" [d]})]
+          (let [r (rg {"query" "model, cycle" "paths" [d]})]
             (expect (:success? r))
             (expect (= 2 (get-in r [:result "hit_count"])))))) ;; both lines, not 0
     (it
@@ -2288,10 +2290,10 @@
         (spit (fs/file f) "L1\nMATCH\nL3\n")
         (let
           [plain
-           (get-in (rg "MATCH" {"paths" [d]}) [:result "matches"])
+           (get-in (rg {"query" "MATCH" "paths" [d]}) [:result "matches"])
 
            ctx
-           (get-in (rg "MATCH" {"paths" [d] "context" 1}) [:result "matches"])
+           (get-in (rg {"query" "MATCH" "paths" [d] "context" 1}) [:result "matches"])
 
            plain-v
            (-> plain
@@ -2326,7 +2328,7 @@
            (str (temp-root) "/rgc/a.clj")]
 
           (spit (fs/file f) "Keymap here\nkeystroke too\nnope\n")
-          (let [r (rg "key" {"paths" [d]})]
+          (let [r (rg {"query" "key" "paths" [d]})]
             (expect (= 2 (get-in r [:result "hit_count"])))))) ;; Keymap + keystroke
     (it
       "a MISSING path CLIMBS to its nearest existing ancestor dir and is REPORTED in missing_paths (never a hard error)"
@@ -2346,7 +2348,7 @@
         ;; REPORTED, not silently absorbed.
         (let
           [r
-           (rg "needle" {"paths" [d ghost]})
+           (rg {"query" "needle" "paths" [d ghost]})
 
            missing
            (get-in r [:result "missing_paths"])]
@@ -2461,12 +2463,12 @@
         (spit (fs/file a) (str needle " here\n"))
         (spit (fs/file b) (str needle " here\n"))
         ;; naming the DIR walks BOTH files under it
-        (let [r (rg needle {"paths" [dir]})]
+        (let [r (rg {"query" needle "paths" [dir]})]
           (expect (:success? r))
           (expect (= 2 (get-in r [:result "file_count"]))))
         ;; naming ONE EXISTING file searches ONLY that file — NOT its sibling in the
         ;; same dir. An existing file is precise; it is NOT widened to its parent.
-        (let [r (rg needle {"paths" [a]})]
+        (let [r (rg {"query" needle "paths" [a]})]
           (expect (:success? r))
           (expect (= 1 (get-in r [:result "file_count"])))
           (expect (= 1 (get-in r [:result "hit_count"])))
@@ -2480,7 +2482,7 @@
            (str dir "/gone.clj")
 
            r
-           (rg needle {"paths" [ghost]})]
+           (rg {"query" needle "paths" [ghost]})]
 
           (expect (:success? r))
           (expect (= 2 (get-in r [:result "file_count"])))
@@ -2662,6 +2664,55 @@
                (it "rg keeps its own empty-path and file-path semantics"
                    (let [spec {"query" ["FIND_FILES" "CAT"] "paths" []}]
                      (expect (= ["."] (:paths (coerce-rg spec))))))))
+
+;; Regression: `grep(["a", "b"], ["src", "tools"])` — needles, then scopes, the
+;; obvious reading of a two-argument search — died on ARGUMENT SHAPE instead of
+;; searching, because the second positional meant OPTIONS and the error offered
+;; three call shapes at once. There is ONE canonical shape now: a single options
+;; map (Python kwargs fold into that same map), for `grep` and `struct_nodes`
+;; alike, so nothing positional can be misread.
+(defdescribe canonical-options-map-only-test
+             "`grep` and `struct_nodes` take ONE options map — never a positional query or path."
+             (let
+               [grep-tool
+                (private-fn "grep-tool")
+
+                nodes-tool
+                (private-fn "nodes-tool")
+
+                caught
+                (fn [f & args]
+                  (try (apply f args) nil (catch clojure.lang.ExceptionInfo e e)))]
+
+               (it "grep refuses every positional shape and its message teaches the map"
+                   (let [e (caught grep-tool ["a" "b"] ["src" "tools"])]
+                     (expect (some? e))
+                     (expect (= :ext.foundation.editing/invalid-find-args (:type (ex-data e))))
+                     (expect (string/includes? (ex-message e)
+                                               "grep({\"query\": q, \"paths\": [\"src\"]})")))
+                   (expect (some? (caught grep-tool "needle")))
+                   (expect (some? (caught grep-tool "needle" {"include" ["*.clj"]}))))
+               (it "grep searches from the one canonical map"
+                   (let
+                     [_
+                      (write-temp! "canonmap/a.clj" "needle here\n")
+
+                      out
+                      (grep-tool {"query" "needle" "paths" [(temp-dir-path "canonmap")]})]
+
+                     (expect (= 1 (get (:result out) "hit_count")))))
+               (it "struct_nodes refuses a positional path and answers the canonical map"
+                   (let
+                     [p
+                      (write-temp! "canonnodes/a.clj" "(ns a)\n\n(defn zonk [x] x)\n")
+
+                      e
+                      (caught nodes-tool p)]
+
+                     (expect (some? e))
+                     (expect (= :ext.foundation.editing/invalid-nodes-args (:type (ex-data e))))
+                     (expect (some? (caught nodes-tool p {"line" 3})))
+                     (expect (:success? (nodes-tool {"path" p})))))))
 
 (defdescribe find-files-directory-scope-test
              (let [find-files (private-fn "grep-tool")]
