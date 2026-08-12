@@ -160,7 +160,6 @@ const turns: TranscriptTurn[] = [
     iterations: [
       {
         id: "i1",
-        tool_name: "python_execution",
         attachments: [
           {
             index: 0,
@@ -183,10 +182,9 @@ const turns: TranscriptTurn[] = [
   {
     id: "t2",
     iterations: [
-      { id: "i2", tool_name: "shell" },
+      { id: "i2" },
       {
         id: "i3",
-        tool_name: "shell",
         attachments: [
           {
             index: 0,
@@ -223,11 +221,10 @@ describe("collecting what a session produced", () => {
 
   it("carries the provenance a tile has to announce", () => {
     const [doc, , image] = collectArtifacts(turns);
-    expect(doc.tool).toBe("shell");
     expect(doc.iterationId).toBe("i3");
     expect(doc.sizeLabel).toBe("");
     expect(image.key).toBe("i1:0");
-    expect(image.tool).toBe("python_execution");
+    expect(image.iterationId).toBe("i1");
     expect(image.sizeLabel).toBe("2.0KB");
   });
 
@@ -263,7 +260,6 @@ describe("collapsing an artifact into its versions", () => {
     size: version * 1024,
     sizeLabel: `${version}.0KB`,
     turn: version,
-    tool: "python_execution",
     iterationId: `i${version}`,
     index: 0,
     version,
@@ -500,10 +496,14 @@ describe("the session-wide artifact index", () => {
       "revenue.png",
       "report.pdf",
     ]);
-    // A held row keeps its own provenance; the turn nobody scrolled back to is
-    // the one the index adds.
-    expect(merged[0].tool).toBe("shell");
-    expect(merged[3].tool).toBe("");
+    // The held rows keep the iteration they hang off; the turn nobody scrolled
+    // back to is the one the index adds.
+    expect(merged.map((entry) => entry.iterationId)).toEqual([
+      "i3",
+      "i1",
+      "i1",
+      "i9",
+    ]);
     expect(merged.map((entry) => entry.turn)).toEqual([42, 41, 41, 3]);
   });
 });

@@ -87,6 +87,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   block, file picker) and the TUI Magit surface are unchanged.
 
 ### Fixed
+- The artifacts gallery no longer reads a wire key nobody sends. `collectArtifacts` asked each
+  iteration for `tool_name` — a field that left the wire when the 21 native tools did — so it
+  always answered `""` and the tile's screen-reader caption silently degraded from "produced in
+  turn 6 by ..." to "produced in turn 6". The dead read, the `SessionArtifact.tool` field and the
+  caption branch are gone rather than re-pointed at the iteration's op: with one door, naming the
+  producer on every row is noise, and the turn plus the iteration it hangs off is the provenance
+  that is real.
 - `capfd` captures the REAL file descriptor in the sandbox pytest shim (issue #138): it used to
   be a second name for `capsys` — a `sys.stdout`/`sys.stderr` swap — so `os.write(1, ...)`, a
   C-level write or a child process's output never came back from `readouterr()`. Fd 1 and fd 2 are

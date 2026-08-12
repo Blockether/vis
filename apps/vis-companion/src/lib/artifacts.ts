@@ -181,8 +181,6 @@ export interface SessionArtifact {
   sizeLabel: string;
   /** Which turn produced it, counted from the start of the session. */
   turn: number;
-  /** The tool call inside that turn. Provenance is data. */
-  tool: string;
   iterationId: string;
   index: number;
   /** Which cut of this NAME it is, 1-based; 1 when the row carries no version. */
@@ -205,7 +203,7 @@ export interface SessionArtifact {
  */
 function toArtifact(
   attachment: IterationAttachment,
-  where: { turn: number; tool: string; iterationId: string },
+  where: { turn: number; iterationId: string },
 ): SessionArtifact {
   const index = attachment.index ?? 0;
   return {
@@ -217,7 +215,6 @@ function toArtifact(
     size: attachment.size,
     sizeLabel: attachmentBytes(attachment.size),
     turn: where.turn,
-    tool: where.tool,
     iterationId: where.iterationId,
     index,
     version: attachment.version ?? 1,
@@ -233,12 +230,8 @@ export function collectArtifacts(
     const ordinal = earlier + position + 1;
     for (const iteration of turn.iterations ?? []) {
       const iterationId = iteration.id ?? "";
-      // `TranscriptIteration` carries the tool name only through its index
-      // signature, so it arrives as `unknown` and is asked, never asserted.
-      const tool =
-        typeof iteration.tool_name === "string" ? iteration.tool_name : "";
       for (const attachment of iteration.attachments ?? []) {
-        list.push(toArtifact(attachment, { turn: ordinal, tool, iterationId }));
+        list.push(toArtifact(attachment, { turn: ordinal, iterationId }));
       }
     }
   });
@@ -254,9 +247,8 @@ export function collectArtifacts(
  * only list what the reader already scrolled back to — the gallery of a long
  * session opened nearly empty and filled in as the reader paged upward.
  *
- * The gateway knows no tool NAME here (that lives on the iteration row, not on
- * the artifact), so a row the transcript also holds keeps its own provenance —
- * see [[mergeArtifacts]].
+ * A row the transcript also holds is preferred anyway — that copy is already
+ * folded with any revision saved on this screen — see [[mergeArtifacts]].
  */
 export function artifactsFromIndex(
   rows: SessionArtifactRow[],
@@ -265,7 +257,6 @@ export function artifactsFromIndex(
     .map((row) =>
       toArtifact(row, {
         turn: row.turn ?? 0,
-        tool: "",
         iterationId: row.iteration_id ?? "",
       }),
     )
@@ -274,9 +265,8 @@ export function artifactsFromIndex(
 
 /**
  * The session-wide index UNDER the turns we actually hold: an artifact the
- * transcript carries wins, because those rows also know which tool made them
- * and are already folded with any revision saved on this screen. Newest first,
- * by the turn that produced it.
+ * transcript carries wins, because that copy is already folded with any
+ * revision saved on this screen. Newest first, by the turn that produced it.
  */
 export function mergeArtifacts(
   held: SessionArtifact[],

@@ -57,7 +57,6 @@ const artifact = (over: Partial<SessionArtifact>): SessionArtifact => ({
   size: 2048,
   sizeLabel: "2.0KB",
   turn: 6,
-  tool: "python_execution",
   iterationId: "i1",
   index: 0,
   version: 1,
@@ -85,7 +84,6 @@ const recorded = artifact({
   size: 1024,
   sizeLabel: "1.0KB",
   turn: 4,
-  tool: "shell",
   iterationId: "i3",
 });
 const note = artifact({
@@ -97,7 +95,6 @@ const note = artifact({
   size: 1900,
   sizeLabel: "1.9KB",
   turn: 1,
-  tool: undefined,
   iterationId: "i4",
 });
 
@@ -442,7 +439,7 @@ describe("the artifacts sheet", () => {
   it("opens what it can read and refuses to fake the rest", () => {
     const html = sheet([picture, document, recorded]);
     expect(html).toContain(
-      'aria-label="Open revenue.png, PNG, 2.0KB, produced in turn 6 by python_execution"',
+      'aria-label="Open revenue.png, PNG, 2.0KB, produced in turn 6"',
     );
     expect(html).toContain('aria-label="Open q3-report.pdf, PDF, 1.0KB');
     // A recorded file has no reader in the app, so it is not a control at all.

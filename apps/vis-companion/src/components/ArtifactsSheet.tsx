@@ -113,9 +113,7 @@ export function describeArtifact(artifact: SessionArtifact): string {
     artifact.version > 1 ? `version ${artifact.version}` : "",
     artifact.media,
     artifact.sizeLabel,
-    artifact.tool
-      ? `produced in turn ${artifact.turn} by ${artifact.tool}`
-      : `produced in turn ${artifact.turn}`,
+    `produced in turn ${artifact.turn}`,
   ]
     .filter(Boolean)
     .join(", ");
