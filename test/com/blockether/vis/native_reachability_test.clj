@@ -27,7 +27,10 @@
    This test pins those registrations in the metadata that ships inside the
    image. Deleting one re-breaks the binary while every JVM test stays green."
   (:require [charred.api :as charred]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
+            [clojure.string :as str]
+            [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.nativeimage :as nativeimage]
             [lazytest.core :refer [defdescribe expect it]]
             [yamlstar.core :as yamlstar]))
@@ -118,3 +121,41 @@
       ;; plain JVM — which is precisely NOT the Linux skip.
       (let [out (with-out-str (with-os-name "Mac OS X" #(nativeimage/-duringSetup nil nil)))]
         (expect (nil? (re-find #"SKIPPED on Linux" out))))))
+
+
+(defn- build-clj-builtin-nses
+  "The `builtin-extension-nses` vector `build.clj` writes into the image's
+   build-time preload list, read from the source it actually ships."
+  []
+  (let
+    [src
+     (slurp (io/file "build.clj"))
+
+     at
+     (str/index-of src "(def ^:private builtin-extension-nses")]
+
+    (set (edn/read-string (subs src (str/index-of src "[" at))))))
+
+;; Regression: `foundation.introspection` reached extension/builtin-extension-nses
+;; and never reached build.clj's copy of it, so the FRESHLY BUILT binary died on
+;; its first line — "Could not locate
+;; com/blockether/vis/internal/foundation/introspection__init.class on classpath"
+;; — before it could paint anything. A runtime `require` in a native image can
+;; only find a namespace the build-time preload list already initialized, and
+;; `load-builtin-extensions!` requires every name in that vector, so a name in one
+;; list and not the other is a binary that cannot start.
+(defdescribe builtin-extension-nses-reach-the-native-image-test
+             (it "keeps build.clj's preload copy identical to the list vis requires"
+                 (let
+                   [shipped
+                    (set (map str @#'extension/builtin-extension-nses))
+
+                    preloaded
+                    (build-clj-builtin-nses)]
+
+                   (expect (= shipped preloaded)
+                           (str "build.clj's builtin-extension-nses drifted. Missing from the "
+                                "image (the binary dies at startup): "
+                                (pr-str (sort (remove preloaded shipped)))
+                                " — listed there but not shipped: "
+                                (pr-str (sort (remove shipped preloaded))))))))

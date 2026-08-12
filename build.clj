@@ -711,10 +711,38 @@
 
 ;; Built-in extension entry namespaces vis `require`s at RUNTIME via
 ;; extension/load-builtin-extensions! (they ship in the main jar, not via a
-;; classpath manifest). Keep in sync with extension/builtin-extension-nses.
+;; classpath manifest). EVERY one of them, in the same order: a name missing here
+;; is missing from the image, and `load-builtin-extensions!` aborts the binary at
+;; startup with "Could not locate <ns>__init.class on classpath" -- there is no
+;; degraded mode. `native-reachability-test` reads this vector and fails when it
+;; drifts from extension/builtin-extension-nses.
 (def ^:private builtin-extension-nses
-  ["com.blockether.vis.internal.foundation.core" "com.blockether.vis.internal.foundation.shell"
-   "com.blockether.vis.internal.foundation.mcp.core"
+  ["com.blockether.vis.internal.foundation.core"
+   "com.blockether.vis.internal.foundation.introspection"
+   "com.blockether.vis.internal.foundation.shell" "com.blockether.vis.internal.foundation.shim-yaml"
+   "com.blockether.vis.internal.foundation.shim-matplotlib"
+   "com.blockether.vis.internal.foundation.shim-requests"
+   "com.blockether.vis.internal.foundation.shim-pytest"
+   "com.blockether.vis.internal.foundation.shim-ruff"
+   "com.blockether.vis.internal.foundation.shim-pil"
+   "com.blockether.vis.internal.foundation.shim-numpy"
+   "com.blockether.vis.internal.foundation.shim-bs4"
+   "com.blockether.vis.internal.foundation.shim-pandas"
+   "com.blockether.vis.internal.foundation.shim-tabulate"
+   "com.blockether.vis.internal.foundation.shim-toml"
+   "com.blockether.vis.internal.foundation.shim-tzdata"
+   "com.blockether.vis.internal.foundation.shim-sqlite3"
+   "com.blockether.vis.internal.foundation.shim-nippy"
+   "com.blockether.vis.internal.foundation.shim-httpx"
+   "com.blockether.vis.internal.foundation.shim-urllib3"
+   "com.blockether.vis.internal.foundation.shim-paramiko"
+   "com.blockether.vis.internal.foundation.shim-xlsxwriter"
+   "com.blockether.vis.internal.foundation.shim-pptx"
+   "com.blockether.vis.internal.foundation.shim-attach"
+   "com.blockether.vis.internal.foundation.shim-ls"
+   "com.blockether.vis.internal.foundation.shim-fonttools"
+   "com.blockether.vis.internal.foundation.shim-anydoc"
+   "com.blockether.vis.internal.foundation.rewind" "com.blockether.vis.internal.foundation.mcp.core"
    "com.blockether.vis.internal.foundation.harness.core"])
 
 (defn- manifest-entry-namespaces

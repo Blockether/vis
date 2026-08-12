@@ -88,6 +88,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The native binary starts again. `build.clj` kept its own copy of the built-in extension
+  namespaces vis `require`s at runtime, and every built-in added since — `foundation.introspection`
+  and the whole shim family — was missing from it, so the image never initialized them and the
+  binary died on its first line with "Could not locate …introspection__init.class on classpath".
+  The copy is complete, and a reachability test now fails when the two lists drift.
+
 - The Linux native binaries ship again. Every release since v0.1.33 built them and then died in
   the TUI smoke test with a SIGSEGV inside the generated FFM stub for lanterna's
   `open("/dev/tty", …)`, so v0.1.33, v0.1.34 and v0.1.35 attached no Linux distribution at all.
