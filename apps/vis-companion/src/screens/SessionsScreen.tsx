@@ -1838,6 +1838,53 @@ const ProjectGroup = memo(function ProjectGroup({
     // reader never asked for.
     if (page > pageCount) setPage(1);
   }, [page, pageCount]);
+  // A star PINS its row to the top of the project, and the top of the project is
+  // PAGE ONE — so a row starred from any other page LEFT the page under the thumb
+  // that starred it. Nothing was broken about the mark: the row carrying it was two
+  // pages away, which is why it only ever turned up after the screen was left and
+  // re-entered on page one.
+  // Regression, user report: after starring, no star appeared on the session row
+  // until the session was opened and closed again.
+  // The group FOLLOWS the row it moved — the page the row lands on is the page
+  // shown, and the row is brought back under the eye that starred it.
+  const favorites = useFavorites();
+  const starredHere = useMemo(() => {
+    const marked = new Set<string>();
+    for (const session of sessions) {
+      if (favoriteKey(base, session.id) in favorites) marked.add(session.id);
+    }
+    return marked;
+  }, [sessions, favorites, base]);
+  const wasStarred = useRef(starredHere);
+  const rowsRef = useRef<HTMLDivElement>(null);
+  const following = useRef<string | null>(null);
+  // Before paint: the reader must never see a frame of the page the row just left.
+  useLayoutEffect(() => {
+    const before = wasStarred.current;
+    wasStarred.current = starredHere;
+    // One tap flips one row. UNSTARRING moves a row just as far — down, out of the
+    // pinned band — so it is followed the same way instead of being dropped
+    // wherever the ordering sends it.
+    const flipped =
+      [...starredHere].find((id) => !before.has(id)) ??
+      [...before].find((id) => !starredHere.has(id));
+    if (!flipped) return;
+    const index = sessions.findIndex((session) => session.id === flipped);
+    if (index < 0) return;
+    following.current = flipped;
+    setPage(Math.floor(index / Math.max(1, Math.floor(pageSize) || 1)) + 1);
+  }, [starredHere, sessions, pageSize]);
+  // The row may land on the page already shown (starred from page one) or on the
+  // one this group just walked to; either way it is scrolled back into view on the
+  // commit that paints it.
+  useEffect(() => {
+    const id = following.current;
+    if (!id || !rows.some((session) => session.id === id)) return;
+    following.current = null;
+    rowsRef.current
+      ?.querySelector(`[data-session-id="${CSS.escape(id)}"]`)
+      ?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+  }, [rows]);
   return (
     <>
     <section aria-label={`${project} sessions`}>
@@ -1891,7 +1938,7 @@ const ProjectGroup = memo(function ProjectGroup({
           </HeaderMeta>
           <Pager page={shownPage} pageCount={pageCount} onPage={setPage} label={`${project} sessions`} />
         </SectionShelf>
-        <div>
+        <div ref={rowsRef}>
           {rows.map((session) => (
             <SessionRow
               key={session.id}
@@ -1998,28 +2045,16 @@ const SessionRow = memo(function SessionRow({
   const favorites = useFavorites();
   const starKey = favoriteKey(clientFor(conn).base, session.id);
   const isStarred = starKey in favorites;
-  // A star PINS the row to the top of its project, so the row you tapped leaves the
-  // spot you tapped it in — on a phone it travels several hundred pixels and an
-  // unstarred neighbour slides under your thumb, which reads as "nothing happened".
-  // Regression, user report: after starring, the star was invisible until the list
-  // was rebuilt by opening a session. The row follows its own pin.
-  const rowRef = useRef<HTMLDivElement>(null);
-  const pinned = useRef(false);
-  useEffect(() => {
-    if (!pinned.current) return;
-    pinned.current = false;
-    rowRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
-  }, [isStarred]);
-  const toggleStar = useCallback(() => {
-    pinned.current = true;
-    toggleFavorite(starKey);
-  }, [starKey]);
+  // Where the row GOES when this flips — the pinned band at the top of the project,
+  // on page one — belongs to the group that pages it, so `ProjectGroup` owns the
+  // follow. This is only the mark and the strip's verb.
+  const toggleStar = useCallback(() => toggleFavorite(starKey), [starKey]);
   // A draft is a per-session clone of the project; the row says so instead of
   // the list inventing a project for it.
   const draftName = isDraftWorkspace(session) ? session.workspace?.label?.trim() : '';
 
   return (
-    <div ref={rowRef} className="[&+&]:border-t [&+&]:border-dialog-edge">
+    <div className="[&+&]:border-t [&+&]:border-dialog-edge">
       {/* The confirm IS the row. The two answers split the row's own width and
           stand its full height, so the question is answered exactly where it
           was asked — and neither answer is a 28px target inside a dialog that

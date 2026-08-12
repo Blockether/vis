@@ -114,4 +114,43 @@ describe("starring a session", () => {
         .querySelector('button[aria-label="Unstar"]'),
     ).not.toBeNull();
   });
+
+  // Regression, user report ("the star is not showing on the session row ... as long
+  // as I don't drag to open the session or come back"): a project is PAGED at ten
+  // rows, and a star pins its row to the top of the project — which is page one. A
+  // row starred on page two therefore left the page the user was looking at, so the
+  // mark they had just asked for was two pages away and only turned up when the
+  // screen was left and re-entered on page one.
+  it("follows the starred row to the page its own pin moved it to", async () => {
+    const many = Array.from({ length: 12 }, (_, index) =>
+      listSession({
+        id: `s${String(index + 1).padStart(2, "0")}`,
+        title: `Session ${index + 1}`,
+        // Descending, so the list order is s01 … s12 before anything is starred.
+        modified_at: new Date(
+          Date.UTC(2024, 4, 1, 23 - index, 0, 0),
+        ).toISOString(),
+      }),
+    );
+    const view = renderSessionsScreen({ machines: [{ sessions: many }] });
+    restore = view.restore;
+    await screen.findByText("Session 1");
+    expect(rowOrder()).toHaveLength(10);
+
+    await userEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(rowOrder()).toEqual(["s11", "s12"]);
+
+    await userEvent.click(
+      screen
+        .getByRole("group", { name: "Session 12 actions" })
+        .querySelector('button[aria-label="Star"]')!,
+    );
+
+    // The row the thumb was on is still on screen, wearing its mark — on page one,
+    // where the pin put it, and at the top of its project.
+    const row = document.querySelector('[data-session-id="s12"]');
+    expect(row).not.toBeNull();
+    expect(row!.textContent).toContain("Favorite");
+    expect(rowOrder()[0]).toBe("s12");
+  });
 });
