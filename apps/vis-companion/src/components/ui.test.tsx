@@ -518,32 +518,61 @@ describe("CloseButton", () => {
     expect(html()).not.toContain('text-err"');
   });
 
-  // Regression, user report ("the close buttons in dialogs, etc or in the places like
-  // otp should have the same height and width"): the ✕ was one mark in one column, but
-  // the column still took its HEIGHT from whatever it ended — 48px on the dialog band
-  // a one-time-code request opens with, 44px on a menu band, 36px on the artifacts
-  // strip, 32px on a composer chip. One width, four heights, so no two ways out were
-  // the same box. The box is the whole difference an eye can see.
-  it("is ONE SQUARE, the same height as it is wide, on every band", () => {
-    expect(html()).toContain("size-8");
-    expect(html()).toContain("mouse:size-6");
-    expect(html()).toContain("self-center");
-    // Nothing may take its height from the thing it ends, and none of the five old
-    // boxes survive.
-    for (const box of [
-      "self-stretch",
-      "min-h-8",
-      "mouse:min-h-6",
-      "min-w-9",
-      "mouse:min-w-8",
-      "w-7",
-      "min-h-7",
-    ]) {
-      expect(html(), box).not.toContain(box);
+  // Regression, user report ("the headers ... the close button have incorrect width ...
+  // even here on the iPhone it's visually so visible ... and all of those have the same
+  // problem"): the way out of a whole screen was a 32×32 mark parked in the middle of a
+  // 48px band. The hairline that welds it stopped 8px short at both ends, the cell was
+  // narrower than its band was tall, and the one gesture that leaves a screen carried a
+  // 32×32 target under the app's own 44px minimum. A ✕ inside a composer chip is right
+  // at 32; a ✕ that ENDS A BAND is that band's own last cell.
+  it("ends a band with the band's own cell, and is a mark inside a control", () => {
+    const band = html({ isBand: true });
+    expect(band).toContain("w-12");
+    expect(band).toContain("mouse:w-9");
+    expect(band).toContain("self-stretch");
+    // A cell takes its height from the band, so a wrapped three-line question cannot
+    // leave paper above and below the way out; it still spells no height of its own.
+    expect(/\bh-\d/.test(band), "a height of its own").toBe(false);
+    expect(band).not.toContain("self-center");
+    expect(band).not.toContain("size-8");
+
+    const mark = html();
+    expect(mark).toContain("size-8");
+    expect(mark).toContain("mouse:size-6");
+    expect(mark).toContain("self-center");
+    expect(mark).not.toContain("self-stretch");
+    // A square is declared once: no separate width, no separate height. None of the
+    // five old boxes survive either.
+    expect(/\bw-\d/.test(mark), "a width of its own").toBe(false);
+    expect(/\bh-\d/.test(mark), "a height of its own").toBe(false);
+    for (const box of ["min-h-8", "mouse:min-h-6", "min-w-9", "w-7", "min-h-7"]) {
+      expect(mark, box).not.toContain(box);
     }
-    // A square is declared once: no separate width, no separate height.
-    expect(/\bw-\d/.test(html()), "a width of its own").toBe(false);
-    expect(/\bh-\d/.test(html()), "a height of its own").toBe(false);
+  });
+
+  // The band cell is ONE box and not one per band: it can only be a square because
+  // every band that hosts it stands at the same height.
+  it("is square because every band that hosts it is one height", () => {
+    const bands = {
+      "the dialog band": renderToStaticMarkup(
+        <DialogHeader
+          title="Application settings"
+          onClose={() => {}}
+          closeLabel="Close Application settings"
+        />,
+      ),
+      "the menu heading": renderToStaticMarkup(
+        <MenuHeading onClose={() => {}} closeLabel="Close projects on tower">
+          Projects · tower
+        </MenuHeading>,
+      ),
+    };
+    for (const [where, markup] of Object.entries(bands)) {
+      expect(markup, where).toContain("min-h-12");
+      expect(markup, where).toContain("mouse:min-h-9");
+      expect(markup, where).toContain("items-stretch");
+      expect(markup, where).toContain("self-stretch");
+    }
   });
 
   // Regression, user report ("Why not black like all buttons"): the artifacts sheet has
@@ -554,17 +583,17 @@ describe("CloseButton", () => {
     expect(html()).toContain("text-current");
     expect(html()).not.toContain("bg-dialog-title");
     expect(html()).not.toContain("text-dialog-title-foreground");
-    expect(artifactsSheetSource).toContain("<CloseButton");
+    // The artifacts sheet had no band to inherit from, so its ✕ read as the one white
+    // button in an app whose every other way out is a light mark on the dark band. It
+    // wears the band now instead of painting itself.
+    expect(artifactsSheetSource).toContain("<DialogHeader");
+    expect(artifactsSheetSource).not.toContain("<CloseButton");
     expect(artifactsSheetSource).not.toContain("tone=");
   });
 
-  // A control with no face left to choose has nothing left to disagree about: the
-  // markup of two ways out may differ in NOTHING but the name of what they leave.
+  // A control with no face left to choose has nothing left to disagree about: two ways
+  // out of the same KIND may differ in NOTHING but the name of what they leave.
   it("renders the same button wherever it is asked for", () => {
-    const band = html({ label: "Close artifacts" }).replaceAll(
-      "Close artifacts",
-      "X",
-    );
     const chip = renderToStaticMarkup(
       <CloseButton
         label="Remove notes.md"
@@ -572,7 +601,17 @@ describe("CloseButton", () => {
         onMouseDown={() => {}}
       />,
     ).replaceAll("Remove notes.md", "X");
-    expect(chip).toBe(band);
+    expect(chip).toBe(html({ label: "Clear search" }).replaceAll("Clear search", "X"));
+
+    const dialog = html({ isBand: true, label: "Close artifacts" }).replaceAll(
+      "Close artifacts",
+      "X",
+    );
+    const menu = html({ isBand: true, label: "Close projects on tower" }).replaceAll(
+      "Close projects on tower",
+      "X",
+    );
+    expect(menu).toBe(dialog);
   });
 
   it("is named for what it closes", () => {

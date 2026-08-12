@@ -866,14 +866,19 @@ export function Switch({
  *
  * So there is one, and everything about its face is decided here:
  *
- * - ONE SQUARE, 32×32 (`size-8`, `mouse:size-6` beside a desktop field whose own box
- *   is 24px) on every surface and every device. It is the box, not the mark, that an
- *   eye compares across two screens, and stretching it to the height of whatever it
- *   ended gave the one button five heights again — 48px welded to a dialog title,
- *   44px on a menu band, 36px on the artifacts strip, 32px on a composer chip, 30px
- *   in the fleet search — so it no longer stretches. It is centred (`self-center`) in
- *   the band it ends and hung at that band's trailing edge, which is where a way out
- *   is looked for; the hairline that welds it is now the square's own left edge.
+ * - TWO SQUARES, AND THE COMPONENT PICKS WHICH — never the call site. A ✕ is either
+ *   the CELL THAT ENDS A BAND (`isBand`: 48×48, 36×36 for a mouse, stretched to the
+ *   band's own height so the hairline that welds it runs the whole band) or the MARK
+ *   INSIDE ANOTHER CONTROL (32×32, `mouse:size-6`, centred — a composer chip, a
+ *   queued row, the fleet search's Clear). Both are squares, both are hung at the
+ *   trailing edge where a way out is looked for, and neither is chosen at a call
+ *   site, so the five arbitrary boxes this replaced cannot come back. The band cell
+ *   is one box and not one per band, because every band that hosts it stands at the
+ *   same height (`min-h-12`, `mouse:min-h-9`): the dialog title and the menu heading
+ *   alike. The 32px mark used to end those bands too, and it was the wrong box for
+ *   a band twice over — a square floating in the middle of a 48px row with its
+ *   hairline stopping 8px short at both ends, and a 32×32 target for the one gesture
+ *   that leaves a screen, under the app's own 44px minimum.
  * - THE INK OF THE SURFACE IT STANDS ON (`text-current`), and that same ink at 20%
  *   for the hairline that welds it. A band declares its foreground once — a dialog
  *   title bar `text-dialog-title-foreground`, a menu's accent heading, a panel strip
@@ -889,22 +894,35 @@ export function Switch({
  * WHERE it sits is the call site's only business: `className` may POSITION it (the
  * attachment chip hangs it on the chip's right edge) and nothing else. There is no
  * tone, no size and no hairline prop, because those three were the whole difference
- * between the eight buttons this replaces.
+ * between the eight buttons this replaces; `isBand` is not a size but a PLACE — it
+ * says this ✕ is a band's own last cell rather than a mark inside another control.
  */
 export function CloseButton({
   label,
+  isBand = false,
   className = '',
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   /** Icon-only, so the name is not optional: "Close artifacts", "Remove notes.md". */
   label: string;
+  /**
+   * This ✕ IS THE BAND'S LAST CELL — a dialog title, a menu heading — rather than a
+   * mark inside another control. It fills the band's height and stands as wide as
+   * that band is tall, so the way out of a screen is a square you can hit and its
+   * hairline is the band's own full-height edge.
+   */
+  isBand?: boolean;
 }) {
   return (
     <button
       type="button"
       aria-label={label}
       title={label}
-      className={`grid size-8 shrink-0 place-items-center self-center border-l border-current/20 text-current transition-colors duration-150 hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-current motion-reduce:transition-none mouse:size-6 ${className}`}
+      className={`grid shrink-0 place-items-center border-l border-current/20 text-current transition-colors duration-150 hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-current motion-reduce:transition-none ${
+        isBand
+          ? 'w-12 self-stretch mouse:w-9'
+          : 'size-8 self-center mouse:size-6'
+      } ${className}`}
       {...props}
     >
       <CloseIcon />
@@ -1219,7 +1237,7 @@ export function DialogHeader({
       {/* The two travel together by type; the second test is what TypeScript needs
           to see it, because a destructured union does not narrow on its own. */}
       {onClose && closeLabel && (
-        <CloseButton label={closeLabel} onClick={onClose} />
+        <CloseButton isBand label={closeLabel} onClick={onClose} />
       )}
     </header>
   );

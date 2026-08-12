@@ -47,7 +47,6 @@ import { readArtifactText } from "./TextArtifact";
 import { AlertIcon, ClipIcon, PlayIcon } from "./icons";
 import {
   Chip,
-  CloseButton,
   DialogHeader,
   KebabButton,
   ListRow,
@@ -582,30 +581,32 @@ function Tile({
 }
 
 /**
- * The kind filter, doubling as the sheet's whole top band: a count per chip
- * (a chip with nothing behind it is drawn disabled rather than hidden — a
- * strip that changes shape per session is a strip you have to re-read every
- * time), and the way out welded to its right edge instead of a separate title
- * band above it — one row, not two.
+ * The kind filter: a count per chip (a chip with nothing behind it is drawn
+ * disabled rather than hidden — a strip that changes shape per session is a strip
+ * you have to re-read every time).
+ *
+ * IT NO LONGER CARRIES THE WAY OUT. This strip is paper, so the one ✕ standing on
+ * it inherited paper — the only way out in the app that read as a white button,
+ * while every other opened surface leaves by a light mark on the dialog band. The
+ * sheet now wears that band like the artifact it opens does, and the ✕ goes back to
+ * inheriting the ink of the band it stands on rather than bringing paper of its own.
  */
 function FilterStrip({
   list,
   active,
   onPick,
-  onClose,
 }: {
   list: SessionArtifact[];
   active: string;
   onPick: (label: string) => void;
-  onClose: () => void;
 }) {
   return (
     <div
       role="group"
       aria-label="Filter artifacts by kind"
-      className="flex min-h-9 shrink-0 items-stretch border-b border-dialog-edge bg-panel pl-3 mouse:min-h-8 sm:pl-4"
+      className="flex min-h-9 shrink-0 items-stretch border-b border-dialog-edge bg-panel px-3 mouse:min-h-8 sm:px-4"
     >
-      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-1.5 pr-1.5">
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-1.5">
         {ARTIFACT_FILTERS.map((filter) => {
           const count = list.filter((entry) =>
             filter.kinds.includes(entry.kind),
@@ -630,10 +631,6 @@ function FilterStrip({
           );
         })}
       </div>
-      {/* The way out is the app's way out: welded to the band's right edge behind
-          its own hairline, exactly as a dialog and an opened artifact are left.
-          It used to be one more bordered chip in a strip of bordered chips. */}
-      <CloseButton label="Close artifacts" onClick={onClose} />
     </div>
   );
 }
@@ -957,10 +954,16 @@ export function ArtifactsSheet({
       aria-label="Artifacts produced by the model"
       className="absolute inset-0 z-30 flex flex-col bg-ink"
     >
+      {/* The sheet is an opened surface, so it opens the way every other one does:
+          the app's dialog band, naming itself, with the one ✕ inheriting its ink. */}
+      <DialogHeader
+        title="Artifacts"
+        closeLabel="Close artifacts"
+        onClose={onClose}
+      />
       <FilterStrip
         list={artifacts}
         active={filter}
-        onClose={onClose}
         onPick={(label) => {
           setFilter(label);
           setPages(1);

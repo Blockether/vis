@@ -178,9 +178,12 @@ export function MenuHeading({
   if (!onClose || !closeLabel)
     return <p className={`${BAND} ${skin} truncate`}>{children}</p>;
   return (
-    <header className={`flex min-h-11 shrink-0 items-stretch mouse:min-h-9 ${skin}`}>
+    // The band stands where the dialog band stands (48, 36 for a mouse), because the
+    // way out welded to it is the same cell on both and a cell can only be square in
+    // a band of one height.
+    <header className={`flex min-h-12 shrink-0 items-stretch mouse:min-h-9 ${skin}`}>
       <p className={`${BAND} min-w-0 flex-1 self-center truncate`}>{children}</p>
-      <CloseButton label={closeLabel} onClick={onClose} />
+      <CloseButton isBand label={closeLabel} onClick={onClose} />
     </header>
   );
 }

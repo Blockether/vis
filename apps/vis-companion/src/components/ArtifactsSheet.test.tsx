@@ -191,23 +191,31 @@ describe("the artifacts sheet", () => {
     expect(html).toContain("absolute inset-0");
   });
 
-  // Regression, user report ("Why not black like all buttons"): the way out of the
-  // sheet was ink on the strip's own paper, one row under a ‹ that leaves the session
-  // as a black block — one gesture drawn two ways on one screen. It was given a black
-  // block of its own, which made it the only ✕ in the app wearing paper; the report
-  // that followed ("can we not have just one close button that looks the same") took
-  // that back off, so it inherits the strip like every other ✕; the report after that
-  // ("should have the same height and width") took the last difference — the height of
-  // the row it ended — off too.
-  it("opens on its filter strip and leaves by the app's one ✕", () => {
+  // Regression, user report ("the artifact button, instead of being the dark one with
+  // white color, it's completely white"): the sheet was the one opened surface with no
+  // title band, so its ✕ stood on the filter strip's PAPER and read as a white button
+  // beside an app whose every other way out is a light mark on the dark dialog band.
+  // Earlier attempts moved the paint instead of the band — a black block of its own
+  // ("Why not black like all buttons"), then no block at all ("can we not have just one
+  // close button that looks the same") — and both left the ✕ answering for a band the
+  // sheet did not have. It has the band now, and the ✕ inherits it like every other.
+  it("opens with the app's own band, and leaves by the ✕ standing in it", () => {
     const html = sheet([picture]);
-    expect(html).not.toMatch(/<header/);
+    const band = /<header[^>]*class="([^"]*)"/.exec(html)?.[1] ?? "";
+    expect(band).toContain("bg-dialog-title");
+    expect(band).toContain("text-dialog-title-foreground");
+    expect(html).toContain("<h2");
+    expect(text(html)).toContain("Artifacts");
+
     const close = classesOf(html, 'aria-label="Close artifacts"');
-    expect(close).toContain("size-8");
-    expect(close).toContain("self-center");
+    expect(close).toContain("self-stretch");
+    expect(close).toContain("w-12");
+    // Still no paint of its own: the band is dark, so the mark is.
     expect(close).toContain("text-current");
-    // No second face for the same gesture anywhere on the sheet.
-    expect(html).not.toContain("bg-dialog-title");
+    expect(close).not.toContain("bg-dialog-title");
+    // The strip below it keeps the same inset on both sides now that nothing is
+    // welded to its right edge.
+    expect(html).toContain("bg-panel px-3");
   });
 
   // Regression, user report ("big on Ipad we don't need this"): a permanent band under
@@ -382,14 +390,14 @@ describe("the artifacts sheet", () => {
     expect(html).toContain("bg-dialog-hint/50");
   });
 
-  it("welds the close onto the filter strip instead of a band above it", () => {
+  it("puts the band above the filter strip, and the strip above the grid", () => {
     const html = sheet([picture]);
-    const groupAt = html.indexOf('role="group"');
     const closeAt = html.indexOf('aria-label="Close artifacts"');
+    const groupAt = html.indexOf('role="group"');
     const gridAt = html.indexOf('class="min-h-0 flex-1 overflow-y-auto');
-    expect(groupAt).toBeGreaterThan(-1);
-    expect(closeAt).toBeGreaterThan(groupAt);
-    expect(closeAt).toBeLessThan(gridAt);
+    expect(closeAt).toBeGreaterThan(-1);
+    expect(closeAt).toBeLessThan(groupAt);
+    expect(groupAt).toBeLessThan(gridAt);
   });
 
   // Regression: a `.md` note was classified as an unreadable file, so the tile
