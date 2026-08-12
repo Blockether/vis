@@ -2072,7 +2072,7 @@ describe("one ✕, at one size, under one wash", () => {
 // Regression, user report ("some of the X are a different X than the dialog ones, and
 // white instead of black"): the way out painted its own resting ink — the page's
 // `--fg` on a panel band — while the band under it painted `text-accent-foreground`.
-// Measured live on the "Add a project" menu heading, the mark disagreed with the words
+// Measured live on the "New project" menu heading, the mark disagreed with the words
 // beside it in five of the six shipped themes: a #f3f4f6 ✕ on the #ffc420 band of
 // blockether-dark (1.5:1) whose own heading was #0f1117, a #1e1e1e ✕ on the #2563eb
 // band of vis-light whose heading was #f0f4fc, grey #839496 on solarized's blue. The

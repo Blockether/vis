@@ -86,18 +86,44 @@ describe('where "New session" lives', () => {
   // Regression, user report (paraphrased: put `+` and the gear on the band — that is add
   // project and the machine settings; and later, make them real buttons like New session):
   // the band's verbs were bordered glyphs, then frameless words, beside an amber slab.
-  it("spells the machine's ADD verb as a word in a real button", async () => {
+  it("spells the machine's create verb as a word in a real button", async () => {
     const view = renderSessionsScreen({ machines: alpha() });
     restore = view.restore;
     await screen.findByText("First");
 
-    const add = screen.getByRole("button", { name: "Add a project on alpha" });
-    expect(add.textContent).toBe("Add project");
+    const add = screen.getByRole("button", { name: "New project on alpha" });
+    expect(add.textContent).toBe("New project");
     // The amber fill `New session` wears, so the two verbs are one species.
     expect(add.className).toContain("bg-accent");
     // ...and it opens the SAME portal the menu row opens, aimed at this machine.
     await userEvent.click(add);
     expect(await screen.findByRole("dialog")).toBeTruthy();
+  });
+
+  // Regression, user report (the machine band struck out on a screenshot, with the create
+  // verb moved up to the row that holds the machine chips): a band inside the card named
+  // the machine the chips had just named, printed "2 projects · 1080 sessions" that every
+  // project header below already counts, and rented a whole row of a phone's glass for
+  // the two controls that now stand on the chip row.
+  it("keeps the machine's verbs above the card and prints no second band", async () => {
+    const view = renderSessionsScreen({ machines: alpha() });
+    restore = view.restore;
+    await screen.findByText("First");
+
+    // The counts the band carried are gone from the screen.
+    expect(screen.queryByText(/\d+ projects?\s*·/)).toBeNull();
+    // The machine is named by the chips and the rail, never by a band of its own: with a
+    // solo fleet there is no chip strip either, so the name appears nowhere above the list.
+    expect(screen.queryByRole("button", { name: "Rename alpha" })).toBeNull();
+
+    // Both verbs stand OUTSIDE the list card, on the row above it.
+    const create = screen.getByRole("button", { name: "New project on alpha" });
+    const kebab = screen.getByRole("button", { name: "Actions for alpha" });
+    const list = screen.getByLabelText("alpha projects");
+    expect(create.closest("section")).toBe(screen.getByLabelText("Sessions"));
+    expect(list.contains(create)).toBe(false);
+    expect(list.contains(kebab)).toBe(false);
+    expect(create.compareDocumentPosition(kebab) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
 

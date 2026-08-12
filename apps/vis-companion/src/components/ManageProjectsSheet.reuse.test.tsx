@@ -162,16 +162,16 @@ describe("ManageProjectsSheet paints no box of its own", () => {
   });
 
   // Regression, user report: adding a project offered no way out of its own — the band
-  // was a BACK arrow into the project inventory, so the only exit from "add a project"
+  // was a BACK arrow into the project inventory, so the only exit from "New project"
   // was a screen the human never asked for. Adding closes, like every other panel: its
   // band carries the close, and the scrim dismisses it.
   it("closes out of adding instead of retreating into the inventory", async () => {
     const { onCancel } = sheet({ isAdding: true });
-    expect(await screen.findByText("Add a project · tower")).toBeInTheDocument();
+    expect(await screen.findByText("New project · tower")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /back/i })).toBeNull();
 
     await userEvent.click(
-      screen.getByRole("button", { name: "Close add a project on tower" }),
+      screen.getByRole("button", { name: "Close new project on tower" }),
     );
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
@@ -325,7 +325,7 @@ describe("browsing opens one level above the current project", () => {
       (await screen.findByRole("menuitem", { name: /vis/ })).textContent,
     ).toContain("current");
 
-    await userEvent.click(screen.getByRole("button", { name: "Add project…" }));
+    await userEvent.click(screen.getByRole("button", { name: "New project…" }));
     expect(
       (await screen.findByRole("menuitem", { name: /vis\// })).textContent,
     ).toContain("current");

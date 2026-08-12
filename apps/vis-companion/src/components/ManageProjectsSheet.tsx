@@ -133,9 +133,9 @@ export function ManageProjectsSheet({
   /** The machine whose files these are — the title says it, so no row has to. */
   label: string;
   /**
-   * Opens straight on the folder browser. The machine header's `+` MEANS "add a
-   * project": landing on the inventory first and making a human hunt for
-   * "Add project…" is a tap spent on a verb the button already named.
+   * Opens straight on the folder browser. The row's `New project` button MEANS what
+   * it says: landing on the inventory first and making a human hunt for a second
+   * "New project…" is a tap spent on a verb the button already named.
    */
   isAdding?: boolean;
   /** Where the panel hangs from `sm:` up — the control that opened it. */
@@ -349,7 +349,7 @@ export function ManageProjectsSheet({
           <div className={`shrink-0 border-t border-dialog-edge bg-panel-2 py-2 ${SHEET_EDGE}`}>
             <div className="flex items-center justify-end">
               <Button variant="secondary" onClick={() => setAdding(true)}>
-                Add project…
+                New project…
               </Button>
             </div>
           </div>
@@ -358,12 +358,12 @@ export function ManageProjectsSheet({
         <>
       {/* Adding is a task, not a step in a tour: its band carries the app's one way
           out. A BACK arrow into the project inventory was an exit into a screen the
-          human never asked for — the `+` says "add a project", so the only way out of
+          human never asked for — the button says "New project", so the only way out of
           it is closing it (or the scrim, which `AnchoredPanel` already dismisses on). */}
       <MenuHeading
         onClose={onCancel}
-        closeLabel={`Close add a project on ${label}`}
-      >{`Add a project · ${label}`}</MenuHeading>
+        closeLabel={`Close new project on ${label}`}
+      >{`New project · ${label}`}</MenuHeading>
 
       {typed === null ? (
         <div

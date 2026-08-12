@@ -955,10 +955,6 @@ export function App() {
               onUnreachable={handleUnreachable}
               onOpen={openGatewaySession}
               onMachineSettings={openSettings}
-              onRenameMachine={async (conn, label) => {
-                await upsertConnection({ ...conn, label: label || undefined });
-                await refresh();
-              }}
             />
           </div>
         )}

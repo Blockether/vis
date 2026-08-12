@@ -53,7 +53,6 @@ export function renderSessionsScreen({
   onOpen = () => {},
   onUnreachable,
   onMachineSettings,
-  onRenameMachine,
 }: {
   machines?: MachineFixture[];
   query?: string;
@@ -61,7 +60,6 @@ export function renderSessionsScreen({
   onOpen?: (conn: GatewayConn, sid: string, fresh?: boolean) => void;
   onUnreachable?: (message: string | null) => void;
   onMachineSettings?: (conn: GatewayConn) => void;
-  onRenameMachine?: (conn: GatewayConn, label: string) => void;
 } = {}) {
   const requests: FleetRequest[] = [];
   const conns: GatewayConn[] = machines.map((machine, index) => ({
@@ -118,7 +116,6 @@ export function renderSessionsScreen({
       onOpen={onOpen}
       onUnreachable={onUnreachable}
       onMachineSettings={onMachineSettings}
-      onRenameMachine={onRenameMachine}
     />
   );
   const view = render(screen(query));

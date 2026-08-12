@@ -13,8 +13,6 @@ import {
   LIST_EDGE_END,
   LIST_FRAME,
   LiveCount,
-  EditableName,
-  machineTagFace,
   MachineMark,
   MachineRail,
   MachineSwitcher,
@@ -233,8 +231,6 @@ interface Props {
   onOpen: (conn: GatewayConn, sid: string, fresh?: boolean) => void | Promise<void>;
   /** Open that machine's own settings — the last verb in its `⋯` menu. */
   onMachineSettings?: (conn: GatewayConn) => void;
-  /** Renames the machine in place from its own header. '' clears the name. */
-  onRenameMachine?: (conn: GatewayConn, label: string) => void;
 }
 
 export function SessionsScreen({
@@ -245,7 +241,6 @@ export function SessionsScreen({
   onUnreachable,
   onOpen,
   onMachineSettings,
-  onRenameMachine,
 }: Props) {
   // A machine OWNS its projects: every row belongs to exactly one gateway, and a
   // project only exists inside the machine it lives on. The fleet is therefore
@@ -646,23 +641,6 @@ export function SessionsScreen({
     [filtered, sessions],
   );
 
-  const totals = useMemo(() => {
-    const all = sessions?.length ?? 0;
-    const shown = visible?.length ?? 0;
-    // Projects are counted PER MACHINE. Counting bare folder names collapsed two
-    // machines' `vis` checkouts into one project that belonged to neither.
-    const projects = new Set(
-      inScope.flatMap((machine) =>
-        (machine.sessions ?? []).map((session) => `${machineKey(machine.conn)}\u0000${projectPath(session)}`),
-      ),
-    ).size;
-    const live = sessions?.filter(sessionIsLive).length ?? 0;
-    const unread = sessions?.filter((session) => unreadTurnCount(session) > 0).length ?? 0;
-    return { all, shown, projects, live, unread };
-    // `readMarks` is the store version: marks change outside React, so it is the
-    // dependency that makes the unread tally recompute.
-  }, [inScope, sessions, visible, readMarks]);
-
   // Per-machine tallies for the strip and the machine headers.
   const tallies = useMemo(
     () =>
@@ -677,13 +655,6 @@ export function SessionsScreen({
   const scopeMachine = scope
     ? (machines.find((machine) => machineKey(machine.conn) === scope) ?? null)
     : null;
-  // THE MACHINE IS SELECTION, NOT STRUCTURE.
-  // The list used to carry two bands one hairline apart — a machine header and a
-  // project header, same x, same trailing cluster — so nothing said the second was
-  // inside the first. The chip strip answers "which machine", the chrome above the
-  // list NAMES the one in scope and carries its verbs, and the list below holds one
-  // header kind. `null` only while the bar speaks for several machines at once.
-  const scopeChrome = scopeMachine;
 
   // One hue per paired machine, assigned from the machine's own key, so a rail
   // keeps its colour across reloads and reorderings and two machines side by side
@@ -693,12 +664,6 @@ export function SessionsScreen({
     () => assignMachineColors(machines.map((machine) => machineKey(machine.conn))),
     [machines],
   );
-
-  // The hue of the machine the chrome speaks for, so the name it carries is the same
-  // machine the spine down the list is drawn in.
-  const chromeColor = scopeChrome
-    ? machineColor(machineColors, machineKey(scopeChrome.conn))
-    : undefined;
 
   // A scope narrowed to a dead machine is not an empty machine: with the rest of
   // the fleet hidden, that machine's failure IS the screen.
@@ -1138,41 +1103,104 @@ export function SessionsScreen({
           a segmented switch on the page's paper now: one track, the chosen machine a
           raised tile inside it. There is no "All": a scope is one machine, always.
 
-          ONE MACHINE IS NOT A CHOICE, SO THE WHOLE BAND GOES. With a solo gateway
-          paired the switcher had exactly one tab, always on, switching to itself, and
-          the row survived only to carry `Add machine` — a twice-a-year verb that lives
-          in Preferences, beside the rest of this device's own setup. Nothing is left
-          to draw, so a solo user is charged neither the row nor the screen-reader
-          landmark.
+          THIS ROW HOLDS THE SWITCH AND THE MACHINE'S VERBS, AND NOTHING ELSE.
+          A second band used to stand inside the card under it: the machine's name
+          again, "2 projects - 1080 sessions", and these same two controls. It named a
+          machine the chips had just named, counted what every project header below it
+          already counts, and spent a whole row of a phone's glass doing it. The band
+          is gone. `New project` and the one `⋯` this list has stand up here on the row
+          that already answers "which machine", so the card starts at the first project.
+
+          A SOLO FLEET STILL HAS VERBS. With one gateway paired there is nothing to
+          switch, so the track, the chips and the `Machines` landmark all disappear and
+          the verbs keep the row to themselves — the switch costs a solo user nothing,
+          but the verbs it used to stand beside are not the switch.
 
           ONE INSET PER EDGE. Standing on the page's paper means wearing the PAGE's
           side edges, and the section above already spells them (`sm:px-6`). `px-3` is
           here for the phone alone, where that section is full bleed and the ink edge
-          is the app bar's own 12px. */}
-      {machines.length > 1 && (
-        <div
-          role="group"
-          aria-label="Machines"
-          className="relative z-10 flex items-center gap-1.5 px-3 pb-3 pt-6 sm:px-0 sm:pb-4 sm:pt-8"
-        >
-          <MachineSwitcher>
-            {machines.map((machine) => {
-              const key = machineKey(machine.conn);
-              const tally = tallies.get(key);
-              return (
-                <MachineTab
-                  key={key}
-                  isOn={scope === key}
-                  hasUnread={(tally?.unread ?? 0) > 0}
-                  onClick={() => selectScope(key)}
-                >
-                  <MachineMark color={machineColor(machineColors, key)} />
-                  {machineLabel(machine.conn)}
-                  {machine.error && <span className="opacity-70">offline</span>}
-                </MachineTab>
-              );
-            })}
-          </MachineSwitcher>
+          is the app bar's own 12px. The TRAILING side is the exception: the `⋯` is an
+          edge control and reclaims its row's gutter (`-mr-3 sm:-mr-4`) to put its ink
+          on the paper's edge, so at `sm` the row has to spell the 16px it takes back —
+          without it the glyph hung 16px outside the card, past the list's own trailing
+          ink. */}
+      {scopeMachine && (
+        <div className="relative z-10 flex items-center gap-1.5 px-3 pb-3 pt-6 sm:pb-4 sm:pl-0 sm:pr-4 sm:pt-8">
+          {machines.length > 1 && (
+            <div role="group" aria-label="Machines" className="flex min-w-0 shrink">
+              <MachineSwitcher>
+                {machines.map((machine) => {
+                  const key = machineKey(machine.conn);
+                  const tally = tallies.get(key);
+                  return (
+                    <MachineTab
+                      key={key}
+                      isOn={scope === key}
+                      hasUnread={(tally?.unread ?? 0) > 0}
+                      onClick={() => selectScope(key)}
+                    >
+                      <MachineMark color={machineColor(machineColors, key)} />
+                      {machineLabel(machine.conn)}
+                      {machine.error && <span className="opacity-70">offline</span>}
+                    </MachineTab>
+                  );
+                })}
+              </MachineSwitcher>
+            </div>
+          )}
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            {/* Only when no button can speak for it: a create started from this row's
+                own menu belongs to no project header. Every header-started create
+                wears its word INSIDE the button that was pressed. */}
+            {creating && creating.at === null && (
+              <span aria-live="polite" className="font-mono text-chip text-dialog-hint">
+                {creating.label}
+              </span>
+            )}
+            {/* A filter is a FLEET question, and the count it came back with is the
+                only proof it left this gateway. It is the one fact this row reports:
+                totals were the same numbers the project headers below already carry. */}
+            {searching && sessions !== null && !scopedError && (
+              <span className="whitespace-nowrap font-mono text-chip font-bold text-accent-ink">
+                {searchCounts.matches} {searchCounts.matches === 1 ? 'match' : 'matches'}
+              </span>
+            )}
+            {scopedError && (
+              <span className="whitespace-nowrap font-mono text-chip font-bold text-accent-ink">
+                not answering
+              </span>
+            )}
+            {/* The machine's verbs, on the row that carries them: a NEW project, and the
+                rarer half behind the one `⋯` this list has.
+
+                It is the amber primary here, the same fill the list's own create verb
+                wears, and it is spelled like it — `New project` beside `New session`,
+                one species of verb saying the same kind of word. `Machine settings` is
+                a row in the `⋯`, beside `Manage projects`, which is its own order of
+                rarity — and the `⋯` is the app's ONE overflow control, so the rarer
+                half of a surface is reached the same way everywhere. */}
+            {!scopeMachine.error && (
+              <Button
+                variant="primary"
+                density="compact"
+                className="shrink-0 whitespace-nowrap"
+                aria-label={`New project on ${machineLabel(scopeMachine.conn)}`}
+                onClick={(event) => {
+                  const at = menuPosition(
+                    event.currentTarget.getBoundingClientRect(),
+                    BROWSE_WIDTH,
+                  );
+                  if (!at) return;
+                  setManageProjects({ machine: scopeMachine, at });
+                }}
+              >New project</Button>
+            )}
+            <KebabButton
+              label={`Actions for ${machineLabel(scopeMachine.conn)}`}
+              isOpen={!!startMenu}
+              onClick={(event) => openStartMenuAt(event.currentTarget, scopeMachine.conn)}
+            />
+          </div>
         </div>
       )}
         {/* ON A PHONE THE CARD IS THE PAGE, AND IT DOES NOT BREATHE.
@@ -1186,124 +1214,13 @@ export function SessionsScreen({
             At `sm` the card detaches again and ENDS where its content ends (`max-h-full`
             + `h-auto`), so the desktop never draws a border around empty paper. */}
         <div className="flex h-full min-h-0 flex-col overflow-hidden border-y border-dialog-edge bg-panel sm:mx-0 sm:h-auto sm:max-h-full sm:border-x sm:border-r-2">
-        <div className={`border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4 ${LIST_FRAME}`}>
-          <div className="mt-1.5 flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              {/* The machine in scope is NAMED here, once, and the name is the rename
-                  control: the band that used to carry it is gone, so this is where a
-                  human owns the word. Same box editing or resting — no jump.
-
-                  It wears the machine's own hue as a TAG (`machineTagFace`) rather than
-                  plain white ink: the hue rides the tag's leading edge, the same 2px
-                  spine that runs down the list below it, so the two places a machine is
-                  visible at all are visibly the same machine. */}
-              {scopeChrome && onRenameMachine ? (
-                <EditableName
-                  face={machineTagFace(chromeColor)}
-                  label={`Rename ${machineLabel(scopeChrome.conn)}`}
-                  value={machineLabel(scopeChrome.conn)}
-                  onCommit={(next) => onRenameMachine(scopeChrome.conn, next)}
-                />
-              ) : (
-                <p className={machineTagFace(chromeColor)}>
-                  {scopeChrome ? machineLabel(scopeChrome.conn) : 'Fleet'}
-                </p>
-              )}
-              <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-chip text-dialog-hint">
-                {sessions === null ? (
-                  <>
-                    <Spinner tone="accent" />
-                    <span>Reading sessions...</span>
-                  </>
-                ) : scopedError ? (
-                  <span className="whitespace-nowrap font-bold text-accent-ink">not answering</span>
-                ) : (
-                  <>
-                    {/* Facts travel as WHOLE units. Every value used to be its own flex
-                        child with a bare `·` child between them, so a wrap left the
-                        separator dangling at the end of the line ("447 sessions ·") and
-                        could strand "●" from its "4 live". Each fact is now nowrap and
-                        the groups are separated by SPACE rather than punctuation, so the
-                        line can only break between facts. */}
-                    {searching ? (
-                      <>
-                        <span className="whitespace-nowrap font-bold text-accent-ink">
-                          {searchCounts.matches} {searchCounts.matches === 1 ? 'match' : 'matches'}
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <span className="whitespace-nowrap">
-                          {totals.projects} {totals.projects === 1 ? 'project' : 'projects'}
-                          <span className="px-1" aria-hidden="true">·</span>
-                          {totals.all} {totals.all === 1 ? 'session' : 'sessions'}
-                        </span>
-                        {/* WHERE the two numbers live is a one-place question.
-                            The scope strip is always on screen, and every chip
-                            carries its machine's live and unread while the All
-                            chip carries the fleet's — one row below this line.
-                            Saying it here too was the same fact twice. */}
-                      </>
-                    )}
-                  </>
-                )}
-              </p>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              {/* Only when no button can speak for it: a create started from this bar's
-                  own menu belongs to no project header. Every header-started create
-                  wears its word INSIDE the button that was pressed. */}
-              {creating && creating.at === null && (
-                <span aria-live="polite" className="font-mono text-chip text-dialog-hint">
-                  {creating.label}
-                </span>
-              )}
-              {/* The machine's verbs, on the chrome that names it rather than on a
-                  band of its own: ADD a project, and the rarer half behind the one `⋯`
-                  this list has. With several machines speaking at once there is no
-                  machine to act on — a workspace only exists on one — so the chip is
-                  asked first.
-
-                  ADD is the amber primary here, the same fill the list's own create
-                  verb wears. `Machine settings` used to stand beside it as a second
-                  word-button, so a twice-a-year order rented the trailing corner of
-                  the header next to the verb the screen exists for. It is a row in the
-                  `⋯` now, beside `Manage projects`, which is its own order of rarity
-                  — and the `⋯` is the app's ONE overflow control, so the rarer half
-                  of a header is reached the same way everywhere. */}
-              {scopeChrome && !scopeChrome.error && (
-                <Button
-                  variant="primary"
-                  density="compact"
-                  className="shrink-0 whitespace-nowrap"
-                  aria-label={`Add a project on ${machineLabel(scopeChrome.conn)}`}
-                  onClick={(event) => {
-                    const at = menuPosition(
-                      event.currentTarget.getBoundingClientRect(),
-                      BROWSE_WIDTH,
-                    );
-                    if (!at) return;
-                    setManageProjects({ machine: scopeChrome, at });
-                  }}
-                >Add project</Button>
-              )}
-              {scopeChrome && (
-                <KebabButton
-                  label={`Actions for ${machineLabel(scopeChrome.conn)}`}
-                  isOpen={!!startMenu}
-                  onClick={(event) =>
-                    openStartMenuAt(event.currentTarget, scopeChrome.conn)
-                  }
-                />
-              )}
-            </div>
+        {/* A create that failed has no button left to speak from once the order's own
+            popover is gone, so the word lands on the paper the list is about to fill. */}
+        {createError && (
+          <div className={`border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4 ${LIST_FRAME}`}>
+            <Banner kind="err">{createError}</Banner>
           </div>
-          {createError && (
-            <div className="mt-2">
-              <Banner kind="err">{createError}</Banner>
-            </div>
-          )}
-        </div>
+        )}
 
         <div ref={listRef} className="min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable]">
         {sessions === null ? (
