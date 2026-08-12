@@ -91,6 +91,10 @@
         (expect (every? some? steps))
         (expect (apply < steps)))
       (expect (str/includes? text "`grep(...)` FIRST"))
+      ;; The verification rule must name a call the language surface accepts: a lone
+      ;; string is the PAYLOAD, not a language, so `run_tests("python")` would run the
+      ;; workspace's primary pack instead of the python one.
+      (expect (str/includes? text "run_tests({\"language\": \"python\"})"))
       ;; Session introspection (gateway event journals, session_state) is toggle-
       ;; gated and lives in the `foundation-introspection` extension prompt, NOT core.
       (expect (not (str/includes? text "`~/.vis/gateway/events/<id>.ndjson`")))

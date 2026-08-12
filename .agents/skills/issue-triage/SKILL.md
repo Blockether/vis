@@ -66,7 +66,7 @@ after a close, where the next issue's triage continues in the same reply (see
 - Wire keys are snake_case strings, engine keys kebab-case keywords — check
   `gateway/wire.clj` before calling a wire-shaped repro wrong.
 - Python tooling repros go through the in-process ruff FFI and
-  `run_tests("python")` / `vis python -m pytest <paths>`.
+  `run_tests({"language": "python"})` / `vis python -m pytest <paths>`.
 - Stop every REPL and background shell you started before answering.
 
 ## After a verified fix

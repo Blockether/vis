@@ -36,7 +36,7 @@
            ;; plain literal swap — the engine only ever emits `Use index(`.
            (str/replace "Use index(" "Use struct_index("))]
     (if (str/includes? m "No definition named")
-      (str m " (Re-check the name/`kind` against struct_index(path).)")
+      (str m " (Re-check the name/`kind` against struct_index({\"paths\": [path]}).)")
       m)))
 
 (defn- split-keep-lines

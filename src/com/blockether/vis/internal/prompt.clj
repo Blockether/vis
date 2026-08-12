@@ -241,7 +241,7 @@
     "  (`line`→`source`+`at`). Edit with `struct_patch` by def NAME; text and unsupported languages\n"
     "  are edited in plain Python.\n"
     "- Bugs: reproduce before editing: tests-only work starts with `run_tests`; interactive work uses `repl_eval`. Keep reproduction as a suite test and rerun after the fix.\n"
-    "- A fix or feature is unverified until a test covers it; Python extensions: `run_tests(\"python\")`; CLI: `vis-agent python -m pytest <paths>`.\n"
+    "- A fix or feature is unverified until a test covers it; Python: `run_tests({\"language\": \"python\"})`; CLI: `vis-agent python -m pytest <paths>`.\n"
     "- BATCH inside one block: `grep` needles, `struct_index` `paths`, `struct_patch` `edits` — one call, never one\n"
     "  per file. Each round must identify, reproduce, edit, verify, or conclude; no repeated search/read without a\n"
     "  named unresolved decision.\n\n"

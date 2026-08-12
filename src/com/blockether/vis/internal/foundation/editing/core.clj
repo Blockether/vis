@@ -4175,7 +4175,7 @@
      down|d|b up|u|t left|l right|r first last next|n prev|p {child:i}
      {find:\"text\"} {find_kind:\"if_statement\"}. Navigate with struct_nodes(...) first,
      then edit the same path here.
-   Locate targets with struct_index(paths) / struct_nodes(nodes).
+   Locate targets with struct_index({\"paths\": [...]}) / struct_nodes({\"nodes\": [...]}).
    Returns the [{\"path\", \"op\", \"changed\", \"diff\"}] shape as patch."
   [args]
   (let
@@ -4544,7 +4544,7 @@
    path string or `{\"path\", \"at\"|\"nav\"|\"line\"}`, and TOP-LEVEL keys are shared
    defaults, so one `path` plus many cursors needs no repetition.
      await struct_nodes({\"nodes\": [\"a.clj\", {\"path\": \"b.clj\", \"at\": [2, 0]}]})
-     await struct_nodes({\"path\": \"a.clj\"
+     await struct_nodes({\"path\": \"a.clj\",
                          \"nodes\": [{\"nav\": [{\"find\": \"my_fn\"}]}, {\"line\": 120}]})
    EVERY entry answers with BOTH the node's SOURCE CODE (`source`, verbatim text)
    AND the zipper API: `at` — the named-child index path `struct_patch` takes —

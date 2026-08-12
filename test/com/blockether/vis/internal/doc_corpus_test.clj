@@ -93,3 +93,42 @@
                    (expect (str/includes? out "grep — Search file content."))
                    (expect (not (str/includes? out "zzz")))
                    (expect (str/includes? out "`apropos(text)`")))))
+
+(def ^:private refused-call-shapes
+  "Call shapes the live handlers REFUSE, each one cross-validated against the
+   running tool before it was banned here — a document that shows one of them
+   teaches a call that cannot work."
+  [[#"(?:run_tests|repl_eval|format_code|lint_code)\(\"[^\"]*\"\)"
+    (str "a lone string argument: the language surface reads the pack from "
+         "{\"language\": \"…\"} (or the FIRST of two arguments), so a lone string "
+         "is the PAYLOAD and the call lands on the workspace's primary pack")]
+   [#"(?:grep|struct_nodes|struct_index|struct_patch)\(\s*[\"\[]"
+    "a positional query/path: search and structural tools take ONE options map"]
+   [#"(?:struct_index|struct_nodes)\([a-z_]+\)"
+    "a positional symbol: struct_index({\"paths\": […]}) / struct_nodes({\"nodes\": […]})"]
+   [#"struct_index\(\{\"path\"" "struct_index has no singular `path` key — it takes `paths`"]
+   [#"struct_patch\(\{\"paths\""
+    "struct_patch has no plural `paths` key — one `path`, or an `edits` batch"]])
+
+(defdescribe
+  no-document-teaches-a-refused-call-shape-test
+  "Every corpus document is model-facing instruction: `doc`/`apropos` hand it
+   back as the contract to call against. A shape the handler refuses is worse
+   than a missing document, because the model spends a turn discovering the
+   refusal — so the corpus is scanned for the shapes the runtime rejects."
+  (it "documents only call shapes the runtime accepts"
+      (let [es (dc/entries)]
+        (expect (seq es))
+        (doseq
+          [e es
+           [re what] refused-call-shapes]
+
+          (expect (nil? (re-find re (:text e))) (str (:name e) " documents " what)))))
+  (it "catches each banned shape when one does appear"
+      (let
+        [offender (str "run_tests(\"python\") struct_index({\"path\": p}) grep(\"q\") "
+                       "struct_patch({\"paths\": [\".\"]}) struct_nodes(nodes)")]
+        (expect (= (count refused-call-shapes)
+                   (count (filter (fn [[re _]]
+                                    (re-find re offender))
+                                  refused-call-shapes)))))))

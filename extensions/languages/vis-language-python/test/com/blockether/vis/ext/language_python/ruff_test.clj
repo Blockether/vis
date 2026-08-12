@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.language-python.ruff-test
-  "format_code(\"python\") / lint_code(\"python\"): the ruff-backed handlers.
+  "format_code / lint_code with {\"language\": \"python\"}: the ruff-backed handlers.
    Everything runs in-process through com.blockether/ruff (no `ruff` binary),
    so these exercise the real formatter/linter against a throwaway project."
   (:require [clojure.java.io :as io]

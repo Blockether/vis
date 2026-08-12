@@ -74,7 +74,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   block, file picker) and the TUI Magit surface are unchanged.
 
 ### Fixed
-- `run_tests("python")` NAMES the tests that failed. Both backends now return every fault in
+- Every model-facing document names a call the runtime accepts. `run_tests("python")` /
+  `repl_eval("python")` never selected the Python pack: the language surface reads the pack from
+  `{"language": "python"}` (or as the FIRST of two arguments), so a lone string was the PAYLOAD —
+  `run_tests("python")` asked the Clojure runner for a `python` namespace, and
+  `repl_eval("python")` evaluated `python` as Clojure. The token-optimization page also showed
+  `struct_index({"path": …})` (the key is `paths`), a project-wide rename through
+  `struct_patch({"paths": ["."]})` (there is no `paths` key — a rename batch is `edits`, whose
+  entries inherit the shared top-level keys), a JSON `true` where Python needs `True`, and the
+  positional `struct_index(paths)` / `struct_nodes(nodes)` spellings the one-options-map contract
+  refuses. A corpus test now scans every document `doc`/`apropos` can hand back for those shapes.
+- `run_tests({"language": "python"})` NAMES the tests that failed. Both backends now return every fault in
   `failures` / `errors` as `{ns, test, message, file, line}` — the project backend reads pytest's
   own `--junitxml` report, the hermetic GraalPy backend maps its per-test records — where before a
   run could report `fail: 1` and not one node id, because pytest's summary line carries counts

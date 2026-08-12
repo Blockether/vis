@@ -72,7 +72,7 @@ await struct_patch({
 })
 ```
 
-The same editor supports named-definition moves, docs, nested child insertion, and unique sub-expression replacement. For a project-wide rename, first `grep` the identifier, then pass its candidate file paths to `struct_index({"paths": [...], "include_occurrences": true})` to inspect declarations and occurrence blast radius before calling `struct_patch({"paths": ["."], "op": "rename", "target": "handle_click", "code": "handle_tap"}).
+The same editor supports named-definition moves, docs, nested child insertion, and unique sub-expression replacement. For a project-wide rename, first `grep` the identifier, then pass its candidate file paths to `struct_index({"paths": [...], "include_occurrences": True})` to inspect declarations and occurrence blast radius, then rename every one of them in ONE `struct_patch` batch — top-level keys are the shared defaults for each entry: `struct_patch({"op": "rename", "target": "handle_click", "code": "handle_tap", "edits": [{"path": path} for path in paths]})`.
 
 For prose, unsupported code, a new file, or a wholesale replacement, write from `python_execution` (`Path.write_text`) — the same filesystem gate applies.
 
@@ -83,9 +83,12 @@ Every capability is a Python function, so one operation and a batch of fifty cos
 Printing is the whole cost model, and it cuts both ways. An unprinted value costs no context — and it is also gone once the block ends, because nothing stores a result the next block could re-read. Print the slice the answer needs, then keep working from the variable while the block is still running.
 
 ```python
-rows = await gather(*(struct_index({"path": path}) for path in paths))
-hits = [row for row in rows if "TODO" in json.dumps(row)]
-print(hits[:3])
+index, todos = await gather(
+    struct_index({"paths": paths}),
+    grep({"query": "TODO", "paths": paths}),
+)
+hits = [d for r in index["results"] for d in r["definitions"]]
+print(len(hits), todos["hit_count"])
 ```
 
 This turns many reads plus a reduction into one visible result instead of one transcript entry per intermediate value.

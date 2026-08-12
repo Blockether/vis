@@ -1789,7 +1789,8 @@ The EXTENSIONS block GREW, and that is the win moving rather than reversing: the
     with phase 2's schemas: +7 describes, ~415 lines in the test map's DELETE column.
 
 58c. **L, check the raw result is still legible.** With Phase 3's card in place, run one failing
-    `run_tests("clojure")`, one `lint_code` with findings and one `repl_eval("clojure")` that throws, from a
+    `run_tests({"language": "clojure"})`, one `lint_code` with findings and one
+    `repl_eval({"language": "clojure", "code": …})` that throws, from a
     python block, and record the printed card in the commit message. The bar is NOT prettiness — it is that
     `file`, `row`, `level`, `message`, `expected`, `actual`, `ex` and `root_ex` are all present and
     addressable in the value. If a key is only reachable from a deleted renderer, that key was never in the

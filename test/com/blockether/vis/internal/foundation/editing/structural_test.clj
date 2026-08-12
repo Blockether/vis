@@ -479,7 +479,7 @@
                   nil
                   (catch Throwable e (.getMessage e)))]
         (expect (some? msg))
-        (expect (str/includes? msg "struct_index(path)"))
+        (expect (str/includes? msg "struct_index({\"paths\": [path]})"))
         (expect (not (str/includes? msg "Use index(")))))
   (it "errors on an ambiguous target without kind"
       (let [s "(defn dup [] 1)\n(def dup 2)\n"]

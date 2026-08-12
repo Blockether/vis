@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.language-python.test-fn-test
-  "run_tests(\"python\") handler: path resolution + the default hermetic GraalPy
+  "run_tests with {\"language\": \"python\"}: path resolution + the default hermetic GraalPy
    backend that discovers a `tests/` tree and runs it through the built-in
    pytest shim. Requiring `shim-pytest` registers the shim so the runner can
    pull its preamble; the GraalPy engine is exercised end to end."
