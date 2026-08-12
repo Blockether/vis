@@ -638,10 +638,17 @@ function OtpBoxes({
       {/* BEST-EFFORT JUSTIFY: the boxes stretch to fill the row, but only as far
           as a digit box goes — a square one, the touch target the thumb expects.
           Stretching six of them across the whole glass made a six-digit code
-          read as six empty fields, and the row is bounded so the same code is
-          the same shape on a phone and in the desktop dialog. */}
+          read as six empty fields, so the slack goes BETWEEN the boxes.
+
+          The row is the FIELD COLUMN on a phone, flush with the label above it
+          and the input below it: `max-w-sm` (24rem) left a 384px row under a
+          408px field on any phone wider than 400pt — a 24px ragged edge on a
+          440pt iPhone, the one thing best-effort justify must not do. The cap is
+          `max-w-md`, wider than the widest phone's column, so it never bites on
+          a phone and still stops the boxes drifting apart on wider glass; from
+          `sm:` up, where `Modal` becomes a 36rem box, it tightens again. */}
       <div
-        className="flex max-w-sm flex-wrap justify-between gap-1.5"
+        className="flex max-w-md flex-wrap justify-between gap-1.5 sm:max-w-sm"
         role="group"
         aria-label={field.label}
       >

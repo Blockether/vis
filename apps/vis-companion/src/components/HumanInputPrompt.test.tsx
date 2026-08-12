@@ -268,7 +268,7 @@ describe('a pause is only as tall as the question it asks', () => {
     const row = element(html, 'aria-label="One-time code"');
     // Best effort: the boxes fill a narrow row and stop at a bounded one, and the
     // slack goes BETWEEN them rather than into them.
-    expect(row).toContain('max-w-sm');
+    expect(row).toContain('sm:max-w-sm');
     expect(row).toContain('justify-between');
     const boxes = html.match(/<input[^>]*aria-label="One-time code digit \d"[^>]*>/g) ?? [];
     // Square: the box is capped at its own height, the touch target of a thumb.
@@ -277,6 +277,19 @@ describe('a pause is only as tall as the question it asks', () => {
     // One shape everywhere — the desktop no longer shrinks it to `w-9`.
     expect(boxes[0]).not.toContain('sm:flex-none');
     expect(boxes[0]).not.toContain('w-9');
+  });
+
+  // Regression, user report (a 440pt iPhone photograph of the shipped sheet): the
+  // bounded row was capped on the phone too, so the code stopped 24px short of the
+  // field under it — justified against nothing.
+  it('runs the code row to the edges of the field column on a phone', () => {
+    const row = element(markup('otp'), 'aria-label="One-time code"');
+    const classes = (/class="([^"]*)"/.exec(row)?.[1] ?? '').split(/\s+/);
+    // Below `sm:` the cap is wider than the widest phone's field column (408px on
+    // a 440pt iPhone), so it never bites there; it only tightens in the box.
+    expect(classes).not.toContain('max-w-sm');
+    expect(classes).toContain('max-w-md');
+    expect(classes).toContain('sm:max-w-sm');
   });
 });
 
