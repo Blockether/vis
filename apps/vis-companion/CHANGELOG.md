@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.35 (4000) — 2026-08-12
+<!-- commit: 9523cf14b093199e1f2f2ead6dca13767978fa13 -->
+
+- Make sandbox functions and tools introspectable
+- Companion: drop the machine row's kebab and always show the switch
+- Drop TOP TOOLS and TOP ERRORS from the session card
+- Drop the machine band; its verbs stand on the row above the list
+- Honour the file redirect an extension's subprocess asked for
+- Settings rows carry one line, not a paragraph
+- Extension env= never widens a confined child environment
+- Jail.md replaces sandbox.md, document the declared extension env
+- Drain the pipes an extension's guest asked for
+- Document only call shapes the runtime accepts
+- Add jail.environment: declared (default) or inherit
+- Contain extension subprocess output instead of inheriting fd 1/2
+- Make grep and struct_nodes take one canonical options map
+- Load the workspace .env by default, jail or no jail
+- CHANGELOG: run_tests(python) names its faults (issue #136)
+- Companion: the one close button is a square, the same size on every band
+- One word for confinement: jail
+- Companion: one CloseButton — every close glyph in the app is the same 32px column
+- Delete jail.env: `environment:` is the one place a variable is named
+- Companion: draw one close glyph at one size, so the queued tray's close is the black one every other close is
+
 ## 0.1.35 (3971) — 2026-08-12
 <!-- commit: eef1f83d0f5af4c3cfa30158ccbde81d9a5326ea -->
 
