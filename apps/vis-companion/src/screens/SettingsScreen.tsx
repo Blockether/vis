@@ -1080,20 +1080,20 @@ function SettingsColumn({
 }) {
   return (
     <section className="flex min-w-0 flex-col sm:min-h-0">
-      <header className="flex shrink-0 items-start gap-3 border-b border-dialog-edge bg-level-machine px-3 py-2 sm:px-4">
-        <div className="min-w-0 flex-1">
-          <h3 className="min-w-0 truncate font-mono text-ui font-black uppercase tracking-[0.12em] text-white">
-            {title}
-          </h3>
-          <p className={`mt-0.5 ${PROSE} font-mono text-chip text-dialog-hint`}>
-            {description}
-          </p>
-        </div>
+      {/* Same wrap rule as a `SettingsPanel` band: a machine label is as long as
+          the host it names, and it may not eat the column's own title. */}
+      <header className="flex min-w-0 shrink-0 flex-wrap content-center items-baseline gap-x-3 gap-y-1 border-b border-dialog-edge bg-level-machine px-3 py-2 sm:px-4">
+        <h3 className="min-w-0 flex-auto truncate font-mono text-ui font-black uppercase tracking-[0.12em] text-white">
+          {title}
+        </h3>
         {meta && (
-          <span className="shrink-0 font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
+          <span className="ms-auto min-w-0 max-w-full break-words text-right font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
             {meta}
           </span>
         )}
+        <p className={`w-full ${PROSE} font-mono text-chip text-dialog-hint`}>
+          {description}
+        </p>
       </header>
       <div className="min-w-0 divide-y divide-dialog-edge sm:min-h-0 sm:flex-1 sm:overflow-y-auto sm:overscroll-contain">
         {children}
@@ -2045,7 +2045,7 @@ function NativeNotificationsPanel({
   );
 }
 
-function SettingsPanel({
+export function SettingsPanel({
   title,
   description,
   meta,
@@ -2064,25 +2064,28 @@ function SettingsPanel({
     // rule its container divides on, exactly as a project is separated from the
     // next in the sessions list.
     <section className="min-w-0 overflow-hidden bg-panel transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
-      <header
-        className={`flex min-h-8 gap-3 border-b border-dialog-edge bg-panel-2 px-3 py-1.5 ${
-          description ? "items-start" : "items-center"
-        }`}
-      >
-        <div className="min-w-0 flex-1">
-          <h3 className="min-w-0 truncate border-l-2 border-accent pl-2 font-mono text-meta font-black uppercase tracking-[0.12em] text-white">
-            {title}
-          </h3>
-          {description && (
-            <p className={`mt-0.5 pl-2 ${PROSE} font-mono text-chip text-dialog-hint`}>
-              {description}
-            </p>
-          )}
-        </div>
+      {/* A HEADER LINE IS NOT A COMPETITION FOR ONE ROW. The status used to be
+          `shrink-0` beside the name, so it took its whole intrinsic width first
+          and the name lived on what was left: measured on a 390px iPhone,
+          "0 devices · via <relay host>" claimed 339 of 390, the title box
+          collapsed to 15px and clipped to one syllable, the sentence under it
+          wrapped one word per line, and the band grew 213px tall. The row WRAPS
+          instead — the name is measured at its own width so a status that does
+          not fit beside it drops to its own line, and the description always
+          spans the whole band. */}
+      <header className="flex min-h-8 min-w-0 flex-wrap content-center items-baseline gap-x-3 gap-y-1 border-b border-dialog-edge bg-panel-2 px-3 py-1.5">
+        <h3 className="min-w-0 flex-auto truncate border-l-2 border-accent pl-2 font-mono text-meta font-black uppercase tracking-[0.12em] text-white">
+          {title}
+        </h3>
         {meta && (
-          <span className="shrink-0 font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
+          <span className="ms-auto min-w-0 max-w-full break-words text-right font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
             {meta}
           </span>
+        )}
+        {description && (
+          <p className={`w-full pl-2 ${PROSE} font-mono text-chip text-dialog-hint`}>
+            {description}
+          </p>
         )}
       </header>
       <div>{children}</div>
