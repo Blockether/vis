@@ -22,10 +22,12 @@
 
 (defn- temp-dir! [] (str (Files/createTempDirectory "magit-test" (make-array FileAttribute 0))))
 
-(defn- init-repo!
-  "Fresh repo on branch `main` with one committed file `a.txt`."
-  []
-  (let [dir (temp-dir!)]
+(defn- init-repo-at!
+  "Fresh repo on branch `main` with one committed file `a.txt`, at `dir`
+   (created when missing)."
+  [dir]
+  (let [dir (str dir)]
+    (.mkdirs (io/file dir))
     (git-run! dir "init" "-b" "main")
     (git-run! dir "config" "user.email" "test@vis.dev")
     (git-run! dir "config" "user.name" "Vis Test")
@@ -34,6 +36,17 @@
     (git-run! dir "add" "-A")
     (git-run! dir "commit" "-m" "initial")
     dir))
+
+(defn- init-repo! [] (init-repo-at! (temp-dir!)))
+
+(defn- mega-repo!
+  "A repository that VENDORS other repositories: the root repo keeps two clones
+   of its own under `repositories/`, the shape a mega-repo has on disk."
+  []
+  (let [root (init-repo!)]
+    (doseq [nm ["alpha" "beta"]]
+      (init-repo-at! (str root "/repositories/" nm)))
+    root))
 
 (defn- add-bare-remote!
   "Create a bare repo and wire it as `origin` of `dir`. Returns its path."
@@ -1081,3 +1094,164 @@
         (expect (= ["a.txt"] (mapv :path (:staged (magit/status-model clone)))))
         (expect (empty? (:staged (magit/status-model trunk))))
         (expect (empty? (:unstaged (magit/status-model trunk))))))))
+
+;;; ── Nested repositories (a mega-repo's `repositories/` clones) ──────────────
+
+(defdescribe
+  session-roots-test
+  (it "a mega-repo lists every nested repository after its own root"
+      (let
+        [root
+         (mega-repo!)
+
+         roots
+         (magit/session-roots nil root)]
+
+        (expect (= root (:root (first roots))))
+        (expect (= 3 (count roots)))
+        (expect (= ["repositories/alpha" "repositories/beta"] (mapv :label (rest roots))))
+        ;; every nested entry points at a real directory of its own
+        (expect (every? #(.isDirectory (io/file (str (:root %) "/.git"))) (rest roots)))
+        (expect (not-any? :draft? roots))))
+  (it "a project with no nested repositories yields its own root alone"
+      (let [root (init-repo!)]
+        (expect (= [root] (mapv :root (magit/session-roots nil root))))))
+  (it "the primary root is never listed twice"
+      (let
+        [root
+         (mega-repo!)
+
+         canonical
+         (fn [p]
+           (.getCanonicalPath (io/file (str p))))
+
+         roots
+         (magit/session-roots {:root root} nil)]
+
+        (expect (= (count roots) (count (distinct (mapv (comp canonical :root) roots)))))))
+  (it "a blank root discovers nothing instead of scanning the filesystem"
+      (expect (= [] (magit/nested-roots nil)))
+      (expect (= [] (magit/nested-roots "")))
+      (expect (= [] (magit/session-roots nil nil)))))
+
+(defdescribe
+  repo-fold-test
+  (it "a clean repo folds to its header line while a dirty one stays open"
+      (let
+        [clean
+         (init-repo!)
+
+         dirty
+         (init-repo!)]
+
+        (spit (str dirty "/new.txt") "x\n")
+        (let
+          [repos
+           (magit/load-repos [{:root clean :trunk clean :label "clean" :draft? false}
+                              {:root dirty :trunk dirty :label "dirty" :draft? false}])
+
+           rows
+           (magit/multi-status-rows repos #{} nil)
+
+           by-root
+           (group-by :root rows)]
+
+          ;; the clean repo IS its header row — nothing else is rendered for it
+          (expect (= 1 (count (by-root clean))))
+          (expect (= :repo (:kind (first (by-root clean)))))
+          (expect (true? (:collapsed? (first (by-root clean)))))
+          (expect (false? (:collapsed? (first (by-root dirty)))))
+          (expect (some #(= "new.txt" (:path %)) (by-root dirty))))))
+  (it "TAB's `[root :repo nil]` flip opens a clean repo and folds a dirty one"
+      (let
+        [clean
+         (init-repo!)
+
+         dirty
+         (init-repo!)]
+
+        (spit (str dirty "/new.txt") "x\n")
+        (let
+          [repos
+           (magit/load-repos [{:root clean :trunk clean :label "clean" :draft? false}
+                              {:root dirty :trunk dirty :label "dirty" :draft? false}])
+
+           rows
+           (magit/multi-status-rows repos #{[clean :repo nil] [dirty :repo nil]} nil)
+
+           by-root
+           (group-by :root rows)]
+
+          (expect (some #(str/starts-with? (str (:text %)) "Head:") (by-root clean)))
+          (expect (= 1 (count (by-root dirty))))
+          (expect (not-any? #(= "new.txt" (:path %)) (by-root dirty))))))
+  (it "a folded repo's header still says which branch it is on and how dirty"
+      (let [dir (init-repo!)]
+        (spit (str dir "/new.txt") "x\n")
+        (spit (str dir "/a.txt") "one\ntwo\n")
+        (git-run! dir "add" "a.txt")
+        (let
+          [model (magit/status-model dir)
+           text (:text (magit/repo-row {:label "proj" :root dir :draft? false :model model}))]
+
+          (expect (str/includes? text "proj"))
+          (expect (str/includes? text "main"))
+          (expect (str/includes? text "1 staged"))
+          (expect (str/includes? text "1 untracked")))))
+  (it "a clean repo's header says so"
+      (let [dir (init-repo!)]
+        (expect (str/includes? (magit/repo-summary (magit/status-model dir)) "clean"))
+        (expect (false? (magit/repo-dirty? (magit/status-model dir))))))
+  (it "ONE repo is never folded — the single-root buffer has no header at all"
+      (let
+        [dir
+         (init-repo!)
+
+         rows
+         (magit/multi-status-rows (magit/load-repos (magit/session-roots nil dir)) #{} nil)]
+
+        (expect (not-any? #(= :repo (:kind %)) rows))
+        (expect (some #(str/starts-with? (str (:text %)) "Head:") rows)))))
+
+(defdescribe
+  multi-repo-verb-routing-test
+  (it
+    "a whole-repo verb on a repo header acts on THAT repo and no other"
+    (let
+      [a
+       (init-repo!)
+
+       b
+       (init-repo!)]
+
+      (spit (str a "/new.txt") "a\n")
+      (spit (str b "/new.txt") "b\n")
+      (let
+        [repos
+         (magit/load-repos [{:root a :trunk a :label "alpha" :draft? false}
+                            {:root b :trunk b :label "beta" :draft? false}])
+
+         rows
+         (magit/multi-status-rows repos #{} nil)
+
+         idx
+         (first (keep-indexed #(when (and (= :repo (:kind %2)) (= b (:root %2))) %1) rows))
+
+         row
+         (nth rows idx)
+
+         r
+         ((var-get #'dialogs/magit-char-action!)
+           nil
+           nil
+           nil
+           (:root row)
+           (magit/status-model b)
+           rows
+           idx
+           row
+           \S)]
+
+        (expect (:ok? r))
+        (expect (= ["new.txt"] (mapv :path (:staged (magit/status-model b)))))
+        (expect (empty? (:staged (magit/status-model a))))))))

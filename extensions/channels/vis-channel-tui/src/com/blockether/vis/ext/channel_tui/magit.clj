@@ -20,6 +20,7 @@
    Keeping the model/actions/rows split pure means the whole magit feature is
    exercisable in tests against a throw-away repo, with zero lanterna."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.foundation.environment.repositories :as repositories]
             [com.blockether.vis.internal.git :as git])
   (:import [java.io File]))
 
@@ -993,10 +994,118 @@
           :draft? (boolean (or (wget ws :draft?) (wget ws :fork-ms)))}])
       []))
 
+(def ^:const nested-repo-limit
+  "Ceiling on the repositories the status buffer discovers BELOW the session
+   root. A mega-repo that vendors clones under `repositories/` pays one
+   `status-model` (a handful of git calls) per repo on every refresh, so the
+   buffer stays bounded no matter how many clones the tree holds."
+  12)
+
+(defn nested-roots
+  "Repo entries for the Git repositories nested BELOW `root`, newest scan of the
+   host's bounded, CACHED inventory (`/reload` refreshes it after a clone). The
+   root itself is dropped — `workspace-roots` already owns it — and each entry
+   is labelled by its path RELATIVE to the session root, so a mega-repo reads as
+   `repositories/svar` and not as a second `svar`. Never throws: a missing or
+   unreadable root yields no entries."
+  [root]
+  (if-let [root (not-empty (str root))]
+    (->> (try (:repositories (repositories/inventory root)) (catch Throwable _ nil))
+         (remove #(= "." (:path %)))
+         (take nested-repo-limit)
+         (mapv (fn [{:keys [path] repo-root :root}]
+                 {:root (str repo-root) :trunk (str repo-root) :label (str path) :draft? false})))
+    []))
+
+(defn session-roots
+  "Every repository the status buffer shows for a session: the primary workspace
+   root (`workspace-roots`) followed by every Git repository `nested-roots`
+   finds below it — the clones a mega-repo keeps in a `repositories/` folder,
+   or any repo checked out inside the project outside `.gitmodules`.
+
+   The primary entry stays FIRST (it owns the title and the fallback root) and a
+   nested root that duplicates it is dropped. Roots that turn out not to be git
+   repositories are dropped later, by `load-repos`."
+  [ws fallback-root]
+  (let
+    [primary
+     (workspace-roots ws fallback-root)
+
+     seen
+     (into #{}
+           (map (fn [{:keys [root]}]
+                  (str (try (.getCanonicalPath (as-file root)) (catch Throwable _ root)))))
+           primary)]
+
+    (into primary (remove #(contains? seen (:root %))) (nested-roots (:root (first primary))))))
+
+(defn repo-dirty?
+  "Has this repo anything to show? Working-tree changes, a conflict, or commits
+   waiting to be pushed or pulled. A clean repo's sections are all empty except
+   its recent history, which is why the multi-root buffer folds it shut."
+  [{:keys [untracked unstaged staged unmerged unpushed unpulled]}]
+  (boolean
+    (or (seq untracked) (seq unstaged) (seq staged) (seq unmerged) (seq unpushed) (seq unpulled))))
+
+(defn repo-summary
+  "One line of state for a repo header: branch (or detached sha), then the
+   working-tree buckets that hold something — `clean` when none do — then
+   ahead/behind. Same vocabulary as the `Head:`/`Merge:` preamble, so a folded
+   repo reads like the buffer it opens into."
+  [{:keys [branch detached? head untracked unstaged staged unmerged ahead behind] :as model}]
+  (if-not model
+    "not a git repository"
+    (let
+      [head-label
+       (if detached? (str "detached " (subs (str head) 0 (min 8 (count (str head))))) (str branch))
+
+       buckets
+       (cond-> []
+         (seq unmerged)
+         (conj (str (count unmerged) " conflicted"))
+
+         (seq staged)
+         (conj (str (count staged) " staged"))
+
+         (seq unstaged)
+         (conj (str (count unstaged) " unstaged"))
+
+         (seq untracked)
+         (conj (str (count untracked) " untracked")))
+
+       sync
+       (cond-> []
+         (pos? (long (or ahead 0)))
+         (conj (str "ahead " ahead))
+
+         (pos? (long (or behind 0)))
+         (conj (str "behind " behind)))]
+
+      (str/join "  ·  "
+                (cond-> [head-label (if (seq buckets) (str/join ", " buckets) "clean")]
+                  (seq sync)
+                  (conj (str/join ", " sync)))))))
+
+(defn repo-open?
+  "Is this repo's section stack unfolded in a multi-root buffer? A repo with
+   something to act on opens by default and a clean one shows as its header
+   alone; TAB on the header flips either way by putting `[root :repo nil]` in
+   `expanded` — the same flip-a-default rule `section-open?` uses."
+  [expanded root model]
+  (let [flipped? (contains? (or expanded #{}) [root :repo nil])]
+    (if (repo-dirty? model) (not flipped?) flipped?)))
+
 (defn repo-row
-  "The repo header row a multi-root buffer shows above each repo's sections."
-  [{:keys [label root draft?]}]
-  {:kind :repo :root root :text (str "Repository " label (when draft? " (draft)") " — " root)})
+  "The repo header row a multi-root buffer shows above each repo's sections: a
+   fold marker, the repo's label, and `repo-summary` — so a FOLDED repo still
+   says which branch it is on and how dirty it is."
+  [{:keys [label root draft? model collapsed?]}]
+  {:kind :repo
+   :root root
+   :collapsible? true
+   :collapsed? (boolean collapsed?)
+   :text
+   (str (if collapsed? "▸ " "▾ ") label (when draft? " (draft)") "  —  " (repo-summary model))})
 
 (defn multi-status-rows
   "Rows for one OR many repos. `repos` is `[{:root :label :draft? :model}]`
@@ -1005,28 +1114,37 @@
    while several repos each get a `:repo` header row. EVERY row is tagged
    with its `:root` so the dialog's verbs route to the right repo.
 
-   `expanded` is a set of `[root area path]` triples; `diff-fn` receives the
-   root-tagged file row."
+   In a MULTI-root buffer only the repos with something to act on unfold
+   (`repo-open?`); a clean repo is its header line alone until TAB opens it, so
+   a mega-repo of a dozen clones opens as a dozen readable lines instead of a
+   dozen commit logs.
+
+   `expanded` is a set of `[root area path]` triples — `[root :repo nil]` flips
+   a repo's own fold; `diff-fn` receives the root-tagged file row."
   [repos expanded diff-fn]
   (let [multi? (> (count repos) 1)]
     (vec
-      (mapcat
-        (fn [{:keys [root model] :as repo}]
-          (let
-            [expanded-here (into #{}
-                                 (keep (fn [[r a p]]
-                                         (when (= r root) [a p])))
-                                 (or expanded #{}))
-             diff-here (when diff-fn
-                         (fn [row]
-                           (diff-fn (assoc row :root root))))
-             body (if model
-                    (status-rows model expanded-here diff-here)
-                    [{:kind :info :text "Not a git repository"}])
-             body (mapv #(assoc % :root root) body)]
+      (mapcat (fn [{:keys [root model] :as repo}]
+                (let
+                  [expanded-here (into #{}
+                                       (keep (fn [[r a p]]
+                                               (when (= r root) [a p])))
+                                       (or expanded #{}))
+                   open? (or (not multi?) (repo-open? expanded root model))
+                   diff-here (when diff-fn
+                               (fn [row]
+                                 (diff-fn (assoc row :root root))))
+                   body (when open?
+                          (mapv #(assoc % :root root)
+                                (if model
+                                  (status-rows model expanded-here diff-here)
+                                  [{:kind :info :text "Not a git repository"}])))]
 
-            (if multi? (into [(repo-row repo)] (conj body (assoc (blank-row) :root root))) body)))
-        repos))))
+                  (if multi?
+                    (into [(repo-row (assoc repo :collapsed? (not open?)))]
+                          (when open? (conj body (assoc (blank-row) :root root))))
+                    body)))
+              repos))))
 
 (defn load-repos
   "Attach a fresh `:model` snapshot to every repo entry — one `status-model`
@@ -1034,13 +1152,17 @@
    nil). A non-repo root has nothing to show, so it never earns a header in the
    multi-root buffer. The refresh path of a multi-root buffer.
 
+   The reads run in PARALLEL (`pmap`, order preserved): every root costs a
+   handful of git subprocesses, and a dozen roots refreshed one after another is
+   what would make the buffer feel slow after each verb.
+
    Fallback: when NOT ONE root is a git repository the first entry is kept (with
    its nil `:model`) so a repo-less session still renders the single-root
    `Not a git repository` empty state instead of a blank buffer."
   [repo-entries]
   (let
     [with-models
-     (mapv #(assoc % :model (status-model (:root %))) repo-entries)
+     (vec (pmap #(assoc % :model (status-model (:root %))) repo-entries))
 
      repos
      (filterv :model with-models)]

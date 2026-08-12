@@ -3018,10 +3018,12 @@
 
    `root-or-repos` is either ONE root (string/File — the classic single-repo
    buffer) or a vector of repo entries `{:root :label :draft?}` from
-   `magit/workspace-roots` — the session's primary workspace root.
-   gets a `Repository <label> — <path>` header and its own full section stack;
-   for a DRAFT session the entries already point at the CLONES the session
-   edits, so the buffer shows the draft's git state, not the trunk's.
+   `magit/session-roots` — the session's primary workspace root plus every
+   Git repository nested below it (a mega-repo's `repositories/` clones). Each
+   entry gets a header row carrying its branch and dirty counts, and its own
+   full section stack; a clean repo opens FOLDED to that one line and TAB
+   unfolds it. For a DRAFT session the entries already point at the CLONES the
+   session edits, so the buffer shows the draft's git state, not the trunk's.
 
    Sections: head/upstream facts, untracked, unmerged, unstaged, staged,
    stashes and recent commits. TAB folds a file's diff peek open under
@@ -3340,6 +3342,11 @@
                   ;; section (magit's section visibility toggle).
                   :section
                   (when (:collapsible? row) [root :section (:area row)])
+
+                  ;; TAB on a repo header folds/unfolds that repository's whole
+                  ;; section stack in a multi-root buffer.
+                  :repo
+                  [root :repo nil]
 
                   :commit
                   [root (:area row) (:sha row)]

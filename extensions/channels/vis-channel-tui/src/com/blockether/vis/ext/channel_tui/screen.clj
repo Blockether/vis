@@ -5593,10 +5593,12 @@
                               (let
                                 [db @state/app-db
                                  fallback (or (:workspace/root db) (System/getProperty "user.dir"))
-                                 ;; The primary workspace root. For a DRAFT it points
-                                 ;; at the clone, so the buffer shows the draft's git
-                                 ;; state, never the trunk's.
-                                 repos (magit/workspace-roots (:workspace db) fallback)]
+                                 ;; The primary workspace root plus every git repo
+                                 ;; nested below it (a mega-repo's `repositories/`
+                                 ;; clones). For a DRAFT the primary points at the
+                                 ;; clone, so the buffer shows the draft's git state,
+                                 ;; never the trunk's.
+                                 repos (magit/session-roots (:workspace db) fallback)]
 
                                 (with-dialog-lock #(dlg/magit-dialog! screen repos)))))
               ;; Companion parity ("Start the session in"): a new session may begin in an
