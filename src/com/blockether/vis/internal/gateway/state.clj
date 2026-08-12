@@ -805,8 +805,7 @@
 (defn session-usage-info
   "Whole-session USAGE rollup for `sid` in THE canonical string-keyed wire shape
    `{\"turn_count\" \"iteration_count\" \"tool_call_count\" \"fold_count\"
-   \"top_tools\" \"error_count\" \"top_errors\" \"input_tokens\"
-   \"input_regular_tokens\"
+   \"input_tokens\" \"input_regular_tokens\"
    \"input_cache_write_tokens\" \"input_cache_read_tokens\" \"output_tokens\"
    \"output_reasoning_tokens\" \"cache_hit_rate\" \"cost_usd\" \"duration_ms\"
    \"first_turn_at\" \"last_turn_at\" \"provider\" \"model\"}`, or nil when the

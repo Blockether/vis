@@ -3148,7 +3148,7 @@
 
 (defdescribe
   usage-tool-rollup-is-decoded-once-test
-  "The tool/fold/error half of the rollup has no column — it lives inside each
+  "The tool/fold half of the rollup has no column — it lives inside each
    iteration's Nippy `tool_calls` BLOB — and the companion refetches
    `/v1/sessions/:sid/usage` on every session-row expand. Re-thawing the whole
    history each time cost ~200 ms on a 2 900-call session, per open, per client.
@@ -3170,8 +3170,6 @@
        tid
        (vis/db-store-session-turn! s {:parent-session-id (str sid) :user-request "one"})
 
-       ;; A form counts as FAILED the way channels judge one: an `:error`
-       ;; payload, or an explicit false `:success?`.
        decodes
        (atom 0)
 
@@ -3188,10 +3186,7 @@
                                       (swap! decodes inc)
                                       (orig forms))}
            (fn []
-             (persistance/db-session-usage-stats s (str sid)))))
-
-       by-name
-       #(into {} (map (juxt :name :count)) %)]
+             (persistance/db-session-usage-stats s (str sid)))))]
 
       (h/store-iteration! s
                           {:session-turn-id tid
@@ -3210,9 +3205,6 @@
       (let [u (stats)]
         (expect (= 4 (:tool-call-count u)))
         (expect (= 1 (:fold-count u)))
-        (expect (= {"cat" 2 "patch" 1} (by-name (:top-tools u))))
-        (expect (= 2 (:error-count u)))
-        (expect (= {"cat" 1 "patch" 1} (by-name (:top-errors u))))
         (expect (= 2 @decodes))
         ;; Same session, nothing written in between: the answer is identical
         ;; and not one blob is thawed again.
@@ -3228,8 +3220,7 @@
                            :forms [{:vis/tool-name "shell" :result "ok"}]})
       (let [u (stats)]
         (expect (= 5 (:tool-call-count u)))
-        (expect (= {"cat" 2 "patch" 1 "shell" 1} (by-name (:top-tools u))))
-        (expect (= 2 (:error-count u)))
+        (expect (= 1 (:fold-count u)))
         (expect (= 3 @decodes))))))
 
 (defdescribe

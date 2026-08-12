@@ -1760,8 +1760,8 @@
 ;; the merged memo without touching a blob at all.
 
 (def ^:private ^java.util.concurrent.ConcurrentHashMap usage-tally-cache
-  "Iteration row id → that row's `{:counts {tool n} :errors {tool n}}` tally.
-   Counts only — no forms, no results — so a row costs a few tens of bytes."
+  "Iteration row id → that row's `{tool n}` call tally. Counts only — no
+   forms, no results — so a row costs a few tens of bytes."
   (java.util.concurrent.ConcurrentHashMap.))
 
 (def ^:private usage-tally-cache-max
@@ -1780,37 +1780,22 @@
   "Session ceiling; dropped wholesale on overflow like the row cache."
   512)
 
-(def ^:private empty-tally {:counts {} :errors {}})
+(def ^:private empty-tally {})
 
 (defn- forms-tally
-  "ONE iteration's `{:counts :errors}` over its decoded tool-call `forms`, keyed
-   by `:vis/tool-name`. A form counts as FAILED the way channels judge one: it
-   carries an `:error` payload, or an explicit false `:success?`. Both rollups
-   come out of the SAME pass, so errors cost no extra decode."
+  "ONE iteration's `{tool n}` call tally over its decoded tool-call `forms`,
+   keyed by `:vis/tool-name`."
   [forms]
   (reduce (fn [acc form]
-            (let
-              [n
-               (str (:vis/tool-name form))
-
-               ok
-               (:success? form)]
-
-              (if (str/blank? n)
-                acc
-                (cond-> (update-in acc [:counts n] (fnil inc 0))
-                  (or (some? (:error form)) (and (some? ok) (not ok)))
-                  (update-in [:errors n] (fnil inc 0))))))
+            (let [n (str (:vis/tool-name form))]
+              (if (str/blank? n) acc (update acc n (fnil inc 0)))))
           empty-tally
           forms))
 
-(defn- merge-tally
-  "Sum two `{:counts :errors}` tallies tool by tool."
-  [a b]
-  {:counts (merge-with + (:counts a) (:counts b)) :errors (merge-with + (:errors a) (:errors b))})
+(defn- merge-tally "Sum two `{tool n}` tallies tool by tool." [a b] (merge-with + a b))
 
 (defn- usage-tally
-  "Merged `{:counts :errors}` over the iteration rows `row-ids` of session
+  "Merged `{tool n}` call tally over the iteration rows `row-ids` of session
    `sref`, computed at most ONCE per row per process.
 
    Three tiers, cheapest first: an unchanged session returns its memoised merge;
@@ -1866,8 +1851,7 @@
    `{:turn-count :iteration-count :duration-ms :input-tokens
      :input-regular-tokens :input-cache-write-tokens :input-cache-read-tokens
      :output-tokens :output-reasoning-tokens :cost-usd :first-turn-at
-     :last-turn-at :provider :model :tool-call-count :fold-count :top-tools
-     :error-count :top-errors}`
+     :last-turn-at :provider :model :tool-call-count :fold-count}`
 
    Token/cost/iteration facts are SQL aggregates over the turn-state rollups
    (`session_turn_state`), which the turn writer already maintains — no
@@ -1880,13 +1864,8 @@
    the iterations added since the last read. It is still an ON-DEMAND
    single-session read and never part of `list-sessions`.
 
-   `:top-tools` is `[{:name s :count n}]`, busiest first, folds excluded.
-
-   `:top-errors` is that same shape over only the calls that FAILED (noisiest
-   tool first, folds included), so a session's failure surface reads next to
-   its volume. A form counts as failed the way channels judge one: it carries
-   an `:error` payload, or an explicit false `:success?`. Both rollups come out
-   of the SAME blob pass, so errors cost no extra decode."
+   Only the two TOTALS survive the blob pass: per-tool and per-error rankings
+   had no reader left on any channel, so they are not computed."
   [db-info session-id]
   (when (and (ds db-info) session-id)
     (let
@@ -1940,10 +1919,9 @@
                                       join)
                           :where (conj where [:<> :qti.tool_calls nil])}))
 
-           ;; ONE Nippy thaw per iteration row, ONCE per process, and TWO
-           ;; rollups out of that single pass: every call by tool, and only the
-           ;; failed ones (see `usage-tally`).
-           {counts :counts errors :errors}
+           ;; ONE Nippy thaw per iteration row, ONCE per process (see
+           ;; `usage-tally`).
+           counts
            (usage-tally db-info soul-id-s iter-ids)
 
            folds
@@ -1961,17 +1939,7 @@
              :output-reasoning-tokens (long (or (:output_reasoning_tokens agg) 0))
              :cost-usd (double (or (:cost_usd agg) 0))
              :tool-call-count (long (reduce + 0 (vals counts)))
-             :fold-count folds
-             :top-tools (into []
-                              (comp (remove #(= "session_fold" (key %)))
-                                    (map (fn [[n c]]
-                                           {:name n :count (long c)})))
-                              (sort-by (comp - val) counts))
-             :error-count (long (reduce + 0 (vals errors)))
-             :top-errors (into []
-                               (map (fn [[n c]]
-                                      {:name n :count (long c)}))
-                               (sort-by (comp - val) errors))}
+             :fold-count folds}
             (:first_at agg)
             (assoc :first-turn-at (long (:first_at agg)))
 
