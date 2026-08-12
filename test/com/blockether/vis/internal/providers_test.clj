@@ -84,8 +84,13 @@
   ;; run synchronously on a warm caller — a stale snapshot is served as-is
   ;; while ONE background refresh replaces it.
   (let
-    [slow-ms
-     200
+    [;; The refresh is held OPEN on this gate instead of a sleep: "in flight" has
+     ;; to be a FACT while the single-flight assertion runs. A 200ms bet loses on
+     ;; a loaded runner — the refresh finished between the reads, a later read
+     ;; found the snapshot stale again and enumerated a second time, and the
+     ;; assertion failed for a race the product does not have (CI, macos-latest).
+     gate
+     (promise)
 
      calls
      (atom 0)
@@ -99,7 +104,7 @@
     (with-redefs
       [config/load-config (fn []
                             (swap! calls inc)
-                            (Thread/sleep slow-ms)
+                            (deref gate 10000 nil)
                             {:providers fleet})]
       ;; plant a STALE snapshot
       (reset! @cache {:at 0 :val [{:id :old}]})
@@ -110,11 +115,17 @@
 
         (is (= [{:id :old}] stale) "stale read serves the last-known snapshot immediately")
         (is (< stale-ms 50.0) "stale read must NOT block on the enumeration")
-        ;; several stale reads while the refresh is in flight stay single-flight
+        ;; wait for the ONE background refresh to actually reach the enumeration,
+        ;; where the gate now holds it
+        (loop [n 0]
+          (when (and (zero? @calls) (< n 400)) (Thread/sleep 5) (recur (inc n))))
+        ;; every stale read WHILE that refresh is in flight is single-flight
         (dotimes [_ 5]
           (providers/configured-providers-cached))
-        (await-value providers/configured-providers-cached fleet)
         (is (= 1 @calls) "only ONE background refresh runs (single-flight)")
+        (deliver gate true)
+        (await-value providers/configured-providers-cached fleet)
+        (is (= 1 @calls) "and the refresh that lands is that same one")
         (is (= fleet (providers/configured-providers-cached)) "the refreshed snapshot lands")))
     (providers/invalidate-configured-providers!)))
 
