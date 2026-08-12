@@ -294,6 +294,141 @@ def __vis_install_pytest_compat__():
     # The capture the run installed, so `capsys`/`capfd` can share it.
     _ACTIVE_CAPTURE = {"cap": None}
 
+    # Ends one `capfd` snapshot: written to the redirected descriptor so the
+    # drain thread can prove it has consumed everything the test wrote.
+    _FD_MARK = b"\x00\x11vis-capfd\x11\x00"
+
+    class _FdCapture:
+        """REAL file-descriptor capture for one fd, backing the `capfd` fixture.
+
+        `capsys` swaps `sys.stdout`/`sys.stderr`, which is blind to anything that
+        writes the descriptor directly (`os.write(1, ...)`, a C extension, a child
+        process). This dup2s the fd onto a pipe for the test's lifetime and reads
+        back what accumulated. A temp FILE would be simpler, but the sandbox
+        Context may grant no filesystem at all while pipes and `dup2` still work.
+
+        A pipe holds ~64 KiB, so ONE daemon thread drains it continuously --
+        without a reader the test's own `os.write` would block forever. Snapshot
+        boundaries are a marker written through the same pipe, so `readouterr()`
+        answers everything written BEFORE it and nothing written after.
+        """
+
+        def __init__(self, fd):
+            self.fd = fd
+            self._saved = None
+            self._read = None
+            self._write = None
+            self._chunks = []
+            self._lock = None
+            self._thread = None
+
+        def start(self):
+            """Redirect the fd; False when the Context forbids the operation."""
+            import threading as _threading
+
+            read_fd = write_fd = None
+            try:
+                read_fd, write_fd = os.pipe()
+                self._saved = os.dup(self.fd)
+                os.dup2(write_fd, self.fd)
+            except Exception:
+                for _fd in (self._saved, read_fd, write_fd):
+                    if _fd is not None:
+                        try:
+                            os.close(_fd)
+                        except Exception:
+                            pass
+                self._saved = None
+                return False
+            self._read, self._write = read_fd, write_fd
+            self._lock = _threading.Lock()
+            self._thread = _threading.Thread(target=self._drain, daemon=True)
+            self._thread.start()
+            return True
+
+        def _drain(self):
+            while True:
+                try:
+                    block = os.read(self._read, 8192)
+                except Exception:
+                    return
+                if not block:
+                    return
+                with self._lock:
+                    self._chunks.append(block)
+
+        def _flush(self):
+            # A stream still pointed at this fd may hold buffered bytes.
+            for stream in (sys.stdout, sys.stderr):
+                try:
+                    if stream is not None and stream.fileno() == self.fd:
+                        stream.flush()
+                except Exception:
+                    pass
+
+        def _take(self, upto_mark):
+            with self._lock:
+                data = b"".join(self._chunks)
+                head, sep, tail = data.partition(_FD_MARK)
+                if upto_mark and sep:
+                    self._chunks = [tail]
+                else:
+                    head, self._chunks = data, []
+            return head.replace(_FD_MARK, b"").decode("utf-8", "replace")
+
+        def snap(self):
+            """Everything written to the fd since the previous snapshot."""
+            if self._read is None:
+                return ""
+            self._flush()
+            import time as _time
+
+            try:
+                os.write(self.fd, _FD_MARK)
+            except Exception:
+                return self._take(False)
+            deadline = _time.time() + 2.0
+            while True:
+                with self._lock:
+                    seen = _FD_MARK in b"".join(self._chunks)
+                if seen or _time.time() > deadline:
+                    break
+                _time.sleep(0.001)
+            return self._take(True)
+
+        def stop(self):
+            """Restore the descriptor; answer whatever was never read back."""
+            tail = self.snap()
+            if self._saved is not None:
+                try:
+                    os.dup2(self._saved, self.fd)
+                    os.close(self._saved)
+                except Exception:
+                    pass
+                self._saved = None
+            # Closing the write end is the drain thread's EOF; only once it has
+            # finished may the read end go, or its last block is lost.
+            if self._write is not None:
+                try:
+                    os.close(self._write)
+                except Exception:
+                    pass
+                self._write = None
+            if self._thread is not None:
+                try:
+                    self._thread.join(1.0)
+                except Exception:
+                    pass
+                self._thread = None
+            rest = self._take(False) if self._read is not None else ""
+            if self._read is not None:
+                try:
+                    os.close(self._read)
+                except Exception:
+                    pass
+                self._read = None
+            return tail + rest
+
     class CaptureFixture:
         """`capsys` / `capfd`: a VIEW on the run's capture, not a second one.
 
@@ -302,6 +437,14 @@ def __vis_install_pytest_compat__():
         replayed under a failure. Private buffers here used to swallow that tail
         entirely. Only with the global capture off (`-s`) does the fixture divert
         `sys.stdout`/`sys.stderr` itself -- pytest's `capsys` works under `-s` too.
+
+        `capfd` adds REAL descriptor capture on top: fd 1 / fd 2 are redirected
+        for the duration of the test, so `os.write(1, ...)`, a C-level write and a
+        child process's output -- output that never passes through `sys.stdout` --
+        come back from `readouterr()` too. Stream text comes first, the
+        descriptor's bytes after it; the two are not interleaved. Where the host
+        Context grants no descriptor operations at all, `capfd` degrades to the
+        `capsys` swap instead of failing the test.
         """
 
         def __init__(self, fd=False):
@@ -310,8 +453,16 @@ def __vis_install_pytest_compat__():
             self._out = io.StringIO()
             self._err = io.StringIO()
             self._old = None
+            self._fds = None
 
         def _start(self):
+            if self.fd:
+                out_fd, err_fd = _FdCapture(1), _FdCapture(2)
+                if out_fd.start():
+                    if err_fd.start():
+                        self._fds = (out_fd, err_fd)
+                    else:
+                        out_fd.stop()
             if self._glob is not None:
                 return
             self._old = (sys.stdout, sys.stderr)
@@ -321,7 +472,23 @@ def __vis_install_pytest_compat__():
         def _stop(self):
             # Sharing the run's capture leaves nothing to restore: the unread tail
             # stays in it and is reported under the failure.
+            if self._fds is not None:
+                # Restore the descriptors FIRST, then carry their unread tail into
+                # the buffers the pop-back below already knows how to drain -- it
+                # must never be written back to the raw fd, which would bypass the
+                # run's capture and land in the harness's own output.
+                for _cap, _buf in zip(self._fds, (self._out, self._err)):
+                    _tail = _cap.stop()
+                    if _tail:
+                        _buf.write(_tail)
+                self._fds = None
             if self._old is None:
+                for _buf in (self._out, self._err):
+                    _tail = _buf.getvalue()
+                    _buf.seek(0)
+                    _buf.truncate(0)
+                    if _tail and self._glob is not None:
+                        self._glob.absorb(_buf is self._err, _tail)
                 return
             sys.stdout, sys.stderr = self._old
             self._old = None
@@ -337,13 +504,17 @@ def __vis_install_pytest_compat__():
 
         def readouterr(self):
             if self._glob is not None:
-                return CaptureResult(*self._glob.snap())
-            o = self._out.getvalue()
-            e = self._err.getvalue()
-            self._out.seek(0)
-            self._out.truncate(0)
-            self._err.seek(0)
-            self._err.truncate(0)
+                o, e = self._glob.snap()
+            else:
+                o = self._out.getvalue()
+                e = self._err.getvalue()
+                self._out.seek(0)
+                self._out.truncate(0)
+                self._err.seek(0)
+                self._err.truncate(0)
+            if self._fds is not None:
+                o += self._fds[0].snap()
+                e += self._fds[1].snap()
             return CaptureResult(o, e)
 
     class _GlobalCapture:
@@ -355,8 +526,9 @@ def __vis_install_pytest_compat__():
         `--capture=no` builds a DISABLED capture: the tests then write straight
         through to the real streams.
 
-        The shim is pure Python with no file-descriptor redirection, so `fd` and
-        `sys` are the same swap here -- exactly as `capfd` already behaves.
+        The RUN-wide capture is a stream swap, so `--capture=fd` and
+        `--capture=sys` are the same thing here; the `capfd` FIXTURE is the one
+        that redirects real descriptors, for the test that asks for it.
         """
 
         def __init__(self, enabled):
@@ -381,6 +553,12 @@ def __vis_install_pytest_compat__():
             self._old = None
             if _ACTIVE_CAPTURE.get("cap") is self:
                 _ACTIVE_CAPTURE["cap"] = None
+
+        def absorb(self, is_err, text):
+            # A fixture's unread tail joins the run's capture, so it is still
+            # replayed under the failure instead of dropped.
+            if text:
+                (self._err if is_err else self._out).write(text)
 
         def snap(self):
             # (out, err) written since the previous snapshot; the buffers are
@@ -528,9 +706,9 @@ def __vis_install_pytest_compat__():
         return cap, cap._stop
 
     def _bi_capfd(request):
-        # File-descriptor capture. The pure-Python shim has no true fd-level
-        # redirection, so capfd behaves like capsys (sys.stdout/err swap) —
-        # sufficient for tests that only read back via readouterr().
+        # File-descriptor capture: the stream swap PLUS a real dup2 of fd 1/2, so
+        # `os.write(1, ...)` is read back as well. Where the host Context grants no
+        # descriptor operations the redirect is skipped and capfd equals capsys.
         cap = CaptureFixture(fd=True)
         cap._start()
         return cap, cap._stop

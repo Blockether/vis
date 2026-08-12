@@ -87,6 +87,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   block, file picker) and the TUI Magit surface are unchanged.
 
 ### Fixed
+- `capfd` captures the REAL file descriptor in the sandbox pytest shim (issue #138): it used to
+  be a second name for `capsys` — a `sys.stdout`/`sys.stderr` swap — so `os.write(1, ...)`, a
+  C-level write or a child process's output never came back from `readouterr()`. Fd 1 and fd 2 are
+  now redirected onto a drained pipe for the test's lifetime (no filesystem needed, so it works in
+  a Context granted none), the descriptor's bytes follow the stream text in the same
+  `CaptureResult`, and a tail nobody read is still replayed under the failure. `capsys` stays
+  stream-only, exactly as real pytest does.
 - Every model-facing document names a call the runtime accepts. `run_tests("python")` /
   `repl_eval("python")` never selected the Python pack: the language surface reads the pack from
   `{"language": "python"}` (or as the FIRST of two arguments), so a lone string was the PAYLOAD —

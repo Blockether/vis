@@ -883,3 +883,61 @@
                                           (str "'RC=' + str(rc)"
                                                " + ';singular=' + str('1 error in' in out)"
                                                " + ';plural=' + str('1 errors' in out)")))))))))
+
+;; Regression, issue #138: `capfd` was a second name for `capsys` -- a
+;; `sys.stdout`/`sys.stderr` swap and nothing else -- so output written straight
+;; to the descriptor (`os.write(1, ...)`, a C-level write, a child process) never
+;; came back from `readouterr()`, and a test reading it back saw an empty string.
+(defdescribe
+  capfd-descriptor-test
+  (it "reads back a descriptor-level write, which capsys still cannot see"
+      (let
+        [d
+         (tmp-dir)
+
+         _
+         (spit (str d "/test_fd.py")
+               (str
+                 "import os\n" "def test_fd(capfd):\n"
+                 "    print('VIA-STREAM')\n" "    os.write(1, b'VIA-DESCRIPTOR\\n')\n"
+                 "    out, err = capfd.readouterr()\n" "    assert 'VIA-STREAM' in out, repr(out)\n"
+                 "    assert 'VIA-DESCRIPTOR' in out, repr(out)\n"
+                 "    os.write(2, b'ERR-DESCRIPTOR\\n')\n"
+                 "    o2, e2 = capfd.readouterr()\n" "    assert 'ERR-DESCRIPTOR' in e2, repr(e2)\n"
+                 "def test_capsys_is_stream_only(capsys):\n" "    os.write(1, b'NEVER-SEEN\\n')\n"
+                 "    out, err = capsys.readouterr()\n"
+                 "    assert 'NEVER-SEEN' not in out, repr(out)\n"))]
+
+        (with-fs-context
+          d
+          (expect (= (str "RC=0;test_fd.py::test_capsys_is_stream_only|passed"
+                          ";test_fd.py::test_fd|passed")
+                     (ev python-context
+                         (str "import pytest\n" "rc = pytest.main(['" d "'])\n" report-code)))))))
+  (it "replays a descriptor tail nobody read under the failure"
+      (let
+        [d
+         (tmp-dir)
+
+         _
+         (spit (str d "/test_fd_tail.py")
+               (str "import os\n" "def test_tail(capfd):\n"
+                    "    os.write(1, b'FD-TAIL-NEVER-READ\\n')\n" "    assert 1 == 2\n"))]
+
+        (with-fs-context d
+                         (expect (= "RC=1;tail=True"
+                                    (ev python-context
+                                        (capture-probe
+                                          (str "'" d "'")
+                                          (str "'RC=' + str(rc) + ';tail='"
+                                               " + str('FD-TAIL-NEVER-READ' in out)"))))))))
+  (it "captures the descriptor with no filesystem granted at all"
+      (with-context (expect (= "RC=0;test_nofd|passed"
+                               (ev python-context
+                                   (str "import pytest, os\n"
+                                        "def test_nofd(capfd):\n" "    print('STREAM-ONLY')\n"
+                                        "    os.write(1, b'NO-FS-DESCRIPTOR\\n')\n"
+                                        "    out, err = capfd.readouterr()\n"
+                                        "    assert 'STREAM-ONLY' in out, repr(out)\n"
+                                        "    assert 'NO-FS-DESCRIPTOR' in out, repr(out)\n"
+                                        "rc = pytest.main()\n" report-code)))))))
