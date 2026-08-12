@@ -100,6 +100,31 @@ describe('Menu parts', () => {
       expect(markup).toContain('role="menuitem"');
     });
 
+    // Regression, user report ("fix this misalignment of icons and text", on the
+    // composer's attach menu): the row was `items-start`, so a row of one line —
+    // the only kind with an icon and no hint — pinned its icon and title to the top
+    // of the 44px thumb target. Measured off the report's own screenshot: 12px of
+    // paper above the title, 23.5px below it, twice over.
+    it('centres a one-line row in the thumb target it has to fill', () => {
+      const markup = html({ icon: <svg />, badge: 'Default' });
+
+      expect(markup).toContain('min-h-11');
+      expect(markup).toContain('items-center');
+      expect(markup).not.toContain('items-start');
+      // Nothing beside the title is nudged down: the centred row already put it on
+      // the title's line.
+      expect(markup).not.toContain('mt-0.5');
+    });
+
+    // The nudge is not gone, it is CONDITIONAL: two lines have a first one to hang
+    // the icon and the badge off, and centring them across both would float them
+    // against the hint instead.
+    it('hangs the icon and the badge off the title’s line once a hint stacks under it', () => {
+      const markup = html({ icon: <svg />, badge: 'Default', hint: '3 transcripts' });
+
+      expect(markup.match(/self-start mt-0\.5/g)).toHaveLength(2);
+    });
+
     it('is a real button, so a sheet can hang off the row that opened it', () => {
       expect(html()).toContain('<button');
       expect(html()).not.toContain('<a ');

@@ -219,6 +219,12 @@ export function MenuBack({
  *
  * `danger` is the same row in the app's red, never a different one: a menu whose
  * destructive row is built by hand is how two `⋯` menus stop looking alike.
+ *
+ * The row CENTRES what it holds. A hinted row is taller than `min-h-11` on its own,
+ * so centring is a no-op there and the icon still hangs off the TITLE's line; a row
+ * of one line is shorter than the thumb target it must fill, and top-pinning it left
+ * the icon and the title floating in the upper third with the whole reserve of empty
+ * paper under them.
  */
 export function MenuItem({
   title,
@@ -245,11 +251,15 @@ export function MenuItem({
   onSelect: (anchor: HTMLElement) => void;
 }) {
   const danger = tone === 'danger';
+  // What rides BESIDE the title belongs to the title's own line, and only a hinted
+  // row has a second one to be pulled off. On a one-line row it is the centred row
+  // that puts it there, so a nudge meant for two lines would only tip it back off.
+  const onFirstLine = hint ? 'self-start mt-0.5' : '';
   const row = (
     <button
       type="button"
       role="menuitem"
-      className={`flex min-h-11 items-start gap-2 px-3 py-2 text-left transition-colors duration-150 focus-visible:outline-none motion-reduce:transition-none mouse:min-h-9 ${
+      className={`flex min-h-11 items-center gap-2 px-3 py-2 text-left transition-colors duration-150 focus-visible:outline-none motion-reduce:transition-none mouse:min-h-9 ${
         action ? 'min-w-0 flex-1' : 'w-full border-b border-dialog-edge'
       } ${
         danger ? 'hover:bg-err/15 focus-visible:bg-err/15' : 'hover:bg-hover focus-visible:bg-hover'
@@ -257,7 +267,7 @@ export function MenuItem({
       onClick={(event) => onSelect(event.currentTarget)}
     >
       {icon && (
-        <span className={`mt-0.5 shrink-0 ${danger ? 'text-err' : 'text-dialog-hint'}`}>
+        <span className={`${onFirstLine} shrink-0 ${danger ? 'text-err' : 'text-dialog-hint'}`}>
           {icon}
         </span>
       )}
@@ -270,7 +280,9 @@ export function MenuItem({
         {hint && <span className="mt-0.5 block font-mono text-meta text-dialog-hint">{hint}</span>}
       </span>
       {badge && (
-        <span className="mt-0.5 shrink-0 border border-edge px-1 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+        <span
+          className={`${onFirstLine} shrink-0 border border-edge px-1 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint`}
+        >
           {badge}
         </span>
       )}
