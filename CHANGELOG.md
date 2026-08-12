@@ -88,6 +88,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Push capability named the wrong provider. Web Push MINTS its own VAPID identity the first time
+  it is asked, so its half is "configured" on every gateway — and it sat AHEAD of the relay in
+  `/v1/capabilities`, hiding the one provider a machine with no credentials at all actually
+  delivers through. The relay is named first now, Web Push last; a browser device also takes the
+  real Web Push path instead of being reported as an unsupported platform.
+- The providers router-rebuild hook held the FUNCTION, and `defonce` skips its body on a
+  `(require … :reload)` — so after any reload of the agent loop the hook still pointed at the
+  definition from the first load, and a default-model change reached a stale router. It holds the
+  VAR now.
+- On Linux, pasta's own startup notes ("No routable interface for IPv6: IPv6 is disabled") were
+  read back as the jailed command's output: pasta is the argv PREFIX, so it writes to the child's
+  stdio. It runs `--quiet`.
+
 - A cancel that landed inside a best-effort `(catch Throwable _ …)` is no longer
   swallowed. The JVM clears the interrupt flag as it throws, so every catch-all
   around a blocking call — `git`, the workspace's git, `rewind`, the credential

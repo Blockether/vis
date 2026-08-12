@@ -2145,17 +2145,21 @@
   (it "leaves no thread of its own behind once the command is gone"
       ;; Every run owns a pump, a PTY reader and an attach acceptor. They are daemons,
       ;; so a leak is invisible until a long session has hundreds of them.
-      (with-shell-on (fn []
-                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                         (let
-                           [sid "shell-thread-hygiene"
-                            env {:session-id sid}]
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-thread-hygiene"
+               env {:session-id sid}]
 
-                           (try (let [before (shell-thread-count)]
-                                  (doseq [i (range 3)]
-                                    (shell* env {"command" "echo x" "id" (str "t" i)}))
-                                  (expect (pos? (long (poll shell-thread-count pos? 30))))
-                                  (doseq [i (range 3)]
-                                    (wait* env (str "t" i)))
-                                  (expect (= before (poll shell-thread-count #(= before %) 60))))
-                                (finally (resources/stop-all! sid)))))))))
+              ;; The command SLEEPS: `echo x` could finish before the first
+              ;; sample on a fast host, and the pump thread that proves the
+              ;; run happened was gone before anything counted it.
+              (try (let [before (shell-thread-count)]
+                     (doseq [i (range 3)]
+                       (shell* env {"command" "echo x; sleep 2" "id" (str "t" i)}))
+                     (expect (pos? (long (poll shell-thread-count pos? 30))))
+                     (doseq [i (range 3)]
+                       (wait* env (str "t" i)))
+                     (expect (= before (poll shell-thread-count #(= before %) 60))))
+                   (finally (resources/stop-all! sid)))))))))

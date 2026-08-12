@@ -5181,9 +5181,12 @@
   ;; as that hook. Before the wiring the hook fired into nil and a default-model
   ;; change never reached the shared router — a new session's first turn kept the
   ;; OLD root until the model was re-pinned on the session.
+  ;; The hook holds the VAR: `permission-config-snapshot-test` above reloads this
+  ;; namespace, and a hook holding the FUNCTION was left pointing at the version
+  ;; from the first load — dead wiring that only a full-suite run ever showed.
   (it "wires reload-router! as the providers router-rebuild hook"
       (expect (identical? (providers/router-rebuild-hook-val)
-                          lp/reload-router!))))
+                          #'lp/reload-router!))))
 
 ;; Regression: `list_attachments()` located a TOOL artifact by its iteration
 ;; alone, so a descriptor for anything the model produced carried no turn id at

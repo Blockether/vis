@@ -746,10 +746,15 @@
      (or (:is-configured cfg) (:is-configured f) (:is-configured w) (:is-available r))]
 
     {:is-available is-available
+     ;; Web Push MINTS its own VAPID identity the first time it is asked, so
+     ;; `:is-configured w` is true on every gateway and can never be evidence
+     ;; that a device takes that path -- it is the LAST resort, named only once
+     ;; relaying was turned off. Ahead of the relay it hid the one provider a
+     ;; machine with no credentials at all actually delivers through.
      :provider (cond (and (:is-configured cfg) (:is-configured f)) "apns+fcm"
                      (:is-configured f) "fcm"
-                     (:is-configured w) "web"
                      (and (:is-available r) (not (:is-configured cfg))) "relay"
+                     (:is-configured w) "web"
                      :else "apns")
      :environment (:default-environment cfg)
      :topic (:topic cfg)

@@ -584,64 +584,67 @@
      pairs
      (partition 2 1 off)]
 
-    (try (testing "argv shape: starts with bwrap, ends with the -- separator"
-           (is (= "bwrap" (basename (first off))))
-           (is (= "--" (last off))))
-         (testing "session root is bind-mounted read-write"
-           (is (some #(= % ["--bind-try" rp]) pairs)))
-         (testing "system toolchain roots are read-only bind-mounted (else nothing launches)"
-           (is (some #(= % ["--ro-bind-try" "/usr"]) pairs)))
-         (testing "deny-write is re-bound read-only AFTER the rw bind (deny wins)"
-           (is (some #(= % ["--ro-bind-try" pp]) pairs))
-           (let
-             [ai
-              (.indexOf ^java.util.List off rp)
+    (try
+      (testing "argv shape: starts with bwrap, ends with the -- separator"
+        (is (= "bwrap" (basename (first off))))
+        (is (= "--" (last off))))
+      (testing "session root is bind-mounted read-write" (is (some #(= % ["--bind-try" rp]) pairs)))
+      (testing "system toolchain roots are read-only bind-mounted (else nothing launches)"
+        (is (some #(= % ["--ro-bind-try" "/usr"]) pairs)))
+      (testing "deny-write is re-bound read-only AFTER the rw bind (deny wins)"
+        (is (some #(= % ["--ro-bind-try" pp]) pairs))
+        (let
+          [ai
+           (.indexOf ^java.util.List off rp)
 
-              di
-              (.lastIndexOf ^java.util.List off pp)]
+           di
+           (.lastIndexOf ^java.util.List off pp)]
 
-             (is (and (pos? ai) (pos? di) (< ai di)))))
-         (testing "deny-read is masked with an empty tmpfs" (is (some #(= % ["--tmpfs" pp]) pairs)))
-         (testing "net OFF gets the --unshare-net kernel wall (safe)"
-           (is (some #{"--unshare-net"} off)))
-         (testing "filtered egress (proxy-port): pasta lane vs no-pasta fallback"
-           (let
-             [no-pasta
-              (with-redefs [pj/linux-pasta nil]
-                (pj/linux-bwrap-args (assoc base
-                                       :net-enabled? true
-                                       :proxy-port 51000)))
+          (is (and (pos? ai) (pos? di) (< ai di)))))
+      (testing "deny-read is masked with an empty tmpfs" (is (some #(= % ["--tmpfs" pp]) pairs)))
+      (testing "net OFF gets the --unshare-net kernel wall (safe)"
+        (is (some #{"--unshare-net"} off)))
+      (testing "filtered egress (proxy-port): pasta lane vs no-pasta fallback"
+        (let
+          [no-pasta
+           (with-redefs [pj/linux-pasta nil]
+             (pj/linux-bwrap-args (assoc base
+                                    :net-enabled? true
+                                    :proxy-port 51000)))
 
-              pasta
-              (with-redefs [pj/linux-pasta "/usr/bin/pasta"]
-                (pj/linux-bwrap-args (assoc base
-                                       :net-enabled? true
-                                       :proxy-port 51000)))]
+           pasta
+           (with-redefs [pj/linux-pasta "/usr/bin/pasta"]
+             (pj/linux-bwrap-args (assoc base
+                                    :net-enabled? true
+                                    :proxy-port 51000)))]
 
-             (is (some #{"--unshare-net"} no-pasta)
-                 "no pasta => filtered egress degrades to the no-egress wall (safe)")
-             (is (not= "pasta" (basename (first no-pasta))))
-             (is (= ["/usr/bin/pasta" "-T" "51000" "-t" "none" "-u" "none" "-U" "none" "--"]
-                    (take 10 pasta))
-                 "pasta wraps bwrap by ABSOLUTE path, forwarding ONLY the proxy port")
-             (is (= "bwrap" (basename (nth pasta 10))) "pasta hands off to bwrap")
-             (is (nil? (some #{"--unshare-net"} pasta))
-                 "pasta provides the restricted ns; bwrap shares it (no --unshare-net)")
-             (is (some #(= % ["--bind-try" rp]) (partition 2 1 pasta))
-                 "the filesystem jail still applies inside the pasta lane")))
-         (testing "an explicitly-open network shares the host namespace (no --unshare-net)"
-           (is (nil? (some #{"--unshare-net"} open))))
-         (testing
-           "deny-exec masks the binary with /dev/null so execve fails (macOS process-exec* parity)"
-           (is (some (fn [[a _]]
-                       (= "/dev/null" a))
-                     (partition 2 1 dex))
-               "deny-exec must emit a /dev/null mask bind for the binary")
-           (is (not (some (fn [[a _]]
-                            (= "/dev/null" a))
-                          (partition 2 1 off)))
-               "no /dev/null mask without deny-exec (deny-read here is a dir => tmpfs)"))
-         (finally (io/delete-file prot true) (io/delete-file root true)))))
+          (is (some #{"--unshare-net"} no-pasta)
+              "no pasta => filtered egress degrades to the no-egress wall (safe)")
+          (is (not= "pasta" (basename (first no-pasta))))
+          (is (= ["/usr/bin/pasta" "--quiet" "-T" "51000" "-t" "none" "-u" "none" "-U" "none" "--"]
+                 (take 11 pasta))
+              "pasta wraps bwrap by ABSOLUTE path, forwarding ONLY the proxy port")
+          ;; pasta prefixes the argv, so anything it prints is the child's output.
+          (is (some #{"--quiet"} pasta)
+              "pasta's own notes must never reach the captured command output")
+          (is (= "bwrap" (basename (nth pasta 11))) "pasta hands off to bwrap")
+          (is (nil? (some #{"--unshare-net"} pasta))
+              "pasta provides the restricted ns; bwrap shares it (no --unshare-net)")
+          (is (some #(= % ["--bind-try" rp]) (partition 2 1 pasta))
+              "the filesystem jail still applies inside the pasta lane")))
+      (testing "an explicitly-open network shares the host namespace (no --unshare-net)"
+        (is (nil? (some #{"--unshare-net"} open))))
+      (testing
+        "deny-exec masks the binary with /dev/null so execve fails (macOS process-exec* parity)"
+        (is (some (fn [[a _]]
+                    (= "/dev/null" a))
+                  (partition 2 1 dex))
+            "deny-exec must emit a /dev/null mask bind for the binary")
+        (is (not (some (fn [[a _]]
+                         (= "/dev/null" a))
+                       (partition 2 1 off)))
+            "no /dev/null mask without deny-exec (deny-read here is a dir => tmpfs)"))
+      (finally (io/delete-file prot true) (io/delete-file root true)))))
 
 (deftest unenforceable-fails-loud
   ;; A requested jail on a host that cannot enforce it must NOT silently pass the
@@ -884,7 +887,7 @@
 
       (let [av (pj/linux-bwrap-args {:rw [] :net-enabled? true :proxy-port 51000})]
         (is (= "/usr/bin/pasta" (first av)))
-        (is (= "/usr/local/bin/bwrap" (nth av 10))))))
+        (is (= "/usr/local/bin/bwrap" (nth av 11))))))
   (when (and (not (linux?)) (sandbox-applicable?))
     (testing "macOS wraps with /usr/bin/sandbox-exec itself"
       (let [av (pj/wrap-argv ["bash" "-lc" "true"] {:roots-fn (constantly []) :net-enabled? false})]

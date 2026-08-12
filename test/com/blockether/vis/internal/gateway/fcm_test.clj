@@ -133,9 +133,13 @@
                     (is (= {:status 0 :reason "not-configured" :is-delivered false}
                            (push/send-to-device! {:token "and-token" :platform "android"}
                                                  {:title "t" :body "b"}))))
-                  (testing "anything that is neither Apple nor Android is never sent"
-                    (is (= "unsupported-platform"
+                  (testing "a browser takes the Web Push path, which refuses a non-subscription"
+                    (is (= "invalid-subscription"
                            (:reason (push/send-to-device! {:token "web-token" :platform "web"}
+                                                          {:title "t" :body "b"})))))
+                  (testing "anything that is neither Apple, Android nor a browser is never sent"
+                    (is (= "unsupported-platform"
+                           (:reason (push/send-to-device! {:token "watch-token" :platform "watchos"}
                                                           {:title "t" :body "b"})))))
                   (testing "an iOS device still takes the APNs path"
                     (is (= "not-configured"
@@ -148,6 +152,12 @@
                     (is (true? (:is-available (push/status))))
                     (is (= "relay" (:provider (push/status))))
                     (is (true? (push/any-configured?))))
+                  ;; Web Push generates its VAPID identity on demand, so its half is
+                  ;; available on every gateway — and must never take the name of the
+                  ;; provider a device is actually delivered through.
+                  (testing "the self-minted Web Push identity never shadows the relay"
+                    (is (true? (get-in (push/status) [:web-push :is-available])))
+                    (is (= "relay" (:provider (push/status)))))
                   (write-service-account! home)
                   (let [st (push/status)]
                     (testing "Android-only credentials are a valid, push-capable setup"

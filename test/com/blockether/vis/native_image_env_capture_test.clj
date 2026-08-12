@@ -122,9 +122,31 @@
        sort))
 
 (defn- strip-strings
-  "Blank out string literals, so an `@` inside a docstring is not read as a deref."
+  "Blank out string literals, so an `@` inside a docstring is not read as a deref.
+
+   A CHARACTER SCAN, never a regex: Java matches `\"(?:\\.|[^\"\\])*\"` by
+   recursing once per character of the literal, so one long docstring overflowed
+   the stack on a 1 MB-stack JVM (Linux CI) while passing on macOS's larger one."
   [^String form]
-  (str/replace form #"\"(?:\\.|[^\"\\])*\"" "\"\""))
+  (let
+    [n
+     (.length form)
+
+     sb
+     (StringBuilder. n)]
+
+    (loop [i 0]
+      (when (< i n)
+        (let [c (.charAt form (int i))]
+          (if (= \" c)
+            (do (.append sb "\"\"")
+                (recur (long (loop [j (inc (long i))]
+                               (cond (>= j n) n
+                                     (= \\ (.charAt form (int j))) (recur (+ j 2))
+                                     (= \" (.charAt form (int j))) (inc j)
+                                     :else (recur (inc j)))))))
+            (do (.append sb c) (recur (inc (long i))))))))
+    (.toString sb)))
 
 (defn- deferred-names
   "Names this file defines as a `delay`/`future`/`promise` — the values whose whole
@@ -282,7 +304,13 @@
                               (expect (= "/tmp/vis-home-probe/.vis/vis.mdb" (config/db-path)))
                               (expect (= {:backend :sqlite :path "/tmp/vis-home-probe/.vis/vis.mdb"}
                                          (config/default-db-spec)))
-                              (expect (= "/tmp/vis-home-probe/.vis/vis.log" (#'config/log-path))))))
+                              ;; Per-process by construction (`paths/log-file`): the
+                              ;; DIRECTORY follows this process' home, the name carries
+                              ;; the pid so two vis processes never rotate one file.
+                              (expect (= (str "/tmp/vis-home-probe/.vis/logs/vis-"
+                                              (.pid (java.lang.ProcessHandle/current))
+                                              ".log")
+                                         (config/log-path))))))
              (it "dotenv defaults resolve against the working directory when consulted"
                  (expect (= (str (System/getProperty "user.dir") "/.env")
                             (#'config/dotenv-path :cwd "/.env")))
