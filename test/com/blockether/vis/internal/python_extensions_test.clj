@@ -1402,7 +1402,12 @@ vis.extension(
                                                          "command" "printf must-not-run"}))
                            (catch Throwable t {"note" (ex-message t)}))]
 
-          (expect (= "latest-policy" (get (jail-wait first-run) "stdout")))
+          ;; ENDS with: on a Linux host whose kernel has IPv6 off, pasta announces
+          ;; itself on the child's stdio before exec'ing it ("No routable interface
+          ;; for IPv6") and neither `--quiet` nor `--log-file` reaches that banner.
+          ;; What this test is about is the POLICY the spawn read, not the jail's
+          ;; own greeting.
+          (expect (str/ends-with? (str (get (jail-wait first-run) "stdout")) "latest-policy"))
           ;; The SECOND spawn re-reads config and finds it invalid, so it refuses.
           (expect (not= "must-not-run" (get second-run "stdout")))
           (expect (re-find #"Invalid Vis configuration" (str (get second-run "note"))))

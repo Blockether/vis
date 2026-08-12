@@ -192,9 +192,10 @@
 
               (try
                 (shell-bg* env "pager" "printf 'pager=[%s] git=[%s]\\n' \"$PAGER\" \"$GIT_PAGER\"")
-                ;; 15 s, not the default 5: a loaded runner takes its time forking a
-                ;; pty child, and the assertion is about the PAGER, never the clock.
-                (let [out (poll #(log-text env "pager") #(str/includes? % "pager=") 150)]
+                ;; WAIT for the child rather than poll its log against a clock: the
+                ;; assertion is about the PAGER the pty child was handed, and a loaded
+                ;; shared runner outran every poll budget worth writing.
+                (let [out (str (get (wait* env "pager" 30) "stdout"))]
                   (expect (str/includes? out "pager=[cat] git=[cat]")))
                 (finally (resources/stop! sid "pager"))))))))
   (it "strips the TWO-BYTE keypad escapes a full-screen tool writes, not only CSI"
