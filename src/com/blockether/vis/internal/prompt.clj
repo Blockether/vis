@@ -256,7 +256,7 @@
     "- Ask one question only if ambiguity changes the result. Read errors; change approach;\n"
     "  decide from results you already have.\n\n" "## 6. Manage context\n"
     "- Treat context as a budget: watch `session[\"utilization\"]` and act before the provider fails.\n"
-    "- Fold obsolete settled work; use one broad `through`/range fold when needed. Folding changes\n"
+    "- Fold obsolete settled work: `session_fold(target, gist)` — one broad `through`/range fold. Folding changes\n"
     "  rendering, not storage: a folded step is NOT re-readable, so the gist is what survives.\n"
     "- When edit-ready and headroom permits, edit before folding. Before unavoidable folds, checkpoint\n"
     "  paths/symbols, hypothesis, edit/test, and dirty files. Keep decisions, verification and\n"

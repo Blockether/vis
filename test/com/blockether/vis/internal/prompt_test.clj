@@ -83,7 +83,10 @@
       ;; folding truth — had to fit UNDER the existing budget. It does, at 4 729 chars.
       ;; The win of that change is not here; it is the provider `:tools` payload, which
       ;; went from eighteen JSON Schemas to one.
-      (expect (< (count text) 4750))
+      ;; 4.75k → 4.8k exactly once more, for the fifty characters that make §6 executable:
+      ;; the section ordered a fold and named no callable, so `session_fold`'s NAME and call
+      ;; shape now ride inline. A rule the model cannot execute costs its whole section.
+      (expect (< (count text) 4800))
       (let
         [steps (mapv #(str/index-of text %)
                      ["`grep` locates unknown code" "`struct_index` every known file"
@@ -140,7 +143,11 @@
                    "Write only files the task asked" "Commit, push, publish"
                    "Treat context as a budget" "at most two targeted"
                    "named unresolved decision blocks the edit" "no repeated search/read"
-                   "Fold obsolete settled work" "one broad `through`/range fold"
+                   ;; Regression, user report: sessions stopped folding. §6 ORDERED the fold
+                   ;; but named no callable, so `session_fold` had to be remembered or
+                   ;; rediscovered through `doc()` — every other verb in the core is named.
+                   "`session_fold(target, gist)`" "Fold obsolete settled work"
+                   "one broad `through`/range fold"
                    ;; Nothing stores a folded step for later: the gist is the whole survivor,
                    ;; and a prompt that hints otherwise buys a fold the model regrets.
                    "a folded step is NOT re-readable, so the gist is what survives"
