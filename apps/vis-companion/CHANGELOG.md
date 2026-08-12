@@ -2,6 +2,13 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.35 (4008) — 2026-08-12
+<!-- commit: ba43d093d0bce4dc4173f04bb651d77cea9477a6 -->
+
+- Companion: hang a project's pager on its own shelf, and open each group on a trough
+- Companion: centre a menu item's content in the thumb target it fills
+- Companion: an All view that gives every machine its own hue, rail and section
+
 ## 0.1.35 (4003) — 2026-08-12
 <!-- commit: 4a1a594e9f988b7d96d89c5a440b610cea2aa9da -->
 
