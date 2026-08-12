@@ -63,14 +63,46 @@ export function reconcileMachines(
 export const SCOPE_ALL = null;
 
 /**
- * The machines a scope covers. `SCOPE_ALL` is the whole fleet; a scope pointing at a
- * machine that is no longer paired falls back to the fleet rather than showing
- * an empty screen.
+ * The machines a scope covers.
+ *
+ * `SCOPE_ALL` IS EVERY MACHINE THAT IS ANSWERING. `All` exists to show the fleet as
+ * separate machines — a section, a hue and a rail each — and a machine that is not
+ * answering has no rows, no counts and no verbs to put in one; it was painting a
+ * named band whose whole content was its own failure, in the middle of a list of
+ * working computers. Its tile in the switcher keeps it visible and offers the retry
+ * (see `MachineTab`), which is the only thing that machine can still do.
+ *
+ * A TOTAL BLACKOUT KEEPS EVERY MACHINE, because a screen with nothing on it cannot
+ * say what happened: with nothing answering, the failures ARE the list (see
+ * `fleetError`).
+ *
+ * A scope pointing at a machine that is no longer paired falls back to the fleet
+ * rather than showing an empty screen.
  */
 export function scopedMachines(machines: FleetMachine[], scope: string | null): FleetMachine[] {
-  if (!scope) return machines;
+  if (!scope) {
+    const answering = machines.filter((machine) => !machine.error);
+    return answering.length > 0 ? answering : machines;
+  }
   const one = machines.find((machine) => machineKey(machine.conn) === scope);
   return one ? [one] : machines;
+}
+
+/**
+ * WHICH MACHINE THE LIST IS SHOWING, from the machine the reader last named.
+ *
+ * The pick is a PREFERENCE, not the answer: naming a machine that is gone, or one
+ * that has stopped answering, falls back to `All` rather than parking the reader on
+ * an empty screen they did not ask for. A machine that is down is not a place to be —
+ * its rows are stale, its verbs refuse, and the retry lives on its tile.
+ *
+ * A FLEET OF ONE ALWAYS RESOLVES TO ITS MACHINE, up or down: there is no `All` above
+ * a single machine, and that machine's failure is then the whole screen.
+ */
+export function resolveScope(machines: FleetMachine[], pick: string | null): string | null {
+  if (machines.length === 1) return machineKey(machines[0].conn);
+  const one = machines.find((machine) => machineKey(machine.conn) === pick);
+  return one && !one.error ? pick : SCOPE_ALL;
 }
 
 /** Every session in scope, machine order preserved. */
@@ -95,24 +127,16 @@ export function isFleetLoaded(machines: FleetMachine[], scope: string | null): b
 }
 
 /**
- * The screen is only "unreachable" when NOTHING answers. One dead machine among
- * several is a degraded row inside a working list, not an error page — that is
- * the whole point of pairing more than one.
+ * The screen is only "unreachable" when NOTHING answers, and then it belongs to the
+ * shell's offline gate rather than to this list. One dead machine among several is
+ * simply not in the fleet view (see `scopedMachines`) — its tile keeps it visible and
+ * carries the retry — which is the whole point of pairing more than one.
  */
 export function fleetError(machines: FleetMachine[]): string | null {
   if (machines.length === 0) return null;
   const failed = machines.filter((machine) => machine.error);
   if (failed.length !== machines.length) return null;
   return failed[0]?.error ?? null;
-}
-
-/**
- * The failure the CURRENT scope is showing. Scoping to one machine makes that
- * machine the whole world: when it is the only thing on screen and it is dead,
- * the list must say so instead of pretending the machine simply has no work.
- */
-export function scopeError(machines: FleetMachine[], scope: string | null): string | null {
-  return fleetError(scopedMachines(machines, scope));
 }
 
 /**

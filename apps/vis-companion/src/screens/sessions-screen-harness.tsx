@@ -17,6 +17,11 @@ export interface MachineFixture {
   sessions?: Session[];
   /** This gateway is not answering — every read rejects, as an offline one does. */
   down?: boolean;
+  /**
+   * A `down` gateway that comes back on the SECOND read it receives, so a test can
+   * watch a retry wake a machine instead of only watching it fail.
+   */
+  heals?: boolean;
   /** Extra routes, by pathname: whatever they return is the JSON body. */
   routes?: Record<string, unknown>;
 }
@@ -32,6 +37,7 @@ export interface FleetRequest {
 }
 
 let origins = 0;
+let created = 0;
 
 /** A session row, filled in enough for the list to group and sort it. */
 export function listSession(overrides: Partial<Session> = {}): Session {
@@ -68,12 +74,20 @@ export function renderSessionsScreen({
   const byOrigin = new Map(
     conns.map((conn, index) => [new URL(conn.url).origin, machines[index]]),
   );
+  /** Reads per gateway, so `heals` can answer the retry it was given. */
+  const reads = new Map<string, number>();
 
   const answer = (body: unknown) =>
     new Response(JSON.stringify(body), {
       status: 200,
       headers: { "Content-Type": "application/json", ETag: `"${origins}"` },
     });
+
+  // A list read that a test can hold open, so it can watch what does NOT wait for
+  // the fleet to drain (a create opens its session while the rows are still in
+  // flight). Held reads resolve normally the moment `releaseList` runs.
+  let held: Promise<void> | null = null;
+  let release: (() => void) | null = null;
 
   const previousFetch = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -94,10 +108,17 @@ export function renderSessionsScreen({
       signal: init?.signal,
     });
     if (!machine) return answer({});
-    if (machine.down) throw new TypeError("Failed to fetch");
+    const seen = (reads.get(url.origin) ?? 0) + 1;
+    reads.set(url.origin, seen);
+    if (machine.down && !(machine.heals && seen > 1)) throw new TypeError("Failed to fetch");
     if (machine.routes && url.pathname in machine.routes)
       return answer(machine.routes[url.pathname]);
     if (url.pathname === "/v1/sessions") {
+      // The create answers a session with an id, the way the gateway's 201 does:
+      // without one the screen has nothing to open.
+      if ((init?.method ?? "GET") === "POST")
+        return answer({ id: `created-${++created}`, channel: "web", title: null });
+      if (held) await held;
       const sessions = machine.sessions ?? [];
       return answer({ sessions, total: sessions.length, has_more: false });
     }
@@ -121,6 +142,17 @@ export function renderSessionsScreen({
     ...view,
     conns,
     requests,
+    /** Suspend every further list read until `releaseList`. */
+    holdList() {
+      held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    },
+    releaseList() {
+      held = null;
+      release?.();
+      release = null;
+    },
     /** Hand the list a new filter, the way the app bar's field does. */
     setQuery(next: string) {
       view.rerender(screen(next));

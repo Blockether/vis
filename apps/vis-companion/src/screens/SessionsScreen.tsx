@@ -91,10 +91,10 @@ import {
   projectLabel,
   projectPage,
   reconcileMachines,
+  resolveScope,
   SCOPE_ALL,
   scopedConns,
   scopedMachines,
-  scopeError,
   SEARCH_LOCAL_ONLY_RANK,
   searchOrder,
   searchTally,
@@ -256,14 +256,11 @@ export function SessionsScreen({
   // counts, its verbs — for the reader who wants one computer and nothing else.
   // A FLEET OF ONE RESOLVES TO ITS MACHINE and is offered no `All`: "every machine"
   // and "this machine" would be the same list under two names.
-  // The pick is only a PREFERENCE: naming a machine that is gone falls back to the
-  // fleet rather than to an empty screen.
+  // The pick is only a PREFERENCE: naming a machine that is gone — or one that has
+  // stopped answering under the reader's thumb — falls back to the fleet rather than
+  // to an empty screen (see `resolveScope`).
   const [scopePick, setScopePick] = useState<string | null>(SCOPE_ALL);
-  const scope = machines.some((machine) => machineKey(machine.conn) === scopePick)
-    ? scopePick
-    : machines.length === 1
-      ? machineKey(machines[0].conn)
-      : SCOPE_ALL;
+  const scope = resolveScope(machines, scopePick);
   // Keep keystrokes immediate even when a large session fleet is regrouped.
   const deferredQuery = useDeferredValue(query);
   const [transcriptMatches, setTranscriptMatches] = useState<Map<string, SessionMatch> | null>(null);
@@ -366,9 +363,13 @@ export function SessionsScreen({
 
   // ONE machine's list. Machines load independently on purpose: a gateway that is
   // asleep must not keep the machines next to it off the screen, and its failure
-  // degrades that machine's section instead of the whole list.
+  // drops that machine out of the fleet view instead of taking the whole list down.
+  //
+  // It ANSWERS its failure as well as storing it: a retry the reader asked for has to
+  // say what came back, in the tile that was pressed, and reading that off the state
+  // this call is about to write would be reading it a paint too early.
   const loadMachine = useCallback(
-    async (conn: GatewayConn, signal?: AbortSignal) => {
+    async (conn: GatewayConn, signal?: AbortSignal): Promise<string | null> => {
       const key = machineKey(conn);
       const api = clientFor(conn);
       try {
@@ -382,7 +383,7 @@ export function SessionsScreen({
             error: null,
           }));
         });
-        if (signal?.aborted) return;
+        if (signal?.aborted) return null;
         // Anchor EVERY reload: the 10s poll can reorder rows under a reading
         // thumb. The layout effect below no-ops at the top of the list, so the
         // first paint is unaffected.
@@ -392,12 +393,41 @@ export function SessionsScreen({
           sessions: reconcileSessions(machine.sessions, next),
           error: null,
         }));
+        return null;
       } catch (cause) {
-        if (signal?.aborted) return;
-        patchMachine(key, (machine) => ({ ...machine, error: (cause as Error).message }));
+        if (signal?.aborted) return null;
+        const failure = (cause as Error).message;
+        patchMachine(key, (machine) => ({ ...machine, error: failure }));
+        return failure;
       }
     },
     [patchMachine],
+  );
+
+  // WHAT A RETRY IS DOING, on the tile that asked for it.
+  //
+  // A machine that is not answering is drained out of the switch and dropped from
+  // `All`, and the one thing it can still do is come back — so its tile IS the retry
+  // (see `MachineTab`). The press has to answer: `reconnecting...` while the probe is
+  // in flight, `no answer` when it came back dead, and nothing at all before the first
+  // press, because a fleet's dead machines are quiet until they are asked. A machine
+  // that answers loses its note along with its drained face.
+  const [retries, setRetries] = useState<ReadonlyMap<string, 'busy' | 'failed'>>(
+    () => new Map(),
+  );
+  const retryMachine = useCallback(
+    async (conn: GatewayConn) => {
+      const key = machineKey(conn);
+      setRetries((current) => new Map(current).set(key, 'busy'));
+      const failure = await loadMachine(conn);
+      setRetries((current) => {
+        const next = new Map(current);
+        if (failure) next.set(key, 'failed');
+        else next.delete(key);
+        return next;
+      });
+    },
+    [loadMachine],
   );
 
   const load = useCallback(
@@ -667,8 +697,11 @@ export function SessionsScreen({
   const isFleetView = scope === SCOPE_ALL;
   // What the `All` tile has to report: something happened on a machine that is not
   // the one you were reading. The exact count belongs to the rows that own it.
+  // A machine that is not answering is not in `All` at all, so its stale badge is not
+  // news the `All` tile can hand back.
   const fleetUnread = machines.some(
-    (machine) => (tallies.get(machineKey(machine.conn))?.unread ?? 0) > 0,
+    (machine) =>
+      !machine.error && (tallies.get(machineKey(machine.conn))?.unread ?? 0) > 0,
   );
 
   // One hue per paired machine, assigned from the machine's own key, so a rail
@@ -679,10 +712,6 @@ export function SessionsScreen({
     () => assignMachineColors(machines.map((machine) => machineKey(machine.conn))),
     [machines],
   );
-
-  // A scope narrowed to a dead machine is not an empty machine: with the rest of
-  // the fleet hidden, that machine's failure IS the screen.
-  const scopedError = scopeError(machines, scope);
 
   const selectScope = useCallback((next: string | null) => {
     setScopePick(next);
@@ -911,8 +940,15 @@ export function SessionsScreen({
         // The repo's draft list just changed; re-read it next time the menu opens.
         forgetParkedDrafts(draftsSourceKey);
       }
-      await load();
+      // Regression, user report (paraphrased: creating a new session from the app
+      // took several seconds): the fleet re-read used to stand between the tap and
+      // the session. It is a full walk of every 100-row window on every machine —
+      // 11 serial round trips and ~728KB on a 1100-session gateway — and it repaints
+      // a list the user is leaving. Open FIRST, then refresh in the background: this
+      // screen stays mounted behind the session, so the rows are already reconciled
+      // by the time anyone comes back to them.
       if (session.id) await onOpen(on, session.id, true);
+      void load();
     } catch (cause) {
       setCreateError((cause as Error).message);
     } finally {
@@ -1171,16 +1207,30 @@ export function SessionsScreen({
               {machines.map((machine) => {
                 const key = machineKey(machine.conn);
                 const tally = tallies.get(key);
+                const name = machineLabel(machine.conn);
+                // A MACHINE THAT IS NOT ANSWERING IS NOT A PLACE TO GO. Its tile used
+                // to scope the whole screen to a machine with nothing to show, under
+                // the word "offline" — the only label here that grew when its machine
+                // got worse. Drained, it is dropped from `All`, and the press is the
+                // one thing that machine can still do: ask it again. The name and the
+                // transport's own reason ride the title, where the block cannot speak.
+                const isDown = Boolean(machine.error);
+                const retry = isDown ? retries.get(key) : undefined;
                 return (
                   <MachineTab
                     key={key}
                     isOn={scope === key}
-                    hasUnread={(tally?.unread ?? 0) > 0}
-                    onClick={() => selectScope(key)}
+                    hasUnread={!isDown && (tally?.unread ?? 0) > 0}
+                    isDown={isDown}
+                    note={
+                      retry === 'busy' ? 'reconnecting...' : retry === 'failed' ? 'no answer' : null
+                    }
+                    label={isDown ? `Reconnect to ${name}` : undefined}
+                    title={isDown ? `${name} is not answering — ${machine.error}` : undefined}
+                    onClick={() => (isDown ? void retryMachine(machine.conn) : selectScope(key))}
                   >
-                    <MachineMark color={machineColor(machineColors, key)} />
-                    {machineLabel(machine.conn)}
-                    {machine.error && <span className="opacity-70">offline</span>}
+                    <MachineMark color={machineColor(machineColors, key)} isHollow={isDown} />
+                    {name}
                   </MachineTab>
                 );
               })}
@@ -1198,7 +1248,7 @@ export function SessionsScreen({
             {/* A filter is a FLEET question, and the count it came back with is the
                 only proof it left this gateway. It is the one fact this row reports:
                 totals were the same numbers the project headers below already carry. */}
-            {searching && sessions !== null && !scopedError && (
+            {searching && sessions !== null && (
               <>
                 <span className="whitespace-nowrap font-mono text-chip font-bold text-accent-ink">
                   {searchCounts.matches} {searchCounts.matches === 1 ? 'match' : 'matches'}
@@ -1206,17 +1256,12 @@ export function SessionsScreen({
                 {/* WHERE the query went, and only a fleet has an answer worth
                     printing: "across 2 of 3 machines" is the proof it left this
                     gateway. A solo user is told nothing they can act on. */}
-                {machines.length > 1 && (
+                {inScope.length > 1 && (
                   <span className="whitespace-nowrap font-mono text-chip text-dialog-hint">
-                    across {searchCounts.machines} of {machines.length} machines
+                    across {searchCounts.machines} of {inScope.length} machines
                   </span>
                 )}
               </>
-            )}
-            {scopedError && (
-              <span className="whitespace-nowrap font-mono text-chip font-bold text-accent-ink">
-                not answering
-              </span>
             )}
             {/* The machine's own control, on the row that names that machine: its
                 PROJECTS — choose the current one, add one, remove one.
@@ -1262,18 +1307,6 @@ export function SessionsScreen({
         <div ref={listRef} className="min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable]">
         {sessions === null ? (
           <NavigatorSkeleton />
-        ) : scopedError && !visible?.length ? (
-          <div className={`px-5 py-16 text-center ${LIST_FRAME}`}>
-            <p className="font-mono text-body font-bold text-white/70">
-              {scopeMachine ? `${machineLabel(scopeMachine.conn)} is not answering` : 'No machine is answering'}
-            </p>
-            <p className="mt-2 font-mono text-ui text-dialog-hint">{scopedError}</p>
-            <div className="mt-4 flex justify-center">
-              <Button variant="secondary" onClick={() => void load()}>
-                Retry
-              </Button>
-            </div>
-          </div>
         ) : visible?.length === 0 ? (
           <div className={`px-5 py-16 text-center ${LIST_FRAME}`}>
             <p className="font-mono text-body font-bold text-white/70">
@@ -1338,24 +1371,20 @@ export function SessionsScreen({
                         qualifierTitle={machine.conn.url}
                       />
                       <HeaderActions>
-                        {/* A machine that is not answering counts NOTHING, and "0
-                            sessions" under its name would be a number it does not have.
-                            The section body says it is down and offers the Retry. */}
-                        {!machine.error && (
-                          <HeaderMeta>
-                            <HeaderTally count={shown} unit="session" />
-                            <LiveCount count={shownLive} />
-                          </HeaderMeta>
-                        )}
+                        {/* Every machine in this list is answering — `All` is the
+                            machines that answered (see `scopedMachines`) — so a band
+                            always has a count to carry. */}
+                        <HeaderMeta>
+                          <HeaderTally count={shown} unit="session" />
+                          <LiveCount count={shownLive} />
+                        </HeaderMeta>
                         {/* The machine's own control, on the machine's own band — the
                             row above the card cannot carry it here, because in this view
                             it speaks for no single machine. */}
-                        {!machine.error && (
-                          <MachineProjectsButton
-                            machine={machineLabel(machine.conn)}
-                            onPress={(anchor) => openManageProjects(machine, anchor)}
-                          />
-                        )}
+                        <MachineProjectsButton
+                          machine={machineLabel(machine.conn)}
+                          onPress={(anchor) => openManageProjects(machine, anchor)}
+                        />
                       </HeaderActions>
                     </SectionHeader>
                   )}
@@ -1363,13 +1392,11 @@ export function SessionsScreen({
                     ? (
                         <div className="flex flex-wrap items-center gap-3 px-3 py-3 sm:px-4">
                           <p className="font-mono text-meta text-dialog-hint">
-                            {machine.error
-                              ? `${machineLabel(machine.conn)} is not answering.`
-                              : machine.sessions === null
-                                ? 'Reading sessions...'
-                                : searching
-                                  ? 'No matches on this machine.'
-                                  : 'No sessions on this machine yet.'}
+                            {machine.sessions === null
+                              ? 'Reading sessions...'
+                              : searching
+                                ? 'No matches on this machine.'
+                                : 'No sessions on this machine yet.'}
                           </p>
                           {/* A MARK CANNOT TEACH ITSELF ON AN EMPTY MACHINE: the band
                               above carries the folder, and with no project row under it
@@ -1379,25 +1406,12 @@ export function SessionsScreen({
                               where it is the only thing to press. A search that matched
                               nothing is not that seam: the projects are there, the query
                               simply missed them. */}
-                          {!machine.error && !searching && machine.sessions !== null && (
+                          {!searching && machine.sessions !== null && (
                             <MachineProjectsButton
                               machine={machineLabel(machine.conn)}
                               face="word"
                               onPress={(anchor) => openManageProjects(machine, anchor)}
                             />
-                          )}
-                          {/* The band that used to carry this machine's Retry is gone, so
-                              the offer stands where its sessions would have been. */}
-                          {machine.error && (
-                            <Button
-                              type="button"
-                              variant="quiet"
-                              density="compact"
-                              pressEffect="none"
-                              onClick={() => void loadMachine(machine.conn)}
-                            >
-                              Retry
-                            </Button>
                           )}
                         </div>
                       )

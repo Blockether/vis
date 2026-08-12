@@ -24,7 +24,9 @@
  * sit on thirds.
  *
  * Colour is redundancy, never the only cue: the machine's name is always next to
- * its block, and "offline" is a word, not a shade.
+ * its block, and a machine that is not answering keeps its hue drained to an
+ * outline — with the name, and the transport's own reason, in the tile's label and
+ * title, where a 6px block cannot speak.
  */
 
 export interface MachineColor {

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -43,6 +43,30 @@ describe('where "New session" lives', () => {
     // It sits inside the project header's trailing cluster, never on the machine band.
     const header = within(screen.getByLabelText("project sessions"));
     expect(header.getByRole("button", { name: "New session on alpha" })).toBe(create[0]);
+  });
+
+  // Regression, user report (paraphrased: creating a new session from the app took
+  // several seconds): the screen used to await its own full fleet re-read — one
+  // request per 100-row window, serially, per machine — before opening the session
+  // it had just created, so the wait the user paid for was a list they were leaving.
+  it("opens the created session without waiting for the list to reload", async () => {
+    const opened: string[] = [];
+    const view = renderSessionsScreen({
+      machines: alpha(),
+      onOpen: (_conn, sid) => opened.push(sid),
+    });
+    restore = view.restore;
+    await screen.findByText("First");
+
+    // The post-create fleet re-read never lands while this test watches.
+    view.holdList();
+    view.requests.length = 0;
+    await userEvent.click(screen.getByRole("button", { name: "New session on alpha" }));
+
+    await waitFor(() => expect(opened).toHaveLength(1));
+    expect(opened[0]).toMatch(/^created-/);
+    // ...and it was opened as a FRESH session, with the list read still in flight.
+    view.releaseList();
   });
 
   it("sends the canonical workspace root, never the home-shortened display path", async () => {
@@ -163,10 +187,26 @@ describe("machine, project and session are three different shapes", () => {
     expect(row.className).not.toContain("min-h-14");
   });
 
-  // One dead machine is a degraded section, not an error page. Scoped to that machine
-  // its failure IS the screen: say it is not answering, show the message and a Retry, and
-  // disable the create buttons instead of rendering "No sessions yet".
-  it("keeps a dead machine's Retry where its sessions would have been", async () => {
+  // NOTHING ANSWERING IS NOT AN EMPTY LIST, and this screen never paints one: a total
+  // blackout is handed to the shell's own offline gate, which is the screen that can
+  // actually say which gateway failed and why. Never "No sessions yet" over a fleet
+  // that was never read.
+  it("hands a fleet with nothing answering to the offline gate", async () => {
+    const unreachable: (string | null)[] = [];
+    const view = renderSessionsScreen({
+      machines: [{ label: "alpha", down: true }],
+      onUnreachable: (message) => unreachable.push(message),
+    });
+    restore = view.restore;
+
+    await waitFor(() => expect(unreachable.filter(Boolean)).not.toHaveLength(0));
+    expect(screen.queryByText(/No sessions yet/)).toBeNull();
+    expect(named(/^New session on/)).toHaveLength(0);
+  });
+
+  // Regression, user report ("offline stuff should just not be accessible"): a machine
+  // that was not answering was still a tab that scoped the whole screen to it.
+  it("refuses to scope a fleet to a machine that is not answering", async () => {
     const view = renderSessionsScreen({
       machines: [
         { label: "alpha", sessions: [listSession({ id: "a1", title: "First" })] },
@@ -175,16 +215,14 @@ describe("machine, project and session are three different shapes", () => {
     });
     restore = view.restore;
     await screen.findByText("First");
+    const strip = within(screen.getByLabelText("Machines"));
 
-    await userEvent.click(
-      within(screen.getByLabelText("Machines")).getByRole("button", { name: /^beta/ }),
+    await userEvent.click(await strip.findByRole("button", { name: /^Reconnect to beta/ }));
+    // Pressing it retried beta; it never became the scope, and `All` stayed on.
+    await waitFor(() =>
+      expect(strip.getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe("true"),
     );
-    const retry = await screen.findByRole("button", { name: /Retry/ });
-    expect(retry).toBeTruthy();
-    expect(screen.getAllByText(/not answering/i).length).toBeGreaterThan(0);
-    expect(screen.queryByText(/No sessions yet/)).toBeNull();
-    // Nothing offers to create on a machine that cannot answer.
-    expect(named(/^New session on/)).toHaveLength(0);
+    expect(screen.getByText("First")).toBeTruthy();
   });
 });
 

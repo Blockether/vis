@@ -15,8 +15,9 @@ import {
   projectLabel,
   projectPage,
   reconcileMachines,
+  resolveScope,
+  SCOPE_ALL,
   scopedMachines,
-  scopeError,
   scopedConns,
   SEARCH_LOCAL_ONLY_RANK,
   searchOrder,
@@ -238,12 +239,51 @@ describe('scope', () => {
     expect(scopedSessions(machines, 'http://gone.local:7890')).toHaveLength(3);
   });
 
+  // Regression, user report ("offline stuff should just not be accessible"): `All` was
+  // every PAIRED machine, so a gateway that was not answering took a named section in
+  // the middle of the fleet whose entire content was its own failure.
+  it('leaves a machine that is not answering out of the fleet view', () => {
+    const half = [machines[0], machine(tower, null, 'offline')];
+    expect(scopedMachines(half, null)).toEqual([half[0]]);
+    expect(scopedSessions(half, null).map((s) => s.id)).toEqual(['a', 'b']);
+    // Named, it is still itself: the scope the reader typed is never second-guessed.
+    expect(scopedMachines(half, machineKey(tower))).toEqual([half[1]]);
+  });
+
+  it('keeps every machine when nothing answers, so the blackout has somewhere to be said', () => {
+    const dark = [machine(studio, null, 'refused'), machine(tower, null, 'offline')];
+    expect(scopedMachines(dark, null)).toEqual(dark);
+    expect(fleetError(dark)).toBe('refused');
+  });
+
   it('is loaded only once every machine in scope has answered', () => {
     const half = [machine(studio, [session('a')]), machine(tower, null)];
     expect(isFleetLoaded(half, null)).toBe(false);
     expect(isFleetLoaded(half, studio.url)).toBe(true);
     expect(isFleetLoaded([machine(tower, null, 'offline')], null)).toBe(true);
     expect(isFleetLoaded([], null)).toBe(false);
+  });
+});
+
+describe('resolveScope', () => {
+  const fleet = [machine(studio, [session('a')]), machine(tower, [session('b')])];
+
+  it('answers with the machine the reader named', () => {
+    expect(resolveScope(fleet, machineKey(tower))).toBe(machineKey(tower));
+    expect(resolveScope(fleet, SCOPE_ALL)).toBe(SCOPE_ALL);
+    expect(resolveScope(fleet, 'http://gone.local:7890')).toBe(SCOPE_ALL);
+  });
+
+  // Regression, user report ("offline stuff should just not be accessible"): a machine
+  // that died under the reading thumb kept the scope, so the list it was showing was
+  // replaced by that machine's failure page.
+  it('falls back to All when the machine being read stops answering', () => {
+    const died = [fleet[0], machine(tower, [session('b')], 'offline')];
+    expect(resolveScope(died, machineKey(tower))).toBe(SCOPE_ALL);
+  });
+
+  it('a fleet of one resolves to its machine, answering or not', () => {
+    expect(resolveScope([machine(studio, null, 'offline')], SCOPE_ALL)).toBe(machineKey(studio));
   });
 });
 
@@ -339,23 +379,6 @@ describe('machineCounts', () => {
       live: 0,
       unread: 0,
     });
-  });
-});
-
-describe('scopeError', () => {
-  const fleet = [machine(studio, [session('a')]), machine(tower, null, 'offline')];
-
-  it('stays null while anything in scope answers', () => {
-    expect(scopeError(fleet, null)).toBeNull();
-    expect(scopeError(fleet, machineKey(studio))).toBeNull();
-  });
-
-  it('surfaces the failure when the scope points at the dead machine', () => {
-    expect(scopeError(fleet, machineKey(tower))).toBe('offline');
-  });
-
-  it('surfaces a total blackout for the unscoped fleet', () => {
-    expect(scopeError([machine(studio, null, 'down'), machine(tower, null, 'offline')], null)).toBe('down');
   });
 });
 

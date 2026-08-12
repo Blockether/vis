@@ -2155,14 +2155,30 @@ export function MachineRail({ color, children }: { color?: MachineColor; childre
  * The machine's hue as a solid block, worn by its banner and its scope chip, so
  * the chip you tapped and the rail you got back are visibly the same machine.
  */
-export function MachineMark({ color, size = 'inline' }: { color: MachineColor; size?: 'inline' | 'banner' }) {
+export function MachineMark({
+  color,
+  size = 'inline',
+  isHollow,
+}: {
+  color: MachineColor;
+  size?: 'inline' | 'banner';
+  /**
+   * The machine is not answering: the SAME hue, drained to an outline.
+   *
+   * A machine that is down keeps its identity — it is still that computer, and
+   * still that colour — so its mark is not recoloured and not removed, it is
+   * emptied. Nothing is behind it, which is exactly what the block says.
+   */
+  isHollow?: boolean;
+}) {
   // A machine's identity block used to be `size-1.5` everywhere — the same 6px square,
   // at the same size, as the LIVE / WAITING / IDLE dot on every session row beneath
   // it. One shape meaning two things, and the SMALLEST glyph marking the HIGHEST
   // level. In a banner it is the mark of a whole computer and takes the glyph column;
   // riding inside a scope chip's text it stays the 6px it has to be.
   const box = size === 'banner' ? 'size-2.5' : 'size-1.5';
-  return <span className={`${box} shrink-0 ${color.dot}`} aria-hidden="true" />;
+  const face = isHollow ? `border ${color.rail}` : color.dot;
+  return <span className={`${box} shrink-0 ${face}`} aria-hidden="true" />;
 }
 
 /**
@@ -2216,33 +2232,70 @@ export function MachineSwitcher({ children }: { children: ReactNode }) {
  * and the reader had to learn a colour code to tell them apart; what a tab has to say
  * is "something happened over here", so unread is one amber mark and bold ink. The
  * exact count belongs to the session rows that own it.
+ *
+ * A MACHINE THAT IS NOT ANSWERING IS NOT A PLACE TO GO, SO ITS TILE IS A VERB.
+ *
+ * It used to be a tab like any other, in the same ink and the same weight, wearing
+ * the word "offline" — the only label on this strip that GREW when its machine got
+ * worse — and pressing it scoped the whole screen to a machine with nothing to show.
+ * A dead machine is now DRAINED: hollow hue, hint ink, never the raised tile, no word
+ * at all, and it is dropped from `All` so nothing under the switch belongs to it.
+ *
+ * The one thing a dead machine can still do is come back, so that is what its tile
+ * does: `isDown` makes the press a RETRY of that machine and nothing else. It is no
+ * longer a state, so it carries no `aria-pressed`; the caller gives it the verb's own
+ * `label` ("Reconnect to tower") and puts the machine's name and the transport's own
+ * reason in `title`, which is where a 6px block cannot speak.
+ *
+ * `note` is what that press is doing, spoken in the tile that was pressed —
+ * "reconnecting...", then "no answer" if it came back dead. It exists only after a
+ * press: a fleet's dead machines say nothing until they are asked.
  */
 export function MachineTab({
   isOn,
   hasUnread,
+  isDown,
+  note,
+  label,
+  title,
   onClick,
   children,
 }: {
   isOn: boolean;
   hasUnread?: boolean;
+  /** Not answering: drained face, never the scope, and the press is a retry. */
+  isDown?: boolean;
+  /** The word this tile earned by being pressed, and only then. */
+  note?: string | null;
+  /** The verb's accessible name, when the press is no longer "show me this machine". */
+  label?: string;
+  title?: string;
   onClick: () => void;
   children: ReactNode;
 }) {
   return (
     <button
       type="button"
-      aria-pressed={isOn}
+      aria-pressed={isDown ? undefined : isOn}
+      aria-label={label}
+      title={title}
+      // The tile answers its own press, so it is the live region: `reconnecting...`
+      // and what came back are read out where the finger already is.
+      aria-live={isDown ? 'polite' : undefined}
       onClick={onClick}
       className={`inline-flex h-7 shrink-0 items-center gap-1.5 px-2 font-mono text-meta transition-colors duration-150 motion-reduce:transition-none mouse:h-5 ${
-        isOn
-          ? 'bg-panel font-bold text-white shadow-sm'
-          : hasUnread
-            ? 'font-bold text-white'
-            : 'text-dialog-hint hover:text-white'
+        isDown
+          ? 'text-dialog-hint/60 hover:text-dialog-hint'
+          : isOn
+            ? 'bg-panel font-bold text-white shadow-sm'
+            : hasUnread
+              ? 'font-bold text-white'
+              : 'text-dialog-hint hover:text-white'
       }`}
     >
       {children}
-      {hasUnread && (
+      {note && <span className="opacity-80">{note}</span>}
+      {hasUnread && !isDown && (
         <span className="inline-block size-1.5 shrink-0 bg-accent">
           <span className="sr-only">unread</span>
         </span>

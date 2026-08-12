@@ -140,24 +140,99 @@ describe("the All view is a fleet of separate machines", () => {
     expect(document.body.textContent).not.toContain("No sessions yet");
   });
 
-  // One dead machine is a degraded SECTION, not an error page — the rest of the fleet is
-  // still a working list, which is the whole reason to pair more than one.
-  it("degrades one dead machine inside a working fleet", async () => {
+  // Regression, user report ("offline stuff should just not be accessible... and maybe
+  // more visually shown that they are disabled instead of showing offline"): a machine
+  // that was not answering took a named section in the middle of the fleet whose whole
+  // content was its own failure, and a live tab wearing the word "offline" that scoped
+  // the screen to a machine with nothing to show.
+  it("keeps a machine that is not answering out of the All view", async () => {
     const view = renderSessionsScreen({
       machines: [fleet()[0], { label: "beta", down: true }],
     });
     restore = view.restore;
     await screen.findByText("First");
+    const strip = within(screen.getByLabelText("Machines"));
+    await waitFor(() => expect(strip.getByRole("button", { name: /^Reconnect to beta/ })).toBeTruthy());
 
-    const beta = within(section("beta"));
-    // Its band still NAMES it — a rail with no name is a colour nobody can resolve —
-    // and counts nothing, because a machine that is down has no count.
-    expect(beta.getByText("beta")).toBeTruthy();
-    expect(section("beta").textContent).not.toContain("0 sessions");
-    expect(await beta.findByText("beta is not answering.")).toBeTruthy();
-    expect(beta.getByRole("button", { name: /Retry/ })).toBeTruthy();
-    // Nothing offers to create on a machine that cannot answer.
-    expect(named(/^Projects on beta$/)).toHaveLength(0);
+    // No section, no band, no Retry inside the list: the fleet on screen is the fleet
+    // that answered, and the machine that did not is the strip's business.
+    expect(screen.queryByLabelText("beta projects")).toBeNull();
+    expect(document.body.textContent).not.toContain("beta is not answering.");
+    expect(named(/Retry/)).toHaveLength(0);
     expect(screen.getByText("First")).toBeTruthy();
+
+    // Its tile stays — a machine you paired never vanishes from the row that lists your
+    // machines — drained, unpressed-looking, and no longer a state to be in.
+    const tile = strip.getByRole("button", { name: /^Reconnect to beta/ });
+    expect(tile.getAttribute("aria-pressed")).toBeNull();
+    expect(tile.getAttribute("title")).toContain("beta is not answering");
+    expect(tile.textContent).toBe("beta");
+    // Hollow hue: the machine keeps its colour, with nothing behind it.
+    const mark = tile.querySelector("[class*='machine-']")!;
+    expect(mark.className).toMatch(/border border-machine-/);
+    expect(mark.className).not.toMatch(/bg-machine-/);
+  });
+
+  // The one thing a dead machine can still do is come back, so that is what its tile
+  // does. The press answers where the finger is, and a machine that answers walks back
+  // into the fleet view with its own section and rail.
+  it("makes the drained tile the retry, and says what the retry did", async () => {
+    const view = renderSessionsScreen({
+      machines: [fleet()[0], { label: "beta", down: true, heals: true, sessions: [
+        listSession({ id: "b1", title: "Second", workspace: { root: "/w/two" } }),
+      ] }],
+    });
+    restore = view.restore;
+    await screen.findByText("First");
+    const strip = within(screen.getByLabelText("Machines"));
+    const tile = await strip.findByRole("button", { name: /^Reconnect to beta/ });
+
+    await userEvent.click(tile);
+    // Woken, it is a machine again: its own section, its own rail, its own tab.
+    expect(await screen.findByText("Second")).toBeTruthy();
+    expect(railHue("beta")).toBeTruthy();
+    expect(railHue("beta")).not.toBe(railHue("alpha"));
+    await waitFor(() =>
+      expect(strip.getByRole("button", { name: /^beta/ }).getAttribute("aria-pressed")).toBe(
+        "false",
+      ),
+    );
+    expect(document.body.textContent).not.toContain("no answer");
+  });
+
+  it("says so in the tile when the retry comes back dead", async () => {
+    const view = renderSessionsScreen({
+      machines: [fleet()[0], { label: "beta", down: true }],
+    });
+    restore = view.restore;
+    await screen.findByText("First");
+    const strip = within(screen.getByLabelText("Machines"));
+
+    await userEvent.click(await strip.findByRole("button", { name: /^Reconnect to beta/ }));
+    await waitFor(() =>
+      expect(strip.getByRole("button", { name: /^Reconnect to beta/ }).textContent).toContain(
+        "no answer",
+      ),
+    );
+    // Still not a door: the failure did not put a section back in the list.
+    expect(screen.queryByLabelText("beta projects")).toBeNull();
+  });
+
+  // Dropping the dead machines from `All` must never empty the screen: a TOTAL
+  // blackout is not a quiet list, it is an unreachable one, and it is handed to the
+  // shell's own offline gate rather than painted as a fleet of nothing.
+  it("hands a whole dark fleet to the offline gate instead of an empty list", async () => {
+    const unreachable: (string | null)[] = [];
+    const view = renderSessionsScreen({
+      machines: [
+        { label: "alpha", down: true },
+        { label: "beta", down: true },
+      ],
+      onUnreachable: (message) => unreachable.push(message),
+    });
+    restore = view.restore;
+    await waitFor(() => expect(unreachable.filter(Boolean)).not.toHaveLength(0));
+    expect(screen.queryByLabelText("Machines")).toBeNull();
+    expect(screen.queryByLabelText("alpha projects")).toBeNull();
   });
 });

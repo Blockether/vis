@@ -1588,6 +1588,62 @@ describe("MachineSwitcher", () => {
     expect(quiet).not.toContain("bg-accent");
     expect(quiet).toContain("text-dialog-hint");
   });
+
+  // Regression, user report ("offline stuff should just not be accessible... it should be
+  // shown as offline and clicking should show reconnecting"): a machine that was not
+  // answering was a live tab in the same ink and the same weight, wearing the word
+  // "offline" — the one label on this strip that GREW when its machine got worse — and
+  // pressing it scoped the screen to a machine with nothing to show.
+  it("drains a machine that is not answering and makes its press a retry", () => {
+    const down = renderToStaticMarkup(
+      <MachineTab
+        isOn={false}
+        isDown
+        label="Reconnect to tower"
+        title="tower is not answering - Failed to fetch"
+        onClick={() => {}}
+      >
+        <MachineMark color={MACHINE_COLORS[0]!} isHollow />
+        tower
+      </MachineTab>,
+    );
+    // It is a VERB now, not one of the states this switch is choosing between.
+    expect(down).not.toContain("aria-pressed");
+    expect(down).toContain('aria-label="Reconnect to tower"');
+    expect(down).toContain("is not answering");
+    // No word inside the tile until it is pressed, and never the old label.
+    expect(down).not.toContain(">offline<");
+    // Drained: hint ink, never the raised paper tile the chosen machine wears.
+    expect(down).not.toContain("bg-panel");
+    expect(down).toContain("text-dialog-hint/60");
+    // The hue is emptied, not swapped: the machine keeps its identity while it is down.
+    expect(down).toContain(`border ${MACHINE_COLORS[0]!.rail}`);
+    expect(down).not.toContain(MACHINE_COLORS[0]!.dot);
+  });
+
+  it("answers the press in the tile that was pressed", () => {
+    const busy = renderToStaticMarkup(
+      <MachineTab isOn={false} isDown note="reconnecting..." onClick={() => {}}>
+        tower
+      </MachineTab>,
+    );
+    const failed = renderToStaticMarkup(
+      <MachineTab isOn={false} isDown note="no answer" onClick={() => {}}>
+        tower
+      </MachineTab>,
+    );
+    expect(busy).toContain("reconnecting...");
+    expect(busy).toContain('aria-live="polite"');
+    expect(failed).toContain("no answer");
+    // A down tile carries no news mark: its badge would be a stale count.
+    expect(
+      renderToStaticMarkup(
+        <MachineTab isOn={false} isDown hasUnread onClick={() => {}}>
+          tower
+        </MachineTab>,
+      ),
+    ).not.toContain("bg-accent");
+  });
 });
 
 // Regression, user report ("the plus is here and here" — a plus on the machine band and
