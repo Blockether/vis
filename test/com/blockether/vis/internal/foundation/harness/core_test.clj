@@ -13,15 +13,18 @@
 
 (defdescribe
   skill-template-text-test
-  (it "slash skill expansion injects the body and bundled resource paths"
-      (let [s {:name "demo" :description "d" :body "BODY" :dir "/x" :resources ["ref.md"]}]
-        (with-redefs
-          [d/skill-by-name (fn [_]
-                             s)]
-          (let [text (skill-template-text {} s "do x")]
-            (expect (str/includes? text "BODY"))
-            (expect (str/includes? text "- /x/ref.md"))
-            (expect (str/includes? text "Task: do x"))))))
+  (it "slash skill expansion names the skill, how to read it and its resource paths"
+      (let
+        [s
+         {:name "demo" :description "d" :body "BODY" :dir "/x" :resources ["ref.md"]}
+
+         text
+         (skill-template-text s "do x")]
+
+        (expect (str/includes? text "Use the skill \"demo\""))
+        (expect (str/includes? text "doc(\"demo\")"))
+        (expect (str/includes? text "- /x/ref.md"))
+        (expect (str/includes? text "Task: do x"))))
   (it "carries a nested skill's owning project into its prompt template"
       (with-redefs
         [d/skills (constantly [{:name "demo" :description "d" :project-root "/repo/apps/demo"}])]
@@ -29,110 +32,54 @@
   ;; Regression: `/impeccable` typed from the repository root expanded to
   ;; apps/vis-companion's SKILL.md with nothing in the message saying the skill
   ;; belonged to that app, so its relative instructions were followed at the root.
-  (it "states the owning project before the body it expands"
+  (it "states the owning project it re-roots the turn on"
       (let
-        [s
-         {:name "demo"
-          :description "d"
-          :body "BODY"
-          :dir "/repo/apps/demo/.agents/skills/demo"
-          :project-root "/repo/apps/demo"
-          :resources []}
+        [s {:name "demo"
+            :description "d"
+            :body "BODY"
+            :dir "/repo/apps/demo/.agents/skills/demo"
+            :project-root "/repo/apps/demo"
+            :resources []}]
+        (expect (str/includes? (skill-template-text s "") "/repo/apps/demo"))))
+  (it "a skill owned by the session's own root carries no owner sentence"
+      (let
+        [s {:name "demo"
+            :description "d"
+            :body "BODY"
+            :dir ".vis/skills/demo"
+            :project-root (.getCanonicalPath (workspace/cwd))
+            :resources []}]
+        (expect (not (str/includes? (skill-template-text s "") "belongs to the project at")))))
+  (it "the cheap prompt listing tags a nested skill with its project"
+      (with-redefs
+        [d/skills (constantly [{:name "demo"
+                                :description "Demo skill"
+                                :project-root (str (.getCanonicalPath (workspace/cwd))
+                                                   "/apps/demo")}])]
+        (expect (str/includes? ((deref #'core/skills-prompt) {}) "demo [apps/demo]")))))
 
-         text
-         (skill-template-text {} s "")]
+;; Regression: `/<name>` pasted the whole SKILL.md into the user message and
+;; kept a per-session ledger of what it had pasted, so a second `/<name>` told
+;; the model the body was "already in this conversation" — a claim nothing
+;; could keep once that text folded away.
+(defdescribe
+  slash-skill-statelessness-test
+  (it "expands to a POINTER, never to the body"
+      (let [s {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []}]
+        (expect (not (str/includes? (skill-template-text s "do x") "BODY")))))
+  (it "every invocation of the same skill expands identically"
+      (let [s {:name "demo" :description "d" :body "BODY" :dir "/x" :resources ["ref.md"]}]
+        (expect (= (skill-template-text s "do x") (skill-template-text s "do x")))
+        (expect (not (str/includes? (skill-template-text s "do y") "injected at turn")))))
+  (it "records nothing on the session context"
+      (with-redefs [d/skills (constantly [{:name "demo" :description "d" :body "BODY" :dir "/x"}])]
+        (let
+          [ca (atom {"session_turn" 3})
+           expand (:expand-fn (first (skill-template-entries)))]
 
-        (expect (str/includes? text "/repo/apps/demo"))
-        (expect (< (.indexOf ^String text "/repo/apps/demo") (.indexOf ^String text "BODY"))))))
-
-(defdescribe slash-skill-idempotence-test
-             ;; `/<name>` is the one skill surface with a session effect: the body is
-             ;; injected ONCE. Re-invoking to re-root a turn or hand over a new task used
-             ;; to paste the whole SKILL.md into the conversation a second time.
-             (it "a repeated slash invocation points at the injected body instead of repeating it"
-                 (let
-                   [s
-                    {:name "demo" :description "d" :body "BODY" :dir "/x" :resources ["ref.md"]}
-
-                    env
-                    {:ctx-atom (atom {"session_turn" 3})}
-
-                    first-text
-                    (skill-template-text env s "do x")
-
-                    again
-                    (skill-template-text env s "do y")]
-
-                   (expect (str/includes? first-text "BODY"))
-                   (expect (not (str/includes? again "BODY")))
-                   (expect (str/includes? again "already in this conversation"))
-                   (expect (str/includes? again "turn 3"))
-                   (expect (str/includes? again "doc(\"demo\")"))
-                   (expect (str/includes? again "Task: do y"))))
-             (it "an edited SKILL.md is injected again"
-                 (let
-                   [env
-                    {:ctx-atom (atom {"session_turn" 1})}
-
-                    s
-                    {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []}]
-
-                   (skill-template-text env s "")
-                   (expect (str/includes? (skill-template-text env (assoc s :body "NEW BODY") "")
-                                          "NEW BODY"))))
-             (it "a repeat still states the owning project of a nested skill"
-                 (let
-                   [env
-                    {:ctx-atom (atom {"session_turn" 1})}
-
-                    s
-                    {:name "demo"
-                     :description "d"
-                     :body "BODY"
-                     :dir "/repo/apps/demo/.agents/skills/demo"
-                     :project-root "/repo/apps/demo"
-                     :resources []}]
-
-                   (skill-template-text env s "")
-                   (expect (str/includes? (skill-template-text env s "") "/repo/apps/demo"))))
-             (it "without a session context every invocation injects the body"
-                 (let [s {:name "demo" :description "d" :body "BODY" :dir "/x" :resources []}]
-                   (expect (str/includes? (skill-template-text {} s "") "BODY"))
-                   (expect (str/includes? (skill-template-text {} s "") "BODY")))))
-
-(defdescribe skill-ownership-test
-             ;; Regression: a repository-root session expanding a nested project's
-             ;; skill (apps/vis-companion's `impeccable`) received a payload of
-             ;; {name description body cwd resources} only — no key and no sentence said
-             ;; the skill belonged to that app, so the model kept working at the root.
-             (it "the slash payload names the owning project and where to work"
-                 (let
-                   [payload ((deref #'core/skill-payload)
-                              {:name "demo"
-                               :description "d"
-                               :body "BODY"
-                               :dir "/repo/apps/demo/.agents/skills/demo"
-                               :project-root "/repo/apps/demo"
-                               :resources []})]
-                   (expect (= "/repo/apps/demo" (get payload "project_root")))
-                   (expect (str/includes? (str (get payload "note")) "/repo/apps/demo"))))
-             (it "a skill owned by the session's own root carries no owner note"
-                 (let
-                   [payload ((deref #'core/skill-payload)
-                              {:name "demo"
-                               :description "d"
-                               :body "BODY"
-                               :dir ".vis/skills/demo"
-                               :project-root (.getCanonicalPath (workspace/cwd))
-                               :resources []})]
-                   (expect (nil? (get payload "note")))))
-             (it "the cheap prompt listing tags a nested skill with its project"
-                 (with-redefs
-                   [d/skills (constantly [{:name "demo"
-                                           :description "Demo skill"
-                                           :project-root (str (.getCanonicalPath (workspace/cwd))
-                                                              "/apps/demo")}])]
-                   (expect (str/includes? ((deref #'core/skills-prompt) {}) "demo [apps/demo]")))))
+          (expand {:ctx-atom ca} "do x")
+          (expand {:ctx-atom ca} "do y")
+          (expect (= {"session_turn" 3} @ca))))))
 
 (defdescribe skills-prompt-test
              (it "skills-prompt is a string listing skills when any exist"

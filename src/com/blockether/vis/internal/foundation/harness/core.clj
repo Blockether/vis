@@ -13,11 +13,12 @@
      `doc(name)` prints it whole. Reading a skill has no session effect: there
      is nothing to activate, nothing to re-read and no activation receipt.
 
-   - The ONE exception is the USER's `/<name>` slash, which injects the body
-     into the user message: that injection is IDEMPOTENT per session. The
-     second `/<name>` of the same SKILL.md expands to a pointer at the copy
-     already in the conversation, so re-invoking for a new task (or to re-root
-     the turn on the skill's project) costs a sentence, not the document.
+   - The USER's `/<name>` slash is that same document with a POINTER, never a
+     copy: it expands to one sentence naming the skill (plus the owning project
+     and any bundled resource paths, which the body does not carry) and leaves
+     fetching it to the model, which is the only party that knows whether the
+     text is still in front of it. No injected body means nothing to remember
+     between two `/<name>`s: every skill surface is stateless.
 
    - AGENTS are the layer's one bare verb (bound like cat/rg via
      `:ext.engine/builtin? true`) and an ALIAS to `sub_loop`:
@@ -87,112 +88,44 @@
         (subs owner (inc (count root)))
         owner))))
 
-(defn- skill-payload
-  "The skill as data for a `/<name>` slash expansion: its body, the directory it
-   lives in and its bundled resource paths."
-  [s]
-  (let [owner (owner-root s)]
-    (cond->
-      {"name" (:name s)
-       "description" (:description s)
-       "body" (:body s)
-       "cwd" (:dir s)
-       "resources" (mapv #(str (:dir s) "/" %) (:resources s))}
-      (:project-root s)
-      (assoc "project_root" (:project-root s))
-
-      owner
-      (assoc "note" (owner-note owner)))))
-
 ;; =============================================================================
 ;; /<name> — user-invokable skill templates (pi-style)
 ;; =============================================================================
 
-(def ^:private slash-skills-key
-  ;; Ledger of the skills a `/<name>` has already injected this session:
-  ;; `{name {"digest" … "turn" …}}`. A `session_*` key, so it OUTLIVES the turn
-  ;; (only `engine_*` is stripped before the Nippy snapshot) and is absent from
-  ;; `ctx-engine/model-facing-keys`, so it is never rendered or bound as
-  ;; `session`. Bookkeeping the user asked for, not context the model reads.
-  "session_slash_skills")
-
-(defn- prior-expansion
-  "The record of an earlier `/<name>` injection of THIS body in this session, or
-   nil. Keyed on a content digest: an edited SKILL.md is a different document
-   and is injected again."
-  [env s digest]
-  (when-let
-    [prior (some-> (:ctx-atom env)
-                   deref
-                   (get-in [slash-skills-key (:name s)]))]
-    (when (= digest (get prior "digest")) prior)))
-
-(defn- remember-expansion!
-  "Stamp the ledger with the body just injected and the turn that injected it."
-  [env s digest]
-  (when-let [ca (:ctx-atom env)]
-    (let [turn (get @ca "session_turn")]
-      (swap! ca assoc-in [slash-skills-key (:name s)] {"digest" digest "turn" turn}))))
-
-(defn- skill-repeat-text
-  "A REPEATED `/<name>`: the same instruction and the same owner sentence, with a
-   pointer at the body already in the conversation instead of a second copy of
-   it. Names `doc` as the way back if that text has since been folded away."
-  [s prior note task]
-  (str "Use the skill \""
-       (:name s)
-       "\" for this task. Its full SKILL.md is already in this conversation"
-       (when-let [t (get prior "turn")]
-         (str " (injected at turn " t ")"))
-       " and is not repeated here — follow those instructions as they stand, and read them"
-       " again with doc(\""
-       (:name s)
-       "\") if they are no longer visible above.\n\n"
-       (when note (str note "\n\n"))
-       (str/triml (str task))))
-
 (defn- skill-template-text
-  "Expanded user-message text for a `/<name> [task]` invocation:
-   the full SKILL.md plus the optional task. A skill owned by a nested project
-   ALSO says so — the turn is re-rooted there (`prompt-templates/expand`
-   carries `:project-root`), and the message must not leave that silent.
+  "Expanded user-message text for a `/<name> [task]` invocation: the SENTENCE
+   that names the skill, plus the optional task. Nothing else — no copy of the
+   `SKILL.md`, no ledger, no receipt.
 
-   IDEMPOTENT per session: the body is injected ONCE. `/<name>` is how a user
-   re-roots a turn on a skill's project or hands it a new task, and doing that
-   three times must not paste the same document three times, so every later
-   invocation expands to `skill-repeat-text`. Only this slash carries the
-   effect — `doc(name)` prints the body every time it is called."
-  [env s args]
+   The slash says WHICH skill governs the task; whether the instructions have
+   to be fetched is the model's own call, because only the model knows whether
+   that text is still in front of it. `doc(<name>)` prints it whole, every
+   time, with no session effect — so a second `/<name>` is the same sentence as
+   the first and needs nothing remembered between them.
+
+   A skill owned by a NESTED project also says whose it is: the turn is
+   re-rooted there (`prompt-templates/expand` carries `:project-root`) and the
+   message must not leave that silent. Bundled resource paths are named for the
+   same reason — the directory a skill's files live in is not derivable from
+   the body `doc` prints."
+  [s args]
   (let
-    [digest
-     (extension/sha256-hex (str (:body s)))
-
-     prior
-     (prior-expansion env s digest)
-
-     note
+    [note
      (owner-note (owner-root s))
 
-     task
-     (when-not (str/blank? (str args)) (str "\n\nTask: " args))]
+     resources
+     (seq (mapv #(str (:dir s) "/" %) (:resources s)))]
 
-    (if prior
-      (skill-repeat-text s prior note task)
-      (let
-        [r
-         ;; A slash invocation is an explicit USER-authored injection: the whole
-         ;; SKILL.md lands in the current user message, literally.
-         (skill-payload s)]
-        (remember-expansion! env s digest)
-        (str "Use the skill \""
-             (:name s)
-             "\" for this task — its full SKILL.md follows. Follow these instructions.\n\n"
-             (when note (str note "\n\n"))
-             (get r "body")
-             (when (seq (get r "resources"))
-               (str "\n\nBundled resources (read them with the file tools as needed):\n"
-                    (str/join "\n" (map #(str "- " %) (get r "resources")))))
-             task)))))
+    (str "Use the skill \""
+         (:name s)
+         "\" for this task: read it with doc(\""
+         (:name s)
+         "\") unless its SKILL.md is already in this conversation, then follow it as written."
+         (when note (str "\n\n" note))
+         (when resources
+           (str "\n\nBundled resources (read them with the file tools as needed):\n"
+                (str/join "\n" (map #(str "- " %) resources))))
+         (when-not (str/blank? (str args)) (str "\n\nTask: " args)))))
 
 (defn- skill-template-entries
   "Every discovered skill as one dynamic prompt template named `<name>`. A
@@ -206,8 +139,8 @@
                                (:name s)
                                (when-let [d (not-empty (str (:description s)))]
                                  (str " — " (clip d 140))))
-             :expand-fn (fn [env args]
-                          (skill-template-text env s args))}
+             :expand-fn (fn [_env args]
+                          (skill-template-text s args))}
             (:project-root s)
             (assoc :project-root (:project-root s))))
         (d/skills)))

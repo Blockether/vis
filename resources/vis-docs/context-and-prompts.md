@@ -88,23 +88,29 @@ template only fires for a `/name` no extension claimed.
 ## Skill invocations: `/<name>`
 
 Every discovered [skill](skills.md) is also exposed as a dynamic template
-named `<name>`, so you can load a skill explicitly instead of waiting
+named `<name>`, so you can name a skill explicitly instead of waiting
 for the model to pick it:
 
 ```
-/setup-pre-commit          # load the skill, follow its instructions
-/setup-pre-commit for husky  # load it with a task appended
+/setup-pre-commit          # name the skill, follow its instructions
+/setup-pre-commit for husky  # name it with a task appended
 ```
 
-The expansion explicitly injects the full `SKILL.md` plus its bundled resource
-paths into that user message. The model reaches the same text on its own with
-`doc(name)` — a skill is a document in the retrieval corpus, never a verb.
+The expansion is a POINTER, not a copy — one sentence in that user message:
 
-The injection is **idempotent per session**: the first `/<name>` carries the
-body, every later one expands to a pointer at the copy already in the
-conversation plus your new task, so re-invoking a skill costs a sentence. The
-pointer names `doc(name)` as the way back if the earlier text has been folded
-away, and an edited `SKILL.md` (different content) is injected in full again.
+```
+Use the skill "setup-pre-commit" for this task: read it with doc("setup-pre-commit")
+unless its SKILL.md is already in this conversation, then follow it as written.
+
+Task: for husky
+```
+
+Fetching is the model's decision, because only the model can see whether that
+text is still in front of it; `doc(name)` prints the whole `SKILL.md` every
+time, with no session effect. Nothing is recorded between two `/<name>`s — they
+expand identically. Two facts the body itself does not carry are added when
+they apply: the owning project of a nested skill (the turn is re-rooted there)
+and the absolute paths of its bundled resources.
 
 ## Shell shortcuts: `!` and `!&`
 

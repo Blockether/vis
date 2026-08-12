@@ -14,12 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   back.
 
 ### Changed
-- `/<name>` injects a skill's `SKILL.md` ONCE per session. A later `/<name>` — how you hand a
-  skill a new task or re-root a turn on its project — expands to a sentence pointing at the copy
-  already in the conversation (and at `doc("name")` if it was folded away) instead of pasting the
-  document again. An edited `SKILL.md` is different content and is injected in full. This user
-  slash is the only skill surface with a session effect; `doc(name)` still prints the body every
-  time.
+- `/<name>` NAMES a skill instead of pasting it. The expansion is one sentence — use this skill,
+  read it with `doc("name")` unless its `SKILL.md` is already in the conversation — plus your
+  task, the owning project of a nested skill, and the paths of its bundled resources. Whether the
+  instructions still have to be fetched is the model's call, since only the model can see whether
+  that text is still in front of it. Every skill surface is now stateless: two `/<name>`s expand
+  identically and nothing is recorded between them.
 
 ### Removed
 - The `skill` verb. A skill is a document like any other: `apropos(text)` finds it, `doc("name")`

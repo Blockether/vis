@@ -111,16 +111,26 @@ built in and always available. There is no skills feature toggle.
 
 The model picks skills from the prompt listing on its own, but you can force
 one: every skill is also a prompt template named `<name>`, so typing
-`/setup-pre-commit for husky` in any channel loads that skill's full
-`SKILL.md` directly into that user message and runs your task with it. Details in
+`/setup-pre-commit for husky` in any channel expands to
+
+```
+Use the skill "setup-pre-commit" for this task: read it with doc("setup-pre-commit")
+unless its SKILL.md is already in this conversation, then follow it as written.
+
+Task: for husky
+```
+
+and runs your task with it. Details in
 [Context files & prompts](context-and-prompts.md).
 
-That injection — and only that injection — is **idempotent per session**. The
-body lands in the conversation once; a later `/setup-pre-commit some other task`
-expands to a sentence pointing at the copy already there (and at `doc(name)` in
-case it has since been folded away), so re-invoking a skill to hand it a new
-task or to re-root the turn on its project never pastes the document twice. An
-edited `SKILL.md` is a different document and is injected again.
+The slash **names** the skill; it never pastes the body. Whether the
+instructions still have to be fetched is the model's call — it is the only
+party that can see whether that text is still in front of it, and `doc(name)`
+prints it whole every time with no session effect. So every `/<name>` expands
+to the same sentence: nothing is remembered between two of them. A skill owned
+by a nested project also gets the sentence naming that project (the turn is
+re-rooted there), and bundled resource paths are listed, because neither is
+derivable from the body `doc` prints.
 
 ## Using skills from other harnesses
 
