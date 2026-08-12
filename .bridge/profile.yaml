@@ -1,0 +1,44 @@
+kind: project-profile
+project_name: vis
+root_path: ..
+verification_policy_path: .bridge/verification-policy.yaml
+code_paths:
+- src
+- extensions/common/vis-foundation-bridge/src
+docs_paths:
+- docs
+- extensions/common/vis-foundation-bridge/docs
+test_paths:
+- test
+- extensions/common/vis-foundation-bridge/test
+artifact_paths:
+  root: .bridge/ephemeral
+  evidence: .bridge/ephemeral/evidence
+canonical_commands:
+- id: unit
+  kind: unit
+  role: regression
+  cwd: extensions/common/vis-foundation-bridge
+  command: clojure -M:test
+  description: Run Bridge extension unit tests
+  result_parser:
+    type: regex-status
+    rules:
+    - stream: stdout
+      regex: '(?m)^(?:\u001B\[[0-9;]*m)*0 failures\.(?:\u001B\[[0-9;]*m)*$'
+      status: passed
+    - stream: stdout
+      regex: '(?m)^(?:\u001B\[[0-9;]*m)*[1-9][0-9]* failures?\.(?:\u001B\[[0-9;]*m)*$'
+      status: failed
+subsystems:
+- name: bridge-extension
+  code_globs:
+  - extensions/common/vis-foundation-bridge/src/**/*
+  docs_globs:
+  - extensions/common/vis-foundation-bridge/docs/**/*
+  test_globs:
+  - extensions/common/vis-foundation-bridge/test/**/*
+  expected_evidence:
+  - unit
+  system_category: api
+  risk_class: medium

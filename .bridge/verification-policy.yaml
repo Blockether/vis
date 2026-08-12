@@ -11,6 +11,7 @@ rules:
     - bridge-extension
     change-categories:
     - code-only
+    - tests-only
     - mixed
     risk-classes:
     - medium
@@ -23,11 +24,5 @@ rules:
   evidence-roles:
     regression:
     - unit
-  omission-rules:
-    allowed?: true
-    requires-record?: true
-    required-fields:
-    - rationale
-    - owner
   notes:
-  - Default bootstrap policy. Customize scope and evidence levels for this project.
+  - Bridge extension changes require its unit suite; omission rationale belongs in ordinary project documentation.
