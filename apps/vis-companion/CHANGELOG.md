@@ -2,6 +2,22 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.35 (3971) — 2026-08-12
+<!-- commit: eef1f83d0f5af4c3cfa30158ccbde81d9a5326ea -->
+
+- Trim the Companion image viewer to what is on screen
+- Shorten inline session delete confirm to Yes, delete / No, keep
+- Tone the inline session-delete confirm: err surface, edge and ink
+- Companion: confirm a session delete in the row, not in a dialog
+- Remove live resources from the model-facing session context
+- Stop naming the deleted cat and patch tools in the docstrings
+- Drop finished background shells from the model-facing ctx
+- Split the shim block into a pushed line and a pulled page
+- Drop the provisioning-profile env overrides from the iOS release
+- Fetch the App Store profile at release time instead of storing it as a secret
+- Pull area doctrine out of the pushed prompt and into skills
+- Record the 0.1.35 (3959) companion build in the changelog
+
 ## 0.1.35 (3959) — 2026-08-11
 <!-- commit: 99ccc2b5af2816ee6f6389a8f042355310a42b90 -->
 
