@@ -659,7 +659,7 @@
                       card
                       (vis/result-card rec)]
 
-                     (expect (= "GREP" (:label card)))
+                     (expect (= "grep" (:op card)))
                      (expect (= "8 hits in 1 file" (:summary card)))))))
 
 ;; Regression: a FAILED provider turn's styled card must survive the

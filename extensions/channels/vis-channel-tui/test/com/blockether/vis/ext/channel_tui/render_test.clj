@@ -87,9 +87,9 @@
                             (code-row-bg {:kind :toggle-details} true t/code-ok-bg)))))
 
 (defn- result-form
-  "One executed form whose card is titled by the printed value's own `:op` — the
-   shape every op-card in a python block wears. Blank `:code`: the card, not the
-   program, is what these tests measure."
+  "One executed form carrying a printed value's own `:op` — the shape every
+   op-card in a python block wears. Blank `:code`: the card, not the program, is
+   what these tests measure."
   [op summary]
   {:op op :success? true :code "" :result-summary summary :result {}})
 
@@ -108,28 +108,35 @@
        (mapv :line)))
 
 (defdescribe
-  card-titles-itself-from-its-op-test
-  ;; A card's identity is DATA the printed value carried out of the sandbox, never
-  ;; a symbol looked up in a registry: an op with no extension registered still
-  ;; paints its own badge, and the block's own output reads `RESULT`.
-  (it "titles a printed result's card with its own op"
+  card-wears-its-tally-and-no-badge-test
+  ;; A card says what the value SAID — its own tally — and nothing else. The
+  ;; op-name badge is gone: no `GREP` over a printed result, no `RESULT` over the
+  ;; block's own output, and no private transport name (`_SHELL_WAIT`) leaking
+  ;; onto a card because a handle method happened to answer it.
+  (it "shows a printed result's tally without titling it with the op"
       (let [txt (str/join "\n" (map strip-ansi (render-forms [(result-form "grep" "12 results")])))]
-        (expect (str/includes? txt "GREP"))
-        (expect (str/includes? txt "12 results"))))
-  (it "titles a card for an op no extension registered"
+        (expect (str/includes? txt "12 results"))
+        (expect (not (str/includes? txt "GREP")))))
+  (it "never paints an op name, however unheard-of the op"
       (let
         [txt (str/join "\n"
                        (map strip-ansi
                             (render-forms [(result-form "totally_unknown_op" "1 row")])))]
-        (expect (str/includes? txt "TOTALLY_UNKNOWN_OP"))))
-  (it "reads RESULT for the block's own output"
+        (expect (str/includes? txt "1 row"))
+        (expect (not (str/includes? txt "TOTALLY_UNKNOWN_OP")))))
+  (it "never paints a private transport op a handle method answered"
+      (let
+        [txt (str/join "\n" (map strip-ansi (render-forms [(result-form "_shell_wait" "exit 0")])))]
+        (expect (str/includes? txt "exit 0"))
+        (expect (not (str/includes? txt "_SHELL_WAIT")))))
+  (it "leaves the block's own output unlabeled"
       (let
         [txt (str/join
                "\n"
                (map strip-ansi
                     (render-forms
                       [{:success? true :code "print(1)" :result-summary "1" :result "1"}])))]
-        (expect (str/includes? txt "RESULT")))))
+        (expect (not (str/includes? txt "RESULT"))))))
 
 (defdescribe
   python-failure-compact-test
@@ -3665,8 +3672,7 @@
       [texts
        (entry-text
          (tool-card-entries
-           {:label "SHELL"
-            :summary "$ 2 shell commands — 2 succeeded, 0 failed"
+           {:summary "$ 2 shell commands — 2 succeeded, 0 failed"
             :body
             "### 1. $ first\n\n**STATUS**\n\nstatus: success\n\n────────────\n\n### 2. $ second\n\n**STATUS**\n\nstatus: success"}
            {:fill-w 76 :session-id nil :detail-expansions {}}))]
@@ -3683,8 +3689,7 @@
                  (with-redefs [timg/images-protocol (constantly :kitty)]
                    (let
                      [entries (tool-card-entries
-                                {:label "RESULT"
-                                 :body (str "````vis-image\n[Image: shot.png 1578×444, 45.7 KB]\n"
+                                {:body (str "````vis-image\n[Image: shot.png 1578×444, 45.7 KB]\n"
                                             "/tmp/shot.png\nimage/png\n1578x444\n45.7 KB\n````")}
                                 {:fill-w 76 :session-id nil :detail-expansions {} :node-id "n1"})
                       img-rows (filter #(#{:image :image-pad} (:kind (:meta %))) entries)
@@ -3959,7 +3964,9 @@
                               lines))]
 
         (expect (= p/MARKER_CODE_PAD (marker-of (:line (nth entries (inc last-code-i))))))
-        (expect (str/includes? (str (:line (nth entries (+ 2 last-code-i)))) "RESULT")))))
+        ;; The row under the pad is the result HEADLINE — the value's own tally
+        ;; ("ok"), which is all a card wears now that the badge is gone.
+        (expect (str/includes? (str (:line (nth entries (+ 2 last-code-i)))) "ok")))))
 
 (defdescribe python-code-disclosure-is-clickable-test
              ;; The header row is only a control if the PAINTER publishes its hit target:

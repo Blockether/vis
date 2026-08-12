@@ -73,20 +73,21 @@
           (expect (= "cat" (:op (first cards)))))))
   (it
     "result-cards is the ONE projection: N cards for a print-many block, 1 for its own output, none for neither"
-    ;; print-many: each :cards mini-form → its own card descriptor, in order, titled
-    ;; by the op the PRINTED value itself carried.
+    ;; print-many: each :cards mini-form → its own card descriptor, in order,
+    ;; carrying the op the PRINTED value itself brought out of the sandbox.
     (let
       [multi (form/result-cards {:cards
                                  [{:op "cat" :result-summary "read 3 lines" :result-render "x"}
                                   {:op "grep" :result-summary "12 results" :result-render "y"}]})]
       (expect (= 2 (count multi)))
-      (expect (= ["CAT" "GREP"] (mapv :label multi))))
-    ;; a block's own printed output (no :cards) → exactly one card, titled RESULT.
+      (expect (= ["cat" "grep"] (mapv :op multi))))
+    ;; a block's own printed output (no :cards) → exactly one card, carrying no op:
+    ;; a card descriptor mints no display NAME of its own.
     (let [one (form/result-cards {:result-render "```\nprinted\n```"})]
       (expect (= 1 (count one)))
-      (expect (= "RESULT" (:label (first one)))))
-    ;; an op nothing registered still titles itself — the badge is the value's data.
-    (expect (= "UNHEARD_OF" (:label (form/result-card {:op "unheard_of" :result-summary "1 row"}))))
+      (expect (nil? (:op (first one)))))
+    ;; the op is carried VERBATIM — an op nothing registered still reaches a channel.
+    (expect (= "unheard_of" (:op (form/result-card {:op "unheard_of" :result-summary "1 row"}))))
     ;; a block that printed nothing and returned nothing → no card at all.
     (expect (= [] (form/result-cards {:result {:k 1}}))))
   (it "->display drops nils so a merge never stamps empty keys"

@@ -37,7 +37,7 @@
    ;; A printed result's OWN op ("grep", "attach") — the only identity a card has.
    ;; It is DATA the value carried out of the sandbox, never a symbol looked up in a
    ;; registry, so a card cannot drift from what actually ran. Absent on the block
-   ;; itself: a form is always the model's python, and its card reads `RESULT`.
+   ;; itself: a form is always the model's python, so its card carries no op.
    [:op "op"]
    ;; display projections
    [:render-segments "render_segments"] [:result-kind "result_kind"]
@@ -49,35 +49,18 @@
   "The canonical engine keys projected by `->display` and recovered by `<-wire`."
   (mapv first display-fields))
 
-(def block-label
-  "The badge a python block's own output wears. One tool reaches the wire, so the
-   block never needs naming — what the card announces is that what follows is the
-   RESULT of the program printed above it."
-  "RESULT")
-
-(defn- card-label
-  "The op-card badge LABEL: a printed result is titled by its OWN `:op`
-   (`grep` → `RG`-style uppercase), and the block's own output by `block-label`.
-   Derived from the value, so a card for an op with no extension registered still
-   paints instead of falling back to raw EDN."
-  [op]
-  (or (some-> op
-              name
-              str/trim
-              not-empty
-              str/upper-case)
-      block-label))
-
 (defn result-card
   "Canonical result CARD descriptor — the ONE place the card / collapse decision is
-   made, so the TUI and web AGREE on label/summary/collapsible instead of each
+   made, so the TUI and web AGREE on summary/collapsible instead of each
    re-deriving it from the raw form. Given an executed form map (or one of the
    canonical MINI-FORMS a python block carries in `:cards`, one per printed
    result), returns:
 
-     {:label        RESULT              — the badge (`card-label`): the printed
-                                          value's own `:op`, or `RESULT` for the
-                                          block's own output
+     {:op           `grep`             — the printed value's OWN op, verbatim
+                                          data it carried out of the sandbox, nil
+                                          for the block's own output. A channel
+                                          titles the card from this or from
+                                          nothing; no display NAME is minted here
       :summary      12 results          — the HEADLINE (`:result-summary`), nil
                                           when the value carried no tally
       :body         …markdown…          — the detail body (`:result-render`), nil
@@ -101,8 +84,7 @@
              str/trimr
              not-empty)]
 
-    (when (or summary body)
-      {:label (card-label op) :summary summary :body body :collapsible? (boolean body)})))
+    (when (or summary body) {:op op :summary summary :body body :collapsible? (boolean body)})))
 
 (defn result-cards
   "The card descriptor(s) a form renders — the ONE place a channel asks \"what

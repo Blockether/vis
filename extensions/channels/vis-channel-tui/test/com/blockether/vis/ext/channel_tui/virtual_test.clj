@@ -316,9 +316,9 @@
 
           (expect (seq visible))
           (expect (not (some #(= last-idx (:idx %)) visible)))))
-    (it "folds a huge streaming result behind its RESULT card"
+    (it "folds a huge streaming result behind its own disclosure"
         ;; A live bubble must never grow by the SIZE of what the block produced:
-        ;; the result rides behind its own `▸ RESULT` disclosure, so a 10 000-char
+        ;; the result rides behind its own `▸ result` disclosure, so a 10 000-char
         ;; value costs the streaming frame one row, not a wall.
         (render/invalidate-cache!)
         (let
@@ -350,7 +350,7 @@
            projected
            (:projected (first visible))]
 
-          (expect (str/includes? (:text projected) "RESULT"))
+          (expect (str/includes? (:text projected) "▸ result"))
           (expect (not (str/includes? (:text projected) "chars hidden")))
           (expect (not (str/includes? (:text projected) huge-result)))
           (expect (some #(= :toggle-details (:kind %)) (:line-meta projected)))))

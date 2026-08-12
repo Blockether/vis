@@ -1046,8 +1046,10 @@
 (defn- tool-descriptor
   "One compact tool-call descriptor from a timeline :code event, mirroring the
    TUI op-card: op label, arg summary, the tool's own rendered result body
-   (ANSI-stripped), and a status. Python blocks are flagged so the renderer can
-   show the source verbatim with the result folded beneath it."
+   (ANSI-stripped), and a status. A card carries the printed value's OWN op as
+   data (`nil` for a python block's own output), and THIS export is the only
+   place that turns it into a display name. Python blocks are flagged so the
+   renderer can show the source verbatim with the result folded beneath it."
   [{:keys [code result-summary status cards]}]
   (when-not (str/blank? (str code))
     (let
@@ -1057,12 +1059,19 @@
        card
        (first cards)
 
+       card-op
+       (some-> (:op card)
+               name
+               str/trim
+               not-empty
+               str/upper-case)
+
        python?
-       (= "RESULT" (:label card))]
+       (and (some? card) (nil? card-op))]
 
       {:kind :tool
        :code c
-       :op (if python? "PYTHON" (or (:label card) (tool-op c)))
+       :op (if python? "PYTHON" (or card-op (tool-op c)))
        :summary (when-not python? (or (:summary card) (tool-summary c)))
        :python? python?
        :carded? (some? card)

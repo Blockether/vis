@@ -243,7 +243,7 @@ describe("collapsed tool results", () => {
   });
 });
 
-describe("a card titles itself", () => {
+describe("a card wears no badge", () => {
   const card = (form: Record<string, unknown>) =>
     text(
       renderToStaticMarkup(
@@ -257,18 +257,22 @@ describe("a card titles itself", () => {
       ),
     );
 
-  it("wears the op the PRINTED value carried, not a tool name", () => {
-    expect(card({ op: "grep", result_summary: "12 results" })).toContain("GREP");
+  it("shows the tally the printed value carried, never its op", () => {
+    const rendered = card({ op: "grep", result_summary: "12 results" });
+    expect(rendered).toContain("12 results");
+    expect(rendered).not.toContain("GREP");
   });
 
-  it("wears RESULT for the block's own output", () => {
-    expect(card({ result_render: "```\nprinted\n```" })).toContain("RESULT");
-  });
-
-  it("titles an op no build ever registered", () => {
-    expect(card({ op: "unheard_of", result_summary: "1 row" })).toContain(
-      "UNHEARD_OF",
+  it("leaves the block's own output unlabeled", () => {
+    expect(card({ result_render: "```\nprinted\n```" })).not.toContain(
+      "RESULT",
     );
+  });
+
+  it("never paints a private transport op a handle method answered", () => {
+    const rendered = card({ op: "_shell_wait", result_summary: "exit 0" });
+    expect(rendered).toContain("exit 0");
+    expect(rendered).not.toContain("_SHELL_WAIT");
   });
 });
 

@@ -4824,11 +4824,11 @@
           (conj pad)))))
 
 (defn- tool-card-entries
-  "Render one op-card (`vis/result-card` descriptor) into TUI line entries: the tool
-   label and tool-authored summary on a neutral headline, with the markdown body
-   nested under it (collapsible via `node-id`). A summary-only card has one headline
-   row and no expand triangle."
-  [{:keys [label summary body]} {:keys [fill-w session-id detail-expansions node-id] :as opts}]
+  "Render one op-card (`vis/result-card` descriptor) into TUI line entries: the
+   tool-authored summary on a neutral headline, with the markdown body nested
+   under it (collapsible via `node-id`). A summary-only card has one headline row
+   and no expand triangle."
+  [{:keys [summary body]} {:keys [fill-w session-id detail-expansions node-id] :as opts}]
   (let
     [body-text
      (some-> body
@@ -4840,8 +4840,12 @@
      ;; headline so expanded cards breathe, but drop markdown/code-fence pad rows
      ;; inside COMMAND / RESULT / STDOUT sections. The labels themselves provide
      ;; the visual structure after that first separator.
+     ;; A card wears NO badge. The op-name title (`GREP`, `RESULT`, a private
+     ;; transport's `_SHELL_WAIT`) is gone: a result is its own tally and its own
+     ;; body. A card that carried no tally still needs a word on its disclosure
+     ;; row, and `result` is the one the unlabeled long-result disclosure uses.
      head-line
-     (str (when (seq (str label)) (str "**" label "**")) (when summary (str "  " summary)))
+     (or summary "result")
 
      ->result
      (fn [e]
@@ -4902,7 +4906,7 @@
                                   :node-id node-id})]
 
         ;; Collapsed op-card gets ONE trailing `result-bg` pad row so the
-        ;; badge reads as its own background BAND (not a lone colored line).
+        ;; headline reads as its own background BAND (not a lone colored line).
         ;; Expanded cards keep ONE separator row after the headline — otherwise a
         ;; nil-result REPL with only STDOUT visually glues the first label to the
         ;; `▾ REPL ...` row — but no decorative gutters inside the labeled body.
@@ -5349,9 +5353,10 @@
           ;; model-context only and is not rendered in human channels.
           ;; Long results mirror thinking: keep the first rows visible and
           ;; collapse only the surplus behind a compact details row.
-          ;; Canonical card descriptor — badge LABEL/colour, the HEADLINE
-          ;; `:summary` and `:collapsible?` are decided ONCE in the gateway
-          ;; (`vis/result-card`) so the TUI badge can't drift from the web one.
+          ;; Canonical card descriptor — the HEADLINE `:summary` and
+          ;; `:collapsible?` are decided ONCE in the gateway (`vis/result-card`)
+          ;; so the TUI card can't drift from the web one. It mints no NAME: the
+          ;; op-name badge is gone from the card.
           ;; nil for a form that printed nothing (its body stays the EDN below).
           card
           (vis/result-card form)
@@ -5437,11 +5442,6 @@
                entries
                (vec entries)
 
-               ;; Every card wears a badge: the printed value's own op, or
-               ;; `RESULT` for the block's own output.
-               card-badge
-               (:label card)
-
                preview-n
                (image-safe-split-n entries reasoning-auto-collapse-line-threshold)
 
@@ -5465,15 +5465,15 @@
                    (assoc e :line (str result-marker stripped))))]
 
               (cond
-                ;; The badge and the value's own headline ride on a neutral row;
-                ;; the whole `:result-render` body nests under it (collapsible). A
+                ;; The value's own headline rides on a neutral row; the whole
+                ;; `:result-render` body nests under it (collapsible). A
                 ;; headline-only result renders a plain row with no expand
                 ;; triangle because there is nothing beneath it.
-                card-badge (tool-card-entries card
-                                              {:fill-w fill-w
-                                               :session-id session-id
-                                               :detail-expansions detail-expansions
-                                               :node-id result-node-id})
+                card (tool-card-entries card
+                                        {:fill-w fill-w
+                                         :session-id session-id
+                                         :detail-expansions detail-expansions
+                                         :node-id result-node-id})
                 ;; Non-tool, long result: keep the first rows visible
                 ;; and collapse only the surplus (unlabeled).
                 (and result-node-id (seq hidden))

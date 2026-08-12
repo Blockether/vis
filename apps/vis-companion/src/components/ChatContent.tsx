@@ -961,15 +961,6 @@ function commandTurn(turn: TranscriptTurn): boolean {
   return request.startsWith("/") || request.startsWith("!");
 }
 
-// Mirrors `form/card-label`: a printed result is titled by its OWN `op`, and the
-// block's own output by RESULT. The badge comes from the value, never from a
-// table of tool names — so a result from an op this build has never heard of
-// still titles itself.
-function toolLabel(op?: string): string {
-  const named = (op ?? "").trim();
-  return named ? named.toUpperCase() : "RESULT";
-}
-
 // A fenced block must not be closable by the content it wraps: file text, tool
 // stdout, and pretty-printed JSON can all carry ``` runs of their own, and a
 // fixed triple-backtick wrapper then closes EARLY — the rest of the payload
@@ -1091,13 +1082,11 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
     : running
       ? "text-code-result"
       : "text-accent-ink";
+  // A card wears NO badge. The op-name title (GREP, RESULT, a private transport's
+  // _SHELL_WAIT) is gone from every channel: a result is its own tally and its
+  // own body, and the TUI card (`tool-card-entries`) paints the same way.
   const headline = (
     <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
-      <span
-        className={`shrink-0 font-mono text-chip font-extrabold tracking-[0.06em] ${failed ? "text-err" : "text-accent-ink"}`}
-      >
-        {toolLabel(form.op)}
-      </span>
       {summary && <ToolSummary className={summaryClass}>{summary}</ToolSummary>}
       {/* A finished call that produced NO summary and NO body still says so: an
           otherwise bare "RESULT 39ms" row reads as a rendering bug rather than as
