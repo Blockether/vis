@@ -555,10 +555,13 @@
       ;; child's loopback port so vis can attach to a managed nREPL bound inside the
       ;; ns (else `-t none`); `-u none -U none` disable UDP. So the ONLY reachable
       ;; destination is the gateway proxy, and the only inbound is the nREPL port.
-      ;; `--quiet`: pasta is the argv PREFIX, so its own startup notes ("No routable
-      ;; interface for IPv6: IPv6 is disabled" on a host without IPv6) are written to
-      ;; the CHILD's stdio and read back as if the command had printed them.
-      (into (vec (concat [(or linux-pasta "pasta") "--quiet" "-T" (str proxy-port)]
+      ;; pasta is the argv PREFIX, so everything it says goes to the CHILD's stdio
+      ;; and is read back as if the command itself had printed it ("No routable
+      ;; interface for IPv6: IPv6 is disabled" on a host without IPv6). `--quiet`
+      ;; drops only the INFORMATIONAL half, so `--log-file` moves the rest of pasta's
+      ;; diagnostics into this vis process' own log directory.
+      (into (vec (concat [(or linux-pasta "pasta") "--quiet" "--log-file" (paths/log-file "pasta")
+                          "-T" (str proxy-port)]
                          (if loopback-port ["-t" (str loopback-port)] ["-t" "none"])
                          ["-u" "none" "-U" "none" "--"]))
             bwrap-args)

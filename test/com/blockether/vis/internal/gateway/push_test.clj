@@ -151,37 +151,42 @@
 
 (deftest device-registry-test
   #_{:clj-kondo/ignore [:unresolved-symbol]}
-  (with-push-home [_home]
-                  (let [tok (apply str (repeat 64 "a"))]
-                    (testing "registration is idempotent and persists across a cache drop"
-                      (is (some? (push/register-device! {:token tok
-                                                         :platform "ios"
-                                                         :environment "sandbox"
-                                                         :client "vis-companion"
-                                                         :client-version "1.0.1"})))
-                      (is (= 1 (push/device-count)))
-                      (push/register-device! {:token tok :platform "ios" :environment "sandbox"})
-                      (is (= 1 (push/device-count)))
-                      (push/reload-devices!)
-                      (is (= 1 (push/device-count))))
-                    (testing "listed devices never carry the raw token"
-                      (let [d (first (push/list-devices))]
-                        (is (nil? (:token d)))
-                        (is (= "aaaaaa…aaaa" (:token_preview d)))
-                        (is (= "sandbox" (:environment d)))))
-                    (testing "a blank token is refused"
-                      (is (nil? (push/register-device! {:token "  "})))
-                      (is (= 1 (push/device-count))))
-                    (testing "unregister is idempotent"
-                      (is (true? (push/unregister-device! tok)))
-                      (is (false? (push/unregister-device! tok)))
-                      (is (= 0 (push/device-count))))
-                    (testing "status: available with this gateway's generated Web Push identity"
-                      (let [st (push/status)]
-                        (is (= "web" (:provider st)))
-                        (is (true? (:is-available st)))
-                        (is (string? (get-in st [:web-push :application-server-key])))
-                        (is (= 0 (:devices st))))))))
+  (with-push-home
+    [_home]
+    (let [tok (apply str (repeat 64 "a"))]
+      (testing "registration is idempotent and persists across a cache drop"
+        (is (some? (push/register-device! {:token tok
+                                           :platform "ios"
+                                           :environment "sandbox"
+                                           :client "vis-companion"
+                                           :client-version "1.0.1"})))
+        (is (= 1 (push/device-count)))
+        (push/register-device! {:token tok :platform "ios" :environment "sandbox"})
+        (is (= 1 (push/device-count)))
+        (push/reload-devices!)
+        (is (= 1 (push/device-count))))
+      (testing "listed devices never carry the raw token"
+        (let [d (first (push/list-devices))]
+          (is (nil? (:token d)))
+          (is (= "aaaaaa…aaaa" (:token_preview d)))
+          (is (= "sandbox" (:environment d)))))
+      (testing "a blank token is refused"
+        (is (nil? (push/register-device! {:token "  "})))
+        (is (= 1 (push/device-count))))
+      (testing "unregister is idempotent"
+        (is (true? (push/unregister-device! tok)))
+        (is (false? (push/unregister-device! tok)))
+        (is (= 0 (push/device-count))))
+      (testing "status: available with this gateway's generated Web Push identity"
+        (let [st (push/status)]
+          ;; The identity is MINTED on demand, so it is available on every
+          ;; gateway and can never be the provider a device is delivered
+          ;; through while the relay is up — that is what `:provider` names.
+          (is (true? (get-in st [:web-push :is-available])))
+          (is (= "relay" (:provider st)))
+          (is (true? (:is-available st)))
+          (is (string? (get-in st [:web-push :application-server-key])))
+          (is (= 0 (:devices st))))))))
 
 (deftest web-device-dispatches-through-its-gateway-test
   (with-push-home [_home]

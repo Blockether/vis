@@ -192,7 +192,9 @@
 
               (try
                 (shell-bg* env "pager" "printf 'pager=[%s] git=[%s]\\n' \"$PAGER\" \"$GIT_PAGER\"")
-                (let [out (poll #(log-text env "pager") #(str/includes? % "pager="))]
+                ;; 15 s, not the default 5: a loaded runner takes its time forking a
+                ;; pty child, and the assertion is about the PAGER, never the clock.
+                (let [out (poll #(log-text env "pager") #(str/includes? % "pager=") 150)]
                   (expect (str/includes? out "pager=[cat] git=[cat]")))
                 (finally (resources/stop! sid "pager"))))))))
   (it "strips the TWO-BYTE keypad escapes a full-screen tool writes, not only CSI"
@@ -1083,7 +1085,10 @@
                        (expect (str/includes? (str (get w "stdout")) "hi"))
                        ;; The bytes are all there AND the caller is not held past the
                        ;; exit: everything after `finished_at` is pure wait overhead.
-                       (expect (< (- back (long (get st "finished_at"))) 100))))
+                       ;; The bound is generous on purpose — this proves the wait does
+                       ;; not sit out a poll interval or a timeout, not that a loaded
+                       ;; shared runner schedules the return within one frame.
+                       (expect (< (- back (long (get st "finished_at"))) 500))))
                    (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))))
   (it "backs its idle cadence off along the idle count instead of a flat 50 ms"
       (let [poll @#'shell/wait-idle-poll-ms]

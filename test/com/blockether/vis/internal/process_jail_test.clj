@@ -621,13 +621,15 @@
           (is (some #{"--unshare-net"} no-pasta)
               "no pasta => filtered egress degrades to the no-egress wall (safe)")
           (is (not= "pasta" (basename (first no-pasta))))
-          (is (= ["/usr/bin/pasta" "--quiet" "-T" "51000" "-t" "none" "-u" "none" "-U" "none" "--"]
-                 (take 11 pasta))
-              "pasta wraps bwrap by ABSOLUTE path, forwarding ONLY the proxy port")
-          ;; pasta prefixes the argv, so anything it prints is the child's output.
-          (is (some #{"--quiet"} pasta)
-              "pasta's own notes must never reach the captured command output")
-          (is (= "bwrap" (basename (nth pasta 11))) "pasta hands off to bwrap")
+          (is (= ["/usr/bin/pasta" "--quiet" "--log-file"] (take 3 pasta))
+              "pasta wraps bwrap by ABSOLUTE path and says nothing on the child's stdio")
+          ;; pasta prefixes the argv, so anything it prints IS the command's output:
+          ;; --quiet drops the informational half and the log file takes the rest.
+          (is (str/includes? (nth pasta 3) "/logs/pasta-")
+              "pasta's own diagnostics belong in this process' log directory")
+          (is (= ["-T" "51000" "-t" "none" "-u" "none" "-U" "none" "--"] (subvec (vec pasta) 4 13))
+              "forwarding ONLY the proxy port")
+          (is (= "bwrap" (basename (nth pasta 13))) "pasta hands off to bwrap")
           (is (nil? (some #{"--unshare-net"} pasta))
               "pasta provides the restricted ns; bwrap shares it (no --unshare-net)")
           (is (some #(= % ["--bind-try" rp]) (partition 2 1 pasta))
@@ -887,7 +889,7 @@
 
       (let [av (pj/linux-bwrap-args {:rw [] :net-enabled? true :proxy-port 51000})]
         (is (= "/usr/bin/pasta" (first av)))
-        (is (= "/usr/local/bin/bwrap" (nth av 11))))))
+        (is (= "/usr/local/bin/bwrap" (nth av 13))))))
   (when (and (not (linux?)) (sandbox-applicable?))
     (testing "macOS wraps with /usr/bin/sandbox-exec itself"
       (let [av (pj/wrap-argv ["bash" "-lc" "true"] {:roots-fn (constantly []) :net-enabled? false})]

@@ -104,9 +104,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `(require … :reload)` — so after any reload of the agent loop the hook still pointed at the
   definition from the first load, and a default-model change reached a stale router. It holds the
   VAR now.
-- On Linux, pasta's own startup notes ("No routable interface for IPv6: IPv6 is disabled") were
-  read back as the jailed command's output: pasta is the argv PREFIX, so it writes to the child's
-  stdio. It runs `--quiet`.
+- On Linux, pasta's own diagnostics ("No routable interface for IPv6: IPv6 is disabled") were read
+  back as the jailed command's output: pasta is the argv PREFIX, so it writes to the child's stdio.
+  It now runs `--quiet` (which drops only the informational half) with `--log-file` pointing at
+  this process' own `~/.vis/logs`.
 
 - A cancel that landed inside a best-effort `(catch Throwable _ …)` is no longer
   swallowed. The JVM clears the interrupt flag as it throws, so every catch-all

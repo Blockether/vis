@@ -4294,8 +4294,9 @@
      (into [] (comp (mapcat band) (remove #(= " " (:ch %)))) card-rows)]
 
     (it "paints the whole card on the warning surface, never on the answer's"
-        ;; top padding + the two wrapped sentence rows + bottom padding
-        (expect (= 4 (count card-rows)))
+        ;; top padding + the machine code on its own row + the blank paragraph
+        ;; break + the two wrapped sentence rows + bottom padding
+        (expect (= 6 (count card-rows)))
         (expect (= #{(rgb t/warning-bg)} (into #{} (comp (mapcat band) (map :bg)) card-rows))))
     ;; ... and it is a CARD, not a stripe: one margin row of plain terminal
     ;; paper between the band and its own `Vis` label, one padding row of the
@@ -4319,8 +4320,8 @@
                      (into #{} (map :bg) (band (nth grid (dec (long card-top)))))))
           ;; the card's own first and last rows are pure surface + edge bar
           (expect (= ["│" "│"] [(text-of (first card-rows)) (text-of (last card-rows))]))
-          ;; label(1) + margin(1) + 3 content rows + padding(1) + gap(1)
-          (expect (= 7 (render/bubble-height* message 76)))))
+          ;; label(1) + margin(1) + the 6 card rows + gap(1)
+          (expect (= 9 (render/bubble-height* message 76)))))
     (it "leads with the bold machine code in error ink behind an amber edge bar"
         (expect (= "turn_failed" (apply str (map :ch (filter :bold ink)))))
         (expect (= #{(rgb t/warning-border)}
@@ -4329,6 +4330,9 @@
                    (into #{} (comp (remove #(= "│" (:ch %))) (map :fg)) ink))))
     (it "reads as a sentence, not as raw markdown"
         (let [text (cap/frame-text captured)]
-          (expect (str/includes? text "turn_failed Provider stream stalled"))
+          ;; The code labels the card from ABOVE now, so the sentence starts on
+          ;; its own row instead of running out of the machine name.
+          (expect (str/includes? text "turn_failed"))
+          (expect (str/includes? text "Provider stream stalled"))
           (expect (not (str/includes? text "**")))
           (expect (not (str/includes? text "ERROR:")))))))
