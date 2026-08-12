@@ -207,10 +207,18 @@ describe("the icon set", () => {
 
   // Regression: the star was drawn in the legible amber INK a text glyph needs,
   // so "starred" never showed the brand yellow.
-  it("fills a starred star with the brand accent and nothing else", () => {
-    expect(renderToStaticMarkup(<StarIcon filled />)).toContain(
-      "fill-accent stroke-accent",
-    );
+  //
+  // Regression, user report ("the star is not showing on the session row"): the
+  // whole mark was then painted in that fill and nothing else — #ffc420 on the
+  // light theme's #faf3eb paper is 1.45:1, so the starred row carried a glyph
+  // that could not be seen. The FILL stays the brand yellow; the OUTLINE is the
+  // amber ink, which is what makes the shape visible on paper.
+  it("fills a starred star with the brand accent and outlines it in the ink", () => {
+    const filled = renderToStaticMarkup(<StarIcon filled />);
+    expect(filled).toContain("fill-accent stroke-accent-ink");
+    // Not the ink as a FILL: that was the brown star an earlier report rejected.
+    expect(filled).not.toContain("fill-accent-ink");
+    expect(filled).not.toContain("fill-current");
     expect(renderToStaticMarkup(<StarIcon />)).toContain(
       "fill-none stroke-current",
     );

@@ -45,7 +45,9 @@ describe("starring a session", () => {
     const star = screen.getAllByRole("button", { name: "Star" })[0];
     const rename = screen.getAllByRole("button", { name: "Rename" })[0];
     expect(star.className).toContain("bg-accent/15");
-    expect(star.className).toContain("text-accent");
+    // The amber SLAB, with the palette's amber INK on it: the #ffc420 fill as a
+    // 9px caption on that slab measured 1.37:1 (see SwipeActions.test.tsx).
+    expect(star.className).toContain("text-accent-ink");
     // Rename stays neutral: the strip has exactly one coloured verb beside Delete.
     expect(rename.className).toContain("bg-panel-2");
     expect(rename.className).not.toContain("bg-accent/15");
@@ -81,5 +83,35 @@ describe("starring a session", () => {
     expect(
       seen[0].contains(document.querySelector(`[data-session-id="${last}"]`)),
     ).toBe(true);
+  });
+
+  // Regression, user report ("the star is not showing on the session row as long
+  // as I don't drag to open the session or come back"): the row's own mark was in
+  // the DOM the moment the strip was tapped — this is what proves it — and it was
+  // painted #ffc420 on #faf3eb paper at 1.45:1, so it could not be SEEN until the
+  // list was left and re-entered and the eye went looking for it. The state was
+  // never the bug; see `icons.tsx` for the outline that gives the mark a shape.
+  it("wears its star on the row the moment the strip is tapped", async () => {
+    const view = renderSessionsScreen({ machines });
+    restore = view.restore;
+    await screen.findByText("Older session");
+    const row = () =>
+      document.querySelector('[data-session-id="older"]') as HTMLElement;
+    expect(row().textContent).not.toContain("Favorite");
+
+    await userEvent.click(
+      screen
+        .getByRole("group", { name: "Older session actions" })
+        .querySelector('button[aria-label="Star"]')!,
+    );
+
+    // No remount, no reopened list: the same row, in the same commit.
+    expect(row().textContent).toContain("Favorite");
+    expect(row().querySelector("svg.fill-accent")).not.toBeNull();
+    expect(
+      screen
+        .getByRole("group", { name: "Older session actions" })
+        .querySelector('button[aria-label="Unstar"]'),
+    ).not.toBeNull();
   });
 });

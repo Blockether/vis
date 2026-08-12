@@ -14,7 +14,9 @@ describe('StarIcon', () => {
   it('fills the starred glyph with the brand accent, not the inherited ink', () => {
     const svg = renderToStaticMarkup(<StarIcon filled />);
     expect(svg).toContain('fill-accent');
-    expect(svg).toContain('stroke-accent');
+    // The edge is the amber INK: the yellow fill alone is 1.45:1 on the row's
+    // paper, so the mark the human left had no visible shape (see icons.tsx).
+    expect(svg).toContain('stroke-accent-ink');
     // It must NOT fall back to currentColor, which is what let the muted ink win.
     expect(svg).not.toContain('fill-current');
   });
@@ -40,14 +42,38 @@ describe('SwipeActions tones', () => {
       </SwipeActions>,
     );
 
-  it('paints an accent action in the brand yellow', () => {
+  // Regression, user report ("see why the starred stuff looks so disgusting"): the
+  // amber SLAB was right and the amber CAPTION was not — `text-accent` is the
+  // #ffc420 button FILL, and on this cell's own 15% tint it measures 1.37:1, so
+  // "STAR" arrived as a smear the width of a word. The slab keeps the meaning;
+  // the caption takes the ink the palette ships for amber text (6.4:1 here).
+  it('paints an accent action on the brand yellow, in the legible amber ink', () => {
     const html = strip('accent');
-    expect(html).toContain('text-accent');
-    expect(html).not.toContain('text-accent-ink');
+    expect(html).toContain('bg-accent/15');
+    expect(html).toContain('text-accent-ink');
+    // The fill is spent on hover, where it becomes the background and takes its
+    // own foreground — never on 9px text.
+    expect(html).toContain('hover:bg-accent hover:text-accent-foreground');
   });
 
+  // The strip's own colour lives in the slab, so a neutral verb has none: it is
+  // the ink alone on the panel, which is what an accent action must not look like.
   it('leaves a neutral action in the shared verb ink', () => {
-    expect(strip()).toContain('text-accent-ink');
+    const html = strip();
+    expect(html).toContain('text-accent-ink');
+    expect(html).toContain('bg-panel-2');
+    expect(html).not.toContain('bg-accent/15');
+  });
+
+  // The same split, in red: `--err` is a badge fill and reads 3.50:1 as a caption
+  // on its own tint, under the 4.5 a 9px bold label owes. The list-safe pair
+  // (`err-surface` + `err-ink`, the tokens the in-row delete confirm already uses)
+  // reads 5.4:1 without turning half the row into an alarm.
+  it('paints a danger action in the list-safe red, not the badge fill', () => {
+    const html = strip('danger');
+    expect(html).toContain('bg-err-surface');
+    expect(html).toContain('text-err-ink');
+    expect(html).not.toContain('bg-err/15');
   });
 
   // Regression, user report ("this also has not full height of the parent"): the swipe

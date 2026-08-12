@@ -108,8 +108,6 @@ export function favoriteRank(key: string): number | null {
 }
 
 
-/** The stars held right now, for callers that already have a snapshot in hand. */
-
 /**
  * Star or unstar one session; returns the new state.
  *
@@ -153,10 +151,6 @@ export function forgetFavorites(keys: Iterable<string>): void {
 /**
  * Write through immediately. Starring is a deliberate, rare tap — nothing like
  * typing — so there is no debounce to lose on the way out of the app.
- */
-/**
- * Write through immediately. Starring is a deliberate, rare tap — nothing like
- * typing — so there is no debounce to lose on the way out of the app.
  *
  * A star tapped before the first read WAITS for it: writing straight away would
  * put this one star on disk on top of every star already stored there.
@@ -196,5 +190,3 @@ export function useFavorites(): FavoriteStore {
     () => snapshot,
   );
 }
-
-/** Test seam: drop everything this module is holding, including the hydration. */

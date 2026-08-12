@@ -5,9 +5,18 @@ export interface SwipeAction {
   label: string;
   icon: ReactNode;
   /**
-   * What the action MEANS, in colour. `accent` is the brand yellow a star wears —
-   * the same amber the filled glyph is painted in — so "Star" can never read as
-   * one more neutral verb beside "Rename".
+   * What the action MEANS, in colour. The SLAB carries the meaning and the INK
+   * carries the caption: `accent` is the amber a star wears — a yellow-tinted
+   * cell around a brand-yellow glyph, so "Star" can never read as one more
+   * neutral verb beside "Rename" — and `danger` is the red one.
+   *
+   * Neither slab lends its own colour to the 9px caption on it. `--accent`
+   * (#ffc420) and `--err` (#dc2626) are FILLS: as text on their own 15% tint
+   * they measure 1.37:1 and 3.50:1, under the 4.5:1 a caption owes, and the
+   * amber one arrived as a smear rather than a word. The palette splits each
+   * one for exactly this — `accent-ink` reads 6.4:1 and `err-ink` 5.4:1 on the
+   * same cells — and the full-strength fill is spent on the hover state, where
+   * it becomes the background and takes its own foreground.
    */
   tone?: 'neutral' | 'accent' | 'danger';
   onSelect: () => void;
@@ -99,9 +108,9 @@ export function SwipeActions({
             aria-label={action.label}
             className={`flex w-[4.5rem] shrink-0 flex-col items-center justify-center gap-1 border-l font-mono text-chip font-bold uppercase tracking-[0.08em] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none ${
               action.tone === 'danger'
-                ? 'border-err/40 bg-err/15 text-err hover:bg-err hover:text-white'
+                ? 'border-err-edge bg-err-surface text-err-ink hover:bg-err hover:text-white'
                 : action.tone === 'accent'
-                  ? 'border-accent/40 bg-accent/15 text-accent hover:bg-accent hover:text-accent-foreground'
+                  ? 'border-accent/40 bg-accent/15 text-accent-ink hover:bg-accent hover:text-accent-foreground'
                   : 'border-dialog-edge bg-panel-2 text-accent-ink hover:bg-hover'
             }`}
             onClick={() => {

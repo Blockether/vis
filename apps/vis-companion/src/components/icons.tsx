@@ -245,11 +245,18 @@ export function TrashIcon({ className }: { className?: string }) {
 }
 
 /**
- * The favorite mark. Filled is "starred": a filled star is an amber FILL, so it
- * wears the brand yellow (`accent`, #ffc420), not the legible amber ink a text
- * glyph would need. The outline stays adaptive (`stroke-current`) so it reads
- * among the other action icons; the fill alone is too quiet to spot at a glance
- * in a list, so the swipe action still shows both states.
+ * The favorite mark. Filled is "starred": the BODY is an amber FILL, so it wears
+ * the brand yellow (`accent`, #ffc420) and never the brown ink a text glyph
+ * needs. Yellow on yellow paper is not a mark, though — #ffc420 on the light
+ * theme's #faf3eb measures 1.45:1, under the 3:1 a graphic owes, so a starred
+ * row carried a glyph the eye slid straight off. The EDGE carries the contrast
+ * the fill cannot: `accent-ink` (light #7a4a00, 6.8:1 on that paper; dark
+ * #fde68a on panel) draws the star's outline at 0.9px on a 12px mark. The shape
+ * is legible, the colour is still the brand yellow.
+ *
+ * The un-starred outline stays adaptive (`stroke-current`) so it reads among the
+ * other action icons; the fill alone is too quiet to spot at a glance in a list,
+ * so the swipe action still shows both states.
  */
 export function StarIcon({
   filled = false,
@@ -261,7 +268,7 @@ export function StarIcon({
   return (
     <Icon
       className={classes(
-        filled ? "fill-accent stroke-accent" : "fill-none stroke-current",
+        filled ? "fill-accent stroke-accent-ink" : "fill-none stroke-current",
         className,
       )}
     >
