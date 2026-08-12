@@ -52,7 +52,18 @@ export function reconcileMachines(
 }
 
 /**
- * The machines a scope covers. `null` is the whole fleet; a scope pointing at a
+ * THE WHOLE FLEET, and the only scope where more than one machine is on screen.
+ *
+ * Scoped to a single gateway, a fleet of six paints ONE hue: the palette, the rails
+ * and the sections exist to tell machines apart, and a list that shows one machine at
+ * a time can never do it. `All` stacks a named section per machine, each under its own
+ * hue, so this is an ANSWER the switcher gives and not merely the unset state. A fleet
+ * of one never offers it — the same list under a second name is not a choice.
+ */
+export const SCOPE_ALL = null;
+
+/**
+ * The machines a scope covers. `SCOPE_ALL` is the whole fleet; a scope pointing at a
  * machine that is no longer paired falls back to the fleet rather than showing
  * an empty screen.
  */

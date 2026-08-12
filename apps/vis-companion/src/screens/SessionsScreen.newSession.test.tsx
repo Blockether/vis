@@ -188,34 +188,54 @@ describe("the machine strip", () => {
     { label: "beta", sessions: [listSession({ id: "b1", title: "Second" })] },
   ];
 
-  it("stands for a fleet of one too: one tab, already pressed", async () => {
+  it("stands for a fleet of one too: one tab, already pressed, and no All", async () => {
     const view = renderSessionsScreen({ machines: alpha() });
     restore = view.restore;
     await screen.findByText("First");
 
     const strip = within(screen.getByLabelText("Machines"));
     const tabs = strip.getAllByRole("button");
+    // "Every machine" and "this machine" would be the same list under two names.
     expect(tabs.map((tab) => tab.textContent)).toEqual(["alpha"]);
     expect(tabs[0]!.getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("scopes to exactly one machine — this one or that one, never All", async () => {
+  // Regression, user report (paraphrased: every machine should have its own hue and its
+  // own rail, but the screen only ever showed one of them): the scope was always exactly
+  // one machine, so a fleet of six painted one colour and the fleet view was unreachable.
+  it("leads with All above a fleet, and starts there", async () => {
     const view = renderSessionsScreen({ machines: fleet });
     restore = view.restore;
     await screen.findByText("First");
 
     const strip = within(screen.getByLabelText("Machines"));
     expect(strip.getAllByRole("button").map((tab) => tab.textContent)).toEqual([
+      "All",
       "alpha",
       "beta",
     ]);
-    // No fleet-wide chip, and no pairing verb: this row answers "which machine" only.
-    expect(strip.queryByRole("button", { name: /All/ })).toBeNull();
-    expect(strip.queryByRole("button", { name: /machine/i })).toBeNull();
+    // No pairing verb: this row answers "which machine", All included, and nothing else.
+    expect(strip.queryByRole("button", { name: /Add machine/i })).toBeNull();
+    expect(strip.getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+    // Both machines are on screen at once, which is the whole point of All.
+    expect(screen.getByText("Second")).toBeTruthy();
+  });
+
+  it("scopes to one machine, and All takes the fleet back", async () => {
+    const view = renderSessionsScreen({ machines: fleet });
+    restore = view.restore;
+    await screen.findByText("First");
+    const strip = within(screen.getByLabelText("Machines"));
 
     await userEvent.click(strip.getByRole("button", { name: /^beta/ }));
     expect(await screen.findByText("Second")).toBeTruthy();
     expect(screen.queryByText("First")).toBeNull();
     expect(screen.getByRole("button", { name: "New session on beta" })).toBeTruthy();
+
+    await userEvent.click(strip.getByRole("button", { name: "All" }));
+    expect(await screen.findByText("First")).toBeTruthy();
+    expect(screen.getByText("Second")).toBeTruthy();
   });
 });

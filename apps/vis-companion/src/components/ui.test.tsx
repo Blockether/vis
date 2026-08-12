@@ -52,6 +52,7 @@ import {
   MachineSwitcher,
   MachineTab,
   MetaButton,
+  NewProjectButton,
   NewSessionButton,
   OptionRow,
   Pill,
@@ -1419,6 +1420,37 @@ describe("MachineSwitcher", () => {
     expect(news).not.toMatch(/>\s*\d+\s*</);
     expect(quiet).not.toContain("bg-accent");
     expect(quiet).toContain("text-dialog-hint");
+  });
+});
+
+// The machine's project verb stands in TWO places now — above the card when the list is
+// scoped to one machine, and on each machine's band in the All view — so it is one
+// component rather than two call sites that drifted apart.
+describe("NewProjectButton", () => {
+  const html = renderToStaticMarkup(
+    <NewProjectButton machine="tower" onPress={() => {}} />,
+  );
+
+  it("is the amber verb, spelled as a word, naming its machine", () => {
+    expect(html).toContain(">New project<");
+    // Several machines are on screen at once in the All view: the label says which.
+    expect(html).toContain('aria-label="New project on tower"');
+  });
+
+  it("holds still under the finger, because it anchors the sheet it opens", () => {
+    // A transform would move the box the projects sheet was measured against.
+    expect(html).not.toContain("active:scale");
+  });
+
+  it("stands at the header row's own compact height", () => {
+    expect(html).toContain("min-h-7");
+    expect(html).toContain("shrink-0");
+  });
+
+  it("is used by both places the machine is named, and hand-rolled in neither", () => {
+    expect(sessionsListSource).toContain("<NewProjectButton");
+    expect(sessionsListSource.match(/<NewProjectButton/g)?.length).toBe(2);
+    expect(sessionsListSource).not.toContain(">New project</Button>");
   });
 });
 

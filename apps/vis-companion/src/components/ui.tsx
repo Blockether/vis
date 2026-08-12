@@ -2063,6 +2063,14 @@ export function MachineMark({ color, size = 'inline' }: { color: MachineColor; s
  * The row then holds exactly two objects, the switch and the verb, and they are
  * told apart by fill logic rather than by colour.
  *
+ * `All` IS THE FIRST TILE, and it exists only above a FLEET. It is the same kind of
+ * STATE as a machine tab — pressing it answers "which machine" with "every one of
+ * them", and the list under it is one named section per machine, each on its own rail
+ * — so it shares the track rather than standing beside it as a control of another
+ * species. It wears no hue block: the hues it stands for are the sections themselves.
+ * A fleet of one never renders it, because "every machine" and "this machine" would
+ * hand back the same list under two names.
+ *
  * The track is the BUTTON's box from the outside — 2px of padding around a 28px
  * tile is exactly the 32px every control on this row stands at, with no frame of its
  * own: the duller fill IS the track, and a border around it would only re-draw the
@@ -2211,5 +2219,41 @@ export function NewSessionButton({
         <DraftIcon className="size-4" />
       </Button>
     </span>
+  );
+}
+
+
+/**
+ * A MACHINE'S OWN VERB: the project list of one gateway, opened from the thing that
+ * names that gateway.
+ *
+ * The same word in two places — above the card while the list is scoped to one
+ * machine, and on each machine's band in the fleet view — is one control, not two
+ * spellings of one: it is the amber primary `New session` wears, compact like every
+ * other control on a header row, and it NAMES its machine, because in the fleet view
+ * several of them are on screen at once.
+ *
+ * `pressEffect="none"`: the sheet it opens is anchored on this button's measured box,
+ * and a transform moves the box that was measured.
+ */
+export function NewProjectButton({
+  machine,
+  onPress,
+}: {
+  machine: string;
+  onPress: (anchor: HTMLElement) => void;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="primary"
+      density="compact"
+      pressEffect="none"
+      className="shrink-0 whitespace-nowrap"
+      aria-label={`New project on ${machine}`}
+      onClick={(event) => onPress(event.currentTarget)}
+    >
+      New project
+    </Button>
   );
 }

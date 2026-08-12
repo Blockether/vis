@@ -18,6 +18,7 @@ import {
   MachineSwitcher,
   MachineTab,
   Modal,
+  NewProjectButton,
   NewSessionButton,
   ProjectCrumb,
   RowDisclosure,
@@ -88,6 +89,7 @@ import {
   projectLabel,
   projectPage,
   reconcileMachines,
+  SCOPE_ALL,
   scopedConns,
   scopedMachines,
   scopeError,
@@ -243,15 +245,23 @@ export function SessionsScreen({
   // returning to this tab repaints the previous frame instantly; the effects
   // below revalidate each machine independently and reconcile on top.
   const [machines, setMachines] = useState<FleetMachine[]>(() => hydrateMachines(conns, []));
-  // THE SCOPE IS ALWAYS EXACTLY ONE MACHINE — this one or that one, never "all".
-  // A fleet-wide scope made every count, every verb and every create ask "which
-  // machine?" all over again one row later; the switcher answers it once, up front.
-  // The pick is only a PREFERENCE: it falls back to the first paired machine when it
-  // names one that is gone, so `scope` below is null only while nothing is paired.
-  const [scopePick, setScopePick] = useState<string | null>(null);
+  // THE SCOPE IS `All` OR EXACTLY ONE MACHINE, and `SCOPE_ALL` is `All`.
+  // Every machine owns a hue, a rail and a section of its own — and scoped to one
+  // gateway only ONE of those hues can ever be on screen, which is a fleet the reader
+  // cannot see. So the strip reads `All`, then the machines, and `All` stacks a named
+  // section per machine, each under its own rail: the separate views are the point of
+  // the separate colours. Scoping stays exactly as narrow as it was — one machine, its
+  // counts, its verbs — for the reader who wants one computer and nothing else.
+  // A FLEET OF ONE RESOLVES TO ITS MACHINE and is offered no `All`: "every machine"
+  // and "this machine" would be the same list under two names.
+  // The pick is only a PREFERENCE: naming a machine that is gone falls back to the
+  // fleet rather than to an empty screen.
+  const [scopePick, setScopePick] = useState<string | null>(SCOPE_ALL);
   const scope = machines.some((machine) => machineKey(machine.conn) === scopePick)
     ? scopePick
-    : (machines[0] ? machineKey(machines[0].conn) : null);
+    : machines.length === 1
+      ? machineKey(machines[0].conn)
+      : SCOPE_ALL;
   // Keep keystrokes immediate even when a large session fleet is regrouped.
   const deferredQuery = useDeferredValue(query);
   const [transcriptMatches, setTranscriptMatches] = useState<Map<string, SessionMatch> | null>(null);
@@ -650,6 +660,14 @@ export function SessionsScreen({
   const scopeMachine = scope
     ? (machines.find((machine) => machineKey(machine.conn) === scope) ?? null)
     : null;
+  // `All`: the list is the whole fleet, so every section has to NAME the machine it
+  // belongs to. Scoped, the strip above has already named it and the band is noise.
+  const isFleetView = scope === SCOPE_ALL;
+  // What the `All` tile has to report: something happened on a machine that is not
+  // the one you were reading. The exact count belongs to the rows that own it.
+  const fleetUnread = machines.some(
+    (machine) => (tallies.get(machineKey(machine.conn))?.unread ?? 0) > 0,
+  );
 
   // One hue per paired machine, assigned from the machine's own key, so a rail
   // keeps its colour across reloads and reorderings and two machines side by side
@@ -664,12 +682,21 @@ export function SessionsScreen({
   // the fleet hidden, that machine's failure IS the screen.
   const scopedError = scopeError(machines, scope);
 
-  const selectScope = useCallback((next: string) => {
+  const selectScope = useCallback((next: string | null) => {
     setScopePick(next);
     // Drafts are repo-scoped ON a machine, and the scope is what decides which
     // machine the next session lands on: the open order asks a question that just
     // changed underneath it, so it ends rather than answering the old one.
     setStartFlow(START_IDLE);
+  }, []);
+
+  // ONE sheet, opened from wherever the machine is named: the row above the card when
+  // the list is scoped, and that machine's own band in the fleet view. It is anchored
+  // on the button that was pressed, so the anchor travels with the verb.
+  const openManageProjects = useCallback((machine: FleetMachine, anchor: HTMLElement) => {
+    const at = menuPosition(anchor.getBoundingClientRect(), BROWSE_WIDTH);
+    if (!at) return;
+    setManageProjects({ machine, at });
   }, []);
 
   /**
@@ -1121,10 +1148,23 @@ export function SessionsScreen({
           needed it, so the switch's left edge and the verb's right edge are the same
           distance from the paper: 12 and 12 of a 390 phone (strip at 12, `New project`
           ending at 378), and 984 inside a card that ends at 1000 on a 1024 desk. */}
-      {scopeMachine && (
+      {machines.length > 0 && (
         <div className="relative z-10 flex items-center gap-1.5 px-3 pb-3 pt-6 sm:pb-4 sm:pl-0 sm:pr-4 sm:pt-8">
           <div role="group" aria-label="Machines" className="flex min-w-0 shrink">
             <MachineSwitcher>
+              {/* `All` LEADS THE STRIP, above a fleet only: it is where the machines
+                  are actually distinguishable — one section, one hue and one rail per
+                  computer — and a fleet of one would only be offering the same list
+                  under a second name. */}
+              {machines.length > 1 && (
+                <MachineTab
+                  isOn={isFleetView}
+                  hasUnread={fleetUnread}
+                  onClick={() => selectScope(SCOPE_ALL)}
+                >
+                  All
+                </MachineTab>
+              )}
               {machines.map((machine) => {
                 const key = machineKey(machine.conn);
                 const tally = tallies.get(key);
@@ -1156,9 +1196,19 @@ export function SessionsScreen({
                 only proof it left this gateway. It is the one fact this row reports:
                 totals were the same numbers the project headers below already carry. */}
             {searching && sessions !== null && !scopedError && (
-              <span className="whitespace-nowrap font-mono text-chip font-bold text-accent-ink">
-                {searchCounts.matches} {searchCounts.matches === 1 ? 'match' : 'matches'}
-              </span>
+              <>
+                <span className="whitespace-nowrap font-mono text-chip font-bold text-accent-ink">
+                  {searchCounts.matches} {searchCounts.matches === 1 ? 'match' : 'matches'}
+                </span>
+                {/* WHERE the query went, and only a fleet has an answer worth
+                    printing: "across 2 of 3 machines" is the proof it left this
+                    gateway. A solo user is told nothing they can act on. */}
+                {machines.length > 1 && (
+                  <span className="whitespace-nowrap font-mono text-chip text-dialog-hint">
+                    across {searchCounts.machines} of {machines.length} machines
+                  </span>
+                )}
+              </>
             )}
             {scopedError && (
               <span className="whitespace-nowrap font-mono text-chip font-bold text-accent-ink">
@@ -1171,22 +1221,17 @@ export function SessionsScreen({
                 wears, and it is spelled like it — `New project` beside `New session`,
                 one species of verb saying the same kind of word. The sheet it opens is
                 this machine's whole project list, so adding, choosing and removing one
-                are all behind the word that names the thing. */}
-            {!scopeMachine.error && (
-              <Button
-                variant="primary"
-                density="compact"
-                className="shrink-0 whitespace-nowrap"
-                aria-label={`New project on ${machineLabel(scopeMachine.conn)}`}
-                onClick={(event) => {
-                  const at = menuPosition(
-                    event.currentTarget.getBoundingClientRect(),
-                    BROWSE_WIDTH,
-                  );
-                  if (!at) return;
-                  setManageProjects({ machine: scopeMachine, at });
-                }}
-              >New project</Button>
+                are all behind the word that names the thing.
+
+                In the fleet view the verb rides each machine's own band instead: there
+                is no one machine for this row to create on, and a `New project` that
+                had to ask which computer it meant would be the chooser the switch
+                exists to abolish. */}
+            {scopeMachine && !scopeMachine.error && (
+              <NewProjectButton
+                machine={machineLabel(scopeMachine.conn)}
+                onPress={(anchor) => openManageProjects(scopeMachine, anchor)}
+              />
             )}
           </div>
         </div>
@@ -1249,6 +1294,15 @@ export function SessionsScreen({
           <div>
             {sections.map(({ machine, groups }) => {
               const key = machineKey(machine.conn);
+              const color = machineColor(machineColors, key);
+              const address = hostOf(machine.conn.url);
+              // What this section is SHOWING, which is what a filter leaves of it —
+              // the same rule the project bands under it count by.
+              const shown = groups.reduce((total, [, rows]) => total + rows.length, 0);
+              const shownLive = groups.reduce(
+                (total, [, rows]) => total + rows.filter(sessionIsLive).length,
+                0,
+              );
               return (
                 <section key={key} aria-label={`${machineLabel(machine.conn)} projects`}>
                   {/* Every machine keeps its own named panel and landmark, even when it is
@@ -1258,7 +1312,45 @@ export function SessionsScreen({
                       machine boundary is a colour change, so where `tower` ends is seen
                       before it is read. The panel is always rendered for the machine
                       whose projects follow, fleet view or scoped view alike. */}
-                  <MachineRail color={machineColor(machineColors, key)}>
+                  <MachineRail color={color}>
+                  {/* IN THE FLEET VIEW A SECTION NAMES ITS MACHINE, and only there.
+                      Scoped, the strip directly above the card has just said the name
+                      and a band repeating it is the second one this list was reported
+                      for; with every machine on screen at once, a rail with no name at
+                      the top of it is a colour the reader cannot resolve. It is the
+                      same BAND as the project headers below it — the rule under it is
+                      the machine's own hue, so where one computer ends is a colour
+                      change carrying a name. */}
+                  {isFleetView && (
+                    <SectionHeader rule={color.rail}>
+                      <HeaderTitle
+                        mark={<MachineMark color={color} size="banner" />}
+                        name={machineLabel(machine.conn)}
+                        qualifier={address === machineLabel(machine.conn) ? undefined : address}
+                        qualifierTitle={machine.conn.url}
+                      />
+                      <HeaderActions>
+                        {/* A machine that is not answering counts NOTHING, and "0
+                            sessions" under its name would be a number it does not have.
+                            The section body says it is down and offers the Retry. */}
+                        {!machine.error && (
+                          <HeaderMeta>
+                            <HeaderTally count={shown} unit="session" />
+                            <LiveCount count={shownLive} />
+                          </HeaderMeta>
+                        )}
+                        {/* The machine's own verb, on the machine's own band — the row
+                            above the card cannot carry it here, because in this view it
+                            speaks for no single machine. */}
+                        {!machine.error && (
+                          <NewProjectButton
+                            machine={machineLabel(machine.conn)}
+                            onPress={(anchor) => openManageProjects(machine, anchor)}
+                          />
+                        )}
+                      </HeaderActions>
+                    </SectionHeader>
+                  )}
                   {groups.length === 0
                     ? (
                         <div className="flex flex-wrap items-center gap-3 px-3 py-3 sm:px-4">
