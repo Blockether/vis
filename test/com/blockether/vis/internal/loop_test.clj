@@ -5122,28 +5122,32 @@
                                                   :llm-headers {"X-Initiator" "user"}})
                          [:opts :llm-headers "X-Initiator"])))))
 
-;; The deep-reasoning cap exists because Copilot bills by interaction class, but
-;; it only recognised the individual and business plans: on
-;; `:github-copilot-enterprise` (and the bare `:github-copilot` id) a trivial
-;; prompt still went out at :deep and burned multiple premium interactions.
+;; Regression: Copilot Claude capped `:deep` to `:balanced`. The cap was written
+;; for the OPENAI-compatible chat wire, where `reasoning_effort` mis-routed the
+;; proxy; on the native `/v1/messages` wire the cap only bought thinking
+;; SHALLOWER than Anthropic's own default effort, which is how a `:deep` turn
+;; came back with two-word thinking summaries.
 (defdescribe
-  copilot-claude-reasoning-cap-test
-  (it "caps deep reasoning on Copilot Claude for EVERY Copilot plan"
+  copilot-claude-reasoning-level-test
+  (it "sends the requested depth on EVERY Copilot plan"
       (doseq [provider [:github-copilot :github-copilot-individual :github-copilot-business
                         :github-copilot-enterprise]]
-        (expect (= :balanced
-                   (#'lp/copilot-claude-safe-reasoning-level {:provider provider
-                                                             :name "claude-opus-5"}
-                                                            "please refactor the loop"
-                                                            :deep
-                                                            {})))))
+        (expect (= :deep
+                   (#'lp/copilot-claude-reasoning-level {:provider provider
+                                                         :name "claude-opus-5"}
+                                                        "please refactor the loop"
+                                                        :deep)))))
   (it "leaves non-Copilot providers at the requested level"
       (expect (= :deep
-                 (#'lp/copilot-claude-safe-reasoning-level {:provider :anthropic-coding-plan
-                                                           :name "claude-opus-5"}
-                                                          "please refactor the loop"
-                                                          :deep
-                                                          {})))))
+                 (#'lp/copilot-claude-reasoning-level {:provider :anthropic-coding-plan
+                                                       :name "claude-opus-5"}
+                                                      "please refactor the loop"
+                                                      :deep))))
+  (it "names no depth for casual Copilot chat, leaving it to adaptive thinking"
+      (expect (nil? (#'lp/copilot-claude-reasoning-level {:provider :github-copilot-individual
+                                                          :name "claude-opus-5"}
+                                                         "hey"
+                                                         :deep)))))
 
 ;; Regression, issue #112: the `:provider-call` lifecycle marker carried only the iteration
 ;; and a start timestamp, so a stalled stream had nothing to name — the gateway failed the

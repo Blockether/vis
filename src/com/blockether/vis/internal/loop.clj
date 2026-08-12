@@ -443,20 +443,25 @@
                   str/trim)]
     (boolean (and text (<= (count text) 80) (re-find casual-request-pattern text)))))
 
-(defn- copilot-claude-safe-reasoning-level
-  "Return the reasoning level Vis is willing to send to GitHub Copilot Claude.
+(defn- copilot-claude-reasoning-level
+  "Return the reasoning level Vis sends to GitHub Copilot Claude.
 
-   Copilot bills by interaction class, not just visible response text. Deep
-   reasoning on Claude can burn multiple premium interactions for a trivial
-   prompt. Default policy:
-   - casual chat gets no reasoning parameter;
-   - :deep is capped to :balanced unless the caller opts in with
-     :allow-copilot-claude-deep? true;
-   - non-Copilot/non-Claude models are untouched."
-  [resolved-model user-request reasoning-level {:keys [allow-copilot-claude-deep?]}]
+   Only casual chat is special-cased: a bare greeting names no depth, and
+   Claude's adaptive thinking then decides for itself whether the turn is
+   worth thinking about. Non-Copilot / non-Claude models are untouched.
+
+   There is no longer a `:deep` cap. It existed because Copilot once served
+   Claude over the OPENAI-compatible chat wire, where svar pushed
+   `reasoning_effort`; the proxy could not read an OpenAI knob for an
+   Anthropic model, chose its own depth and spiralled into autonomous
+   reasoning loops. Copilot Claude has ridden the native `/v1/messages` wire
+   since svar v0.7.111, where depth is `output_config.effort` — the field the
+   backend actually reads. Capping there bought nothing but thinking
+   SHALLOWER than Anthropic's own default, which is exactly how a `:deep`
+   turn ended up rendering two-word thinking summaries."
+  [resolved-model user-request reasoning-level]
   (cond (not (github-copilot-claude-model? resolved-model)) reasoning-level
         (casual-user-request? user-request) nil
-        (and (= :deep reasoning-level) (not allow-copilot-claude-deep?)) :balanced
         :else reasoning-level))
 
 
@@ -6435,7 +6440,7 @@
            ;; `max-context-tokens` feeds advisory context-pressure hooks;
            ;; trailer assembly itself still owns no token trimming.
            max-context-tokens hooks cancel-atom cancel-token reasoning-default routing extra-body
-           reasoning-effort turn-features allow-copilot-claude-deep? workspace-overrides]}]
+           reasoning-effort turn-features workspace-overrides]}]
   (let
     [environment
      (cond-> environment
@@ -6978,11 +6983,8 @@
               :else
               (let
                 [raw-reasoning-level (when has-reasoning? base-reasoning-level)
-                 reasoning-level (copilot-claude-safe-reasoning-level resolved-model
-                                                                      user-request
-                                                                      raw-reasoning-level
-                                                                      {:allow-copilot-claude-deep?
-                                                                       allow-copilot-claude-deep?})
+                 reasoning-level
+                 (copilot-claude-reasoning-level resolved-model user-request raw-reasoning-level)
                  _ (log-stage! :iteration/start
                                iteration
                                {:message-count (count messages)
