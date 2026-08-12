@@ -11,7 +11,7 @@ apropos("skeleton")      # full text: the word need not be in any name
 apropos("wire contract") # terms are ANDed, hits come back ranked
 doc("struct_patch")      # one function's whole contract
 doc("gateway")           # a Vis documentation page, by slug
-doc("spel")              # a skill, whole — reading it does not activate it
+doc("spel")              # a skill, whole — reading it is the whole of using it
 doc()                    # the curated index: the verbs a session starts from
 ```
 
