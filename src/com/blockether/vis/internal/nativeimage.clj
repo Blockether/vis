@@ -145,23 +145,36 @@
                     nil
                     (into-array Object [desc (into-array opt-t options)]))))]
 
-      ;; open(const char*, int) / close(int)
-      (register! (descriptor [java.lang.foreign.ValueLayout/ADDRESS
-                              java.lang.foreign.ValueLayout/JAVA_INT]))
-      (register! (descriptor [java.lang.foreign.ValueLayout/JAVA_INT]))
-      ;; tcgetattr(int, struct termios*) / tcsetattr(int, int, const struct termios*)
-      (register! (descriptor [java.lang.foreign.ValueLayout/JAVA_INT
-                              java.lang.foreign.ValueLayout/ADDRESS]))
-      (register! (descriptor [java.lang.foreign.ValueLayout/JAVA_INT
-                              java.lang.foreign.ValueLayout/JAVA_INT
-                              java.lang.foreign.ValueLayout/ADDRESS]))
-      ;; ioctl(int, unsigned long, ...) — variadic from argument index 2, which is
-      ;; how the winsize pointer must be passed on Apple silicon.
-      (register! (descriptor [java.lang.foreign.ValueLayout/JAVA_INT
-                              java.lang.foreign.ValueLayout/JAVA_LONG
-                              java.lang.foreign.ValueLayout/ADDRESS])
-                 (java.lang.foreign.Linker$Option/firstVariadicArg 2))
-      (println "[vis/native-image] registered 5 FFM downcalls for native TTY control"))
+      ;; NEVER on Linux. v0.1.32 was the last native release that shipped; v0.1.33
+      ;; (which first carried this registration), v0.1.34 and v0.1.35 all died in
+      ;; `native-binary-paints-the-tui-test` with a SIGSEGV inside the generated
+      ;; downcall stub for `open("/dev/tty", O_RDWR|O_NOCTTY)` — both x64 and arm64,
+      ;; every attempt. Registering the descriptor is what lets lanterna's
+      ;; `TTYDeviceControl` <clinit> SUCCEED in the image; without it the very same
+      ;; <clinit> catches Throwable, leaves SUPPORTED false, and the terminal drives
+      ;; the tty by forking /bin/stty exactly as it did through v0.1.32. macOS keeps
+      ;; the fast path: it is the only platform this has ever been proven on.
+      (if (.contains (.toLowerCase (str (System/getProperty "os.name" ""))) "linux")
+        (println "[vis/native-image] FFM downcall registration SKIPPED on Linux -"
+                 "the TTY is driven by forking /bin/stty (see the comment above)")
+        (do
+          ;; open(const char*, int) / close(int)
+          (register! (descriptor [java.lang.foreign.ValueLayout/ADDRESS
+                                  java.lang.foreign.ValueLayout/JAVA_INT]))
+          (register! (descriptor [java.lang.foreign.ValueLayout/JAVA_INT]))
+          ;; tcgetattr(int, struct termios*) / tcsetattr(int, int, const struct termios*)
+          (register! (descriptor [java.lang.foreign.ValueLayout/JAVA_INT
+                                  java.lang.foreign.ValueLayout/ADDRESS]))
+          (register! (descriptor [java.lang.foreign.ValueLayout/JAVA_INT
+                                  java.lang.foreign.ValueLayout/JAVA_INT
+                                  java.lang.foreign.ValueLayout/ADDRESS]))
+          ;; ioctl(int, unsigned long, ...) — variadic from argument index 2, which is
+          ;; how the winsize pointer must be passed on Apple silicon.
+          (register! (descriptor [java.lang.foreign.ValueLayout/JAVA_INT
+                                  java.lang.foreign.ValueLayout/JAVA_LONG
+                                  java.lang.foreign.ValueLayout/ADDRESS])
+                     (java.lang.foreign.Linker$Option/firstVariadicArg 2))
+          (println "[vis/native-image] registered 5 FFM downcalls for native TTY control"))))
     (catch Throwable t
       ;; Older builder without RuntimeForeignAccess, or FFM support switched off:
       ;; the TUI still works, it just forks stty like it always did.

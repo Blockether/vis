@@ -28,6 +28,7 @@
    image. Deleting one re-breaks the binary while every JVM test stays green."
   (:require [charred.api :as charred]
             [clojure.java.io :as io]
+            [com.blockether.vis.internal.nativeimage :as nativeimage]
             [lazytest.core :refer [defdescribe expect it]]
             [yamlstar.core :as yamlstar]))
 
@@ -90,3 +91,30 @@
                  ;; nested config document is exactly the call the image must be able to make.
                  (expect (= {"gateway" {"host" "0.0.0.0" "port" 7890}}
                             (yamlstar/load "gateway:\n  host: 0.0.0.0\n  port: 7890\n")))))
+
+
+(defn- with-os-name
+  "Run `f` with the build host's reported `os.name`, restoring the real one."
+  [os f]
+  (let [original (System/getProperty "os.name")]
+    (try (System/setProperty "os.name" os) (f) (finally (System/setProperty "os.name" original)))))
+
+;; Regression: v0.1.32 was the last native release whose Linux binaries shipped.
+;; v0.1.33 added the FFM downcall registration below, and v0.1.33/34/35 all died in
+;; `native-binary-paints-the-tui-test` with a SIGSEGV inside the generated stub for
+;; lanterna's `open("/dev/tty", …)` — on x64 AND arm64, every attempt. Registering the
+;; descriptor is what lets `TTYDeviceControl`'s <clinit> succeed in the image; skipping
+;; it leaves that <clinit>'s own `catch Throwable` to mark the native TTY unsupported,
+;; and the terminal forks /bin/stty exactly as it did through v0.1.32.
+(defdescribe
+  native-tty-downcalls-are-not-registered-on-linux-test
+  (it "skips the FFM registration when the image is built on Linux"
+      (let [out (with-out-str (with-os-name "Linux" #(nativeimage/-duringSetup nil nil)))]
+        (expect (re-find #"SKIPPED on Linux" out))
+        (expect (nil? (re-find #"registered 5 FFM downcalls" out)))))
+  (it "still takes the fast path on the platform it was proven on"
+      ;; The builder class is HOSTED-ONLY, so off Linux this reaches the
+      ;; registration and fails on `RuntimeForeignAccess` being absent from a
+      ;; plain JVM — which is precisely NOT the Linux skip.
+      (let [out (with-out-str (with-os-name "Mac OS X" #(nativeimage/-duringSetup nil nil)))]
+        (expect (nil? (re-find #"SKIPPED on Linux" out))))))

@@ -88,6 +88,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The Linux native binaries ship again. Every release since v0.1.33 built them and then died in
+  the TUI smoke test with a SIGSEGV inside the generated FFM stub for lanterna's
+  `open("/dev/tty", …)`, so v0.1.33, v0.1.34 and v0.1.35 attached no Linux distribution at all.
+  The build feature no longer registers those downcall descriptors on Linux, which leaves
+  lanterna's own `catch Throwable` to mark the native TTY unsupported and drive the terminal by
+  forking `/bin/stty` — exactly what shipped through v0.1.32. macOS keeps the fast path.
+
 - Push capability named the wrong provider. Web Push MINTS its own VAPID identity the first time
   it is asked, so its half is "configured" on every gateway — and it sat AHEAD of the relay in
   `/v1/capabilities`, hiding the one provider a machine with no credentials at all actually
