@@ -3379,6 +3379,129 @@
 
     (when (and (string? text) (not (str/blank? text))) text)))
 
+(defn- python-param-name
+  "One declared parameter as a PYTHON identifier: kebab-case becomes snake_case
+   and Clojure's marks (`?`, `!`, `*`) are dropped. nil when nothing legal
+   survives — a destructuring form or a `&` has no name to show."
+  [param]
+  (when (or (simple-symbol? param) (string? param) (keyword? param))
+    (let
+      [n (-> (name param)
+             (str/replace "-" "_")
+             (str/replace #"[^A-Za-z0-9_]" ""))]
+      (when (re-matches #"[A-Za-z_][A-Za-z0-9_]*" n) n))))
+
+(defn- call-shape-signature
+  "Python parameter list for a `:ext.symbol/call` SHAPE. The shape already
+   declares how a Python call's keywords re-expand onto the implementation's
+   positionals, so it IS the sandbox-facing signature: `:lead-opt` is one
+   optional leading parameter, `:pos` the required ones, `:opt-pos` the optional
+   trailing ones. `**kwargs` appears ONLY under `:rest` — without it an
+   undeclared keyword stops `folded-kwargs->positional` from re-expanding at
+   all, so promising kwargs would be a lie. nil when a declared key has no legal
+   Python name."
+  [{lead :lead-opt pos :pos opt-pos :opt-pos rest-mode :rest}]
+  (let
+    [named
+     (mapv python-param-name (concat (when lead [lead]) pos opt-pos))
+
+     lead-n
+     (if lead 1 0)]
+
+    (when (and (seq named) (every? some? named))
+      (str/join ", "
+                (concat (map #(str % "=None") (take lead-n named))
+                        (take (count pos) (drop lead-n named))
+                        (map #(str % "=None") (drop (+ lead-n (count pos)) named))
+                        (when rest-mode ["**kwargs"]))))))
+
+(defn- arglists-signature
+  "Python parameter list from the implementation's `:ext.symbol/arglists`, for an
+   entry that declares no `:call` shape. The longest fixed arity names the
+   parameters, everything past the SHORTEST arity is optional, a `&` tail is
+   `*args`, and `**kwargs` is always accepted because GraalPy folds keywords
+   into exactly the trailing dict positional such a tool receives as its options
+   map. `env` leads the arglist of an env-injected impl and is dropped: the host
+   passes it, never the model. nil when the arglists carry no names at all
+   (`[[& args]]`) — the wrapper's own `(*a, **k)` already says that much."
+  [arglists inject-env?]
+  (let
+    [lists
+     (->> arglists
+          (filter sequential?)
+          (map vec)
+          (map (fn [al]
+                 (if (and inject-env? (= 'env (first al))) (subvec al 1) al))))
+
+     fixed
+     (map (fn [al]
+            (vec (take-while #(not= '& %) al)))
+          lists)
+
+     longest
+     (last (sort-by count fixed))
+
+     required
+     (when (seq fixed) (apply min (map count fixed)))
+
+     named
+     (mapv python-param-name longest)]
+
+    (when (and (seq named) (every? some? named))
+      (str/join ", "
+                (concat (map-indexed (fn [i n]
+                                       (if (< (long i) (long required)) n (str n "=None")))
+                                     named)
+                        (when (some (fn [al]
+                                      (some #(= '& %) al))
+                                    lists)
+                          ["*args"])
+                        ["**kwargs"])))))
+
+(defn symbol-signature
+  "Python parameter list for ONE symbol entry — what stands between the
+   parentheses of the signature the sandbox reports for it, e.g.
+   `\"language=None, **kwargs\"`. The `:call` shape wins (it is the declared
+   keyword->positional contract); the implementation's arglists are the
+   fallback. nil when the entry declares nothing a caller could act on.
+
+   `env-python` ships these to the sandbox as `__vis_sigs__`, where a deferred
+   tool hangs its parameters off `__wrapped__` so `inspect.signature(tool)` and
+   `help(tool)` answer with them instead of with the async trampoline's own
+   `(*a, **k)`."
+  [entry]
+  (when (:ext.symbol/fn entry)
+    (let [shape (:ext.symbol/call entry)]
+      (or (when (map? shape) (call-shape-signature shape))
+          (arglists-signature (:ext.symbol/arglists entry)
+                              (boolean (:ext.symbol/inject-env? entry)))))))
+
+(defn sandbox-symbol-signatures
+  "Map `{sandbox-symbol -> python-parameter-list}` for every engine-bound
+   callable across the registered extensions, from `symbol-signature`. The
+   signature twin of `sandbox-symbol-docs`, seeded into the sandbox by
+   `env-python/build-agent-context` and keyed the same way: by the BARE symbol,
+   so aliased extensions (which bind per turn) seed their own through
+   `env-python/set-python-binding-signature!`."
+  []
+  (load-builtin-extensions!)
+  (into {}
+        (for
+          [ext
+           (registered-extensions)
+
+           entry
+           (ext-symbols ext)
+
+           :let [sym
+                 (:ext.symbol/symbol entry)
+
+                 sig
+                 (symbol-signature entry)]
+           :when (and sym sig)]
+
+          [sym sig])))
+
 (defn sandbox-symbol-docs
   "Map `{sandbox-symbol -> doc-text}` for every engine-bound symbol across the
    registered extensions, keyed by the `:ext.symbol/symbol` as it is bound in

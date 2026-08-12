@@ -9090,7 +9090,13 @@
                  ;; `build-agent-context` seed never saw them.
                  (env/set-python-binding-doc! python-context
                                               target
-                                              (extension/symbol-doc-text (get by-sym sym))))
+                                              (extension/symbol-doc-text (get by-sym sym)))
+                 ;; ...and its declared parameter list, so `inspect.signature` /
+                 ;; `help` on an aliased tool answer with real parameters
+                 ;; instead of the async trampoline's own `(*a, **k)`.
+                 (env/set-python-binding-signature! python-context
+                                                    target
+                                                    (extension/symbol-signature (get by-sym sym))))
              (env/remove-python-binding! python-context target))))))
    environment))
 

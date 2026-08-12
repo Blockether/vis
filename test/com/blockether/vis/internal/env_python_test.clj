@@ -907,3 +907,90 @@
                         (expect (not (str/includes? out "PAGE THAT MUST LOSE")))
                         (expect (str/includes? out "ls")))
                       (finally (doc-corpus/register-source! ::collision (constantly []))))))
+
+(defdescribe
+  block-source-introspection-test
+  ;; A block's source was registered nowhere, so `inspect.getsource` on a
+  ;; function the model had just defined died with "could not get source code":
+  ;; the sandbox could RUN code it could not SHOW.
+  (it "reads back the source of a function defined in an EARLIER block"
+      (let
+        [ctx
+         (tpc/shared)
+
+         _
+         (ep/run-python-block ctx "def source_probe(a, b=2):\n    return a + b\n")
+
+         _
+         (ep/run-python-block ctx "source_probe_unrelated = 1")
+
+         result
+         (ep/run-python-block ctx "import inspect\nprint(inspect.getsource(source_probe))")]
+
+        (expect (str/includes? (:stdout result) "def source_probe(a, b=2):"))
+        (expect (str/includes? (:stdout result) "return a + b"))))
+  (it "gives every block its own co_filename, so an older source is never overwritten"
+      (let
+        [ctx
+         (tpc/shared)
+
+         _
+         (ep/run-python-block ctx "def source_probe_first():\n    return 1\n")
+
+         result
+         (ep/run-python-block
+           ctx
+           (str "import inspect\n"
+                "def source_probe_second():\n    return 2\n"
+                "print(source_probe_first.__code__.co_filename"
+                " != source_probe_second.__code__.co_filename)\n"
+                "print(inspect.getsource(source_probe_first).strip().endswith('return 1'))\n"))]
+
+        (expect (= "True\nTrue\n" (:stdout result))))))
+
+(defdescribe tool-introspection-test
+             ;; Every bound tool was a bare `(*a, **k)` trampoline with an empty docstring,
+             ;; so `help(tool)` and `inspect.signature(tool)` showed nothing of the
+             ;; contract the host declares for it.
+             (it "carries the host doc and the declared parameters onto the bound callable"
+                 (let
+                   [ctx
+                    (tpc/shared-with! {'meta-probe (fn [& args]
+                                                     (str "called:" (count args)))})
+
+                    _
+                    (ep/set-python-binding-doc!
+                      ctx
+                      'meta-probe
+                      "meta_probe(language=None, **kwargs) -> str. The declared contract.")
+
+                    _
+                    (ep/set-python-binding-signature! ctx 'meta-probe "language=None, **kwargs")
+
+                    result
+                    (ep/run-python-block ctx
+                                         (str "import inspect\n"
+                                              "print(str(inspect.signature(meta_probe)))\n"
+                                              "print(meta_probe.__doc__.split('.')[0])\n"
+                                              "print(meta_probe.__name__)\n"))]
+
+                   (expect (= (str "(language=None, **kwargs)\n"
+                                   "meta_probe(language=None, **kwargs) -> str\n"
+                                   "meta_probe\n")
+                              (:stdout result)))))
+             (it "keeps accepting the call shapes the reported signature does not name"
+                 (let
+                   [ctx
+                    (tpc/shared-with! {'meta-probe (fn [& args]
+                                                     (str "called:" (count args)))})
+
+                    _
+                    (ep/set-python-binding-signature! ctx 'meta-probe "language=None, **kwargs")
+
+                    result
+                    (ep/run-python-block ctx
+                                         (str "kw = meta_probe(language=\"python\", extra=1)\n"
+                                              "mapped = meta_probe({\"language\": \"python\"})\n"
+                                              "print(kw, mapped)\n"))]
+
+                   (expect (= "called:1 called:1\n" (:stdout result))))))

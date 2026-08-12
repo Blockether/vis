@@ -461,3 +461,40 @@
                    ;; `call` documents itself here and binds as `mcp__call` per turn.)
                    (doseq [sym bound]
                      (expect (contains? (set (keys docs)) sym) (str sym))))))
+
+(defdescribe
+  symbol-signature-test
+  ;; Before this, a bound tool reported the async trampoline's own `(*a, **k)`
+  ;; and no docstring, so `inspect.signature(run_tests)` / `help(run_tests)`
+  ;; could not show a single parameter the host declares for it.
+  (it "reads a Python parameter list off the declared :call shape"
+      (expect (= "language=None, **kwargs"
+                 (extension/symbol-signature #:ext.symbol{:fn sample-channel-fn
+                                                          :call {:lead-opt "language"
+                                                                 :rest :always}})))
+      (expect (= "server, tool=None, args=None"
+                 (extension/symbol-signature #:ext.symbol{:fn sample-channel-fn
+                                                          :call {:pos ["server"]
+                                                                 :opt-pos ["tool" "args"]}}))))
+  (it "falls back to the arglists, dropping the injected env and snake-casing"
+      (expect (= "command, opts=None, **kwargs"
+                 (extension/symbol-signature #:ext.symbol{:fn sample-channel-fn
+                                                          :arglists '([command] [command opts])})))
+      (expect (= "session_id=None, **kwargs"
+                 (extension/symbol-signature #:ext.symbol{:fn sample-channel-fn
+                                                          :arglists '([] [session-id])})))
+      (expect (= "id"
+                 (extension/symbol-signature #:ext.symbol{:fn sample-channel-fn
+                                                          :inject-env? true
+                                                          :arglists '([env id])
+                                                          :call {:pos ["id"]}}))))
+  (it "answers nil when the entry declares nothing but a rest argument"
+      (expect (nil? (extension/symbol-signature #:ext.symbol{:fn sample-channel-fn
+                                                             :arglists '([& args])})))
+      (expect (nil? (extension/symbol-signature #:ext.symbol{:fn sample-channel-fn
+                                                             :inject-env? true
+                                                             :arglists '([env & args])}))))
+  (it "signs the live registry's positional tools"
+      (let [sigs (extension/sandbox-symbol-signatures)]
+        (expect (= "language=None, **kwargs" (get sigs 'run_tests)))
+        (expect (= "command, opts=None, **kwargs" (get sigs 'shell))))))

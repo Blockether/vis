@@ -3,6 +3,7 @@ import builtins as __vis_builtins__
 import errno as __vis_errno__
 import gc as __vis_gc__
 import io as __vis_io__
+import linecache as __vis_linecache__
 import os as __vis_os__
 import time as __vis_time__
 import weakref as __vis_weakref__
@@ -896,8 +897,15 @@ def __vis_drive__(coro):
             send = __vis_Raise__(__vis_wrap_tool_exc__(__vis_exc__))
 
 
+def __vis_is_user_file__(name):
+    # Every co_filename this runtime compiles a MODEL BLOCK under: the bare
+    # `<prog>` the test runner execs under, and the per-block `<prog:N>` names
+    # `__vis_register_source__` mints (see there for why they are unique).
+    return name == "<prog>" or (name[:6] == "<prog:" and name[-1:] == ">")
+
+
 def __vis_error_pos__(e):
-    # Deepest '<prog>' (user-code) traceback frame -> (line, col, end_col). The
+    # Deepest user-code traceback frame -> (line, col, end_col). The
     # async trampoline (__vis_drive__) unwinds the guest stack, so a GraalPy
     # PolyglotException.getPolyglotStackTrace() LOSES these frames; the Python
     # __traceback__ is the only place the failing user-code position survives.
@@ -908,7 +916,7 @@ def __vis_error_pos__(e):
     end_col = None
     while tb is not None:
         f = tb.tb_frame
-        if f.f_code.co_filename == "<prog>":
+        if __vis_is_user_file__(f.f_code.co_filename):
             line = tb.tb_lineno
             col = None
             end_col = None
@@ -1178,12 +1186,85 @@ def __vis_to_thread__(func, /, *args, **kwargs):
     return __vis_Call__(func, args, kwargs, getattr(func, "__name__", "to_thread"))
 
 
+def __vis_tool_proto__(nm, params):
+    # A stub carrying ONLY a parameter list. The tool itself has to stay
+    # permissive — GraalPy folds `tool(a=1)` into ONE trailing dict positional,
+    # so `(*a, **k)` is the only shape that can accept every call the host
+    # supports — while `inspect.signature` follows `__wrapped__`. The stub is
+    # therefore how a tool REPORTS the parameters the host declared for it
+    # without narrowing what it accepts. It has no body and no registered
+    # source, so `inspect.getsource` on a tool keeps refusing: the
+    # implementation is a host callable, not Python.
+    ns = {}
+    try:
+        __vis_real_exec__("def __vis_proto__(" + params + "): pass", ns)
+    except SyntaxError:
+        return None
+    proto = ns["__vis_proto__"]
+    proto.__name__ = nm
+    proto.__qualname__ = nm
+    return proto
+
+
+def __vis_stamp_tool__(fn, nm):
+    # Give ONE tool wrapper the two facts only the host knows: the contract
+    # `doc(nm)` answers (as `__doc__`, so `help(tool)` and `inspect.getdoc`
+    # answer it too) and the declared parameter list (through `__wrapped__`, so
+    # `inspect.signature` stops reporting the trampoline's own `(*a, **k)`).
+    # The host doc WINS every time: re-stamping is how a doc seeded AFTER the
+    # binding still lands — an aliased extension binds per turn and seeds its
+    # doc one step later.
+    g = globals()
+    doc = (g.get("__vis_docs__") or {}).get(nm)
+    if doc:
+        try:
+            fn.__doc__ = doc
+        except Exception:
+            pass
+    params = (g.get("__vis_sigs__") or {}).get(nm)
+    if params and getattr(fn, "__wrapped__", None) is None:
+        proto = __vis_tool_proto__(nm, params)
+        if proto is not None:
+            fn.__wrapped__ = proto
+    return fn
+
+
+def __vis_stamp_tools__(names=None):
+    # HOST-CALLED once docs/signatures are seeded, and again after a late
+    # binding: (re)stamp every deferred tool, or only the ones named. A name the
+    # model has since shadowed with its own function is skipped — the marker is
+    # set by `__vis_deferred__` and by nothing else.
+    g = globals()
+    for nm in list(g.get("__vis_tool_names__") or [] if names is None else names):
+        fn = g.get(nm)
+        if callable(fn) and getattr(fn, "__vis_is_tool__", False):
+            __vis_stamp_tool__(fn, nm)
+
+
+def __vis_publish_tool__(fn, nm):
+    # Name, MARK, stamp and register one wrapper as a sandbox tool — the single
+    # place a callable becomes a name the model can introspect. The mark is what
+    # `__vis_stamp_tools__` re-stamps and what keeps it off a name the model has
+    # since shadowed with a function of its own.
+    fn.__name__ = nm
+    fn.__qualname__ = nm
+    fn.__vis_is_tool__ = True
+    __vis_stamp_tool__(fn, nm)
+    g = globals()
+    names = g.get("__vis_tool_names__")
+    if names is None:
+        names = []
+        g["__vis_tool_names__"] = names
+    if nm not in names:
+        names.append(nm)
+    return fn
+
+
 def __vis_deferred__(realfn, nm="tool"):
     def __vis_tool__(*a, **k):
         return __vis_Call__(realfn, a, k, nm)
 
-    __vis_tool__.__name__ = nm
-    return __vis_tool__
+    return __vis_publish_tool__(__vis_tool__, nm)
 
 
 class __vis_asyncio__:
@@ -1855,6 +1936,42 @@ def __vis_pin_runtime__(g):
                 pass
 
 
+__vis_blocks_kept__ = 128
+
+
+def __vis_register_source__(src):
+    # Make a block READABLE BACK. Every `def`/`class` the model writes lands in
+    # a code object whose co_filename is synthetic, and nothing on disk backs
+    # it: `inspect.getsource`, `inspect.getsourcelines`, `traceback`'s source
+    # echo and the pytest shim's assert introspection all read through
+    # `linecache`, so without this entry each of them failed with
+    # `OSError: could not get source code` — the sandbox could RUN code it
+    # could not SHOW.
+    #
+    # The name is UNIQUE PER BLOCK. Two blocks share no line numbering, so one
+    # shared `<prog>` would hand a LATER block's text back for an EARLIER
+    # block's function — wrong source, silently, which is worse than the error.
+    # Only the newest `__vis_blocks_kept__` sources stay resident.
+    g = globals()
+    n = int(g.get("__vis_block_no__") or 0) + 1
+    g["__vis_block_no__"] = n
+    name = "<prog:" + str(n) + ">"
+    # THIS block's source, for the pytest shim's inline assert introspection.
+    g["__vis_src__"] = src
+    # mtime None means "no file behind it", which is exactly what
+    # `linecache.checkcache` needs to leave the entry alone instead of
+    # dropping it on the next lookup.
+    __vis_linecache__.cache[name] = (len(src), None, src.splitlines(True), name)
+    kept = g.get("__vis_block_names__")
+    if kept is None:
+        kept = []
+        g["__vis_block_names__"] = kept
+    kept.append(name)
+    while len(kept) > __vis_blocks_kept__:
+        __vis_linecache__.cache.pop(kept.pop(0), None)
+    return name
+
+
 def __vis_run_async__(src):
     g = globals()
     __vis_pin_runtime__(g)
@@ -1868,6 +1985,7 @@ def __vis_run_async__(src):
     g["__vis_err_obj__"] = (
         None  # the raised exception, stashed for that host-driven lookup
     )
+    __vis_file__ = __vis_register_source__(src)
     tree = __vis_ast__.parse(src)
     __vis_flags__ = __vis_future_flags__(tree)
     __vis_check_module_scope__(tree, src)
@@ -1940,7 +2058,7 @@ def __vis_run_async__(src):
     mod = __vis_ast__.Module(body=[fn], type_ignores=[])
     __vis_ast__.fix_missing_locations(mod)
     try:
-        __vis_code__ = compile(mod, "<prog>", "exec", __vis_flags__)
+        __vis_code__ = compile(mod, __vis_file__, "exec", __vis_flags__)
     except SyntaxError as __vis_se__:
         # A compile error on the SYNTHESIZED module has no source text, and the
         # host cannot render such a guest exception at all (it dies with a bare
@@ -1958,7 +2076,12 @@ def __vis_run_async__(src):
                 __vis_txt__ = __vis_lines__[__vis_ln__ - 1]
         raise SyntaxError(
             __vis_msg__,
-            ("<prog>", __vis_ln__, getattr(__vis_se__, "offset", None), __vis_txt__),
+            (
+                __vis_file__,
+                __vis_ln__,
+                getattr(__vis_se__, "offset", None),
+                __vis_txt__,
+            ),
         ) from None
     exec(__vis_code__, g)
     try:
@@ -2000,8 +2123,7 @@ def __vis_direct_kwargs__(realfn, nm="verb"):
     def __vis_verb__(*a, **k):
         return realfn(*a, dict(k)) if k else realfn(*a)
 
-    __vis_verb__.__name__ = nm
-    return __vis_verb__
+    return __vis_publish_tool__(__vis_verb__, nm)
 
 
 def __vis_kwargs_direct_tools__():

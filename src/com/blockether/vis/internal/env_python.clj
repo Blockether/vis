@@ -856,16 +856,17 @@
               "    globals()[__vis_defer1__] = __vis_deferred__(globals()[__vis_defer1__], __vis_defer1__)")))
         (finally (.putMember g "__vis_defer1__" nil))))))
 
-(defn set-python-binding-doc!
-  "Record `doc` text for `sym` (and its py-aliases) in the sandbox `__vis_docs__`
-   dict that in-sandbox `doc(name)` / `apropos(pat)` read. Keyed by the SAME
-   py-name(s) `set-python-binding!` binds under, so `doc(\"mcp_servers\")` resolves
-   for ALIASED extensions that bind AFTER context creation (per turn, via
-   `sync-active-extension-symbols!`) — not only the built-ins seeded eagerly in
-   `build-agent-context`. No-op for a blank doc or a helper context with no
-   sandbox."
-  [python-context sym doc]
-  (when (and python-context (string? doc) (not (str/blank? doc)))
+(defn- set-python-binding-meta!
+  "Record one piece of model-facing metadata for `sym` (and its py-aliases) in
+   the sandbox `dict-name` table, then RE-STAMP those names so the bound
+   callable carries it: a tool DEFERRED before its metadata arrived only gets it
+   from the stamp. Keyed by the SAME py-name(s) `set-python-binding!` binds
+   under, so an ALIASED extension binding AFTER context creation (per turn, via
+   `sync-active-extension-symbols!`) is covered too, not only the built-ins
+   seeded eagerly in `build-agent-context`. No-op for blank text, and for a
+   helper context with no sandbox or no async preamble."
+  [python-context sym dict-name text]
+  (when (and python-context (string? text) (not (str/blank? text)))
     (let
       [^Context ctx
        python-context
@@ -873,13 +874,32 @@
        g
        (python-globals ctx)]
 
-      (try (.putMember g "__vis_doc_txt__" (str doc))
+      (try (.putMember g "__vis_meta_txt__" (str text))
            (doseq [nm (cons (sym->py-name sym) (py-aliases-for-sym sym))]
-             (.putMember g "__vis_doc_sym__" (str nm))
+             (.putMember g "__vis_meta_sym__" (str nm))
              (.eval ctx
                     "python"
-                    "globals().setdefault('__vis_docs__', {})[__vis_doc_sym__] = __vis_doc_txt__"))
-           (finally (.putMember g "__vis_doc_sym__" nil) (.putMember g "__vis_doc_txt__" nil))))))
+                    (str "globals().setdefault('"
+                         dict-name
+                         "', {})[__vis_meta_sym__] = __vis_meta_txt__\n"
+                         "if '__vis_stamp_tools__' in globals():\n"
+                         "    __vis_stamp_tools__([__vis_meta_sym__])")))
+           (finally (.putMember g "__vis_meta_sym__" nil) (.putMember g "__vis_meta_txt__" nil))))))
+
+(defn set-python-binding-doc!
+  "Record `doc` text for `sym` in the sandbox `__vis_docs__` dict that in-sandbox
+   `doc(name)` / `apropos(pat)` read — and that a deferred tool carries as its
+   `__doc__`, so `help(tool)` answers the same contract."
+  [python-context sym doc]
+  (set-python-binding-meta! python-context sym "__vis_docs__" doc))
+
+(defn set-python-binding-signature!
+  "Record `signature` — the Python parameter list from
+   `extension/symbol-signature` — for `sym` in the sandbox `__vis_sigs__` dict.
+   A deferred tool hangs it off `__wrapped__`, so `inspect.signature(tool)`
+   reports the declared parameters instead of the async trampoline's `(*a, **k)`."
+  [python-context sym signature]
+  (set-python-binding-meta! python-context sym "__vis_sigs__" signature))
 
 (def ^:private protected-baseline-names
   "Python globals the agent may CALL but must not rebind. Rebinding a tool or
@@ -924,11 +944,11 @@
          ;; Drop any recorded doc too, so a deactivated tool leaves no stale
          ;; `__vis_docs__` entry that `doc`/`apropos` would keep surfacing.
          (doseq [nm (cons (sym->py-name sym) (py-aliases-for-sym sym))]
-           (.putMember g "__vis_doc_sym__" (str nm))
+           (.putMember g "__vis_meta_sym__" (str nm))
            (.eval ^Context python-context
                   "python"
-                  "globals().get('__vis_docs__', {}).pop(__vis_doc_sym__, None)"))
-         (.putMember g "__vis_doc_sym__" nil))
+                  "globals().get('__vis_docs__', {}).pop(__vis_meta_sym__, None)"))
+         (.putMember g "__vis_meta_sym__" nil))
        (catch Throwable _ false)))
 
 (defn bind-and-bump!
@@ -951,11 +971,11 @@
 
     (set-python-binding! python-context sym val)
     ;; Stash name -> doc text in a Python dict global that `doc(name)` reads.
-    (.putMember g "__vis_doc_sym__" (str sym))
-    (.putMember g "__vis_doc_txt__" (str (or doc "vis-managed engine binding")))
+    (.putMember g "__vis_meta_sym__" (str sym))
+    (.putMember g "__vis_meta_txt__" (str (or doc "vis-managed engine binding")))
     (.eval ^Context python-context
            "python"
-           "globals().setdefault('__vis_docs__', {})[__vis_doc_sym__] = __vis_doc_txt__")
+           "globals().setdefault('__vis_docs__', {})[__vis_meta_sym__] = __vis_meta_txt__")
     nil))
 
 
@@ -1946,23 +1966,39 @@
     ;; Best-effort: a registry hiccup must never break context creation.
     (try
       (let
-        [sym->doc
-         (extension/sandbox-symbol-docs)
+        [by-py-name
+         (fn [sym->text]
+           (reduce (fn [m [sym _]]
+                     (if-let [d (get sym->text sym)]
+                       (reduce #(assoc %1 %2 d)
+                               m
+                               (cons (sym->py-name sym) (py-aliases-for-sym sym)))
+                       m))
+                   {}
+                   (or custom-bindings {})))
 
          py-docs
-         (reduce (fn [m [sym _]]
-                   (if-let [d (get sym->doc sym)]
-                     (reduce #(assoc %1 %2 d) m (cons (sym->py-name sym) (py-aliases-for-sym sym)))
-                     m))
-                 {}
-                 (or custom-bindings {}))]
+         (by-py-name (extension/sandbox-symbol-docs))
+
+         ;; The signature twin of the docs: `__vis_sigs__` is the declared
+         ;; parameter list a deferred tool reports through `__wrapped__`, so
+         ;; `inspect.signature(grep)` / `help(grep)` answer with the contract
+         ;; instead of the async trampoline's own `(*a, **k)`.
+         py-sigs
+         (by-py-name (extension/sandbox-symbol-signatures))]
 
         (when (seq py-docs)
           (.putMember g "__vis_docs_json__" (json/write-json-str py-docs))
           (.eval ctx
                  "python"
                  "globals().setdefault('__vis_docs__', {}).update(json.loads(__vis_docs_json__))")
-          (.putMember g "__vis_docs_json__" nil)))
+          (.putMember g "__vis_docs_json__" nil))
+        (when (seq py-sigs)
+          (.putMember g "__vis_sigs_json__" (json/write-json-str py-sigs))
+          (.eval ctx
+                 "python"
+                 "globals().setdefault('__vis_sigs__', {}).update(json.loads(__vis_sigs_json__))")
+          (.putMember g "__vis_sigs_json__" nil)))
       (catch Throwable _ nil))
     ;; POSIX refusal: subprocess / os.system / os.popen point at the `shell`
     ;; tool instead of spawning. Eval'd BEFORE the initial-ns-keys snapshot so
@@ -2137,7 +2173,11 @@
                         distinct
                         vec)]
       (.putMember g "__vis_defer_names__" (->py defer-names))
-      (.eval ctx "python" "__vis_defer_tools__()"))
+      (.eval ctx "python" "__vis_defer_tools__()")
+      ;; Docs and signatures are seeded ABOVE, shims and the documentation
+      ;; corpus after them — so the stamp runs LAST, when every tool's contract
+      ;; is already in `__vis_docs__`/`__vis_sigs__` for it to carry.
+      (.eval ctx "python" "__vis_stamp_tools__()"))
     ;; The DIRECT (never-deferred) verbs keep their synchronous identity but still
     ;; accept Python kwargs: wrap them so `session_fold(target, gist="…")` folds
     ;; its kwargs into ONE trailing dict positional the Clojure verb unwraps
