@@ -62,7 +62,9 @@ import {
   ProjectCrumb,
   RowDisclosure,
   SearchField,
+  SectionGap,
   SectionHeader,
+  SectionShelf,
   Spinner,
   UnreadBadge,
 } from "./ui";
@@ -735,8 +737,8 @@ describe("Pager", () => {
 
   // Regression, user report: the `<` and `>` were spread the full width of the
   // list, "too much and hard to click" — 360px apart on a phone, so no thumb can
-  // reach both and click-click-click through pages. The band still runs the full
-  // width; the control inside it is capped and centred.
+  // reach both and click-click-click through pages. The shelf still runs the full
+  // width; the control on it is capped and held at its trailing end.
   it("keeps the two steps within a thumb's reach of the numbers", () => {
     const html = renderToStaticMarkup(
       <Pager page={4} pageCount={73} onPage={() => {}} label="vis sessions" />,
@@ -744,7 +746,7 @@ describe("Pager", () => {
     // A FIXED cap, not `w-fit`: a cluster that sizes to its own window re-centres
     // whenever the window grows, which is what slid `>` out from under the finger.
     expect(html).toContain("flex w-full max-w-[19rem] items-center gap-1");
-    expect(html).toContain("flex justify-center border-t");
+    expect(html).toContain('class="flex min-w-0 grow justify-end"');
   });
 
   it("makes every printed page a one-tap jump, current one marked", () => {
@@ -766,6 +768,111 @@ describe("Pager", () => {
     expect(pageWindow(1, 73)).toEqual([1, 2, null, 73]);
     expect(pageWindow(72, 73)).toEqual([1, null, 71, 72, 73]);
     expect(pageWindow(4, 73)).toEqual([1, 2, 3, 4, 5, null, 73]);
+  });
+});
+
+// Regression, user report ("I think there's no visual differentiation between the
+// paging and also there is no visual differentiation between the projects and it all
+// looks like kind of the same thing"): the pager was painted at the FOOT of a group's
+// rows — `border-t border-dialog-edge` on the rows' own paper, one hairline above the
+// next project's header — so `1 2 … 80 ›` read as the last row of `vis` or the first
+// row of `vis-companion`. It rides on the header's shelf now, and two projects are
+// separated by a trough instead of by the hairline two sessions share.
+describe("SectionShelf", () => {
+  const html = renderToStaticMarkup(
+    <SectionShelf>
+      <HeaderMeta>
+        <HeaderTally count={794} unit="session" />
+      </HeaderMeta>
+      <Pager page={2} pageCount={100} onPage={() => {}} label="vis sessions" />
+    </SectionShelf>,
+  );
+
+  const face = /^<div class="([^"]*)"/.exec(html)?.[1] ?? "";
+
+  it("stands on the header's paper, not on the rows'", () => {
+    expect(face).toContain("bg-level-project");
+    expect(face).not.toContain("bg-panel");
+    // One closing hairline for the header/shelf pair, and none above it: a rule
+    // between a band and its own shelf is the doubled line this list was reported for.
+    expect(face).toContain("border-b border-dialog-edge");
+    expect(face).not.toContain("border-t");
+  });
+
+  it("hangs under the band at exactly the band's own height, and behind it", () => {
+    const band = renderToStaticMarkup(<SectionHeader>project</SectionHeader>);
+    expect(band).toContain("min-h-13");
+    expect(face).toContain("sticky top-13");
+    expect(band).toContain("mouse:min-h-9");
+    expect(face).toContain("mouse:top-9");
+    // A group scrolling away passes its shelf UNDER the next header.
+    expect(band).toContain("z-10");
+    expect(face).toContain("z-9");
+  });
+
+  it("is shorter than the band it hangs from", () => {
+    expect(face).toContain("min-h-9");
+    expect(face).toContain("mouse:min-h-8");
+  });
+
+  it("wraps rather than crushing either of its two halves", () => {
+    // 284px of steps and numbers plus a count does not fit a 320px screen; the
+    // second line is honest, a count truncated to nothing is not.
+    expect(face).toContain("flex-wrap");
+    expect(html).toContain("794 sessions");
+    expect(face).not.toContain("truncate");
+  });
+
+  it("owns the list's two edges, so the pager spells neither", () => {
+    expect(face).toContain("pl-3");
+    expect(face).toContain("sm:pl-4");
+    expect(face).toContain("pr-3");
+    expect(face).toContain("sm:pr-4");
+    const pager = renderToStaticMarkup(
+      <Pager page={2} pageCount={100} onPage={() => {}} label="vis sessions" />,
+    );
+    expect(pager).not.toContain("pl-3");
+    expect(pager).not.toContain("pr-3");
+    expect(pager).not.toContain("border-t border-dialog-edge");
+    // `grow` with an automatic basis, so the wrap is decided by the cluster's own
+    // width; `flex-1` would zero that basis and overflow the screen instead.
+    expect(pager).toContain('class="flex min-w-0 grow justify-end"');
+  });
+
+  it("carries the group's count, which the header's cluster no longer does", () => {
+    const shelf = /<SectionShelf>[\s\S]*?<\/SectionShelf>/.exec(sessionsListSource)?.[0];
+    expect(shelf).toContain("<HeaderTally count={sessions.length} unit=\"session\" />");
+    expect(shelf).toContain("<LiveCount count={liveCount} />");
+    expect(shelf).toContain("<Pager page={shownPage}");
+    // ...and it is the ONLY place either of them is rendered on this screen.
+    expect(sessionsListSource.match(/<Pager /g)?.length).toBe(1);
+    // Scoped to the PROJECT header: the fleet view's machine band keeps a tally of
+    // its own, which is a different section counting a different thing.
+    const projectBand = /<ProjectCrumb[\s\S]*?<\/SectionHeader>/.exec(sessionsListSource)?.[0];
+    expect(projectBand).toContain("<NewSessionButton");
+    expect(projectBand).not.toContain("HeaderTally");
+    expect(projectBand).not.toContain("LiveCount");
+    // The loading band stands in for a shelf too, or the list jumps by one when the
+    // rows land.
+    expect(sessionsListSource).toMatch(/<SectionShelf>\s*<SkeletonBar/);
+  });
+});
+
+// Regression, same report ("no visual differentiation between the projects"): a
+// project boundary was ONE hairline — the same hairline two sessions of one project
+// are separated by — so four checkouts read as one long list.
+describe("SectionGap", () => {
+  const html = renderToStaticMarkup(<SectionGap />);
+
+  it("is 8px of the machine's own paper, one step deeper than the card", () => {
+    expect(html).toContain("h-2");
+    expect(html).toContain("bg-level-machine");
+    expect(html).toContain('aria-hidden="true"');
+  });
+
+  it("opens every group but the first, and every machine but the first", () => {
+    expect(sessionsListSource).toContain("{groupIndex > 0 && <SectionGap />}");
+    expect(sessionsListSource).toContain("{sectionIndex > 0 && <SectionGap />}");
   });
 });
 

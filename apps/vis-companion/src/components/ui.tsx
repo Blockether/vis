@@ -1589,6 +1589,66 @@ export function SectionHeader({
 }
 
 /**
+ * THE SHELF a section hangs under its own header: what the section REPORTS, and
+ * how it is WALKED.
+ *
+ * Reported ("there is no visual differentiation between the paging"): the pager
+ * was painted at the FOOT of a group's rows, in the rows' own paper, closing with
+ * the same hairline every row draws — and the element directly after it was the
+ * next project's header. So the strip that walks `vis` looked like the last row of
+ * `vis` or the first row of `vis-companion`, and nothing on the screen said which.
+ * A control that belongs to a HEADING has to stand on the heading's paper: the
+ * shelf is the header's own `bg-level-project`, half a band tall, and it closes the
+ * pair with one hairline instead of drawing a second one mid-list.
+ *
+ * It STICKS to the underside of the band it belongs to — `top-13`, exactly
+ * `HEADER_BAND`'s `min-h-13`, and `mouse:top-9` for the compact one — so header and
+ * shelf travel as one object: at row 40 of a 794-session project the reader can
+ * still see which project they are in AND jump to page 12 without scrolling back.
+ * It is one step BEHIND the band in z-order (`z-9` against `z-10`), because when a
+ * group scrolls out its own shelf must pass UNDER the next header rather than over
+ * it.
+ *
+ * It WRAPS. On a 320px screen a 100-page pager is 284px of steps and numbers, which
+ * leaves nothing for the count beside it; a second line is honest, a truncated
+ * count is not, and both children keep their full ink at every width.
+ *
+ * The count lives here rather than in the header's trailing cluster for the same
+ * reason the qualifier moved under the name: measured on a 320px screen, `699
+ * sessions`, `3 live`, the amber verb and the `⋯` took the cluster's width first
+ * and left the project NAME — the thing the reader came for — 24px wide.
+ */
+export function SectionShelf({ children }: { children: ReactNode }) {
+  return (
+    <div
+      className={`sticky top-13 z-9 flex min-h-9 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-dialog-edge bg-level-project py-1 mouse:top-9 mouse:min-h-8 ${LIST_EDGE} ${LIST_EDGE_END}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
+ * THE TROUGH between two sections, and the only thing between them that is not a
+ * line.
+ *
+ * Reported ("there is no visual differentiation between the projects and it all
+ * looks like kind of the same thing"): the last row of one project and the header
+ * of the next were separated by a single hairline, the same hairline that separates
+ * two sessions inside one project — one pixel of grey asked to mean both "next row"
+ * and "different repository". A boundary that matters is seen before it is read, so
+ * it is 8px of the machine's own paper (`bg-level-machine`, `L 0.905` against the
+ * card's `0.96`): each project reads as a slab standing ON its machine's rail, and
+ * the rail's hue runs through the gap because the machine owns both sides of it.
+ *
+ * It is 8px and not a margin: a gap collapses, a slab does not, and this one has to
+ * PAINT to be a boundary at all.
+ */
+export function SectionGap() {
+  return <div aria-hidden="true" className="h-2 bg-level-machine" />;
+}
+
+/**
  * A name that edits IN PLACE, and does not move when it does.
  *
  * The resting name and the field it becomes are the same box: the same class list,
@@ -1825,11 +1885,19 @@ export function pageWindow(page: number, pageCount: number, span = 1): (number |
  * disclosure chevron on the header hid the whole project behind a tap for the
  * same reason. A page number answers both: where you are, and how much there is.
  *
- * It is a BAND, like every other row-wide strip in this list: the list's own
- * edges, the section rule above it, the steps at its ends and the NUMBERS between
- * them — every one of them pressable, so page 5 of 73 is ONE tap and not four.
- * Below one page it renders nothing at all — a pager for a project with four
- * sessions is a control that can never be pressed.
+ * It is NOT a band of its own: it rides on the group's `SectionShelf`, under the
+ * project header and on the header's paper. Painted at the FOOT of the rows it was
+ * indistinguishable from one — a `border-t border-dialog-edge` strip at the end of
+ * a group, one hairline above the next project's header — so `1 2 … 80 ›` read
+ * either as the last session of `vis` or as the first thing in `vis-companion`,
+ * which is the report this shelf exists for. The shelf also STICKS, so the control
+ * that walks a 794-session project is still on screen at row 40 of that project.
+ *
+ * What the pager owns is the steps at its ends and the NUMBERS between them — every
+ * one of them pressable, so page 5 of 73 is ONE tap and not four; the paper, the
+ * two list edges and the closing hairline belong to the shelf. Below one page it
+ * renders nothing at all — a pager for a project with four sessions is a control
+ * that can never be pressed, and its shelf then carries only the group's count.
  *
  * A step that cannot be taken is not painted. It used to render disabled, so page
  * one wore a `<` that answered nothing and the eye still had to check it.
@@ -1876,15 +1944,20 @@ export function Pager({
   return (
     <nav
       aria-label={`Pages of ${label}`}
-      className={`flex justify-center border-t border-dialog-edge py-1 ${LIST_EDGE} ${LIST_EDGE_END}`}
+      // The shelf is a flex row that WRAPS, so the cluster's own content width is
+      // what decides whether the count and the pages share one line: `grow` with an
+      // automatic basis, never `flex-1`, whose zero basis would let 284px of steps
+      // and numbers overflow a 320px screen rather than take a second line.
+      className="flex min-w-0 grow justify-end"
     >
-      {/* The band runs the width of the list; the CONTROL does not. Steps pinned to
+      {/* The shelf runs the width of the list; the CONTROL does not. Steps pinned to
           the paper's two edges put `<` and `>` 360px apart on a phone, so paging is a
           two-handed reach and no thumb can rest between them — you cannot tap `>`
-          twice without moving. The cluster is capped and centred instead, which puts
-          the two steps a thumb's width from the numbers they belong to. It is a FIXED
-          cap, not `w-fit`: a window that grows from `1 2 … 73` to `1 … 5 6 7 … 73`
-          would otherwise re-centre and slide `>` out from under the finger again. */}
+          twice without moving. The cluster is capped and held at the shelf's trailing
+          end instead, which puts the two steps a thumb's width from the numbers they
+          belong to and in the column every other trailing control already uses. It is
+          a FIXED cap, not `w-fit`: a window that grows from `1 2 … 73` to
+          `1 … 5 6 7 … 73` would otherwise slide `>` out from under the finger. */}
       <div className="flex w-full max-w-[19rem] items-center gap-1">
         {step(page - 1, true)}
       {/* The strip is LIVE: pressing a number changes nothing else on the band, so

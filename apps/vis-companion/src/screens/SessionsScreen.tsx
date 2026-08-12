@@ -1,4 +1,4 @@
-import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Banner,
   Button,
@@ -22,7 +22,9 @@ import {
   NewSessionButton,
   ProjectCrumb,
   RowDisclosure,
+  SectionGap,
   SectionHeader,
+  SectionShelf,
   Spinner,
 } from '../components/ui';
 import {
@@ -1292,7 +1294,7 @@ export function SessionsScreen({
           </div>
         ) : (
           <div>
-            {sections.map(({ machine, groups }) => {
+            {sections.map(({ machine, groups }, sectionIndex) => {
               const key = machineKey(machine.conn);
               const color = machineColor(machineColors, key);
               const address = hostOf(machine.conn.url);
@@ -1313,6 +1315,10 @@ export function SessionsScreen({
                       before it is read. The panel is always rendered for the machine
                       whose projects follow, fleet view or scoped view alike. */}
                   <MachineRail color={color}>
+                  {/* Where one computer ends is a colour change AND a trough, so the
+                      first project of the second machine can never read as the fifth
+                      project of the first one. */}
+                  {sectionIndex > 0 && <SectionGap />}
                   {/* IN THE FLEET VIEW A SECTION NAMES ITS MACHINE, and only there.
                       Scoped, the strip directly above the card has just said the name
                       and a band repeating it is the second one this list was reported
@@ -1378,9 +1384,13 @@ export function SessionsScreen({
                           )}
                         </div>
                       )
-                    : groups.map(([groupRoot, projectSessions]) => (
+                    : groups.map(([groupRoot, projectSessions], groupIndex) => (
+                        // Two projects used to be separated by the SAME hairline that
+                        // separates two sessions of one project. Every group after the
+                        // first opens on 8px of the machine's own paper instead.
+                        <Fragment key={`${key}\u0000${groupRoot}`}>
+                        {groupIndex > 0 && <SectionGap />}
                         <ProjectGroup
-                          key={`${key}\u0000${groupRoot}`}
                           project={projectLabel(projectSessions)}
                           sessions={projectSessions}
                           conn={machine.conn}
@@ -1406,6 +1416,7 @@ export function SessionsScreen({
                           pageSize={pageSize}
                           drafts={draftMessages}
                         />
+                        </Fragment>
                       ))}
                   </MachineRail>
                 </section>
@@ -1817,14 +1828,11 @@ const ProjectGroup = memo(function ProjectGroup({
           onToggle={() => setIsOpen((open) => !open)}
           label={`${isOpen ? 'Collapse' : 'Expand'} ${project}`}
         />
-        {/* The same trailing cluster the machine header above wears: what this group
-            reports, then what it offers — the yellow verb gets its gap, the `⋯` gets
-            the same box, and both stop at the same right edge as every other header. */}
+        {/* The trailing cluster now holds only what this group OFFERS. What it
+            reports moved down to the shelf: on a 320px screen the count, the live
+            pulse, the yellow verb and the `⋯` took this cluster's width first and
+            left the project name 24px wide. */}
         <HeaderActions>
-          <HeaderMeta>
-            <HeaderTally count={sessions.length} unit="session" />
-            <LiveCount count={liveCount} />
-          </HeaderMeta>
           <NewSessionButton
             machine={machineLabel(conn)}
             where={project}
@@ -1836,9 +1844,22 @@ const ProjectGroup = memo(function ProjectGroup({
           />
         </HeaderActions>
       </SectionHeader>
-      {/* The list carries no bottom rule of its own: the card's own bottom border
-          closes it, and the two of them stacked into a doubled line under the pager. */}
+      {/* The rows carry no bottom rule of their own: the trough that opens the next
+          project, or the card's own bottom border, closes the group. */}
       {isOpen && rows.length > 0 && (
+        <>
+        {/* The group's own shelf, hung under its header and sticking with it: what
+            the project counts, then the pages it is walked by. The pager used to
+            stand at the FOOT of these rows, in the rows' paper, one hairline above
+            the next project's header — a strip that read as a row of whichever of
+            the two projects the eye picked. */}
+        <SectionShelf>
+          <HeaderMeta>
+            <HeaderTally count={sessions.length} unit="session" />
+            <LiveCount count={liveCount} />
+          </HeaderMeta>
+          <Pager page={shownPage} pageCount={pageCount} onPage={setPage} label={`${project} sessions`} />
+        </SectionShelf>
         <div>
           {rows.map((session) => (
             <SessionRow
@@ -1858,8 +1879,8 @@ const ProjectGroup = memo(function ProjectGroup({
               onCancelDelete={onCancelDelete}
             />
           ))}
-          <Pager page={shownPage} pageCount={pageCount} onPage={setPage} label={`${project} sessions`} />
         </div>
+        </>
       )}
     </section>
     </>
@@ -2370,6 +2391,12 @@ function NavigatorSkeleton() {
                 <SkeletonBar type="text-chip" width="w-14" baz="h-1.5" tone="bg-muted/25" />
               </HeaderActions>
             </SectionHeader>
+            {/* The shelf stands in too: a group is a band, a shelf and its rows, and
+                a skeleton missing one of the three is a 36px jump the moment data
+                lands. */}
+            <SectionShelf>
+              <SkeletonBar type="text-chip" width="w-20" baz="h-1.5" tone="bg-muted/25" />
+            </SectionShelf>
             {/* Mirrors `SessionRow` — the SAME grid, the same leading edge, the same
                 trailing column — because a skeleton that stands anywhere else is a
                 layout jump the user pays for on every cold open. It used to carry an
