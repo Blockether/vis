@@ -1,5 +1,7 @@
 import {
+  createContext,
   forwardRef,
+  useContext,
   useRef,
   useState,
   type ButtonHTMLAttributes,
@@ -1083,6 +1085,16 @@ export const DIALOG_DESKTOP_HEIGHT = 'sm:h-[min(38rem,100%)]';
  * itself, so no screen writes the safe-area scrim out by hand again; two of them
  * had already drifted into two copies of the same forty characters.
  */
+/**
+ * WHICH sheet a `DialogFrame` is standing in — the one thing it cannot see about
+ * itself. A `fit` sheet stops at its content and is welded to the BOTTOM edge, so
+ * there is no notch above it to clear: padding its top with the safe-area inset
+ * hangs 47 dead pixels of panel paper over the title on every iPhone, on the very
+ * dialog whose whole point is to take no more height than it needs. Default
+ * `false`, so a frame opened outside `Modal` keeps clearing the notch.
+ */
+const IsFitSheet = createContext(false);
+
 export function Modal({
   onDismiss,
   size = 'full',
@@ -1136,7 +1148,7 @@ export function Modal({
         role="presentation"
         onClick={(event) => event.stopPropagation()}
       >
-        {children}
+        <IsFitSheet.Provider value={size === 'fit'}>{children}</IsFitSheet.Provider>
       </div>
     </div>,
     document.body,
@@ -1270,9 +1282,14 @@ export function DialogFrame({
   closeLabel?: string;
   className?: string;
 }) {
+  // A sheet that stops at its content starts halfway down the glass, so the notch
+  // is not above it and the top inset is dead space (`IsFitSheet`).
+  const isFitSheet = useContext(IsFitSheet);
   return (
     <section
-      className={`flex min-h-0 flex-1 flex-col overflow-hidden border-t-2 border-accent bg-panel pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] shadow-none transition-[opacity,transform,translate,scale,rotate] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] starting:translate-y-full starting:opacity-0 motion-reduce:transition-none sm:border sm:border-dialog-edge sm:pt-0 sm:pb-0 sm:shadow-[8px_8px_0_var(--dialog-shadow)] sm:duration-200 sm:starting:translate-y-2 ${className}`}
+      className={`flex min-h-0 flex-1 flex-col overflow-hidden border-t-2 border-accent bg-panel ${
+        isFitSheet ? '' : 'pt-[env(safe-area-inset-top)]'
+      } pb-[env(safe-area-inset-bottom)] shadow-none transition-[opacity,transform,translate,scale,rotate] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] starting:translate-y-full starting:opacity-0 motion-reduce:transition-none sm:border sm:border-dialog-edge sm:pt-0 sm:pb-0 sm:shadow-[8px_8px_0_var(--dialog-shadow)] sm:duration-200 sm:starting:translate-y-2 ${className}`}
       role="dialog"
       aria-modal="true"
       aria-label={title}

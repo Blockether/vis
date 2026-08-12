@@ -1,13 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import {
-  Banner,
-  Button,
-  ChoiceRow,
-  DIALOG_DESKTOP_HEIGHT,
-  DialogFrame,
-  Input,
-} from './ui';
+import { Banner, Button, ChoiceRow, DialogFrame, Input, Modal } from './ui';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
@@ -184,7 +176,7 @@ export function HumanInputPrompt({
 
   if (!request) return null;
 
-  return createPortal(
+  return (
     <HumanInputSheet
       request={request}
       values={form.values}
@@ -196,8 +188,7 @@ export function HumanInputPrompt({
       onChange={setValue}
       onSubmit={submit}
       onCancel={cancel}
-    />,
-    document.body,
+    />
   );
 }
 
@@ -231,96 +222,98 @@ export function HumanInputSheet({
   onSubmit: () => void;
   onCancel: () => void;
 }) {
-  // A phone answers with its thumb, so the ask takes the WHOLE glass; from `sm:`
-  // up it is the same box every other dialog is (`DIALOG_DESKTOP_HEIGHT`).
+  // A pause is a QUESTION, and a question opens in the sheet a question opens in:
+  // `Modal size="fit"` rides up from the bottom edge and stops at the height its
+  // own form needs. Taking the whole glass for six digit boxes made an interruption
+  // read like a screen the operator had navigated to, with the verbs that end the
+  // pause stranded a phone's length below the question. Above `sm:` it is the same
+  // box every other dialog is, minus the fixed height.
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/60 sm:items-center sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pt-[max(1rem,env(safe-area-inset-top))]"
-      role="presentation"
+    <Modal
+      size="fit"
+      // A pause with no way out is not dismissed by tapping the glass either: the
+      // scrim answers exactly what the header's X and Esc answer, and for an
+      // uncancellable request all three do nothing.
+      onDismiss={request.is_cancellable ? onCancel : () => undefined}
     >
-      <div
-        className={`flex w-full flex-col sm:max-w-lg ${DIALOG_DESKTOP_HEIGHT}`}
-        role="presentation"
-      >
-        <DialogFrame
-          title={request.title}
-          {...(request.is_cancellable
-            ? { onClose: onCancel, closeLabel: 'Cancel this request' }
-            : {})}
-          footer={
-            // Pinned: the banner that explains a refusal and the buttons that
-            // answer it stay put while the form above them scrolls.
-            <div className="space-y-2">
-              {error && <Banner kind="err">{error}</Banner>}
-              <div className="flex items-center justify-between gap-3">
-                <span className="min-w-0 truncate text-chip">
-                  {waiting > 0
-                    ? `${waiting} more request${waiting > 1 ? 's' : ''} waiting`
-                    : 'This run is waiting for you'}
-                </span>
-                <span className="hidden shrink-0 text-chip sm:inline" aria-hidden="true">
-                  ⌘↵ submit{request.is_cancellable && ' · Esc cancel'}
-                </span>
-              </div>
-              <div className="flex gap-2 sm:justify-end">
-                {request.is_cancellable && (
-                  <Button
-                    variant="secondary"
-                    className="flex-1 sm:flex-none"
-                    disabled={busy}
-                    onClick={onCancel}
-                  >
-                    {request.cancel_label}
-                  </Button>
-                )}
+      <DialogFrame
+        title={request.title}
+        {...(request.is_cancellable
+          ? { onClose: onCancel, closeLabel: 'Cancel this request' }
+          : {})}
+        footer={
+          // Pinned: the banner that explains a refusal and the buttons that
+          // answer it stay put while the form above them scrolls.
+          <div className="space-y-2">
+            {error && <Banner kind="err">{error}</Banner>}
+            <div className="flex items-center justify-between gap-3">
+              <span className="min-w-0 truncate text-chip">
+                {waiting > 0
+                  ? `${waiting} more request${waiting > 1 ? 's' : ''} waiting`
+                  : 'This run is waiting for you'}
+              </span>
+              <span className="hidden shrink-0 text-chip sm:inline" aria-hidden="true">
+                ⌘↵ submit{request.is_cancellable && ' · Esc cancel'}
+              </span>
+            </div>
+            <div className="flex gap-2 sm:justify-end">
+              {request.is_cancellable && (
                 <Button
+                  variant="secondary"
                   className="flex-1 sm:flex-none"
                   disabled={busy}
-                  onClick={onSubmit}
+                  onClick={onCancel}
                 >
-                  {busy ? 'Sending...' : request.submit_label}
+                  {request.cancel_label}
                 </Button>
-              </div>
-            </div>
-          }
-        >
-          <div
-            ref={bodyRef}
-            className="max-h-[55svh] space-y-3 overflow-y-auto overscroll-contain p-4 sm:max-h-[60vh]"
-          >
-            {(request.description || request.source) && (
-              <div className="space-y-1">
-                {request.description && (
-                  <p className="font-mono text-meta italic text-dialog-hint">
-                    {request.description}
-                  </p>
-                )}
-                {/* WHO stopped the run is half the question: an answer means
-                    something different to a deploy hook than to a linter. */}
-                {request.source && (
-                  <p className="font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
-                    asked by <span className="text-white">{request.source}</span>
-                  </p>
-                )}
-              </div>
-            )}
-            {/* A DECORATION has no name, so position is the only identity a row
-                is guaranteed to have. */}
-            {request.fields.map((field, at) => (
-              <HumanInputFieldRow
-                key={`${request.id}:${at}:${field.id}`}
-                field={field}
-                values={values}
-                errors={errors}
+              )}
+              <Button
+                className="flex-1 sm:flex-none"
                 disabled={busy}
-                onChange={onChange}
-                onSubmit={onSubmit}
-              />
-            ))}
+                onClick={onSubmit}
+              >
+                {busy ? 'Sending...' : request.submit_label}
+              </Button>
+            </div>
           </div>
-        </DialogFrame>
-      </div>
-    </div>
+        }
+      >
+        <div
+          ref={bodyRef}
+          className="max-h-[55svh] space-y-3 overflow-y-auto overscroll-contain p-4 sm:max-h-[60vh]"
+        >
+          {(request.description || request.source) && (
+            <div className="space-y-1">
+              {request.description && (
+                <p className="font-mono text-meta italic text-dialog-hint">
+                  {request.description}
+                </p>
+              )}
+              {/* WHO stopped the run is half the question: an answer means
+                  something different to a deploy hook than to a linter. */}
+              {request.source && (
+                <p className="font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+                  asked by <span className="text-white">{request.source}</span>
+                </p>
+              )}
+            </div>
+          )}
+          {/* A DECORATION has no name, so position is the only identity a row
+              is guaranteed to have. */}
+          {request.fields.map((field, at) => (
+            <HumanInputFieldRow
+              key={`${request.id}:${at}:${field.id}`}
+              field={field}
+              values={values}
+              errors={errors}
+              disabled={busy}
+              onChange={onChange}
+              onSubmit={onSubmit}
+            />
+          ))}
+        </div>
+      </DialogFrame>
+    </Modal>
   );
 }
 
@@ -642,7 +635,16 @@ function OtpBoxes({
 
   return (
     <div className="space-y-1">
-      <div className="flex flex-wrap gap-1.5" role="group" aria-label={field.label}>
+      {/* BEST-EFFORT JUSTIFY: the boxes stretch to fill the row, but only as far
+          as a digit box goes — a square one, the touch target the thumb expects.
+          Stretching six of them across the whole glass made a six-digit code
+          read as six empty fields, and the row is bounded so the same code is
+          the same shape on a phone and in the desktop dialog. */}
+      <div
+        className="flex max-w-sm flex-wrap justify-between gap-1.5"
+        role="group"
+        aria-label={field.label}
+      >
         {Array.from({ length: max }, (_unused, index) => (
           <input
             key={index}
@@ -659,7 +661,7 @@ function OtpBoxes({
             autoComplete={index === 0 ? 'one-time-code' : 'off'}
             aria-label={`${field.label} digit ${index + 1}`}
             value={digits[index] ?? ''}
-            className="h-11 w-9 min-w-0 flex-1 border border-edge bg-input text-center font-mono text-body tabular-nums text-white focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted sm:flex-none"
+            className="h-11 min-w-8 max-w-11 flex-1 border border-edge bg-input text-center font-mono text-body tabular-nums text-white focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:cursor-not-allowed disabled:text-muted"
             onChange={(event) => fill(index, event.target.value)}
             onPaste={(event) => {
               event.preventDefault();

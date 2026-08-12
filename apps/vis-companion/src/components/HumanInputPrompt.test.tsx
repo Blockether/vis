@@ -1,6 +1,11 @@
-import { renderToStaticMarkup } from 'react-dom/server';
+// @vitest-environment jsdom
+// The sheet opens in `Modal`, which PORTALS into the document — there is no
+// document in the `node` environment, and a portal cannot be rendered to a
+// string. Every case here renders and then reads the body it landed in.
+import { cleanup, render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { HumanInputSheet } from './HumanInputPrompt';
+import promptSource from './HumanInputPrompt.tsx?raw';
 import { HUMAN_INPUT_REQUESTS } from '../dev/humanInputVariants';
 import fixture from '../lib/human-input.fixture.json';
 import {
@@ -17,7 +22,10 @@ const noop = () => {};
 
 function markup(state: string, extra: Record<string, unknown> = {}, values?: HumanInputValues) {
   const request = HUMAN_INPUT_REQUESTS[state];
-  return renderToStaticMarkup(
+  // One sheet in the document at a time: two mounts would leave the previous
+  // request's markup in the string this returns.
+  cleanup();
+  render(
     <HumanInputSheet
       request={request}
       values={values ?? initialHumanInputValues(request)}
@@ -27,6 +35,7 @@ function markup(state: string, extra: Record<string, unknown> = {}, values?: Hum
       {...extra}
     />,
   );
+  return document.body.innerHTML;
 }
 
 const otpValues = initialHumanInputValues(HUMAN_INPUT_REQUESTS.otp);
@@ -149,12 +158,12 @@ describe('human input sheet', () => {
     expect(boxes).toHaveLength(6);
     // The keypad, not the alphabet: a code field that opens a QWERTY keyboard on
     // a phone costs the operator every tap it takes to find the numbers.
-    expect(boxes[0]).toContain('inputMode="numeric"');
+    expect(boxes[0]).toContain('inputmode="numeric"');
     expect(boxes[0]).toContain('pattern="[0-9]*"');
-    expect(boxes[0]).toContain('maxLength="1"');
+    expect(boxes[0]).toContain('maxlength="1"');
     // Only the FIRST box may claim the SMS autofill, or one code arrives six times.
-    expect(boxes[0]).toContain('autoComplete="one-time-code"');
-    expect(boxes[1]).toContain('autoComplete="off"');
+    expect(boxes[0]).toContain('autocomplete="one-time-code"');
+    expect(boxes[1]).toContain('autocomplete="off"');
     expect(boxes.slice(0, 4).map((box) => /value="(\d?)"/.exec(box)?.[1])).toEqual([
       '4',
       '0',
@@ -212,6 +221,66 @@ describe('human input sheet', () => {
 });
 
 // =============================================================================
+// A PAUSE IS ONLY AS TALL AS THE QUESTION
+// =============================================================================
+
+// Regression, user report ("when we are showing OTP cannot we make it less height,
+// like it goes from bottom only and occupies only the height its required?"): the
+// sheet hand-rolled its own scrim beside `Modal` and took the WHOLE glass, so six
+// digit boxes opened a full-screen page — 844px tall on a 390x844 phone, with a
+// phone's length of empty panel between the code and the verbs that end the pause.
+describe('a pause is only as tall as the question it asks', () => {
+  it('opens in the sheet that stops at its content, arriving from the bottom edge', () => {
+    const html = markup('otp');
+    // `Modal size="fit"`: welded to the bottom edge on a phone, and no fixed
+    // 38rem box above `sm:` either.
+    const scrim = /<div class="fixed inset-0 z-50[^"]*"/.exec(html)?.[0] ?? '';
+    expect(scrim).toContain('items-end');
+    expect(scrim).not.toContain('items-stretch');
+    expect(html).toContain('max-h-full sm:h-auto');
+    expect(html).not.toContain('sm:h-[min(38rem,100%)]');
+    // The question still cannot push its own buttons away: the form scrolls.
+    expect(html).toContain('overflow-y-auto');
+  });
+
+  // The scrim was a third copy of the same forty characters, and it had already
+  // drifted — `bg-black/60` against the one glass every other layer wears.
+  it('brings no second scrim of its own', () => {
+    expect(promptSource).toContain('<Modal');
+    expect(promptSource).toContain('size="fit"');
+    expect(promptSource).not.toContain('fixed inset-0 z-50');
+    expect(promptSource).not.toContain('bg-black/60');
+    expect(promptSource).not.toContain('DIALOG_DESKTOP_HEIGHT');
+  });
+
+  // A sheet that starts halfway down the glass has no notch above it: the inset
+  // hung 47px of dead paper over the title of the one dialog whose whole point
+  // is to take no more height than it needs.
+  it('does not clear a notch that is not above it', () => {
+    expect(markup('otp')).not.toContain('pt-[env(safe-area-inset-top)]');
+  });
+
+  // Regression, user report ("in general you need to ALSO DO BEST EFFORT JUSTIFY
+  // because now its too much"): each box took a sixth of the glass — 55px wide on
+  // a 390px phone — so a six-digit code read as six empty fields.
+  it('stretches a digit box only as far as a digit box goes', () => {
+    const html = markup('otp');
+    const row = element(html, 'aria-label="One-time code"');
+    // Best effort: the boxes fill a narrow row and stop at a bounded one, and the
+    // slack goes BETWEEN them rather than into them.
+    expect(row).toContain('max-w-sm');
+    expect(row).toContain('justify-between');
+    const boxes = html.match(/<input[^>]*aria-label="One-time code digit \d"[^>]*>/g) ?? [];
+    // Square: the box is capped at its own height, the touch target of a thumb.
+    expect(boxes[0]).toContain('h-11');
+    expect(boxes[0]).toContain('max-w-11');
+    // One shape everywhere — the desktop no longer shrinks it to `w-9`.
+    expect(boxes[0]).not.toContain('sm:flex-none');
+    expect(boxes[0]).not.toContain('w-9');
+  });
+});
+
+// =============================================================================
 // FULL support, proved against the engine's own bytes
 //
 // `human-input.fixture.json` is `request->view` verbatim, and the Clojure suite
@@ -224,7 +293,8 @@ describe('human input sheet', () => {
 describe('the engine’s whole node vocabulary', () => {
   const request = humanInputRequestFromWire(fixture);
   if (!request) throw new Error('the engine fixture must parse');
-  const html = renderToStaticMarkup(
+  cleanup();
+  render(
     <HumanInputSheet
       request={request}
       values={initialHumanInputValues(request)}
@@ -233,6 +303,8 @@ describe('the engine’s whole node vocabulary', () => {
       onCancel={noop}
     />,
   );
+  const html = document.body.innerHTML;
+  cleanup();
 
   /** Every node of the tree, groups and their children alike. */
   function nodes(fields: readonly HumanInputField[]): HumanInputField[] {

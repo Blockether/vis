@@ -1392,6 +1392,25 @@ describe("Modal, fit", () => {
   it("is what the rename/delete question opens in", () => {
     expect(sessionsListSource).toContain('<Modal size="fit" onDismiss={closeRowAction}>');
   });
+
+  // Regression, user report ("cannot we make it less height, like it goes from
+  // bottom only and occupies only the height its required?"): a `fit` sheet is
+  // welded to the BOTTOM edge, and it still padded its top with the notch inset —
+  // 47px of dead panel paper above the title on every iPhone. The frame cannot see
+  // which sheet it stands in, so the sheet tells it.
+  it("tells the frame inside it that no notch stands above a fit sheet", () => {
+    expect(uiSource).toContain("const IsFitSheet = createContext(false);");
+    expect(uiSource).toContain("<IsFitSheet.Provider value={size === 'fit'}>");
+    expect(uiSource).toContain("isFitSheet ? '' : 'pt-[env(safe-area-inset-top)]'");
+  });
+
+  // The pause that BLOCKS a run is a question too, and it was the last surface
+  // hand-rolling a scrim beside this one.
+  it("is what a human-input pause opens in", () => {
+    expect(humanInputSource).toContain('<Modal');
+    expect(humanInputSource).toContain('size="fit"');
+    expect(humanInputSource).not.toContain("fixed inset-0 z-50");
+  });
 });
 
 
