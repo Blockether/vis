@@ -96,6 +96,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   AND the `FAILURES` section, the short test summary and the counts line, behind a marker that
   says how many characters it dropped; the old tail slice hid a whole `FAILURES` section behind a
   bare ellipsis.
+- `attach(img, 'crop.png')` takes a PIL image, the way it already took a matplotlib figure. A
+  picture cropped or composed in the sandbox fell through to the PATH branch and died with
+  `attach: no such file: <PIL.Image.Image ...>`, so it had to be written to a temp file first.
+  The FILENAME chooses the encoder (`shot.jpg` really stores a JPEG, converting an alpha mode the
+  encoder cannot take; anything else is lossless PNG), and a source that is neither a path nor a
+  producer is now refused by SHAPE — `attach: source must be a path, bytes, a PIL image or a
+  matplotlib figure, got dict` — instead of having its repr reported as a missing file.
 
 ## [v0.1.35] - 2026-08-09
 

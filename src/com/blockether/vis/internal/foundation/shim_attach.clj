@@ -187,7 +187,8 @@
   (vis/extension
     {:ext/name "foundation-shim-attach"
      :ext/description
-     (str "Sandbox `attach(source)` — a confined path, in-memory bytes, or a figure: "
+     (str "Sandbox `attach(source)` — a confined path, in-memory bytes, a PIL image or a "
+          "matplotlib figure: "
           "persists any artifact (image, CSV/TSV, JSON, PDF, wav) as a durable session "
           "attachment. Survives restart; `image/*` replays to vision models; a CSV/TSV becomes "
           "a transcript table whose rows never reach the model. "

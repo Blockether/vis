@@ -169,6 +169,65 @@
         (expect (= "plot.png" (:filename att)))
         (expect (= "image/png" (:media-type att)))
         (expect (= "image" (:kind att)))))
+  ;; Regression: attach(pil_image, 'crop.png') fell through to the PATH branch
+  ;; and died with "attach: no such file: <PIL.Image.Image ...>", so a picture
+  ;; cropped in the sandbox could not be attached without writing it out first.
+  (it "encodes and captures a PIL image handed straight to attach"
+      (let
+        [pctx
+         (ctx-with-root (temp-root))
+
+         out
+         (block pctx
+                (str "from PIL import Image\n"
+                     "img = Image.new('RGBA', (12, 9), (255, 0, 0, 255))\n"
+                     "attach(img, 'crop.png')\n"))
+
+         [att]
+         (:attachments out)]
+
+        (expect (nil? (:error out)))
+        (expect (= "crop.png" (:filename att)))
+        (expect (= "image/png" (:media-type att)))
+        (expect (= "image" (:kind att)))
+        ;; the pixels really rode along: the fence carries the image's own dims
+        (expect (re-find #"12x9" (str (:stdout out))))))
+  (it "lets the filename choose the encoder for a PIL image, defaulting to PNG"
+      (let
+        [pctx
+         (ctx-with-root (temp-root))
+
+         out
+         (block pctx
+                (str "from PIL import Image\n"
+                     "img = Image.new('RGBA', (6, 6), (0, 128, 255, 255))\n"
+                     "attach(img, 'shot.jpg')\n" "attach(img)\n"))
+
+         [jpg png]
+         (:attachments out)]
+
+        (expect (nil? (:error out)))
+        ;; a JPEG has no alpha channel, so an RGBA image is converted, not refused
+        (expect (= ["shot.jpg" "image/jpeg"] [(:filename jpg) (:media-type jpg)]))
+        (expect (= ["image.png" "image/png"] [(:filename png) (:media-type png)]))))
+  (it
+    "refuses a source that is neither a path nor a producer, by name"
+    (let
+      [pctx
+       (ctx-with-root (temp-root))
+
+       out
+       (block pctx
+              (str "try:\n" "    attach({'rows': 1}, 'data.json')\n"
+                   "except TypeError as e:\n" "    print('RAISED', e)\n"))]
+
+      (expect (nil? (:error out)))
+      ;; naming the SHAPE that was wrong, never a repr reported as a missing file
+      (expect
+        (re-find
+          #"RAISED attach: source must be a path, bytes, a PIL image or a matplotlib figure, got dict"
+          (str (:stdout out))))
+      (expect (empty? (:attachments out)))))
   (it
     "carries a label into the vis-image fence summary — the picture's caption row"
     (let

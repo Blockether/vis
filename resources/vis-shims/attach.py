@@ -280,6 +280,45 @@ def __vis_install_attach__():
                 print("[Attached: " + name + "] " + cap)
         return None
 
+    # A Pillow image is the OTHER in-memory picture this sandbox produces
+    # (`PIL` is a first-class shim here), so `attach(img, 'crop.png')` has to
+    # work exactly like the matplotlib idiom instead of falling through to the
+    # path branch and reporting the repr as a missing file.
+    __vis_pil_encoders = {
+        ".png": "PNG",
+        ".jpg": "JPEG",
+        ".jpeg": "JPEG",
+        ".gif": "GIF",
+        ".bmp": "BMP",
+        ".webp": "WEBP",
+        ".tif": "TIFF",
+        ".tiff": "TIFF",
+    }
+
+    def __vis_is_pil_image(source):
+        # Duck-typed, never isinstance: importing PIL to test a type would drag
+        # the imaging shim into every attach call.
+        return (
+            hasattr(source, "save")
+            and hasattr(source, "mode")
+            and hasattr(source, "size")
+            and not hasattr(source, "savefig")
+        )
+
+    def __vis_pil_bytes(image, name):
+        # The FILENAME chooses the encoder, so attach(img, 'shot.jpg') really
+        # stores a JPEG; anything else is lossless PNG. JPEG carries no alpha
+        # channel, so a mode the encoder cannot take is converted first instead
+        # of failing inside it.
+        import io as _io
+
+        fmt = __vis_pil_encoders.get(_os.path.splitext(str(name))[1].lower(), "PNG")
+        if fmt == "JPEG" and str(getattr(image, "mode", "")) not in ("RGB", "L"):
+            image = image.convert("RGB")
+        buf = _io.BytesIO()
+        image.save(buf, format=fmt)
+        return buf.getvalue()
+
     def attach(
         source,
         filename=None,
@@ -288,9 +327,10 @@ def __vis_install_attach__():
         label=None,
         audience="both",
     ):
-        # ONE attach verb, three shapes of source: a confined PATH, in-memory
-        # BYTES (a str is a path, so encode text you produced), or anything with
-        # `savefig` - the matplotlib idiom `attach(fig, 'plot.png')`.
+        # ONE attach verb, four shapes of source: a confined PATH, in-memory
+        # BYTES (a str is a path, so encode text you produced), anything with
+        # `savefig` - the matplotlib idiom `attach(fig, 'plot.png')` - and a PIL
+        # image, `attach(img, 'crop.png')`.
         if isinstance(source, (bytes, bytearray, memoryview)):
             return __vis_attach_data(
                 bytes(source),
@@ -312,6 +352,24 @@ def __vis_install_attach__():
                 media_type,
                 label,
                 audience,
+            )
+        if __vis_is_pil_image(source):
+            name = str(filename) if filename else "image.png"
+            return __vis_attach_data(
+                __vis_pil_bytes(source, name),
+                name,
+                kind,
+                media_type,
+                label,
+                audience,
+            )
+        # Everything left has to be a PATH. An object that is neither one nor a
+        # producer we know is REFUSED by name here: str()-ing it would report a
+        # repr as a missing file and hide which shape was actually wrong.
+        if not isinstance(source, str) and not hasattr(source, "__fspath__"):
+            raise TypeError(
+                "attach: source must be a path, bytes, a PIL image or a "
+                "matplotlib figure, got " + type(source).__name__
             )
         # A PATH in any spelling a human types: a str, an os.PathLike (pathlib),
         # with `~` and $VARS expanded - the string that works in a shell works
@@ -427,7 +485,8 @@ def __vis_install_attach__():
 
     attach.__doc__ = (
         "Persist a produced artifact as a durable attachment. source is a confined "
-        "PATH, in-memory BYTES (name them with filename), or a matplotlib figure. "
+        "PATH, in-memory BYTES (name them with filename), a PIL image, or a "
+        "matplotlib figure. "
         "SAME DOCUMENT, SAME NAME: re-attaching a filename stores the next "
         "VERSION of that artifact, never report_v2.png beside report.png; a new "
         "name is a different document. Attach one or two artifacts per turn - "
@@ -472,8 +531,8 @@ def __vis_install_attach__():
     docs["attach"] = (
         "attach(source, filename=None, kind=None, media_type=None, label=None, "
         "audience='both'): persist an artifact durably across restarts. source is "
-        "a confined PATH, BYTES (name them with filename), or a matplotlib "
-        "figure. SAME DOCUMENT, SAME NAME - re-attaching a filename stores the "
+        "a confined PATH, BYTES (name them with filename), a PIL image, or a "
+        "matplotlib figure. SAME DOCUMENT, SAME NAME - re-attaching a filename stores the "
         "next VERSION of that artifact, never report_v2.png beside report.png; a "
         "new name is a different document. One or two artifacts per turn: "
         "compose many images into ONE sheet. audience='both'|'user'|'model' "
