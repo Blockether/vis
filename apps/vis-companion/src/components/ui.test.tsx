@@ -18,6 +18,7 @@ import providerAuthSource from "./ProviderAuth.tsx?raw";
 import routerSource from "../screens/RouterScreen.tsx?raw";
 import sessionScreenSource from "../screens/SessionScreen.tsx?raw";
 import connectSource from "../screens/ConnectScreen.tsx?raw";
+import machinesSource from "./Machines.tsx?raw";
 
 import { MACHINE_COLORS } from "../lib/machine-colors";
 import {
@@ -1073,11 +1074,16 @@ describe("settings is ONE dialog with two columns", () => {
   });
 
   it("pairs a machine from the column the machines live in", () => {
-    expect(settings).toContain(">Pair machine</Button>");
+    // The verb used to be a button that CLOSED this dialog and navigated to the
+    // machines screen. Pairing happens here now, on the same shared controls that
+    // screen is built from.
+    expect(settings).toContain("<AddMachine");
+    expect(settings).not.toContain(">Pair machine</Button>");
+    expect(settings).not.toContain("onPair");
   });
 
   it("switches machine inside the dialog instead of closing it", () => {
-    expect(settings).toContain("<MachineSwitcher>");
+    expect(settings).toContain("<MachineRows");
     expect(settings).toContain("onSelectGateway");
   });
 
@@ -1782,6 +1788,7 @@ describe("the button's four ranks", () => {
       providerAuthSource,
       artifactsSheetSource,
       connectSource,
+      machinesSource,
       docSource,
       tableBarSource,
       boundarySource,
@@ -1986,7 +1993,10 @@ describe("the session screen and the settings dialog spell no control out", () =
   });
 
   it("picks a saved machine with the one pressable row", () => {
-    expect(connectSource).toContain("<ListRow");
+    // The rows moved out of the screen and into `Machines`, shared with the cog's
+    // settings dialog — so the rule follows the rows.
+    expect(machinesSource).toContain("<ListRow");
+    expect(machinesSource).not.toContain("<button");
     expect(connectSource).not.toContain("<button");
   });
 

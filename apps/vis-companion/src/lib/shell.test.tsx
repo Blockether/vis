@@ -185,7 +185,9 @@ describe('the app bar', () => {
   // Regression, issue #6830218b-c00d-497a-86b9-1a8966cd92ca: returning from a
   // session used to unmount the cached fleet, replay its entrance animation, and
   // visibly reflow every machine's sessions instead of restoring the previous frame.
-  it('keeps the sessions screen mounted while pairing, and hides it', async () => {
+  // Pairing no longer even leaves the list — it happens inside the cog's dialog —
+  // so the same node is not merely kept, it is never hidden.
+  it('keeps the sessions screen mounted while pairing, and standing', async () => {
     const view = await mount();
     const main = view.baseElement.querySelector('main') as HTMLElement;
     const list = Array.from(main.children).find(
@@ -194,13 +196,42 @@ describe('the app bar', () => {
     expect(list).toBeTruthy();
 
     await userEvent.click(screen.getByRole('button', { name: 'Open preferences' }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Pair a machine' }));
     await screen.findByRole('heading', { name: 'Add a machine' });
 
-    // The very same node, still carrying the fleet — hidden, never rebuilt.
+    // The very same node, still carrying the fleet — never rebuilt, never hidden.
     expect(main.contains(list)).toBe(true);
-    expect(list.className).toBe('hidden');
+    expect(list.className).toBe('h-full');
     expect(within(list).getByRole('button', { name: 'New project on laptop' })).toBeTruthy();
+    view.unmount();
+    view.restore();
+  });
+
+  // Regression, user report (a sketch over the machines screen: "this should open when
+  // I click the cog"): the cog opened a dialog whose machine half was a strip of bare
+  // NAMES plus a `Pair machine` button whose only act was to CLOSE the dialog and
+  // navigate to a screen the app bar has no door to — so the machines this device is
+  // paired with, and both ways to add one, were behind nothing the cog could reach.
+  it('opens the machines, and both ways to pair, straight from the cog', async () => {
+    const view = await mount();
+    await userEvent.click(screen.getByRole('button', { name: 'Open preferences' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Settings' });
+
+    // The fleet LEADS the dialog: it is what the cog is opened for.
+    const headings = within(dialog)
+      .getAllByRole('heading')
+      .map((heading) => heading.textContent ?? '');
+    expect(headings).toContain('Machines');
+    expect(headings.indexOf('Machines')).toBeLessThan(headings.indexOf('Application'));
+
+    // A machine is a ROW — its name, its address, its verdict — not a bare tab.
+    const row = within(dialog).getByRole('button', { name: /laptop/ });
+    expect(row.textContent).toContain('app-gateway');
+
+    // Both ways in are on the same surface, and nothing navigates away to reach them.
+    expect(within(dialog).getByRole('heading', { name: 'Add a machine' })).toBeTruthy();
+    expect(within(dialog).getByPlaceholderText(/vis:\/\/gateway/)).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Scan QR' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Pair a machine' })).toBeNull();
     view.unmount();
     view.restore();
   });

@@ -1004,8 +1004,10 @@ export function App() {
           gatewayKey={settingsKey}
           client={settingsClient}
           isPrimary={settingsTarget?.url === primary?.url}
+          activeUrl={active?.url}
+          primaryUrl={primary?.url}
           onSelectGateway={openSettings}
-          onPair={() => setTab("connect")}
+          onAddMachine={addConnection}
           onMakePrimary={async () => {
             if (!settingsTarget) return;
             await Promise.all([

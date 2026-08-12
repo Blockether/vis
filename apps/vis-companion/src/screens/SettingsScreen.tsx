@@ -75,8 +75,6 @@ import {
   DialogFrame,
   Input,
   ListRow,
-  MachineSwitcher,
-  MachineTab,
   Modal,
   PROSE,
   Switch,
@@ -103,6 +101,11 @@ import {
   unscopedMessage,
   useProviderAuth,
 } from "../components/ProviderAuth";
+import {
+  AddMachine,
+  MachineRows,
+  useFleetHealth,
+} from "../components/Machines";
 
 /**
  * ONE MACHINE'S OWN SETTINGS, as a column inside `SettingsDialog`.
@@ -1111,10 +1114,11 @@ function SettingsColumn({
  * remembering which of two doors a choice lived behind, and pairing a machine was
  * filed under the device while the machine it produced was filed somewhere else.
  *
- * One dialog, two columns, one rule between them. APPLICATION owns what this copy of
- * Vis decides (theme, page size) and GATEWAYS owns what a machine decides, with the
- * machine chosen by a tab in its own column instead of by leaving and coming back.
- * Below `sm:` the columns stack in the order they are read, application first.
+ * One dialog, two columns, one rule between them. MACHINES owns the fleet — which
+ * machines this device is paired with, how to add another, and what the machine being
+ * read decides — and APPLICATION owns what this copy of Vis decides (theme, page size).
+ * Machines leads, because the cog is opened to reach a machine far more often than to
+ * repaint the app, and below `sm:` the columns stack in that same order.
  */
 export function SettingsDialog({
   gateways,
@@ -1122,8 +1126,10 @@ export function SettingsDialog({
   gatewayKey,
   client,
   isPrimary,
+  activeUrl,
+  primaryUrl,
   onSelectGateway,
-  onPair,
+  onAddMachine,
   onMakePrimary,
   onRename,
   onRemove,
@@ -1140,9 +1146,12 @@ export function SettingsDialog({
   gatewayKey: string;
   client: GatewayClient | null;
   isPrimary: boolean;
+  /** The machine the APP is talking to, which is not always the one being read. */
+  activeUrl?: string | null;
+  primaryUrl?: string | null;
   onSelectGateway: (conn: GatewayConn) => void;
-  /** Opens the machines screen. Pairing is setup, and setup lives here. */
-  onPair: () => void;
+  /** Pairing is setup, and setup happens HERE — never by leaving this dialog. */
+  onAddMachine: (conn: GatewayConn, makeActive?: boolean) => Promise<void>;
   onMakePrimary?: () => void | Promise<void>;
   onRename?: (label: string | undefined) => void | Promise<void>;
   onRemove?: () => void | Promise<void>;
@@ -1235,6 +1244,8 @@ export function SettingsDialog({
     }
   }
 
+  const health = useFleetHealth(gateways);
+
   return (
     // The app's ONE dialog: `Modal` + `DialogFrame`, the same outer component
     // "Manage projects" and every ask already open in. `wide` is the one size that
@@ -1252,6 +1263,65 @@ export function SettingsDialog({
             Theme off the top of the screen for no reason. Below `sm:` the halves stack
             and the dialog body is the one scroller again. */}
         <div className="grid min-w-0 grid-cols-1 divide-y divide-dialog-edge sm:min-h-0 sm:flex-1 sm:grid-cols-2 sm:divide-x sm:divide-y-0 sm:overflow-hidden">
+          <SettingsColumn
+            title="Machines"
+            description="Every machine this device is paired with, and the way to add another. What a machine stores is shared with its TUI and every other client."
+            meta={
+              gateway
+                ? (gateway.label ?? gatewayHost(gateway.url))
+                : "none paired"
+            }
+          >
+            {/* THE COG'S FIRST ANSWER IS THE FLEET. Reported over the machines screen:
+                this should open when I click the cog. It did not — this column held a
+                strip of bare machine NAMES and a `Pair machine` button whose only job
+                was to CLOSE the dialog and navigate to a screen the app bar has no door
+                to, so "which machines does this app know, and how do I add one?" was
+                answered nowhere the cog could reach. The list and both ways to pair are
+                now the very components that screen is made of: one object, and nothing
+                leaves this dialog to reach it. It leads the dialog because it is what
+                the cog was opened FOR — below `sm:` the columns stack in that order. */}
+            {gateways.length > 0 && (
+              <MachineRows
+                conns={gateways}
+                selectedUrl={gateway?.url}
+                activeUrl={activeUrl}
+                primaryUrl={primaryUrl}
+                health={health}
+                onPick={onSelectGateway}
+              />
+            )}
+
+            <SettingsPanel
+              title="Add a machine"
+              description="Paste the pairing link printed by ‘vis gateway pair’, scan its QR, or type the address."
+            >
+              <div className="p-3 sm:p-4">
+                <AddMachine onAdd={onAddMachine} isStacked />
+              </div>
+            </SettingsPanel>
+
+            {gateway && client ? (
+              <GatewayPanels
+                key={gatewayKey}
+                client={client}
+                gateway={gateway}
+                isPrimary={isPrimary}
+                onMakePrimary={onMakePrimary}
+                onRename={onRename}
+                onRemove={onRemove}
+                onSelectAddress={onSelectAddress}
+                onClose={onClose}
+              />
+            ) : (
+              <SettingsPanel title="No machine yet">
+                <p className="px-4 py-6 text-center font-mono text-body text-dialog-hint">
+                  Pair one above and its own settings appear here.
+                </p>
+              </SettingsPanel>
+            )}
+          </SettingsColumn>
+
           <SettingsColumn
             title="Application"
             description="These choices affect this copy of Vis only. They are never sent to a gateway."
@@ -1306,66 +1376,6 @@ export function SettingsDialog({
             </SettingsPanel>
           </SettingsColumn>
 
-          <SettingsColumn
-            title="Gateways"
-            description="Stored by the machine itself and shared with its TUI and every other client."
-            meta={
-              gateway
-                ? (gateway.label ?? gatewayHost(gateway.url))
-                : "none paired"
-            }
-          >
-            {/* PAIRING IS SETUP, NOT CHROME. It held the widest slot in the app bar —
-                beside the cog, above every screen — for a verb used twice a year. It
-                belongs beside the machines it produces, on the same row that switches
-                between them, and with one machine paired that row is the verb alone. */}
-            <div className="flex items-center gap-2 bg-panel px-3 py-2 sm:px-4">
-              {gateways.length > 1 && (
-                <MachineSwitcher>
-                  {gateways.map((conn) => (
-                    <MachineTab
-                      key={conn.url}
-                      isOn={conn.url === gateway?.url}
-                      onClick={() => onSelectGateway(conn)}
-                    >
-                      {conn.label ?? gatewayHost(conn.url)}
-                    </MachineTab>
-                  ))}
-                </MachineSwitcher>
-              )}
-              <Button
-                type="button"
-                variant="primary"
-                density="compact"
-                className="ml-auto shrink-0"
-                onClick={() => {
-                  onClose();
-                  onPair();
-                }}
-                aria-label="Pair a machine"
-              >Pair machine</Button>
-            </div>
-
-            {gateway && client ? (
-              <GatewayPanels
-                key={gatewayKey}
-                client={client}
-                gateway={gateway}
-                isPrimary={isPrimary}
-                onMakePrimary={onMakePrimary}
-                onRename={onRename}
-                onRemove={onRemove}
-                onSelectAddress={onSelectAddress}
-                onClose={onClose}
-              />
-            ) : (
-              <SettingsPanel title="Machines">
-                <p className="px-4 py-6 text-center font-mono text-body text-dialog-hint">
-                  No machine paired with this device yet.
-                </p>
-              </SettingsPanel>
-            )}
-          </SettingsColumn>
         </div>
       </DialogFrame>
     </Modal>
