@@ -27,10 +27,16 @@
 (def ^:const default-status-timeout-ms 500)
 
 (def ^:private skip-directories
+  "Directory names the scan never descends: VCS metadata, dependency caches and
+   build output. Xcode's `DerivedData`, SwiftPM's `.build` and CocoaPods' `Pods`
+   earn their place — each holds a full CLONE of every package a build resolved,
+   so a project with an iOS app would otherwise inventory a dozen repositories
+   it does not work on, several of them the same package cloned again under a
+   second derived-data path."
   #{".git" ".hg" ".svn" "node_modules" "target" "dist" "build" ".venv" "venv" "__pycache__"
     ".cpcache" ".cljs-cache" ".shadow-cljs" ".clj-kondo" ".lsp" ".idea" ".gradle" ".next" ".nuxt"
     "vendor" ".cache" "out" ".out" ".verification" ".verification-baseline" "book" "_site" "public"
-    "site" "_book"})
+    "site" "_book" "DerivedData" "Pods" ".build"})
 
 (defonce ^:private inventory-cache (atom {}))
 
@@ -203,7 +209,7 @@
 
       root-inventory
       (inventory root-file
-                 (cond-> {:max-repos (max max-repos default-inventory-max-repos)}
+                 (cond-> {:max-repos (max max-repos (long default-inventory-max-repos))}
                    (:max-files opts)
                    (assoc :max-files (:max-files opts))
 

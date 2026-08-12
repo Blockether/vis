@@ -1026,21 +1026,98 @@
   [root]
   (str (try (.getCanonicalPath (as-file root)) (catch Throwable _ root))))
 
+(defn- repo-identity
+  "The canonical directories a repo entry OCCUPIES: the working root its verbs
+   act through, and the trunk it stands for. Two entries that share EITHER are
+   the same repository — `~/spel`, `~/spel/`, `~/spel/x/..`, a symlink to it and
+   its upper-case spelling on a case-insensitive filesystem all canonicalize to
+   one path, and a draft's private clone stands for the trunk it was minted
+   from."
+  [entry]
+  (into #{} (comp (remove nil?) (map canonical-path)) [(:root entry) (:trunk entry)]))
+
 (defn- distinct-roots
-  "Repo entries with every duplicate DIRECTORY dropped, FIRST occurrence winning.
-   The primary entry is built first and owns the title, so a nested clone or a
-   declared catalog root that resolves to the same directory never earns a second
-   header."
+  "Repo entries with every duplicate REPOSITORY dropped, FIRST occurrence
+   winning. The primary entry is built first and owns the title, so a nested
+   clone, a catalog root declared under any spelling of the same directory, or
+   the TRUNK a draft isolated never earns a second header. Dropping the trunk
+   matters twice over: it is the same repository shown again, and it would be
+   the one door the draft promised to keep shut."
   [entries]
   (:kept (reduce (fn [acc entry]
-                   (let [path (canonical-path (:root entry))]
-                     (if (contains? (:seen acc) path)
+                   (let [paths (repo-identity entry)]
+                     (if (some (:seen acc) paths)
                        acc
                        (-> acc
-                           (update :seen conj path)
+                           (update :seen into paths)
                            (update :kept conj entry)))))
                  {:seen #{} :kept []}
                  entries)))
+
+(defn- path-segments
+  "`path` split into its directory segments, blanks dropped."
+  [path]
+  (into [] (remove str/blank?) (str/split (str path) #"[/\\]")))
+
+(defn- path-tail
+  "The last `n` `segments`, joined — tail 2 of `/home/me/work/spel` is
+   `work/spel`. A path shorter than `n` answers all of itself."
+  [segments n]
+  (str/join "/" (take-last n segments)))
+
+(defn- unique-labels
+  "Repo entries whose header labels are all DISTINCT. Every verb acts on the repo
+   UNDER THE CURSOR, so two headers reading `vis` are two doors wearing one sign
+   — a sibling checkout declared as `id: vis`, two catalog ids that repeat, or a
+   nested clone whose folder matches an id. Colliding entries are relabelled
+   TOGETHER by the shortest tail of their real (trunk) path that tells them apart
+   (`work/vis` beside `src/vis`); anything still ambiguous falls back to its full
+   canonical path, which `distinct-roots` has already made unique. A label
+   nothing collides with is left exactly as it was."
+  [entries]
+  (let
+    [segments-of
+     (fn [entry]
+       (path-segments (canonical-path (or (:trunk entry) (:root entry)))))
+
+     tail-depth
+     (fn [peers]
+       (let
+         [segments
+          (mapv segments-of peers)
+
+          deepest
+          (long (reduce max 1 (map count segments)))]
+
+         (or (first (filter (fn [n]
+                              (apply distinct? (map #(path-tail % n) segments)))
+                            (range 2 (inc deepest))))
+             deepest)))
+
+     depths
+     (into {}
+           (keep (fn [[label peers]]
+                   (when (< 1 (count peers)) [label (tail-depth peers)])))
+           (group-by :label entries))
+
+     relabelled
+     (mapv (fn [entry]
+             (if-let [n (get depths (:label entry))]
+               (assoc entry :label (path-tail (segments-of entry) n))
+               entry))
+           entries)
+
+     repeated
+     (into #{}
+           (keep (fn [[label n]]
+                   (when (< 1 (long n)) label)))
+           (frequencies (map :label relabelled)))]
+
+    (mapv (fn [entry]
+            (cond-> entry
+              (repeated (:label entry))
+              (assoc :label (canonical-path (or (:trunk entry) (:root entry))))))
+          relabelled)))
 
 (defn- draft-clones
   "`{canonical-trunk -> canonical-clone}` for the per-root clones minted for THIS
@@ -1155,15 +1232,23 @@
       (`configured-roots`) — the sibling checkouts bound to the session from
       elsewhere on the filesystem.
 
-   Duplicate directories are dropped, first occurrence winning, so a sibling that
-   is ALSO nested (or is the project itself) earns exactly one header. Roots that
-   turn out not to be git repositories are dropped later, by `load-repos`. Pass
-   `catalog` explicitly to resolve against something other than the live config."
+   The list is DEDUPLICATED twice over, first occurrence winning. By repository
+   (`distinct-roots`): a sibling that is also nested, a root declared under
+   another spelling of its directory, and the trunk a drafted session already
+   shows as its clone each earn exactly one header. Then by NAME
+   (`unique-labels`): two repos that would render the same header text are told
+   apart by as much of their path as it takes, because the header is all the
+   cursor has to say which repository a verb is about to stage, commit or push.
+
+   Roots that turn out not to be git repositories are dropped later, by
+   `load-repos`. Pass `catalog` explicitly to resolve against something other
+   than the live config."
   ([ws fallback-root] (session-roots ws fallback-root (catalog-entries)))
   ([ws fallback-root catalog]
    (let [primary (workspace-roots ws fallback-root)]
-     (distinct-roots
-       (concat primary (nested-roots (:root (first primary))) (configured-roots ws catalog))))))
+     (unique-labels (distinct-roots (concat primary
+                                            (nested-roots (:root (first primary)))
+                                            (configured-roots ws catalog)))))))
 
 (defn repo-dirty?
   "Has this repo anything to show? Working-tree changes, a conflict, or commits

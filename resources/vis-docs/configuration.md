@@ -420,6 +420,12 @@ status buffer, next to the project and the repositories nested inside it, so one
 buffer stages, commits and pushes across every repository the session works on.
 It is labelled by its catalog `id`; a `read-only` root is left out, and a drafted
 session sees the private copy of an isolated root instead of the real one.
+Every repository is listed ONCE: a root declared under another spelling of a
+directory already shown — a symlink, a trailing slash, the project itself, a
+repository nested inside it, or the trunk a drafted session already shows as its
+private copy — earns no second header. Two repositories that would wear the same
+name are told apart by as much of their path as it takes (`work/vis` beside
+`src/vis`), because that header is what every verb acts on.
 
 `when` and `optional` let ONE catalog serve several machines: `when.os` mounts a
 root only on `macos`, `linux`, `wsl` or `windows`, `when.exists` only when that

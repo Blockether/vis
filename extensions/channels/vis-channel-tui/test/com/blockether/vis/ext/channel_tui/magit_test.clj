@@ -1236,6 +1236,90 @@
   (it "the live vis.yml catalog is read as a vector and never throws"
       (expect (vector? (magit/catalog-entries)))))
 
+;;; ── Deduplication ───────────────────────────────────────────────────
+
+(defdescribe
+  repo-dedup-test
+  (it "one directory reached four ways earns exactly one header"
+      (let
+        [root
+         (init-repo!)
+
+         link
+         (str (temp-dir!) "/link")]
+
+        (Files/createSymbolicLink (.toPath (io/file link))
+                                  (.toPath (io/file root))
+                                  (make-array FileAttribute 0))
+        (let
+          [roots (magit/session-roots {:root root}
+                                      nil
+                                      [{"id" "by-symlink" "path" link}
+                                       {"id" "by-slash" "path" (str root "/")}
+                                       {"id" "by-dot-dot" "path" (str root "/.git/..")}
+                                       {"id" "declared-again" "path" root}])]
+          (expect (= 1 (count roots)))
+          (expect (= root (:root (first roots)))))))
+  (it "a drafted session shows the clone, never the trunk it isolated"
+      (let
+        [trunk
+         (init-repo!)
+
+         clone
+         (init-repo-at! (str (temp-dir!) "/clone"))
+
+         ;; `draft: shared` is the catalog default, so the trunk is NOT withheld
+         ;; — only deduplication keeps the buffer from offering that second door
+         roots
+         (magit/session-roots {:root clone :repo-root trunk :draft? true}
+                              nil
+                              [{"id" "vis" "path" trunk}])]
+
+        (expect (= 1 (count roots)))
+        (expect (= clone (:root (first roots))))
+        (expect (= (real-path trunk) (real-path (:trunk (first roots)))))))
+  (it "two repositories that would wear one name are told apart by their paths"
+      (let
+        [primary
+         (init-repo-at! (str (temp-dir!) "/work/vis"))
+
+         sibling
+         (init-repo-at! (str (temp-dir!) "/src/vis"))
+
+         other
+         (init-repo!)
+
+         roots
+         (magit/session-roots {:root primary}
+                              nil
+                              [{"id" "vis" "path" sibling} {"id" "spel" "path" other}])
+
+         labels
+         (mapv :label roots)]
+
+        (expect (= 3 (count roots)))
+        (expect (= (count labels) (count (distinct labels))))
+        (expect (= ["work/vis" "src/vis"] (subvec labels 0 2)))
+        ;; a label nothing collides with is left exactly as it was
+        (expect (= "spel" (peek labels)))))
+  (it
+    "two catalog entries that repeat one id stay two readable headers"
+    (let
+      [root
+       (init-repo!)
+
+       one
+       (init-repo-at! (str (temp-dir!) "/alpha/spel"))
+
+       two
+       (init-repo-at! (str (temp-dir!) "/beta/spel"))
+
+       roots
+       (magit/session-roots {:root root} nil [{"id" "spel" "path" one} {"id" "spel" "path" two}])]
+
+      (expect (= 3 (count roots)))
+      (expect (= ["alpha/spel" "beta/spel"] (mapv :label (rest roots)))))))
+
 (defdescribe
   repo-fold-test
   (it "a clean repo folds to its header line while a dirty one stays open"

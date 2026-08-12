@@ -55,6 +55,12 @@
              (mark-repo! (io/file root ".cache/project"))
              (mark-repo! (io/file root "vendor/project"))
              (mark-repo! (io/file root "build/project"))
+             ;; an iOS app's derived data holds a full clone of every resolved
+             ;; package, and the same package again under a second build path
+             (mark-repo! (io/file root "ios/App/DerivedData/SourcePackages/checkouts/capacitor"))
+             (mark-repo! (io/file root "ios/DerivedData/SourcePackages/checkouts/capacitor"))
+             (mark-repo! (io/file root "ios/App/Pods/SomePod"))
+             (mark-repo! (io/file root ".build/checkouts/swift-log"))
              (repositories/refresh-inventory!)
              (expect (= [".hidden/project" "visible"]
                         (mapv :path (:repositories (repositories/inventory root)))))
