@@ -86,7 +86,7 @@ describe('shell screen', () => {
 describe('the app bar', () => {
   const mount = async () => {
     const view = renderApp({ machines: [{ label: 'laptop' }] });
-    await screen.findByRole('button', { name: 'New project on laptop' });
+    await screen.findByRole('button', { name: 'Projects on laptop' });
     return view;
   };
 
@@ -173,7 +173,7 @@ describe('the app bar', () => {
     expect(screen.queryByRole('button', { name: 'Search all machines' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Close search' })).toBeTruthy();
     // Nothing scopes it: the fleet list is still the answer underneath.
-    expect(screen.getByRole('button', { name: 'New project on laptop' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Projects on laptop' })).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Close search' }));
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Search all machines' })).toBeTruthy(),
@@ -201,7 +201,7 @@ describe('the app bar', () => {
     // The very same node, still carrying the fleet — never rebuilt, never hidden.
     expect(main.contains(list)).toBe(true);
     expect(list.className).toBe('h-full');
-    expect(within(list).getByRole('button', { name: 'New project on laptop' })).toBeTruthy();
+    expect(within(list).getByRole('button', { name: 'Projects on laptop' })).toBeTruthy();
     view.unmount();
     view.restore();
   });

@@ -36,7 +36,10 @@ describe('where "New session" lives', () => {
     expect(create[0]!.getAttribute("aria-label")).toBe("New session on alpha");
     // Several machines are on screen at once, so the row says which one AND which project.
     expect(create[0]!.getAttribute("title")).toBe("New session on alpha, in project");
-    expect(create[0]!.textContent).toBe("New session");
+    // The word repeated once per project; the mark says the same thing in 37px, and the
+    // name it gave up is on the label and the tooltip above.
+    expect(create[0]!.textContent).toBe("");
+    expect(create[0]!.querySelector("svg")).toBeTruthy();
     // It sits inside the project header's trailing cluster, never on the machine band.
     const header = within(screen.getByLabelText("project sessions"));
     expect(header.getByRole("button", { name: "New session on alpha" })).toBe(create[0]);
@@ -61,7 +64,7 @@ describe('where "New session" lives', () => {
 
   // Regression, user report (paraphrased: take the `⋯` off the right of the machine row):
   // the list's last overflow menu stood beside the switcher and held two rows — `Manage
-  // projects`, which is the sheet `New project` opens anyway, and `Machine settings`,
+  // projects`, which is the sheet the machine's own control opens anyway, and `Machine settings`,
   // which the Machines tab and the app bar's cog already open. A menu whose every answer
   // was one tap away without it.
   it("leaves the list no overflow menu at all", async () => {
@@ -73,24 +76,31 @@ describe('where "New session" lives', () => {
     expect(named(/^Remove /)).toHaveLength(0);
     expect(screen.queryByRole("menu")).toBeNull();
 
-    // The one row it held that this screen owns is the sheet the amber verb opens.
-    await userEvent.click(screen.getByRole("button", { name: "New project on alpha" }));
+    // The one row it held that this screen owns is the sheet the amber mark opens.
+    await userEvent.click(screen.getByRole("button", { name: "Projects on alpha" }));
     const sheet = within(await screen.findByRole("dialog"));
     expect(sheet.getByText(/New project/)).toBeTruthy();
   });
 
   // Regression, user report (paraphrased: put `+` and the gear on the band — that is add
-  // project and the machine settings; and later, make them real buttons like New session):
-  // the band's verbs were bordered glyphs, then frameless words, beside an amber slab.
-  it("spells the machine's create verb as a word in a real button", async () => {
+  // project and the machine settings; and later, make them real buttons like New session;
+  // and last, that a plus on the machine band and a plus on every project header meant two
+  // different creations): the band's control is the app's button wearing the FOLDER it
+  // opens, which is this machine's project inventory and never was a create.
+  it("marks the machine's projects with the folder it opens, in a real button", async () => {
     const view = renderSessionsScreen({ machines: alpha() });
     restore = view.restore;
     await screen.findByText("First");
 
-    const add = screen.getByRole("button", { name: "New project on alpha" });
-    expect(add.textContent).toBe("New project");
-    // The amber fill `New session` wears, so the two verbs are one species.
+    const add = screen.getByRole("button", { name: "Projects on alpha" });
+    expect(add.textContent).toBe("");
+    expect(add.querySelector("svg")).toBeTruthy();
+    // The amber fill `New session` wears, so the two controls are one species.
     expect(add.className).toContain("bg-accent");
+    // ...and the plus is left to mean exactly one thing on this screen: a session.
+    expect(add.innerHTML).not.toBe(
+      screen.getAllByRole("button", { name: /^New session on/ })[0]!.innerHTML,
+    );
     // ...and it opens the SAME portal the menu row opens, aimed at this machine.
     await userEvent.click(add);
     expect(await screen.findByRole("dialog")).toBeTruthy();
@@ -111,8 +121,8 @@ describe('where "New session" lives', () => {
     // The machine is named by its tab and the rail, never by a band of its own.
     expect(screen.queryByRole("button", { name: "Rename alpha" })).toBeNull();
 
-    // The verb stands OUTSIDE the list card, on the row above it, after the switch.
-    const create = screen.getByRole("button", { name: "New project on alpha" });
+    // The control stands OUTSIDE the list card, on the row above it, after the switch.
+    const create = screen.getByRole("button", { name: "Projects on alpha" });
     const strip = screen.getByLabelText("Machines");
     const list = screen.getByLabelText("alpha projects");
     expect(create.closest("section")).toBe(screen.getByLabelText("Sessions"));

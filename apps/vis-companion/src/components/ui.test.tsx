@@ -20,6 +20,7 @@ import sessionScreenSource from "../screens/SessionScreen.tsx?raw";
 import connectSource from "../screens/ConnectScreen.tsx?raw";
 import machinesSource from "./Machines.tsx?raw";
 
+import { DraftIcon, PlusIcon, ProjectsIcon } from "./icons";
 import { MACHINE_COLORS } from "../lib/machine-colors";
 import {
   BackButton,
@@ -48,11 +49,11 @@ import {
   LIST_EDGE,
   machineTagFace,
   MachineMark,
+  MachineProjectsButton,
   MachineRail,
   MachineSwitcher,
   MachineTab,
   MetaButton,
-  NewProjectButton,
   NewSessionButton,
   OptionRow,
   Pill,
@@ -377,6 +378,17 @@ describe("NewSessionButton", () => {
   it("is the yellow one: the verb of the screen, not a row of a menu", () => {
     expect(html()).toContain("bg-accent");
     expect(html()).toContain("New session");
+  });
+
+  // Regression, user report ("make those buttons less verbose — nine yellow slabs
+  // saying the same eleven characters"): the word was right once and repetitive nine
+  // times, because a project header appears once per repository.
+  it("is a PLUS at rest: the word repeats once per project, the mark does not", () => {
+    expect(html()).toContain("<svg");
+    expect(html()).not.toContain(">New session<");
+    // The name survives whole where a reader and a pointer can still get at it.
+    expect(html({ where: "vis" })).toContain('aria-label="New session on tower"');
+    expect(html({ where: "vis" })).toContain('title="New session on tower, in vis"');
   });
 
   it("names the machine it will start on, because every header carries one", () => {
@@ -1578,18 +1590,33 @@ describe("MachineSwitcher", () => {
   });
 });
 
-// The machine's project verb stands in TWO places now — above the card when the list is
-// scoped to one machine, and on each machine's band in the All view — so it is one
-// component rather than two call sites that drifted apart.
-describe("NewProjectButton", () => {
+// Regression, user report ("the plus is here and here" — a plus on the machine band and
+// a plus on every project header below it, meaning two different creations): the machine
+// band's control never was a create at all. `openManageProjects` opens the sheet on
+// `Projects · <machine>` — choose one, remove one, `New project…` at its foot — so the
+// word promised one of the three things behind it and a plus would have promised a
+// session's meaning one row up.
+describe("MachineProjectsButton", () => {
   const html = renderToStaticMarkup(
-    <NewProjectButton machine="tower" onPress={() => {}} />,
+    <MachineProjectsButton machine="tower" onPress={() => {}} />,
   );
 
-  it("is the amber verb, spelled as a word, naming its machine", () => {
-    expect(html).toContain(">New project<");
+  it("wears the folder it opens, never the plus that means a session", () => {
+    expect(html).toContain(
+      renderToStaticMarkup(<ProjectsIcon className="size-4" />),
+    );
+    expect(html).not.toContain(
+      renderToStaticMarkup(<PlusIcon className="size-4" />),
+    );
+  });
+
+  it("is named for what it opens, because it carries no word", () => {
+    expect(html).toContain('aria-label="Projects on tower"');
+    expect(html).toContain("bg-accent");
     // Several machines are on screen at once in the All view: the label says which.
-    expect(html).toContain('aria-label="New project on tower"');
+    expect(
+      renderToStaticMarkup(<MachineProjectsButton machine="nuc" onPress={() => {}} />),
+    ).toContain('aria-label="Projects on nuc"');
   });
 
   it("holds still under the finger, because it anchors the sheet it opens", () => {
@@ -1602,10 +1629,51 @@ describe("NewProjectButton", () => {
     expect(html).toContain("shrink-0");
   });
 
-  it("is used by both places the machine is named, and hand-rolled in neither", () => {
-    expect(sessionsListSource).toContain("<NewProjectButton");
-    expect(sessionsListSource.match(/<NewProjectButton/g)?.length).toBe(2);
+  // An empty machine has no project row under its band to say what a folder means.
+  it("spells itself out where the mark has no example beside it", () => {
+    const word = renderToStaticMarkup(
+      <MachineProjectsButton machine="tower" face="word" onPress={() => {}} />,
+    );
+    expect(word).toContain(">Projects<");
+    expect(word).not.toContain("<svg");
+    expect(word).toContain('aria-label="Projects on tower"');
+  });
+
+  it("is used by every place the machine is named, and hand-rolled in none", () => {
+    // The row above the card when scoped, each machine's band in the All view, and
+    // the empty body that has nothing else to press.
+    expect(sessionsListSource.match(/<MachineProjectsButton/g)?.length).toBe(3);
     expect(sessionsListSource).not.toContain(">New project</Button>");
+    // The word it used to carry named a create the sheet does not start.
+    expect(sessionsListSource).not.toContain("NewProjectButton");
+    expect(uiSource).not.toContain("NewProjectButton");
+  });
+});
+
+// Regression, same report: THREE verbs stand on this screen — a machine's projects, a
+// session in a project, that session in a draft — and a glyph used twice makes two of
+// them one control. One meaning, one mark.
+describe("three verbs, three marks", () => {
+  const glyph = (markup: string) => markup.match(/<svg[\s\S]*?<\/svg>/g) ?? [];
+  const session = renderToStaticMarkup(
+    <NewSessionButton
+      machine="tower"
+      where="vis"
+      onPress={() => {}}
+      onDraft={() => {}}
+    />,
+  );
+  const projects = renderToStaticMarkup(
+    <MachineProjectsButton machine="tower" onPress={() => {}} />,
+  );
+
+  it("gives the plus to a session, the folder to a machine, the fork to a draft", () => {
+    const [start, draft] = glyph(session);
+    const [inventory] = glyph(projects);
+    expect(start).toBe(renderToStaticMarkup(<PlusIcon className="size-4" />));
+    expect(draft).toBe(renderToStaticMarkup(<DraftIcon className="size-4" />));
+    expect(inventory).toBe(renderToStaticMarkup(<ProjectsIcon className="size-4" />));
+    expect(new Set([start, draft, inventory]).size).toBe(3);
   });
 });
 

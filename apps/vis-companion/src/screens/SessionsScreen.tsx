@@ -18,7 +18,7 @@ import {
   MachineSwitcher,
   MachineTab,
   Modal,
-  NewProjectButton,
+  MachineProjectsButton,
   NewSessionButton,
   ProjectCrumb,
   RowDisclosure,
@@ -1136,10 +1136,11 @@ export function SessionsScreen({
           is gone, so the card starts at the first project header.
 
           NO OVERFLOW CONTROL STANDS HERE. A `⋯` beside the switch held two rows —
-          `Manage projects`, which is the sheet `New project` already opens, and
+          `Manage projects`, which is the sheet the machine's own folder mark already
+          opens, and
           `Machine settings`, which the Machines tab and the app bar's own cog both
           open — so it was a menu whose every answer was one tap away without it.
-          The row is a switch and a verb, and both say what they do.
+          The row is a switch and one mark, and both say what they do.
 
           ONE INSET PER EDGE, AND BOTH ENDS STAND ON THE PAPER. Standing on the page's
           paper means wearing the PAGE's side edges, and the section above already
@@ -1148,8 +1149,8 @@ export function SessionsScreen({
           keeps the same kind of inset once the card detaches. Nothing reclaims the
           gutter any more — the `-mr-3 sm:-mr-4` edge treatment left with the `⋯` that
           needed it, so the switch's left edge and the verb's right edge are the same
-          distance from the paper: 12 and 12 of a 390 phone (strip at 12, `New project`
-          ending at 378), and 984 inside a card that ends at 1000 on a 1024 desk. */}
+          distance from the paper: 12 and 12 of a 390 phone (strip at 12, the projects
+          mark ending at 378), and 984 inside a card that ends at 1000 on a 1024 desk. */}
       {machines.length > 0 && (
         <div className="relative z-10 flex items-center gap-1.5 px-3 pb-3 pt-6 sm:pb-4 sm:pl-0 sm:pr-4 sm:pt-8">
           <div role="group" aria-label="Machines" className="flex min-w-0 shrink">
@@ -1217,20 +1218,21 @@ export function SessionsScreen({
                 not answering
               </span>
             )}
-            {/* The machine's verb, on the row that carries it: a NEW project.
+            {/* The machine's own control, on the row that names that machine: its
+                PROJECTS — choose the current one, add one, remove one.
 
-                It is the amber primary here, the same fill the list's own create verb
-                wears, and it is spelled like it — `New project` beside `New session`,
-                one species of verb saying the same kind of word. The sheet it opens is
-                this machine's whole project list, so adding, choosing and removing one
-                are all behind the word that names the thing.
+                It is the amber primary, the same fill the list's create verb wears,
+                and it is a MARK: the folder this app uses for a place on disk. It used
+                to say `New project` beside `New session` one row below, two amber
+                paragraphs promising two different creations, and only one of them was
+                a create at all.
 
-                In the fleet view the verb rides each machine's own band instead: there
-                is no one machine for this row to create on, and a `New project` that
-                had to ask which computer it meant would be the chooser the switch
-                exists to abolish. */}
+                In the fleet view it rides each machine's own band instead: there is no
+                one machine for this row to speak for, and a control that had to ask
+                which computer it meant would be the chooser the switch exists to
+                abolish. */}
             {scopeMachine && !scopeMachine.error && (
-              <NewProjectButton
+              <MachineProjectsButton
                 machine={machineLabel(scopeMachine.conn)}
                 onPress={(anchor) => openManageProjects(scopeMachine, anchor)}
               />
@@ -1345,11 +1347,11 @@ export function SessionsScreen({
                             <LiveCount count={shownLive} />
                           </HeaderMeta>
                         )}
-                        {/* The machine's own verb, on the machine's own band — the row
-                            above the card cannot carry it here, because in this view it
-                            speaks for no single machine. */}
+                        {/* The machine's own control, on the machine's own band — the
+                            row above the card cannot carry it here, because in this view
+                            it speaks for no single machine. */}
                         {!machine.error && (
-                          <NewProjectButton
+                          <MachineProjectsButton
                             machine={machineLabel(machine.conn)}
                             onPress={(anchor) => openManageProjects(machine, anchor)}
                           />
@@ -1369,6 +1371,21 @@ export function SessionsScreen({
                                   ? 'No matches on this machine.'
                                   : 'No sessions on this machine yet.'}
                           </p>
+                          {/* A MARK CANNOT TEACH ITSELF ON AN EMPTY MACHINE: the band
+                              above carries the folder, and with no project row under it
+                              there is nothing on screen that says what the folder opens.
+                              A machine that is up and genuinely empty therefore gets the
+                              word — the same control, the same sheet, spelled out once,
+                              where it is the only thing to press. A search that matched
+                              nothing is not that seam: the projects are there, the query
+                              simply missed them. */}
+                          {!machine.error && !searching && machine.sessions !== null && (
+                            <MachineProjectsButton
+                              machine={machineLabel(machine.conn)}
+                              face="word"
+                              onPress={(anchor) => openManageProjects(machine, anchor)}
+                            />
+                          )}
                           {/* The band that used to carry this machine's Retry is gone, so
                               the offer stands where its sessions would have been. */}
                           {machine.error && (
@@ -1596,7 +1613,7 @@ export function SessionsScreen({
 
       {/* The folder browser the start flow falls through to when a machine has no
           project yet. `manageProjects` below is the same sheet, reached deliberately
-          from `New project` on the row above the list. */}
+          from the projects mark on the row above the list. */}
       {target && browseAt && (
         <ManageProjectsSheet
           label={machineLabel(target)}

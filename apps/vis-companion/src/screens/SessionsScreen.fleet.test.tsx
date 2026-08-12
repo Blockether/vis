@@ -82,25 +82,48 @@ describe("the All view is a fleet of separate machines", () => {
     expect(within(section("alpha")).queryByText("alpha")).toBeNull();
   });
 
-  // A verb that had to ask which of two computers it meant would be the chooser the
+  // A control that had to ask which of two computers it meant would be the chooser the
   // switch exists to abolish, so in the fleet view it stands on each machine's own band.
-  it("gives every machine its own New project verb, and one when scoped", async () => {
+  it("gives every machine its own projects control, and one when scoped", async () => {
     const view = renderSessionsScreen({ machines: fleet() });
     restore = view.restore;
     await screen.findByText("First");
 
-    expect(named(/^New project on/).map((button) => button.getAttribute("aria-label"))).toEqual([
-      "New project on alpha",
-      "New project on beta",
+    expect(named(/^Projects on/).map((button) => button.getAttribute("aria-label"))).toEqual([
+      "Projects on alpha",
+      "Projects on beta",
     ]);
-    expect(section("beta").contains(named(/^New project on beta$/)[0]!)).toBe(true);
+    expect(section("beta").contains(named(/^Projects on beta$/)[0]!)).toBe(true);
 
     await userEvent.click(
       within(screen.getByLabelText("Machines")).getByRole("button", { name: /^beta/ }),
     );
-    await waitFor(() => expect(named(/^New project on/)).toHaveLength(1));
-    // Scoped, the verb is back above the card, outside the list.
-    expect(section("beta").contains(named(/^New project on beta$/)[0]!)).toBe(false);
+    await waitFor(() => expect(named(/^Projects on/)).toHaveLength(1));
+    // Scoped, the control is back above the card, outside the list.
+    expect(section("beta").contains(named(/^Projects on beta$/)[0]!)).toBe(false);
+  });
+
+  // Regression, user report ("the plus is here and here"): the machine's control is a
+  // folder mark now, and a machine with nothing under its band has no project row on
+  // screen to say what that folder opens.
+  it("spells the machine's control out where its section is empty", async () => {
+    const view = renderSessionsScreen({
+      machines: [fleet()[0], { label: "beta", sessions: [] }],
+    });
+    restore = view.restore;
+    await screen.findByText("First");
+
+    const beta = within(section("beta"));
+    expect(beta.getByText("No sessions on this machine yet.")).toBeTruthy();
+    // Two controls for this machine: the band's mark, and the word beside the empty
+    // body — same name, same sheet, and the word is the one carrying a word.
+    const both = beta.getAllByRole("button", { name: "Projects on beta" });
+    expect(both).toHaveLength(2);
+    expect(both.map((button) => button.textContent)).toEqual(["", "Projects"]);
+    // A machine that IS answering with sessions keeps the mark alone.
+    expect(
+      within(section("alpha")).getAllByRole("button", { name: "Projects on alpha" }),
+    ).toHaveLength(1);
   });
 
   // A search is a FLEET question: "across 1 of 2 machines" is the only proof the query
@@ -134,7 +157,7 @@ describe("the All view is a fleet of separate machines", () => {
     expect(await beta.findByText("beta is not answering.")).toBeTruthy();
     expect(beta.getByRole("button", { name: /Retry/ })).toBeTruthy();
     // Nothing offers to create on a machine that cannot answer.
-    expect(named(/^New project on beta$/)).toHaveLength(0);
+    expect(named(/^Projects on beta$/)).toHaveLength(0);
     expect(screen.getByText("First")).toBeTruthy();
   });
 });

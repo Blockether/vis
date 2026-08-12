@@ -22,6 +22,8 @@ import {
   CopyIcon,
   DotsIcon,
   DraftIcon,
+  PlusIcon,
+  ProjectsIcon,
   SearchIcon,
 } from './icons';
 
@@ -2250,12 +2252,23 @@ export function MachineTab({
 }
 
 /**
- * The verb this screen exists for, on the machine that will run it.
+ * The verb this screen exists for, spelled as the ONE PLUS on the screen.
  *
  * It used to be the first row of the header's `⋯` menu: a tap, a popover, a read,
  * and only then the thing people do all day. So it is a BUTTON now — the Blockether
- * yellow, on every machine header, directly before the `⋯` that keeps the rarer
+ * yellow, on every project header, directly before the `⋯` that keeps the rarer
  * verbs — and the menu is left with the questions that actually deserve one.
+ *
+ * IT IS A MARK, NOT A WORD, because it repeats. A project header appears once per
+ * repository, so a fleet with nine checkouts painted nine amber paragraphs of the
+ * same eleven characters: measured on a 390px frame the word cost 83px of a row
+ * whose name and path had 221px to share, and the ninth one said nothing the first
+ * had not. The mark is 37px, the name column takes the 46px back, and the rank is
+ * untouched — same amber, same compact box, same 44px touch target.
+ *
+ * The plus therefore means START A SESSION HERE and nothing else on this screen: the
+ * machine's control wears the folder it opens (`MachineProjectsButton`), the draft
+ * half wears a fork inside that folder, and no glyph is used for two meanings.
  *
  * It NAMES its machine, because every header carries one and three controls all
  * labelled "New session" say nothing to a screen reader; `where` puts the project it
@@ -2290,6 +2303,10 @@ export function NewSessionButton({
    * which of a fleet's headers had been pressed; the verb that was pressed is the
    * only honest place for it, so the button wears its own progress and refuses a
    * second press while it does.
+   *
+   * A MARK HAS NOWHERE TO HOLD THAT WORD, so while the create runs this control is
+   * the word button it used to be — for exactly as long as the create runs, on the
+   * one header that was pressed, which is the only row that has anything to say.
    */
   busyLabel?: string | null;
   onPress: (anchor: HTMLElement) => void;
@@ -2297,20 +2314,34 @@ export function NewSessionButton({
   onDraft?: (anchor: HTMLElement) => void;
 }) {
   const isBusy = Boolean(busyLabel);
-  const verb = (
+  const label = `New session on ${machine}`;
+  const title = where ? `New session on ${machine}, in ${where}` : label;
+  const verb = isBusy ? (
     <Button
       type="button"
       pressEffect="none"
       density="compact"
-      disabled={disabled || isBusy}
+      disabled
       aria-live="polite"
-      aria-label={`New session on ${machine}`}
-      title={where ? `New session on ${machine}, in ${where}` : `New session on ${machine}`}
+      aria-label={label}
+      title={title}
       className={`shrink-0 whitespace-nowrap${onDraft ? ' border-r-0' : ''}`}
       onClick={(event) => onPress(event.currentTarget)}
     >
-      {busyLabel ?? 'New session'}
+      {busyLabel}
     </Button>
+  ) : (
+    <IconButton
+      variant="primary"
+      disabled={disabled}
+      aria-live="polite"
+      label={label}
+      title={title}
+      className={onDraft ? 'border-r-0' : ''}
+      onClick={(event) => onPress(event.currentTarget)}
+    >
+      <PlusIcon className="size-4" />
+    </IconButton>
   );
   if (!onDraft) return verb;
   return (
@@ -2319,54 +2350,78 @@ export function NewSessionButton({
       {/* The seam is the only thing between the two halves: same fill, same height, a
           hairline in the ink they both carry. A second bordered box beside the verb
           would read as a different control doing a different thing. */}
-      <Button
-        type="button"
-        pressEffect="none"
-        density="compact"
+      <IconButton
+        variant="primary"
         disabled={disabled || isBusy}
-        aria-label={`New session in a draft of ${where ?? 'this project'} on ${machine}`}
+        label={`New session in a draft of ${where ?? 'this project'} on ${machine}`}
         title={`New session in a draft — a private copy of ${where ?? 'this project'}`}
-        className="shrink-0 border-l-accent-foreground/30 px-2"
+        className="border-l-accent-foreground/30"
         onClick={(event) => onDraft(event.currentTarget)}
       >
         <DraftIcon className="size-4" />
-      </Button>
+      </IconButton>
     </span>
   );
 }
 
 
 /**
- * A MACHINE'S OWN VERB: the project list of one gateway, opened from the thing that
+ * A MACHINE'S PROJECTS: the inventory of one gateway, opened from the thing that
  * names that gateway.
  *
- * The same word in two places — above the card while the list is scoped to one
- * machine, and on each machine's band in the fleet view — is one control, not two
- * spellings of one: it is the amber primary `New session` wears, compact like every
- * other control on a header row, and it NAMES its machine, because in the fleet view
- * several of them are on screen at once.
+ * IT IS NOT A CREATE, and for a long time it said it was. `openManageProjects` opens
+ * `ManageProjectsSheet` on `Projects · <machine>` — choose the machine's current
+ * project, remove one, or take the `New project…` at its foot — so a control spelled
+ * "New project" promised the last of the three things behind it, and a plus on the
+ * band would have promised the same plus one row below meant a session. So it wears
+ * the NOUN it opens: the app's one mark for a place on disk, the same folder a
+ * project row carries, with the fork inside it left to mean a copy of that place.
+ *
+ * It stands in two places — above the card while the list is scoped to one machine,
+ * and on each machine's band in the All view — and it NAMES its machine, because in
+ * the fleet view several of them are on screen at once.
+ *
+ * `face="word"` is for the one seam where the mark cannot teach itself: a machine
+ * with nothing under its band has no project row on screen to say what the folder
+ * means, so its empty body carries the word instead of a glyph with no example.
  *
  * `pressEffect="none"`: the sheet it opens is anchored on this button's measured box,
  * and a transform moves the box that was measured.
  */
-export function NewProjectButton({
+export function MachineProjectsButton({
   machine,
+  face = 'mark',
   onPress,
 }: {
   machine: string;
+  face?: 'mark' | 'word';
   onPress: (anchor: HTMLElement) => void;
 }) {
+  const label = `Projects on ${machine}`;
+  const title = `Projects on ${machine} — choose one, add one, remove one`;
+  if (face === 'word')
+    return (
+      <Button
+        type="button"
+        variant="primary"
+        density="compact"
+        pressEffect="none"
+        className="shrink-0 whitespace-nowrap"
+        aria-label={label}
+        title={title}
+        onClick={(event) => onPress(event.currentTarget)}
+      >
+        Projects
+      </Button>
+    );
   return (
-    <Button
-      type="button"
+    <IconButton
       variant="primary"
-      density="compact"
-      pressEffect="none"
-      className="shrink-0 whitespace-nowrap"
-      aria-label={`New project on ${machine}`}
+      label={label}
+      title={title}
       onClick={(event) => onPress(event.currentTarget)}
     >
-      New project
-    </Button>
+      <ProjectsIcon className="size-4" />
+    </IconButton>
   );
 }
