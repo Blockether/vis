@@ -140,6 +140,18 @@ is offered to the extension alongside what it declared, because those files
 belong to the project the extension is running in. `env=` is what a *third*
 party's variable needs.
 
+**`env=` does not widen the jail.** It is scoped to *this context's*
+`os.environ` and nothing else. A confined child — the model's `shell(...)`,
+`vis.jailed_shell(...)` (including one spawned by this very extension), a
+managed REPL or test process — is handed only the workspace's `.env`/`.env.local`
+plus the `environment:` declarations, so a name that ONLY an extension declared
+is absent there. That asymmetry is deliberate and runs the safe way: extension
+contexts are trusted and unconfined, so `env=["ACME_API_KEY"]` reads an ambient
+host variable even while `jail.environment: declared` withholds it from every
+confined child. To give a confined child a variable, declare it under
+`environment:` (or put it in `.env`) — see
+[the jail's environment scrubbing](jail.md#environment-scrubbing).
+
 ### Session context
 
 The model sees a live `session` bag every turn — turn/iteration counters,

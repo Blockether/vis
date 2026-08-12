@@ -622,7 +622,10 @@ kernel owns the JVM, and `wrap-argv` deliberately skips re-wrapping
 - Python extension files are intentionally trusted plugins. Their separate
   contexts have real filesystem, network, threads, and process creation; their
   environment is the DECLARED one (`vis.extension(env=[...])` plus the project's
-  own `environment:` and `.env`), not a copy of the host's. They have no arbitrary Java/native/polyglot interop. Review
+  own `environment:` and `.env`), not a copy of the host's. `env=` reaches that
+  context ONLY: it never adds a name to a confined child's environment, so a
+  variable an extension declares but `environment:`/`.env` do not is unreachable
+  from `vis.jailed_shell` and from the model's `shell(...)`. They have no arbitrary Java/native/polyglot interop. Review
   project `.vis/extensions/` with the same care as executable build files.
 - The OS enforcer is implemented on macOS (Seatbelt) and Linux/WSL2 (bubblewrap +
   pasta); WSL1 has none. There the gateway policy remains useful but
