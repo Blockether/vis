@@ -59,6 +59,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.egress-proxy :as egress]
             [com.blockether.vis.internal.extension :as extension]
@@ -591,45 +592,46 @@
    escapes this reach — the registry still drops cleanly and the pump is unblocked
    by closing the stream in the stop-fn, but the orphan keeps running."
   [p]
-  (try
-    (let
-      [pid
-       (if (map? p) (:pid p) (.pid ^Process p))
+  (try (let
+         [pid
+          (if (map? p) (:pid p) (.pid ^Process p))
 
-       destroy
-       (if (map? p)
-         (:destroy p)
-         (fn [force?]
-           (if force? (.destroyForcibly ^Process p) (.destroy ^Process p))))
+          destroy
+          (if (map? p)
+            (:destroy p)
+            (fn [force?]
+              (if force? (.destroyForcibly ^Process p) (.destroy ^Process p))))
 
-       ^ProcessHandle ph
-       (try (.orElse (ProcessHandle/of pid) nil) (catch Throwable _ nil))
+          ^ProcessHandle ph
+          (try (.orElse (ProcessHandle/of pid) nil) (catch Throwable _ nil))
 
-       descendants
-       (fn []
-         (if ph
-           (-> ph
-               .descendants
-               .iterator
-               iterator-seq)
-           []))]
+          descendants
+          (fn []
+            (if ph
+              (-> ph
+                  .descendants
+                  .iterator
+                  iterator-seq)
+              []))]
 
-      (run! (fn [^ProcessHandle d]
-              (try (.destroy d) (catch Throwable _ nil)))
-            (descendants))
-      (destroy false)
-      (let [deadline (+ (System/currentTimeMillis) 2000)]
-        (loop []
+         (run! (fn [^ProcessHandle d]
+                 (try (.destroy d) (catch Throwable _ nil)))
+               (descendants))
+         (destroy false)
+         (let [deadline (+ (System/currentTimeMillis) 2000)]
+           (loop []
 
-          (when (and ph (.isAlive ph) (< (System/currentTimeMillis) deadline))
-            (Thread/sleep 50)
-            (recur))))
-      (when (and ph (.isAlive ph))
-        (run! (fn [^ProcessHandle d]
-                (try (.destroyForcibly d) (catch Throwable _ nil)))
-              (descendants))
-        (destroy true)))
-    (catch Throwable _ nil))
+             (when (and ph (.isAlive ph) (< (System/currentTimeMillis) deadline))
+               (Thread/sleep 50)
+               (recur))))
+         (when (and ph (.isAlive ph))
+           (run! (fn [^ProcessHandle d]
+                   (try (.destroyForcibly d) (catch Throwable _ nil)))
+                 (descendants))
+           (destroy true)))
+       ;; A cancel landing mid-kill still has a session to unwind: keep the
+       ;; interrupt, never let the tree teardown swallow it.
+       (catch Throwable t (cancellation/preserve-interrupt! t) nil))
   nil)
 
 ;; =============================================================================
@@ -1643,7 +1645,7 @@
   (doto (Thread.
           (fn []
             (doseq [f drains]
-              (try (deref f) (catch Throwable _ nil)))
+              (try (deref f) (catch Throwable t (cancellation/preserve-interrupt! t) nil)))
             ;; The stream is finished, so the file is complete: flush and close it
             ;; BEFORE the exit code is published, or a reader that already saw the
             ;; exit could still be missing the last buffered bytes.

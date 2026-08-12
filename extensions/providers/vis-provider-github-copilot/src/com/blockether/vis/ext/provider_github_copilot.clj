@@ -21,6 +21,7 @@
             [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.oauth :as oauth]
             [taoensso.telemere :as tel]))
@@ -229,7 +230,7 @@
             (.waitFor proc 5 java.util.concurrent.TimeUnit/SECONDS)]
 
            (when (and ok (zero? (.exitValue proc)) (not (str/blank? out))) out))
-         (catch Exception _ nil))))
+         (catch Exception e (cancellation/preserve-interrupt! e) nil))))
 
 (defn detect-oauth-token
   "Detect an existing OAuth token from all known sources.

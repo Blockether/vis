@@ -12,6 +12,7 @@
    `com.blockether.vis.internal.workspace`."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel])
@@ -78,6 +79,7 @@
             :timed-out? (not done)
             :duration-ms (- (System/currentTimeMillis) t0)}))
        (catch Throwable t
+         (cancellation/preserve-interrupt! t)
          (tel/log! :warn
                    ["git: run-git failed"
                     {:dir (some-> dir

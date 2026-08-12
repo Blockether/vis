@@ -20,7 +20,8 @@
    already in vis's native-image reachability metadata) on the server side, and
    `stty` for raw mode on the client side (the human's interactive shell always
    has it). No JNA, no new dep, native-image clean."
-  (:require [clojure.string :as str])
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.cancellation :as cancellation])
   (:import (java.io InputStream OutputStream)
            (java.net StandardProtocolFamily UnixDomainSocketAddress)
            (java.nio ByteBuffer)
@@ -256,7 +257,7 @@
 
          (.waitFor proc)
          (str/trim out))
-       (catch Throwable _ nil)))
+       (catch Throwable t (cancellation/preserve-interrupt! t) nil)))
 
 (defn attach!
   "Human-side passthrough: connect to a background shell's AF_UNIX socket, put the

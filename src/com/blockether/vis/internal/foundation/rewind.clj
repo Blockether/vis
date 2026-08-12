@@ -41,6 +41,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel])
   (:import [java.io File RandomAccessFile]
@@ -422,7 +423,9 @@
 
          (.waitFor pr)
          {:exit (.exitValue pr) :bytes out :out (String. ^bytes out StandardCharsets/UTF_8)})
-       (catch Throwable t {:exit -1 :out "" :bytes (byte-array 0) :error (ex-message t)})))
+       (catch Throwable t
+         (cancellation/preserve-interrupt! t)
+         {:exit -1 :out "" :bytes (byte-array 0) :error (ex-message t)})))
 
 (defn- git-repo-root
   [root]

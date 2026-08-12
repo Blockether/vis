@@ -29,6 +29,7 @@
    unavailable (`providers/provider-status`, `doctor`) or to drop it from the
    router build, exactly as an unresolved `${NAME}` is handled today."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.cancellation :as cancellation]
             [taoensso.telemere :as tel])
   (:import (java.io ByteArrayOutputStream InputStream)
            (java.nio.charset StandardCharsets)
@@ -149,7 +150,9 @@
            ;; `ProcessBuilder.start` throws this when the executable is absent or
            ;; not executable — by far the most common real-world failure.
            {:error (str "cannot run `" exe "`: " (ex-message e))})
-         (catch Throwable t {:error (str "`" exe "` failed: " (ex-message t))}))))
+         (catch Throwable t
+           (cancellation/preserve-interrupt! t)
+           {:error (str "`" exe "` failed: " (ex-message t))}))))
 
 (defonce ^:private cache
   ;; provider-id -> {:token|:error _ :at epoch-ms :argv av}

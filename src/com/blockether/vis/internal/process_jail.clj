@@ -53,6 +53,7 @@
      2. a default-deny profile MUST `(import \"system.sb\")` or dyld/sysctl startup
         reads are denied and every binary aborts before `main`."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.paths :as paths])
   (:import (java.io File)
            (java.nio.file LinkOption Paths)
@@ -640,7 +641,7 @@
          (try (and (.waitFor p 5 TimeUnit/SECONDS) (= 77 (.exitValue p)))
               (finally (try (.close (.getOutputStream p)) (catch Throwable _ nil))
                        (when (.isAlive p) (.destroyForcibly p)))))
-       (catch Throwable _ false)))
+       (catch Throwable t (cancellation/preserve-interrupt! t) false)))
 
 (def ^:private detach-argv
   "argv PREFIX that runs a child in its OWN process group, or `[]`.

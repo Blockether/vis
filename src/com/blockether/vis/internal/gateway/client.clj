@@ -8,6 +8,7 @@
    in ONE process."
   (:require [babashka.http-client :as http]
             [clojure.string :as str]
+            [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.gateway.protocol :as protocol]
@@ -252,7 +253,7 @@
                 (cond (port-free? host port) true
                       (>= (System/currentTimeMillis) deadline) false
                       :else (do (Thread/sleep 50) (recur))))))))
-      (catch Throwable _ nil))))
+      (catch Throwable t (cancellation/preserve-interrupt! t) nil))))
 
 (def ^:private spinner-frames ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"])
 

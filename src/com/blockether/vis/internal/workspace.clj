@@ -24,6 +24,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.rift :as rift]
+            [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance :as p]
             [taoensso.telemere :as tel])
@@ -814,7 +815,9 @@
 
           (when-not done (.destroyForcibly p))
           {:exit (when done (.exitValue p)) :out out})
-        (catch Throwable t {:exit nil :out (str (ex-message t))}))))
+        (catch Throwable t
+          (cancellation/preserve-interrupt! t)
+          {:exit nil :out (str (ex-message t))}))))
 
 (defn- git-lines
   "Non-blank stdout lines of a SUCCESSFUL `git <args>` in `dir`, else []."

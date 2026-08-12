@@ -18,6 +18,7 @@
      `(cancel-reason token)`      - the recorded origin of the cancel
      `(cancelled? token)`         - true once `cancel!` has been called
      `(cancellation? throwable)`  - true if exception was caused by `cancel!`
+     `(preserve-interrupt! t)`    - re-arm the interrupt flag a catch-all ate
 
    This namespace has zero side effects at load time and depends only
    on Java interop - channels and the runtime can require it
@@ -220,3 +221,29 @@
    error and avoid showing stack traces."
   [^Throwable e]
   (cancellation-cause? e))
+
+(defn preserve-interrupt!
+  "Re-arm THIS thread's interrupt flag when `t` is, or wraps, an
+   `InterruptedException`, and answer whether it did.
+
+   The JVM CLEARS the flag as it throws, so a best-effort
+   `(catch Throwable _ ...)` around anything that BLOCKS -- `.waitFor` on a
+   subprocess, `Thread/sleep`, an unbounded `deref` -- silently EATS the
+   cancellation: [[cancel!]] interrupted the turn, the handler answered its
+   fallback value, and the thread polled on to its own deadline as if nothing
+   had happened. Every catch-all that can see a blocking call runs this FIRST:
+   the fallback value still stands (the measurement, the git output, the token
+   really is unavailable), while the cancellation survives to the next
+   interruptible call, which throws at once.
+
+   `CancellationException` is deliberately NOT re-armed -- some OTHER future was
+   cancelled; this thread was never interrupted, and pretending otherwise would
+   abort work nobody asked to stop."
+  [^Throwable t]
+  (let
+    [interrupted? (loop [x t]
+                    (cond (nil? x) false
+                          (instance? InterruptedException x) true
+                          :else (recur (.getCause x))))]
+    (when interrupted? (.interrupt (Thread/currentThread)))
+    interrupted?))

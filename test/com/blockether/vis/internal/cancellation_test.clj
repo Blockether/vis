@@ -3,8 +3,11 @@
    `cancel!`, late registration after cancellation still triggers
    immediately, and `dispose!` removes the hook cleanly without
    side-effects."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.internal.cancellation :as cancellation]
+            [com.blockether.vis.internal.git :as git]
+            [com.blockether.vis.internal.process-jail :as process-jail]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe on-cancel-callback-test
@@ -162,3 +165,55 @@
 
         (expect (= :done (deref fut 5000 :timeout)))
         (expect (= (cancellation/virtual-threads-available?) (deref virtual? 5000 :timeout))))))
+
+;; Regression: a best-effort `(catch Throwable _ ...)` wrapped around a BLOCKING
+;; call used to eat the cancellation. The JVM clears the interrupt flag as it
+;; throws `InterruptedException`, so a `cancel!` that landed while the turn was
+;; waiting on a subprocess was answered with the handler's fallback value AND a
+;; cleared flag -- the turn then polled on to its own deadline (up to 600s) as if
+;; nothing had been cancelled.
+(defdescribe
+  preserve-interrupt-test
+  (it "re-arms this thread's flag for an InterruptedException"
+      (try (Thread/interrupted)
+           (expect (true? (cancellation/preserve-interrupt! (InterruptedException. "cancel"))))
+           (expect (true? (.isInterrupted (Thread/currentThread))))
+           (finally (Thread/interrupted))))
+  (it "re-arms through a WRAPPED interrupt, the shape a future hands back"
+      (try (Thread/interrupted)
+           (expect (true? (cancellation/preserve-interrupt!
+                            (java.util.concurrent.ExecutionException. "worker failed"
+                                                                      (InterruptedException.
+                                                                        "cancel")))))
+           (expect (true? (.isInterrupted (Thread/currentThread))))
+           (finally (Thread/interrupted))))
+  (it "leaves an ordinary failure alone"
+      (try (Thread/interrupted)
+           (expect (false? (cancellation/preserve-interrupt! (RuntimeException. "boom"))))
+           (expect (false? (.isInterrupted (Thread/currentThread))))
+           (finally (Thread/interrupted))))
+  ;; Some OTHER future was cancelled; THIS thread was never interrupted, and
+  ;; arming its flag would abort work nobody asked to stop.
+  (it "never re-arms a CancellationException"
+      (try (Thread/interrupted)
+           (expect (false? (cancellation/preserve-interrupt!
+                             (java.util.concurrent.CancellationException. "another future"))))
+           (expect (false? (.isInterrupted (Thread/currentThread))))
+           (finally (Thread/interrupted)))))
+
+;; Regression: the same defect, proven through two REAL best-effort call sites --
+;; a cancel that lands inside a subprocess wait keeps its fallback value AND the
+;; cancellation. An already-set flag makes `.waitFor` throw at once, so this is
+;; deterministic rather than a race with a slow process.
+(defdescribe best-effort-subprocess-keeps-the-cancel-test
+             (it "git/run-git answers its failure map without eating the interrupt"
+                 (try (.interrupt (Thread/currentThread))
+                      (let [result (git/run-git (io/file ".") ["--version"])]
+                        (expect (nil? (:exit result)))
+                        (expect (true? (.isInterrupted (Thread/currentThread)))))
+                      (finally (Thread/interrupted))))
+             (it "the jail's detacher probe answers false without eating the interrupt"
+                 (try (.interrupt (Thread/currentThread))
+                      (expect (false? (#'process-jail/execs-in-place? [])))
+                      (expect (true? (.isInterrupted (Thread/currentThread))))
+                      (finally (Thread/interrupted)))))

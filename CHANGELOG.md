@@ -87,6 +87,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   block, file picker) and the TUI Magit surface are unchanged.
 
 ### Fixed
+
+- A cancel that landed inside a best-effort `(catch Throwable _ …)` is no longer
+  swallowed. The JVM clears the interrupt flag as it throws, so every catch-all
+  around a blocking call — `git`, the workspace's git, `rewind`, the credential
+  helper, `stty`, the jail's detacher probe, the RSS sampler, the shell's tree
+  teardown, the gateway client's port poll, the MCP listen thread, `gh auth
+  token`, the Copilot keychain read — answered its fallback value with the
+  cancellation gone, and the turn polled on to its own deadline.
+  `cancellation/preserve-interrupt!` re-arms the flag (never for a
+  `CancellationException`, which interrupted nothing), and the MCP listen thread
+  now ENDS on an interrupt instead of sleeping through it.
 - The prompt's Clojure `run_tests` note said the opposite of what the runner does. It claimed the
   managed REPL does "NOT reload namespaces automatically" and told a session to reload every
   changed *test* namespace, while the runner already `(require … :reload)`s (or `load-file`s)

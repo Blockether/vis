@@ -26,6 +26,7 @@
             [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.foundation.mcp.http :as mcp-http]
             [com.blockether.vis.internal.process-jail :as process-jail]
             [taoensso.telemere :as tel])
@@ -313,29 +314,34 @@
             (fn []
               (let [backoff (atom 1000)]
                 (while (not @closed?)
-                  (try (let
-                         [resp (http/request (build-request))
-                          status (long (:status resp))]
+                  (try
+                    (let
+                      [resp (http/request (build-request))
+                       status (long (:status resp))]
 
-                         (cond (or (= 404 status) (= 405 status))
-                               ;; Server doesn't support the listen channel — quit quietly.
-                               (reset! closed? :no-listen)
-                               (>= status 400)
-                               (do (tel/log! {:level :debug
-                                              :id ::http-listen-status
-                                              :data {:server server-name :status status}}
-                                             "MCP HTTP listen non-2xx")
-                                   (Thread/sleep (long @backoff))
-                                   (swap! backoff #(long (min 30000
-                                                              (unchecked-multiply 2 (long %))))))
-                               :else (do (reset! backoff 1000)
-                                         (doseq [msg (sse-data-objects (:body resp))]
-                                           (when (and (map? msg) (get msg "method"))
-                                             (try (on-notify msg) (catch Throwable _ nil)))))))
-                       (catch Throwable _
-                         (when-not @closed?
-                           (Thread/sleep (long @backoff))
-                           (swap! backoff #(long (min 30000 (unchecked-multiply 2 (long %)))))))))))
+                      (cond (or (= 404 status) (= 405 status))
+                            ;; Server doesn't support the listen channel — quit quietly.
+                            (reset! closed? :no-listen)
+                            (>= status 400)
+                            (do (tel/log! {:level :debug
+                                           :id ::http-listen-status
+                                           :data {:server server-name :status status}}
+                                          "MCP HTTP listen non-2xx")
+                                (Thread/sleep (long @backoff))
+                                (swap! backoff #(long (min 30000 (unchecked-multiply 2 (long %))))))
+                            :else (do (reset! backoff 1000)
+                                      (doseq [msg (sse-data-objects (:body resp))]
+                                        (when (and (map? msg) (get msg "method"))
+                                          (try (on-notify msg) (catch Throwable _ nil)))))))
+                    (catch Throwable t
+                      ;; An interrupt is the ONE failure that ENDS the loop: with the
+                      ;; flag eaten, the backoff slept on and `.interrupt` could never
+                      ;; stop this thread.
+                      (if (cancellation/preserve-interrupt! t)
+                        (reset! closed? :interrupted)
+                        (when-not @closed?
+                          (Thread/sleep (long @backoff))
+                          (swap! backoff #(long (min 30000 (unchecked-multiply 2 (long %))))))))))))
             (str "mcp-http-listen-" server-name))
       (.setDaemon true)
       (.start))))

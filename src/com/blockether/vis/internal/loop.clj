@@ -10552,7 +10552,9 @@
                        1024)
                     0)
                   (finally (.destroy process))))))
-       (catch Throwable _ 0)))
+       ;; Same shape as the shell's usage sampler: `ps` is best-effort, the
+       ;; cancel that interrupted it is not.
+       (catch Throwable t (cancellation/preserve-interrupt! t) 0)))
 
 (defn- heap-used-pct
   "Current JVM heap utilization as an integer percent of the max heap

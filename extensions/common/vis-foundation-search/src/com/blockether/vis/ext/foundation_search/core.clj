@@ -43,6 +43,7 @@
             [clojure.string :as str]
             [clojure.xml :as xml]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.workspace :as workspace])
   (:import (java.io ByteArrayInputStream ByteArrayOutputStream)
@@ -967,7 +968,7 @@
          (if (and finished? (zero? (.exitValue process)))
            (not-empty (str/trim (deref output 1000 "")))
            (do (.destroyForcibly process) nil)))
-       (catch Throwable _ nil)))
+       (catch Throwable t (cancellation/preserve-interrupt! t) nil)))
 
 (defn- github-request
   [query opts]
