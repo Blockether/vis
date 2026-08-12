@@ -10063,8 +10063,8 @@
        (gateway-sandbox/register-session! repl-sandbox-token (constantly compiled-network-policy)))
 
      ;; The user-controlled keys come only from config-spec/process-jail-config.
-     ;; Per-spawn evaluation retains live workspace roots and lazy proxy startup,
-     ;; but never reads config again.
+     ;; Per-spawn evaluation retains live workspace roots, lazy proxy startup and
+     ;; the resolved `environment:` declarations; nothing else re-reads config.
      jail-policy-fn
      (when sandbox-roots-fn
        (fn []
@@ -10087,6 +10087,9 @@
            (merge jail-config
                   {:roots-fn sandbox-roots-fn
                    :net-enabled? net-on?
+                   ;; Resolved per spawn (never baked into the session snapshot), so a
+                   ;; `.env` edit or a refreshed keychain item reaches the next child.
+                   :env-values (config/declared-environment-values)
                    :proxy-port proxy-port
                    :proxy-token (when proxy? sandbox-token)
                    :repl-proxy-port repl-proxy-port

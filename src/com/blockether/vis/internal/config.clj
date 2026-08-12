@@ -1666,8 +1666,10 @@
 ;; `extension-env-status` is the ONE funnel — the extension host, the TUI's
 ;; env-var settings row and every builtin that reads a key go through it, so a
 ;; variable resolves identically in Clojure, in Python and in the dialog that
-;; reports it. Declaring is still not EXPOSING: `jail.env` alone decides which
-;; confined child ever sees a name (`process-jail/jailed-child-env`).
+;; reports it. `declared-environment-values` is that funnel applied to the whole
+;; block: it is what every CHILD process of Vis is handed, so there is no second
+;; list to keep in sync (`jail.env` used to be one, and could only ever re-admit
+;; an ambient variable — never a `dotenv:`/`keychain:`/`command:` value).
 ;; =============================================================================
 
 (def ^:private env-var-name-pattern #"[A-Za-z_][A-Za-z0-9_]*")
@@ -1685,8 +1687,8 @@
   "Every variable name declared under `environment:`, validated and distinct.
 
    These are the USER's own declarations in the user's own config, so they are
-   offered to extensions exactly like `extensions.env-passthrough`. An extension
-   still cannot reach a host variable nobody declared."
+   offered to extensions and to child processes alike. An extension still cannot
+   reach a host variable nobody declared."
   []
   (into []
         (comp (map str) (filter #(re-matches env-var-name-pattern %)) (distinct))
@@ -1777,6 +1779,27 @@
   "Resolved value for `name`, or nil when no source produced a non-blank one."
   [name]
   (:value (extension-env-status name)))
+
+(defn declared-environment-values
+  "`{\"NAME\" \"value\"}` for every `environment:` declaration that resolves, the
+   value coming from the source that declaration NAMES.
+
+   This is what a child process of Vis is given: the shell's subprocesses
+   (confined or not), managed language processes and Python extensions all read
+   the same map, so `.env`, a keychain item or a helper command reaches a tool
+   the agent runs without the operator having exported anything into the shell
+   that launched Vis. A name that resolves to nothing is simply absent — an
+   unset variable, never an empty one.
+
+   Never throws: it runs on the spawn path, where an unreadable config must not
+   take a child process down with it."
+  []
+  (try (into {}
+             (keep (fn [name]
+                     (when-let [value (extension-env-value name)]
+                       [name value])))
+             (declared-environment-names))
+       (catch Throwable _ {})))
 
 (defn active-provider
   "Return the first (primary) provider from config, or nil."

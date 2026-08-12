@@ -21,8 +21,10 @@
       :allow-read       [<path> …]           ; additional read-only paths
       :deny-read        [<path> …]           ; protect a read region (deny wins)
       :mach-services    [<name> …]           ; macOS Mach services a child may look up
-      :inbound-ports    [<int> …]}           ; extra local ports a child may ACCEPT on
+      :inbound-ports    [<int> …]            ; extra local ports a child may ACCEPT on
                                              ; (bind is local-only; accept is port-gated)
+      :env-values       {<NAME> <value>}}    ; RESOLVED `environment:` declarations,
+                                             ; attached per spawn by the policy builder
 
    The filesystem model mirrors Anthropic's sandbox-runtime:
      - WRITE is allow-only: denied everywhere except the session roots + tmp +
@@ -745,7 +747,9 @@
 
 (def ^:private env-passthrough-names
   "Non-secret operator vars a confined child may inherit. Everything else in the
-   operator environment — API keys, tokens, credentials — is dropped."
+   operator environment — API keys, tokens, credentials — is dropped; a variable
+   a child legitimately needs is DECLARED in `environment:` and arrives as a
+   resolved value (`:env-values`), not by widening this list."
   #{"PATH" "HOME" "USER" "LOGNAME" "SHELL" "LANG" "LANGUAGE" "TERM" "TERMINFO" "TZ" "TMPDIR" "PWD"
     "HOSTNAME" "COLORTERM" "DISPLAY"})
 
@@ -763,11 +767,11 @@
 ;; detacher ran the module and wrote a file in `$HOME` that the very same jailed
 ;; argv was denied (`WRITE-DENIED`, no file) without it.
 ;;
-;; These names are therefore refused UNCONDITIONALLY — an explicit `jail.env`
-;; opt-in cannot re-enable them, because the whole point of the opt-in is to hand
-;; a var to the CONFINED child, and these never reach it: they are consumed
-;; earlier, outside the jail. Opting `LD_PRELOAD` into a sandbox is not a use
-;; case, it is the exploit.
+;; These names are therefore refused UNCONDITIONALLY — declaring one under
+;; `environment:` cannot re-enable it, because the whole point of a declaration
+;; is to hand a variable to the CONFINED child, and these never reach it: they
+;; are consumed earlier, outside the jail. Declaring `LD_PRELOAD` for a sandbox
+;; is not a use case, it is the exploit.
 
 (def ^:private pre-exec-hijack-names
   "Exact names that run attacker code during another program's startup."
@@ -789,39 +793,60 @@
       (boolean (some #(str/starts-with? k %) pre-exec-hijack-prefixes))))
 
 (defn- env-passthrough?
-  [extra ^String k]
+  [^String k]
   (and (not (pre-exec-hijack? k))
        (or (contains? env-passthrough-names k)
-           (contains? extra k)
            (boolean (some #(str/starts-with? k %) env-passthrough-prefixes)))))
 
+(defn declared-env
+  "The policy's RESOLVED `environment:` declarations, as string pairs. These are
+   the operator's own named variables — the value already came from the source
+   the declaration picked (`env:`, `dotenv:`, `keychain:`, `command:`), so the
+   jail hands them over verbatim. A [[pre-exec-hijack?]] name is dropped even
+   here: it would run code in the UNCONFINED detacher/enforcer hops, so no
+   declaration can buy it back."
+  [policy]
+  (into {}
+        (keep (fn [[k v]]
+                (let [k (str k)]
+                  (when (and (not (str/blank? k)) (not (pre-exec-hijack? k)) (some? v))
+                    [k (str v)]))))
+        (:env-values policy)))
+
 (defn jailed-child-env
-  "The COMPLETE environment for a confined child. Only an allowlist of safe,
-   inherited; every API key / token / credential in the operator environment is
-   DROPPED, and so is every [[pre-exec-hijack?]] name — those would run code in
-   the unconfined detacher/enforcer before the jail exists, so no `jail.env`
-   opt-in can bring them back. This session's proxy + CA variables are then added.
+  "The COMPLETE environment for a confined child: an allowlist of non-secret
+   operator variables, plus the resolved `environment:` declarations the policy
+   carries, plus this session's proxy + CA variables. Every API key / token /
+   credential the operator happens to have exported is DROPPED — a variable a
+   child needs is named in `environment:` — and so is every [[pre-exec-hijack?]]
+   name, which would run code in the unconfined detacher/enforcer before the jail
+   exists.
+
    Returns nil when the policy is not enforcing — the caller keeps the parent
-   environment as-is (unjailed platforms/`sandbox: false`), so non-confined
-   behavior is unchanged."
+   environment and merges [[child-env-additions]] instead (unjailed
+   platforms/`sandbox: false`), so non-confined behavior is unchanged."
   [policy]
   (when (and policy (not (:disabled? policy)) (or (inherited-jail?) (supported?)))
     (let
-      [extra
-       (into #{} (comp (map str) (remove str/blank?)) (:env-passthrough policy))
-
-       inherited
-       (into {}
-             (filter (fn [[k _]]
-                       (env-passthrough? extra k)))
-             (System/getenv))]
-
-      ;; Total: the scrub also covers the proxy additions, so no later edit to
-      ;; `proxy-env` can reintroduce a pre-exec hijack name.
+      [inherited (into {}
+                       (filter (fn [[k _]]
+                                 (env-passthrough? k)))
+                       (System/getenv))]
+      ;; Total: the scrub also covers the declared + proxy additions, so no later
+      ;; edit to either can reintroduce a pre-exec hijack name.
       (into {}
             (remove (fn [[k _]]
                       (pre-exec-hijack? k)))
-            (merge inherited (proxy-env policy))))))
+            (merge inherited (declared-env policy) (proxy-env policy))))))
+
+(defn child-env-additions
+  "What an UNCONFINED child gets ON TOP of the inherited environment: the
+   resolved `environment:` declarations plus this session's proxy + CA variables.
+   The declarations apply whether or not the jail is enabled — `environment:`
+   says where a variable comes from, and the jail only decides what ELSE a child
+   may keep."
+  [policy]
+  (merge (declared-env policy) (proxy-env policy)))
 
 ;; ── Standard language-process jail contract ────────────────────────────────
 ;; Language packs spawn managed REPLs and project test runners via raw
@@ -948,5 +973,5 @@
      (if full
        {:argv (detached-argv (wrap-argv argv policy)) :env full :replace-env? true}
        {:argv (detached-argv (wrap-argv argv policy))
-        :env (proxy-env policy)
+        :env (child-env-additions policy)
         :replace-env? false}))))

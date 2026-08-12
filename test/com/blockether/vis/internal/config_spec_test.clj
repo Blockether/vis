@@ -74,7 +74,6 @@
            "filesystem" {"allow" ["svar" "ref" "gen" "cache"]}
            ;; #90: macOS Mach lookups — an explicit allow list plus the keychain bundle.
            "mach_services" {"allow" ["com.example.agent"] "keychain" false}
-           "env" ["CI" "MY_TOKEN"]
            "deny_exec" ["definitely-not-a-real-binary-xyz"]
            "network" {"inbound_ports" [5273 8080]
                       "allowed_domains" ["github.com"]
@@ -167,6 +166,10 @@
               (assoc-in full-config
                 ["workspace" "filesystem"]
                 [{"id" "ok" "path" "~/home-ok" "description" "why" "search" false}])))
+    ;; `jail.env` is GONE: `environment:` is the one place a variable is named, and
+    ;; the old list could only ever re-admit an ambient one — never a `dotenv:`,
+    ;; `keychain:` or `command:` value — so the two blocks disagreed where it counted.
+    (expect (not (config-spec/valid? (assoc-in full-config ["jail" "env"] ["CI"]))))
     ;; deny-exec: a list of executable names (or rooted paths) to block by read.
     (expect (config-spec/valid? (assoc-in full-config ["jail" "deny_exec"] ["curl" "ssh"])))
     (expect (not (config-spec/valid? (assoc-in full-config ["jail" "deny_exec"] "curl"))))
@@ -219,7 +222,6 @@
                   :deny-exec []
                   :no-search ["~/.m2" "~/.vis"]
                   :inbound-ports [5273 8080]
-                  :env-passthrough ["CI" "MY_TOKEN"]
                   :mach-services ["com.example.agent"]
                   :path-descriptions {"/opt/svar" "a sibling repo"
                                       "~/.m2" "maven cache"

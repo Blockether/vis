@@ -169,11 +169,16 @@ through a shell — cached briefly and single-flighted, so a keychain prompt or 
 vault helper is not forked once per turn. Its stdout is never logged, never
 persisted and never placed in an error message.
 
-**Declaring is not exposing.** `environment:` answers *where a value comes from*;
-`jail.env` still decides which confined child process ever sees a name (see
-`sandbox.md`), and `LD_*`, `DYLD_*`, `PERL*`, `BASH_ENV` and friends are refused
-unconditionally. Python extensions receive the declared names in `os.environ`
-alongside the names they declare with `vis.extension(env=[...])`.
+**One block, one list.** A declared name is what Vis hands to its own children:
+Python extensions receive it in `os.environ` alongside the names they declare
+with `vis.extension(env=[...])`, and every process Vis spawns — `shell(...)`,
+managed REPLs, test runners — gets it with the value its declared source
+produced, jail on or off. There is no second allowlist to repeat it in.
+
+Everything *else* in the operator's environment is still dropped for a confined
+child (see `sandbox.md`), and `LD_*`, `DYLD_*`, `PERL*`, `BASH_ENV` and friends
+are refused unconditionally — declaring one changes nothing, because those names
+are consumed before the jail exists.
 
 ## Providers and models
 

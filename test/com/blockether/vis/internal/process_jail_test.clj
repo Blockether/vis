@@ -418,14 +418,17 @@
 
 (deftest env-scrub-allowlist
   (testing
-    "a confined child inherits ONLY the allowlist + jail.env opt-ins; every
-            operator secret is dropped, proxy/CA additions are present"
+    "a confined child inherits ONLY the non-secret allowlist plus the RESOLVED
+            `environment:` declarations; every operator secret is dropped and the
+            proxy/CA additions are present"
     (let
       [policy
        {:roots-fn (fn []
                     [(System/getProperty "java.io.tmpdir")])
         :net-enabled? false
-        :env-passthrough ["MY_OPT_IN"]}
+        ;; The value, not just the name: this is where a `dotenv:`/`keychain:`
+        ;; declaration reaches the child. `jail.env` could never carry one.
+        :env-values {"MY_DECLARED_TOKEN" "from-dotenv"}}
 
        env
        (pj/jailed-child-env policy)
@@ -440,8 +443,15 @@
       (is (contains? env "PATH"))
       (is (contains? env "HOME"))
       (is (= "1" (get env "VIS_SEATBELT_ACTIVE")))
-      (is (empty? (filter env secretish))
-          "no API key / token / secret / password var may reach a jailed child")))
+      (is (= "from-dotenv" (get env "MY_DECLARED_TOKEN"))
+          "a declared variable reaches the confined child with its resolved value")
+      (is (empty? (filter env (remove #{"MY_DECLARED_TOKEN"} secretish)))
+          "no UNDECLARED API key / token / secret / password var may reach a jailed child")))
+  (testing "an unconfined child gets the same declarations as plain additions"
+    (is (= {"MY_DECLARED_TOKEN" "from-dotenv"}
+           (pj/child-env-additions {:disabled? true
+                                    :env-values {"MY_DECLARED_TOKEN" "from-dotenv"
+                                                 "BLANK_NAME" nil}}))))
   (testing "nil when the policy is not enforcing (disabled / nil) — caller inherits"
     (is (nil? (pj/jailed-child-env nil)))
     (is (nil? (pj/jailed-child-env {:disabled? true
@@ -986,24 +996,24 @@
   ;; / `bwrap` themselves — run UNCONFINED with the child's environment. Any
   ;; variable that makes one of those hops execute code at startup is a full jail
   ;; bypass, so the allowlist must refuse it ahead of every opt-in path.
-  (testing "no startup-code variable passes, not even as an explicit jail.env opt-in"
+  (testing "no startup-code variable passes, not even as an `environment:` declaration"
     (doseq
       [k ["PERL5OPT" "PERL5LIB" "PERLLIB" "PERL5DB" "LD_PRELOAD" "LD_AUDIT" "LD_LIBRARY_PATH"
           "DYLD_INSERT_LIBRARIES" "DYLD_LIBRARY_PATH" "BASH_ENV" "BASH_FUNC_x%%" "ENV" "SHELLOPTS"
           "IFS" "GCONV_PATH" "LOCPATH" "NLSPATH" "HOSTALIASES"]]
       (is (#'pj/pre-exec-hijack? k) (str k " must be recognised as a pre-exec hijack"))
-      (is (not (#'pj/env-passthrough? #{k} k))
-          (str k " must not pass through even when the policy names it"))))
+      (is (not (#'pj/env-passthrough? k)) (str k " must not pass through the ambient scrub"))
+      (is (empty? (pj/declared-env {:env-values {k "payload"}}))
+          (str k " must not pass through even when `environment:` declares it"))))
   (testing "and the ordinary allowlist is untouched"
-    (is (#'pj/env-passthrough? #{} "PATH"))
-    (is (#'pj/env-passthrough? #{} "LC_ALL"))
-    (is (#'pj/env-passthrough? #{"MY_TOOL_FLAG"} "MY_TOOL_FLAG"))
-    (is (not (#'pj/env-passthrough? #{} "AWS_SECRET_ACCESS_KEY"))))
+    (is (#'pj/env-passthrough? "PATH"))
+    (is (#'pj/env-passthrough? "LC_ALL"))
+    (is (not (#'pj/env-passthrough? "AWS_SECRET_ACCESS_KEY"))))
   (testing "the produced environment carries none of them"
     (when-let
       [env (pj/jailed-child-env {:roots-fn (constantly [])
                                  :net-enabled? false
-                                 :env-passthrough ["PERL5OPT" "LD_PRELOAD"]})]
+                                 :env-values {"PERL5OPT" "-Mevil" "LD_PRELOAD" "/tmp/x.so"}})]
       (is (empty? (filter #'pj/pre-exec-hijack? (keys env)))))))
 
 (deftest a-pre-jail-env-hijack-cannot-escape-the-jail

@@ -833,6 +833,19 @@
           (fn []
             (expect (= {:name "VIS_TEST_DECLARED_MISSING" :source :unset :value nil}
                        (config/extension-env-status "VIS_TEST_DECLARED_MISSING")))))))
+  ;; `jail.env` used to have to REPEAT every declared name before a confined child
+  ;; saw one, and repeating a `dotenv:`/`keychain:` name there did nothing at all:
+  ;; that list could only re-admit an AMBIENT variable. One block, one resolution.
+  (it "resolves the whole block into the map every child process is handed"
+      (binding [config/*extension-getenv* {"WORK_OPENAI_KEY" "outer" "VIS_TEST_BLANK_OUTER" ""}]
+        (with-declared-environment {"OPENAI_API_KEY" {"env" "WORK_OPENAI_KEY"}
+                                    "FROM_HELPER" {"command" ["/bin/echo" "helper-value"]}
+                                    "VIS_TEST_BLANK" {"env" "VIS_TEST_BLANK_OUTER"}}
+                                   (fn []
+                                     ;; An unset name is ABSENT, never an empty string.
+                                     (expect (= {"OPENAI_API_KEY" "outer"
+                                                 "FROM_HELPER" "helper-value"}
+                                                (config/declared-environment-values)))))))
   (it "never persists a value: the block survives the write round trip unchanged"
       (let [block {"environment" {"P" {"env" "PATH"} "Q" {"keychain" "vis-exa"}}}]
         (expect (= block (config/interpolate-env block)))

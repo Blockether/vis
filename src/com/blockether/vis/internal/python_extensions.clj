@@ -220,23 +220,9 @@
 ;; context. There is no blanket passthrough of the HOST environment — that would
 ;; hand every third-party extension the user's AWS/Gerrit/GitHub credentials. The
 ;; user's own config is the exception, and an explicit one: a name written under
-;; `environment:` or `extensions.env-passthrough` was declared by the operator
-;; for exactly this purpose, so it is offered to extensions as well.
+;; `environment:` was declared by the operator for exactly this purpose, so it is
+;; offered to extensions as well.
 ;; =============================================================================
-
-(defn- config-env-passthrough
-  "Extra env var names the USER allowed in `vis.yml`:
-
-     extensions:
-       env-passthrough: [RBI_GENAI_API_KEY]"
-  []
-  (try (let [cfg (config/current-config)]
-         (into #{}
-               (comp (map str) (remove str/blank?))
-               (or (get-in cfg [:extensions :env-passthrough])
-                   (get-in cfg [:extensions "env-passthrough"])
-                   [])))
-       (catch Throwable _ #{})))
 
 (def ^:private env-name-re #"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -256,19 +242,15 @@
    under another name, `.env`/`.env.local`, a keychain item or a helper command —
    and otherwise the process environment.
 
-   Three sources of NAMES, unioned: what the extension DECLARED, what the user
-   allowed with `extensions.env-passthrough`, and what the user declared under
-   `environment:`. The last two are the user's own config, so they are an opt-in
-   by construction; a name nobody declared stays unreachable no matter what the
-   extension asks for.
+   Two sources of NAMES, unioned: what the extension DECLARED and what the user
+   declared under `environment:`. The latter is the user's own config, so it is
+   an opt-in by construction; a name nobody declared stays unreachable no matter
+   what the extension asks for.
 
    Names that resolve to nothing are simply absent from the result (never an
    empty string, so an extension's `os.environ.get(...) or default` still works)."
   [declared]
-  (let
-    [names (normalize-env-names (concat (or declared [])
-                                        (config-env-passthrough)
-                                        (config/declared-environment-names)))]
+  (let [names (normalize-env-names (concat (or declared []) (config/declared-environment-names)))]
     (into {}
           (keep (fn [n]
                   (when-let [v (config/extension-env-value n)]

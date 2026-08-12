@@ -508,12 +508,13 @@
       ;; Route the child's HTTP clients at the loopback egress proxy when the jail
       ;; policy walls it to proxy-only egress (net-off-except-loopback).
       (if-let [full (process-jail/jailed-child-env policy)]
-        ;; Confined child: REPLACE the inherited env with the allowlisted set so the
-        ;; operator's API keys/tokens are never handed to sandboxed code.
+        ;; Confined child: REPLACE the inherited env with the allowlisted set plus the
+        ;; declared `environment:` values, so the operator's API keys/tokens are never
+        ;; handed to sandboxed code while a DECLARED variable still arrives.
         (let [^java.util.Map e (.environment pb)]
           (.clear e)
           (.putAll e ^java.util.Map full))
-        (let [pe (process-jail/proxy-env policy)]
+        (let [pe (process-jail/child-env-additions policy)]
           (when (seq pe) (.putAll (.environment pb) ^java.util.Map pe))))
       (when merge-err? (.redirectErrorStream pb true))
       (let [^Process p (spawn-retrying-fds #(.start pb))]
@@ -567,11 +568,12 @@
                                :dir (.getPath ^File dir)
                                :env (doto ^HashMap
                                           (if-let [full (process-jail/jailed-child-env policy)]
-                                            ;; Confined child: allowlisted env only (secrets dropped).
+                                            ;; Confined child: allowlisted env + declared
+                                            ;; `environment:` values (secrets dropped).
                                             (HashMap. ^java.util.Map full)
                                             (doto (HashMap. ^java.util.Map (System/getenv))
                                               (.putAll ^java.util.Map
-                                                       (process-jail/proxy-env policy))))
+                                                       (process-jail/child-env-additions policy))))
                                       (.putAll ^java.util.Map pty-child-env))
                                :cols 120
                                :rows 40})))
@@ -2384,7 +2386,11 @@
   [env opts]
   (shell-dispatch (-> (or env {})
                       (assoc :shell-origin "trusted-extension")
-                      (assoc :jail-policy-fn (constantly {:disabled? true}))
+                      ;; Unconfined, but the operator's `environment:` declarations still
+                      ;; apply: they say where a variable comes from, not who may see it.
+                      (assoc :jail-policy-fn (constantly {:disabled? true
+                                                          :env-values
+                                                          (config/declared-environment-values)}))
                       (assoc-in [:security-policy :sandbox] false))
                   opts))
 
@@ -2416,7 +2422,7 @@
      (:process-jail security)]
 
     (if (or (false? (:sandbox security)) (:disabled? jail-config))
-      {:disabled? true ::environment latest-env}
+      {:disabled? true :env-values (config/declared-environment-values) ::environment latest-env}
       (let
         [entries
          (workspace/env-filesystem-roots latest-env)
@@ -2472,6 +2478,8 @@
                        :proxy-port proxy-port
                        :proxy-token token
                        :ca-file ca-file
+                       ;; Resolved per spawn: a `.env` edit lands on the next child.
+                       :env-values (config/declared-environment-values)
                        ::environment latest-env
                        ::cleanup cleanup}))
              (catch Throwable t (cleanup) (throw t)))))))

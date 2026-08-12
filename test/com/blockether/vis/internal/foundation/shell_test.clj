@@ -117,25 +117,41 @@
   ([env id] (wait* env id 30))
   ([env id secs] (:result (shell-wait* env id {:seconds secs}))))
 
-(defdescribe shell-env-injection-test
-             (it "uses declarative env injection rather than a before middleware shim"
-                 (expect (true? (:ext.symbol/inject-env? shell/shell-symbol)))
-                 (expect (nil? (:ext.symbol/before-fn shell/shell-symbol))))
-             (it "a failing or nil session policy denies spawn instead of failing open"
-                 (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                   (expect (threw? #(shell-run* {:session-id "t"
-                                                 :jail-policy-fn (fn []
-                                                                   (throw (ex-info "boom" {})))}
-                                                "echo escaped")))
-                   (expect (threw? #(shell-run* {:session-id "t" :jail-policy-fn (constantly nil)}
-                                                "echo escaped")))))
-             (it "sandbox false is represented explicitly and still launches unwrapped"
-                 (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                   (let
-                     [r (shell-run* {:session-id "t" :jail-policy-fn (constantly {:disabled? true})}
-                                    "printf explicit-opt-out")]
-                     (expect (= 0 (get r "exit")))
-                     (expect (= "explicit-opt-out" (get r "stdout")))))))
+(defdescribe
+  shell-env-injection-test
+  (it "uses declarative env injection rather than a before middleware shim"
+      (expect (true? (:ext.symbol/inject-env? shell/shell-symbol)))
+      (expect (nil? (:ext.symbol/before-fn shell/shell-symbol))))
+  (it "a failing or nil session policy denies spawn instead of failing open"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (expect (threw? #(shell-run* {:session-id "t"
+                                      :jail-policy-fn (fn []
+                                                        (throw (ex-info "boom" {})))}
+                                     "echo escaped")))
+        (expect (threw? #(shell-run* {:session-id "t" :jail-policy-fn (constantly nil)}
+                                     "echo escaped")))))
+  (it "sandbox false is represented explicitly and still launches unwrapped"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let
+          [r (shell-run* {:session-id "t" :jail-policy-fn (constantly {:disabled? true})}
+                         "printf explicit-opt-out")]
+          (expect (= 0 (get r "exit")))
+          (expect (= "explicit-opt-out" (get r "stdout"))))))
+  ;; `jail.env` is gone: the ONE `environment:` declaration carries the VALUE,
+  ;; so a name only `.env`, a keychain item or a helper command knows reaches a
+  ;; spawned tool even though the shell that launched Vis never exported it.
+  ;; The old list could re-admit an ambient name and nothing else.
+  (it "a declared `environment:` value reaches the child, jail off or on"
+      (binding [workspace/*workspace-root* (workspace/trunk-root)]
+        (let
+          [declared {"VIS_TEST_DECLARED" "from-declaration"}
+           r (shell-run* {:session-id "t"
+                          :jail-policy-fn (constantly {:disabled? true :env-values declared})}
+                         "printf %s \"$VIS_TEST_DECLARED\"")]
+
+          (expect (= "from-declaration" (get r "stdout")))
+          (expect (= declared
+                     (process-jail/child-env-additions {:disabled? true :env-values declared})))))))
 
 ;; Regression: a background `git stash list` came back with a stray `=` above the
 ;; output, a `>` welded to the next command's first line and long paths broken

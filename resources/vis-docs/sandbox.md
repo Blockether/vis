@@ -303,13 +303,21 @@ and other operator credential is dropped before the process starts. This covers
 the sandbox's `shell(...)` call (every stage), trusted extension `subprocess`, and every managed
 language REPL / test runner.
 
-To pass a specific extra variable through to confined children, list its exact
-name under `jail.env`:
+To give a confined child a specific variable, **declare it in `environment:`**
+(see `configuration.md`) — the same block that says where the value comes from.
+Declared names are injected with their resolved values, so a variable that lives
+in `.env`, the keychain or a helper command reaches the child even though the
+operator's shell never exported it:
 
 ```yaml
-jail:
-  env: [CI, MY_BUILD_TOKEN]   # exact var names; everything else stays dropped
+environment:
+  CI: {env: CI}                     # pass an ambient variable through
+  MY_BUILD_TOKEN: {dotenv: MY_BUILD_TOKEN}   # …or one that only `.env` knows
 ```
+
+Everything not declared stays dropped, and `LD_*`, `DYLD_*`, `PERL*`,
+`BASH_ENV` and friends are refused even when declared: they run code in the
+unconfined hops that install the jail, so they never reach the child anyway.
 
 File **metadata** (existence, size, mtime) is likewise scoped: a child may stat
 its granted roots and the directory ancestors it needs to resolve paths, but not

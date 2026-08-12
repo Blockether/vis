@@ -20,8 +20,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   instructions still have to be fetched is the model's call, since only the model can see whether
   that text is still in front of it. Every skill surface is now stateless: two `/<name>`s expand
   identically and nothing is recorded between them.
+- `environment:` is the ONE place a variable is named, and a declared name now reaches every
+  child process Vis spawns — `shell(...)` (jailed or not), managed REPLs, test runners and Python
+  extensions — carrying the value its own source produced. A `dotenv:`, `keychain:` or `command:`
+  declaration therefore works for a tool the agent runs without the operator's shell having
+  exported anything.
 
 ### Removed
+- `jail.env`. It was a second list of the same names that could only ever re-admit an AMBIENT
+  variable — never a `dotenv:`/`keychain:`/`command:` value — so the two blocks disagreed exactly
+  where it mattered. Declare the variable in `environment:` instead (`CI: {env: CI}` is the old
+  `jail.env: [CI]`). Everything undeclared is still dropped for a confined child, and `LD_*`,
+  `DYLD_*`, `PERL*`, `BASH_ENV` and friends are still refused even when declared.
+- `extensions.env-passthrough`, a third list of the same names: `extensions` was never a valid
+  top-level config key, so the block was rejected before anything could read it.
 - The `skill` verb. A skill is a document like any other: `apropos(text)` finds it, `doc("name")`
   prints the whole `SKILL.md`, and reading it is the whole of using it. There is no activation, no
   `status`/`scope`/`note` receipt, no idempotent re-read and no fold protection for an "active"

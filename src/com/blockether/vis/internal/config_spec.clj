@@ -24,7 +24,6 @@
 (defn- non-empty-string-list? [x] (and (string-list? x) (seq x)))
 (def ^:private env-var-name-re #"[A-Za-z_][A-Za-z0-9_]*")
 (defn- env-var-name? [x] (and (string? x) (boolean (re-matches env-var-name-re x))))
-(defn- env-var-name-list? [x] (and (vector? x) (every? env-var-name? x)))
 (defn- rooted-path?
   "A filesystem grant must be absolute (\"/\") or home-relative (\"~\", \"~/\") —
    a bare-relative path resolves against the gateway process cwd, silently
@@ -266,12 +265,16 @@
    are credentials, never grep fodder."
   ["~/Library/Keychains" "/Library/Keychains"])
 
-(def jail-keys #{"enabled" "filesystem" "network" "env" "deny_exec" "mach_services"})
+(def jail-keys #{"enabled" "filesystem" "network" "deny_exec" "mach_services"})
+;; There is no `jail.env`: `environment:` is the ONE place a variable is named,
+;; and every name declared there reaches Vis' children with the value its own
+;; source produced. A second list of the same names bought nothing — it could
+;; only re-admit an AMBIENT variable, never a `dotenv:`/`keychain:`/`command:`
+;; value, so the two blocks disagreed exactly where it mattered.
 (def jail-schema
   {"enabled" boolean?
    "filesystem" (spec-pred ::jail-filesystem)
    "network" (spec-pred ::network)
-   "env" env-var-name-list?
    "deny_exec" string-list?
    "mach_services" (spec-pred ::jail-mach-services)})
 (s/def ::jail #(closed-map? jail-schema %))
@@ -443,8 +446,12 @@
 ;; — which is what `${NAME}` and `api_key_command` exist to prevent. A keychain
 ;; item and a helper command never hold a value in the file at all.
 ;;
-;; Declaring is not exposing: this key answers "where does it come from", while
-;; `jail.env` still decides which CONFINED child ever sees a name.
+;; Declaring IS the exposure decision: a name written here is resolved from its
+;; own source and handed to Vis' own children — Python extensions, the shell's
+;; subprocesses (confined or not) and managed language processes. Nothing else
+;; of the operator's environment reaches a CONFINED child; the names that run
+;; code during another program's startup (`LD_*`, `DYLD_*`, `PERL*`, `BASH_ENV`
+;; …) are refused even when declared (`process-jail/jailed-child-env`).
 
 (def environment-source-schema
   {;; The process environment, read under this name — also the rename knob.
@@ -674,7 +681,7 @@
 
 (def process-jail-config-keys
   #{:disabled? :allow-read-write :allow-read :allow-write :deny-read :deny-write :deny-exec
-    :no-search :inbound-ports :env-passthrough :path-descriptions :mach-services})
+    :no-search :inbound-ports :path-descriptions :mach-services})
 
 (s/def ::process-jail-config
   (s/and map?
@@ -685,7 +692,6 @@
          #(rooted-path-list? (or (:no-search %) []))
          #(rooted-path-list? (or (:deny-exec %) []))
          #(s/valid? (get network-schema "inbound_ports") (:inbound-ports %))
-         #(env-var-name-list? (or (:env-passthrough %) []))
          #(string-list? (or (:mach-services %) []))
          #(let
             [d
@@ -1042,7 +1048,6 @@
         :deny-exec (resolve-exec-denies (get jail "deny_exec"))
         :no-search (into [] (distinct) (concat no-search (when keychain? keychain-read-paths)))
         :inbound-ports (vec (get-in jail ["network" "inbound_ports"]))
-        :env-passthrough (vec (get jail "env"))
         :mach-services mach-services
         :path-descriptions descriptions}))))
 
