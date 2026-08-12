@@ -13,7 +13,7 @@
              (it "retries once and warns when the GraalPy context cannot be built"
                  (let [calls (atom 0)]
                    (with-redefs
-                     [pyx/build-context (fn []
+                     [pyx/build-context (fn [_label]
                                           (swap! calls inc)
                                           (throw (ex-info "cold context" {})))]
                      (let [layout (pyproj/project-layout tmp)]
@@ -31,9 +31,10 @@
                     pyx/build-context]
 
                    (with-redefs
-                     [pyx/build-context
-                      (fn []
-                        (if (= 1 (swap! calls inc)) (throw (ex-info "cold context" {})) (real)))]
+                     [pyx/build-context (fn [label]
+                                          (if (= 1 (swap! calls inc))
+                                            (throw (ex-info "cold context" {}))
+                                            (real label)))]
                      (let [layout (pyproj/project-layout tmp)]
                        (expect (nil? (:warning layout)))
                        (expect (= 2 @calls))))))

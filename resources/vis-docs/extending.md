@@ -709,7 +709,7 @@ from the model's sandbox:
 | --- | --- | --- |
 | Who writes the code | the model | **you** |
 | Filesystem | confined to workspace roots | **real, unrestricted** |
-| Network / env vars / subprocess | gateway policy / restricted | **real, inherited, unrestricted** |
+| Network / env vars / subprocess | gateway policy / restricted | **real, inherited, unrestricted** — output captured, not on your terminal |
 | Lifetime | per session | process (rebuilt on `/reload`) |
 
 This is an intentional trust decision, not a missing sandbox feature. Extension
@@ -718,6 +718,22 @@ environment variables because they are user-installed plugins. They still deny
 arbitrary host-class, native, and polyglot interop; host access is limited to the
 bound `vis` API. The model can call an exported tool but cannot evaluate code in
 the extension context. See [Process sandbox and gateway egress](sandbox.md).
+
+**Output is captured, never inherited.** Unrestricted means the process runs with
+your permissions, not that it owns Vis' terminal. Any stream the extension does
+not read itself — a child's stdout/stderr, the context's own `print()` and
+tracebacks — is piped, drained and logged under the extension's file name, so it
+lands in the diagnostic log instead of on whatever terminal happens to own the
+running Vis. Two consequences worth knowing before you write one:
+
+- A child that asks `isatty()` about an uncaptured stream now sees a pipe:
+  progress bars render plain and a genuinely interactive child cannot work.
+- Read the bytes yourself when you need them (`capture_output=True`,
+  `stdout=subprocess.PIPE`, `check_output`) — those streams are passed straight
+  through and never touched. A file or descriptor redirect (`stdout=open(...)`,
+  `stdout=os.open(...)`) does **not** reach that file: GraalPy hands it to the
+  host as plain inheritance, so the bytes go to the log like any other
+  uncaptured stream.
 
 Ordinary process paths stay trusted and unrestricted: `subprocess`, `os.system`,
 `os.popen`, and `vis.shell({...})` ignore the process jail even when a session has

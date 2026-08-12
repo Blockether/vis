@@ -49,6 +49,7 @@
             [com.blockether.vis.internal.notifications :as notifications]
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
+            [com.blockether.vis.internal.python-process-handler :as process-handler]
             [com.blockether.vis.internal.security-policy :as security-policy]
             [com.blockether.vis.internal.toggles :as toggles]
             [taoensso.telemere :as tel])
@@ -265,18 +266,32 @@
   "Build one trusted extension context on the shared Engine. Extensions have
    real filesystem, network, environment, thread, and subprocess access; only
    arbitrary host interop remains unavailable. Use `vis.jailed_shell` when a
-   command should instead run under the current session's jail policy."
-  ^Context []
-  (-> (Context/newBuilder (into-array String ["python"]))
-      (.engine ^Engine @env/shared-engine)
-      (.allowAllAccess false)
-      (.allowIO IOAccess/ALL)
-      (.allowCreateThread true)
-      (.allowCreateProcess true)
-      (.allowNativeAccess false)
-      (.allowPolyglotAccess PolyglotAccess/NONE)
-      (.allowEnvironmentAccess EnvironmentAccess/INHERIT)
-      (.build)))
+   command should instead run under the current session's jail policy.
+
+   Nothing the context produces reaches a descriptor uncaptured: guest stdout
+   and stderr are bound to the log tagged with `label`, and every process the
+   extension spawns runs under `internal.python-process-handler`, which pipes
+   and drains whatever the guest itself does not read. Both are required —
+   the JVM stream swap in `internal.config/init-cli!` replaces PrintStreams
+   and a child process writes to the file DESCRIPTOR, which under a
+   foreground gateway is the operator's terminal."
+  ^Context [label]
+  (let [emit (process-handler/log-emit label)]
+    (-> (Context/newBuilder (into-array String ["python"]))
+        (.engine ^Engine @env/shared-engine)
+        (.allowAllAccess false)
+        (.allowIO IOAccess/ALL)
+        (.allowCreateThread true)
+        (.allowCreateProcess true)
+        (.allowNativeAccess false)
+        (.allowPolyglotAccess PolyglotAccess/NONE)
+        (.allowEnvironmentAccess EnvironmentAccess/INHERIT)
+        (.out (process-handler/line-sink-stream (fn [line]
+                                                  (emit "stdout" line))))
+        (.err (process-handler/line-sink-stream (fn [line]
+                                                  (emit "stderr" line))))
+        (.processHandler (process-handler/contained-handler emit))
+        (.build))))
 
 ;; Python hands LEVEL as a string; the boundary is strings-only, so the
 ;; lookup maps string -> the INTERNAL telemere/notification level keyword.
@@ -1487,7 +1502,7 @@
       (extension/sha256-hex source)
 
       ctx
-      (build-context)]
+      (build-context (.getName f))]
 
      (try (bind-host! ctx (.getName f))
           (locking ctx

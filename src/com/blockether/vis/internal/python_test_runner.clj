@@ -179,7 +179,7 @@
      (test-sys-path scan-dir test-file sys-path)
 
      ^Context ctx
-     (pyx/build-context)]
+     (pyx/build-context (.getName test-file))]
 
     (try (pyx/bind-host! ctx (.getName test-file))
          (locking ctx

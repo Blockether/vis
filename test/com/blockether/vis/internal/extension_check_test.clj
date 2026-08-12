@@ -232,7 +232,7 @@
                 (expect (= (set (re-seq #"__vis_host_\w+__" pyx/bootstrap-python))
                            (set pyx/host-member-names))))
             (it "cannot run, so a checked form is judged by the engine and nobody else"
-                (let [^Context ctx (pyx/build-context)]
+                (let [^Context ctx (pyx/build-context "inert-host-test")]
                   (try (pyx/bind-inert-host! ctx nil)
                        (.eval ctx "python" ^String pyx/bootstrap-python)
                        (expect (str/includes?

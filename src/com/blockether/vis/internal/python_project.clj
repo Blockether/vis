@@ -146,7 +146,7 @@
   [^String dir]
   (let
     [built
-     (try {:ctx (pyx/build-context)}
+     (try {:ctx (pyx/build-context "python-project-layout")}
           (catch Throwable t
             {:warning (str "GraalPy context unavailable, project layout not read: "
                            (throwable-msg t))}))

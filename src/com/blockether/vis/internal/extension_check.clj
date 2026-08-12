@@ -37,7 +37,7 @@
 (defn- checker-context
   "A context holding the real `vis` module with an inert host, plus the checker."
   ^Context []
-  (let [ctx (px/build-context)]
+  (let [^Context ctx (px/build-context "extension-check")]
     (px/bind-inert-host! ctx {"__vis_host_check_input__" human-input/check-json})
     (locking ctx
       (.eval ctx "python" ^String px/bootstrap-python)
