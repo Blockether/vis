@@ -111,7 +111,7 @@
      tail
      (if (and (pos? prev-len) (<= prev-len n)) (subs s prev-len) s)]
 
-    (boolean (re-find #"[.!?…][\"')\]]*(?:\s|$)|\n" tail))))
+    (boolean (re-find strutil/sentence-boundary-pattern tail))))
 
 (defn- coalesce-delta?
   "True when this transient reasoning/content/prose delta should be SKIPPED on
@@ -1252,7 +1252,7 @@
          ;; The iteration's complete reasoning + complete assistant prose ride
          ;; the boundary event too — the canonical, PERSISTED final text.
          :iteration-final
-         (cond-> {:done (boolean done?) :thinking (strutil/normalize-thinking-text thinking)}
+         (cond-> {:done (boolean done?) :thinking (strutil/settled-thinking-text thinking)}
            (some-> assistant-prose
                    str
                    str/trim
@@ -1268,7 +1268,7 @@
          ;; `:vis/provider-error-data`).
          (cond->
            {:error (when (some? error) (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
-            :thinking (strutil/normalize-thinking-text thinking)}
+            :thinking (strutil/settled-thinking-text thinking)}
            (map? error)
            (assoc :error-data (select-keys error [:type :message :status :cause-class]))
 
@@ -1739,7 +1739,7 @@
   (cond->
     (-> iteration
         (dissoc :llm-assistant-message)
-        (update :thinking strutil/normalize-thinking-text))
+        (update :thinking strutil/settled-thinking-text))
     (seq (:forms iteration))
     (update :forms #(mapv form/with-display-code %))))
 

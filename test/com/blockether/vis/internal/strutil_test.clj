@@ -78,3 +78,23 @@
                  (expect (nil? (su/normalize-thinking-text "")))
                  (expect (nil? (su/normalize-thinking-text "   \n\n ")))
                  (expect (nil? (su/normalize-thinking-text "…")))))
+
+;; Regression: the provider's CUT summary was rendered as the iteration's whole
+;; thought — `I found…`, `So the issue…`, `The diff…` — reading as if Vis had
+;; truncated the model, on iterations that had really thought for 10-25s.
+(defdescribe
+  settled-thinking-text-test
+  (it "keeps a summary that closed at least one sentence"
+      (expect (= "The tests pass. I need" (su/settled-thinking-text "The tests pass. I need…")))
+      (expect (= "Checked the parser." (su/settled-thinking-text "Checked the parser.…")))
+      (expect (= "first\nsecond" (su/settled-thinking-text "first\n\nsecond…"))))
+  (it "drops a summary the provider cut before its first sentence"
+      (expect (nil? (su/settled-thinking-text "So the issue…")))
+      (expect (nil? (su/settled-thinking-text "I found…")))
+      (expect (nil? (su/settled-thinking-text
+                      "The condition looks right for `.txt` files, so I need…")))
+      (expect (nil? (su/settled-thinking-text "The diff"))))
+  (it "answers nil for nothing, like the live normalizer"
+      (expect (nil? (su/settled-thinking-text nil)))
+      (expect (nil? (su/settled-thinking-text "   \n ")))
+      (expect (nil? (su/settled-thinking-text "…")))))

@@ -464,8 +464,8 @@
 
        base
        (assoc entry
-         :thinking (or (strutil/normalize-thinking-text (:thinking chunk))
-                       (strutil/normalize-thinking-text (:thinking entry)))
+         :thinking (or (strutil/settled-thinking-text (:thinking chunk))
+                       (strutil/settled-thinking-text (:thinking entry)))
          :assistant-prose (or (some-> (:assistant-prose chunk)
                                       str
                                       str/trim
@@ -504,8 +504,8 @@
 
     :iteration-error
     (assoc entry
-      :thinking (or (strutil/normalize-thinking-text (:thinking chunk))
-                    (strutil/normalize-thinking-text (:thinking entry)))
+      :thinking (or (strutil/settled-thinking-text (:thinking chunk))
+                    (strutil/settled-thinking-text (:thinking entry)))
       :activity nil
       :error (:error chunk)
       :done? true)

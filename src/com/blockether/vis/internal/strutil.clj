@@ -88,3 +88,35 @@
                    str/trim
                    strip-elision-marker
                    str/trim))))
+
+(def sentence-boundary-pattern
+  "One CLOSED sentence or clause end in model text — `.`, `!`, `?` or `…` with
+   any trailing quotes/brackets, at whitespace or end of string, or a newline.
+
+   Owned here because two rules need the same notion of \"the model finished a
+   thought\": the gateway flushes the live stream one sentence at a time
+   (`gateway.state/sentence-closed-in-suffix?`), and `settled-thinking-text`
+   refuses a summary that never closed one."
+  #"[.!?…][\"')\]]*(?:\s|$)|\n")
+
+(defn settled-thinking-text
+  "Canonical thinking text for a SETTLED iteration — what a transcript, a
+   timeline entry or a replayed row keeps — or nil when the provider showed
+   nothing usable.
+
+   `normalize-thinking-text`, plus: a summary that never closes a single
+   sentence is a CUT summary, not a thought. Anthropic writes the thinking
+   summary with a SECOND model that streams alongside the thinking block; when
+   the block closes first the summary stops wherever it stood, and the wire
+   terminates it with the `…` marker. Over 4000 iterations of one week's
+   sessions (`session_turn_iteration`) 32 landed as `I found…`, `So the
+   issue…`, `The diff…` — one of them after the model had spent 24.5s and 2056
+   output tokens — and each reads on screen as if Vis had truncated the model.
+   A long summary keeps its cut tail: whole sentences already stand in front
+   of it.
+
+   LIVE ticks keep `normalize-thinking-text`: mid-stream every summary is still
+   a fragment, and the stream must paint as it arrives."
+  [text]
+  (when-let [s (normalize-thinking-text text)]
+    (when (re-find sentence-boundary-pattern s) s)))

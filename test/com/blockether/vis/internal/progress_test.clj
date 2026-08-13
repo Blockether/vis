@@ -87,14 +87,14 @@
          (:on-chunk tracker)]
 
         (on {:phase :provider-call :iteration 1 :started-at-ms 0})
-        (on {:phase :reasoning :iteration 1 :thinking "warm-up"})
+        (on {:phase :reasoning :iteration 1 :thinking "Warm-up done."})
         (on {:phase :iteration-final :iteration 1 :final nil :done? false})
         ;; A malformed chunk with no iteration is ignored (no phantom bucket).
         (on {:phase :reasoning :thinking "no-iteration"})
         (let [timeline ((:get-timeline tracker))]
           (expect (= 1 (count timeline)))
           (expect (= 1 (:iteration (first timeline))))
-          (expect (= "warm-up" (:thinking (first timeline)))))))
+          (expect (= "Warm-up done." (:thinking (first timeline)))))))
   (it "streams provider content as :content-stream until response-parse done"
       ;; User-visible regression: prior to live answer streaming the
       ;; bubble froze for several seconds between reasoning end and the
@@ -198,3 +198,20 @@
                   :forms
                   first)]
         (expect (= "print(42)" (:code form)))))))
+
+;; Regression: a timeline entry kept the provider's CUT summary as the settled
+;; iteration's thinking, so the bubble read `I need…` after the iteration ended.
+(defdescribe cut-summary-thinking-entry-test
+             (it "keeps a settled summary that closed a sentence"
+                 (let
+                   [entry
+                    (#'progress/update-entry
+                     {}
+                     {:phase :iteration-final :done? true :thinking "Checked the parser. I need…"})]
+                   (expect (= "Checked the parser. I need" (:thinking entry)))))
+             (it "drops a cut summary instead of settling the stub on the entry"
+                 (let
+                   [entry (#'progress/update-entry
+                           {:thinking "I need"}
+                           {:phase :iteration-final :done? true :thinking "I need…"})]
+                   (expect (nil? (:thinking entry))))))

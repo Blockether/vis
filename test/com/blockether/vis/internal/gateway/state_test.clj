@@ -3751,3 +3751,31 @@
         (expect (every? #(seq (str (get % "text"))) deltas))
         ;; …and the block that DID open still closes exactly once.
         (expect (= (count started) (count (of-type "content.block.completed"))))))))
+
+;; Regression: `iteration.completed` shipped the provider's CUT summary as the
+;; iteration's thinking, so every surface painted a two-word stub — `So the
+;; issue…` on an iteration where the model had spent 24.5s and 2056 tokens.
+(defdescribe cut-summary-thinking-test
+             (it "keeps a settled summary that closed a sentence"
+                 (let
+                   [[type _ payload] (#'state/chunk->event
+                                      {:phase :iteration-final
+                                       :done? true
+                                       :iteration 1
+                                       :thinking "Checked the parser. I need…"})]
+                   (expect (= "iteration.completed" type))
+                   (expect (= "Checked the parser. I need" (:thinking payload)))))
+             (it "ships no thinking when the provider cut the summary mid-clause"
+                 (let
+                   [[_ _ payload]
+                    (#'state/chunk->event
+                     {:phase :iteration-final :done? true :iteration 1 :thinking "So the issue…"})]
+                   (expect (nil? (:thinking payload)))))
+             (it "does the same on the iteration's error boundary"
+                 (let
+                   [[_ _ payload] (#'state/chunk->event
+                                   {:phase :iteration-error
+                                    :iteration 1
+                                    :thinking "I found…"
+                                    :error {:type :provider :message "boom"}})]
+                   (expect (nil? (:thinking payload))))))
