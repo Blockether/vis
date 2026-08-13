@@ -39,7 +39,7 @@ definitions (29):
 
 Each row carries plain 1-based `line`/`end_line` numbers and the matching `anchor`/`end_anchor`, so a definition is already a `patch` argument. Read that one definition with `struct_nodes` at its `line` instead of paging the file. In Python, the structured `definitions` and `imports` values can stay bound while the model prints only the rows it needs.
 
-For unsupported text, generated files, or one already-known region, `cat(path, start, end)` returns that window as `line:hash│ text` — one anchored line per source line, so the read that shows you the region also ADDRESSES it. `Path(path).read_text()` is for a file you only consume, never for one you are about to edit.
+For unsupported text, generated files, or one already-known region, `cat(path, start, end)` returns that window as `line:hash│ text` — one anchored line per source line, so the read that shows you the region also ADDRESSES it. A negative endpoint counts from the end (`cat(path, -50)` is the tail 50 lines, `cat(path, -50, -30)` the window between them). `Path(path).read_text()` is for a file you only consume, never for one you are about to edit.
 
 ## Edit structure, not surrounding text
 

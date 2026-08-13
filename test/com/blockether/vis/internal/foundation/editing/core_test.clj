@@ -1225,105 +1225,131 @@
         (expect (contains? names "grep")))))
 
 
-(defdescribe cat-returns-anchored-string-test
-             (it "every line is addressable, blanks included"
-                 (let
-                   [rel
-                    (write-temp! "cat/anchored.clj" "(ns a)\n\n(defn one [] 1)\n(defn two [] 2)\n")
+(defdescribe
+  cat-returns-anchored-string-test
+  (it "every line is addressable, blanks included"
+      (let
+        [rel
+         (write-temp! "cat/anchored.clj" "(ns a)\n\n(defn one [] 1)\n(defn two [] 2)\n")
 
-                    cat-tool
-                    (comp :result (private-fn "cat-tool"))
+         cat-tool
+         (comp :result (private-fn "cat-tool"))
 
-                    out
-                    (cat-tool rel)
+         out
+         (cat-tool rel)
 
-                    lines
-                    (string/split-lines out)]
+         lines
+         (string/split-lines out)]
 
-                   ;; A plain String, never a map: `print(cat(...))` IS the whole surface.
-                   (expect (string? out))
-                   (expect (= 4 (count lines)))
-                   (expect (every? #(re-matches #"\d+:[0-9a-f]{3}│ .*" %) lines))
-                   ;; The blank line carries an anchor too, so the read is gap-free.
-                   (expect (string/starts-with? (nth lines 1) "2:000│"))))
-             ;; Regression: `cat` answered its anchored text as a BARE STRING, so a real
-             ;; sandbox call died at the extension boundary with "Symbol 'cat' must
-             ;; return a canonical :envelope map" while every direct call here passed.
-             (it "the tool answers the canonical envelope with the text as :result"
-                 (let
-                   [rel
-                    (write-temp! "cat/envelope.txt" "alpha\nbeta\n")
+        ;; A plain String, never a map: `print(cat(...))` IS the whole surface.
+        (expect (string? out))
+        (expect (= 4 (count lines)))
+        (expect (every? #(re-matches #"\d+:[0-9a-f]{3}│ .*" %) lines))
+        ;; The blank line carries an anchor too, so the read is gap-free.
+        (expect (string/starts-with? (nth lines 1) "2:000│"))))
+  ;; Regression: `cat` answered its anchored text as a BARE STRING, so a real
+  ;; sandbox call died at the extension boundary with "Symbol 'cat' must
+  ;; return a canonical :envelope map" while every direct call here passed.
+  (it "the tool answers the canonical envelope with the text as :result"
+      (let
+        [rel
+         (write-temp! "cat/envelope.txt" "alpha\nbeta\n")
 
-                    env
-                    ((private-fn "cat-tool") rel)]
+         env
+         ((private-fn "cat-tool") rel)]
 
-                   (expect (extension/tool-result? env))
-                   (expect (true? (:success? env)))
-                   (expect (string? (:result env)))
-                   (expect (string/starts-with? (:result env) "1:"))))
-             (it "an anchor endpoint and a line number select the same window"
-                 (let
-                   [rel
-                    (write-temp! "cat/endpoints.txt" "alpha\nbeta\ngamma\ndelta\n")
+        (expect (extension/tool-result? env))
+        (expect (true? (:success? env)))
+        (expect (string? (:result env)))
+        (expect (string/starts-with? (:result env) "1:"))))
+  (it "an anchor endpoint and a line number select the same window"
+      (let
+        [rel
+         (write-temp! "cat/endpoints.txt" "alpha\nbeta\ngamma\ndelta\n")
 
-                    cat-tool
-                    (comp :result (private-fn "cat-tool"))
+         cat-tool
+         (comp :result (private-fn "cat-tool"))
 
-                    by-number
-                    (cat-tool rel 2 3)
+         by-number
+         (cat-tool rel 2 3)
 
-                    anchor-from
-                    (first (string/split (first (string/split-lines by-number)) #"│"))
+         anchor-from
+         (first (string/split (first (string/split-lines by-number)) #"│"))
 
-                    by-anchor
-                    (cat-tool rel anchor-from 3)]
+         by-anchor
+         (cat-tool rel anchor-from 3)]
 
-                   (expect (= by-number by-anchor))
-                   (expect (= 2 (count (string/split-lines by-number))))))
-             (it "a window is capped and the clip names the call that continues it"
-                 (let
-                   [rel
-                    (write-temp! "cat/big.txt"
-                                 (string/join "\n" (map #(str "line " %) (range 1 3001))))
+        (expect (= by-number by-anchor))
+        (expect (= 2 (count (string/split-lines by-number))))))
+  (it "a window is capped and the clip names the call that continues it"
+      (let
+        [rel
+         (write-temp! "cat/big.txt" (string/join "\n" (map #(str "line " %) (range 1 3001))))
 
-                    cat-tool
-                    (comp :result (private-fn "cat-tool"))
+         cat-tool
+         (comp :result (private-fn "cat-tool"))
 
-                    out
-                    (cat-tool rel)
+         out
+         (cat-tool rel)
 
-                    lines
-                    (string/split-lines out)]
+         lines
+         (string/split-lines out)]
 
-                   (expect (= 2001 (count lines)))
-                   (expect (string/starts-with? (last lines) "… clipped at 2000 lines"))
-                   (expect (string/includes? (last lines) "continue with cat("))
-                   (expect (string/includes? (last lines) ", 2001, "))))
-             (it "an unreadable path and an inverted window both refuse"
-                 (let [cat-tool (comp :result (private-fn "cat-tool"))]
-                   (expect (throws? clojure.lang.ExceptionInfo #(cat-tool "does/not/exist.txt")))
-                   (expect (throws? clojure.lang.ExceptionInfo
-                                    #(cat-tool (write-temp! "cat/inv.txt" "a\nb\nc\n") 3 1)))))
-             ;; Regression: an `end` past the last line REFUSED, so `cat(path, 2172, 2212)`
-             ;; on a 2210-line file threw the whole block away — every line it had already
-             ;; printed included — instead of handing back the tail it asked for.
-             (it "an `end` past the last line CLAMPS to it; a `start` past it still refuses"
-                 (let
-                   [cat-tool
-                    (comp :result (private-fn "cat-tool"))
+        (expect (= 2001 (count lines)))
+        (expect (string/starts-with? (last lines) "… clipped at 2000 lines"))
+        (expect (string/includes? (last lines) "continue with cat("))
+        (expect (string/includes? (last lines) ", 2001, "))))
+  (it "an unreadable path and an inverted window both refuse"
+      (let [cat-tool (comp :result (private-fn "cat-tool"))]
+        (expect (throws? clojure.lang.ExceptionInfo #(cat-tool "does/not/exist.txt")))
+        (expect (throws? clojure.lang.ExceptionInfo
+                         #(cat-tool (write-temp! "cat/inv.txt" "a\nb\nc\n") 3 1)))))
+  ;; Regression: an `end` past the last line REFUSED, so `cat(path, 2172, 2212)`
+  ;; on a 2210-line file threw the whole block away — every line it had already
+  ;; printed included — instead of handing back the tail it asked for.
+  (it "an `end` past the last line CLAMPS to it; a `start` past it still refuses"
+      (let
+        [cat-tool
+         (comp :result (private-fn "cat-tool"))
 
-                    rel
-                    (write-temp! "cat/clamp.txt" "a\nb\nc\n")
+         rel
+         (write-temp! "cat/clamp.txt" "a\nb\nc\n")
 
-                    out
-                    (cat-tool rel 2 99)]
+         out
+         (cat-tool rel 2 99)]
 
-                   (expect (= 2 (count (string/split-lines out))))
-                   (expect (string/includes? out "│ b"))
-                   (expect (string/includes? out "│ c"))
-                   (expect (= out (cat-tool rel 2 3)))
-                   (expect (throws? clojure.lang.ExceptionInfo #(cat-tool rel 9 99))))))
+        (expect (= 2 (count (string/split-lines out))))
+        (expect (string/includes? out "│ b"))
+        (expect (string/includes? out "│ c"))
+        (expect (= out (cat-tool rel 2 3)))
+        (expect (throws? clojure.lang.ExceptionInfo #(cat-tool rel 9 99)))))
+  ;; Regression: a negative endpoint was rejected as "outside this file's
+  ;; 1..N lines", so the tail of a file could only be read by first
+  ;; counting its lines — two calls where one is the natural one.
+  (it "a NEGATIVE endpoint counts from the end, and clamps past the top"
+      (let
+        [cat-tool
+         (comp :result (private-fn "cat-tool"))
 
+         rel
+         (write-temp! "cat/neg.txt" "a\nb\nc\nd\ne\nf\n")
+
+         tail
+         (cat-tool rel -2)]
+
+        ;; -1 IS the last line, so -2 is the last TWO lines.
+        (expect (= 2 (count (string/split-lines tail))))
+        (expect (string/includes? tail "│ e"))
+        (expect (string/includes? tail "│ f"))
+        (expect (= tail (cat-tool rel 5 6)))
+        ;; A negative window: -4 .. -2 is the closed range 3..5.
+        (expect (= (cat-tool rel 3 5) (cat-tool rel -4 -2)))
+        ;; Negative and positive endpoints mix freely.
+        (expect (= (cat-tool rel 2 6) (cat-tool rel 2 -1)))
+        ;; More tail than the file has is the whole file, not a refusal.
+        (expect (= (cat-tool rel) (cat-tool rel -500)))
+        ;; Zero is still no line at all.
+        (expect (throws? clojure.lang.ExceptionInfo #(cat-tool rel 0))))))
 
 (defdescribe
   patch-spends-the-anchor-test

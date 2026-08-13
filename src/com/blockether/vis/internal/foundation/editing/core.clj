@@ -4440,9 +4440,10 @@
    EITHER a line number or a `<line>:<hash>` anchor, and the two mix freely
    across `start`/`end` — the read is the forgiving side, so a stale anchor
    resolves through `resolve-anchor-range-read` (which falls back to the
-   anchor's line number) and only a genuinely unlocatable one refuses. A numeric
-   `end` past the last line CLAMPS to it — asking for the tail is not an error —
-   while a `start` past the end still refuses."
+   anchor's line number) and only a genuinely unlocatable one refuses. A NEGATIVE
+   line counts from the END — -1 is the last line — so `cat(path, -50)` is the
+   tail 50 lines. A numeric `end` past the last line CLAMPS to it — asking for
+   the tail is not an error — while a `start` past the end still refuses."
   ^long [^String content endpoint which ^long line-count]
   (if (hashline/anchor-string? endpoint)
     (let [r (hashline/resolve-anchor-range-read content endpoint endpoint)]
@@ -4466,19 +4467,30 @@
                   :anchor (str endpoint)}))
         (long (:from-line r))))
     (let
-      [n (long (cond (integer? endpoint) (long endpoint)
-                     (number? endpoint) (long endpoint)
-                     (and (string? endpoint) (parse-long (str/trim (str endpoint))))
-                     (long (parse-long (str/trim (str endpoint))))
-                     :else (throw (ex-info (str "cat: the "
-                                                which
-                                                " endpoint must be a line number or a "
-                                                "`<line>:<hash>` anchor, got "
-                                                (pr-str endpoint)
-                                                ".")
-                                           {:type :ext.foundation.editing/invalid-range
-                                            :which which
-                                            :endpoint endpoint}))))]
+      [n
+       (long (cond (integer? endpoint) (long endpoint)
+                   (number? endpoint) (long endpoint)
+                   (and (string? endpoint) (parse-long (str/trim (str endpoint))))
+                   (long (parse-long (str/trim (str endpoint))))
+                   :else (throw (ex-info (str "cat: the "
+                                              which
+                                              " endpoint must be a line number or a "
+                                              "`<line>:<hash>` anchor, got "
+                                              (pr-str endpoint)
+                                              ".")
+                                         {:type :ext.foundation.editing/invalid-range
+                                          :which which
+                                          :endpoint endpoint}))))
+
+       ;; A NEGATIVE endpoint counts from the END, Python-style: -1 IS the last
+       ;; line, so `cat(path, -50)` reads the tail 50 lines and
+       ;; `cat(path, -50, -30)` the window between them. It is resolved BEFORE
+       ;; the range check, so every message names a real 1-based line; a
+       ;; magnitude past the top clamps to line 1, because asking for more tail
+       ;; than the file has is a reader asking for the whole file.
+       n
+       (long (if (neg? n) (max 1 (+ line-count n 1)) n))]
+
       (when (or (< n 1) (and (> n line-count) (not= which "end")))
         (throw
           (ex-info
@@ -4607,8 +4619,11 @@
      cat(path)                whole file, capped
      cat(path, start)         start -> EOF, capped
      cat(path, start, end)    closed range, inclusive
+     cat(path, -50)           the tail 50 lines
+     cat(path, -50, -30)      the window between them
 
-   `start`/`end` are line numbers or anchors and mix freely. They are NOT named
+   `start`/`end` are line numbers or anchors and mix freely; a NEGATIVE line
+   counts from the END, where -1 is the last line. They are NOT named
    `from`/`to`: `from` is a Python KEYWORD, so a declared parameter carrying
    that name cannot be compiled into the signature stub the sandbox reports and
    `inspect.signature(cat)` would fall back to `(*a, **k)`.
@@ -4987,7 +5002,9 @@
      (str
        "Read one file's region as patch-ready `line:hash` text — the read that produces the address "
        "`patch` spends. `cat(path)`, `cat(path, start)`, `cat(path, start, end)`; `start`/`end` "
-       "are line numbers or anchors. `ls(dir)` lists directories; `struct_index` maps code first.")
+       "are line numbers or anchors, and a NEGATIVE line counts from the end (-1 is the last line), "
+       "so `cat(path, -50)` is the tail 50 lines and `cat(path, -50, -30)` the window between them. "
+       "`ls(dir)` lists directories; `struct_index` maps code first.")
      :call {:pos ["path"] :opt-pos ["start" "end"]}
      :before-fn (fs-access-before-fn :cat :file "file-read" read-arg-paths)
      :tag :observation

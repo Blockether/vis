@@ -668,6 +668,12 @@
                    (expect (not (str/includes? text "CHANGING the tree is plain Python")))
                    (expect (not (str/includes? text "are edited in plain Python")))
                    (expect (str/includes? text "restate the text you replace: quote the anchor"))))
+             ;; Regression: `cat` grew a negative endpoint and the prompt kept quiet, so
+             ;; the tail of a file still cost a line count first and then a read.
+             (it "says a negative `start` counts from the end"
+                 (let [text (prompt/build-system-prompt {})]
+                   (expect (str/includes? text "a negative"))
+                   (expect (str/includes? text "`start` counts from the end"))))
              ;; Regression: after grep started answering ONE anchored TEXT block the
              ;; prompt still said only "hits arrive ANCHORED", never WHAT arrives, so the
              ;; model kept treating the answer as a keyed map.
