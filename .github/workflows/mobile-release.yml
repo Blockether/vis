@@ -4,7 +4,8 @@ name: Mobile release
 # `vX.Y.Z` release calls this workflow only after its own release succeeds;
 # app-only rebuilds arrive through immutable `companion-vX.Y.Z-build.N` tags. Both
 # paths must match the repo-root VIS_VERSION exactly.
-#   iOS      → TestFlight, and (with `public`) an external PUBLIC-LINK group after Beta App Review
+#   iOS      → TestFlight; every tester audience (internal groups AND the external
+#              PUBLIC-LINK group after Beta App Review) — the TestFlight analogue of `beta`
 #   Android  → Google Play; every tester track (internal, alpha, beta) in one edit —
 #              `beta` IS the public "Open testing" channel
 #
@@ -38,9 +39,9 @@ on:
       track:
         type: string
         default: internal,alpha,beta
-      public:
-        type: boolean
-        default: true
+      audience:
+        type: string
+        default: internal,public
   workflow_dispatch:
     inputs:
       platforms:
@@ -53,10 +54,11 @@ on:
         type: choice
         options: ['internal,alpha,beta', internal, alpha, beta, production]
         default: internal,alpha,beta
-      public:
-        description: "iOS: also submit for Beta App Review and link the public TestFlight group"
-        type: boolean
-        default: false
+      audience:
+        description: "TestFlight audiences, comma-separated (public = the public-link group, Beta App Review)"
+        type: choice
+        options: ['internal,public', internal]
+        default: internal,public
 
 concurrency:
   group: mobile-release-${{ github.ref }}
@@ -179,7 +181,7 @@ jobs:
           VIS_IOS_TEAM_ID: ${{ secrets.VIS_IOS_TEAM_ID }}
         run: |
           export VIS_ASC_KEY_PATH="$RUNNER_TEMP/AuthKey_${VIS_ASC_KEY_ID}.p8"
-          npm run release:ios:store -- ${{ (github.event_name == 'push' || inputs.public) && '--public' || '' }}
+          npm run release:ios:store -- --audience ${{ inputs.audience || 'internal,public' }}
 
       - name: No iOS credentials
         if: steps.creds.outputs.ok != 'true'

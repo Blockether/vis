@@ -36,6 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   the build or none does, so no channel can be left a version behind. `production` is never
   implied, and a staged `--rollout` — which Play defines per track — refuses more than one track
   BEFORE the build rather than after a signed .aab.
+- One iOS release reaches EVERY TestFlight audience, the same rule Android just got. An upload
+  reaches only the internal groups by itself, and the public-link group had to be asked for with
+  `--public` — so the public link served build 4042 while the team group already had 4075 and
+  every Play tester track served 4090. `release:ios:store` now fans out by default (internal
+  groups PLUS the public group after Beta App Review) and `--audience internal` keeps a build
+  inside the team; the audience is planned BEFORE the archive, so an unknown one costs a second
+  instead of a signed .ipa. The product release workflow no longer narrows Android to `beta`
+  alone either: a `vX.Y.Z` tag ships one build to every tester channel of both stores.
 - `run_tests` selects by `paths` and nothing else, in every language. The `ns` / `namespace` /
   `namespaces` selector is gone: name a test file, a directory, or the SOURCE file whose `*-test`
   namespace should run, and the clojure pack does that translation itself (a `*_test.clj` file is

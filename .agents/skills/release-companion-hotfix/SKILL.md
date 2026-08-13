@@ -9,9 +9,11 @@ compatibility: agents
 # release-companion-hotfix — app-only rebuild under the same version
 
 Ships `apps/vis-companion` to both public beta channels **without touching
-`VIS_VERSION`**: iOS → TestFlight (plus the public-link group after Beta App
-Review), Android → the Play tester tracks `internal`, `alpha` and `beta` in one
-edit (`beta` IS "open testing"); one build, every channel, nothing to promote.
+`VIS_VERSION`**: iOS → TestFlight internal groups AND the public-link group after
+Beta App Review, Android → the Play tester tracks `internal`, `alpha` and `beta`
+in one edit (`beta` IS "open testing"). Both defaults are the full fan-out, so
+the two stores serve the same build: one build, every channel, nothing to
+promote.
 
 Use `release-vis` instead when the CLI/native/gateway changed, or when the
 marketing version must move. Marketing version bumps are that skill's job, never
@@ -84,9 +86,12 @@ which `release-vis` owns.
    npm run release:ios:store          # web → cap sync → signed archive → .ipa → TestFlight
    npm run release:android:store      # web → cap sync → signed .aab → Play internal+alpha+beta
    ```
-   Add `-- --public` to the iOS leg only when the build should go to the public
-   TestFlight link (beta review). Report the build number each leg uploaded and the
-   track/channel it landed in. Do **not** create a companion tag afterwards.
+   Both legs fan out to **every tester channel** by default and match each other:
+   iOS internal groups + the public-link group (Beta App Review), Play
+   `internal,alpha,beta`. Narrow only when asked — `-- --audience internal`,
+   `-- --track internal` — and never to the store itself. Report the build number
+   each leg uploaded and the channels it landed in. Do **not** create a companion
+   tag afterwards.
 
 ### CI route (fallback only)
 

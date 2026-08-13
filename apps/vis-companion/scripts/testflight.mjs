@@ -49,6 +49,40 @@ const isDuplicate = (err) =>
   /already/i.test(err.message) ||
   /not in a valid processing state/i.test(err.message);
 
+/** Every TestFlight tester audience, cheapest first. The App Store itself is not one of them. */
+export const TESTFLIGHT_AUDIENCES = ['internal', 'public'];
+
+/**
+ * Which testers a build must reach, decided BEFORE anything is built or uploaded.
+ *
+ * An upload reaches INTERNAL groups by itself — App Store Connect hands them every processed
+ * build — while EXTERNAL, public-link testers see nothing until the build is submitted for
+ * Beta App Review and LINKED here. Asking for nothing therefore used to mean "team only",
+ * which is exactly how the public link sat on build 4042 while the team group already had
+ * 4075 and Play served 4090 on every track. Asking for nothing now means EVERY tester
+ * audience — the same rule Play follows with internal + alpha + beta — and `--audience
+ * internal` is how a build stays inside the team.
+ *
+ * `internal` is never removable: Apple gives internal groups the build whether or not this
+ * release asks for it, so a plan that omitted it would be a lie about what testers can see.
+ */
+export const planDistribution = ({ audiences, group, review = true } = {}) => {
+  const asked = (Array.isArray(audiences) ? audiences : [audiences])
+    .flatMap((v) => (v == null ? [] : String(v).split(',')))
+    .map((v) => v.trim())
+    .filter(Boolean);
+  const unknown = asked.find((a) => !TESTFLIGHT_AUDIENCES.includes(a));
+  if (unknown) throw new Error(`unknown audience "${unknown}" (${TESTFLIGHT_AUDIENCES.join(' | ')})`);
+  // A named group is a public group: there is nothing else to name.
+  const isPublic = asked.length ? asked.includes('public') || Boolean(group) : true;
+  return {
+    audiences: isPublic ? [...TESTFLIGHT_AUDIENCES] : ['internal'],
+    isPublic,
+    group: group ?? 'Public',
+    review: isPublic && review,
+  };
+};
+
 /**
  * Every beta group that must carry this build, named group FIRST.
  *

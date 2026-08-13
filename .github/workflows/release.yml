@@ -236,6 +236,8 @@ jobs:
     uses: ./.github/workflows/mobile-release.yml
     with:
       platforms: both
-      track: beta
-      public: true
+      # Every tester channel on both stores, the same build: a release that lands on `beta`
+      # alone leaves internal and alpha a version behind, which is how they drifted before.
+      track: internal,alpha,beta
+      audience: internal,public
     secrets: inherit

@@ -19,8 +19,10 @@
  *   npm run release:ios:store -- --prepare    # web + cap sync + stamp versions, then STOP
  *   npm run release:ios:store -- --prepare --dev  # same, but aps-environment=development
  *                                             # (archive by hand in Xcode: Product > Archive)
- *   npm run release:ios:store -- --public     # …and hand it to PUBLIC TestFlight afterwards:
- *                                             # beta review + public-link group (see testflight.mjs)
+ *   npm run release:ios:store -- --audience internal   # team only: skip the public-link group
+ *                                             # (the default is every tester audience — internal
+ *                                             # groups AND public TestFlight after beta review,
+ *                                             # the same fan-out Play does with internal+alpha+beta)
  *
  * Upload auth, in order of preference:
  *   1. App Store Connect API key (headless, CI-friendly, no 2FA prompt):
@@ -41,7 +43,7 @@ import { tmpdir } from 'node:os';
 import { buildNotes, publishNotes } from './release-notes.mjs';
 import { exportArchiveArgs, exportOptionsPlist, signingPlan } from './ios-export.mjs';
 import { distributionIdentity, ensureProfiles, installProfile, stampManualSigning } from './ios-signing.mjs';
-import { distribute } from './testflight.mjs';
+import { distribute, planDistribution } from './testflight.mjs';
 import { syncPackageVersion } from './version.mjs';
 
 // Release credentials live in the macOS login keychain (scripts/secrets.mjs),
@@ -73,6 +75,8 @@ const flag = (name) => {
   const i = args.indexOf(`--${name}`);
   return i === -1 ? undefined : args[i + 1];
 };
+// Repeatable flags: `--audience internal --audience public` reads as both, not as the last one.
+const flags = (name) => args.flatMap((a, i) => (a === `--${name}` && args[i + 1] ? [args[i + 1]] : []));
 const has = (name) => args.includes(`--${name}`);
 
 const die = (msg) => {
@@ -97,6 +101,15 @@ const buildNumber = flag('build') ?? capture('git', ['rev-list', '--count', 'HEA
 if (!/^\d+(\.\d+)*$/.test(marketingVersion)) die(`bad VIS_VERSION "${marketingVersion}"`);
 if (!/^\d+$/.test(buildNumber)) die(`bad --build "${buildNumber}" (git rev-list unavailable?)`);
 
+// Who gets this build is planned BEFORE the archive, exactly like the Play tracks: an unknown
+// audience must cost a second, not a ten-minute signed .ipa (scripts/testflight.mjs).
+let plan;
+try {
+  plan = planDistribution({ audiences: flags('audience'), group: flag('group'), review: !has('no-review') });
+} catch (err) {
+  die(err.message);
+}
+
 const needsIosScaffold = !existsSync(projectDir);
 
 if (needsIosScaffold) {
@@ -116,7 +129,7 @@ rmSync(archivePath, { recursive: true, force: true });
 rmSync(ipaDir, { recursive: true, force: true });
 
 console.log(
-  `\nVis Companion → TestFlight\n  version ${marketingVersion} (build ${buildNumber})\n  team    ${teamId}\n  archive ${archivePath}`,
+  `\nVis Companion → TestFlight\n  version ${marketingVersion} (build ${buildNumber})\n  testers ${plan.audiences.join(', ')}\n  team    ${teamId}\n  archive ${archivePath}`,
 );
 
 // Generated BEFORE the archive so a bad/empty changelog fails fast rather than after a
@@ -456,7 +469,6 @@ console.log(
 // TestFlight shows "What to Test" to every tester on the update card, so the changelog
 // must ride along with the build. The build only exists in App Store Connect AFTER
 // processing, hence the poll inside publishNotes.
-const wantsPublicDistribution = has('public') || Boolean(flag('group'));
 // The one command that re-pushes notes for a build already in App Store Connect.
 const notesRecovery = `npm run release:notes -- --build ${buildNumber}`;
 /**
@@ -501,24 +513,25 @@ const publishWhatToTest = async (timeoutMs) => {
 // public branch below has always said so, while this one printed a line that scrolls past in
 // a build log — which is how 0.1.35 (4075) shipped with its notes stranded. Same rule now,
 // and `asc` has already retried everything transient by the time we get here.
-if (!wantsPublicDistribution) {
+if (!plan.isPublic) {
   const notesOk = await publishWhatToTest(Number(flag('notes-timeout') ?? 15 * 60 * 1000));
   if (!notesOk) die(`TestFlight release notes were not published for build ${buildNumber}.\nThe build is uploaded; recover with: ${notesRecovery}`);
 }
 
-// PUBLIC TestFlight. Off by default because it costs a Beta App Review round trip and
-// exposes the build outside the team — both things a routine internal upload must not do
-// implicitly. `--public` (or `--group <name>`) opts in; everything it needs is already in
-// scope, so this is one call, not a second pipeline.
-if (wantsPublicDistribution) {
+// PUBLIC TestFlight, by default. An upload only reaches the internal groups, so stopping here
+// leaves the public link serving whatever it last got — the iOS half of the split that had Play
+// on 4090 everywhere while the public TestFlight link still handed out 4042. `--audience
+// internal` is the opt-out; everything this needs is already in scope, so it is one call, not a
+// second pipeline.
+if (plan.isPublic) {
   const res = await distribute({
     keyId,
     issuerId,
     keyPem: keyPem ?? (process.env.VIS_ASC_KEY_PATH ? readFileSync(process.env.VIS_ASC_KEY_PATH, 'utf8') : undefined),
     bundleId,
     build: buildNumber,
-    group: flag('group') ?? 'Public',
-    review: !has('no-review'),
+    group: plan.group,
+    review: plan.review,
     timeoutMs: Number(flag('public-timeout') ?? 60 * 60 * 1000),
   });
   if (!res.ok) {

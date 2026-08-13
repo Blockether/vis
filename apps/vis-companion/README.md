@@ -132,14 +132,22 @@ neither set, the upload falls back to `xcodebuild -exportArchive
 account signed into **Xcode → Settings → Accounts** — that is what a local
 release from this machine uses. Artifacts land in `build/ios/`.
 
-### Public TestFlight link
+### TestFlight audiences
 
 ```sh
-npm run release:ios:store -- --public  # one-store recovery: upload + public group
-npm run release:testflight          # same distribution step for the LAST uploaded build
+npm run release:ios:store                          # internal groups AND the public link
+npm run release:ios:store -- --audience internal   # team only, no Beta App Review
+npm run release:testflight                         # same distribution step for the LAST uploaded build
 ```
 
-`--public` waits for App Store Connect to finish processing, creates (once) an
+A build testers can install is the SAME build for every tester, so the default is
+every audience — the TestFlight mirror of Play's `internal,alpha,beta`. An upload
+reaches internal groups by itself; only the public link has to be asked for, and
+asking for it by default is what stops it serving a build the team left behind.
+`--audience internal` opts out. Unknown audiences fail before the archive, not
+after it.
+
+The public leg waits for App Store Connect to finish processing, creates (once) an
 external beta group named **Public** with a public link, attaches the build, and
 submits it for **Beta App Review**. Review takes hours on the first build of a
 version and is usually instant afterwards; the link itself never changes, so it
