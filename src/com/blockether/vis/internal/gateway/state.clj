@@ -2143,12 +2143,16 @@
      key
      (:idempotency_key turn)
 
-     ;; A failed turn ships its settled content and reason too, so the terminal
-     ;; event alone describes the failure. A channel that reconciles the terminal
-     ;; independently of the blocking worker has nothing else to paint, and the
-     ;; persisted row remains the durable source for later readers.
+     ;; A failed turn ships its settled content and reason, so the event alone
+     ;; describes the failure. A completed turn ships its visual prose together
+     ;; with the semantic speech projection. The terminal frame can overtake a
+     ;; client's throttled body deltas (notably in browsers), so speech alone
+     ;; would settle the bubble with a footer but no visible answer until transcript
+     ;; persistence catches up. Code/tool payloads remain transcript-only.
      content
-     (when (= "failed" status) (not-empty (vec (:content turn))))
+     (not-empty (if (= "failed" status)
+                  (vec (:content turn))
+                  (filterv #(contains? #{"prose" "speech"} (get % "type")) (:content turn))))
 
      error
      (when (= "failed" status)

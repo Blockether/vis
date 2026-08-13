@@ -2390,7 +2390,13 @@
          (str "terminal-idem-" (java.util.UUID/randomUUID))
 
          tid
-         "turn-1"]
+         "turn-1"
+
+         prose
+         (content/prose "full technical answer")
+
+         spoken
+         (content/speech "spoken" "The work is complete.")]
 
         (try (swap! registry assoc
                sid
@@ -2404,6 +2410,12 @@
              ;; explicit nil correlation id that would match another tab's nil.
              (expect (= {:turn_id "ghost" :status "failed"}
                         (#'state/turn-terminal-payload sid "ghost" "failed")))
+             ;; The terminal frame is the only answer guaranteed to reach a web
+             ;; client whose throttled body deltas race completion. It carries
+             ;; the visual answer and the secondary spoken projection together.
+             (swap! registry assoc-in [sid :turns tid :content] [prose spoken])
+             (expect (= [prose spoken]
+                        (:content (#'state/turn-terminal-payload sid tid "completed"))))
              (finally (swap! registry dissoc sid))))))
 
 (defdescribe

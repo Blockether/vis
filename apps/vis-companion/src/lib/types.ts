@@ -670,7 +670,14 @@ export type JsonValue =
 export interface ContentBlock {
   id: string;
   type:
-    "prose" | "code" | "tool" | "reasoning" | "error" | "attachment" | "notice";
+    | "prose"
+    | "speech"
+    | "code"
+    | "tool"
+    | "reasoning"
+    | "error"
+    | "attachment"
+    | "notice";
   markdown?: string;
   text?: string;
   language?: string;

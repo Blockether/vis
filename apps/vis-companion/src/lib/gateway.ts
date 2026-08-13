@@ -2847,6 +2847,7 @@ export class GatewayClient {
       displayRequest?: string;
       attachments?: GatewayAttachment[];
       extraBody?: Record<string, unknown>;
+      turnFeatures?: Record<string, boolean>;
     } = {},
   ): Promise<SubmittedTurn> {
     const clientId = `companion:${crypto.randomUUID()}`;
@@ -2860,6 +2861,7 @@ export class GatewayClient {
         model: options.model,
         attachments: options.attachments,
         extra_body: options.extraBody,
+        turn_features: options.turnFeatures,
         idempotency_key: clientId,
       },
     );

@@ -26,6 +26,7 @@ import {
 import {
   BandLabel,
   BandTally,
+  Button,
   CopyChip,
   Disclosure,
   LoadMore,
@@ -62,6 +63,7 @@ import type {
   TranscriptTurn,
 } from "../lib/types";
 import type { GatewayClient } from "../lib/gateway";
+import { speechOutput } from "../lib/speech";
 import { ExpandableImage } from "./ImageViewer";
 import {
   mediaContentClass,
@@ -2130,6 +2132,49 @@ export const IterationTrace = memo(function IterationTrace({
   );
 });
 
+function SpeechBlock({ text }: { text: string }) {
+  const [speaking, setSpeaking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const toggle = () => {
+    if (speaking) {
+      speechOutput.stop();
+      setSpeaking(false);
+      return;
+    }
+    setError(null);
+    setSpeaking(true);
+    void speechOutput.speak(text).catch((cause: unknown) => {
+      setError((cause as Error).message);
+    }).finally(() => setSpeaking(false));
+  };
+
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="my-2 border border-dialog-edge bg-panel">
+      <Disclosure isOpen={open} onClick={() => setOpen((was) => !was)}>
+        <span className="min-w-0 flex-1 truncate font-mono text-meta font-bold">
+          Spoken version
+        </span>
+        <span className="shrink-0 font-mono text-chip text-dialog-hint">
+          {speaking ? "Speaking" : "Ready to replay"}
+        </span>
+      </Disclosure>
+      {open && (
+        <div className="grid gap-2 border-t border-dialog-edge px-2.5 py-2 text-body text-dialog-foreground">
+          <p>{text}</p>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" density="compact" onClick={toggle}>
+              {speaking ? "Stop" : "Replay"}
+            </Button>
+            {error && <span className="font-mono text-meta text-err">{error}</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export const ContentBlockView = memo(function ContentBlockView({
   block,
 }: {
@@ -2138,6 +2183,8 @@ export const ContentBlockView = memo(function ContentBlockView({
   switch (block.type) {
     case "prose":
       return block.markdown ? <Markdown>{block.markdown}</Markdown> : null;
+    case "speech":
+      return block.text ? <SpeechBlock text={block.text} /> : null;
     case "code":
       return (
         <Markdown>{fenced(block.text ?? "", block.language ?? "")}</Markdown>

@@ -41,12 +41,18 @@ import {
 import {
   ArrowDownIcon,
   CameraIcon,
+  ChevronIcon,
   ImageIcon,
   MicIcon,
   PlusIcon,
 } from "../components/icons";
 import { HumanInputPrompt } from "../components/HumanInputPrompt";
+import { speechOutput } from "../lib/speech";
 import { settledTranscriptCoversLiveTurn } from "../lib/live-turn-handover";
+import {
+  VoiceTurnOwnership,
+  type VoiceModeLease,
+} from "../lib/voice-conversation";
 import { MenuItem } from "../components/Menu";
 import { ProviderRouterDialog } from "./RouterScreen";
 import {
@@ -137,6 +143,8 @@ import type {
   GatewayAttachment,
 } from "../lib/types";
 import {
+  beginVoiceAudioSession,
+  endVoiceAudioSession,
   startWavRecording,
   voiceProgressLabel,
   type WavRecording,
@@ -1318,6 +1326,10 @@ export function SessionScreen({
   // Native hides two distinct acts behind one composer control, so the plus has
   // to ask which one: the OS gallery sheet never opens a shutter.
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+  // Dictation and voice conversation share one microphone control. The adjacent
+  // disclosure keeps the alternate mode discoverable without relying on a hidden
+  // long-press gesture (especially on iOS).
+  const [voiceModeMenuOpen, setVoiceModeMenuOpen] = useState(false);
   const [pastes, setPastes] = useState<Map<number, ComposerPaste>>(
     () =>
       new Map(
@@ -1355,6 +1367,12 @@ export function SessionScreen({
     null,
   );
   const [voiceRequested, setVoiceRequested] = useState(false);
+  const [voiceConversation, setVoiceConversation] = useState(false);
+  const voiceConversationRef = useRef(false);
+  const [voiceSpeaking, setVoiceSpeaking] = useState(false);
+  const voiceOwnershipRef = useRef(new VoiceTurnOwnership());
+  const voiceLeaseRef = useRef<VoiceModeLease | null>(null);
+  const [pendingVoiceSend, setPendingVoiceSend] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -1569,6 +1587,7 @@ export function SessionScreen({
     dropOverlayHandovers();
     void recordingRef.current?.cancel();
     recordingRef.current = null;
+    void endVoiceAudioSession();
     pendingVoiceRef.current = null;
     setTurns(client.cachedTranscript(sid) ?? []);
     setTurnsFresh(false);
@@ -1606,6 +1625,13 @@ export function SessionScreen({
     setComposerNotice(null);
     setVoicePhase("idle");
     setVoiceRequested(false);
+    voiceConversationRef.current = false;
+    voiceLeaseRef.current = null;
+    voiceOwnershipRef.current.leave();
+    setVoiceConversation(false);
+    speechOutput.stop();
+    setVoiceSpeaking(false);
+    setPendingVoiceSend(null);
     setLoading(!fresh);
     setVeiled(!fresh);
     setVisibleTurnCount(INITIAL_VISIBLE_TURNS);
@@ -2611,12 +2637,16 @@ export function SessionScreen({
         // hijacked mic records perfect silence), so it has to say so: dropping it
         // silently is what makes the button feel dead.
         if (text) {
-          setPrompt(
-            (current) =>
-              `${current.trimEnd()}${current.trim() ? " " : ""}${text}`,
-          );
-          // Show the TAIL of the dictation, not its opening line.
-          revealComposerEnd();
+          if (voiceConversationRef.current) {
+            setPendingVoiceSend(text);
+          } else {
+            setPrompt(
+              (current) =>
+                `${current.trimEnd()}${current.trim() ? " " : ""}${text}`,
+            );
+            // Show the TAIL of the dictation, not its opening line.
+            revealComposerEnd();
+          }
         } else {
           setComposerNotice("No speech recognised — nothing was captured.");
         }
@@ -2751,8 +2781,13 @@ export function SessionScreen({
 
   useEffect(
     () => () => {
+      voiceConversationRef.current = false;
+      voiceLeaseRef.current = null;
+      voiceOwnershipRef.current.leave();
       void recordingRef.current?.cancel();
       recordingRef.current = null;
+      void endVoiceAudioSession();
+      speechOutput.stop();
     },
     [],
   );
@@ -2789,6 +2824,26 @@ export function SessionScreen({
       const finishedHadProse = ownsTerminal(liveTurnRef.current)
         ? liveTurnCarriesProse(liveTurnRef.current)
         : false;
+      const voiceOwned = voiceOwnershipRef.current.settle(finishedId);
+      if (type === "turn.completed" && voiceConversationRef.current && voiceOwned) {
+        const terminalBlocks = Array.isArray(event.content)
+          ? (event.content as ContentBlock[])
+          : undefined;
+        const spoken = terminalBlocks
+          ?.find((block) => block.type === "speech")
+          ?.text?.trim();
+        if (spoken) {
+          setVoiceSpeaking(true);
+          void speechOutput
+            .speak(spoken)
+            .catch((cause: unknown) => setComposerNotice((cause as Error).message))
+            .finally(() => setVoiceSpeaking(false));
+        } else {
+          setComposerNotice(
+            "The answer is ready on screen — no spoken version was returned.",
+          );
+        }
+      }
       if (!liveTurnRef.current || ownsTerminal(liveTurnRef.current))
         setRunning(false);
       // Settle the live bubble ITSELF, synchronously. The transcript refetch below
@@ -2800,10 +2855,9 @@ export function SessionScreen({
       setLiveTurn((turn) => {
         if (!turn || turn.status !== "running" || !ownsTerminal(turn))
           return turn;
-        const failedBlocks =
-          type === "turn.failed" && Array.isArray(event.content)
-            ? (event.content as ContentBlock[])
-            : undefined;
+        const terminalBlocks = Array.isArray(event.content)
+          ? (event.content as ContentBlock[])
+          : undefined;
         const next: LiveTurn = {
           ...turn,
           status:
@@ -2814,7 +2868,10 @@ export function SessionScreen({
                 : "completed",
           activity: undefined,
           cancelling: false,
-          content: failedBlocks?.length ? failedBlocks : turn.content,
+          // Completion can overtake the 150 ms body-delta queue in a browser.
+          // The terminal frame therefore carries canonical prose plus speech;
+          // paint it immediately instead of settling to a bare meta/footer row.
+          content: terminalBlocks?.length ? terminalBlocks : turn.content,
         };
         liveTurnRef.current = next;
         return next;
@@ -3977,14 +4034,18 @@ export function SessionScreen({
     }
   }
 
-  async function send() {
-    const authoredRequest = prompt.trim();
+  async function send(voiceRequest?: string, voiceProjection = false) {
+    const authoredRequest = (voiceRequest ?? prompt).trim();
     const request =
       expandFileMentions(expandPastePlaceholders(authoredRequest, pastes)) ||
       (attachments.length ? "Please inspect the attached image(s)." : "");
     const displayRequest =
       collapsePastePlaceholders(authoredRequest, pastes) || request;
     if (!request || voicePhase !== "idle") return;
+    // Capture the activation that authored this turn before any network await.
+    // Leave/session navigation invalidates it, so a late POST response cannot
+    // register an abandoned turn for playback in a newly opened voice mode.
+    const voiceLease = voiceProjection ? voiceLeaseRef.current : null;
 
     const [command = "", ...argParts] = authoredRequest.split(/\s+/);
     const args = argParts.join(" ");
@@ -4051,8 +4112,11 @@ export function SessionScreen({
           displayRequest,
           attachments: sent,
           extraBody: turnExtraBody,
+          turnFeatures: voiceProjection ? { voice_projection: true } : undefined,
         });
         const queuedId = submitted.turn_id ?? submitted.id;
+        if (voiceProjection)
+          voiceOwnershipRef.current.claim(queuedId, voiceLease);
         rememberSent(queuedId, sent);
         // Keep the AUTHORED shape (raw text, pastes, image bytes) so a cancel can
         // hand it straight back to the composer instead of losing it with the
@@ -4133,8 +4197,11 @@ export function SessionScreen({
         displayRequest,
         attachments: sent,
         extraBody: turnExtraBody,
+        turnFeatures: voiceProjection ? { voice_projection: true } : undefined,
       });
       const submittedId = submitted.turn_id ?? submitted.id;
+      if (voiceProjection)
+        voiceOwnershipRef.current.claim(submittedId, voiceLease);
       rememberSent(submittedId, sent);
       if (isQueuedSubmission(submitted)) {
         // The gateway QUEUED us: a turn started between our liveness read and this
@@ -4645,6 +4712,59 @@ export function SessionScreen({
       .finally(() => setLoadingEarlier(false));
   };
 
+  useEffect(() => {
+    if (!pendingVoiceSend || voicePhase !== "idle") return;
+    const text = pendingVoiceSend;
+    setPendingVoiceSend(null);
+    void send(text, true);
+  }, [pendingVoiceSend, voicePhase]);
+
+  const leaveVoiceConversation = async () => {
+    setVoiceModeMenuOpen(false);
+    voiceConversationRef.current = false;
+    voiceLeaseRef.current = null;
+    voiceOwnershipRef.current.leave();
+    setVoiceConversation(false);
+    setPendingVoiceSend(null);
+    speechOutput.stop();
+    setVoiceSpeaking(false);
+    if (recordingRef.current) {
+      const recording = recordingRef.current;
+      recordingRef.current = null;
+      await recording.cancel().catch(() => undefined);
+      setVoicePhase("idle");
+    }
+    await endVoiceAudioSession();
+  };
+
+  const toggleVoiceConversation = async () => {
+    setVoiceModeMenuOpen(false);
+    if (
+      !voiceConversation &&
+      (Boolean(prompt.trim()) || attachments.length > 0 || pastes.size > 0)
+    ) {
+      setComposerNotice(
+        "Send or clear the current message before starting voice conversation.",
+      );
+      return;
+    }
+    if (voiceSpeaking) {
+      speechOutput.stop();
+      setVoiceSpeaking(false);
+      return;
+    }
+    if (!voiceConversation) {
+      voiceConversationRef.current = true;
+      voiceLeaseRef.current = voiceOwnershipRef.current.enter();
+      setVoiceConversation(true);
+      await beginVoiceAudioSession();
+      // Leaving or switching sessions while Android negotiates Bluetooth must
+      // not start a recorder after that voice-conversation lease was revoked.
+      if (!voiceConversationRef.current) return;
+    }
+    await toggleVoice();
+  };
+
   return (
     <AttachImageContext.Provider value={attachCapturedImage}>
       <section className="relative flex h-full min-h-0 flex-col overflow-hidden bg-ink transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
@@ -5127,6 +5247,7 @@ export function SessionScreen({
             )}
 
             {(composerNotice ||
+              voiceConversation ||
               voicePhase !== "idle" ||
               voiceModel?.status === "downloading" ||
               (voiceRequested && voiceModel?.status !== "ready")) && (
@@ -5134,15 +5255,24 @@ export function SessionScreen({
                 {voicePhase === "recording" ? (
                   <>
                     <span className="size-1.5 animate-pulse bg-err motion-reduce:animate-none" />{" "}
-                    Listening · tap the microphone to finish
+                    {voiceConversation
+                      ? "Voice conversation · Listening · tap the microphone again to finish"
+                      : "Listening · tap the microphone again to finish"}
                   </>
                 ) : voicePhase === "transcribing" ? (
                   <>
                     <span className="size-1.5 animate-pulse bg-accent motion-reduce:animate-none" />{" "}
+                    {voiceConversation && "Voice conversation · "}
                     {voiceProgressLabel(voiceProgress)}
                   </>
                 ) : composerNotice ? (
                   composerNotice
+                ) : voiceSpeaking ? (
+                  <>Voice conversation · Speaking · tap the microphone to stop</>
+                ) : voiceConversation && running ? (
+                  <>Voice conversation · Vis is working</>
+                ) : voiceConversation ? (
+                  <>Voice conversation · Ready · tap the microphone to speak</>
                 ) : voiceModel?.status === "downloading" ? (
                   <>
                     {voiceModel.phase === "extracting"
@@ -5270,26 +5400,129 @@ export function SessionScreen({
               </div>
 
               {voiceSupported && (
-                <ComposerButton
-                  tone={voicePhase === "recording" ? "recording" : "quiet"}
-                  onMouseDown={keepKeyboard}
-                  onClick={() => void toggleVoice()}
-                  disabled={
-                    voicePhase === "transcribing" ||
-                    voiceModel?.status === "downloading"
-                  }
-                  label={
-                    voicePhase === "recording"
-                      ? "Finish dictation"
-                      : "Dictate message"
-                  }
-                  title={
-                    voicePhase === "recording"
-                      ? "Finish dictation"
-                      : "Dictate message"
-                  }
+                <div
+                  className="relative flex shrink-0 items-stretch"
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape" && voiceModeMenuOpen) {
+                      event.stopPropagation();
+                      setVoiceModeMenuOpen(false);
+                    }
+                  }}
                 >
-                  <MicIcon />
+                  {voiceModeMenuOpen && (
+                    <>
+                      <div
+                        role="presentation"
+                        className="fixed inset-0 z-20"
+                        onMouseDown={keepKeyboard}
+                        onClick={() => setVoiceModeMenuOpen(false)}
+                      />
+                      <div
+                        role="menu"
+                        aria-label="Microphone mode"
+                        onMouseDown={keepKeyboard}
+                        className="absolute bottom-full left-0 z-30 mb-1.5 w-max min-w-52 border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
+                      >
+                        <MenuItem
+                          title="Dictate message"
+                          hint="Transcribe into the composer"
+                          icon={<MicIcon />}
+                          onSelect={() => {
+                            setVoiceModeMenuOpen(false);
+                            void toggleVoice();
+                          }}
+                        />
+                        <MenuItem
+                          title="Voice conversation"
+                          hint="Submit speech and read responses aloud"
+                          icon={<span className="font-mono text-chip font-bold">V</span>}
+                          onSelect={() => void toggleVoiceConversation()}
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  <ComposerButton
+                    tone={
+                      voicePhase === "recording" || voiceSpeaking
+                        ? "recording"
+                        : "quiet"
+                    }
+                    onMouseDown={keepKeyboard}
+                    onClick={() =>
+                      void (voiceConversation
+                        ? toggleVoiceConversation()
+                        : toggleVoice())
+                    }
+                    disabled={
+                      voicePhase === "transcribing" ||
+                      voiceModel?.status === "downloading" ||
+                      (voiceConversation && running && !voiceSpeaking)
+                    }
+                    label={
+                      voiceSpeaking
+                        ? "Stop speaking"
+                        : voicePhase === "recording"
+                          ? voiceConversation
+                            ? "Finish voice utterance"
+                            : "Finish dictation"
+                          : voiceConversation
+                            ? "Start voice utterance"
+                            : "Dictate message"
+                    }
+                    title={
+                      voiceConversation
+                        ? voiceSpeaking
+                          ? "Stop speaking"
+                          : "Voice conversation"
+                        : "Dictate message"
+                    }
+                    className={voiceConversation ? "bg-warn-surface" : ""}
+                  >
+                    <span className="relative grid place-items-center">
+                      <MicIcon />
+                      {voiceConversation && (
+                        <span
+                          className="absolute -right-1.5 -top-1 font-mono text-chip font-bold"
+                          aria-hidden="true"
+                        >
+                          V
+                        </span>
+                      )}
+                    </span>
+                  </ComposerButton>
+
+                  {!voiceConversation && (
+                    <ComposerButton
+                      onMouseDown={keepKeyboard}
+                      onClick={() => setVoiceModeMenuOpen((open) => !open)}
+                      disabled={
+                        voicePhase !== "idle" ||
+                        voiceModel?.status === "downloading"
+                      }
+                      aria-haspopup="menu"
+                      aria-expanded={voiceModeMenuOpen}
+                      label="Choose microphone mode"
+                      title="Choose dictation or voice conversation"
+                      className="w-4 border-l border-dialog-edge mouse:w-4"
+                    >
+                      <ChevronIcon
+                        open={voiceModeMenuOpen}
+                        className="size-2.5 rotate-90"
+                      />
+                    </ComposerButton>
+                  )}
+                </div>
+              )}
+
+              {voiceConversation && (
+                <ComposerButton
+                  onMouseDown={keepKeyboard}
+                  onClick={() => void leaveVoiceConversation()}
+                  label="Leave voice conversation"
+                  title="Leave voice conversation"
+                >
+                  <span className="font-mono text-ui" aria-hidden="true">×</span>
                 </ComposerButton>
               )}
 

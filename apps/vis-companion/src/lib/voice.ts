@@ -8,16 +8,43 @@ interface AndroidAudioRoutePlugin {
 
 const androidAudioRoute = registerPlugin<AndroidAudioRoutePlugin>("AudioRoute");
 
+let androidBluetoothRoute: Promise<boolean> | null = null;
+let retainAndroidBluetoothRoute = false;
+
 async function claimAndroidBluetoothMicrophone(): Promise<boolean> {
   if (Capacitor.getPlatform() !== "android") return false;
-  try {
-    await androidAudioRoute.startBluetoothMicrophone();
-    return true;
-  } catch {
-    // Recording from the device microphone is still useful when no headset mic
-    // is connected or Android refuses the communication route.
-    return false;
+  if (!androidBluetoothRoute) {
+    androidBluetoothRoute = androidAudioRoute
+      .startBluetoothMicrophone()
+      // A resolved call means the plugin owns (or attempted) the communication
+      // route and must be paired with stop even when Android could not confirm
+      // SCO before its timeout.
+      .then(() => true)
+      .catch(() => false);
   }
+  return androidBluetoothRoute;
+}
+
+async function releaseAndroidBluetoothMicrophone(): Promise<void> {
+  if (Capacitor.getPlatform() !== "android") return;
+  androidBluetoothRoute = null;
+  await androidAudioRoute.stopBluetoothMicrophone().catch(() => undefined);
+}
+
+/**
+ * Keep Android's Bluetooth communication route alive across every utterance in
+ * one voice conversation. Releasing SCO after each tap makes many headsets say
+ * “disconnected”, then reconnect on the next utterance. A voice conversation is
+ * one call-like audio session; only leaving the mode should tear its route down.
+ */
+export async function beginVoiceAudioSession(): Promise<void> {
+  retainAndroidBluetoothRoute = true;
+  await claimAndroidBluetoothMicrophone();
+}
+
+export async function endVoiceAudioSession(): Promise<void> {
+  retainAndroidBluetoothRoute = false;
+  await releaseAndroidBluetoothMicrophone();
 }
 
 export interface WavRecording {
@@ -156,8 +183,8 @@ export async function startWavRecording(
   // before WebView chooses an input device.
   const heldAndroidRoute = await claimAndroidBluetoothMicrophone();
   const releaseAndroidRoute = async () => {
-    if (heldAndroidRoute) {
-      await androidAudioRoute.stopBluetoothMicrophone().catch(() => undefined);
+    if (heldAndroidRoute && !retainAndroidBluetoothRoute) {
+      await releaseAndroidBluetoothMicrophone();
     }
   };
 

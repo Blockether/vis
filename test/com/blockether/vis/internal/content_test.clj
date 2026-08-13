@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.content-test
   (:require [clojure.spec.alpha :as s]
+            [clojure.string :as str]
             [com.blockether.vis.internal.content :as content]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -35,6 +36,20 @@
         (expect (= "prose" (get-in blocks [0 "type"])))
         (expect (= "done" (get-in blocks [0 "markdown"])))
         (expect (= "done" (content/text-projection blocks)))))
+  (it
+    "extracts a voice projection from final Markdown into a speech block"
+    (let
+      [blocks
+       (content/answer-content
+         "Full **technical** answer.\n\n```vis-speech\nThe work is complete and the tests pass.\n```")]
+      (expect (= ["prose" "speech"] (mapv #(get % "type") blocks)))
+      (expect (= "Full **technical** answer." (get-in blocks [0 "markdown"])))
+      (expect (= "The work is complete and the tests pass." (get-in blocks [1 "text"])))
+      (expect (not (str/includes? (get-in blocks [0 "markdown"]) "vis-speech")))))
+  (it "accepts speech blocks and includes them in plain-text projection"
+      (let [block (content/speech "s1" "A concise spoken answer.")]
+        (expect (s/valid? ::content/block block))
+        (expect (= "A concise spoken answer." (content/text-projection [block])))))
   (it "preserves canonical error blocks in wrapped final answers"
       (let
         [error

@@ -2411,6 +2411,35 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(settingsSource).not.toContain("<button");
   });
 
+  it("uses one microphone control and names each voice-conversation phase", () => {
+    expect(sessionScreenSource).not.toContain("tap V again");
+    expect(sessionScreenSource).toContain(
+      "Voice conversation · Listening · tap the microphone again to finish",
+    );
+    expect(sessionScreenSource).toContain(
+      "Listening · tap the microphone again to finish",
+    );
+    expect(sessionScreenSource).toContain("Voice conversation · Vis is working");
+    expect(sessionScreenSource).toContain(
+      "Voice conversation · Speaking · tap the microphone to stop",
+    );
+    expect(sessionScreenSource).toContain(
+      'aria-label="Microphone mode"',
+    );
+    expect(sessionScreenSource).toContain('title="Dictate message"');
+    expect(sessionScreenSource).toContain('title="Voice conversation"');
+    expect(sessionScreenSource).toContain('label="Choose microphone mode"');
+    expect(sessionScreenSource).not.toContain(
+      'label={voiceSpeaking ? "Stop speaking"',
+    );
+  });
+
+  it("paints completed terminal prose before transcript hydration", () => {
+    expect(sessionScreenSource).toContain(
+      "content: terminalBlocks?.length ? terminalBlocks : turn.content",
+    );
+  });
+
   it("keeps painted answer prose through mobile wake reconciliation", () => {
     expect(sessionScreenSource).toContain(
       "const liveHadProse = liveTurnCarriesProse(liveBefore)",
@@ -2421,6 +2450,11 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(sessionScreenSource).toMatch(
       /liveTurnSettledRow\([\s\S]*?liveRequest,[\s\S]*?liveHadOutput,[\s\S]*?liveHadProse,[\s\S]*?\)/,
     );
+  });
+
+  it("holds one Android audio route for the whole voice conversation", () => {
+    expect(sessionScreenSource).toContain("await beginVoiceAudioSession()");
+    expect(sessionScreenSource).toContain("await endVoiceAudioSession()");
   });
 
   it("uses the composer's own vocabulary where it used to repeat itself", () => {

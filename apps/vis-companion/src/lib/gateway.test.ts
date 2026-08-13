@@ -120,7 +120,7 @@ describe('GatewayClient turn cancellation', () => {
     expect(cancelBody.idempotency_key).toBe(submitBody.idempotency_key);
   });
 
-  it('captures per-turn extra body on submission', async () => {
+  it('captures per-turn submission options', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ turn_id: 'turn-fast' })),
     );
@@ -129,10 +129,12 @@ describe('GatewayClient turn cancellation', () => {
 
     await new GatewayClient(conn).submitTurn('session-1', 'hello', {
       extraBody: { service_tier: 'priority' },
+      turnFeatures: { voice_projection: true },
     });
 
     const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(body.extra_body).toEqual({ service_tier: 'priority' });
+    expect(body.turn_features).toEqual({ voice_projection: true });
   });
 
   it('cancels a known turn by id, which needs no correlation id', async () => {

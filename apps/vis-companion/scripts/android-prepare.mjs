@@ -364,6 +364,7 @@ public class MainActivity extends BridgeActivity {
         // and a cold-start share must already look like a vis:// link by then.
         setIntent(asShareLink(getIntent()));
         registerPlugin(AudioRoutePlugin.class);
+        registerPlugin(NativeSpeechPlugin.class);
         super.onCreate(savedInstanceState);
     }
 
@@ -550,6 +551,88 @@ public class AudioRoutePlugin extends Plugin {
 `;
 if (!existsSync(audioRoutePluginPath) || readFileSync(audioRoutePluginPath, 'utf8') !== audioRoutePlugin) {
   writeFileSync(audioRoutePluginPath, audioRoutePlugin);
+}
+
+const nativeSpeechPluginPath = join(javaPackageDir, 'NativeSpeechPlugin.java');
+const nativeSpeechPlugin = `package ${appId};
+
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
+import com.getcapacitor.Plugin;
+import com.getcapacitor.PluginCall;
+import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.CapacitorPlugin;
+
+@CapacitorPlugin(name = "NativeSpeech")
+public class NativeSpeechPlugin extends Plugin {
+    private TextToSpeech tts;
+    private PluginCall pending;
+    private String pendingText;
+
+    @PluginMethod
+    public void speak(PluginCall call) {
+        stopPending();
+        pending = call;
+        pendingText = call.getString("text", "");
+        if (tts != null) {
+            speakPending();
+            return;
+        }
+        tts = new TextToSpeech(getContext(), status -> {
+            if (status != TextToSpeech.SUCCESS) {
+                fail("Android text-to-speech could not start.");
+                return;
+            }
+            tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                @Override public void onStart(String id) {}
+                @Override public void onDone(String id) { finish(); }
+                @Override public void onError(String id) { fail("Android text-to-speech failed."); }
+                @Override public void onError(String id, int code) { fail("Android text-to-speech failed (" + code + ")."); }
+            });
+            speakPending();
+        });
+    }
+
+    @PluginMethod
+    public void stop(PluginCall call) {
+        stopPending();
+        call.resolve();
+    }
+
+    private void speakPending() {
+        if (pending == null || tts == null) return;
+        if (tts.speak(pendingText, TextToSpeech.QUEUE_FLUSH, null, "vis") == TextToSpeech.ERROR) {
+            fail("Android text-to-speech rejected the text.");
+        }
+    }
+
+    private void finish() {
+        if (pending == null) return;
+        pending.resolve();
+        pending = null;
+        pendingText = null;
+    }
+
+    private void fail(String message) {
+        if (pending != null) pending.reject(message);
+        pending = null;
+        pendingText = null;
+    }
+
+    private void stopPending() {
+        if (tts != null) tts.stop();
+        finish();
+    }
+
+    @Override protected void handleOnDestroy() {
+        stopPending();
+        if (tts != null) tts.shutdown();
+        tts = null;
+    }
+}
+`;
+if (!existsSync(nativeSpeechPluginPath) || readFileSync(nativeSpeechPluginPath, 'utf8') !== nativeSpeechPlugin) {
+  writeFileSync(nativeSpeechPluginPath, nativeSpeechPlugin);
 }
 
 // The filters that put Vis in the system share sheet. `text/plain` is what a

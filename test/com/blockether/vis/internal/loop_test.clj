@@ -5328,3 +5328,13 @@
           (finally (deliver (:release ghost) true)
                    (.join ^Thread (:thread ghost) 2000)
                    (swap! env-cache dissoc k)))))))
+(defdescribe voice-projection-prompt-test
+  (it "activates the voice projection instructions only for the requested turn"
+      (let [projected (#'lp/voice-system-prompt "base" {"voice_projection" true})]
+        (expect (str/includes? projected "base"))
+        (expect (str/includes? projected "vis-speech"))
+        (expect (str/includes? projected "text-to-speech"))
+        (expect (str/includes? projected "text-only turn"))
+        (expect (str/includes? projected "do not mention voice mode")))
+      (expect (= "base" (#'lp/voice-system-prompt "base" {})))
+      (expect (= "base" (#'lp/voice-system-prompt "base" {:voice_projection true})))))

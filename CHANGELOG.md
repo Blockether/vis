@@ -88,6 +88,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   windows. There are no aliases — the old names are gone.
 - Android voice capture now opens a connected Bluetooth headset's HFP/SCO microphone before
   WebView starts recording, then restores the normal audio route when recording ends.
+- Voice-conversation playback on Android now uses the system text-to-speech engine when WebView
+  does not expose the Web Speech API.
+- Voice conversation requests the spoken projection for an idle session as well as a queued one;
+  previously the usual idle path returned only the full on-screen answer.
 - Prepare `vis-foundation-bridge` for Bridge 0.3: migrate the project profile and policy to the
   reduced YAML schema, recognize every 0.3 profile filename, preserve exact validation paths, and
   keep malformed Bridge configuration from crashing ordinary filesystem access.

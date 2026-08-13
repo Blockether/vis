@@ -16,7 +16,7 @@
 
 (def reasoning-visibilities #{"private" "visible"})
 
-(def block-types #{"prose" "code" "tool" "reasoning" "error" "attachment" "notice"})
+(def block-types #{"prose" "speech" "code" "tool" "reasoning" "error" "attachment" "notice"})
 
 (defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 
@@ -37,6 +37,12 @@
   (and (string-keyed-map? block)
        (non-blank-string? (get block "id"))
        (string? (get block "markdown"))))
+
+(defmethod block-valid? "speech"
+  [block]
+  (and (string-keyed-map? block)
+       (non-blank-string? (get block "id"))
+       (non-blank-string? (get block "text"))))
 
 (defmethod block-valid? "code"
   [block]
@@ -152,6 +158,10 @@
   ([markdown] (prose (block-id) markdown))
   ([id markdown] (assert-block! {"id" (str id) "type" "prose" "markdown" (str markdown)})))
 
+(defn speech
+  ([text] (speech (block-id) text))
+  ([id text] (assert-block! {"id" (str id) "type" "speech" "text" (str text)})))
+
 (defn code
   ([text] (code (block-id) text nil))
   ([id text language]
@@ -227,20 +237,40 @@
                      author
                      (assoc "author" (str author)))))
 
+(def ^:private speech-fence-pattern
+  #"(?s)(?:^|\n)[ \t]*```vis-speech[ \t]*\n(.*?)(?:\n[ \t]*```)(?=\n|$)")
+
+(defn- markdown-content
+  "Turn the reserved `vis-speech` fence into a semantic speech block. The fence is
+   removed from ordinary prose so visual clients never render a duplicate code
+   block. Text outside the fence remains the canonical full answer."
+  [markdown]
+  (let [markdown (str markdown)
+        [_ speech-text] (re-find speech-fence-pattern markdown)
+        prose-text (str/trim (str/replace-first markdown speech-fence-pattern "\n"))
+        spoken (some-> speech-text str/trim not-empty)]
+    (cond-> []
+      (not (str/blank? prose-text))
+      (conj (prose prose-text))
+
+      spoken
+      (conj (speech spoken)))))
+
 (defn answer-content
   "Convert the engine's final answer value into canonical blocks.
    Accepted answer values are Markdown strings, `{:answer string}`, wrapped
    canonical content vectors, and needs-input maps. Typed content vectors pass
-   through after validation."
+   through after validation. A reserved `vis-speech` fence becomes a speech block."
   [answer]
   (let [answer (if (and (map? answer) (contains? answer :result)) (:result answer) answer)]
     (cond (nil? answer) []
           (and (vector? answer) (every? block-valid? answer)) answer
           (and (map? answer) (vector? (:answer answer)) (every? block-valid? (:answer answer)))
           (:answer answer)
-          (string? answer) [(prose answer)]
-          (and (map? answer) (string? (:answer answer))) [(prose (:answer answer))]
-          (and (map? answer) (string? (:answer/text answer))) [(prose (:answer/text answer))]
+          (string? answer) (markdown-content answer)
+          (and (map? answer) (string? (:answer answer))) (markdown-content (:answer answer))
+          (and (map? answer) (string? (:answer/text answer)))
+          (markdown-content (:answer/text answer))
           :else (throw (ex-info "Final answer must be canonical content or Markdown prose"
                                 {:answer-type (type answer)})))))
 
@@ -253,7 +283,7 @@
                  "prose"
                  (get block "markdown")
 
-                 ("code" "reasoning")
+                 ("speech" "code" "reasoning")
                  (get block "text")
 
                  ("error" "notice")

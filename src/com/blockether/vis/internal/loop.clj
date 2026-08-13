@@ -6460,6 +6460,16 @@
                 :estimator-undercount (estimator-undercount (:input-tokens overflow)
                                                             (:before-tokens projection))))))))))
 
+(def ^:private voice-projection-prompt
+  "This is a text-only turn whose client may optionally read a separate projection aloud. Write the complete normal answer exactly as you would for any text client; do not mention voice mode, listening, playback, or ask the user to confirm that audio played. Then finish with exactly one fenced `vis-speech` block. Inside that block write only concise, natural plain text suitable for text-to-speech: no Markdown, code, tables, raw URLs, citation syntax, or tool narration. State the outcome, an important caveat, and any question that needs an answer. Do not repeat secrets. Aim for 15 to 45 seconds.")
+
+(defn- voice-system-prompt
+  [system-prompt turn-features]
+  (if (true? (get turn-features "voice_projection"))
+    (str (when-not (str/blank? (str system-prompt)) (str system-prompt "\n\n"))
+         voice-projection-prompt)
+    system-prompt))
+
 (defn iteration-loop
   "The core iteration loop. Runs assemble -> ask LLM -> execute -> persist
    until the model emits `:answer` or the user cancels."
@@ -6470,7 +6480,10 @@
            max-context-tokens hooks cancel-atom cancel-token reasoning-default routing extra-body
            reasoning-effort turn-features workspace-overrides]}]
   (let
-    [environment
+    [system-prompt
+     (voice-system-prompt system-prompt turn-features)
+
+     environment
      (cond-> environment
        (seq turn-features)
        (assoc :turn/features turn-features)
