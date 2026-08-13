@@ -278,8 +278,9 @@
   "import urllib.request as _ur, gzip as _gz, email.message as _em
 _seen = {}
 def _serve(status=200, body=b'', headers=()):
-    def _open(req, timeout=None):
+    def _open(req, timeout=None, context=None):
         _seen['url'] = req.full_url
+        _seen['context'] = context
         _seen['headers'] = {k.lower(): v for k, v in req.header_items()}
         b = req.data
         if hasattr(b, 'read'):
@@ -361,3 +362,52 @@ import requests
                           "_serve(200, b'{\"n\": 1}', [('Content-Type', 'application/json')])\n"
                           "[b'name=\"k\"' in body, b'name=\"f\"' in body,\n"
                           " repr(requests.get('http://svc/j').json(parse_int=float)['n'])]")))))))
+
+;; Regression, issue #141: `verify=False` and `cert=` were accepted and thrown
+;; away -- every request used urlopen's default verified context, so an expired
+;; or self-signed host was unreachable from the sandbox and the one kwarg that
+;; says "skip verification" did nothing at all.
+(defdescribe
+  requests-tls-options-test
+  (it "verify=False hands the transport an unverified context (was: ignored)"
+      (with-fresh-python-context
+        (expect (= [true false 200]
+                   (ev python-context
+                       (str
+                         urlopen-fake
+                         "import ssl\n"
+                         "_serve()\n" "r = requests.get('https://svc/x', verify=False)\n"
+                         "c = _seen['context']\n"
+                         "[c.verify_mode == ssl.CERT_NONE, c.check_hostname, r.status_code]"))))))
+  (it "an ordinary request carries NO context, so the default CA store still decides"
+      (with-fresh-python-context (expect (true? (ev python-context
+                                                    (str urlopen-fake
+                                                         "_serve()\n"
+                                                         "requests.get('https://svc/x')\n"
+                                                         "_seen['context'] is None"))))))
+  (it "Session.verify decides every call on it (was: stored, never read)"
+      (with-fresh-python-context
+        (expect (= [true true]
+                   (ev python-context
+                       (str urlopen-fake
+                            "import ssl\n" "_serve()\n"
+                            "s = requests.Session()\n" "s.verify = False\n"
+                            "s.get('https://svc/x')\n"
+                            "off = _seen['context'].verify_mode == ssl.CERT_NONE\n"
+                            "s.get('https://svc/x', verify=True)\n"
+                            "[off, _seen['context'] is None]"))))))
+  (it "warns with urllib3's own InsecureRequestWarning, which disable_warnings silences"
+      (with-fresh-python-context
+        (expect (= [1 true 0]
+                   (ev python-context
+                       (str
+                         urlopen-fake
+                         "import warnings, urllib3\n" "_serve()\n"
+                         "with warnings.catch_warnings(record=True) as w:\n"
+                         "    warnings.simplefilter('always')\n"
+                         "    requests.get('https://svc/x', verify=False)\n"
+                         "with warnings.catch_warnings(record=True) as w2:\n"
+                         "    warnings.simplefilter('always')\n" "    urllib3.disable_warnings()\n"
+                         "    requests.get('https://svc/x', verify=False)\n" "[len(w),\n"
+                         " isinstance(w[0].message, urllib3.exceptions.InsecureRequestWarning),\n"
+                         " len(w2)]")))))))

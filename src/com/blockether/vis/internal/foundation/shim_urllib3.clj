@@ -17,12 +17,16 @@
    `.headers`, `.json()`, `.read()`, `.stream()`, `.getheader()`),
    `HTTPHeaderDict`, `Retry`, `Timeout` (turned into the transport's
    connect/read pair), `parse_url` / `Url`, `make_headers`, `RequestField` +
-   `encode_multipart_formdata`, `disable_warnings()`, and the
+   `encode_multipart_formdata`, `disable_warnings()` (which really installs the
+   warnings filter), and the
    `urllib3.exceptions` tree (`HTTPError`, `MaxRetryError`,
    `NewConnectionError`, `ReadTimeoutError`, `ProtocolError`, `IncompleteRead`,
    `ProxySchemeUnknown`, `InsecureRequestWarning`). Real connection pooling and
    retry loops are no-ops, and a proxy URL is recorded rather than dialled: the
-   sandbox does its own egress."
+   sandbox does its own egress. The TLS options are NOT no-ops -- `cert_reqs`,
+   `ca_certs`, `ca_cert_dir`, `cert_file`/`key_file`, `assert_hostname` and
+   `ssl_context` map onto the requests shim's `verify=`/`cert=` and reach the
+   socket."
   (:require [com.blockether.vis.core :as vis]))
 
 
@@ -43,8 +47,8 @@
        :shim/description
        (str
          "`urllib3` as a package: `PoolManager`/`ProxyManager`, `HTTPResponse`, `request`, `util`, "
-         "`fields`, `filepost`, `exceptions`. Retries, pooling and low-level TLS options are "
-         "best-effort no-ops.")
+         "`fields`, `filepost`, `exceptions`. TLS options (`cert_reqs`, `ca_certs`, `ssl_context`) "
+         "reach the socket; retries and pooling are best-effort no-ops.")
        :shim/source "vis-shims/urllib3.py"}]}))
 
 (vis/register-extension! vis-extension)

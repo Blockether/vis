@@ -21,8 +21,11 @@
 ;; exercised with zero network. `fake` must be prepended to each snippet.
 (def ^:private fake
   "import requests as _rq, json as _json
+_last = {}
 def _fake(method, url, params=None, data=None, json=None, headers=None,
           cookies=None, auth=None, timeout=None, allow_redirects=True, **kw):
+    _last.clear()
+    _last.update(kw)
     resp = _rq.Response()
     m = str(method).upper()
     resp.status_code = 404 if 'missing' in url else (201 if m == 'POST' else 200)
@@ -418,3 +421,60 @@ _rq.request = _echo
                                            "    import urllib3\n" "except ImportError as e:\n"
                                            "    out = str(e)\n"
                                            "'json' in out and 'urllib3' in out")))))))
+
+;; Regression, issue #141: PoolManager swallowed every TLS option in `**_ignored`,
+;; so `cert_reqs='CERT_NONE'` (and ca_certs / cert_file) never reached the socket
+;; and an unverified request was impossible through urllib3.
+(defdescribe
+  urllib3-tls-options-test
+  (it "maps pool-level cert_reqs=CERT_NONE onto the transport's verify=False"
+      (with-python-context
+        (expect
+          (true?
+            (ev python-context
+                (str fake
+                     "urllib3.PoolManager(cert_reqs='CERT_NONE').request('GET', 'https://svc/d')\n"
+                     "_last['verify'] is False"))))))
+  (it "maps ca_certs and cert_file/key_file given on the call"
+      (with-python-context
+        (expect
+          (true?
+            (ev python-context
+                (str
+                  fake
+                  "pm = urllib3.PoolManager()\n"
+                  "pm.request('GET', 'https://svc/d', ca_certs='/etc/ca.pem',\n"
+                  "           cert_file='/c.pem', key_file='/k.pem')\n"
+                  "_last['verify'] == '/etc/ca.pem' and _last['cert'] == ('/c.pem', '/k.pem')"))))))
+  (it "an HTTPSConnectionPool keeps the TLS options it was built with"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str fake
+                                "p = urllib3.HTTPSConnectionPool('svc', cert_reqs='CERT_NONE')\n"
+                                "p.request('GET', '/d')\n"
+                                "_last['verify'] is False"))))))
+  (it "assert_hostname=False skips the NAME check and still verifies the chain"
+      (with-python-context
+        (expect
+          (true?
+            (ev python-context
+                (str fake
+                     "import ssl\n"
+                     "urllib3.PoolManager(assert_hostname=False).request('GET', 'https://svc/d')\n"
+                     "c = _last['verify']\n"
+                     "c.check_hostname is False and c.verify_mode == ssl.CERT_REQUIRED"))))))
+  (it "leaves an ordinary request alone, so the default CA store decides"
+      (with-python-context
+        (expect (true? (ev python-context
+                           (str fake
+                                "urllib3.PoolManager().request('GET', 'https://svc/d')\n"
+                                "_last['verify'] is None and _last['cert'] is None"))))))
+  (it "disable_warnings() really silences the InsecureRequestWarning category"
+      (with-python-context
+        (expect
+          (true? (ev python-context
+                     (str fake
+                          "import warnings\n" "with warnings.catch_warnings(record=True) as w:\n"
+                          "    warnings.simplefilter('always')\n" "    urllib3.disable_warnings()\n"
+                          "    warnings.warn('x', urllib3.exceptions.InsecureRequestWarning)\n"
+                          "len(w) == 0")))))))

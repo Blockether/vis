@@ -36,7 +36,8 @@
        :shim/imports ["requests"]
        :shim/description
        (str "`requests`-compatible API over stdlib urllib. No HTTP/2 or real pooling; "
-            "`HTTPDigestAuth` is accepted but sends no auth header.")
+            "`verify=`/`cert=` build the TLS context; `HTTPDigestAuth` is accepted but sends "
+            "no auth header.")
        :shim/source "vis-shims/requests.py"}]}))
 
 (vis/register-extension! vis-extension)

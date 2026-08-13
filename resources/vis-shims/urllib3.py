@@ -661,6 +661,53 @@ def __vis_install_urllib3__():
         out.append(("--" + boundary + "--\r\n").encode("utf-8"))
         return b"".join(out), "multipart/form-data; boundary=" + boundary
 
+    # ---- TLS ---------------------------------------------------------------
+    # urllib3 carries its TLS options on the pool/manager; the requests shim
+    # underneath spells them verify=/cert=. Mapping one onto the other is what
+    # makes `PoolManager(cert_reqs="CERT_NONE")` reach the socket instead of
+    # being swallowed as an unknown kwarg.
+    _TLS_KEYS = (
+        "cert_reqs",
+        "ca_certs",
+        "ca_cert_dir",
+        "cert_file",
+        "key_file",
+        "assert_hostname",
+        "ssl_context",
+    )
+
+    def _split_tls(kw):
+        """Picks urllib3's TLS options out of a pool's kwargs (the rest is dropped)."""
+        return {k: kw[k] for k in _TLS_KEYS if k in kw}
+
+    def _tls_pair(opts):
+        """Maps urllib3's TLS options onto the requests shim's (verify, cert).
+
+        `cert_reqs=CERT_NONE` -- the string, the int or the ssl enum -- turns
+        verification off; `ca_certs` / `ca_cert_dir` name a CA bundle;
+        `cert_file` + `key_file` are the client certificate; a ready
+        `ssl_context` is handed through, because the requests shim accepts an
+        SSLContext as `verify`; and `assert_hostname=False` is applied to the
+        built context, since requests' own vocabulary cannot say "verify the
+        chain but skip the name".
+        """
+        if not opts:
+            return None, None
+        verify = None
+        reqs = opts.get("cert_reqs")
+        if reqs is not None:
+            verify = str(getattr(reqs, "name", reqs)).upper() not in ("CERT_NONE", "0")
+        bundle = opts.get("ca_certs") or opts.get("ca_cert_dir")
+        if bundle and verify is not False:
+            verify = bundle
+        cert_file, key_file = opts.get("cert_file"), opts.get("key_file")
+        cert = (cert_file, key_file) if (cert_file and key_file) else cert_file
+        if opts.get("ssl_context") is not None:
+            verify = opts["ssl_context"]
+        if opts.get("assert_hostname") is False and verify is not False:
+            verify = _req()._vis_tls_context(verify, cert, check_hostname=False)
+        return verify, cert
+
     def _dispatch(
         method,
         url,
@@ -672,9 +719,12 @@ def __vis_install_urllib3__():
         preload_content=True,
         encode_multipart=True,
         multipart_boundary=None,
+        tls=None,
         **_ignored,
     ):
         rq = _req()
+        # Pool-level TLS options, overridden by anything given on the call.
+        verify, cert = _tls_pair(dict(tls or {}, **_split_tls(_ignored)))
         if isinstance(timeout, Timeout):
             timeout = timeout.as_requests()
         m = str(method).upper()
@@ -704,6 +754,8 @@ def __vis_install_urllib3__():
                 json=json_body,
                 headers=hdr or None,
                 timeout=timeout,
+                verify=verify,
+                cert=cert,
             )
         except PermissionError:
             raise  # vis network guard denial -- keep the clear message legible
@@ -724,8 +776,9 @@ def __vis_install_urllib3__():
         return HTTPResponse(rr)
 
     class PoolManager:
-        def __init__(self, num_pools=10, headers=None, **_ignored):
+        def __init__(self, num_pools=10, headers=None, **kw):
             self._headers = dict(headers or {})
+            self._tls = _split_tls(kw)
 
         def request(
             self, method, url, fields=None, headers=None, body=None, json=None, **kw
@@ -740,11 +793,14 @@ def __vis_install_urllib3__():
                 body=body,
                 headers=hdr or None,
                 json_body=json,
+                tls=self._tls,
                 **kw,
             )
 
         def urlopen(self, method, url, body=None, headers=None, **kw):
-            return _dispatch(method, url, body=body, headers=headers, **kw)
+            return _dispatch(
+                method, url, body=body, headers=headers, tls=self._tls, **kw
+            )
 
         def clear(self):
             return None
@@ -753,7 +809,12 @@ def __vis_install_urllib3__():
             self, host, port=None, scheme="http", pool_kwargs=None
         ):
             cls = HTTPSConnectionPool if scheme == "https" else HTTPConnectionPool
-            return cls(host, port=port, headers=self._headers, **(pool_kwargs or {}))
+            return cls(
+                host,
+                port=port,
+                headers=self._headers,
+                **dict(self._tls, **(pool_kwargs or {})),
+            )
 
         def connection_from_url(self, url, pool_kwargs=None):
             u = parse_url(url)
@@ -771,10 +832,11 @@ def __vis_install_urllib3__():
         scheme = "http"
         port_by_scheme = {"http": 80, "https": 443}
 
-        def __init__(self, host, port=None, headers=None, **_ignored):
+        def __init__(self, host, port=None, headers=None, **kw):
             self.host = host
             self.port = port
             self._headers = dict(headers or {})
+            self._tls = _split_tls(kw)
 
         def _url(self, path):
             base = self.scheme + "://" + str(self.host)
@@ -789,6 +851,7 @@ def __vis_install_urllib3__():
                 fields=fields,
                 body=body,
                 headers=headers or self._headers,
+                tls=self._tls,
                 **kw,
             )
 
@@ -807,7 +870,7 @@ def __vis_install_urllib3__():
         def __init__(
             self, proxy_url, num_pools=10, headers=None, proxy_headers=None, **_ignored
         ):
-            super().__init__(num_pools=num_pools, headers=headers)
+            super().__init__(num_pools=num_pools, headers=headers, **_ignored)
             if isinstance(proxy_url, HTTPConnectionPool):
                 proxy_url = (
                     proxy_url.scheme
@@ -836,7 +899,11 @@ def __vis_install_urllib3__():
         return PoolManager().request(method, url, **kw)
 
     def disable_warnings(category=None):
-        return None
+        """Silences the shim's security warnings -- the very call real code makes
+        before an intentionally unverified request."""
+        import warnings as _warnings
+
+        _warnings.simplefilter("ignore", category or InsecureRequestWarning)
 
     def add_stderr_logger(level=None):
         return None

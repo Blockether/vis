@@ -381,6 +381,10 @@ def __vis_install_httpx__():
             timeout = read if read is not None else connect
         cookies = kw.pop("cookies", None)
         auth = kw.pop("auth", None)
+        # httpx spells TLS as verify=/cert= too, and additionally accepts a
+        # ready ssl.SSLContext as `verify` -- all three reach the transport.
+        verify = kw.pop("verify", None)
+        cert = kw.pop("cert", None)
         follow = kw.pop("follow_redirects", None)
         if follow is None:
             # httpx does NOT follow redirects unless asked -- unlike requests.
@@ -400,6 +404,8 @@ def __vis_install_httpx__():
                 timeout=timeout,
                 auth=auth,
                 allow_redirects=bool(follow),
+                verify=verify,
+                cert=cert,
             )
         except PermissionError:
             raise  # vis network guard denial -- keep the clear message legible
@@ -479,6 +485,8 @@ def __vis_install_httpx__():
             follow_redirects=False,
             auth=None,
             cookies=None,
+            verify=True,
+            cert=None,
             **_ignored,
         ):
             self.base_url = str(base_url or "")
@@ -488,6 +496,8 @@ def __vis_install_httpx__():
             self._follow = follow_redirects
             self._auth = auth
             self._cookies = cookies
+            self._verify = verify
+            self._cert = cert
 
         def _abs(self, url):
             u = str(url)
@@ -517,6 +527,8 @@ def __vis_install_httpx__():
             kw.setdefault("follow_redirects", self._follow)
             kw.setdefault("auth", self._auth)
             kw.setdefault("cookies", self._cookies)
+            kw.setdefault("verify", self._verify)
+            kw.setdefault("cert", self._cert)
             return kw
 
         def request(self, method, url, **kw):
@@ -566,6 +578,8 @@ def __vis_install_httpx__():
             follow_redirects=False,
             auth=None,
             cookies=None,
+            verify=True,
+            cert=None,
             **_ignored,
         ):
             self._client = Client(
@@ -576,6 +590,8 @@ def __vis_install_httpx__():
                 follow_redirects=follow_redirects,
                 auth=auth,
                 cookies=cookies,
+                verify=verify,
+                cert=cert,
             )
 
         @property

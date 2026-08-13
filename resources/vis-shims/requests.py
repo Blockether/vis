@@ -655,6 +655,75 @@ def __vis_install_requests_compat__():
 
     _no_redirect_opener = _ur.build_opener(_NoRedirect())
 
+    # ---- TLS ---------------------------------------------------------------
+    def _tls_context(verify=None, cert=None, check_hostname=None):
+        """Builds the ssl.SSLContext for ONE request, or None for the stdlib default.
+
+        requests' vocabulary: `verify=True` checks the chain against the default
+        CA store, `verify=False` checks nothing, `verify="<path>"` uses that CA
+        file (or directory), and `cert=` is the client certificate -- a combined
+        PEM path or a (cert, key) pair. A ready ssl.SSLContext is accepted too
+        (httpx spells `verify=` that way) and is handed through untouched, and
+        `check_hostname=False` keeps chain verification while skipping the name
+        check -- urllib3's `assert_hostname`, which requests cannot express.
+
+        None means "change nothing", so the ordinary verified request keeps
+        urlopen's own default context and costs no extra work.
+        """
+        if verify is None:
+            verify = True
+        if verify is True and not cert and check_hostname is None:
+            return None
+        if hasattr(verify, "wrap_socket"):
+            return verify  # already an ssl.SSLContext
+        import ssl as _ssl
+
+        if verify:
+            cafile = capath = None
+            if isinstance(verify, str):
+                if _os.path.isdir(verify):
+                    capath = verify
+                else:
+                    cafile = verify
+            ctx = _ssl.create_default_context(cafile=cafile, capath=capath)
+        else:
+            ctx = _ssl.create_default_context()
+            # Hostname checking must go off FIRST: CERT_NONE while it is still
+            # on is a ValueError, not an unverified context.
+            ctx.check_hostname = False
+            ctx.verify_mode = _ssl.CERT_NONE
+        if check_hostname is False:
+            ctx.check_hostname = False
+        if cert:
+            if isinstance(cert, (tuple, list)):
+                certfile = cert[0]
+                keyfile = cert[1] if len(cert) > 1 else None
+            else:
+                certfile, keyfile = cert, None
+            ctx.load_cert_chain(certfile, keyfile)
+        return ctx
+
+    def _warn_insecure(url):
+        """Warns that verification is off, with urllib3's OWN warning class, so
+        `urllib3.disable_warnings()` and a filter on `InsecureRequestWarning`
+        silence it exactly like they do on the real stack."""
+        import warnings as _warnings
+
+        try:
+            import urllib3 as _u3
+
+            category = _u3.exceptions.InsecureRequestWarning
+        except Exception:
+            category = Warning
+        host = _up.urlsplit(url).hostname or url
+        _warnings.warn(
+            "Unverified HTTPS request is being made to host '"
+            + str(host)
+            + "'. Adding certificate verification is strongly advised.",
+            category,
+            stacklevel=3,
+        )
+
     # ---- request ----------------------------------------------------------
     def request(
         method,
@@ -668,6 +737,8 @@ def __vis_install_requests_compat__():
         timeout=None,
         allow_redirects=True,
         files=None,
+        verify=None,
+        cert=None,
         **kwargs,
     ):
         method = str(method).upper()
@@ -723,10 +794,22 @@ def __vis_install_requests_compat__():
         resp = Response()
         resp.url = full
         resp.request = req
-        opener = _ur.urlopen if allow_redirects else _no_redirect_opener.open
+        # TLS: verify=/cert= decide the context for THIS request. urlopen takes
+        # one directly; OpenerDirector.open does not, so the no-redirect path
+        # bakes it into an HTTPSHandler of its own.
+        ctx = _tls_context(verify, cert)
+        if verify is not None and not verify and low.startswith("https://"):
+            _warn_insecure(full)
         start = _dt.datetime.now()
         try:
-            raw = opener(req, timeout=t)
+            if allow_redirects:
+                raw = _ur.urlopen(req, timeout=t, context=ctx)
+            elif ctx is None:
+                raw = _no_redirect_opener.open(req, timeout=t)
+            else:
+                raw = _ur.build_opener(
+                    _ur.HTTPSHandler(context=ctx), _NoRedirect()
+                ).open(req, timeout=t)
         except PermissionError:
             # vis network guard (host/method denial) raises PermissionError with a
             # clear 'vis: ...' message -- surface it VERBATIM instead of masking it
@@ -851,6 +934,10 @@ def __vis_install_requests_compat__():
             if cookies:
                 merged_c.update(cookies)
             use_auth = auth if auth is not None else self.auth
+            # Session TLS settings are per-call DEFAULTS, like requests':
+            # an explicit verify=/cert= on the call still wins.
+            kwargs.setdefault("verify", self.verify)
+            kwargs.setdefault("cert", self.cert)
             resp = request(
                 method,
                 url,
@@ -1135,6 +1222,10 @@ def __vis_install_requests_compat__():
     mod.CaseInsensitiveDict = CaseInsensitiveDict
     mod.RequestsCookieJar = RequestsCookieJar
     mod.codes = codes
+    # Internal seam: the urllib3 shim maps its own TLS options (cert_reqs,
+    # ca_certs, assert_hostname) onto this builder, so ssl is configured in
+    # exactly ONE place for every shim that rides this transport.
+    mod._vis_tls_context = _tls_context
 
     mod.request = request
     mod.get = get

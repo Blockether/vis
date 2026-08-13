@@ -200,7 +200,7 @@ class _Fake:
     def read(self): return b'ok'
     def close(self): pass
 sent = {}
-def _fake_urlopen(req, timeout=None):
+def _fake_urlopen(req, timeout=None, context=None):
     body = req.data
     if hasattr(body, 'read'):
         body = body.read()
@@ -266,6 +266,7 @@ def _echo(method, url, params=None, data=None, files=None, json=None, headers=No
         resp.headers['Location'] = '/next'
     resp.content = _json.dumps({'files': repr(files), 'follow': allow_redirects,
                                 'timeout': timeout, 'auth': type(auth).__name__,
+                                'verify': kw.get('verify'), 'cert': kw.get('cert'),
                                 'headers': dict(headers) if headers else {}}).encode('utf-8')
     return resp
 _rq.request = _echo
@@ -377,3 +378,24 @@ _rq.request = _echo
                  "    streamed = 'landed' if s.status_code == 200 else 'no'\n"
                  "[httpx.codes.NOT_FOUND, httpx.codes.OK, auth, str(u.query), streamed,\n"
                  " u.raw_path.decode()]")))))))
+
+;; Regression, issue #141: httpx accepted `verify=` / `cert=` and dropped them on
+;; the floor -- neither the call nor the Client could turn verification off, and
+;; the hole was invisible because the kwargs were swallowed by `**_ignored`.
+(defdescribe
+  httpx-tls-options-test
+  (it "forwards verify= from the call and from the Client (was: silently dropped)"
+      (with-python-context
+        (expect (= [false false true nil]
+                   (ev python-context
+                       (str echo-fake
+                            "a = httpx.get('http://svc/a', verify=False).json()['verify']\n"
+                            "b = httpx.Client(verify=False).get('http://svc/a').json()['verify']\n"
+                            "c = httpx.Client().get('http://svc/a').json()['verify']\n"
+                            "d = httpx.get('http://svc/a').json()['verify']\n" "[a, b, c, d]"))))))
+  (it "forwards the client certificate too"
+      (with-python-context
+        (expect (= "/c.pem"
+                   (ev python-context
+                       (str echo-fake
+                            "httpx.Client(cert='/c.pem').get('http://svc/a').json()['cert']")))))))

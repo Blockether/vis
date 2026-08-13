@@ -1782,14 +1782,18 @@ def __vis_strip_protected_imports__(src):
     #     ALSO auto-imported onto builtins (always present); the module imports
     #     fine even with the network toggle off — only a live connect is gated by
     #     `allowHostSocketAccess`, which raises a clean UnsupportedOperation.
-    #   • `import select` / `selectors` / `ssl` ...      ->  dropped (no shim; a
-    #     later use is a clean NameError, not a native crash).
+    #   • `import ssl` / `select` / `selectors`        ->  passthrough. They were
+    #     once DELETED as native-crash risks; on this build they import and run
+    #     (ssl reports "OpenSSL compatible GraalVM JSSE"), and deleting the
+    #     statement made an unverified HTTPS request unfixable from a block: the
+    #     escape hatch vanished silently and the later use raised a NameError
+    #     nobody could explain. A real future incompatibility has to fail LOUDLY
+    #     at import, never by editing the statement away.
     #   • an import binding a tool name (`import doc`)  ->  KEPT; it just shadows
     #     that name for THIS block (the wrapper never declares it `global`).
     # Everything else (json, re, ...) is untouched; the ORIGINAL src is returned
     # when nothing changed (line numbers / formatting preserved).
     prot = set(globals().get("__vis_protected_names__") or [])
-    drop = ("select", "selectors", "ssl")
 
     def bind(name, attr):
         val = __vis_ast__.Name(id="__vis_asyncio__", ctx=__vis_ast__.Load())
@@ -1807,11 +1811,8 @@ def __vis_strip_protected_imports__(src):
             keep = []
             for a in node.names:
                 base = a.name.split(".")[0]
-                bound = (a.asname or a.name).split(".")[0]
                 if base == "asyncio":
                     newbody.append(bind(a.asname or "asyncio", None))
-                    changed = True
-                elif base in drop:
                     changed = True
                 else:
                     keep.append(a)
@@ -1825,8 +1826,6 @@ def __vis_strip_protected_imports__(src):
                     bound = a.asname or a.name
                     if bound not in prot:  # gather etc. stay the builtin
                         newbody.append(bind(bound, a.name))
-                changed = True
-            elif base in drop:
                 changed = True
             else:
                 newbody.append(node)

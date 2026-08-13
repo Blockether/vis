@@ -1030,6 +1030,40 @@ await patch({'path': css})" "t1/i1")]
           (expect (not (clojure.string/includes? blob "PosixSupport")))
           (expect (clojure.string/includes? blob "socket"))))))
 
+;; Regression, issue #141: `import ssl` (and `select` / `selectors`) was DELETED
+;; from the block by the import preprocessor, so the stdlib escape hatch for an
+;; unverified HTTPS request vanished without a word and the next line raised a
+;; NameError nobody could explain.
+(defdescribe
+  stdlib-import-passthrough-test
+  "Only `asyncio` is rewritten. Every other stdlib import — including the three
+   once dropped as native-crash risks — reaches the block verbatim."
+  (let
+    [mk (fn []
+          (tpc/context ::ctx))]
+    (it "import ssl / select / selectors survives, and the modules work"
+        (let
+          [r (ep/run-python-block (mk)
+                                  (str "import ssl, select, selectors\n"
+                                       "print(ssl.CERT_NONE == 0, callable(select.select), "
+                                       "selectors.SelectSelector is not None)")
+                                  "t1/i1")]
+          (expect (nil? (:error r)))
+          (expect (= "True True True" (clojure.string/trim (str (:stdout r)))))))
+    (it "from ssl import ... binds the name instead of vanishing"
+        (let
+          [r (ep/run-python-block (mk) "from ssl import CERT_NONE\nprint(CERT_NONE == 0)" "t1/i1")]
+          (expect (nil? (:error r)))
+          (expect (= "True" (clojure.string/trim (str (:stdout r)))))))
+    (it "the preprocessor hands such a block back byte-for-byte"
+        (let
+          [r (ep/run-python-block (mk)
+                                  (str "src = 'import ssl\\nx = 1\\n'\n"
+                                       "print(__vis_strip_protected_imports__(src) == src)")
+                                  "t1/i1")]
+          (expect (nil? (:error r)))
+          (expect (= "True" (clojure.string/trim (str (:stdout r)))))))))
+
 (defdescribe
   guest-threads-test
   "Guest Python may CREATE threads — importlib's import machinery, `threading`,

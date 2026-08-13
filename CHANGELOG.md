@@ -107,6 +107,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   block, file picker) and the TUI Magit surface are unchanged.
 
 ### Fixed
+- Sandbox HTTPS could not skip certificate verification, and the escape hatch was deleted behind
+  the caller's back. `requests.get(url, verify=False)`, `Session.verify`, `cert=`, httpx's
+  `verify=`/`cert=` and urllib3's `cert_reqs` / `ca_certs` / `cert_file` / `assert_hostname` /
+  `ssl_context` were all accepted and thrown away — every request used urlopen's default verified
+  context, so an expired, self-signed or internal-CA host was unreachable from a block — while a
+  top-level `import ssl` (and `select` / `selectors`) was silently DELETED from the source by the
+  import preprocessor, so even the stdlib workaround died on an unexplainable `NameError`. Those
+  options now build the TLS context for the request, warning with urllib3's own
+  `InsecureRequestWarning` (which `urllib3.disable_warnings()` really silences); only `asyncio` is
+  still rewritten, and every other stdlib import reaches the block verbatim.
 - A committed `vis.yml` forced one developer's provider and model on every clone. The visible
   project file merges LAST, over `~/.vis`, so `default_provider`, `default_model`,
   `fallback_provider` and `fallback_model` written there silently replaced each teammate's own
