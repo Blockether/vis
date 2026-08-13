@@ -21,7 +21,8 @@
             [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.python-test-runner :as runner]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [java.nio.file Files]
+  (:import [java.lang ProcessHandle]
+           [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.graalvm.polyglot Context]))
 
@@ -1322,6 +1323,11 @@ vis.extension(
    session jail and the user's `shell` toggle — so the two cannot drift apart."
   "import vis\ndef detect():\n    handle = vis.shell({'command': 'printf regular-shell'})\n    result = handle.wait(30)\n    for _ in range(3):\n        if not result.get('timed_out'):\n            break\n        result = handle.wait(30)\n    return {'token': result['stdout'], 'source': 'shell'}\nvis.extension(name='shell-provider', description='shell provider', providers=[vis.provider(id='shell-provider', label='Shell provider', detect_fn=detect)])")
 
+(def ^:private popen-probe-py
+  "Issue #142's own reproduction as an extension: start a child, hand the pid
+   the handle carries straight back to the host."
+  "import subprocess\nimport vis\ndef probe():\n    '''await probe() -> {'pid'} — start a child and report the handle it got.'''\n    child = subprocess.Popen(['/bin/sleep', '39'])\n    return {'pid': child.pid, 'slot': getattr(child, '__vis_virtual_pid__', child.pid), 'poll': child.poll()}\nvis.extension(name='popen-probe', description='popen probe', alias='popen', symbols=[vis.symbol(probe, tag='observation')])")
+
 (defdescribe
   python-extension-process-boundary-test
   (it
@@ -1332,6 +1338,38 @@ vis.extension(
       (fn [_ _]
         (expect (= {:token "extension-native" :source :subprocess}
                    ((:provider/detect-fn (registry/provider-by-id :process-provider))))))))
+  ;; Regression, issue #142: through this same loader, `Popen(...)` started a real
+  ;; child and handed the extension a handle whose pid was `1` — GraalPy's first
+  ;; child slot, and 1 is init — so nothing could ps, lsof or supervise the child
+  ;; the extension had just started.
+  (it "hands a tool the real OS pid of the child its Popen started"
+      (with-loaded
+        {"popen_probe.py" popen-probe-py}
+        (fn [_ _]
+          (let
+            [result
+             ((symbol-fn (registered "popen-probe") 'probe))
+
+             pid
+             (long (get-in result [:result "pid"]))
+
+             slot
+             (long (get-in result [:result "slot"]))
+
+             found
+             (ProcessHandle/of pid)]
+
+            (try (expect (extension/envelope-success? result))
+                 (expect (= 1 slot) "the child still lands in the context's first slot")
+                 (expect (not= slot pid) "and the handle carries a pid, not that slot")
+                 (expect (nil? (get-in result [:result "poll"]))
+                         "the child was running when the tool returned")
+                 (expect (.isPresent found) "the pid names a process the host can see")
+                 (expect (str/includes? (str (.orElse (.command (.info ^ProcessHandle (.get found)))
+                                                      ""))
+                                        "sleep")
+                         "and it is the child the extension started")
+                 (finally (when (.isPresent found) (.destroy ^ProcessHandle (.get found)))))))))
   (it "keeps vis.shell unrestricted even while the invoking session jail is enabled"
       (with-loaded {"shell_provider.py" shell-provider-py}
                    (fn [_ _]

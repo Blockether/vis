@@ -201,9 +201,33 @@ def __vis_install_process_redirect__():
     # The pairing: the host fills a slot confined to the thread that spawns
     # during the spawn this constructor makes, and the claim empties it.
 
-    # Real OS pid -> the slot emulated posix answers to, while the child lives.
-    # Dropped on reap, so a stale pid raises instead of signalling a stranger.
+    # Real OS pid -> the slot emulated posix answers to, and back. The reverse
+    # direction is what keeps a stale pid harmless: a slot is handed to the NEXT
+    # child once its own is reaped, and a reap can happen through a door this
+    # layer never sees - `os.waitpid(-1, ...)` reaps a child of the context and
+    # answers -1, naming nobody. Through the forward map alone, the dead child's
+    # pid then signalled whichever child had taken its slot.
     slot_of_pid = {}
+    pid_of_slot = {}
+
+    def forget(pid):
+        """Drop `pid`'s slot, in both directions."""
+        slot = slot_of_pid.pop(pid, None)
+        if slot is not None and pid_of_slot.get(slot) == pid:
+            del pid_of_slot[slot]
+
+    def live_slot(pid):
+        """The slot `pid` may still be reached through, else `None`.
+
+        `None` both for a pid this layer never handed out - it belongs to the
+        caller's own world and is passed through - and for one whose slot has
+        since gone to another child, which the caller must not reach.
+        """
+        slot = slot_of_pid.get(pid)
+        if slot is None or pid_of_slot.get(slot) == pid:
+            return slot
+        forget(pid)
+        return None
 
     def adopt_real_pid(process):
         """Put the child's real OS pid on `process`, keeping its slot index."""
@@ -221,6 +245,7 @@ def __vis_install_process_redirect__():
         process.__vis_virtual_pid__ = slot
         process.pid = real
         slot_of_pid[real] = slot
+        pid_of_slot[slot] = real
 
     def through_slot(method):
         """`method`, run with the slot index emulated posix keys children on."""
@@ -237,7 +262,7 @@ def __vis_install_process_redirect__():
             finally:
                 self.pid = real
                 if self.returncode is not None:
-                    slot_of_pid.pop(real, None)
+                    forget(real)
 
         return patched
 
@@ -245,16 +270,17 @@ def __vis_install_process_redirect__():
     original_waitpid = os.waitpid
 
     def patched_kill(pid, sig):
-        return original_kill(slot_of_pid.get(pid, pid), sig)
+        slot = live_slot(pid)
+        return original_kill(pid if slot is None else slot, sig)
 
     def patched_waitpid(pid, options=0):
-        slot = slot_of_pid.get(pid)
+        slot = live_slot(pid)
         if slot is None:
             return original_waitpid(pid, options)
         reaped, status = original_waitpid(slot, options)
         if not reaped:
             return reaped, status
-        slot_of_pid.pop(pid, None)
+        forget(pid)
         # The caller asked about an OS pid and is answered with one.
         return pid, status
 

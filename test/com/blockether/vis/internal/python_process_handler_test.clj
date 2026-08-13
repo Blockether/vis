@@ -682,7 +682,27 @@
                   (expect (.asBoolean (member ctx "distinct")) "two children never share a pid")
                   (expect (.asBoolean (member ctx "second_alive"))
                           (str "the reaped child's pid signalled nobody, os.kill answered "
-                               (.asString (member ctx "stale"))))))))
+                               (.asString (member ctx "stale")))))))
+  (it "refuses a pid whose slot a wildcard wait handed to another child"
+      ;; `os.waitpid(-1, ...)` reaps a child of this context and answers -1, so the
+      ;; layer that swaps pids never learns which handle died; the freed slot goes
+      ;; to the next child, and the first child's pid used to signal THAT one.
+      (in-guest "real-pid-wildcard.py"
+                (str "import os, signal, subprocess, time\n"
+                     "first = subprocess.Popen(['/bin/sleep', '0.2'])\n" "time.sleep(0.8)\n"
+                     "wildcard = os.waitpid(-1, 0)\n"
+                     "second = subprocess.Popen(['/bin/sleep', '32'])\n"
+                     "recycled = getattr(second, '__vis_virtual_pid__', 0) == 1\n" "try:\n"
+                     "    os.kill(first.pid, signal.SIGTERM)\n" "    stale = 'accepted'\n"
+                     "except Exception as error:\n" "    stale = type(error).__name__\n"
+                     "time.sleep(0.4)\n" "second_alive = second.poll() is None\n")
+                (fn [ctx]
+                  (expect (.asBoolean (member ctx "recycled"))
+                          "the wildcard wait freed the first child's slot for the second")
+                  (expect (= "ProcessLookupError" (.asString (member ctx "stale")))
+                          "a pid whose slot moved on names nobody")
+                  (expect (.asBoolean (member ctx "second_alive"))
+                          "and the child that took the slot was left alone")))))
 
 (defdescribe
   guest-pid-under-concurrent-spawn-test
