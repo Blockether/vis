@@ -99,7 +99,16 @@
       ;; several edits in one block does not fit in what it freed. Measured against 40 real
       ;; sessions, the instruction it replaces cost 48% of ALL block characters in blocks
       ;; that write a file, 80% of it the old text quoted back; this is the cheaper order.
-      (expect (< (count text) 5500))
+      ;; 5.5k → 5.9k exactly once more, for §2's shape rule. The sandbox is a PROGRAM the
+      ;; session keeps: roots bound once off `session`, results in named variables, one helper
+      ;; called again instead of a near-identical block pasted twice, and — when the chore
+      ;; outlives the turn — a proposed Python extension in `.vis/extensions/*.py`. Sessions
+      ;; that lacked it retyped absolute paths per block, redefined the same helper each block,
+      ;; and re-derived what an earlier block had already computed. Naming the `session` key,
+      ;; the extension path and `doc("extending")` is what makes the rule executable rather
+      ;; than a slogan; the paragraph it replaced ("A result is an ordinary Python value") is
+      ;; folded into it.
+      (expect (< (count text) 5900))
       (let
         [steps (mapv #(str/index-of text %)
                      ["`grep` locates unknown code" "`struct_index` every known file"
@@ -150,9 +159,9 @@
                    ;; status accessors, so following it verbatim raised a TypeError —
                    ;; `type` SENDS keystrokes and its text argument is required.
                    "No shell TOOL" "`sh.logs(-50)`" "`sh.wait(s)`" "`sh.type(\"y\")`"
-                   "functions that accept or return\n  callables"
+                   "functions that accept or return callables"
                    "NEVER paste a near-identical loop or block twice" "Define once and reuse"
-                   "second occurrence factor it out and call it" "ordinary Python value"
+                   "factor it out on the second occurrence" "keep results in"
                    "an unprinted value costs no context" "gone when the block ends"
                    "Inspect shape before indexing" "nothing lists one for you"
                    "tests-only work starts with `run_tests`" "interactive work uses `repl_eval`"
@@ -689,3 +698,25 @@
              (it "says a shell handle reads its last n LINES"
                  (let [text (prompt/build-system-prompt {})]
                    (expect (str/includes? text "`sh.logs(-50)` (last n LINES)")))))
+
+;; Regression: §2 named the execution surfaces but never the SHAPE of the code written on
+;; them, so blocks retyped absolute paths, redefined the same helper in every block, and a
+;; chore repeated across turns never became anything the project keeps.
+(defdescribe core-prompt-steers-python-shape-test
+             (it "binds roots off `session` and derives every path from them"
+                 (let [text (prompt/build-system-prompt {})]
+                   (expect (str/includes? text "Write a PROGRAM, not a transcript"))
+                   (expect (str/includes? text "Path(session[\"workspace\"][\"root\"])"))
+                   (expect (str/includes? text "`await gather(...)`"))))
+             (it "orders a helper CALLED again, never pasted again"
+                 (let [text (prompt/build-system-prompt {})]
+                   (expect (str/includes? text "CALL the one an earlier block defined"))
+                   (expect (str/includes? text "definitions persist between blocks"))))
+             ;; A chore that repeats across turns is the one thing a session can turn into
+             ;; project-durable tooling, and the rule is executable only if it names the file
+             ;; it lives in and the document that shows how to write it.
+             (it "proposes a Python extension when the chore outlives the turn"
+                 (let [text (prompt/build-system-prompt {})]
+                   (expect (str/includes? text ".vis/extensions/*.py"))
+                   (expect (str/includes? text "doc(\"extending\")"))
+                   (expect (str/includes? text "write it when asked")))))

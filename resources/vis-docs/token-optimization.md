@@ -105,6 +105,28 @@ print(len(hits), todos.splitlines()[0])   # grep answers TEXT; line 1 is its sum
 
 This turns many reads plus a reduction into one visible result instead of one transcript entry per intermediate value.
 
+## Write a program, not a transcript
+
+The sandbox keeps state between blocks, so treat it as one program the session is building rather than a run of disposable snippets.
+
+Bind the roots once and derive every path from them. The workspace root is already in `session`, so no block ever has to retype an absolute path:
+
+```python
+root = Path(session["workspace"]["root"])
+src, tests = root / "src", root / "test"
+```
+
+Write a small helper the first time a shape repeats, then CALL it from every later block — a function defined in an earlier block is still bound, and redefining it is a paste the context pays for twice:
+
+```python
+def hits(needles, *paths, ctx=0):
+    """Anchored `line:hash│ text` rows only, without the per-path headers."""
+    text = grep({"query": needles, "paths": list(paths), "context": ctx})
+    return [l for l in text.splitlines() if "│ " in l]
+```
+
+When the same helper survives across turns — a deploy check, a fixture loader, a project-specific guard — it has outgrown the sandbox. Propose a **Python extension**: one file in `.vis/extensions/*.py` registers a named tool for every future session in that project, `vis-agent extension check` validates it, and `doc("extending")` is the whole recipe. Propose it; write it when the user asks.
+
 ## Fold settled steps
 
 `fold_session` removes **settled wire steps** from future model calls; it does not delete database history. Settled means every completed prior turn AND the current turn's already-finished iterations. At the start of a new turn, understand the new request first, then fold earlier work that no longer needs raw detail:
