@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   back.
 
 ### Changed
+- The native release build is verifiable without spending a tag. `Native Release` dispatched
+  from a BRANCH is now a dry run — it builds the image, stages the bundle and runs every smoke
+  test and the native suite, and attaches nothing; only a `v*` ref publishes. It used to refuse
+  a non-tag dispatch outright, so the only way to learn whether a release would build was to cut
+  the tag and watch.
 - The macOS arm64 release build no longer runs on anyone's laptop. This repository registers no
   self-hosted runner: the `macos` job of `.github/workflows/native-release.yml` takes its builder
   from the repository variable `VIS_MACOS_ARM64_RUNNER`, which now holds a CLOUD Apple-silicon
