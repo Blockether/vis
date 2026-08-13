@@ -94,4 +94,47 @@ describe("fleet search asks the gateway once per pause", () => {
     expect(screen.getByText("No matching sessions")).toBeTruthy();
     expect(document.body.textContent).not.toContain("No sessions yet");
   });
+
+  // Regression, issue: a fleet search sat completely silent for as long as it took —
+  // the row above the list said "0 matches" and the empty list said "No matching
+  // sessions", both of them answers this screen did not have yet, and the real rows
+  // appeared much later with no word in between about where the search was.
+  it("says a search is IN FLIGHT before it can say what it found", async () => {
+    const view = renderSessionsScreen({ machines: machines([hit]) });
+    restore = view.restore;
+    await screen.findByText("First");
+
+    view.setQuery("needle");
+    expect(await screen.findByText("searching...")).toBeTruthy();
+    // Not a result, so not a dead end either.
+    expect(document.body.textContent).not.toContain("No matching sessions");
+    await waitFor(() => expect(screen.getByText("1 match")).toBeTruthy());
+    expect(screen.queryByText("searching...")).toBeNull();
+  });
+
+  // A fleet search is one round trip PER MACHINE, so "how far along" is a real
+  // number the reader can be given — and the machine that answered must not be held
+  // behind the one that has not.
+  it("reports how much of the fleet has answered, and paints the machine that did", async () => {
+    const view = renderSessionsScreen({
+      machines: [
+        ...machines([hit]),
+        {
+          label: "beta",
+          sessions: [listSession({ id: "b1", title: "Second" })],
+          hangs: true,
+        },
+      ],
+    });
+    restore = view.restore;
+    await screen.findByText("First");
+    await screen.findByText("Second");
+
+    view.setQuery("needle");
+    expect(await screen.findByText("searching 1 of 2 machines...")).toBeTruthy();
+    // alpha's hit is on screen while beta is still out, and beta's own section says
+    // it is still reading rather than that it found nothing.
+    expect(screen.getByText("First")).toBeTruthy();
+    expect(screen.getByText("Searching this machine...")).toBeTruthy();
+  });
 });

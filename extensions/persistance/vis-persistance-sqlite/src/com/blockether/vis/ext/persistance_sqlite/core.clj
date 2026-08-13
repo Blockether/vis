@@ -1333,21 +1333,34 @@
                       str/trim
                       not-empty)}))
 
-(defn- transcript-hit-rank-sql
-  "Id-only FTS ranking query for ONE side (`:request` from the user's own text,
-   `:reply` from assistant prose/thinking): session soul id, FTS rowid and the
-   row's `created_at`, newest first.
+(defn- transcript-hit-sql
+  "FTS query for ONE side (`:request` from the user's own text, `:reply` from
+   assistant prose/thinking): session soul id, FTS rowid, the row's `created_at`
+   and the `snippet()` window(s) that say WHY it matched — newest first, in ONE
+   statement.
 
    Newest-first is `rowid DESC` — insertion order — deliberately NOT `created_at`:
    ordering on a non-indexed column would force a sort of every match.
 
-   The DESC walk and the scan cap live in a SUBQUERY over the FTS table ALONE,
-   before any join. FTS5 can only serve `ORDER BY rowid DESC` from its own index
-   when nothing else is in the query; ordering the joined result instead made
-   SQLite spool EVERY match into a temp B-tree and sort it (`USE TEMP B-TREE FOR
-   ORDER BY`), so a stop word paid for all 75k of its hits to hand back 20k —
-   240ms of a 300ms search. Ranking first and joining only the survivors is the
-   same rows in the same order for a third of the time.
+   The DESC walk, the scan cap AND the snippets live in a SUBQUERY over the FTS
+   table ALONE, before any join. Both halves of that are measured:
+
+   FTS5 can only serve `ORDER BY rowid DESC` from its own index when nothing else
+   is in the query; ordering the joined result instead made SQLite spool EVERY
+   match into a temp B-tree and sort it (`USE TEMP B-TREE FOR ORDER BY`), so a
+   stop word paid for all 75k of its hits to hand back 20k — 240ms of a 300ms
+   search.
+
+   And `snippet()` used to be a SECOND pass that repeated the MATCH and
+   intersected it with the ranked rowids (`… MATCH ? AND rowid IN (…)`). SQLite
+   re-runs that MATCH once PER rowid, and a PREFIX term longer than the
+   `prefix='2 3'` indexes — `star*`, which is what a human actually types — has
+   to be re-expanded across the term index on every one of those seeks: 0.75ms a
+   row, ~800ms of snippets for one query against a 2.2GB store, against 5ms for
+   the same 400 rows under an exact term. That single pass was most of the wait
+   the app reported as a search that hangs with nothing to show. Snippeting the
+   ordered scan instead expands the prefix ONCE for the whole query (~150ms for
+   `star*`, ~270ms for a stop word) and needs no second statement at all.
 
    The cap therefore counts matches BEFORE the claimed/unforked filter rather
    than after: beyond `transcript-hit-scan-limit` newest hits the tail is a
@@ -1361,6 +1374,31 @@
 
        :reply
        "transcript_reply_fts")
+
+     ;; The reply side asks for one window per indexed column — assistant prose
+     ;; (0) then thinking (1) — so `hit-snippet` can tell an answer from the
+     ;; reasoning aside. `char(1)` is the marker that proves a column really
+     ;; matched; the request side has one column and needs none.
+     snips
+     (case side
+       :request
+       (str "snippet(" fts ", 0, '', '', '…', 20) AS snip")
+
+       :reply
+       (str "snippet("
+            fts
+            ", 0, char(1), '', '…', 20) AS s0, "
+            "snippet("
+            fts
+            ", 1, char(1), '', '…', 20) AS s1"))
+
+     cols
+     (case side
+       :request
+       "f.snip AS snip"
+
+       :reply
+       "f.s0 AS s0, f.s1 AS s1")
 
      joins
      (case side
@@ -1383,9 +1421,13 @@
        "it.created_at")]
 
     (str "SELECT cs.id AS sid, f.rid AS rid, "
+         cols
+         ", "
          at
          " AS at "
-         "FROM (SELECT rowid AS rid FROM "
+         "FROM (SELECT rowid AS rid, "
+         snips
+         " FROM "
          fts
          " WHERE "
          fts
@@ -1399,44 +1441,16 @@
          chan-sql
          " ORDER BY f.rid DESC")))
 
-(defn- transcript-snippet-sql
-  "`snippet()` windows for an EXPLICIT set of FTS rowids on one side. `snippet()`
-   only works inside a direct `MATCH` query (not over a join or CTE), hence the
-   MATCH is repeated here and intersected with the ranked rowids."
-  [side n]
-  (let [ids (str/join "," (repeat n "?"))]
-    (case side
-      :request
-      (str "SELECT transcript_request_fts.rowid AS rid, "
-           "snippet(transcript_request_fts, 0, '', '', '…', 20) AS snip "
-           "FROM transcript_request_fts "
-           "WHERE transcript_request_fts MATCH ? AND rowid IN ("
-           ids
-           ")")
-
-      :reply
-      (str "SELECT transcript_reply_fts.rowid AS rid, "
-           "snippet(transcript_reply_fts, 0, char(1), '', '…', 20) AS s0, "
-           "snippet(transcript_reply_fts, 1, char(1), '', '…', 20) AS s1 "
-           "FROM transcript_reply_fts "
-           "WHERE transcript_reply_fts MATCH ? AND rowid IN ("
-           ids
-           ")"))))
-
-(def ^:private transcript-snippet-batch
-  "Rowids per `IN (…)` batch — well under SQLite's bound-parameter ceiling."
-  400)
-
 (defn- transcript-hit-rows
   "FTS hits on ONE side, FAIRLY capped: up to `transcript-hits-per-session`
    snippets for EACH of the newest `transcript-hit-sessions-limit` matching
    sessions — not the newest N rows overall, which is what starved older
    sessions down to a single snippet.
 
-   Two passes: an id-only ranking query (cheap even for a stop word), then one
-   `snippet()` query over just the rowids that survived the per-session cap. The
-   snippet pass is also what SPLITS the reply side into `:reply` (the answer) and
-   `:thinking` (the reasoning aside) — see `hit-snippet`."
+   ONE statement does it (`transcript-hit-sql`): the ranked walk and the
+   `snippet()` windows arrive together, and the snippet is also what SPLITS the
+   reply side into `:reply` (the answer) and `:thinking` (the reasoning aside) —
+   see `hit-snippet`. The caps are applied here, on rows already in hand."
   [db-info side ch match]
   (let
     [chan-sql
@@ -1448,7 +1462,7 @@
        (conj ch))
 
      ranked
-     (raw-query! db-info (into [(transcript-hit-rank-sql side chan-sql)] params))
+     (raw-query! db-info (into [(transcript-hit-sql side chan-sql)] params))
 
      ;; `ranked` is newest-first, so first appearance order = sessions ordered
      ;; by their newest hit.
@@ -1456,37 +1470,27 @@
      (into #{} (take transcript-hit-sessions-limit) (distinct (map :sid ranked)))
 
      kept
-     (into []
-           (comp (filter #(contains? sids (:sid %)))
-                 (map (fn [r]
-                        (update r :sid str))))
-           ranked)
-
-     kept
-     (->> kept
+     (->> ranked
+          (filter #(contains? sids (:sid %)))
           (reduce (fn [acc r]
-                    (let [n (long (get-in acc [:counts (:sid r)] 0))]
+                    (let
+                      [sid
+                       (:sid r)
+
+                       n
+                       (long (get-in acc [:counts sid] 0))]
+
                       (if (>= n (long transcript-hits-per-session))
                         acc
                         (-> acc
-                            (assoc-in [:counts (:sid r)] (inc n))
+                            (assoc-in [:counts sid] (inc n))
                             (update :rows conj r)))))
                   {:counts {} :rows []})
-          :rows)
-
-     snippets
-     (into {}
-           (mapcat (fn [batch]
-                     (map (juxt :rid #(hit-snippet side %))
-                          (raw-query! db-info
-                                      (into [(transcript-snippet-sql side (count batch)) match]
-                                            (map :rid)
-                                            batch)))))
-           (partition-all transcript-snippet-batch kept))]
+          :rows)]
 
     (mapv (fn [row]
-            (let [hit (get snippets (:rid row))]
-              {:sid (:sid row) :side (:side hit side) :at (:at row) :snippet (:snippet hit)}))
+            (let [hit (hit-snippet side row)]
+              {:sid (str (:sid row)) :side (:side hit side) :at (:at row) :snippet (:snippet hit)}))
           kept)))
 
 (defn- title-hit-rows

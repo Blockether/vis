@@ -1413,12 +1413,13 @@
         (expect (= 2 (count by-id)))
         (expect (<= 4 (long (get by-id older))))
         (expect (= (get by-id older) (get by-id newer))))))
-  (it "ranks hits off the FTS index itself, never through a temp B-tree sort"
-      ;; The ranking query used to ORDER BY the JOINED result, which makes SQLite
-      ;; spool EVERY match into a temp B-tree and sort it before the LIMIT can
-      ;; apply: a stop word paid for all of its hits to hand back the newest few,
-      ;; ~240ms of a ~300ms search on a real store. The DESC walk belongs to the
-      ;; FTS subquery, and this plan is the only place that stays honest about it.
+  ;; Regression, issue: searching the app for a 4+ character word (`star`) sat
+  ;; silent for about a second before it painted anything. The snippets came
+  ;; from a SECOND statement that repeated the MATCH and intersected it with the
+  ;; ranked rowids, so SQLite re-ran the query once PER rowid — and a prefix term
+  ;; longer than the `prefix='2 3'` indexes was re-expanded across the term index
+  ;; on every one of those seeks (~800ms of a ~925ms search on a real store).
+  (it "reads the ranked walk AND its snippets from ONE indexed FTS scan"
       (let
         [s
          (h/store)
@@ -1431,14 +1432,22 @@
           {:parent-session-id cid :user-request "needle ask" :status :done})
         (doseq [side [:request :reply]]
           (let
-            [plan (mapv :detail
+            [sql ((private-core-fn "transcript-hit-sql") side "")
+             plan (mapv :detail
                         ((private-core-fn "raw-query!")
                           s
-                          [(str "EXPLAIN QUERY PLAN "
-                                ((private-core-fn "transcript-hit-rank-sql") side ""))
-                           "\"needle\"*"]))]
+                          [(str "EXPLAIN QUERY PLAN " sql) "\"needle\"*"]))]
+
+            ;; The DESC walk belongs to the FTS subquery: ordering the JOINED
+            ;; result makes SQLite spool EVERY match into a temp B-tree and sort
+            ;; it before the LIMIT can apply — ~240ms of a ~300ms search.
             (expect (seq plan))
-            (expect (not-any? #(re-find #"TEMP B-TREE" (str %)) plan))))))
+            (expect (not-any? #(re-find #"TEMP B-TREE" (str %)) plan))
+            ;; ONE MATCH for the whole side. A second one IS the per-rowid
+            ;; snippet pass coming back.
+            (expect (= 1 (count (re-seq #"MATCH" sql))))
+            ;; ...and it is the scan itself that renders the snippet.
+            (expect (re-find #"FROM \(SELECT rowid AS rid, snippet\(" sql))))))
   (it "matches a PREFIX so search is useful mid-typing (`dia` finds `dialogs`)"
       (let
         [s
