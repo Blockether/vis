@@ -29,6 +29,8 @@ export interface MachineFixture {
    * a press give up on its own deadline instead of on a transport error.
    */
   hangs?: boolean;
+  /** Answers its list reads, but never answers a search. */
+  searchHangs?: boolean;
   /** Extra routes, by pathname: whatever they return is the JSON body. */
   routes?: Record<string, unknown>;
 }
@@ -128,6 +130,11 @@ export function renderSessionsScreen({
     const seen = (reads.get(url.origin) ?? 0) + 1;
     reads.set(url.origin, seen);
     if (machine.hangs && seen > 1) return blackhole(init?.signal);
+    // Alive to the list, dark to the search: the machine whose transcripts nobody is
+    // reading answers everything else, so its darkness is something only a search can
+    // discover — and something the next search has to remember.
+    if (machine.searchHangs && url.pathname === "/v1/sessions/actions/search")
+      return blackhole(init?.signal);
     if (machine.down && !(machine.heals && seen > 1)) throw new TypeError("Failed to fetch");
     if (machine.routes && url.pathname in machine.routes)
       return answer(machine.routes[url.pathname]);

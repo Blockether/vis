@@ -93,9 +93,9 @@ import {
   reconcileMachines,
   resolveScope,
   SCOPE_ALL,
-  scopedConns,
   scopedMachines,
   SEARCH_LOCAL_ONLY_RANK,
+  searchFanout,
   searchOrder,
   searchTally,
   sessionIsListed,
@@ -362,6 +362,10 @@ export function SessionsScreen({
   const restoredRef = useRef(false);
   const connsRef = useRef(conns);
   const machinesRef = useRef(machines);
+  // MACHINES THAT WENT SILENT ON A SEARCH. A ref, not state: nothing on screen reads it
+  // (the answers already say who could not be reached) and a re-render for it would
+  // restart the very effect that writes it.
+  const searchSilentRef = useRef(new Set<string>());
   // Refs mirror the latest props for callbacks that must not re-subscribe on every
   // connection object identity change. Written in an effect so render stays pure.
   useEffect(() => {
@@ -415,11 +419,17 @@ export function SessionsScreen({
     async (conn: GatewayConn, signal?: AbortSignal): Promise<string | null> => {
       const key = machineKey(conn);
       const api = clientFor(conn);
+      // ANY answer from this machine ends its search blackout. A gateway that was merely
+      // busy when a search ran out of deadline must not stay skipped: the 10s poll is
+      // what proves it alive again, and only a machine that keeps failing keeps being
+      // passed over (see `searchFanout`).
+      const alive = () => searchSilentRef.current.delete(key);
       try {
         // Paint the first page the moment it lands instead of waiting for the whole
         // fleet to drain. Only ever called on a cold load (see `listSessions`).
         const next = await api.listSessions(signal, (partial) => {
           if (signal?.aborted) return;
+          alive();
           patchMachine(key, (machine) => ({
             ...machine,
             sessions: reconcileSessions(machine.sessions, partial),
@@ -427,6 +437,7 @@ export function SessionsScreen({
           }));
         });
         if (signal?.aborted) return null;
+        alive();
         // Anchor EVERY reload: the 10s poll can reorder rows under a reading
         // thumb. The layout effect below no-ops at the top of the list, so the
         // first paint is unaffected.
@@ -645,25 +656,23 @@ export function SessionsScreen({
   useEffect(() => {
     const needle = deferredQuery.trim();
     if (!needle) return;
-    const targets = scopedConns(connsRef.current, scope);
-    // A MACHINE THE FLEET ALREADY KNOWS IS DARK IS ASKED NOTHING. Its list read failed,
-    // it is drained out of `All` (see `scopedMachines`) and its tile carries the retry —
-    // asking it anyway put a machine that is not even on screen in front of the progress
-    // the reader is watching, for as long as the transport was willing to wait. It still
-    // counts as ASKED and answers at once as unreached: dropping it silently would make
-    // the search look complete when part of the fleet was never read.
-    const dark = new Set(
-      machinesRef.current
-        .filter((machine) => machine.error !== null)
-        .map((machine) => machineKey(machine.conn)),
+    // WHICH MACHINES ARE EVEN ASKED. A gateway that is not answering is not asked a
+    // question: neither the one whose list read failed nor the one that already ate a
+    // whole search deadline in silence. Both still count as ASKED and answer at once as
+    // unreached — dropping them silently would make the search look complete when part
+    // of the fleet was never read (see `searchFanout`).
+    const fanout = searchFanout(
+      connsRef.current,
+      machinesRef.current,
+      scope,
+      searchSilentRef.current,
     );
-    const asked = targets.map(machineKey);
     setSearchAnswers({
       needle,
-      asked,
-      byMachine: new Map(asked.filter((key) => dark.has(key)).map((key) => [key, UNREACHED])),
+      asked: fanout.asked,
+      byMachine: new Map(fanout.dark.map((key) => [key, UNREACHED])),
     });
-    const reachable = targets.filter((conn) => !dark.has(machineKey(conn)));
+    const reachable = fanout.ask;
     if (reachable.length === 0) return;
     const controller = new AbortController();
     const answer = (key: string, entry: SearchAnswer) =>
@@ -695,6 +704,10 @@ export function SessionsScreen({
           window.clearTimeout(expiry);
           if (controller.signal.aborted) return;
           if (found === null) {
+            // NOW KNOWN DARK. The next query skips this machine outright instead of
+            // spending another `SEARCH_REACH_MS` rediscovering the same silence; its
+            // next answered list read takes the mark off again (see `loadMachine`).
+            searchSilentRef.current.add(key);
             answer(key, UNREACHED);
             return;
           }

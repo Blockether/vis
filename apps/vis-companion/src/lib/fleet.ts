@@ -120,6 +120,55 @@ export function scopedConns(conns: GatewayConn[], scope: string | null): Gateway
   return one ? [one] : conns;
 }
 
+/**
+ * WHO A FLEET SEARCH IS PUT TO — and who is answered for without being asked.
+ *
+ * A search costs the machine a ranked full-text scan and costs the reader the wait, so
+ * the question only goes to gateways that can still answer one. TWO KINDS OF DEAD are
+ * skipped, and both still count as ASKED, because a fleet that quietly shrinks to the
+ * machines that work reports a search as complete that never read half the fleet:
+ *
+ *   - a machine whose LIST read failed (`error`): already drained out of `All`, not on
+ *     screen, its tile carrying the retry — asking it put a machine the reader cannot
+ *     even see in front of the progress they are watching;
+ *   - a machine that was asked an EARLIER search and never answered it (`silent`).
+ *     Having learned a gateway is dark, putting the same question to it on the next
+ *     keystroke is how one asleep laptop turns every search into another timeout.
+ *
+ * `silent` is a MEMORY, NOT A VERDICT: the caller drops a machine from it the moment
+ * any list read of that machine lands, so a gateway that was merely busy is searched
+ * again within one poll and only a machine that keeps failing keeps being skipped.
+ */
+export interface SearchFanout {
+  /** The machines the query is actually put to. */
+  ask: GatewayConn[];
+  /** Every machine the search covers, dark ones included — the count on screen. */
+  asked: string[];
+  /** Machines answered as unreachable without spending a request. */
+  dark: string[];
+}
+
+export function searchFanout(
+  conns: GatewayConn[],
+  machines: FleetMachine[],
+  scope: string | null,
+  silent: ReadonlySet<string>,
+): SearchFanout {
+  const failed = new Set(
+    machines
+      .filter((machine) => machine.error !== null)
+      .map((machine) => machineKey(machine.conn)),
+  );
+  const targets = scopedConns(conns, scope);
+  const isDark = (conn: GatewayConn) =>
+    failed.has(machineKey(conn)) || silent.has(machineKey(conn));
+  return {
+    ask: targets.filter((conn) => !isDark(conn)),
+    asked: targets.map(machineKey),
+    dark: targets.filter(isDark).map(machineKey),
+  };
+}
+
 /** True once every machine in scope has answered (or failed) at least once. */
 export function isFleetLoaded(machines: FleetMachine[], scope: string | null): boolean {
   const inScope = scopedMachines(machines, scope);

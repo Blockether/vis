@@ -19,6 +19,7 @@ import {
   SCOPE_ALL,
   scopedMachines,
   scopedConns,
+  searchFanout,
   SEARCH_LOCAL_ONLY_RANK,
   searchOrder,
   searchTally,
@@ -389,6 +390,31 @@ describe('search across the fleet', () => {
     expect(scopedConns(conns, tower.url)).toEqual([tower]);
     // A scope left over from an unpaired machine must not silence the search.
     expect(scopedConns(conns, 'http://gone.local:7890')).toEqual(conns);
+  });
+
+  // Regression, user report (paraphrased: "make sure we are not putting search requests to
+  // machines that are genuinely dead"): every paired gateway was asked, so a machine that
+  // had failed its list read — or had already let a whole search deadline pass in silence —
+  // was asked again, and the reader waited on it again.
+  it('puts the question only to machines that can still answer one', () => {
+    const conns = [studio, tower, vps];
+    const fleet = [machine(studio, [session('a')]), machine(tower, null, 'offline'), machine(vps, [session('b')])];
+    const fanout = searchFanout(conns, fleet, SCOPE_ALL, new Set([machineKey(vps)]));
+    expect(fanout.ask).toEqual([studio]);
+    // Both kinds of dark are still ASKED: a fleet that shrinks to the machines that work
+    // reports a search as complete that never read half of it.
+    expect(fanout.asked).toEqual([machineKey(studio), machineKey(tower), machineKey(vps)]);
+    expect(fanout.dark).toEqual([machineKey(tower), machineKey(vps)]);
+  });
+
+  it('narrows to the scope, and asks a live machine even while another is dark', () => {
+    const conns = [studio, tower];
+    const fleet = [machine(studio, [session('a')]), machine(tower, null, 'offline')];
+    expect(searchFanout(conns, fleet, machineKey(studio), new Set()).ask).toEqual([studio]);
+    // Scoped to the dark machine, nothing is asked and the machine is still counted.
+    const onDark = searchFanout(conns, fleet, machineKey(tower), new Set());
+    expect(onDark.ask).toEqual([]);
+    expect(onDark.asked).toEqual([machineKey(tower)]);
   });
 
   it('tallies the hits and the machines that produced them', () => {

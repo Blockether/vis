@@ -234,3 +234,74 @@ describe("a search gives up on a silent machine on its own clock", () => {
     expect(document.body.textContent).not.toContain("Nothing on any paired machine");
   });
 });
+
+// Regression, user report (paraphrased: "make sure we are not putting search requests to
+// machines that are genuinely dead"): a machine that had just spent a whole search
+// deadline in silence was asked again by the very next query, so every further keystroke
+// bought another eight seconds of waiting on a gateway already known to be dark — and the
+// more gateways are paired, the more of them there are to wait on.
+describe("a machine already known to be dark is not asked again", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Let every request, timer and repaint that fits inside `ms` happen. */
+  const settle = async (ms = 0) => {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  };
+
+  /** Alive to the list, silent to every search — dark in the only way a search can tell. */
+  const fleet = () => [
+    ...machines([hit]),
+    {
+      label: "beta",
+      sessions: [listSession({ id: "b1", title: "Second" })],
+      searchHangs: true,
+    },
+  ];
+
+  it("answers for a silent machine without spending a second request on it", async () => {
+    const view = renderSessionsScreen({ machines: fleet() });
+    restore = view.restore;
+    await settle(50);
+    view.requests.length = 0;
+
+    view.setQuery("needle");
+    await settle(9_000);
+    // Both were asked the first time — nothing yet said beta was dark.
+    expect(searches(view.requests)).toEqual(["needle", "needle"]);
+    expect(screen.getByText("1 machine did not answer")).toBeTruthy();
+
+    view.requests.length = 0;
+    view.setQuery("other");
+    await settle(300);
+    // The second query goes ONLY to the machine that answers. Beta is reported as
+    // unreachable at once, instead of holding the fleet for another deadline.
+    expect(searches(view.requests)).toEqual(["other"]);
+    expect(screen.getByText("1 machine did not answer")).toBeTruthy();
+    expect(screen.getByText("1 match")).toBeTruthy();
+  });
+
+  it("asks it again as soon as a list read proves the machine alive", async () => {
+    const view = renderSessionsScreen({ machines: fleet() });
+    restore = view.restore;
+    await settle(50);
+
+    view.setQuery("needle");
+    await settle(9_000);
+    expect(screen.getByText("1 machine did not answer")).toBeTruthy();
+
+    // The blackout is a memory of one failure, not a verdict on the machine: the 10s
+    // poll's list read lands and the next search puts its question to beta again.
+    view.requests.length = 0;
+    await settle(2_000);
+    view.setQuery("third");
+    await settle(300);
+    expect(searches(view.requests)).toEqual(["third", "third"]);
+  });
+});
