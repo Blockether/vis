@@ -522,23 +522,30 @@
                    (expect (threw? #(shell-logs* env "no-such-shell"))))
                  (finally (resources/stop-all! sid))))))))
   (it "keeps an exited process listed (status :exited) with readable logs + exit"
-      (with-shell-on (fn []
-                       (binding [workspace/*workspace-root* (workspace/trunk-root)]
-                         (let
-                           [sid "shell-ext-exit"
-                            env {:session-id sid}]
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-ext-exit"
+               env {:session-id sid}]
 
-                           (try (shell-bg* env "quick" "echo done; exit 7")
-                                (let
-                                  [r (poll #(:result (shell-logs* env "quick"))
-                                           #(= "exited" (get % "status")))]
-                                  (expect (= 7 (get r "exit")))
-                                  (expect (str/includes? (get r "stdout") "done"))
-                                  (expect (nil? (get r "lines"))))
-                                (let [res (first (resources/list-resources sid))]
-                                  (expect (some? res))
-                                  (expect (= "failed" (get res "status"))))
-                                (finally (resources/stop-all! sid))))))))
+              (try (shell-bg* env "quick" "echo done; exit 7")
+                   (let
+                     [r (poll #(:result (shell-logs* env "quick")) #(= "exited" (get % "status")))]
+                     (expect (= 7 (get r "exit")))
+                     (expect (str/includes? (get r "stdout") "done"))
+                     (expect (nil? (get r "lines"))))
+                   ;; The LOG's status and the REGISTRY's are two
+                   ;; stores: exit finalization publishes the failed
+                   ;; status after the log already reads "exited", so
+                   ;; a single read here is a race a loaded runner
+                   ;; wins (CI, ubuntu-latest).
+                   (let
+                     [res (poll #(first (resources/list-resources sid))
+                                #(= "failed" (get % "status")))]
+                     (expect (some? res))
+                     (expect (= "failed" (get res "status"))))
+                   (finally (resources/stop-all! sid))))))))
   ;; The whole point of the cursor: a shell that printed far more than one read
   ;; returns loses NOTHING. The ring buffer this replaced dropped the head of a
   ;; long build and only said how many lines it had thrown away.
