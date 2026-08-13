@@ -26,7 +26,7 @@
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [java.util.concurrent TimeUnit]
-           [org.graalvm.polyglot Context]
+           [org.graalvm.polyglot Context Value]
            [org.graalvm.polyglot.io ProcessHandler ProcessHandler$ProcessCommand
             ProcessHandler$Redirect]))
 
@@ -554,14 +554,64 @@
                            "the pid of the process this handler really started")
                    (expect (nil? (process-handler/claim-pid! handoff))
                            "an emptied slot answers nothing rather than the previous child")
-                   (.waitFor started))))
+                   (.waitFor started)))
+             ;; Regression, issue #142: the handoff was one slot for the whole context,
+             ;; and `Popen` is not a context's only spawn - `os.system` reaches the
+             ;; handler without constructing one. A spawn on another thread overwrote
+             ;; the pid a constructor was about to claim, so the handle adopted a
+             ;; stranger's - by then exited - pid.
+             (it
+               "confines the slot to the thread that started the child"
+               (let
+                 [[_ emit]
+                  (recorder)
+
+                  handoff
+                  (process-handler/pid-handoff)
+
+                  handler
+                  (process-handler/contained-handler emit handoff)
+
+                  started-elsewhere
+                  (promise)
+
+                  claimed-elsewhere
+                  (promise)
+
+                  release
+                  (promise)
+
+                  ^Thread other
+                  (Thread. ^Runnable
+                           (fn []
+                             (let
+                               [^Process p (start-on! handler {:command ["/bin/sh" "-c" "exit 0"]})]
+                               (deliver started-elsewhere (.pid p))
+                               (deref release 5000 :timeout)
+                               (deliver claimed-elsewhere (process-handler/claim-pid! handoff))
+                               (.waitFor p))))]
+
+                 (.start other)
+                 (expect (number? (deref started-elsewhere 5000 nil))
+                         "the other thread started its child first")
+                 (let [^Process mine (start-on! handler {:command ["/bin/sh" "-c" "exit 0"]})]
+                   (expect (= (.pid mine) (process-handler/claim-pid! handoff))
+                           "this thread claims the child it started, not the other thread's")
+                   (.waitFor mine))
+                 (deliver release :go)
+                 (expect (= @started-elsewhere (deref claimed-elsewhere 5000 nil))
+                         "and the other thread's own pid survived this thread's claim")
+                 (.join other 5000))))
 
 (def ^:private reap-guest-children
   "Terminate every child still running in the context. A `Context.close(true)`
    throws while a sub-process is alive, and that exception would otherwise
    replace the assertion failure a test is reporting."
-  (str "import subprocess\n"
-       "for __handle in list(globals().values()):\n"
+  (str "import subprocess\n" "__values = list(globals().values())\n"
+       ;; A test that spawns many children keeps them in a list, so look one deep.
+       "for __group in [__v for __v in __values if isinstance(__v, list)]:\n"
+       "    __values.extend(__group)\n"
+       "for __handle in __values:\n"
        "    if isinstance(__handle, subprocess.Popen) and __handle.poll() is None:\n"
        "        __handle.terminate()\n" "        __handle.wait()\n"))
 
@@ -633,3 +683,39 @@
                   (expect (.asBoolean (member ctx "second_alive"))
                           (str "the reaped child's pid signalled nobody, os.kill answered "
                                (.asString (member ctx "stale"))))))))
+
+(defdescribe
+  guest-pid-under-concurrent-spawn-test
+  ;; Regression, issue #142: the host handed the pid over through ONE slot per
+  ;; context, and `os.system` reaches that handler without constructing a
+  ;; `Popen`. Called from another thread it overwrote the slot between a
+  ;; constructor starting its child and claiming it, so roughly a fifth of the
+  ;; handles ended up carrying the pid of an `os.system` child that had already
+  ;; exited - a real pid, naming the wrong process, or none at all.
+  (it
+    "gives every child its own pid while other threads spawn"
+    (in-guest
+      "real-pid-concurrent.py"
+      (str "import os, subprocess, threading\n"
+           "stop = False\n"
+           ;; `os.system` starts its child through the same host handler,
+           ;; with no `Popen` constructor to claim the pid it leaves.
+           "def hammer():\n"
+           "    while not stop:\n" "        os.system('/bin/sleep 0.001')\n"
+           "hammers = [threading.Thread(target=hammer) for _ in range(3)]\n" "for __t in hammers:\n"
+           "    __t.start()\n"
+           "children = [subprocess.Popen(['/bin/sleep', '3600.%d' % i]) for i in range(12)]\n"
+           "stop = True\n" "for __t in hammers:\n"
+           "    __t.join()\n" "pids = [child.pid for child in children]\n")
+      (fn [ctx]
+        (let [^Value pids (member ctx "pids")]
+          (doseq
+            [i (range (.getArraySize pids))
+             :let [pid (.asLong (.getArrayElement pids i))
+                   found (ProcessHandle/of pid)]]
+
+            (expect (.isPresent found) (str "child " i " carries the pid of a process that exists"))
+            (expect (str/includes? (str (.orElse (.commandLine (.info ^ProcessHandle (.get found)))
+                                                 ""))
+                                   (str "3600." i))
+                    (str "child " i " carries its OWN pid, not another spawn's"))))))))

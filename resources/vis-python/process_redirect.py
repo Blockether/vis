@@ -198,10 +198,8 @@ def __vis_install_process_redirect__():
     # `__vis_virtual_pid__` for the syscalls that are keyed on it.
     claim_child_pid = globals().get("__vis_host_claim_child_pid__")
 
-    # The pairing: the host fills a one-slot handoff during the spawn this
-    # constructor makes, and the claim empties it. Serializing construction is
-    # what stops a `Popen` on another thread from claiming this one's pid.
-    spawn_lock = threading.RLock()
+    # The pairing: the host fills a slot confined to the thread that spawns
+    # during the spawn this constructor makes, and the claim empties it.
 
     # Real OS pid -> the slot emulated posix answers to, while the child lives.
     # Dropped on reap, so a stale pid raises instead of signalling a stranger.
@@ -263,11 +261,13 @@ def __vis_install_process_redirect__():
     def patched_init(self, *args, **kwargs):
         args = list(args)
         taken = piped(args, kwargs)
-        with spawn_lock:
-            original_init(self, *args, **kwargs)
-            # Inside the lock: this claim empties the handoff the host filled
-            # during the spawn `original_init` just made.
-            adopt_real_pid(self)
+        original_init(self, *args, **kwargs)
+        # The claim empties the handoff the host filled during the spawn
+        # `original_init` just made. No lock: the handoff is confined to the
+        # thread that spawns, so a `Popen` - or an `os.system`, which reaches
+        # the host handler without a `Popen` at all - on another thread fills
+        # its own slot and cannot be mistaken for this child.
+        adopt_real_pid(self)
         self.__vis_redirect_pumps__ = [
             pump_stdin(self, fd) if name == "stdin" else pump_output(self, name, fd)
             for name, fd in taken.items()

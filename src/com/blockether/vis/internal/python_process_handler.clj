@@ -277,31 +277,40 @@
                         (apply [_ _] self)))))))
 
 (defn pid-handoff
-  "A one-slot handoff carrying the OS pid of the child a `contained-handler`
-   most recently started, from this handler to the guest that started it.
+  "A one-slot handoff, CONFINED TO THE STARTING THREAD, carrying the OS pid of
+   the child a `contained-handler` most recently started on that thread, from
+   this handler to the guest that started it.
 
    An extension context runs with `allowNativeAccess false`, so GraalPy serves
    `subprocess` from its EMULATED posix and never shows the guest an OS pid:
    `Popen.pid` is the per-context CHILD SLOT INDEX `PosixResources` registered
    the child under (1, 2, 3 ...), and that slot is REUSED once the child is
-   reaped. So the number names no process — 1 is init — and a pid held past
+   reaped. So the number names no process - 1 is init - and a pid held past
    `wait()` names whichever child later took the slot.
    `vis-python/process_redirect.py` claims this slot inside `Popen.__init__`
    and puts the real pid on the handle.
 
-   One slot, not a queue: `claim-pid!` empties it, so a claim can only answer a
-   child started since the last claim. A guest spawn that bypasses `Popen`
-   overwrites the slot instead of leaving a stale pid for the next `Popen` to
-   mistake for its own."
-  []
-  (atom nil))
+   Per thread, because `Popen` is not a context's only spawn: GraalPy's
+   `os.system` reaches this handler WITHOUT constructing a `Popen`, and an
+   extension may call it from another thread (`allowCreateThread true`). One
+   shared slot let such a spawn overwrite the pid in the window between the
+   constructor starting its child and claiming it, so the handle adopted a
+   stranger's - by then already exited - pid. GraalPy calls
+   `ProcessHandler.start` on the very thread the guest spawned from, so a
+   thread-confined slot pairs start with claim exactly, whatever else the
+   context spawns meanwhile."
+  ^ThreadLocal []
+  (ThreadLocal.))
 
 (defn claim-pid!
-  "Take the OS pid `handoff` holds, emptying the slot. `nil` when nothing has
-   started through this handler since the last claim — the guest then keeps the
-   slot index it already has rather than being handed a guess."
-  [handoff]
-  (first (reset-vals! handoff nil)))
+  "Take the OS pid `handoff` holds FOR THIS THREAD, emptying the slot. `nil`
+   when nothing has started on this thread through this handler since the last
+   claim - the guest then keeps the slot index it already has rather than being
+   handed a guess."
+  [^ThreadLocal handoff]
+  (let [pid (.get handoff)]
+    (.remove handoff)
+    pid))
 
 (defn- start-contained
   "Start `command`'s process with every output stream piped and consumed by a
@@ -309,7 +318,8 @@
    into a bounded backlog when the guest does — so the child never blocks on a
    full pipe. Input redirect, working directory, environment and
    `isRedirectErrorStream` are passed through exactly as the guest asked. The
-   child's real OS pid is left in `handoff` for the guest half to claim."
+   child's real OS pid is left in this thread's `handoff` slot for the guest
+   half to claim."
   ^Process [emit handoff ^ProcessHandler$ProcessCommand command]
   (let
     [out-redirect
@@ -366,16 +376,18 @@
 
       ;; The guest claims this the moment its `Popen` constructor returns
       ;; (`vis-python/process_redirect.py`), which is the only place the real
-      ;; pid can still be paired with the handle GraalPy is building.
-      (reset! handoff (.pid process))
+      ;; pid can still be paired with the handle GraalPy is building. This runs
+      ;; on the thread the guest spawned from, so the slot is that thread's and
+      ;; a spawn on another thread cannot overwrite it.
+      (.set ^ThreadLocal handoff (.pid process))
       (guest-facing-process process out-stream err-stream))))
 
 (defn contained-handler
   "The `ProcessHandler` every extension context is built with. `emit` is
    `(fn [stream-name line])` and receives each line of every stream the guest
-   left uncaptured; `log-emit` builds the production one. `handoff` is the slot
-   `pid-handoff` makes, through which the guest half learns the real OS pid of
-   the child it just started."
+   left uncaptured; `log-emit` builds the production one. `handoff` is the
+   per-thread slot `pid-handoff` makes, through which the guest half learns the
+   real OS pid of the child it just started."
   ^ProcessHandler [emit handoff]
   (reify
     ProcessHandler
