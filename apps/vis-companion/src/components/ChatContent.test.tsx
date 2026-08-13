@@ -367,3 +367,36 @@ describe("a vis-doc fence", () => {
     expect(markup).not.toContain("<iframe");
   });
 });
+
+// Reported from a phone: a message was sent, the session title updated, and the
+// answer rail under it was a bare "Vis" — no phase, no clock, no trace — for the
+// whole turn. A `running` row the screen had stopped following rendered nothing
+// at all, so the reader had no word that work had even started.
+describe("a turn that has not answered yet", () => {
+  const running = {
+    id: "t1",
+    request: "check the logs",
+    status: "running",
+    iterations: [],
+    content: [],
+  } as unknown as TranscriptTurn;
+
+  it("names its phase while the screen is following it", () => {
+    const html = renderToStaticMarkup(<AssistantMessage turn={running} />);
+
+    expect(text(html)).toContain("Vis is waiting for an update");
+    expect(html).toContain("animate-spinner-frame");
+  });
+
+  it("keeps naming its phase once the screen stops following it", () => {
+    const html = renderToStaticMarkup(
+      <AssistantMessage turn={running} settled />,
+    );
+
+    expect(text(html)).toContain("Vis is waiting for an update");
+    // What `settled` takes off is the TICKER — the spinner and the elapsed
+    // clock that made a finished turn look alive — and nothing else.
+    expect(html).not.toContain("animate-spinner-frame");
+    expect(text(html)).not.toMatch(/\d/);
+  });
+});

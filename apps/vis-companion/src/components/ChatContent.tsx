@@ -2181,19 +2181,30 @@ function runningTurnPhase(turn: TranscriptTurn): string {
   return `Vis is working ${suffix}`;
 }
 
+/**
+ * The phase line under a turn that has not answered yet.
+ *
+ * `still` is the same line with the spinner and the clock taken off: the screen
+ * has stopped FOLLOWING this turn (see `settled`), which is never a reason to
+ * stop SAYING what it is. Silence there is what put a bare "Vis" — no phase, no
+ * clock, no trace — under a message that had just been sent.
+ */
 function LiveProgress({
   phase,
   startedAt,
+  still = false,
 }: {
   phase: string;
   startedAt?: number;
+  still?: boolean;
 }) {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
+    if (still) return;
     const timer = window.setInterval(() => setNow(Date.now()), 100);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [still]);
 
   const elapsed =
     formatDuration(Math.max(0, now - (startedAt ?? now))) ?? "0ms";
@@ -2204,9 +2215,11 @@ function LiveProgress({
         className="mt-5 truncate whitespace-nowrap font-mono text-ui text-vis-message"
         aria-hidden="true"
       >
-        <Spinner />
+        {still ? null : <Spinner />}
         <span>
-          &nbsp;&nbsp;{phase}...&nbsp;&nbsp;{elapsed}
+          {still ? null : <>&nbsp;&nbsp;</>}
+          {phase}...
+          {still ? null : <>&nbsp;&nbsp;{elapsed}</>}
         </span>
       </div>
       <span className="sr-only" role="status">
@@ -2234,7 +2247,8 @@ export const AssistantMessage = memo(function AssistantMessage({
    * session, or its terminal frame already landed) even though the persisted
    * row still reads `running` — persistence lags the terminal event. Without
    * it the placeholder row paints the live ticker, and "Vis is thinking..."
-   * kept spinning at the bottom for a turn that had long finished.
+   * kept spinning at the bottom for a turn that had long finished. It stops the
+   * TICKER, never the words: the row still names its phase (see `still`).
    */
   settled?: boolean;
   client?: GatewayClient;
@@ -2303,10 +2317,15 @@ export const AssistantMessage = memo(function AssistantMessage({
             phase={activity ?? "Vis is working"}
             startedAt={startedAt}
           />
-        ) : turn.status === "running" && !settled ? (
+        ) : turn.status === "running" ? (
+          // A row this screen has stopped following still reads `running`, so it
+          // still says so: the spinner and the elapsed clock go (they are what
+          // made a finished turn look alive), the words stay. Rendering nothing
+          // here left the reader a bare "Vis" for the whole turn.
           <LiveProgress
             phase={runningTurnPhase(turn)}
             startedAt={turn.created_at}
+            still={settled}
           />
         ) : null}
         {meta && (

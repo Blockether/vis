@@ -1956,10 +1956,14 @@ export function SessionScreen({
       signal?: AbortSignal,
       rows?: readonly TranscriptTurn[] | null,
     ) => {
-      if (!row) return;
-      const gatewayLive =
-        row.live !== undefined ? row.live : row.status === "running";
-      const claimed = row.current_turn_id ?? "";
+      // NO SESSION ROW IS NOT "NOTHING IS RUNNING". That read is one request on
+      // a phone's link and it fails on its own; the transcript is the second
+      // witness and it never goes through the registry (see `inFlightRow`).
+      // Bailing here left `running` false and the live bubble null for the whole
+      // turn — `reduceLiveEvent` then drops every delta that arrives, so the
+      // freshly persisted `running` row sat there with nothing under it.
+      const gatewayLive = row?.live ?? row?.status === "running";
+      const claimed = row?.current_turn_id ?? "";
       // The registry answers FIRST — exact, free, no round trip. But when it says
       // nothing is running, that is not taken as "nothing is running": the
       // transcript is asked instead (see `inFlightRow`). A registry that dropped
@@ -2025,7 +2029,7 @@ export function SessionScreen({
       // response for exactly this) so a phone minutes off UTC does not show a
       // turn that started in the future or an hour ago.
       const startedAt =
-        row.running_started_at != null && row.server_time_ms != null
+        row?.running_started_at != null && row.server_time_ms != null
           ? Date.now() -
             Math.max(0, row.server_time_ms - row.running_started_at)
           : // Adopted off the transcript there is no `running_started_at` to rebase
@@ -2034,12 +2038,12 @@ export function SessionScreen({
             typeof running?.created_at === "number" &&
               Number.isFinite(running.created_at)
             ? running.created_at -
-              (row.server_time_ms != null ? row.server_time_ms - Date.now() : 0)
+              (row?.server_time_ms != null ? row.server_time_ms - Date.now() : 0)
             : Date.now();
       const adopted: LiveTurn = {
         id: tid,
         request:
-          row.running_request ??
+          row?.running_request ??
           running?.user_request ??
           running?.request ??
           "",
@@ -4346,7 +4350,17 @@ export function SessionScreen({
   // A live bubble that ALREADY settled (terminal frame in, persisted row not yet
   // fetched) is not work in flight: treating it as such kept every persisted
   // 'running' row spinning with its elapsed clock until the refetch landed.
-  const turnsSettled = !running && (!liveTurn || liveTurn.status !== "running");
+  // The rows the gateway just handed us are the second witness, and they do not
+  // go through the registry (see `inFlightRow`): while one still reads `running`
+  // there IS work, whatever this screen's own latch believes. Without it a turn
+  // whose bubble never arrived — the session read failed, the POST timed out, the
+  // seed frame was missed — settled its own live row and painted no phase, no
+  // clock and no trace for as long as it ran.
+  const persistedInFlight = turnsFresh ? inFlightRow(turns) : null;
+  const turnsSettled =
+    !running &&
+    persistedInFlight === null &&
+    (!liveTurn || liveTurn.status !== "running");
   // What the composer may advertise as in-flight. `running` on its own is a latch:
   // set optimistically at submit, cleared by the terminal frame or the 5s
   // reconcile. Pairing it with the bubble's own status means a settled turn can
