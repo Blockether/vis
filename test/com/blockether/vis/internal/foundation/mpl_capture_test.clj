@@ -4,7 +4,10 @@
    `run-python-block` binds `*image-sink*` around one block's eval then `drain`s
    it into the outcome's `:attachments`. There is NO stdout-fence parsing anywhere —
    these cover append-into-bound-sink (order preserved), the unbound no-op, and
-   the drain shape."
+   the drain shape. `record-file!` (the incidental temp/outbox capture) is DORMANT
+   in the product — `mpl-capture/incidental-capture-enabled?` is false and nothing
+   calls it — so its cases below drive it directly, keeping the kept-but-unwired
+   filter honest for whatever repurposes it."
   (:require [com.blockether.vis.internal.foundation.mpl-capture :as cap]
             [lazytest.core :refer [defdescribe describe expect it]]))
 

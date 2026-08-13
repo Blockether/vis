@@ -283,7 +283,8 @@
   "The `~/.vis` directory tree that file tools may ALWAYS reach, independent of
    workspace roots. Canonical (symlinks resolved), computed once on first use;
    dropped when `user.home` is unset. Kept SEPARATE from `temp-roots`: a write
-   here is NOT captured as a session attachment (only temp writes are)."
+   here was never captured as a session attachment even when the temp capture
+   was live (see `capture-temp-write!`)."
   (delay (->> [".vis"]
               (keep (fn [^String sub]
                       (some-> (System/getProperty "user.home")
@@ -303,13 +304,20 @@
        (catch Throwable _ false)))
 
 (defn- capture-temp-write!
-  "Stream a just-written TEMP file (under `/tmp` or `$TMPDIR`) to the DB as a
+  "DORMANT — a no-op while `mpl-capture/incidental-capture-enabled?` is false, and
+   that is the whole point: a file tool writing scratch into temp is not an
+   artifact anyone asked for. What a session should SHOW is what a tool `attach`es
+   deliberately.
+
+   It streamed a just-written TEMP file (under `/tmp` or `$TMPDIR`) to the DB as a
    `session_iteration_attachment` — the native-tool twin of the sandbox OUTBOX
    tap. A no-op for a non-temp path, or when no capture sink is bound (the file
    tool ran outside a driven block). NEVER throws — a capture must not break an
    edit."
   [^File f]
-  (try (when (under-temp-root? f) (mpl-capture/record-file! (.toPath f))) (catch Throwable _ nil))
+  (try (when (and mpl-capture/incidental-capture-enabled? (under-temp-root? f))
+         (mpl-capture/record-file! (.toPath f)))
+       (catch Throwable _ nil))
   nil)
 
 (defn- safe-path

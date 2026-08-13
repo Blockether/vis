@@ -2,7 +2,10 @@
   "Security regression guard for the confined Python sandbox filesystem.
    These assertions are the safety net: a confinement bug = sandbox escape.
    Plus the OUTBOX tap: a WRITE under the engine outbox dir fires `on-close`;
-   reads and writes anywhere else are untouched."
+   reads and writes anywhere else are untouched. That tap is DORMANT in the
+   product — the engine passes no outbox (`mpl-capture/incidental-capture-enabled?`)
+   — so these drive `confined-filesystem` directly to keep the kept-but-unwired
+   machinery honest."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.foundation.mpl-capture :as mc]
             [com.blockether.vis.internal.extension :as extension]

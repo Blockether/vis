@@ -105,6 +105,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `foundation-git` extension: a Git command is an ordinary `shell` command, run by the same
   jail, capture and timeout as everything else. Workspace Git FACTS (footer status, environment
   block, file picker) and the TUI Magit surface are unchanged.
+- The automatic outbox capture. `$VIS_OUTBOX` no longer exists in the sandbox, a file the
+  sandbox writes into system temp is no longer harvested, and neither is a `write_file` that
+  lands in `/tmp` — the session, the transcript and the Companion stop filling with scratch,
+  build chips and half-finished files nobody asked for. `attach` is how an artifact is kept:
+  a producer that wants a human to SEE something names it and hands over the bytes. Writing to
+  temp still WORKS everywhere it did; it is simply not collected. The machinery stays in the
+  tree, dormant and tested behind `mpl-capture/incidental-capture-enabled?`, in case a future
+  feature wants an engine-owned capture directory again.
 
 ### Fixed
 - Sandbox HTTPS could not skip certificate verification, and the escape hatch was deleted behind

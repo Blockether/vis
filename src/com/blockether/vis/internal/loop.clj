@@ -4679,7 +4679,7 @@
                 ;; call's whole stdout (no per-form split).
                 :stdout (:stdout result)
                 ;; Artifacts the block PRODUCED (matplotlib
-                ;; show/savefig, attach, $VIS_OUTBOX write),
+                ;; show/savefig or an `attach` call),
                 ;; captured at the SOURCE into the sandbox sink —
                 ;; carried down so the DB attachment OWNS the bytes.
                 :attachments (:attachments result)

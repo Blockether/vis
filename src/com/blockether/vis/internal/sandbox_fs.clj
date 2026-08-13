@@ -16,11 +16,13 @@
    `allowInternalResourceAccess` (read-only access to the language home and
    bundled resources) before it reaches the Context.
 
-   OUTBOX tap — an optional engine-managed capture directory (`$VIS_OUTBOX`,
-   distinct from configured filesystem roots): the sandbox may WRITE there and every
-   file it closes is handed to `on-close` so the engine can persist it as a
-   `session_iteration_attachment` (the implicit twin of `attach`). Reads,
-   and writes anywhere else, are untouched.
+   OUTBOX tap (DORMANT — the engine passes no `outbox` today, see
+   `mpl-capture/incidental-capture-enabled?`) — an optional engine-managed capture
+   directory (`$VIS_OUTBOX`, distinct from configured filesystem roots): the sandbox
+   may WRITE there and every file it closes is handed to `on-close` so the engine
+   can persist it as a `session_iteration_attachment` (the implicit twin of
+   `attach`). Reads, and writes anywhere else, are untouched. The machinery is kept
+   and tested for a future capture feature; today only `attach` records artifacts.
 
    Empty/zero roots ⇒ DENY everything (fail closed)."
   (:require [clojure.string :as str])
@@ -77,7 +79,8 @@
    independent of configured filesystem roots. Canonicalized ONCE via `real-path`
    (which resolves the real path of `~/.vis`, even before a child exists). Held
    in a delay so the syscall happens on first use. Kept SEPARATE from
-   `temp-roots`: a write here is NOT tapped to the OUTBOX (only temp writes are)."
+   `temp-roots`: a write here was never tapped to the OUTBOX (only temp writes
+   were, back when the tap was armed)."
   (delay (let [home (System/getProperty "user.home")]
            (if (str/blank? (str home))
              []
@@ -204,7 +207,9 @@
    `root-cache` lives for the FS's lifetime and memoizes the per-root `toRealPath`
    so confinement doesn't re-stat every root on every path operation.
 
-   `outbox` (optional) — `{:dir <existing dir path string> :on-close (fn [^Path])}`.
+   `outbox` (optional, DORMANT — the engine passes nil, see
+   `mpl-capture/incidental-capture-enabled?`) —
+   `{:dir <existing dir path string> :on-close (fn [^Path])}`.
    Its real path is treated as an always-allowed root (so the sandbox can write
    there even though it is outside configured filesystem roots); a WRITE channel closed under it
    fires `on-close` with the file path. The SAME `on-close` also fires for a
@@ -257,11 +262,12 @@
              ch
              (.newByteChannel d cp opts attrs)
 
-             ;; Tap a WRITE opened under the OUTBOX *or* any system temp
-             ;; root (/tmp, $TMPDIR): once the sandbox CLOSES the file it
-             ;; streams to the DB as a `session_iteration_attachment` —
-             ;; the $VIS_OUTBOX capture, widened to plain /tmp scratch so
-             ;; anything the sandbox drops in /tmp is persisted too.
+             ;; DORMANT (`on-close` is nil — the engine wires no outbox):
+             ;; tap a WRITE opened under the OUTBOX *or* any system temp
+             ;; root (/tmp, $TMPDIR) so that, once the sandbox CLOSED the
+             ;; file, it streamed to the DB as a
+             ;; `session_iteration_attachment`. Retired in favour of
+             ;; `attach`; see `mpl-capture/incidental-capture-enabled?`.
              tap?
              (and on-close
                   (write-opts? opts)

@@ -402,48 +402,55 @@
                                   "    _r = 'NO-RAISE'\n" "except Exception as e:\n"
                                   "    _r = str(e)\n" "_r")))))))
 
-(defdescribe
-  vis-outbox-capture-test
-  (it "captures a file WRITTEN into $VIS_OUTBOX as an attachment (no attach call)"
-      (let
-        [pctx
-         (ctx-with-root (temp-root))
+(defdescribe incidental-capture-dormant-test
+             ;; The automatic outbox pattern is RETIRED: the engine wires no `$VIS_OUTBOX`
+             ;; and no temp tap, so a sandbox that merely WRITES a file records nothing and
+             ;; the session (and the companion transcript reading it) stays free of scratch
+             ;; nobody asked for. `attach` is the one way an artifact is kept.
+             ;; See `mpl-capture/incidental-capture-enabled?` — flip it to re-arm both.
+             (it "records NOTHING for a file the sandbox merely writes"
+                 (let
+                   [root
+                    (temp-root)
 
-         out
-         (block pctx
-                (str "import os\n"
-                     "with open(os.path.join(os.environ['VIS_OUTBOX'], 'm.csv'), 'w') as f:\n"
-                     "    f.write('a,b\\n1,2\\n')\n" "print('ok')\n"))
+                    pctx
+                    (ctx-with-root root)
 
-         [att]
-         (:attachments out)]
+                    ;; `temp-root` sits UNDER the system temp root, which is exactly the
+                    ;; widest case the old tap captured.
+                    out
+                    (block pctx
+                           (str "with open('"
+                                root
+                                "/plain.txt', 'w') as f:\n"
+                                "    f.write('hi')\n"
+                                "print('ok')\n"))]
 
-        (expect (nil? (:error out)))
-        (expect (= 1 (count (:attachments out))))
-        (expect (= "m.csv" (:filename att)))
-        (expect (= "text/csv" (:media-type att)))
-        (expect (= "file" (:kind att)))))
-  (it "captures a confined write under a system temp root too (scratch tap, not just $VIS_OUTBOX)"
-      (let
-        [root
-         (temp-root)
+                   (expect (nil? (:error out)))
+                   (expect (empty? (:attachments out)))))
+             (it "gives the sandbox no outbox to write into: VIS_OUTBOX is undefined"
+                 (let [pctx (ctx-with-root (temp-root))]
+                   (expect (false? (ev pctx "'VIS_OUTBOX' in globals()")))
+                   (expect (false? (ev pctx "import os; 'VIS_OUTBOX' in os.environ")))))
+             (it "still records what a tool DELIBERATELY attaches in the same block"
+                 (let
+                   [root
+                    (temp-root)
 
-         pctx
-         (ctx-with-root root)
+                    pctx
+                    (ctx-with-root root)
 
-         out
-         (block pctx
-                (str "with open('"
-                     root
-                     "/plain.txt', 'w') as f:\n"
-                     "    f.write('hi')\n"
-                     "print('ok')\n"))]
+                    out
+                    (block pctx
+                           (str "with open('"
+                                root
+                                "/scratch.csv', 'w') as f:\n"
+                                "    f.write('a,b\\n1,2\\n')\n"
+                                "attach(b'a,b\\n1,2\\n', 'kept.csv')\n"))]
 
-        (expect (nil? (:error out)))
-        ;; The outbox tap is widened to any system temp root (/tmp, $TMPDIR):
-        ;; a `temp-root` write is scratch under it, so it captures at the source.
-        (expect (= 1 (count (:attachments out))))
-        (expect (= "plain.txt" (:filename (first (:attachments out))))))))
+                   (expect (nil? (:error out)))
+                   (expect (= 1 (count (:attachments out))))
+                   (expect (= "kept.csv" (:filename (first (:attachments out))))))))
 
 (defn- conveying-gather
   "Faithful replica of loop.clj's `gather-fn`: submit each thunk to a

@@ -706,7 +706,7 @@
    their shell here), the human-run CLI forwards trailing script args and,
    by default, the caller's environment.
 
-   Mirrors the `VIS_OUTBOX` injection: values cross via `putMember`, then a
+   Same shape as any host→guest seeding here: values cross via `putMember`, then a
    guest eval assigns them (a JSON hop keeps ProxyHashMaps off the boundary
    and reuses the auto-imported `json`). Best-effort: a bad value never
    aborts startup."
@@ -1748,7 +1748,10 @@
   (runtime-python-src "vis-python/network_probe.py"))
 
 (defn- make-outbox
-  "Create a fresh per-context OUTBOX directory under the system temp dir and return
+  "DORMANT — not called while `mpl-capture/incidental-capture-enabled?` is false,
+   so no context gets an outbox dir and the filesystem tap never arms.
+
+   Create a fresh per-context OUTBOX directory under the system temp dir and return
    `{:dir <abs path string> :on-close record-file!}` for
    `sandbox-fs/confined-filesystem`. The sandbox may WRITE files there
    (`$VIS_OUTBOX`); each file it closes is captured AT THE SOURCE as a
@@ -1885,8 +1888,13 @@
      ;; work). Containment is the gateway egress proxy the interpreter is pointed at
      ;; (see `proxy-env-python`), not an on/off capability; a non-empty
      ;; `:network/allowed-domains` allowlist further confines the guard installed below.
+     ;; OUTBOX (DORMANT): the automatic capture of everything the sandbox wrote
+     ;; into `$VIS_OUTBOX` or system temp is OFF — `attach` is how an artifact
+     ;; reaches the session now. See `mpl-capture/incidental-capture-enabled?`.
+     ;; With no outbox the filesystem stays plain-confined: temp writes still
+     ;; WORK, they are simply not harvested into the DB.
      outbox
-     (when roots-fn (make-outbox))
+     (when (and mpl-capture/incidental-capture-enabled? roots-fn) (make-outbox))
 
      io-access
      (if (or roots-fn net?)
@@ -2117,12 +2125,15 @@
     ;; model-created live var). The model may still `import re` — re isn't
     ;; protected, so the redundant import is a harmless no-op.
     (.eval ctx "python" "import re")
-    ;; OUTBOX: expose the per-context capture dir to Python as a `VIS_OUTBOX`
-    ;; global and `$VIS_OUTBOX` env var. A file the sandbox WRITES there is
-    ;; captured at the source as a durable iteration attachment (see the
-    ;; `sandbox-fs` outbox tap) — the implicit twin of `attach` for libraries
-    ;; that only know how to write a file. Eval'd before the snapshot so
-    ;; `VIS_OUTBOX` is a BASELINE name (not surfaced as a model-created live var).
+    ;; OUTBOX (DORMANT — `outbox` is always nil, so neither the global nor the
+    ;; env var exists in the sandbox): it exposed the per-context capture dir to
+    ;; Python as a `VIS_OUTBOX` global and `$VIS_OUTBOX` env var, and a file the
+    ;; sandbox WROTE there was captured at the source as a durable iteration
+    ;; attachment (the `sandbox-fs` outbox tap) — the implicit twin of `attach`
+    ;; for libraries that only know how to write a file. Retired in favour of
+    ;; `attach` alone; see `mpl-capture/incidental-capture-enabled?`. Eval'd
+    ;; before the snapshot so `VIS_OUTBOX` stayed a BASELINE name (not surfaced
+    ;; as a model-created live var).
     (when outbox
       (.putMember g "VIS_OUTBOX" ^String (:dir outbox))
       (try
@@ -3154,8 +3165,8 @@
            only?
            (true? (->clj (.getMember g "__vis_only_results__")))
 
-           ;; Artifacts the block PRODUCED (matplotlib show/savefig, attach,
-           ;; or an $VIS_OUTBOX write), captured at the source into the per-block
+           ;; Artifacts the block PRODUCED (matplotlib show/savefig, or an
+           ;; `attach` call), captured at the source into the per-block
            ;; sink — folded in as `:attachments` so the loop OWNS the bytes with
            ;; NO stdout-fence parsing.
            attachments

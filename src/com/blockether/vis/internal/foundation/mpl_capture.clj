@@ -1,17 +1,21 @@
 (ns com.blockether.vis.internal.foundation.mpl-capture
   "SINK for artifacts the sandbox PRODUCES — matplotlib figures (`plt.show()` /
-   `plt.savefig()`), anything a tool hands to `attach`, AND anything written
-   into the per-context OUTBOX directory (`$VIS_OUTBOX`) — so the engine OWNS the
+   `plt.savefig()`) and anything a tool hands to `attach` — so the engine OWNS the
    bytes (a `session_iteration_attachment` row) captured AT THE SOURCE, with NO
    re-parsing of the model-facing stdout fence.
+
+   The INCIDENTAL capture — every file the sandbox happened to write into
+   `$VIS_OUTBOX` or system temp — is DORMANT: see [[incidental-capture-enabled?]].
+   Only what a producer DELIBERATELY hands over is recorded now.
 
    The old flow rendered each figure to a `$TMPDIR/vis-mpl` temp file, printed a
    `vis-image` fence carrying just that PATH, then at persist time re-parsed the
    fence out of stdout and re-read the (possibly already-gone) file. We control the
    whole boundary, so that round-trip is gone: a producer renders/reads the bytes
    HOST-side (matplotlib's `__vis_mpl_render_file__` imaging backend; `attach`'s
-   sandbox-confined `open`; the outbox filesystem tap in `sandbox-fs`) and, right
-   where it already holds the bytes, calls `record-attachment!` (or `record-file!`).
+   sandbox-confined `open`; the DORMANT outbox filesystem tap in `sandbox-fs`) and,
+   right where it already holds the bytes, calls `record-attachment!` (or
+   `record-file!`).
    `run-python-block` binds `*attachment-sink*` to a fresh collector around each
    block's eval and drains it into the block outcome's `:attachments`; the loop
    stamps each with the block's tool-call-id and hands them to `db-store-iteration!`'s
@@ -37,8 +41,30 @@
 (def ^:dynamic *outbox-seen*
   "Per-block set of canonical outbox paths ALREADY captured by the filesystem tap,
    bound (an atom `#{}`) alongside `*attachment-sink*` so a file re-closed in the
-   same block is not recorded twice. Nil outside a driven block."
+   same block is not recorded twice. Nil outside a driven block. Dormant with the
+   tap itself — see [[incidental-capture-enabled?]]."
   nil)
+
+(def ^:const incidental-capture-enabled?
+  "THE switch for INCIDENTAL file capture — the old outbox pattern — and it is OFF.
+
+   What it did: every file the sandbox CLOSED under `$VIS_OUTBOX` or a system temp
+   root (`sandbox-fs`'s write tap) and every native `write_file` that landed in
+   temp (`editing.core/capture-temp-write!`) was read host-side by
+   [[record-file!]] and persisted as a `session_iteration_attachment` — an
+   implicit twin of `attach` for a library that only knows how to write a file.
+
+   Why it is off: `attach` is the whole need, deliberately. A producer that wants
+   a human to SEE something names it and hands over the bytes; everything else the
+   sandbox writes is scratch, and harvesting it filled the session DB and the
+   companion's recorded-files row with build chips nobody asked for. Nothing else
+   changes — the sandbox still writes wherever it may write, the writes are simply
+   not collected.
+
+   Kept whole and still covered by tests (this ns, `sandbox-fs`, `env-python`'s
+   outbox dir) because a future feature may want an engine-owned capture directory
+   again: flip this to `true` and both wirings re-arm."
+  false)
 
 (def ^:dynamic *attachment-reader*
   "Per-block READ-BACK accessor for artifacts already persisted in THIS session,
@@ -153,7 +179,8 @@
   (* 32 1024 1024))
 
 (def ^:private noisy-capture-exts
-  "Extensions the filesystem tap SKIPS — machine output, never a document.
+  "Extensions the filesystem tap SKIPS — machine output, never a document. Dormant
+   with the tap ([[incidental-capture-enabled?]]); this is what it filtered.
 
    Every entry is something a TOOLCHAIN writes for itself: a compiler, a linker,
    a packager, a VM, an editor or a downloader. None of them is an artifact a
@@ -281,7 +308,10 @@
        (catch Throwable _ "application/octet-stream")))
 
 (defn record-file!
-  "Read the bytes of a just-written file at `path` (a `java.nio.file.Path`), sniff
+  "DORMANT — nothing calls this while [[incidental-capture-enabled?]] is false;
+   kept whole (and tested) for a future capture feature.
+
+   Read the bytes of a just-written file at `path` (a `java.nio.file.Path`), sniff
    its media-type, base64-encode, and `record-attachment!` it — the host side of
    the filesystem OUTBOX tap. De-dups per block via `*outbox-seen*` (a file
    re-closed in the same block records once). Skips a file larger than

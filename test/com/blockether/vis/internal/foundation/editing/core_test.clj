@@ -1692,8 +1692,12 @@
         (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts")))))))
 
 (defdescribe
-  native-temp-write-capture-test
-  (it "a write to /tmp streams to the DB attachment sink; a workspace write does NOT"
+  native-temp-write-capture-dormant-test
+  ;; The native twin of the sandbox outbox tap is retired with it: a file tool
+  ;; writing scratch into /tmp is not an artifact anyone asked for, so nothing
+  ;; streams to the DB and the companion has nothing to show. Only what a tool
+  ;; `attach`es is recorded — see `mpl-capture/incidental-capture-enabled?`.
+  (it "a write to /tmp no longer streams to the DB attachment sink"
       (let
         [write-safe
          (private-fn "write-safe")
@@ -1718,13 +1722,11 @@
            mpl-capture/*outbox-seen*
            seen]
 
-          (expect (:success? (write-safe {"path" tmp "content" "captured tmp bytes"})))
-          (expect (:success? (write-safe {"path" ws "content" "not captured"}))))
-        ;; ONLY the /tmp write reached the sink — the workspace write is untouched.
-        (expect (= 1 (count @sink)))
-        (let [[att] @sink]
-          (expect (string/ends-with? (:filename att) ".txt"))
-          (expect (= "file" (:kind att)))))))
+          (expect (:success? (write-safe {"path" tmp "content" "temp scratch, not an artifact"})))
+          (expect (:success? (write-safe {"path" ws "content" "not captured either"}))))
+        ;; NEITHER write reached the sink: the temp capture is off, and a
+        ;; workspace write was never captured in the first place.
+        (expect (empty? @sink)))))
 
 
 
