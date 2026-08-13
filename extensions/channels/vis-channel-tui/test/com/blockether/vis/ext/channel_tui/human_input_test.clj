@@ -2007,3 +2007,36 @@
                                                          {"name" "a" "label" "A"}]})))
                             40)]
         (expect (< 1 (count (filterv #(= :paragraph (:kind %)) rows)))))))
+;;; ── The focused field's ring rides its own surface ───────────────────────────
+;; Regression (reported from the TUI, photo of a transient band): the accent ring
+;; `▎` a focused field wears was painted one column OUTSIDE the row's own
+;; surface — on the frame's rail in a band, floating in the margin here — and the
+;; line being typed started one column right of the label that names it, so a form
+;; that promises ONE text column painted two.
+(defdescribe
+  focused-field-ring-test
+  (it "keeps the ring inside the rails and the typed line under its own label"
+      (let
+        [{:keys [screen g]}
+         (virtual-screen)
+
+         _
+         (hi/paint! g 80 30 (hi/init-form (request)))
+
+         rows
+         (mapv #(screen-row screen %) (range 30))
+
+         ring-row
+         (first (filter #(str/includes? % "▎") rows))
+
+         label-row
+         (first (filter #(str/includes? % "User") rows))]
+
+        ;; the ring is the field's own left edge, and the text it fences starts in
+        ;; the very column the label above it does
+        (expect (str/includes? ring-row "▎who"))
+        (expect (= (str/index-of label-row "User") (str/index-of ring-row "who")))
+        ;; the band's rails are the first and the last ink on that row — the ring
+        ;; never reaches either of them
+        (expect (< (long (str/index-of ring-row "│")) (long (str/index-of ring-row "▎"))))
+        (expect (< (long (str/index-of ring-row "▎")) (long (str/last-index-of ring-row "│")))))))

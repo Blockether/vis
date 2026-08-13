@@ -705,15 +705,22 @@
 (defn- draw-row-surface!
   "The shared geometry of EVERY focusable form row, typed or toggled. A form has
    ONE text column: the label, the prose, an option, a checkbox and an input box
-   all start at the dialog's own inner edge. The accent ring `▎` a focused row
-   wears lives OUTSIDE that column, in the frame's own edge column, so focus costs
-   the text no indent — a gutter carved out of the text column indented every
-   toggle away from its label, and a checkbox, which IS its own label, was the one
-   label in the form that did not line up.
+   all land on it, and focus costs the text no indent — the accent ring `▎` a
+   focused row wears lives in the GUTTER beside that column.
 
-   The dialog's own paper is cleared first — anything past the row's right edge
-   belongs to the body — then `bg` paints the row's surface, the text lands one
-   `pad` in from that surface's edge (none when there is no surface), and a focused
+   The row owns the frame's INNER columns and nothing else. `left` is the frame's
+   own border column, exactly as every other painter here reads it, so the gutter
+   is the first column INSIDE it and the text column the one after. A ring painted
+   ON the border column erased the frame's rail on precisely the row the keyboard
+   was in: the focused field looked like it had escaped the box, and in a magit
+   band it read as a rail hanging outside the border. A gutter carved out of the
+   TEXT column instead indented every toggle away from its label.
+
+   The dialog's own paper is cleared across the inner columns first — anything
+   past the row's right edge belongs to the body — then `bg` paints the row's
+   surface. A typed row's surface OPENS ON the gutter, so the ring is the field's
+   own left edge and `pad` is the space between that edge and the text; a toggle
+   paints no surface, and its gutter stays empty until it is focused. A focused
    row takes the ink (`box-fg`, bold) while an unfocused one recedes to
    `dialog-hint`. Returns the column the text started at.
 
@@ -724,29 +731,31 @@
     [content-w
      (field-content-w inner-w)
 
-     ;; the ring sits in the frame's edge column; the text column starts at the
-     ;; dialog's own inner edge, where every label starts.
+     ;; the gutter is the first column inside the frame; the text column is the
+     ;; next one, and every row of the form shares it.
      ring-col
-     (long left)
-
-     field-left
      (inc (long left))
 
      text-left
-     (+ (long field-left) (long pad))
+     (+ (long left) 2)
+
+     ;; a surface opens ON the gutter, so its own padding IS the ring's column
+     field-left
+     (- text-left (long pad))
 
      shown
      (ellipsize (str content) content-w)]
 
     (p/set-colors! g t/dialog-fg t/dialog-bg)
-    (p/fill-rect! g ring-col row (inc (long inner-w)) 1)
+    (p/fill-rect! g ring-col row inner-w 1)
     (p/set-colors! g (if focused? t/box-fg t/dialog-hint) bg)
     (p/fill-rect! g field-left row (+ content-w 1 (* 2 (long pad))) 1)
     (if focused?
       (p/styled g [p/BOLD] (p/put-str! g text-left row shown))
       (p/put-str! g text-left row shown))
     (when focused?
-      (p/set-colors! g t/header-active-tab-accent t/dialog-bg)
+      ;; the ring rides the row's OWN paper — on a typed row that IS its surface
+      (p/set-colors! g t/header-active-tab-accent bg)
       (p/put-str! g ring-col row "▎"))
     (p/set-colors! g t/dialog-fg t/dialog-bg)
     text-left))
@@ -2510,8 +2519,18 @@
          display
          (if mask (apply str (repeat (count txt) mask)) txt)
 
+         ;; The answer sits on the band's own body lead — one column inside the
+         ;; frame, the very inset a form's rows take — so the field breathes off
+         ;; both rails instead of opening flush against the left one.
          pos
-         (draw-input-item! g left row inner-w true display @cursor placeholder)]
+         (draw-input-item! g
+                           (inc (long left))
+                           row
+                           (dec (long inner-w))
+                           true
+                           display
+                           @cursor
+                           placeholder)]
 
         (.setCursorPosition screen pos)
         (.refresh screen Screen$RefreshType/DELTA)

@@ -1964,3 +1964,33 @@
             (expect (str/includes? (str/join "\n" (map :text (term/painted-rows terminal)))
                                    "Alpha band"))))
         (finally (.stopScreen screen))))))
+;;; ── A field's ring belongs INSIDE the frame ──────────────────────────────────
+;; Regression (reported from the TUI, photo of the magit commit band): the accent
+;; ring `▎` a focused field wears was painted in the frame's OWN border column,
+;; and the row's paper was cleared from that column too, so the box lost its left
+;; rail on exactly the row the keyboard was in — the answer read as a rail hanging
+;; outside the border instead of a field inside it.
+(defdescribe
+  band-question-frame-test
+  (it "a band's typed answer keeps BOTH rails and wears its ring inside them"
+      (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (term/virtual-screen)]
+        (try (let
+               [g (.newTextGraphics screen)
+                left 2
+                inner-w 40
+                region {:left left :inner-w inner-w :hint-row 20 :text-w 38}
+                _ (doseq [k (concat (map term/keystroke "hi") [(KeyStroke. KeyType/Enter)])]
+                    (.addInput terminal k))
+                answer ((:read! (dlg/band-questions screen g region)) "Name:")
+                field-row (first (filter #(str/includes? % "▎") (term/grid terminal)))]
+
+               (expect (= "hi" answer))
+               ;; the typed line is on that row …
+               (expect (str/includes? field-row "hi"))
+               ;; … the frame's two rails both survive it …
+               (expect (= \│ (nth field-row left)))
+               (expect (= \│ (nth field-row (+ left inner-w 1))))
+               ;; … and the ring sits INSIDE them, on the field's own left edge
+               (expect (< left (long (str/index-of field-row "▎")) (+ left inner-w 1)))
+               (expect (str/includes? field-row "▎hi")))
+             (finally (.stopScreen screen))))))

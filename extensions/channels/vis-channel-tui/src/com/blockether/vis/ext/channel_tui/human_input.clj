@@ -975,7 +975,7 @@
   [g left row inner-w fg text]
   (p/set-colors! g fg t/dialog-bg)
   (p/fill-rect! g (inc (long left)) row inner-w 1)
-  (p/put-str! g (inc (long left)) row (dialogs/ellipsize (str text) (max 0 (- (long inner-w) 2)))))
+  (p/put-str! g (+ (long left) 2) row (dialogs/ellipsize (str text) (max 0 (- (long inner-w) 3)))))
 
 (defn- paint-italic!
   "Prose rows — the request's description and each field's — paint in the same
@@ -987,9 +987,9 @@
   (p/styled g
             [p/ITALIC]
             (p/put-str! g
-                        (inc (long left))
+                        (+ (long left) 2)
                         row
-                        (dialogs/ellipsize (str text) (max 0 (- (long inner-w) 2))))))
+                        (dialogs/ellipsize (str text) (max 0 (- (long inner-w) 3))))))
 
 (defn- paint-required!
   "Re-ink a row's trailing [[required-marker]] in the error colour, on whatever paper
@@ -1046,7 +1046,7 @@
                                              {:variant (if (= :submit action) :primary :secondary)
                                               :is-focused is-focused}))
                 (+ col w 2)))
-            (inc left)
+            (+ left 2)
             buttons)
     nil))
 
@@ -1085,7 +1085,7 @@
        (if (:is-active-field entry) t/dialog-fg t/dialog-hint)
 
        shown
-       (dialogs/ellipsize (str (:text entry)) (max 0 (- (long inner-w) 2)))
+       (dialogs/ellipsize (str (:text entry)) (max 0 (- (long inner-w) 3)))
 
        ;; The `*` is the last thing on the row, so it is inked red only when it
        ;; actually survived the ellipsis — a truncated label must not stain its
@@ -1098,8 +1098,8 @@
 
       (p/set-colors! g fg t/dialog-bg)
       (p/fill-rect! g (inc (long left)) row inner-w 1)
-      (p/styled g [p/BOLD] (p/put-str! g (inc (long left)) row head))
-      (when mark? (paint-required! g (+ (inc (long left)) (count head)) row t/dialog-bg))
+      (p/styled g [p/BOLD] (p/put-str! g (+ (long left) 2) row head))
+      (when mark? (paint-required! g (+ (long left) 2 (count head)) row t/dialog-bg))
       nil)
 
     :error
@@ -1116,9 +1116,9 @@
         (p/styled g
                   [p/BOLD]
                   (p/put-str! g
-                              (inc (long left))
+                              (+ (long left) 2)
                               row
-                              (dialogs/ellipsize (str (:text entry)) (max 0 (- (long inner-w) 2)))))
+                              (dialogs/ellipsize (str (:text entry)) (max 0 (- (long inner-w) 3)))))
         nil)
 
     :paragraph
@@ -1239,12 +1239,13 @@
 (defn- prose-width
   "Columns a plan row's TEXT actually gets out of a `row-w`-wide row.
 
-   `paint-row!` starts every row one column inside the frame and `ellipsize`s
-   it two columns short of `row-w`, so prose wrapped any wider than this is
-   wrapped to a width the painter then CLIPS — and a hard-broken token (a URL,
-   a path) silently loses the characters that fall past the cut."
+   `paint-row!` starts every row on the form's shared text column — two columns
+   inside the frame, past the ring's gutter — and `ellipsize`s it one column short
+   of the row's right edge, so prose wrapped any wider than this is wrapped to a
+   width the painter then CLIPS — and a hard-broken token (a URL, a path) silently
+   loses the characters that fall past the cut."
   ^long [^long row-w]
-  (max 1 (- row-w 2)))
+  (max 1 (- row-w 3)))
 
 
 
@@ -1274,11 +1275,10 @@
    `prompt-h` is the live height of that input box (`screen`'s `input-box-h`),
    which is what decides where the band's floor is.
 
-   The body is inset by `transient/pane-lead`, the very lead the hydra gives its
-   own panes: the accent ring `▎` a focused row wears takes the LAST of those
-   columns and the text starts after it, so a focused row is fenced off the rail
-   by a clear column instead of painting its ring against it — and the form's
-   text column then lands exactly where a transient's items do.
+   The body starts ONE column inside the rails and the row painters carve the
+   ring's gutter out of the column after that, so the accent ring `▎` a focused
+   row wears is fenced off the rail by a clear column instead of painting against
+   it — and the form's text column lands exactly where a transient's items do.
 
    The scrollbar sits in the LANE every other scrollable dialog uses — the last
    column INSIDE the right rail (`left + inner-w`), painted by the shared
@@ -1308,13 +1308,13 @@
        (let
          [left (long left)
           inner-w (long inner-w)
-          ;; The rails own the two edge columns, and the body takes the hydra's
-          ;; own pane lead inside them — the ring gutter is the last of those
-          ;; columns, so nothing the form paints ever touches a rail. The same
-          ;; one clear column answers on the right, so the box breathes equally
-          ;; on both sides and the scrollbar's rail keeps its air.
-          body-left (+ left (long tr/pane-lead))
-          body-w (- inner-w (long tr/pane-lead))
+          ;; The rails own the two edge columns and the body opens one column
+          ;; inside them; the row painters take the next column as the ring's
+          ;; gutter, so nothing the form paints ever touches a rail. The same one
+          ;; clear column answers on the right, so the box breathes equally on
+          ;; both sides and the scrollbar's rail keeps its air.
+          body-left (inc left)
+          body-w (dec inner-w)
           baz (hint form)
           actions (action-bar form)
           ;; The pinned bar costs its own row plus the blank one above it.
