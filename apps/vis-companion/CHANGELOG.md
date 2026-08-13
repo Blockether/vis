@@ -2,6 +2,25 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.35 (4090) — 2026-08-13
+<!-- commit: 4b67f7bafd8181c495f9397bf5eabfe01242d310 -->
+
+- Companion: the notch strip stands ON the dialog band, not inside it
+- Plan: let a session speak to the other sessions in its tree
+- Name tests by path, and let each pack say pass and fail itself
+- Give a switched-off toggle a frame it can be found by
+- Name the session surface after the verb, not the storage table
+- Give an edit a coordinate again: cat mints it, patch spends it
+- Say what pairing is doing, and bound how long it can take
+- Delete a session without re-downloading the fleet
+- Honour every TLS option the sandbox shims accept, or refuse it out loud
+- Count the tests that THREW, and read the cli tally as counts
+- Never lose the TestFlight notes to one bad minute from Apple
+- Collapse run_tests faults into ONE typed failures list
+- Show every repository in the magit buffer, not the first twelve
+- Plan: bring back cat and patch, and make grep speak anchored text
+- Companion: record the 0.1.35 (4075) TestFlight build
+
 ## 0.1.35 (4075) — 2026-08-13
 <!-- commit: 303d39e0132803b54e94db9293b6828bfbde6901 -->
 
