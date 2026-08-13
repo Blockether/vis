@@ -1099,7 +1099,7 @@
                     (write-temp! "cat/anchored.clj" "(ns a)\n\n(defn one [] 1)\n(defn two [] 2)\n")
 
                     cat-tool
-                    (private-fn "cat-tool")
+                    (comp :result (private-fn "cat-tool"))
 
                     out
                     (cat-tool rel)
@@ -1113,13 +1113,28 @@
                    (expect (every? #(re-matches #"\d+:[0-9a-f]{3}│ .*" %) lines))
                    ;; The blank line carries an anchor too, so the read is gap-free.
                    (expect (string/starts-with? (nth lines 1) "2:000│"))))
+             ;; Regression: `cat` answered its anchored text as a BARE STRING, so a real
+             ;; sandbox call died at the extension boundary with "Symbol 'cat' must
+             ;; return a canonical :envelope map" while every direct call here passed.
+             (it "the tool answers the canonical envelope with the text as :result"
+                 (let
+                   [rel
+                    (write-temp! "cat/envelope.txt" "alpha\nbeta\n")
+
+                    env
+                    ((private-fn "cat-tool") rel)]
+
+                   (expect (extension/tool-result? env))
+                   (expect (true? (:success? env)))
+                   (expect (string? (:result env)))
+                   (expect (string/starts-with? (:result env) "1:"))))
              (it "an anchor endpoint and a line number select the same window"
                  (let
                    [rel
                     (write-temp! "cat/endpoints.txt" "alpha\nbeta\ngamma\ndelta\n")
 
                     cat-tool
-                    (private-fn "cat-tool")
+                    (comp :result (private-fn "cat-tool"))
 
                     by-number
                     (cat-tool rel 2 3)
@@ -1139,7 +1154,7 @@
                                  (string/join "\n" (map #(str "line " %) (range 1 3001))))
 
                     cat-tool
-                    (private-fn "cat-tool")
+                    (comp :result (private-fn "cat-tool"))
 
                     out
                     (cat-tool rel)
@@ -1152,7 +1167,7 @@
                    (expect (string/includes? (last lines) "continue with cat("))
                    (expect (string/includes? (last lines) ", 2001, "))))
              (it "an unreadable path and an inverted window both refuse"
-                 (let [cat-tool (private-fn "cat-tool")]
+                 (let [cat-tool (comp :result (private-fn "cat-tool"))]
                    (expect (throws? clojure.lang.ExceptionInfo #(cat-tool "does/not/exist.txt")))
                    (expect (throws? clojure.lang.ExceptionInfo
                                     #(cat-tool (write-temp! "cat/inv.txt" "a\nb\nc\n") 3 1))))))
@@ -1166,7 +1181,7 @@
          (write-temp! "patch/window.txt" "one\ntwo\nthree\nfour\nfive\nsix\nseven\n")
 
          cat-tool
-         (private-fn "cat-tool")
+         (comp :result (private-fn "cat-tool"))
 
          patch-one
          (private-fn "patch-one")
@@ -1196,7 +1211,7 @@
          (write-temp! "patch/span.txt" "a\nb\nc\nd\ne\n")
 
          cat-tool
-         (private-fn "cat-tool")
+         (comp :result (private-fn "cat-tool"))
 
          patch-one
          (private-fn "patch-one")
@@ -1219,7 +1234,7 @@
          (write-temp! "patch/stale.txt" "alpha\nbeta\ngamma\n")
 
          cat-tool
-         (private-fn "cat-tool")
+         (comp :result (private-fn "cat-tool"))
 
          patch-one
          (private-fn "patch-one")
@@ -1285,7 +1300,7 @@
          (write-temp! "patch/gate.clj" "(ns gate)\n\n(defn ok [] 1)\n")
 
          cat-tool
-         (private-fn "cat-tool")
+         (comp :result (private-fn "cat-tool"))
 
          patch-one
          (private-fn "patch-one")
@@ -1307,7 +1322,7 @@
          (write-temp! "patch/broken.clj" "(ns broken)\n\n(defn oops [] 1\n")
 
          cat-tool
-         (private-fn "cat-tool")
+         (comp :result (private-fn "cat-tool"))
 
          patch-one
          (private-fn "patch-one")
@@ -1328,7 +1343,7 @@
          (write-temp! "patch/plain.zzz" "hello\nworld\n")
 
          cat-tool
-         (private-fn "cat-tool")
+         (comp :result (private-fn "cat-tool"))
 
          patch-one
          (private-fn "patch-one")
@@ -4445,7 +4460,41 @@
                               "t1/i1")]
 
         (expect (nil? (:error result)))
-        (expect (= "True\n" (:stdout result))))))
+        (expect (= "True\n" (:stdout result)))))
+  ;; Regression: `cat` answered its anchored text as a BARE STRING, so the FIRST
+  ;; real call from the sandbox died at the extension boundary with "Symbol 'cat'
+  ;; must return a canonical :envelope map"; and because its declared parameter
+  ;; was named `from` — a Python KEYWORD — the signature stub would not compile,
+  ;; so `inspect.signature(cat)` fell back to `(*a, **k)`. Calling the tool fn
+  ;; directly, which is what every other cat/patch test does, sees neither.
+  (it "cat reads and patch writes from real Python, and both report their parameters"
+      (let
+        [rel
+         (write-temp! "cat/sandbox.txt" "alpha\nbeta\ngamma\n")
+
+         ctx
+         (:python-context (ep/create-python-context (extension/builtin-sandbox-bindings (constantly
+                                                                                          nil))))
+
+         result
+         (ep/run-python-block ctx
+                              (str "import inspect\n"
+                                   "p = " (pr-str rel)
+                                   "\n" "print(inspect.signature(cat))\n"
+                                   "print(inspect.signature(patch))\n" "text = cat(p)\n"
+                                   "print(text)\n"
+                                   "print(patch(p, text.splitlines()[1].split('│ ')[0], 'BETA'))\n")
+                              "t1/i2")
+
+         out
+         (str (:stdout result))]
+
+        (expect (nil? (:error result)))
+        (expect (string/includes? out "(path, start=None, end=None)"))
+        (expect (string/includes? out "(path, from_anchor, to_anchor=None, replacement=None)"))
+        (expect (re-find #"(?m)^1:[0-9a-f]{3}│ alpha$" out))
+        (expect (string/includes? out "→ 1 line"))
+        (expect (= "alpha\nBETA\ngamma\n" (slurp rel))))))
 
 ;; =============================================================================
 ;; `ls` ORDERING, and the two sources allowed to answer a listing.

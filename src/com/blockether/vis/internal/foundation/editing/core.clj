@@ -4300,7 +4300,7 @@
     (throw (ex-info (str (name op)
                          " takes POSITIONAL arguments, not an options map — "
                          (if (= op :cat)
-                           "cat(path), cat(path, from) or cat(path, from, to)."
+                           "cat(path), cat(path, start) or cat(path, start, end)."
                            (str "patch(path, anchor, new) for one line, "
                                 "patch(path, from_anchor, to_anchor, new) for a span.")))
                     {:type :ext.foundation.editing/positional-only :op op})))
@@ -4315,7 +4315,7 @@
 (defn- cat-endpoint-line
   "Resolve ONE `cat` endpoint to a 1-based line in `content`. An endpoint is
    EITHER a line number or a `<line>:<hash>` anchor, and the two mix freely
-   across `from`/`to` — the read is the forgiving side, so a stale anchor
+   across `start`/`end` — the read is the forgiving side, so a stale anchor
    resolves through `resolve-anchor-range-read` (which falls back to the
    anchor's line number) and only a genuinely unlocatable one refuses."
   ^long [^String content endpoint which ^long line-count]
@@ -4387,20 +4387,23 @@
       (let
         [from-line
          (if (some? from)
-           (cat-endpoint-line content (positional-only! :cat from) "from" line-count)
+           (cat-endpoint-line content (positional-only! :cat from) "start" line-count)
            1)
 
          to-line
          (if (some? to)
-           (cat-endpoint-line content (positional-only! :cat to) "to" line-count)
+           (cat-endpoint-line content (positional-only! :cat to) "end" line-count)
            line-count)
 
          _
          (when (> from-line to-line)
-           (throw
-             (ex-info
-               (str "cat: from line " from-line " is after to line " to-line " — order the window.")
-               {:type :ext.foundation.editing/invalid-range :from from-line :to to-line})))
+           (throw (ex-info
+                    (str "cat: start line "
+                         from-line
+                         " is after end line "
+                         to-line
+                         " — order the window.")
+                    {:type :ext.foundation.editing/invalid-range :from from-line :to to-line})))
 
          wanted
          (subvec lines (dec from-line) to-line)
@@ -4456,20 +4459,38 @@
                (min line-count (+ last-line (long default-cat-limit)))
                ")"))))))
 
+(defn- cat-envelope
+  "`cat-one`'s string in the canonical envelope every symbol must answer. The
+   MODEL still sees the bare string — the host unwraps `:result` on the way into
+   the sandbox — but a symbol that RETURNS a raw String is refused at the
+   extension boundary before its value ever gets there."
+  [path start end]
+  (let [text (cat-one path start end)]
+    (tool-success {:op :cat
+                   :path path
+                   :kind :file
+                   :result text
+                   :metadata {:mode :cat :line-count (count (str/split-lines text))}})))
+
 (defn- cat-tool
   "cat — read one file's region as patch-ready `<line>:<hash>` text.
 
-     cat(path)              whole file, capped
-     cat(path, from)        from -> EOF, capped
-     cat(path, from, to)    closed range, inclusive
+     cat(path)                whole file, capped
+     cat(path, start)         start -> EOF, capped
+     cat(path, start, end)    closed range, inclusive
 
-   `from`/`to` are line numbers or anchors and mix freely. The return is a plain
-   STRING, never a map: `print(cat(...))` shows it and `cat(...).splitlines()`
-   slices it. Its every line is a `patch` argument, so the read that finds the
-   region is also the read that addresses it."
-  ([path] (cat-one path nil nil))
-  ([path from] (cat-one path from nil))
-  ([path from to] (cat-one path from to)))
+   `start`/`end` are line numbers or anchors and mix freely. They are NOT named
+   `from`/`to`: `from` is a Python KEYWORD, so a declared parameter carrying
+   that name cannot be compiled into the signature stub the sandbox reports and
+   `inspect.signature(cat)` would fall back to `(*a, **k)`.
+
+   What the model receives is a plain STRING, never a map: `print(cat(...))`
+   shows it and `cat(...).splitlines()` slices it. Its every line is a `patch`
+   argument, so the read that finds the region is also the read that addresses
+   it."
+  ([path] (cat-envelope path nil nil))
+  ([path start] (cat-envelope path start nil))
+  ([path start end] (cat-envelope path start end)))
 
 ;; -----------------------------------------------------------------------------
 ;; patch
@@ -4776,9 +4797,9 @@
      :description
      (str
        "Read one file's region as patch-ready `line:hash` text — the read that produces the address "
-       "`patch` spends. `cat(path)`, `cat(path, from)`, `cat(path, from, to)`; `from`/`to` are line "
-       "numbers or anchors. `ls(dir)` lists directories; `struct_index` maps code first.")
-     :call {:pos ["path"] :opt-pos ["from" "to"]}
+       "`patch` spends. `cat(path)`, `cat(path, start)`, `cat(path, start, end)`; `start`/`end` "
+       "are line numbers or anchors. `ls(dir)` lists directories; `struct_index` maps code first.")
+     :call {:pos ["path"] :opt-pos ["start" "end"]}
      :before-fn (fs-access-before-fn :cat :file "file-read" read-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :cat :file)}))

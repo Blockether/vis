@@ -39,7 +39,7 @@ definitions (29):
 
 Each row carries plain 1-based `line`/`end_line` numbers. Read that one definition with `struct_nodes` at its `line` instead of paging the file. In Python, the structured `definitions` and `imports` values can stay bound while the model prints only the rows it needs.
 
-For unsupported text, generated files, or one already-known region, `cat(path, from, to)` returns that window as `line:hash│ text` — one anchored line per source line, so the read that shows you the region also ADDRESSES it. `Path(path).read_text()` is for a file you only consume, never for one you are about to edit.
+For unsupported text, generated files, or one already-known region, `cat(path, start, end)` returns that window as `line:hash│ text` — one anchored line per source line, so the read that shows you the region also ADDRESSES it. `Path(path).read_text()` is for a file you only consume, never for one you are about to edit.
 
 ## Edit structure, not surrounding text
 
@@ -147,7 +147,7 @@ The efficient path is:
 
 1. Discover capabilities with `apropos`, then read the one contract with `doc`.
 2. Locate relevant files and symbols with `grep` — its hits arrive anchored, so a hit is already a `patch` argument.
-3. Map supported code with `struct_index`, then read only the needed body with `struct_nodes`; `cat(path, from, to)` for anything else you are about to edit.
+3. Map supported code with `struct_index`, then read only the needed body with `struct_nodes`; `cat(path, start, end)` for anything else you are about to edit.
 4. Edit by NAME with `struct_patch`, by ADDRESS with `patch`; fall back to a `python_execution` write only for a new file or a wholesale replacement.
 5. Keep batch intermediates in `python_execution`.
 6. Fold completed prior-turn noise while preserving durable evidence.

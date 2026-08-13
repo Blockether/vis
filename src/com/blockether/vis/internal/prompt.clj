@@ -235,7 +235,7 @@
     "## 3. Inspect\n"
     "- **Filesystem work is Python**: `grep(...)` searches, `shell(...)` runs programs, `ls(dir)` maps an\n"
     "  unknown tree FIRST (`depth` descends) so no path is guessed. READING a region you will EDIT is\n"
-    "  `cat(path, from, to)` — its output IS the address (`line:hash│ text`). `Path.read_text`\n"
+    "  `cat(path, start, end)` — its output IS the address (`line:hash│ text`). `Path.read_text`\n"
     "  consumes; creating/moving/deleting is plain Python.\n"
     "- After the initial search make at most two targeted discovery rounds before reproducing a\n"
     "  bug or writing the smallest test; exceed only if it fails or a named unresolved decision blocks the edit.\n"

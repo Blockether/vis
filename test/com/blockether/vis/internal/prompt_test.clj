@@ -659,7 +659,7 @@
              ;; how a 2 KB block that restates the old text becomes the normal way to edit.
              (it "names both anchored verbs and the address they speak"
                  (let [text (prompt/build-system-prompt {})]
-                   (expect (str/includes? text "cat(path, from, to)"))
+                   (expect (str/includes? text "cat(path, start, end)"))
                    (expect (str/includes? text "patch(path, from, to, new)"))
                    (expect (str/includes? text "line:hash"))))
              (it "never tells the model to write a text EDIT in plain Python"
