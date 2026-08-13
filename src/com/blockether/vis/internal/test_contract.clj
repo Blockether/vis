@@ -34,7 +34,10 @@
      :ns        the namespace(s) run
      :total     test count actually run
      :pass      passing count
-     :fail      failing + erroring count
+     :fail      count that did NOT pass - assertion failures AND errors
+     :errored   the SUBSET of :fail that THREW instead of asserting false
+                (:fail minus :errored is the assertion failures). Already
+                inside :fail and :total - never add it to either again
      :selected  count chosen by the selectors (before skips)
      :skipped   count filtered out by :exclude / source :skip
      :failures  [{:ns :test :type :message :file :line} ...] - EVERY fault, in
@@ -93,6 +96,11 @@
 
 (s/def ::fail nat-int?)
 
+;; The erroring SUBSET of ::fail, not a count beside it: a runner that reports
+;; counts without per-test detail (pytest's summary line) is the only witness
+;; that a fault THREW, so the tally has to carry what ::type carries per fault.
+(s/def ::errored nat-int?)
+
 (s/def ::selected nat-int?)
 
 (s/def ::skipped nat-int?)
@@ -106,8 +114,8 @@
 ;; exception stacktraces written to *out* / *err*); :failures is the ONE fault
 ;; list, each fault carrying its :type.
 (s/def ::result
-  (s/keys :opt-un [::language ::mode ::framework ::tool ::ns ::total ::pass ::fail ::selected
-                   ::skipped ::failures ::output]))
+  (s/keys :opt-un [::language ::mode ::framework ::tool ::ns ::total ::pass ::fail ::errored
+                   ::selected ::skipped ::failures ::output]))
 
 ;; =============================================================================
 ;; Key vectors DERIVED from the specs (spec is the single source of truth)

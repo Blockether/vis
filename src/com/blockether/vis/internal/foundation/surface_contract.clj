@@ -127,6 +127,7 @@
          (count-key "total")
          (count-key "pass")
          (count-key "fail")
+         (count-key "errored")
          (count-key "selected")
          (count-key "skipped")
          (opt "failures" #(s/valid? (s/coll-of ::test-failure) %))
@@ -167,6 +168,12 @@
    "total" nil
    "pass" nil
    "fail" nil
+   ;; The erroring SUBSET of "fail" — the tests that THREW rather than asserting
+   ;; false. Already counted in "fail" and "total" (total = pass + fail +
+   ;; skipped), so it is NEVER added to either again. It exists as a count
+   ;; because a runner can report a tally with no per-test detail, where the
+   ;; faults' "type" cannot answer how many threw.
+   "errored" nil
    "selected" nil
    "skipped" nil
    ;; structured faults + their directory-nested view — ONE list, where an
@@ -201,12 +208,17 @@
    the uniform shape is made true.
 
    Per-pack key VOCABULARY is folded onto the canonical names, so the caller
-   reads `pass`/`fail` whatever ran: pytest/bun `passed`/`failed`/`errored` ->
-   `pass`/`fail` (errored counts as failed), an argv `cmd` -> a `command`
+   reads `pass`/`fail` whatever ran: pytest/bun `passed`/`failed` -> `pass`/
+   `fail` (an errored test is a failed one), an argv `cmd` -> a `command`
    string, `ok` -> `is_pass`. The folded alias is then DROPPED: a completed
    result names each fact ONCE, never `passed` beside `pass`. `total`,
-   `is_pass` and `language` are DERIVED only when the pack reported none —
-   nothing a pack said is ever overwritten.
+   `errored`, `is_pass` and `language` are DERIVED only when the pack reported
+   none — nothing a pack said is ever overwritten.
+
+   `errored` is the one count kept BESIDE `fail` rather than folded into it,
+   because it names a different fact (how many threw), stays a SUBSET of
+   `fail`, and survives where the typed fault list cannot: a runner that
+   reported counts and no per-test detail lists no faults to type.
 
    Non-map results (a pack that returned something else) pass through."
   [language result]
@@ -216,14 +228,26 @@
       [pass
        (or (->count (get result "pass")) (->count (get result "passed")))
 
-       errored
+       faults
+       (->faults (get result "failures"))
+
+       reported-errored
        (->count (get result "errored"))
 
        fail
        (or (->count (get result "fail"))
            (when-let [f (->count (get result "failed"))]
-             (+ (long f) (long (or errored 0))))
-           errored)
+             (+ (long f) (long (or reported-errored 0))))
+           reported-errored)
+
+       ;; Unreported: every listed fault carries its "type", but only a fault
+       ;; list that accounts for EVERY failure may be counted — pytest's summary
+       ;; line reports `3 failed` and names none of them, and 0 faults typed
+       ;; "error" out of 0 listed is UNKNOWN, not zero.
+       errored
+       (or reported-errored
+           (when (and fail (= (count faults) fail))
+             (count (filter #(= "error" (get % "type")) faults))))
 
        skipped
        (->count (get result "skipped"))
@@ -255,13 +279,14 @@
           (assoc "language" (or (get result "language") language)
                  "pass" pass
                  "fail" fail
+                 "errored" errored
                  "total" total
                  "skipped" skipped
                  "is_pass" is-pass
                  "command" command
-                 "failures" (->faults (get result "failures"))
+                 "failures" faults
                  "by-cwd" (or (get result "by-cwd") {}))
-          (dissoc "passed" "failed" "errored" "ok" "cmd")))))
+          (dissoc "passed" "failed" "ok" "cmd")))))
 
 ;; =============================================================================
 ;; Capability -> spec + the check the packs run

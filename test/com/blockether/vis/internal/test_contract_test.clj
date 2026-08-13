@@ -23,7 +23,7 @@
              (describe "result-keys - derived from the ::result spec"
                        (it "lists every uniform result key in order"
                            (expect (= [:language :mode :framework :tool :ns :total :pass :fail
-                                       :selected :skipped :failures :output]
+                                       :errored :selected :skipped :failures :output]
                                       contract/result-keys)))
                        (it "stays in sync with the ::result spec :opt-un keys"
                            (let [opts (apply hash-map (rest (s/form ::contract/result)))]

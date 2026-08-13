@@ -203,6 +203,8 @@
                     "total" (+ (:pass c) (:fail c) (:error c))
                     "pass" (:pass c)
                     "fail" (+ (:fail c) (:error c))
+                    ;; The erroring SUBSET of "fail" — already inside it.
+                    "errored" (:error c)
                     "selected" (count selected)
                     "skipped" skipped
                     "failures" fs})))
@@ -291,6 +293,10 @@
                                           (= :pass (:type x)))
                                         results))
                   "fail" (count fails)
+                  ;; The erroring SUBSET of "fail" — already inside it.
+                  "errored" (count (filter (fn [x]
+                                             (= :error (:type x)))
+                                           results))
                   "selected" (count selected)
                   "skipped" skipped
                   "failures" (mapv ->fail fails)}))))]
@@ -803,9 +809,10 @@
   "Fallback when no nREPL is reachable: shell the build-tool's test command. For a
    deps.edn project whose :test alias mains lazytest.main, the normalized selectors
    are PASSED THROUGH as lazytest CLI flags (-n/-v/-i/-e) so cli mode honors them
-   just like the repl path; otherwise the whole suite runs and a :note says so.
-   The full shell command lives on :command; the :note stays a short human
-   sentence so the RUN_TESTS headline doesn't re-list every namespace.
+   just like the repl path; otherwise the whole suite runs.
+   The full shell command lives on :command, and the runner's own summary line is
+   read into the COUNTS every mode shares — :total, :fail and its erroring subset
+   :errored — instead of being retold as a sentence the caller has to parse.
    `norm` is the canonical selector map {:nses :only :include :exclude}."
   [root norm]
   (let
@@ -821,16 +828,24 @@
                   (catch Throwable t {:exit -1 :out "" :err (str (.getMessage t))}))
          out (str (:out res) (:err res))
          exit (long (or (:exit res) -1))
+         ;; clojure.test and lazytest both close on "Ran N test…" plus an
+         ;; "F failures, E errors." line — the only tally a shelled runner
+         ;; offers, and the cli path reports it as the SAME counts the repl
+         ;; path does.
          cases (some-> (re-find #"Ran (\d+) test" out)
-                       second)
+                       second
+                       parse-long)
          fails (some-> (re-find #"(\d+) failures?" out)
-                       second)
+                       second
+                       parse-long)
+         errs (some-> (re-find #"(\d+) errors?" out)
+                      second
+                      parse-long)
          ;; A PASS demands a "Ran N test…" summary, not merely a 0 exit: a
          ;; deps.edn with no :test alias drops `clojure -M:test` into a bare
          ;; REPL that reads EOF and exits 0 having run ZERO tests. Counting
          ;; that as green silently hid whole suites (a real false green).
-         ran? (some? cases)
-         tally (when cases (str cases " cases" (when fails (str ", " fails " failures"))))]
+         ran? (some? cases)]
 
         ;; "is_pass" (exit-code verdict) is a DISTINCT key from the repl path's
         ;; "pass" (a count) — render-test-result reads both.
@@ -841,11 +856,16 @@
            "command" (str/join " " cmd)
            "exit" exit
            "is_pass" (and (zero? exit) ran?)
-           ;; Surface just the RESULT — the tally is all the caller needs. The
-           ;; runner mechanics (which build tool, live nREPL vs CLI, selector
-           ;; pass-through) are internal plumbing, not something to narrate.
-           "note" tally
            "output" (cli-tail out)}
+          cases
+          (assoc "total" cases)
+
+          (or fails errs)
+          (assoc "fail" (+ (long (or fails 0)) (long (or errs 0))))
+
+          errs
+          (assoc "errored" errs)
+
           (and (zero? exit) (not ran?))
           (assoc "error"
             (str "test command exited 0 but printed no \"Ran N test…\" summary"

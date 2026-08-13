@@ -104,7 +104,10 @@
                                     (assoc test-ok
                                       "fail" 1
                                       "failures" [{"test" "boom" "type" "exploded"}]))))
-      (expect (not (contains? contract/test-result-base "errors"))))
+      (expect (not (contains? contract/test-result-base "errors")))
+      ;; ONE list of faults, but the erroring TALLY is its own count: a runner
+      ;; that reports counts and no per-test detail types nothing.
+      (expect (contains? contract/test-result-base "errored")))
   (it "rejects a test failure whose line is not a non-negative int"
       (expect (not (contract/valid? :test-fn
                                     (assoc test-ok "failures" [{"message" "boom" "line" "12"}]))))
@@ -168,12 +171,37 @@
                                            "skipped" 3})]
         (expect (= 7 (get r "pass")))
         (expect (= 3 (get r "fail"))) ; failed + errored
+        (expect (= 1 (get r "errored"))) ; the erroring SUBSET of fail, kept
         (expect (= 13 (get r "total"))) ; derived: pass + fail + skipped
         (expect (= "pytest tests" (get r "command")))
         (expect (= "python" (get r "language")))
         (expect (false? (get r "is_pass")))
         ;; FOLDED, not carried alongside — a completed result names each fact once
-        (expect (every? #(not (contains? r %)) ["passed" "failed" "errored" "ok" "cmd"]))))
+        (expect (every? #(not (contains? r %)) ["passed" "failed" "ok" "cmd"]))))
+  (it "keeps errored as the erroring SUBSET of fail — never a count to add on top"
+      ;; Reported by the pack: fail already contains it, so total stays
+      ;; pass + fail + skipped and errored is never added a second time.
+      (let
+        [r (contract/complete-test-result
+             "clojure"
+             {"mode" "repl" "pass" 7 "fail" 3 "errored" 2 "skipped" 1})]
+        (expect (= 3 (get r "fail")))
+        (expect (= 2 (get r "errored")))
+        (expect (= 11 (get r "total"))))
+      ;; NOT reported, but every failure is in the typed fault list — counted.
+      (let
+        [r (contract/complete-test-result "clojure"
+                                          {"mode" "repl"
+                                           "fail" 2
+                                           "failures" [{"test" "threw" "type" "error"}
+                                                       {"test" "asserted" "type" "fail"}]})]
+        (expect (= 1 (get r "errored"))))
+      ;; Counts with no per-test detail (pytest's summary line): UNKNOWN, not 0.
+      (let [r (contract/complete-test-result "python" {"mode" "cli" "fail" 3})]
+        (expect (nil? (get r "errored"))))
+      ;; Nothing failed, so nothing threw.
+      (let [r (contract/complete-test-result "python" {"mode" "cli" "pass" 4 "fail" 0})]
+        (expect (= 0 (get r "errored")))))
   (it "derives is_pass from ok / exit when the pack reports no counts"
       (expect (nil? (get (contract/complete-test-result "python" {"ok" true}) "ok")))
       (expect (true? (get (contract/complete-test-result "python" {"ok" true}) "is_pass")))

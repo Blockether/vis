@@ -3,6 +3,7 @@
    server that vanishes mid-run surfaces as a structured result the model can act
    on, never a raw connect exception that eats the turn."
   (:require [clojure.java.io :as io]
+            [clojure.java.shell :as shell]
             [com.blockether.vis.ext.language-clojure.nrepl-client :as nc]
             [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
             [com.blockether.vis.ext.language-clojure.test-runner :as tr]
@@ -348,3 +349,70 @@
                 error))
             (expect (not (re-find #"first-test|second-test|vis\\.test-runner" error)))))
         (finally (remove-ns fixture-ns))))))
+(def ^:private run-via-cli @#'com.blockether.vis.ext.language-clojure.test-runner/run-via-cli)
+
+(defn- with-cli-run
+  "Run the cli fallback against a canned shell result, with no project on disk."
+  [{:keys [exit out]}]
+  (with-redefs
+    [com.blockether.vis.ext.language-clojure.test-runner/cli-command-for
+     (fn [_root _sel]
+       {:tool :clj :cmd ["clojure" "-M:test"]})
+
+     shell/sh
+     (fn [& _]
+       {:exit exit :out out :err ""})]
+
+    (run-via-cli "/proj" {})))
+
+(defdescribe
+  cli-summary-counts-test
+  ;; The cli path used to retell its summary line as a NOTE ("12 cases, 3
+  ;; failures") and leave total / fail / errored nil, so one run read as counts
+  ;; on the repl path and as prose on the cli path.
+  (it "reads the shelled runner's summary line into total / fail / errored"
+      (let
+        [r (with-cli-run {:exit 1
+                          :out "Ran 12 test cases in 0.4 seconds.\n1 failures, 2 errors.\n"})]
+        (expect (= 12 (get r "total")))
+        ;; fail is every test that did not pass ...
+        (expect (= 3 (get r "fail")))
+        ;; ... and errored is the subset of it that THREW
+        (expect (= 2 (get r "errored")))
+        (expect (nil? (get r "note")))
+        (expect (false? (get r "is_pass")))))
+  (it "reports a green cli run as ZERO failures, never unknown"
+      (let
+        [r (with-cli-run {:exit 0
+                          :out "Ran 12 test cases in 0.4 seconds.\n0 failures, 0 errors.\n"})]
+        (expect (= 12 (get r "total")))
+        (expect (= 0 (get r "fail")))
+        (expect (= 0 (get r "errored")))
+        (expect (true? (get r "is_pass"))))))
+
+(defdescribe repl-errored-count-test
+             (it "counts a test that THREW into errored as well as fail"
+                 (let
+                   [fixture-ns
+                    'vis.test-runner-errored-fixture
+
+                    n
+                    (create-ns fixture-ns)
+
+                    run-form
+                    @#'com.blockether.vis.ext.language-clojure.test-runner/run-form]
+
+                   (try (alter-meta! (intern n
+                                             'throws-test
+                                             (fn []))
+                                     assoc
+                                     :test
+                                     (fn []
+                                       (throw (ex-info "boom" {}))))
+                        (with-redefs [clojure.core/require (fn [& _])]
+                          (let [r ((eval run-form) [fixture-ns] {} {})]
+                            (expect (= 1 (get r "fail")))
+                            ;; the erroring SUBSET of fail — nothing is listed twice
+                            (expect (= 1 (get r "errored")))
+                            (expect (= ["error"] (mapv #(get % "type") (get r "failures"))))))
+                        (finally (remove-ns fixture-ns))))))
