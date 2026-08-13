@@ -14,7 +14,7 @@ describe("linkTargets", () => {
   const groups = [
     { id: "public" },
     { id: "external", attributes: { isInternalGroup: false } },
-    { id: "internal", attributes: { isInternalGroup: true } },
+    { id: "internal", attributes: { isInternalGroup: true, hasAccessToAllBuilds: true } },
   ];
 
   it("carries the build to every EXTERNAL beta group, named one first", () => {
@@ -23,6 +23,18 @@ describe("linkTargets", () => {
 
   it("never links the named group twice", () => {
     expect(linkTargets(groups, "external")).toEqual(["external", "public"]);
+  });
+
+  // Regression: EVERY internal group was skipped, so an internal group created WITHOUT access to
+  // all builds — the one kind Apple does not hand new builds to — never received the release and
+  // its testers stayed on whatever they last installed.
+  it("links an internal group that Apple does not hand every build to", () => {
+    const withTeam = [...groups, { id: "team", attributes: { isInternalGroup: true, hasAccessToAllBuilds: false } }];
+    expect(linkTargets(withTeam, "public")).toEqual(["public", "external", "team"]);
+  });
+
+  it("still leaves out an internal group that already gets every build", () => {
+    expect(linkTargets(groups, "public")).not.toContain("internal");
   });
 
   it("is just the named group when it is the only one", () => {
@@ -63,6 +75,13 @@ describe("planDistribution", () => {
 
   it("refuses an unknown audience before anything is built", () => {
     expect(() => planDistribution({ audiences: "nightly" })).toThrow(/unknown audience "nightly"/);
+  });
+
+  // `all` is what CI passes on both stores, so the two release legs of one commit are asked for
+  // in the same words: `--track all` for Play, `--audience all` for TestFlight.
+  it("reads `all` as every audience, exactly like asking for nothing", () => {
+    expect(planDistribution({ audiences: "all" })).toEqual(planDistribution());
+    expect(planDistribution({ audiences: ["all"] }).isPublic).toBe(true);
   });
 
   it("treats a named group as the public group", () => {

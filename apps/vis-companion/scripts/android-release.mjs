@@ -11,16 +11,18 @@
  * gitignored) and two uploads can never collide on a version code.
  *
  * Tracks — a build testers can install belongs on EVERY tester channel at once, so `--track`
- * takes a list (comma-separated, or repeat the flag) and defaults to all three testing
- * tracks, written in ONE transactional Play edit. No track is ever left a version behind:
+ * takes a list (comma-separated, or repeat the flag) and defaults to `all`, written in ONE
+ * transactional Play edit. No track is ever left a version behind:
  *   --track internal    up to 100 named testers, no review wait
  *   --track alpha       closed testing, tester lists/groups
  *   --track beta        OPEN testing — the public one, the TestFlight-public analogue
  *   --track production  the store itself — never implied, always asked for
- *   (default)           internal,alpha,beta
+ *   --track all         every TESTER track this listing has, read from Play — including a
+ *                       closed track someone created in the Console, which no list here knows
+ *   (default)           all
  *
  * Usage (workflow/store recovery only; normal releases use `npm run release:android`):
- *   npm run release:android:store                          # build + sign + internal, alpha AND beta
+ *   npm run release:android:store                          # build + sign + EVERY tester track
  *   npm run release:android:store -- --track internal      # named internal testers only
  *   npm run release:android:store -- --track beta,production  # any subset, one edit
  *   npm run release:android:store -- --no-upload           # stop at the signed .aab
@@ -107,11 +109,24 @@ if (!/^\d+$/.test(versionCode)) die(`version code must be a positive integer, go
 const reuseExisting = has('reuse-existing');
 if (reuseExisting && !flag('build')) die('--reuse-existing requires an explicit --build <versionCode>');
 
+// Ask Play which tracks this listing HAS before planning anything: `all` (the default) then
+// means every tester track that exists — a closed track added in the Play Console is served by
+// this release without a code change — and a misspelled `--track` is refused against the real
+// names. Skipped when there is nothing to publish to, so `--no-upload` still works offline.
+let available;
+if (serviceAccount && !has('no-upload')) {
+  try {
+    available = (await readTracks({ serviceAccount, packageName })).map((t) => t.track);
+  } catch (err) {
+    die(`could not read the Play tracks: ${err.message}`);
+  }
+}
+
 // Plan the tracks BEFORE the build: an unknown track or a staged rollout aimed at several
 // tracks must fail in a second, not after Gradle has spent ten minutes signing an .aab.
 let tracks;
 try {
-  ({ tracks } = planRelease({ tracks: flags('track'), userFraction: flag('rollout'), draft: has('draft') }));
+  ({ tracks } = planRelease({ tracks: flags('track'), available, userFraction: flag('rollout'), draft: has('draft') }));
 } catch (err) {
   die(err.message);
 }

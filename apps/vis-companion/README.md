@@ -136,16 +136,19 @@ release from this machine uses. Artifacts land in `build/ios/`.
 
 ```sh
 npm run release:ios:store                          # internal groups AND the public link
+npm run release:ios:store -- --audience all        # the default, spelled out
 npm run release:ios:store -- --audience internal   # team only, no Beta App Review
 npm run release:testflight                         # same distribution step for the LAST uploaded build
 ```
 
 A build testers can install is the SAME build for every tester, so the default is
-every audience — the TestFlight mirror of Play's `internal,alpha,beta`. An upload
+`all` — every audience, the TestFlight mirror of Play's `--track all`. An upload
 reaches internal groups by itself; only the public link has to be asked for, and
 asking for it by default is what stops it serving a build the team left behind.
-`--audience internal` opts out. Unknown audiences fail before the archive, not
-after it.
+Every external group is linked, public link or invite-only, and so is any internal
+group created WITHOUT "access to all builds" — the one kind Apple does not hand new
+builds to. `--audience internal` opts out. Unknown audiences fail before the
+archive, not after it.
 
 The public leg waits for App Store Connect to finish processing, creates (once) an
 external beta group named **Public** with a public link, attaches the build, and
@@ -172,7 +175,8 @@ uses it.
 ## Release to Google Play (Android)
 
 ```sh
-npm run release:android:store                             # signed .aab → internal, alpha AND beta
+npm run release:android:store                             # signed .aab → EVERY tester track
+npm run release:android:store -- --track all              # the default, spelled out
 npm run release:android:store -- --track internal         # one channel only
 npm run release:android:store -- --track beta,production  # any subset, comma-separated
 npm run release:android:store -- --no-upload              # stop at the signed .aab
@@ -182,11 +186,14 @@ npm run release:android:store -- --tracks                 # what each track serv
 ```
 
 **One build, every tester channel.** `--track` takes a list and defaults to
-`internal,alpha,beta`, all written in ONE transactional Play edit: either every
-track gets the new build or none does, so no channel is left a version behind
-and nothing has to be promoted afterwards. `production` is never implied — name
-it and it ships. A staged `--rollout` is per-track by definition, so it requires
-exactly one `--track`; both refusals happen before the build, not after it.
+`all`, written in ONE transactional Play edit: either every track gets the new
+build or none does, so no channel is left a version behind and nothing has to be
+promoted afterwards. `all` is not a list frozen in this repo — the release asks
+Play which tracks this listing HAS, so a closed testing track created in the Play
+Console is served without a code change, and a misspelled `--track` is refused
+against the real names. `production` is never implied — name it and it ships. A
+staged `--rollout` is per-track by definition, so it requires exactly one
+`--track`; both refusals happen before the build, not after it.
 
 Play's equivalent of a public TestFlight link is the **`beta` (Open testing)**
 track: anyone with the URL joins, no invite and no tester list. `internal` is
@@ -250,7 +257,7 @@ npm run release:mobile
 
 That creates an immutable tag such as `companion-v1.0.2-build.2874` for current
 `origin/main`. The tag push runs `.github/workflows/mobile-release.yml`, ships iOS
-to public TestFlight and Android to the internal, alpha and beta tracks, keeps marketing version
+to every TestFlight audience and Android to every tester track, keeps marketing version
 `1.0.2`, and gets the same unique store build number from `git rev-list --count HEAD`. A manual **Run workflow**
 can recover one platform. The workflow calls the direct `release:ios` /
 `release:android` scripts with repository secrets, so local and CI build logic

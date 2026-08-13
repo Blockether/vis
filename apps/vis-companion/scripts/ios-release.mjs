@@ -20,9 +20,10 @@
  *   npm run release:ios:store -- --prepare --dev  # same, but aps-environment=development
  *                                             # (archive by hand in Xcode: Product > Archive)
  *   npm run release:ios:store -- --audience internal   # team only: skip the public-link group
- *                                             # (the default is every tester audience — internal
- *                                             # groups AND public TestFlight after beta review,
- *                                             # the same fan-out Play does with internal+alpha+beta)
+ *   npm run release:ios:store -- --audience all        # the default, spelled out: every tester
+ *                                             # audience — internal groups AND public TestFlight
+ *                                             # after beta review, the same fan-out `--track all`
+ *                                             # gives Play
  *
  * Upload auth, in order of preference:
  *   1. App Store Connect API key (headless, CI-friendly, no 2FA prompt):

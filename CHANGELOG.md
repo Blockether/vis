@@ -44,6 +44,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   inside the team; the audience is planned BEFORE the archive, so an unknown one costs a second
   instead of a signed .ipa. The product release workflow no longer narrows Android to `beta`
   alone either: a `vX.Y.Z` tag ships one build to every tester channel of both stores.
+- `all` — every tester channel each STORE has, not the list this repo happens to know. The
+  fan-out was still three track names frozen in the release script and repeated in two workflow
+  files, so a closed testing track created in the Play Console could never be released to
+  (`--track qa` was refused as unknown) and an internal TestFlight group created WITHOUT "access
+  to all builds" — the one kind Apple does not hand new builds to — was skipped on every run.
+  `--track all` now asks Play which tracks this listing HAS and writes them all in the one edit
+  (`production` still never implied, a typo still refused against the real names, before the
+  build), `--audience all` links every external group and every internal group that needs the
+  build assigned, and both GitHub workflows pass `all` — so a channel added in a console is
+  served by the next release with no change to this repository.
 - `run_tests` selects by `paths` and nothing else, in every language. The `ns` / `namespace` /
   `namespaces` selector is gone: name a test file, a directory, or the SOURCE file whose `*-test`
   namespace should run, and the clojure pack does that translation itself (a `*_test.clj` file is

@@ -44,13 +44,20 @@ const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // "already exists" / "already submitted" are the normal state of a re-run, not a failure.
 // A build that is already IN Beta App Review answers "not in a valid processing state" to a
 // second submission — same thing, different wording, and equally not an error for a re-run.
+// An internal group that is configured with access to ALL builds answers `422 Builds cannot
+// be assigned to this internal group` — it HAS the build, Apple gave it away, so that refusal
+// is the same non-event as a duplicate link.
 const isDuplicate = (err) =>
   err.status === 409 ||
   /already/i.test(err.message) ||
-  /not in a valid processing state/i.test(err.message);
+  /not in a valid processing state/i.test(err.message) ||
+  /cannot be assigned to this internal group/i.test(err.message);
 
 /** Every TestFlight tester audience, cheapest first. The App Store itself is not one of them. */
 export const TESTFLIGHT_AUDIENCES = ['internal', 'public'];
+
+/** Ask for this and the build reaches every tester audience — the iOS spelling of Play's `all`. */
+export const ALL_AUDIENCES = 'all';
 
 /**
  * Which testers a build must reach, decided BEFORE anything is built or uploaded.
@@ -65,16 +72,17 @@ export const TESTFLIGHT_AUDIENCES = ['internal', 'public'];
  *
  * `internal` is never removable: Apple gives internal groups the build whether or not this
  * release asks for it, so a plan that omitted it would be a lie about what testers can see.
+ * `all` says the same thing out loud, so a workflow input can be spelled the way Play's is.
  */
 export const planDistribution = ({ audiences, group, review = true } = {}) => {
   const asked = (Array.isArray(audiences) ? audiences : [audiences])
     .flatMap((v) => (v == null ? [] : String(v).split(',')))
     .map((v) => v.trim())
     .filter(Boolean);
-  const unknown = asked.find((a) => !TESTFLIGHT_AUDIENCES.includes(a));
-  if (unknown) throw new Error(`unknown audience "${unknown}" (${TESTFLIGHT_AUDIENCES.join(' | ')})`);
+  const unknown = asked.find((a) => a !== ALL_AUDIENCES && !TESTFLIGHT_AUDIENCES.includes(a));
+  if (unknown) throw new Error(`unknown audience "${unknown}" (${[ALL_AUDIENCES, ...TESTFLIGHT_AUDIENCES].join(' | ')})`);
   // A named group is a public group: there is nothing else to name.
-  const isPublic = asked.length ? asked.includes('public') || Boolean(group) : true;
+  const isPublic = asked.length ? asked.includes('public') || asked.includes(ALL_AUDIENCES) || Boolean(group) : true;
   return {
     audiences: isPublic ? [...TESTFLIGHT_AUDIENCES] : ['internal'],
     isPublic,
@@ -87,16 +95,21 @@ export const planDistribution = ({ audiences, group, review = true } = {}) => {
  * Every beta group that must carry this build, named group FIRST.
  *
  * A tester sees the newest build of the group their invitation belongs to, so a build that only
- * reaches the named group leaves every other invitation serving whatever it last got.
+ * reaches the named group leaves every other invitation serving whatever it last got. EVERY
+ * external group is therefore a target, public link or invite-only.
  *
- * An INTERNAL group is never a target: App Store Connect answers `422 Builds cannot be assigned
- * to this internal group` — internal testers get every build automatically — and that refusal
- * failed the whole release job after the build had already shipped to TestFlight.
+ * An internal group is a target only when App Store Connect will accept one. A group created
+ * with access to ALL builds is handed every processed build by Apple and answers `422 Builds
+ * cannot be assigned to this internal group` — a refusal that once failed the whole release job
+ * after the build had already shipped. A group WITHOUT that access is the opposite case: nobody
+ * in it sees the build until it is linked here, so skipping every internal group would leave
+ * those testers on whatever they last got.
  */
 export const linkTargets = (groups, namedId) => [
   namedId,
   ...groups
-    .filter((g) => g.id && g.id !== namedId && !g.attributes?.isInternalGroup)
+    .filter((g) => g.id && g.id !== namedId)
+    .filter((g) => !g.attributes?.isInternalGroup || g.attributes?.hasAccessToAllBuilds === false)
     .map((g) => g.id),
 ];
 

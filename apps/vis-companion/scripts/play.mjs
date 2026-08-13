@@ -9,8 +9,10 @@
 // is read from the login keychain (scripts/secrets.mjs) or an env var and stays in memory.
 //
 // Track names Play understands: internal, alpha (closed testing), beta (OPEN testing —
-// the public one, the true TestFlight-public analogue), production. A release names as many
-// as it likes: they are written in ONE edit, so every tester channel serves one build.
+// the public one, the true TestFlight-public analogue), production, plus any custom closed
+// track the Play Console holds. A release names as many as it likes — or `all`, every tester
+// track the listing HAS — and they are written in ONE edit, so every tester channel serves
+// one build.
 
 import { createPrivateKey, sign as cryptoSign } from 'node:crypto';
 
@@ -64,29 +66,58 @@ const call = async (token, method, path, { body, contentType = 'application/json
   return json;
 };
 
-/** Every track Play knows, lowest to highest. */
+/** The track names this listing actually has, read inside an edit the caller already holds. */
+const editTracks = async (token, packageName, editId) =>
+  ((await call(token, 'GET', `/applications/${packageName}/edits/${editId}/tracks`)).tracks ?? []).map((t) => t.track);
+
+/**
+ * The four tracks EVERY Play listing has, lowest to highest. A listing can carry more than
+ * these: a closed-testing track created in the Play Console gets a name of its own, and Play
+ * lists it beside the standard four. So the tracks a release may write are READ from the
+ * listing — this constant is only what is true of every listing.
+ */
 export const PLAY_TRACKS = ['internal', 'alpha', 'beta', 'production'];
 
-/**
- * The default fan-out. A build testers can install is the SAME build on every tester
- * channel: publishing to one track and leaving the rest behind is how `internal` ended up
- * serving 0.1.21 while `beta` served 0.1.35. `production` is never implied — it is asked for.
- */
-export const TESTING_TRACKS = ['internal', 'alpha', 'beta'];
+/** Ask for this and the release lands on every tester track the listing HAS. */
+export const ALL_TRACKS = 'all';
 
 /**
- * `internal,beta`, `['internal', 'beta']` or nothing at all → the tracks to write, unique and
- * ordered internal → production. Asking for nothing is asking for the tester fan-out.
+ * The fan-out when the listing's real tracks are not known yet (offline, `--no-upload`).
+ * A build testers can install is the SAME build on every tester channel: publishing to one
+ * track and leaving the rest behind is how `internal` ended up serving 0.1.21 while `beta`
+ * served 0.1.35. `production` is never implied — it is asked for by name.
  */
-export const parseTracks = (values) => {
+export const TESTING_TRACKS = PLAY_TRACKS.filter((t) => t !== 'production');
+
+/** Standard tracks first, custom closed tracks after, each exactly once. */
+const inPlayOrder = (names) => [
+  ...PLAY_TRACKS.filter((t) => names.includes(t)),
+  ...[...new Set(names)].filter((t) => !PLAY_TRACKS.includes(t)),
+];
+
+/**
+ * `all`, `internal,beta`, `['internal', 'beta']` or nothing at all → the tracks to write,
+ * unique and ordered internal → production → custom.
+ *
+ * Asking for nothing, or for `all`, is asking for every TESTER track `available` holds:
+ * a closed track someone adds in the Play Console is then served by the next release with no
+ * code change, and `production` still has to be named.
+ *
+ * `available` is the listing's own track names — `null` when they have not been read yet, and
+ * a name cannot be called unknown against a list nobody has: the caller that holds the listing
+ * (the CLI before the build, the publisher inside its edit) is the one that refuses a typo.
+ */
+export const parseTracks = (values, available = PLAY_TRACKS) => {
   const asked = (Array.isArray(values) ? values : [values])
     .flatMap((v) => (v == null ? [] : String(v).split(',')))
     .map((v) => v.trim())
     .filter(Boolean);
-  if (!asked.length) return [...TESTING_TRACKS];
-  const unknown = asked.find((t) => !PLAY_TRACKS.includes(t));
-  if (unknown) throw new Error(`unknown track "${unknown}" (${PLAY_TRACKS.join(' | ')})`);
-  return PLAY_TRACKS.filter((t) => asked.includes(t));
+  const known = available === null ? null : inPlayOrder(available);
+  if (!asked.length || asked.includes(ALL_TRACKS)) return (known ?? PLAY_TRACKS).filter((t) => t !== 'production');
+  if (!known) return inPlayOrder(asked);
+  const unknown = asked.find((t) => !known.includes(t));
+  if (unknown) throw new Error(`unknown track "${unknown}" (${[ALL_TRACKS, ...known].join(' | ')})`);
+  return known.filter((t) => asked.includes(t));
 };
 
 /**
@@ -97,9 +128,10 @@ export const parseTracks = (values) => {
  *
  * `userFraction` staged-rolls the release (0 < f < 1 ⇒ status inProgress); omit it for a full
  * rollout. `draft: true` uploads without releasing — the Play Console "draft" state.
+ * `available` is the listing's real track names, so `all` means every track that EXISTS.
  */
-export const planRelease = ({ tracks, releaseName, notes, locale = 'en-US', userFraction, draft = false }) => {
-  const wanted = parseTracks(tracks);
+export const planRelease = ({ tracks, available, releaseName, notes, locale = 'en-US', userFraction, draft = false }) => {
+  const wanted = parseTracks(tracks, available);
   // Play stages a rollout per track, so one fraction shared by several tracks is not a thing
   // the API can express — and guessing which track the fraction meant is worse than refusing.
   if (userFraction && wanted.length > 1) throw new Error(`a staged rollout targets exactly one track, not ${wanted.join(', ')}`);
@@ -154,13 +186,22 @@ const assignTracks = async ({ token, packageName, editId, plan, versionCode, log
   return { ok: true, versionCode: String(versionCode), tracks: plan.tracks, status: plan.status };
 };
 
-/** Upload an .aab and roll it out on every planned track, atomically. */
+/**
+ * Upload an .aab and roll it out on every planned track, atomically.
+ *
+ * The plan is made TWICE, and deliberately: once with no listing, so a shape the API cannot
+ * express (a staged rollout across several tracks) costs no request at all, and once inside
+ * the edit against the listing's real tracks — which is what makes `all` mean every track that
+ * exists, custom closed tracks included, and what refuses a misspelled one before the upload.
+ */
 export const publishBundle = async ({ serviceAccount, packageName, aab, log = console.log, ...plan }) => {
-  const planned = planRelease(plan);
+  planRelease({ ...plan, available: null });
   const { token, account } = await playToken(serviceAccount);
   log(`· authenticated as ${account}`);
 
   return withEdit({ token, packageName, log }, async (editId) => {
+    const planned = planRelease({ ...plan, available: await editTracks(token, packageName, editId) });
+    log(`· tracks ${planned.tracks.join(', ')}`);
     const uploaded = await call(token, 'POST', `/applications/${packageName}/edits/${editId}/bundles?uploadType=media`, {
       body: aab,
       contentType: 'application/octet-stream',
@@ -178,12 +219,13 @@ export const publishBundle = async ({ serviceAccount, packageName, aab, log = co
  */
 export const promoteBundle = async ({ serviceAccount, packageName, versionCode, log = console.log, ...plan }) => {
   if (!/^\d+$/.test(String(versionCode))) throw new Error(`versionCode must be a positive integer, got "${versionCode}"`);
-  const planned = planRelease(plan);
+  planRelease({ ...plan, available: null });
   const { token, account } = await playToken(serviceAccount);
   log(`· authenticated as ${account}`);
 
   return withEdit({ token, packageName, log }, async (editId) => {
-    log(`· reusing versionCode ${versionCode}`);
+    const planned = planRelease({ ...plan, available: await editTracks(token, packageName, editId) });
+    log(`· reusing versionCode ${versionCode} on ${planned.tracks.join(', ')}`);
     return assignTracks({ token, packageName, editId, plan: planned, versionCode, log });
   });
 };

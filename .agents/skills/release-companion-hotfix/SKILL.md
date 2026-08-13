@@ -84,14 +84,14 @@ which `release-vis` owns.
 6L. **Release**, one leg at a time so a failure names its platform:
    ```bash
    npm run release:ios:store          # web → cap sync → signed archive → .ipa → TestFlight
-   npm run release:android:store      # web → cap sync → signed .aab → Play internal+alpha+beta
+   npm run release:android:store      # web → cap sync → signed .aab → every Play tester track
    ```
-   Both legs fan out to **every tester channel** by default and match each other:
-   iOS internal groups + the public-link group (Beta App Review), Play
-   `internal,alpha,beta`. Narrow only when asked — `-- --audience internal`,
-   `-- --track internal` — and never to the store itself. Report the build number
-   each leg uploaded and the channels it landed in. Do **not** create a companion
-   tag afterwards.
+   Both legs default to `all` and match each other: iOS every internal group + the
+   public-link group (Beta App Review), Play every TESTER track the listing has —
+   read from Play, so a closed track added in the Console is included. Narrow only
+   when asked — `-- --audience internal`, `-- --track internal` — and never to the
+   store itself. Report the build number each leg uploaded and the channels it
+   landed in. Do **not** create a companion tag afterwards.
 
 ### CI route (fallback only)
 

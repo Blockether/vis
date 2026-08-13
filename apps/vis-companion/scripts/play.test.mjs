@@ -29,6 +29,9 @@ const transport = (...queue) => {
 const ok = (body) => ({ status: 200, body });
 const token = () => ok({ access_token: 'tok' });
 const edit = () => ok({ id: 'edit-1' });
+// What Play answers when asked which tracks this listing has — the standard four unless a test
+// says otherwise, because a custom closed track is a listing's own business.
+const listing = (...names) => ok({ tracks: (names.length ? names : ['internal', 'alpha', 'beta', 'production']).map((track) => ({ track })) });
 
 // A real RSA key: playToken signs the assertion for real, so the test covers the signing path
 // instead of a stub of it. The identity is a placeholder — no real credential is involved.
@@ -69,6 +72,30 @@ describe('parseTracks', () => {
   it('refuses a track Play does not have', () => {
     expect(() => parseTracks('nightly')).toThrow(/unknown track "nightly"/);
   });
+
+  // Regression: the tracks were a list frozen in this file, so a closed testing track created in
+  // the Play Console could never be released to — `--track qa` was refused as unknown, and a CI
+  // release that asked for internal,alpha,beta silently left that track a version behind.
+  it('takes `all` as every TESTER track the listing has, custom closed tracks included', () => {
+    const available = ['internal', 'alpha', 'beta', 'production', 'qa'];
+    expect(parseTracks('all', available)).toEqual(['internal', 'alpha', 'beta', 'qa']);
+    expect(parseTracks([], available)).toEqual(['internal', 'alpha', 'beta', 'qa']);
+    // `all` is the tester fan-out: the store itself is still asked for by name.
+    expect(parseTracks('all', available)).not.toContain('production');
+    expect(parseTracks('production,all', available)).not.toContain('production');
+  });
+
+  it('releases to a custom closed track by name, and judges a typo against the real ones', () => {
+    expect(parseTracks('qa', ['internal', 'beta', 'qa'])).toEqual(['qa']);
+    expect(() => parseTracks('qá', ['internal', 'beta', 'qa'])).toThrow(/unknown track "qá" \(all \| internal \| beta \| qa\)/);
+  });
+
+  // A name cannot be unknown against a list nobody has read: the publisher plans once before it
+  // has the listing (to refuse an impossible SHAPE without a request) and again inside its edit.
+  it('accepts any name while the listing is unread, and falls back to the tester tracks', () => {
+    expect(parseTracks('qa', null)).toEqual(['qa']);
+    expect(parseTracks('all', null)).toEqual(TESTING_TRACKS);
+  });
 });
 
 describe('planRelease', () => {
@@ -98,7 +125,7 @@ describe('publishBundle', () => {
   // beta already served 0.1.35 (4075) — which build a tester got depended on their list, and
   // lining the tracks up again took a second, manual promote.
   it('uploads once and puts that build on every tester track inside ONE edit', async () => {
-    const seen = transport(token(), edit(), ok({ versionCode: 4090, sha1: 'abcdef123456' }), ok({}), ok({}), ok({}), ok({}));
+    const seen = transport(token(), edit(), listing(), ok({ versionCode: 4090, sha1: 'abcdef123456' }), ok({}), ok({}), ok({}), ok({}));
 
     const res = await publishBundle(release({ aab: Buffer.from('aab'), releaseName: '0.1.35 (4090)', notes: 'fixes' }));
 
@@ -114,7 +141,7 @@ describe('publishBundle', () => {
   });
 
   it('honours an explicit subset', async () => {
-    const seen = transport(token(), edit(), ok({ versionCode: 4090 }), ok({}), ok({}), ok({}));
+    const seen = transport(token(), edit(), listing(), ok({ versionCode: 4090 }), ok({}), ok({}), ok({}));
 
     const res = await publishBundle(release({ aab: Buffer.from('aab'), tracks: 'production,internal' }));
 
@@ -125,11 +152,35 @@ describe('publishBundle', () => {
   // A half-published release — the new build on internal, the old one still on beta — is
   // exactly what the single edit exists to prevent, so a refused track must publish NOTHING.
   it('rolls the whole edit back when one track is refused, and commits nothing', async () => {
-    const seen = transport(token(), edit(), ok({ versionCode: 4090 }), ok({}), { status: 403, body: { error: { message: 'no access' } } }, ok({}));
+    const seen = transport(token(), edit(), listing(), ok({ versionCode: 4090 }), ok({}), { status: 403, body: { error: { message: 'no access' } } }, ok({}));
 
     await expect(publishBundle(release({ aab: Buffer.from('aab') }))).rejects.toThrow(/403 no access/);
 
     expect(seen.filter((r) => r.url.endsWith(':commit'))).toHaveLength(0);
+    expect(seen.at(-1)).toMatchObject({ method: 'DELETE' });
+  });
+
+  // Regression: a release could only reach the tracks named in this repository, so a closed
+  // testing track created in the Play Console was never served — and CI, which passed the frozen
+  // internal,alpha,beta, could not name it either.
+  it('reads the listing and lands on every tester track it has, custom ones included', async () => {
+    const seen = transport(token(), edit(), listing('internal', 'alpha', 'beta', 'production', 'qa'), ok({ versionCode: 4094 }), ok({}), ok({}), ok({}), ok({}), ok({}));
+
+    const res = await publishBundle(release({ aab: Buffer.from('aab'), tracks: 'all' }));
+
+    expect(res.tracks).toEqual(['internal', 'alpha', 'beta', 'qa']);
+    expect(trackPuts(seen).map((p) => p.track)).toEqual(['internal', 'alpha', 'beta', 'qa']);
+    expect(seen.filter((r) => r.url.endsWith(':commit'))).toHaveLength(1);
+  });
+
+  // The listing is read INSIDE the edit that carries the upload, so a track refused for its name
+  // rolls the whole edit back — nothing is uploaded to a listing that cannot take the release.
+  it('refuses a track this listing does not have, before the bundle is uploaded', async () => {
+    const seen = transport(token(), edit(), listing('internal', 'beta'), ok({}));
+
+    await expect(publishBundle(release({ aab: Buffer.from('aab'), tracks: 'alpha' }))).rejects.toThrow(/unknown track "alpha"/);
+
+    expect(seen.some((r) => r.url.includes('/bundles?'))).toBe(false);
     expect(seen.at(-1)).toMatchObject({ method: 'DELETE' });
   });
 
@@ -142,7 +193,7 @@ describe('publishBundle', () => {
 
 describe('promoteBundle', () => {
   it('lines the named tracks up with an existing build without re-uploading it', async () => {
-    const seen = transport(token(), edit(), ok({}), ok({}), ok({}));
+    const seen = transport(token(), edit(), listing(), ok({}), ok({}), ok({}));
 
     const res = await promoteBundle(release({ versionCode: '4090', tracks: 'alpha,beta', releaseName: '0.1.35 (4090)' }));
 

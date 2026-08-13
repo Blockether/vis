@@ -4,10 +4,14 @@ name: Mobile release
 # `vX.Y.Z` release calls this workflow only after its own release succeeds;
 # app-only rebuilds arrive through immutable `companion-vX.Y.Z-build.N` tags. Both
 # paths must match the repo-root VIS_VERSION exactly.
-#   iOS      → TestFlight; every tester audience (internal groups AND the external
-#              PUBLIC-LINK group after Beta App Review) — the TestFlight analogue of `beta`
-#   Android  → Google Play; every tester track (internal, alpha, beta) in one edit —
-#              `beta` IS the public "Open testing" channel
+# Both legs ask for `all`, which each store resolves against ITSELF at release time:
+#   iOS      → TestFlight; every tester audience — every internal group AND the external
+#              PUBLIC-LINK group after Beta App Review (the analogue of Play's `beta`)
+#   Android  → Google Play; every TESTER track the listing HAS, in one edit — internal, alpha,
+#              beta (which IS the public "Open testing" channel) and any closed track created
+#              in the Play Console. `production` is never implied; name it to ship the store.
+# So a tester group or closed track added in a console is served by the next run of this
+# workflow with no change here.
 #
 # Store build logic stays in scripts/{ios-release,android-release}.mjs. Public
 # npm release commands only orchestrate the regular/companion tag contract;
@@ -38,10 +42,10 @@ on:
         default: both
       track:
         type: string
-        default: internal,alpha,beta
+        default: all
       audience:
         type: string
-        default: internal,public
+        default: all
   workflow_dispatch:
     inputs:
       platforms:
@@ -50,15 +54,15 @@ on:
         options: [both, ios, android]
         default: both
       track:
-        description: "Play tracks, comma-separated (beta = public open testing)"
+        description: "Play tracks — all = every tester track this listing has (never production)"
         type: choice
-        options: ['internal,alpha,beta', internal, alpha, beta, production]
-        default: internal,alpha,beta
+        options: [all, 'internal,alpha,beta', internal, alpha, beta, production]
+        default: all
       audience:
-        description: "TestFlight audiences, comma-separated (public = the public-link group, Beta App Review)"
+        description: "TestFlight audiences — all = every internal group AND the public link (Beta App Review)"
         type: choice
-        options: ['internal,public', internal]
-        default: internal,public
+        options: [all, internal]
+        default: all
 
 concurrency:
   group: mobile-release-${{ github.ref }}
@@ -181,7 +185,7 @@ jobs:
           VIS_IOS_TEAM_ID: ${{ secrets.VIS_IOS_TEAM_ID }}
         run: |
           export VIS_ASC_KEY_PATH="$RUNNER_TEMP/AuthKey_${VIS_ASC_KEY_ID}.p8"
-          npm run release:ios:store -- --audience ${{ inputs.audience || 'internal,public' }}
+          npm run release:ios:store -- --audience ${{ inputs.audience || 'all' }}
 
       - name: No iOS credentials
         if: steps.creds.outputs.ok != 'true'
@@ -269,7 +273,7 @@ jobs:
           VIS_ANDROID_KEY_ALIAS: ${{ secrets.VIS_ANDROID_KEY_ALIAS }}
           VIS_ANDROID_KEY_PASSWORD: ${{ secrets.VIS_ANDROID_KEY_PASSWORD }}
           VIS_ANDROID_GOOGLE_SERVICES: ${{ secrets.VIS_ANDROID_GOOGLE_SERVICES }}
-        run: npm run release:android:store -- --track ${{ inputs.track || 'internal,alpha,beta' }}
+        run: npm run release:android:store -- --track ${{ inputs.track || 'all' }}
 
       - name: No Play credentials
         if: steps.creds.outputs.ok != 'true'

@@ -238,6 +238,9 @@ jobs:
       platforms: both
       # Every tester channel on both stores, the same build: a release that lands on `beta`
       # alone leaves internal and alpha a version behind, which is how they drifted before.
-      track: internal,alpha,beta
-      audience: internal,public
+      # `all` is resolved against each store at release time — every tester track this Play
+      # listing has, every TestFlight internal group and the public link — so a channel added
+      # in a console is served by the next tag without touching this file.
+      track: all
+      audience: all
     secrets: inherit
