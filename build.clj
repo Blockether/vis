@@ -746,15 +746,26 @@
    "com.blockether.vis.internal.foundation.harness.core"])
 
 (defn- manifest-entry-namespaces
-  "Every namespace under `:nses` across the merged extension manifest written by
-   `merge-extension-manifests!`. vis `require`s these at runtime
-   (manifest/scan-extensions!), so they must be build-time-initialized too."
+  "Every namespace an extension manifest declares, across the merged manifest
+   written by `merge-extension-manifests!` — BOTH keys, because both must be in
+   the image:
+
+     :nses        required at DISCOVERY (manifest/scan-extensions!);
+     :image-nses  loaded BY NAME on first use (`requiring-resolve`, a backend
+                  registrar's `:persistance/ns`) and never required at startup.
+
+   A native image cannot define classes at run time, so a namespace that is not
+   build-time initialized is absent from the binary: the TUI's `screen` and the
+   sqlite backend's `core` are reached only by name, and leaving them out shipped
+   a binary that aborted the moment a human opened the terminal UI or touched the
+   DB. `native-reachability-test` fails when a by-name namespace is undeclared."
   [class-dir]
   (let [f (io/file class-dir "META-INF" "vis-extension" "vis.edn")]
     (if (.exists f)
       (->> (read-string (slurp f))
            vals
-           (mapcat :nses)
+           (mapcat (fn [entry]
+                     (concat (:nses entry) (:image-nses entry))))
            (map str))
       [])))
 

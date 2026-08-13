@@ -159,3 +159,79 @@
                                 (pr-str (sort (remove preloaded shipped)))
                                 " — listed there but not shipped: "
                                 (pr-str (sort (remove shipped preloaded))))))))
+
+
+(defn- extension-manifest-files
+  "Every shipped extension discovery manifest under `extensions/`."
+  []
+  (->> (file-seq (io/file "extensions"))
+       (filter (fn [^java.io.File f]
+                 (and (.isFile f) (str/ends-with? (str f) "META-INF/vis-extension/vis.edn"))))))
+
+(defn- declared-image-nses
+  "Every namespace an extension manifest declares — `:nses` (required at
+   discovery) plus `:image-nses` (build-time initialized only). Both end up in
+   the image's preload list; only the first is required at startup."
+  []
+  (set (for
+         [f
+          (extension-manifest-files)
+
+          [_ entry]
+          (edn/read-string (slurp f))
+
+          ns
+          (concat (:nses entry) (:image-nses entry))]
+
+         (str ns))))
+
+(defn- nses-loaded-by-name
+  "Extension namespaces vis resolves BY NAME at run time: every
+   `(requiring-resolve 'com.blockether.vis.ext.…/…)` in shipped extension source,
+   and every backend registrar's `:persistance/ns`."
+  []
+  (->> (file-seq (io/file "extensions"))
+       (filter (fn [^java.io.File f]
+                 (and (.isFile f) (str/ends-with? (str f) ".clj") (str/includes? (str f) "/src/"))))
+       (mapcat
+         (fn [f]
+           (let [src (slurp f)]
+             (concat
+               (map second
+                    (re-seq
+                      #"requiring-resolve\s+'(com\.blockether\.vis\.ext\.[A-Za-z0-9.*+!_?<>=-]+)/"
+                      src))
+               (map second
+                    (re-seq
+                      #":persistance/ns\s+'(com\.blockether\.vis\.ext\.[A-Za-z0-9.*+!_?<>=-]+)"
+                      src))))))
+       set))
+
+;; Regression: the FRESHLY BUILT v0.1.35+ binary aborted on `vis` (the TUI) with
+;; "Could not locate com/blockether/vis/ext/channel_tui/screen__init.class" and on
+;; any DB command with "Backend :sqlite … failed to load". Both namespaces are
+;; deliberately kept OUT of `:nses` — discovery must not pay for Lanterna or JDBC —
+;; and are reached with `requiring-resolve` on first use. A JVM loads them then;
+;; a native image CANNOT ("Classes cannot be defined at runtime"), so a namespace
+;; the image never build-time initialized is simply not there. Every JVM test
+;; stayed green while the binary could not start its own terminal UI.
+(defdescribe nses-loaded-by-name-reach-the-native-image-test
+             (it "declares every extension namespace vis resolves by name at run time"
+                 (let
+                   [declared
+                    (declared-image-nses)
+
+                    missing
+                    (sort (remove declared (nses-loaded-by-name)))]
+
+                   (expect (empty? missing)
+                           (str "these namespaces are loaded by NAME at run time but no extension "
+                                "manifest declares them, so the native image does not contain them "
+                                "(the binary dies on first use): "
+                                (pr-str missing)
+                                " — add each to its manifest's :image-nses"))))
+             (it "keeps build.clj reading BOTH manifest keys into the preload list"
+                 (let [src (slurp (io/file "build.clj"))]
+                   (expect (str/includes? src ":image-nses")
+                           "build.clj must fold :image-nses into the native-image preload list")
+                   (expect (str/includes? src ":nses")))))

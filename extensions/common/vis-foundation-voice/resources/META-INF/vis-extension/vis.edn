@@ -1,2 +1,8 @@
+;; `:image-nses` — loaded BY NAME on first use (`requiring-resolve`), never at
+;; discovery. A JVM can load such a namespace whenever it likes; a native image
+;; cannot define classes at run time, so anything not build-time initialized is
+;; simply absent from the binary. These are therefore compiled INTO the image
+;; without being required at startup.
 {foundation-voice
- {:nses [com.blockether.vis.ext.foundation-voice.core]}}
+ {:nses [com.blockether.vis.ext.foundation-voice.core]
+  :image-nses [com.blockether.vis.ext.foundation-voice.input]}}

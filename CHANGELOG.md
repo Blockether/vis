@@ -102,6 +102,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   block, file picker) and the TUI Magit surface are unchanged.
 
 ### Fixed
+- The native binary could not open its own terminal UI or touch its database. The TUI's `screen`
+  and `chat`, the sqlite backend's `core` and voice's `input` are reached BY NAME
+  (`requiring-resolve`) on first use, so nothing required them at discovery and the image never
+  build-time initialized them — a native image cannot define classes at run time, so `vis` died
+  with `Could not locate …channel_tui/screen__init.class` and any DB command with `Backend
+  :sqlite … failed to load`, while every JVM test stayed green. An extension manifest now
+  declares such a namespace under `:image-nses`: compiled INTO the image, still not required at
+  startup, so discovery keeps paying nothing for Lanterna or JDBC. `native-reachability-test`
+  now fails when a by-name namespace is undeclared.
 - The Android release preflight asks the question the build asks. It probed
   `/usr/libexec/java_home -v 21`, which only reports JDKs registered under
   `/Library/Java/JavaVirtualMachines` and is blind to SDKMAN — so a machine whose only
