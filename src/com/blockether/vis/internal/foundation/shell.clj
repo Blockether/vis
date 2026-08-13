@@ -932,6 +932,20 @@
 
 (defn- bg-entry [session id] (get-in @bg-procs [(str session) (str id)]))
 
+(defn- prune-bg-session
+  "Drop a session's map once its last shell is gone, so an idle session leaves no
+   empty shell registry behind."
+  [m sk]
+  (if (empty? (get m sk)) (dissoc m sk) m))
+
+(defn- live-entry?
+  "True while this registry `entry` holds a RUNNING process. An entry reserved
+   before its first process exists (a start claims its handle at the top of the
+   batch) is not live yet."
+  [entry]
+  (boolean (when-let [alive? (:alive? (:proc entry))]
+             (alive?))))
+
 (defn- env-origin
   "The TRUST ORIGIN of the caller reaching the shell family.
 
@@ -968,7 +982,7 @@
    agree about it."
   [session id]
   (when-let [e (bg-entry session id)]
-    (when (and (:proc e) ((:alive? (:proc e)))) e)))
+    (when (live-entry? e) e)))
 
 (defn- canonical-dir
   [d]
@@ -1008,14 +1022,61 @@
                         {:type ::id-in-use :id id})))
       e)))
 
-(defn- bg-live?
-  "True only while `id` still holds a RUNNING process in this session. An entry
-   registered before its first process exists (a run claims its handle at the top
-   of the batch) is not live yet."
+(defn- bg-id-taken?
+  "True while a registry `entry` SPEAKS FOR its id: a running process, or a start
+   that has claimed the id and not spawned yet.
+
+   Liveness alone cannot answer this. A start reserves its entry, opens the log
+   file and only then spawns, so in between the entry carries `:proc nil` and a
+   live check reads the id as FREE — the window two concurrent auto-id starts of
+   the same program both derive their id in. Only a KNOWN exit frees the id again,
+   so a finished shell's short name stays reusable while its log keeps its bytes."
+  [entry]
+  (boolean (when entry
+             (if (:proc entry)
+               (live-entry? entry)
+               (nil? (some-> (:exit entry)
+                             deref))))))
+
+(defn- drop-bg-entry!
   [session id]
-  (boolean (when-let [entry (bg-entry session id)]
-             (when-let [alive? (:alive? (:proc entry))]
-               (alive?)))))
+  (let
+    [sk
+     (str session)
+
+     id
+     (str id)]
+
+    (swap! bg-procs (fn [m]
+                      (prune-bg-session (update m sk dissoc id) sk)))
+    nil))
+
+(defn- release-bg-claim!
+  "Give a CLAIMED id back when its start never reached a process.
+
+   Only an unspawned claim is dropped: registering a process replaces the entry,
+   which then carries no `:claim`, so a failing start can neither erase the shell
+   that took the id over nor push every later auto id one suffix along for the
+   rest of the session."
+  [session id]
+  (let
+    [sk
+     (str session)
+
+     id
+     (str id)]
+
+    (swap! bg-procs (fn [m]
+                      (if (:claim (get-in m [sk id]))
+                        (prune-bg-session (update m sk dissoc id) sk)
+                        m)))
+    nil))
+
+(defn- releasing-claim
+  "Run `f` on the id a start just claimed, releasing the claim if `f` throws
+   before any process was registered under it."
+  [session id f]
+  (try (f id) (catch Throwable t (release-bg-claim! session id) (throw t))))
 
 (defn- command->bg-id-slug
   "Name a background shell after the program it runs: `npm run dev` -> `npm`.
@@ -1046,7 +1107,7 @@
     (if (str/blank? slug) "shell" (subs slug 0 (min 24 (count slug))))))
 
 (defn- auto-bg-id
-  "Derive the handle for a background START that carried none.
+  "Derive AND CLAIM the handle for a background START that carried none.
 
    Starting a long process is the ONE background call that does not act on an
    existing handle, so rejecting `{op: \"background\", command: \"…\"}` for a missing
@@ -1055,8 +1116,18 @@
 
    Re-issuing the SAME script while it runs returns that shell's own id, so the
    duplicate start resolves to `already_running` instead of a second dev server;
-   otherwise the program name is suffixed until no LIVE shell holds it, so an auto
-   id never hijacks an unrelated running process."
+   otherwise the program name is suffixed until no shell HOLDS it, so an auto id
+   never hijacks an unrelated process.
+
+   The id is committed by the same `bg-procs` update that finds it. Searching
+   through a plain read and registering afterwards is a check-then-act: two
+   concurrent starts of one program both saw `echo` free, both took it, and then
+   shared a single registry entry, log file and attach socket — one handle read
+   the other child's output, which is how a `gather` of shells over the same
+   program crossed its results. A loser of the CAS searches again against a map
+   that already holds the winner's claim, and the committed id is read back by the
+   claim token because an earlier attempt may have picked a different candidate.
+   `release-bg-claim!` hands the id back if the start never spawns."
   [env session command]
   (let
     [origin
@@ -1065,39 +1136,45 @@
      wanted
      (str command)
 
+     sk
+     (str session)
+
      ;; Only a shell THIS origin started can be resolved to; a live shell of
      ;; another origin is skipped by the suffix loop like any other taken id.
      running-same
-     (->> (get @bg-procs (str session))
-          (filter (fn [[id entry]]
+     (->> (get @bg-procs sk)
+          (filter (fn [[_ entry]]
                     (and (= wanted (:command entry))
                          (= origin (str (or (:origin entry) origin)))
-                         (bg-live? session id))))
+                         (live-entry? entry))))
           ffirst)
 
      base
-     (command->bg-id-slug wanted)]
+     (command->bg-id-slug wanted)
+
+     token
+     (str (java.util.UUID/randomUUID))]
 
     (or running-same
-        (loop [n 1]
-          (let [candidate (if (= 1 n) base (str base "-" n))]
-            (cond (not (bg-live? session candidate)) candidate
-                  (< n 100) (recur (inc n))
-                  :else (str base "-" (System/nanoTime))))))))
+        (let
+          [[_ committed] (swap-vals!
+                           bg-procs
+                           (fn [m]
+                             (let
+                               [ids (get m sk)
+                                id (loop [n 1]
+                                     (let [candidate (if (= 1 n) base (str base "-" n))]
+                                       (cond (not (bg-id-taken? (get ids candidate))) candidate
+                                             (< n 100) (recur (inc n))
+                                             :else (str base "-" (System/nanoTime)))))]
 
-(defn- drop-bg-entry!
-  [session id]
-  (let
-    [sk
-     (str session)
+                               (assoc-in m
+                                 [sk id]
+                                 {:claim token :command wanted :script wanted :origin origin}))))]
+          (some (fn [[id entry]]
+                  (when (= token (:claim entry)) id))
+                (get committed sk))))))
 
-     id
-     (str id)]
-
-    (swap! bg-procs (fn [m]
-                      (let [m (update m sk dissoc id)]
-                        (if (empty? (get m sk)) (dissoc m sk) m))))
-    nil))
 
 (defn- push-line!
   [buffer line]
@@ -1373,7 +1450,9 @@
     (when (str/blank? script)
       (throw (ex-info "The shell background op needs its `command` as the first argument."
                       {:type ::blank-command})))
-    (when-let [stale (bg-entry session id)]
+    ;; A CLAIM is this start's own reservation of the id and has no process to
+    ;; retire; only a previous generation's entry does.
+    (when-let [stale (let [e (bg-entry session id)] (when (:proc e) e))]
       ;; The caller established that this generation has exited. Retire its
       ;; async pump/bridge under the lifecycle lock before reusing the socket path.
       ;; The pump re-checks this flag + process identity under the same lock, so it
@@ -1804,10 +1883,14 @@
         :started-at t0})
 
      r
-     (shell-run-impl env
-                     command
-                     (assoc opts "timeout_secs" wait-secs)
-                     {:sink sink :on-spawn on-spawn})
+     ;; A start that dies before it spawns must not keep the id. The entry above is
+     ;; what holds the handle against a concurrent auto id, so leaving it behind
+     ;; would push every later run of this program one suffix along for good.
+     (try (shell-run-impl env
+                          command
+                          (assoc opts "timeout_secs" wait-secs)
+                          {:sink sink :on-spawn on-spawn})
+          (catch Throwable t (drop-bg-entry! session id) (throw t)))
 
      cwd
      (:dir (meta r))
@@ -2324,26 +2407,30 @@
              (:session-id env)
 
              run-id
-             (or id (auto-bg-id env session cmd))
+             (or id (auto-bg-id env session cmd))]
 
-             opts
-             (assoc opts "id" run-id)]
-
-            (if-let [live (reissue-live-entry env session run-id cmd (opt opts :cwd))]
-              (live-run-result run-id live)
-              (run-of-background (shell-bg-impl env run-id cmd opts)))))
+            (releasing-claim
+              session
+              run-id
+              (fn [run-id]
+                (let [opts (assoc opts "id" run-id)]
+                  (if-let [live (reissue-live-entry env session run-id cmd (opt opts :cwd))]
+                    (live-run-result run-id live)
+                    (run-of-background (shell-bg-impl env run-id cmd opts))))))))
 
       "background"
       ;; A start is the one background stage with no prior handle: derive the id from
       ;; the command rather than fail a well-formed start over a missing name. Every
       ;; other stage (no command) still names the shell it acts on.
       (do (reject-text)
-          (shell-bg-impl env
-                         (if (and (nil? id) valid-command)
-                           (auto-bg-id env (:session-id env) valid-command)
-                           (need-id))
-                         valid-command
-                         opts))
+          (let
+            [bg-id (if (and (nil? id) valid-command)
+                     (auto-bg-id env (:session-id env) valid-command)
+                     (need-id))]
+            (releasing-claim (:session-id env)
+                             bg-id
+                             (fn [bg-id]
+                               (shell-bg-impl env bg-id valid-command opts)))))
 
       "logs"
       (do (reject-command)

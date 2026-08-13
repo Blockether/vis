@@ -2301,3 +2301,47 @@
                        (wait* env (str "t" i)))
                      (expect (= before (poll shell-thread-count #(= before %) 60))))
                    (finally (resources/stop-all! sid)))))))))
+
+;; Regression, issue #139: shells started at the SAME MOMENT for the same program
+;; all derived the one id `sleep` — a single registry entry, log file and attach
+;; socket for several children — so a gathered batch came back holding another
+;; call's output, or lost a call to "is already running and it is running a
+;; different command".
+(defdescribe
+  shell-concurrent-auto-id-test
+  (it
+    "gives every simultaneous auto-id start its own handle, log and output"
+    (with-shell-on
+      (fn []
+        (binding [workspace/*workspace-root* (workspace/trunk-root)]
+          (let
+            [sid (str "shell-auto-id-race-" (System/nanoTime))
+             env {:session-id sid}
+             n 6
+             ;; One latch, so every start DERIVES its id before any of them has
+             ;; spawned: that window IS the bug, and staggered starts close it by
+             ;; accident.
+             gate (java.util.concurrent.CountDownLatch. 1)
+             starts (mapv (fn [i]
+                            (future (.await gate)
+                                    (try (:result (shell* env
+                                                          {"command" (str "sleep 0.4; echo payload-"
+                                                                          i)}))
+                                         (catch Throwable t t))))
+                          (range n))]
+
+            (try (.countDown gate)
+                 (let
+                   [results (mapv deref starts)
+                    ids (mapv #(get % "id") results)]
+
+                   ;; A second shell for the same program is a second shell, not a
+                   ;; re-issue of the first: nothing is refused, and nothing shares.
+                   (expect (= [] (filterv #(instance? Throwable %) results)))
+                   (expect (= n (count (distinct ids))))
+                   (expect (= n (count (distinct (mapv #(get % "log_path") results)))))
+                   (doseq [[i id] (map-indexed vector ids)]
+                     (let [out (:out (wait-exited* env id))]
+                       (expect (str/includes? out (str "payload-" i)))
+                       (expect (not (str/includes? out (str "payload-" (mod (inc (long i)) n))))))))
+                 (finally (resources/stop-all! sid)))))))))
