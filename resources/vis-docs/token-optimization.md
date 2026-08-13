@@ -134,7 +134,7 @@ print(defs())            # 2 definitions in this sandbox
 print(defs("hits"))      # its source — edit THAT, never re-paste from memory
 ```
 
-What does **not** persist is anything written into `session`. That map is host-owned and rebuilt from the engine snapshot before every block, so `session["helpers"] = …` succeeds and is gone by the next one — a silent loss, not an error. Keep state in ordinary names.
+What does **not** persist is anything written into `session`. That map is host-owned and rebuilt from the engine snapshot before every block, so `session["helpers"] = …` succeeds and is gone by the next one — a silent loss, not an error. Keep state in ordinary names — and give a helper its OWN name: a top-level `def cat(...)` or `class grep:` named after a bound tool is refused where it is written, because that definition could only ever shadow the tool inside its own block and would never be persisted or restored.
 
 When the same helper survives across turns — a deploy check, a fixture loader, a project-specific guard — it has outgrown the sandbox. Propose a **Python extension**: one file in `.vis/extensions/*.py` registers a named tool for every future session in that project, `vis-agent extension check` validates it, and `doc("extending")` is the whole recipe — including the durable `state` an extension owns by NAME, which is the only storage that survives `/reload` and a restart. Propose it; write it when the user asks.
 

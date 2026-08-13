@@ -3353,7 +3353,9 @@
    source is registered as a real block, so `defs(\"name\")` and
    `inspect.getsource` read a restored helper back exactly like a local one.
    Only `def`s and their imports/constants are stored, so nothing re-executes a
-   previous block's side effects.
+   previous block's side effects, and a statement that BINDS a name which is a
+   bound tool in THIS process is dropped: a snapshot written before the tool
+   existed used to overwrite it for the whole process.
 
    Returns the number of session-defined functions live afterwards, or nil when
    there was nothing to restore."

@@ -1467,3 +1467,65 @@
         (expect (not (str/includes? listed "dumps")))
         (expect (str/includes? source "def widen(a, b=2):"))
         (expect (str/includes? missing "refused:")))))
+
+(defdescribe tool-shadow-test
+             ;; Regression: a helper named after a bound tool was accepted in silence and then
+             ;; quietly dropped — `def patch(...)` lived only inside its own block, was never
+             ;; persisted, and the next block silently got the tool back instead.
+             (it
+               "refuses a top-level def or class named after a bound tool, and keeps the tool"
+               (let
+                 [ctx
+                  (:python-context (ep/create-python-context {}))
+
+                  _
+                  (ep/set-python-binding! ctx
+                                          'shadow_probe
+                                          (fn [& _]
+                                            "REAL-TOOL"))
+
+                  refused
+                  (ep/run-python-block ctx "def shadow_probe(a):\n    return a\n")
+
+                  klass
+                  (ep/run-python-block ctx "class defs:\n    pass\n")
+
+                  nested
+                  (:stdout (ep/run-python-block ctx
+                                                (str "def outer():\n"
+                                                     "    def defs(x):\n" "        return x\n"
+                                                     "    return defs(7)\n" "print(outer())\n")))
+
+                  var-shadow
+                  (:stdout (ep/run-python-block ctx
+                                                "shadow_probe = 'a string'\nprint(shadow_probe)"))
+
+                  after
+                  (:stdout (ep/run-python-block ctx "print(shadow_probe('x'))"))]
+
+                 (expect (str/includes? (str (:error refused)) "`shadow_probe` is a bound tool"))
+                 (expect (str/includes? (str (:error refused)) "shadow_probe_mine"))
+                 (expect (str/includes? (str (:error klass)) "`defs` is a bound tool"))
+                 ;; A def nested in another function is an ordinary local, and a plain
+                 ;; assignment is still a block-local shadow: neither is refused.
+                 (expect (str/includes? nested "7"))
+                 (expect (str/includes? var-shadow "a string"))
+                 (expect (str/includes? after "REAL-TOOL"))))
+             ;; Regression, the same trap across processes: a snapshot written before a tool
+             ;; existed re-created `def patch(...)` straight over the real one, and the tool
+             ;; was gone for the whole process — while the restored count never noticed.
+             (it "never restores a definition whose name is a bound tool now"
+                 (let
+                   [{:keys [restored stdout]}
+                    (restore-into-fresh-sandbox
+                      [:file
+                       (str "def defs(*a, **k):\n    return \"HIJACKED\"\n\n"
+                            "doc = \"clobbered\"\n"
+                            "def kept(n):\n    return n * 3\n")]
+                      (str "print(kept(2))\n" "print(\"HIJACKED\" in str(defs()))\n"
+                           "print(callable(doc))\n" "print(__vis_restore_dropped__)\n"))]
+                   (expect (= 1 restored))
+                   (expect (str/includes? stdout "6"))
+                   (expect (str/includes? stdout "False"))
+                   (expect (str/includes? stdout "True"))
+                   (expect (str/includes? stdout "['defs', 'doc']")))))

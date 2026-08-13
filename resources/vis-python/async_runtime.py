@@ -1680,6 +1680,40 @@ def __vis_check_compile_traps__(tree, src):
                 raise __vis_syntax_error__(star, t, src)
 
 
+def __vis_check_tool_shadow__(tree, src):
+    # A top-level `def cat(...)` or `class grep:` named after a BOUND TOOL used to
+    # be accepted in silence and then quietly dropped: the name is left out of the
+    # `global` list in `__vis_run_async__`, so the definition lived and died inside
+    # THAT block while the next one silently got the tool back — and the helper was
+    # never persisted either, because the snapshot skips protected names. A helper
+    # the session cannot keep is not a helper. Refuse it where it is written, with
+    # the one fix: give it its own name.
+    # Only TOP-LEVEL defs are the trap. A nested `def doc(...)` inside another
+    # function is an ordinary local and never touches the sandbox namespace, and a
+    # plain `search = re.search(...)` stays a block-local shadow on purpose.
+    prot = set(globals().get("__vis_protected_names__") or [])
+    if not prot:
+        return
+    heads = (
+        __vis_ast__.FunctionDef,
+        __vis_ast__.AsyncFunctionDef,
+        __vis_ast__.ClassDef,
+    )
+    for node in tree.body:
+        if isinstance(node, heads) and node.name in prot:
+            raise __vis_syntax_error__(
+                "`"
+                + node.name
+                + "` is a bound tool: defining it here would shadow it for THIS"
+                + " block only, would not persist, and the next block gets the"
+                + " tool back. Name the helper something else (`"
+                + node.name
+                + "_mine`) and call the tool by its own name.",
+                node,
+                src,
+            )
+
+
 def __vis_annotate__(name, value):
     # Module scope records `x: int = 1` in the module's `__annotations__` (created
     # on first use); the binding itself is a plain assignment.
@@ -2357,20 +2391,40 @@ def __vis_restore_defs__(src):
     # read a restored helper back exactly like one defined in this process.
     name = __vis_register_source__(src)
     globals()["__vis_restored_block__"] = name
+    # A name that is a BOUND TOOL *now* is never restored, whatever it was when the
+    # snapshot was written. `def patch(...)` was an ordinary session helper before
+    # the tool existed; exec'ing that file into a process that HAS the tool wrote
+    # straight over it, for the whole process, and the count below never noticed
+    # because it skips protected names. Statements are dropped by the names they
+    # BIND, so an alias line or a constant goes the same way, and the next snapshot
+    # no longer carries them — the file heals itself.
+    prot = set(globals().get("__vis_protected_names__") or [])
     try:
-        exec(compile(src, name, "exec"), globals())
+        body = __vis_ast__.parse(src).body
+    except Exception:
+        # A file that will not PARSE cannot be replayed at all — never let that
+        # escape as a failure of the whole restore.
+        return len(__vis_user_defs__())
+    dropped = []
+    kept = []
+    for stmt in body:
+        clash = [n for n in __vis_assigned_names__([stmt]) if n in prot]
+        if clash:
+            dropped.extend(clash)
+        else:
+            kept.append(stmt)
+    globals()["__vis_restore_dropped__"] = sorted(set(dropped))
+    try:
+        exec(
+            compile(__vis_ast__.Module(body=kept, type_ignores=[]), name, "exec"),
+            globals(),
+        )
     except Exception:
         # One bad statement must not cost the whole toolbox — a shim this build
         # no longer ships, a helper whose default argument no longer resolves.
-        # Replay the file statement by statement and keep every definition that
-        # still loads; each keeps its own line numbers, so its source reads back.
-        try:
-            body = __vis_ast__.parse(src).body
-        except Exception:
-            # A file that will not PARSE cannot be replayed at all — never let
-            # that escape as a failure of the whole restore.
-            body = []
-        for stmt in body:
+        # Replay statement by statement and keep every definition that still
+        # loads; each keeps its own line numbers, so its source reads back.
+        for stmt in kept:
             try:
                 exec(
                     compile(
@@ -2401,6 +2455,7 @@ def __vis_run_async__(src):
     __vis_flags__ = __vis_future_flags__(tree)
     __vis_check_module_scope__(tree, src)
     __vis_check_compile_traps__(tree, src)
+    __vis_check_tool_shadow__(tree, src)
     tree = __vis_AsyncDefFix__().visit(tree)
     tree = __vis_AwaitFix__().visit(tree)
     tree = __vis_StarImportFix__().visit(tree)
@@ -2415,7 +2470,9 @@ def __vis_run_async__(src):
     # `search = re.search(...)` reads naturally inside the block and the
     # persistent callable is still there for the next one. Each shadowed name is
     # pre-seeded from globals, so a READ that precedes the shadowing assignment
-    # still sees the tool instead of raising UnboundLocalError.
+    # still sees the tool instead of raising UnboundLocalError. A top-level `def`
+    # of a tool name is the one exception and never reaches here — a helper that
+    # cannot outlive its own block is refused above, by name.
     __vis_prot__ = set(g.get("__vis_protected_names__") or [])
     __vis_shadow__ = [n for n in assigned if n in __vis_prot__ and n in g]
     assigned = [n for n in assigned if n not in __vis_shadow__]
