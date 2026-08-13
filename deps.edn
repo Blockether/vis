@@ -88,17 +88,22 @@
                    ;; while making those blips ~6x rarer than the old 10s.
                    "-XX:+G1PeriodicGCInvokesConcurrent" "-XX:G1PeriodicGCInterval=60000"
                    "-XX:MinHeapFreeRatio=10" "-XX:MaxHeapFreeRatio=25"
-                   ;; Raise the heap CEILING. There is no explicit -Xmx, but the
-                   ;; JVM STILL caps the heap at an ergonomic default
-                   ;; MaxHeapSize of 25% of physical RAM (~2 GB on an 8 GB box)
-                   ;; — THAT is the "2 GB limit". GraalPy/Truffle warmup plus a
-                   ;; long transcript can want much more, so lift the ceiling to
-                   ;; 75% of RAM. This is a CAP, not a reservation: the
-                   ;; free-ratio + periodic-GC flags above still uncommit idle
-                   ;; pages, so steady-state RSS stays small while bursts get
-                   ;; the headroom. Percentage scales across machines instead of
-                   ;; a hardcoded number.
-                   "-XX:MaxRAMPercentage=75.0"
+                   ;; Pin the heap CEILING explicitly at 5 GiB. Without an
+                   ;; -Xmx the JVM picks an ergonomic MaxHeapSize, and the
+                   ;; MaxRAMPercentage=75 that used to sit here made that
+                   ;; ceiling scale with the HOST: ~27 GiB on a 48 GB machine.
+                   ;; A ceiling that large silently disarms the free-ratio
+                   ;; flags above for the GATEWAY — with ~3 GiB live G1 feels
+                   ;; no pressure, uncommits nothing, and idle RSS parks near
+                   ;; 5 GB — and it puts the engine's own pressure gates
+                   ;; (VIS_ENV_HEAP_BUDGET_MB 2048, VIS_ENV_RSS_BUDGET_MB
+                   ;; 3072, VIS_ENV_HEAP_WATERMARK_PCT 85 in
+                   ;; internal.loop) out of reach: 85% of 27 GiB is never hit.
+                   ;; 5g is the same number on every machine size, comfortably
+                   ;; above GraalPy/Truffle warmup plus a long transcript and
+                   ;; below anything that should be called a leak, so those
+                   ;; gates fire and the periodic GC has something to shrink.
+                   "-Xmx5g"
                    ;; String dedup runs a concurrent G1 pass that folds
                    ;; byte-identical LONG-LIVED strings (the retained transcript
                    ;; text kept across renders) onto ONE shared backing array,

@@ -28,6 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   back.
 
 ### Changed
+- The Vis JVM heap ceiling is an explicit 5 GiB instead of a share of host RAM. `-XX:MaxRAMPercentage=75.0`
+  scaled with the machine — ~27 GiB on a 48 GB host — so a gateway running for hours sat at ~5 GB resident
+  with a 3.2 GiB live set and shrank nothing: the tight free ratios beside it only uncommit once the heap
+  looks full, and the engine's memory-pressure gates (heap watermark 85%, heap budget 2 GB, RSS budget
+  3 GB) were either unreachable or shedding idle sessions that were not what held the memory. `-Xmx5g` is
+  the same ceiling on every machine, so the periodic concurrent GC has something to give back and the
+  pressure gates sit at a meaningful fraction of the cap.
 - One Android release lands on EVERY Play tester track. `release:android:store` wrote a single
   `--track`, so the channels drifted apart — internal served 0.1.21 (2861) while beta already
   served 0.1.35 (4075), and lining them up again was a second, manual promote afterwards.
