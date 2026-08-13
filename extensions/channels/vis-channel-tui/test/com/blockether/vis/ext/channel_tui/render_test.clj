@@ -812,6 +812,31 @@
             (expect (visually-blank? (nth ln (dec idx))))
             (expect (or (zero? (dec idx)) (not (visually-blank? (nth ln (- idx 2)))))))))))
 
+(defdescribe collapsed-thinking-keeps-streamed-answer-visible-test
+             (it "keeps live provider prose outside the collapsed THINKING accordion"
+                 (let
+                   [thinking
+                    (str/join "\n" (repeat 12 "private reasoning row"))
+
+                    answer
+                    "This is the full visible answer."
+
+                    lines
+                    (:lines (render/format-answer-with-thinking-data*
+                              nil
+                              [{:thinking thinking :content-stream answer}]
+                              80
+                              {:show-thinking true :show-iterations true}
+                              nil
+                              false
+                              {:session-id "sid" :session-turn-id "turn" :detail-expansions {}}))
+
+                    visible
+                    (mapv (comp str/trim strip-sentinels strip-ansi) lines)]
+
+                   (expect (some #(str/includes? % "THINKING  +") visible))
+                   (expect (some #(str/includes? % answer) visible)))))
+
 (defdescribe collapsed-thinking-ellipsis-test
              ;; Regression: the collapsed `▸ THINKING +N more` peek appends a dim
              ;; " …" to its LAST visible reasoning line. Thinking rows carry a

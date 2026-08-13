@@ -46,6 +46,7 @@ import {
   PlusIcon,
 } from "../components/icons";
 import { HumanInputPrompt } from "../components/HumanInputPrompt";
+import { settledTranscriptCoversLiveTurn } from "../lib/live-turn-handover";
 import { MenuItem } from "../components/Menu";
 import { ProviderRouterDialog } from "./RouterScreen";
 import {
@@ -360,12 +361,10 @@ function inFlightRow(
  * a whole finished turn, with every iteration the user watched, vanished from
  * the screen: the placeholder carries no content and `visibleTurns` filters it.
  *
- * The reliable claim is "a SETTLED row exists that was not here before this turn
- * started". `before` is the id snapshot taken while no live bubble existed;
- * `created_at` (when present) keeps a "load earlier" page of ancient history
- * from passing as this turn's answer. Same invariant the TUI holds in
- * `:message-received`: never drop the live trace unless something at least as
- * complete replaces it.
+ * A safe handover requires a SETTLED row that was not present before this live
+ * turn and that identifies the same request (or has the exact same id).
+ * `created_at` then guards against an ancient page passing as the replacement.
+ * Never drop an already painted trace merely because some unrelated turn landed.
  *
  * The ROW, not a yes/no: the screen has to hand that row the trace the bubble
  * was painting (`whole` in `ChatContent`), so it must know which one took over.
@@ -378,27 +377,25 @@ function liveTurnSettledRow(
   before: Set<string>,
   finishedId: string,
   startedAt?: number,
+  request?: string,
+  requireOutput = false,
+  requireProse = false,
 ): TranscriptTurn | null {
   if (!turns?.length) return null;
-  const accepts = (turn: TranscriptTurn): boolean => {
-    if (!isSettledRow(turn)) return false;
-    if (before.has(rowId(turn))) return false;
-    const created = turn.created_at;
-    if (startedAt && typeof created === "number" && Number.isFinite(created)) {
-      // One minute of slack: clock skew between the engine's row stamp and the
-      // client's `Date.now()` must never disqualify this turn's own answer.
-      return created >= startedAt - 60_000;
-    }
-    return true;
-  };
+  const covers = (turn: TranscriptTurn): boolean =>
+    settledTranscriptCoversLiveTurn([turn], before, {
+      id: finishedId,
+      request,
+      startedAt,
+      requireOutput,
+      requireProse,
+    });
   if (finishedId) {
-    const named = turns.find(
-      (turn) => isSettledRow(turn) && rowId(turn) === finishedId,
-    );
-    if (named) return named;
+    const named = turns.find((turn) => rowId(turn) === finishedId);
+    if (named && covers(named)) return named;
   }
   for (let index = turns.length - 1; index >= 0; index -= 1) {
-    if (accepts(turns[index])) return turns[index];
+    if (covers(turns[index])) return turns[index];
   }
   return null;
 }
@@ -916,19 +913,82 @@ function CopyableId({ id, className }: { id: string; className: string }) {
  * `rememberLiveTurn`), so re-entry can start exactly where it left off and take
  * only NEW frames on top.
  *
- * Two guards, because a wrong seed renders an answer twice: the remembered turn
- * must still be `running`, and the hub must not have seen a terminal frame for
- * this session while the screen was away (that answer is already a settled
- * transcript row).
+ * A remembered bubble remains authoritative until a settled transcript row for
+ * that same request replaces it. If the terminal frame arrived while this screen
+ * was away, retain the painted output but locally stop its running state; the hub
+ * has discarded the terminal turn's replay buffer and persistence may still lag.
  */
+function liveTurnCarriesProse(turn: LiveTurn | null): boolean {
+  return Boolean(
+    turn &&
+      (turn.answer.trim() ||
+        turn.content?.some(
+          (block) => block.type === "prose" && Boolean(block.markdown?.trim()),
+        ) ||
+        turn.iterations.some((iteration) =>
+          Boolean(iteration.assistant_prose?.trim()),
+        ))
+  );
+}
+
+function liveTurnCarriesOutput(turn: LiveTurn | null): boolean {
+  return Boolean(
+    turn &&
+      (turn.answer.trim() ||
+        turn.content?.length ||
+        turn.iterations.some((iteration) =>
+          Boolean(
+            iteration.assistant_prose?.trim() ||
+              iteration.thinking?.trim() ||
+              iteration.forms?.length ||
+              iteration.error,
+          ),
+        ))
+  );
+}
+
 function seedLiveTurn(
   client: GatewayClient,
   subscriptions: SessionSubscriptionHub,
   sid: string,
 ): { turn: LiveTurn; seq: number } | null {
   const cached = client.cachedLiveTurn<LiveTurn>(sid);
-  if (!cached || cached.turn.status !== "running") return null;
-  if (subscriptions.hasEndedTurn(sid)) return null;
+  if (!cached) return null;
+
+  // A settled transcript row is the only safe replacement for pixels the user
+  // already saw. This check matters for BOTH kinds of cached bubble below.
+  const persisted = client.cachedTranscript(sid);
+  if (
+    settledTranscriptCoversLiveTurn(persisted, new Set(), {
+      id: cached.turn.id,
+      request: cached.turn.request,
+      startedAt: cached.turn.startedAt,
+      requireOutput: liveTurnCarriesOutput(cached.turn),
+      requireProse: liveTurnCarriesProse(cached.turn),
+    })
+  )
+    return null;
+
+  if (cached.turn.status === "running") {
+    if (!subscriptions.hasEndedTurn(sid)) return cached;
+    // The hub observed the terminal frame while this screen was away. Its buffer
+    // intentionally discards finished turns, but the transcript cache may still
+    // contain only the running placeholder. Keep the last painted bubble and
+    // settle it locally; otherwise switching back replaces a complete answer
+    // with "waiting for an update" (or nothing) until the transcript refetch.
+    return {
+      seq: cached.seq,
+      turn: {
+        ...cached.turn,
+        status: "completed",
+        activity: undefined,
+        cancelling: false,
+      },
+    };
+  }
+
+  // A screen can leave after applying the terminal frame but before the engine's
+  // persisted row reaches the transcript. Retain that completed/error bubble too.
   return cached;
 }
 
@@ -1093,7 +1153,9 @@ export function SessionScreen({
   const [connected, setConnected] = useState(false);
   // The bubble this screen re-enters with, resolved ONCE at mount.
   const [liveSeed] = useState(() => seedLiveTurn(client, subscriptions, sid));
-  const [running, setRunning] = useState(liveSeed !== null);
+  const [running, setRunning] = useState(
+    liveSeed?.turn.status === "running",
+  );
   const [liveTurn, setLiveTurn] = useState<LiveTurn | null>(
     liveSeed?.turn ?? null,
   );
@@ -1517,7 +1579,7 @@ export function SessionScreen({
     // a replay before the in-flight answer came back.
     const seed = seedLiveTurn(client, subscriptions, sid);
     setLiveTurn(seed?.turn ?? null);
-    setRunning(seed !== null);
+    setRunning(seed?.turn.status === "running");
     setQueued(client.cachedQueuedTurns(sid) ?? []);
     setQueueBusy(new Set());
     setQueuePaused(null);
@@ -2160,6 +2222,13 @@ export function SessionScreen({
       // the gateway is idle but we still show work, do the same.
       const liveId = liveTurnRef.current?.id ?? "";
       const liveStartedAt = liveTurnRef.current?.startedAt;
+      const liveRequest = liveTurnRef.current?.request;
+      // Mobile foregrounding runs this reconcile path after WebKit may have
+      // suspended the SSE stream. Preserve the SAME painted-content contract as
+      // terminal settle: a tool/reasoning-only persisted shell cannot replace
+      // answer prose the user has already seen.
+      const liveHadOutput = liveTurnCarriesOutput(liveBefore);
+      const liveHadProse = liveTurnCarriesProse(liveBefore);
       let nextTurns: TranscriptTurn[] | null = null;
       try {
         // Gated on the row this tick just read: an idle session costs one tiny
@@ -2182,6 +2251,9 @@ export function SessionScreen({
         preLiveTurnIdsRef.current,
         liveId,
         liveStartedAt,
+        liveRequest,
+        liveHadOutput,
+        liveHadProse,
       );
       const covered = landedRow !== null;
       if (nextTurns) {
@@ -2708,6 +2780,15 @@ export function SessionScreen({
       const finishedStartedAt = ownsTerminal(liveTurnRef.current)
         ? liveTurnRef.current?.startedAt
         : undefined;
+      const finishedRequest = ownsTerminal(liveTurnRef.current)
+        ? liveTurnRef.current?.request
+        : undefined;
+      const finishedHadOutput = ownsTerminal(liveTurnRef.current)
+        ? liveTurnCarriesOutput(liveTurnRef.current)
+        : false;
+      const finishedHadProse = ownsTerminal(liveTurnRef.current)
+        ? liveTurnCarriesProse(liveTurnRef.current)
+        : false;
       if (!liveTurnRef.current || ownsTerminal(liveTurnRef.current))
         setRunning(false);
       // Settle the live bubble ITSELF, synchronously. The transcript refetch below
@@ -2783,6 +2864,9 @@ export function SessionScreen({
           preLiveTurnIdsRef.current,
           finishedId,
           finishedStartedAt,
+          finishedRequest,
+          finishedHadOutput,
+          finishedHadProse,
         );
       // The persisted row lags the terminal frame by however long the engine's
       // write takes. Poll for it on a short escalating backoff instead of

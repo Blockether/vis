@@ -28,101 +28,89 @@
                    (fn []
                      :flushed))))
 
-(defdescribe turn-extra-body-test
-             ;; Regression: verbosity was gated on `(= :openai-codex provider)`, so a
-             ;; GitHub Copilot GPT session — the SAME `/v1/responses` wire — was denied
-             ;; a field its endpoint accepts, while the chip stayed hidden. The gate is
-             ;; now svar's `:verbosity-style` on the model the SESSION routes to.
-             (it "omits verbosity when the session's model rides a wire that rejects it"
-                 (with-redefs
-                   [vis/get-router
-                    (constantly :router)
+(defdescribe
+  turn-extra-body-test
+  ;; Regression: verbosity was gated on `(= :openai-codex provider)`, so a
+  ;; GitHub Copilot GPT session — the SAME `/v1/responses` wire — was denied
+  ;; a field its endpoint accepts, while the chip stayed hidden. The gate is
+  ;; now svar's `:verbosity-style` on the model the SESSION routes to.
+  (it "omits verbosity when the session's model rides a wire that rejects it"
+      (with-redefs
+        [vis/get-router
+         (constantly :router)
 
-                    vis/resolve-model-info
-                    (fn [_ _provider _model]
-                      {:provider :github-copilot :name "claude-sonnet-4-6"})]
+         vis/resolve-model-info
+         (fn [_ _provider _model]
+           {:provider :github-copilot :name "claude-sonnet-4-6"})]
 
-                   (expect (nil? (#'state/turn-extra-body
-                                  {:session {:id "s1"}
-                                   :session-model-pref {:provider "github-copilot"
-                                                        :model "claude-sonnet-4-6"}
-                                   :settings {:verbosity "high"}})))))
-             (it "includes verbosity for every model svar stamped with a verbosity style"
-                 (doseq [provider [:openai-codex :github-copilot]]
-                   (with-redefs
-                     [vis/get-router
-                      (constantly :router)
+        (expect (nil? (#'state/turn-extra-body
+                       {:session {:id "s1"}
+                        :session-model-pref {:provider "github-copilot" :model "claude-sonnet-4-6"}
+                        :settings {:verbosity "high"}})))))
+  (it "includes verbosity for every model svar stamped with a verbosity style"
+      (doseq [provider [:openai-codex :github-copilot]]
+        (with-redefs
+          [vis/get-router (constantly :router)
+           vis/resolve-model-info
+           (fn [_ _provider _model]
+             {:provider provider :name "gpt-5.6-sol" :verbosity-style :openai-text})]
 
-                      vis/resolve-model-info
-                      (fn [_ _provider _model]
-                        {:provider provider
-                         :name "gpt-5.6-sol"
-                         :verbosity-style :openai-text})]
+          (expect (= {:text {:verbosity "high"}}
+                     (#'state/turn-extra-body
+                      {:session {:id "s1"}
+                       :session-model-pref {:provider (name provider) :model "gpt-5.6-sol"}
+                       :settings {:verbosity "high"}}))))))
+  (it "adds priority only for Codex while Fast mode is enabled"
+      (try (vis/toggle-set-value! "codex_fast_mode" true)
+           (doseq
+             [[provider expected] [[:openai-codex
+                                    {:text {:verbosity "high"} :service_tier "priority"}]
+                                   [:github-copilot {:text {:verbosity "high"}}]]]
+             (with-redefs
+               [vis/get-router (constantly :router)
+                vis/resolve-model-info
+                (fn [_ _provider _model]
+                  {:provider provider :name "gpt-5.6-sol" :verbosity-style :openai-text})]
 
-                     (expect (= {:text {:verbosity "high"}}
-                                (#'state/turn-extra-body
-                                 {:session {:id "s1"}
-                                  :session-model-pref {:provider (name provider)
-                                                       :model "gpt-5.6-sol"}
-                                  :settings {:verbosity "high"}}))))))
-             (it "adds priority only for Codex while Fast mode is enabled"
-                 (try
-                   (vis/toggle-set-value! "codex_fast_mode" true)
-                   (doseq [[provider expected]
-                           [[:openai-codex {:text {:verbosity "high"}
-                                           :service_tier "priority"}]
-                            [:github-copilot {:text {:verbosity "high"}}]]]
-                     (with-redefs
-                       [vis/get-router
-                        (constantly :router)
+               (expect (= expected
+                          (#'state/turn-extra-body
+                           {:session {:id "s1"}
+                            :session-model-pref {:provider (name provider) :model "gpt-5.6-sol"}
+                            :settings {:verbosity "high"}})))))
+           (finally (vis/toggle-reset-to-default! "codex_fast_mode"))))
+  (it "omits priority when Fast mode is disabled"
+      (try (vis/toggle-set-value! "codex_fast_mode" false)
+           (with-redefs
+             [vis/get-router
+              (constantly :router)
 
-                        vis/resolve-model-info
-                        (fn [_ _provider _model]
-                          {:provider provider
-                           :name "gpt-5.6-sol"
-                           :verbosity-style :openai-text})]
+              vis/resolve-model-info
+              (fn [& _]
+                {:provider :openai-codex :name "gpt-5.6-sol"})]
 
-                       (expect (= expected
-                                  (#'state/turn-extra-body
-                                   {:session {:id "s1"}
-                                    :session-model-pref {:provider (name provider)
-                                                         :model "gpt-5.6-sol"}
-                                    :settings {:verbosity "high"}})))))
-                   (finally (vis/toggle-reset-to-default! "codex_fast_mode"))))
-             (it "omits priority when Fast mode is disabled"
-                 (try
-                   (vis/toggle-set-value! "codex_fast_mode" false)
-                   (with-redefs
-                     [vis/get-router
-                      (constantly :router)
+             (expect (nil? (#'state/turn-extra-body
+                            {:session {:id "s1"}
+                             :session-model-pref {:provider "openai-codex" :model "gpt-5.6-sol"}
+                             :settings {}}))))
+           (finally (vis/toggle-reset-to-default! "codex_fast_mode"))))
+  (it "toggles Fast for Codex and refuses other providers"
+      (let
+        [handler (-> #'state/event-registry
+                     deref
+                     deref
+                     (get :toggle-codex-fast-mode)
+                     :fn)]
+        (with-redefs
+          [vis/get-router (constantly :router)
+           vis/resolve-model-info (fn [_ provider _model]
+                                    {:provider (keyword provider)})]
 
-                      vis/resolve-model-info
-                      (fn [& _]
-                        {:provider :openai-codex :name "gpt-5.6-sol"})]
-
-                     (expect (nil? (#'state/turn-extra-body
-                                    {:session {:id "s1"}
-                                     :session-model-pref {:provider "openai-codex"
-                                                          :model "gpt-5.6-sol"}
-                                     :settings {}}))))
-                   (finally (vis/toggle-reset-to-default! "codex_fast_mode"))))
-             (it "toggles Fast for Codex and refuses other providers"
-                 (let [handler (-> #'state/event-registry deref deref
-                                   (get :toggle-codex-fast-mode) :fn)]
-                   (with-redefs
-                     [vis/get-router (constantly :router)
-                      vis/resolve-model-info
-                      (fn [_ provider _model] {:provider (keyword provider)})]
-                     (expect (= [[:toggle-boolean "codex_fast_mode" "Fast mode"]]
-                                (:fx (handler {:session-model-pref
-                                               {:provider "openai-codex" :model "gpt"}}
-                                              [:toggle-codex-fast-mode]))))
-                     (expect (= [[:notify
-                                  "Fast mode is available only for OpenAI Codex"
-                                  :warn 1500]]
-                                (:fx (handler {:session-model-pref
-                                               {:provider "github-copilot" :model "gpt"}}
-                                              [:toggle-codex-fast-mode]))))))))
+          (expect (= [[:toggle-boolean "codex_fast_mode" "Fast mode"]]
+                     (:fx (handler {:session-model-pref {:provider "openai-codex" :model "gpt"}}
+                                   [:toggle-codex-fast-mode]))))
+          (expect (= [[:notify "Fast mode is available only for OpenAI Codex" :warn 1500]]
+                     (:fx (handler {:session-model-pref {:provider "github-copilot" :model "gpt"}}
+                                   [:toggle-codex-fast-mode]))))))))
 
 (defdescribe always-on-display-test
              (it "thinking, full trace, silent calls, and timestamps are ALWAYS shown"
@@ -593,73 +581,72 @@
       ;; real bottom is far below the stale layout's. Nothing may animate there.
       (expect (not (scroll/animating? (:scroll @state/app-db) 970)))))
 
-(defdescribe
-  init-settings-test
-  (it "loads the default balanced reasoning level when config has none"
-      (with-redefs
-        [vis/load-config-raw (fn []
-                               {})]
-        (state/init!)
-        (expect (= "balanced" (get-in @state/app-db [:settings :reasoning-level])))
-        (expect (= "low" (get-in @state/app-db [:settings :verbosity])))
-        (expect (= :blockether-light (get-in @state/app-db [:settings :theme-name])))
-        (expect (not (contains? (:settings @state/app-db) :differentiate-turns)))
-        (expect (true? (get-in @state/app-db [:settings :mouse-selection-copy])))))
-  (it "hydrates persisted enum toggles into the registry"
-      ;; The persistence shape now lives under `:toggles`, not
-      ;; `:tui-settings`. `state/init!` keeps the `:settings`
-      ;; projection coherent by pulling each migrated toggle's value
-      ;; off the registry. (In production `screen/run-chat!` runs
-      ;; hydration AFTER `init!` and then dispatches
-      ;; `:resync-toggle-settings` — see the regression test below.)
-      (vis/toggles-hydrate-from-config! {:toggles {"reasoning_level" :deep}})
-      (try (with-redefs
-             [vis/load-config-raw (fn []
-                                    {})]
-             (state/init!)
-             (expect (= "deep" (get-in @state/app-db [:settings :reasoning-level]))))
-           (finally (vis/toggle-reset-to-default! "reasoning_level"))))
-  (it "resync repairs the projection when hydration runs AFTER init! (production order)"
-      ;; Regression: `screen/run-chat!` calls `state/init!` FIRST — projecting
-      ;; registry DEFAULTS into `:settings` — and only THEN hydrates the toggles
-      ;; from config, followed by a `:resync-toggle-settings` dispatch. Without
-      ;; that resync the footer keeps showing the default (`balanced`) while the
-      ;; real toggle holds the persisted value, so the first Ctrl+X r cycle
-      ;; advances the toggle only up to the already-displayed level and appears
-      ;; to do nothing.
-      (try (with-redefs
-             [vis/load-config-raw (fn []
-                                    {})]
-             (state/init!)                     ;; projects default :balanced
-             (vis/toggles-hydrate-from-config! ;; toggle -> persisted :quick
-               {:toggles {"reasoning_level" :quick}})
-             (expect (= "balanced" ;; stale projection, pre-resync
-                        (get-in @state/app-db [:settings :reasoning-level])))
-             (state/dispatch [:resync-toggle-settings]) ;; the fix
-             (expect (= "quick" (get-in @state/app-db [:settings :reasoning-level]))))
-           (finally (vis/toggle-reset-to-default! "reasoning_level"))))
-  (it "hydrates verbosity from the toggles registry"
-      (vis/toggles-hydrate-from-config! {:toggles {"verbosity" :medium}})
-      (try (with-redefs
-             [vis/load-config-raw (fn []
-                                    {})]
-             (state/init!)
-             (expect (= "medium" (get-in @state/app-db [:settings :verbosity]))))
-           (finally (vis/toggle-reset-to-default! "verbosity"))))
-  (it "drops invalid persisted enum values back to registered defaults"
-      ;; `hydrate-from-config!` routes through `set-value!` which
-      ;; validates against `:choices`. Invalid entries are silently
-      ;; skipped — the registered default stands.
-      (vis/toggles-hydrate-from-config! {:toggles {"reasoning_level" :turbo
-                                                   "verbosity" :loud}})
-      (try (with-redefs
-             [vis/load-config-raw (fn []
-                                    {})]
-             (state/init!)
-             (expect (= "balanced" (get-in @state/app-db [:settings :reasoning-level])))
-             (expect (= "low" (get-in @state/app-db [:settings :verbosity]))))
-           (finally (vis/toggle-reset-to-default! "reasoning_level")
-                    (vis/toggle-reset-to-default! "verbosity")))))
+(defdescribe init-settings-test
+             (it "loads the default balanced reasoning level when config has none"
+                 (with-redefs
+                   [vis/load-config-raw (fn []
+                                          {})]
+                   (state/init!)
+                   (expect (= "balanced" (get-in @state/app-db [:settings :reasoning-level])))
+                   (expect (= "low" (get-in @state/app-db [:settings :verbosity])))
+                   (expect (= :blockether-light (get-in @state/app-db [:settings :theme-name])))
+                   (expect (not (contains? (:settings @state/app-db) :differentiate-turns)))
+                   (expect (true? (get-in @state/app-db [:settings :mouse-selection-copy])))))
+             (it "hydrates persisted enum toggles into the registry"
+                 ;; The persistence shape now lives under `:toggles`, not
+                 ;; `:tui-settings`. `state/init!` keeps the `:settings`
+                 ;; projection coherent by pulling each migrated toggle's value
+                 ;; off the registry. (In production `screen/run-chat!` runs
+                 ;; hydration AFTER `init!` and then dispatches
+                 ;; `:resync-toggle-settings` — see the regression test below.)
+                 (vis/toggles-hydrate-from-config! {:toggles {"reasoning_level" :deep}})
+                 (try (with-redefs
+                        [vis/load-config-raw (fn []
+                                               {})]
+                        (state/init!)
+                        (expect (= "deep" (get-in @state/app-db [:settings :reasoning-level]))))
+                      (finally (vis/toggle-reset-to-default! "reasoning_level"))))
+             (it "resync repairs the projection when hydration runs AFTER init! (production order)"
+                 ;; Regression: `screen/run-chat!` calls `state/init!` FIRST — projecting
+                 ;; registry DEFAULTS into `:settings` — and only THEN hydrates the toggles
+                 ;; from config, followed by a `:resync-toggle-settings` dispatch. Without
+                 ;; that resync the footer keeps showing the default (`balanced`) while the
+                 ;; real toggle holds the persisted value, so the first Ctrl+X r cycle
+                 ;; advances the toggle only up to the already-displayed level and appears
+                 ;; to do nothing.
+                 (try (with-redefs
+                        [vis/load-config-raw (fn []
+                                               {})]
+                        (state/init!)                     ;; projects default :balanced
+                        (vis/toggles-hydrate-from-config! ;; toggle -> persisted :quick
+                          {:toggles {"reasoning_level" :quick}})
+                        (expect (= "balanced" ;; stale projection, pre-resync
+                                   (get-in @state/app-db [:settings :reasoning-level])))
+                        (state/dispatch [:resync-toggle-settings]) ;; the fix
+                        (expect (= "quick" (get-in @state/app-db [:settings :reasoning-level]))))
+                      (finally (vis/toggle-reset-to-default! "reasoning_level"))))
+             (it "hydrates verbosity from the toggles registry"
+                 (vis/toggles-hydrate-from-config! {:toggles {"verbosity" :medium}})
+                 (try (with-redefs
+                        [vis/load-config-raw (fn []
+                                               {})]
+                        (state/init!)
+                        (expect (= "medium" (get-in @state/app-db [:settings :verbosity]))))
+                      (finally (vis/toggle-reset-to-default! "verbosity"))))
+             (it "drops invalid persisted enum values back to registered defaults"
+                 ;; `hydrate-from-config!` routes through `set-value!` which
+                 ;; validates against `:choices`. Invalid entries are silently
+                 ;; skipped — the registered default stands.
+                 (vis/toggles-hydrate-from-config! {:toggles {"reasoning_level" :turbo
+                                                              "verbosity" :loud}})
+                 (try (with-redefs
+                        [vis/load-config-raw (fn []
+                                               {})]
+                        (state/init!)
+                        (expect (= "balanced" (get-in @state/app-db [:settings :reasoning-level])))
+                        (expect (= "low" (get-in @state/app-db [:settings :verbosity]))))
+                      (finally (vis/toggle-reset-to-default! "reasoning_level")
+                               (vis/toggle-reset-to-default! "verbosity")))))
 
 (defdescribe
   settings-shortcut-test
@@ -714,9 +701,9 @@
                                       {})
                 vis/save-config! (fn [_])
                 vis/get-router (constantly :router)
-                vis/resolve-effective-model (fn [_]
-                                              {:provider :openai :name "gpt-5"
-                                               :reasoning? true :reasoning-effort? true})
+                vis/resolve-effective-model
+                (fn [_]
+                  {:provider :openai :name "gpt-5" :reasoning? true :reasoning-effort? true})
                 vis/notify! (fn [& _])]
 
                (reset! state/app-db {:settings {:reasoning-level "quick"} :render-version 0})
@@ -780,62 +767,59 @@
            vis/notify! (fn [text & kvs]
                          (reset! notified [text kvs]))]
 
-          (reset! state/app-db {:settings {:reasoning-level "balanced"
-                                           :verbosity "high"}
+          (reset! state/app-db {:settings {:reasoning-level "balanced" :verbosity "high"}
                                 :render-version 0})
           (state/dispatch [:cycle-verbosity])
           (expect (= "high" (get-in @state/app-db [:settings :verbosity])))
           (expect (= ["Answer length is not configurable for this model"
                       [:level :warn :ttl-ms 1500]]
                      @notified)))))
-  (it
-    "cycles verbosity low -> medium -> high -> low on a GitHub Copilot GPT session"
-    ;; The reported gap: Copilot rides `/v1/responses` exactly as Codex does, so
-    ;; the cycle must work there without the provider being named anywhere.
-    (with-redefs
-      [vis/load-config-raw
-       (fn []
-         {})
+  (it "cycles verbosity low -> medium -> high -> low on a GitHub Copilot GPT session"
+      ;; The reported gap: Copilot rides `/v1/responses` exactly as Codex does, so
+      ;; the cycle must work there without the provider being named anywhere.
+      (with-redefs
+        [vis/load-config-raw
+         (fn []
+           {})
 
-       vis/save-config!
-       (fn [_])
+         vis/save-config!
+         (fn [_])
 
-       vis/get-router
-       (constantly :router)
+         vis/get-router
+         (constantly :router)
 
-       vis/resolve-model-info
-       (fn [_ _provider _model]
-         {:provider :github-copilot
-          :name "gpt-5.6-sol"
-          :reasoning? true
-          :reasoning-effort? true
-          :verbosity-style :openai-text})
+         vis/resolve-model-info
+         (fn [_ _provider _model]
+           {:provider :github-copilot
+            :name "gpt-5.6-sol"
+            :reasoning? true
+            :reasoning-effort? true
+            :verbosity-style :openai-text})
 
-       vis/resolve-effective-model
-       (fn [_]
-         {:provider :github-copilot
-          :name "gpt-5.6-sol"
-          :reasoning? true
-          :reasoning-effort? true
-          :verbosity-style :openai-text})
+         vis/resolve-effective-model
+         (fn [_]
+           {:provider :github-copilot
+            :name "gpt-5.6-sol"
+            :reasoning? true
+            :reasoning-effort? true
+            :verbosity-style :openai-text})
 
-       vis/notify!
-       (fn [& _])]
+         vis/notify!
+         (fn [& _])]
 
-      ;; The cycle advances the GLOBAL toggles registry, not app-db — pin it
-      ;; to its :low default so a value another test left in the shared
-      ;; registry can't shift where the first step lands (order-dependent flake).
-      (vis/toggle-reset-to-default! "verbosity")
-      (try (reset! state/app-db {:settings {:reasoning-level "balanced"
-                                            :verbosity "low"}
-                                 :render-version 0})
-           (state/dispatch [:cycle-verbosity])
-           (expect (= "medium" (get-in @state/app-db [:settings :verbosity])))
-           (state/dispatch [:cycle-verbosity])
-           (expect (= "high" (get-in @state/app-db [:settings :verbosity])))
-           (state/dispatch [:cycle-verbosity])
-           (expect (= "low" (get-in @state/app-db [:settings :verbosity])))
-           (finally (vis/toggle-reset-to-default! "verbosity"))))))
+        ;; The cycle advances the GLOBAL toggles registry, not app-db — pin it
+        ;; to its :low default so a value another test left in the shared
+        ;; registry can't shift where the first step lands (order-dependent flake).
+        (vis/toggle-reset-to-default! "verbosity")
+        (try (reset! state/app-db {:settings {:reasoning-level "balanced" :verbosity "low"}
+                                   :render-version 0})
+             (state/dispatch [:cycle-verbosity])
+             (expect (= "medium" (get-in @state/app-db [:settings :verbosity])))
+             (state/dispatch [:cycle-verbosity])
+             (expect (= "high" (get-in @state/app-db [:settings :verbosity])))
+             (state/dispatch [:cycle-verbosity])
+             (expect (= "low" (get-in @state/app-db [:settings :verbosity])))
+             (finally (vis/toggle-reset-to-default! "verbosity"))))))
 
 (defdescribe session-model-pref-scope-test
              ;; The footer chip PREFERS the optimistic `:session-model-pref` over the
@@ -1743,54 +1727,63 @@
                      (expect (nil? (:submitted-input acked)))))))
 
 
-(defdescribe failed-turn-refill-test
-             ;; A provider-FAILURE terminal (overloaded / rate-limited, retries
-             ;; exhausted) must hand the failed prompt BACK to the composer — one
-             ;; Enter re-sends it — while keeping the error bubble the user needs
-             ;; to read. Before this, a failed turn dropped :submitted-input and
-             ;; the text was lost, so recovery meant retyping. The failed turn is
-             ;; never auto-replayed by the gateway; the refill IS the retry.
-             (let
-               [handler
-                (fn [id] (-> #'state/event-registry deref deref (get id) :fn))
+(defdescribe
+  failed-turn-refill-test
+  ;; A provider-FAILURE terminal (overloaded / rate-limited, retries
+  ;; exhausted) must hand the failed prompt BACK to the composer — one
+  ;; Enter re-sends it — while keeping the error bubble the user needs
+  ;; to read. Before this, a failed turn dropped :submitted-input and
+  ;; the text was lost, so recovery meant retyping. The failed turn is
+  ;; never auto-replayed by the gateway; the refill IS the retry.
+  (let
+    [handler
+     (fn [id]
+       (-> #'state/event-registry
+           deref
+           deref
+           (get id)
+           :fn))
 
-                pending-id "client-1"
+     pending-id
+     "client-1"
 
-                running-db
-                {:active-tab-id :main
-                 :session {:id "s1"}
-                 :loading? true
-                 :turn-start-ms 1000
-                 :input (input/empty-input)
-                 :messages [{:role :user :text "first" :client-turn-id pending-id}
-                            {:role :assistant :pending? true :client-turn-id pending-id}]
-                 :progress {:iterations [{:n 1 :blocks [{:kind :tool}]}]}
-                 :submitted-input {:text "first" :pastes {} :paste-counter 0}
-                 :pending-sends []}
+     running-db
+     {:active-tab-id :main
+      :session {:id "s1"}
+      :loading? true
+      :turn-start-ms 1000
+      :input (input/empty-input)
+      :messages [{:role :user :text "first" :client-turn-id pending-id}
+                 {:role :assistant :pending? true :client-turn-id pending-id}]
+      :progress {:iterations [{:n 1 :blocks [{:kind :tool}]}]}
+      :submitted-input {:text "first" :pastes {} :paste-counter 0}
+      :pending-sends []}
 
-                failed
-                (:db ((handler :message-received)
-                       running-db
-                       [:message-received :main
-                        [:ast {} [:p {} [:span {} "Provider gateway unavailable"]]]
-                        {:status :failed :client-turn-id pending-id}]))]
+     failed
+     (:db ((handler :message-received)
+            running-db
+            [:message-received :main [:ast {} [:p {} [:span {} "Provider gateway unavailable"]]]
+             {:status :failed :client-turn-id pending-id}]))]
 
-               (it "hands the failed prompt back to the composer"
-                   (expect (= "first" (input/input->text (:input failed)))))
-               (it "clears the submitted-input snapshot once refilled"
-                   (expect (nil? (:submitted-input failed))))
-               (it "keeps the failure bubble instead of dropping it"
-                   (expect (seq (:messages failed))))
-               (it "settles the turn (no longer loading)"
-                   (expect (false? (:loading? failed))))
-               (it "never overwrites a newer draft typed while the failure settles"
-                   (let [typed (assoc running-db :input (#'state/text->input-state "new idea"))
-                         out (:db ((handler :message-received)
-                                    typed
-                                    [:message-received :main
-                                     [:ast {} [:p {} [:span {} "Provider gateway unavailable"]]]
-                                     {:status :failed :client-turn-id pending-id}]))]
-                     (expect (= "new idea" (input/input->text (:input out))))))))
+    (it "hands the failed prompt back to the composer"
+        (expect (= "first" (input/input->text (:input failed)))))
+    (it "clears the submitted-input snapshot once refilled"
+        (expect (nil? (:submitted-input failed))))
+    (it "keeps the failure bubble instead of dropping it" (expect (seq (:messages failed))))
+    (it "settles the turn (no longer loading)" (expect (false? (:loading? failed))))
+    (it "never overwrites a newer draft typed while the failure settles"
+        (let
+          [typed
+           (assoc running-db :input (#'state/text->input-state "new idea"))
+
+           out
+           (:db ((handler :message-received)
+                  typed
+                  [:message-received :main
+                   [:ast {} [:p {} [:span {} "Provider gateway unavailable"]]]
+                   {:status :failed :client-turn-id pending-id}]))]
+
+          (expect (= "new idea" (input/input->text (:input out))))))))
 
 
 (defdescribe cancel-self-heal-test
@@ -4384,6 +4377,15 @@
           (expect (= 1 (count blocks)))
           (expect (= "prose" (get (first blocks) "type")))
           (expect (= "final answer" (get (first blocks) "markdown"))))))
+  (it "a cross-channel completed turn keeps streamed content outside reasoning"
+      (let
+        [trace
+         [{:id :iter-1 :thinking "hidden reasoning" :content-stream "visible streamed answer"}]]
+        (reset! state/app-db (terminal-test-db {:progress {:iterations trace}}))
+        (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "completed"})
+        (settle-marked-terminal!)
+        (expect (= "visible streamed answer"
+                   (get (first (get-in @state/app-db [:messages 1 :content])) "markdown")))))
   (it "a stranded completed turn with no prose keeps the notice"
       (reset! state/app-db (terminal-test-db {:progress {:iterations [{:id :iter-1}]}}))
       (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "completed"})

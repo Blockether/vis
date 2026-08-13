@@ -4983,27 +4983,13 @@
      ;; thinking trace and the code+result (see `prose-body` / the final layout)
      ;; — a "here's what I'm doing" read, placed ABOVE the code to match the
      ;; live stream.
-     ;; `content-stream` is the LIVE stream (prose OR the tool-call code the loop
-     ;; re-emits as :content). Once a real `forms` block exists it ALREADY shows the
-     ;; code, and genuine prose renders below via `:assistant-prose` — so echoing
-     ;; content-stream into the thinking bubble would DUPLICATE the code. Only merge
-     ;; it while no form has landed yet (the live pre-block window).
-     content-stream
+     ;; Provider `:content` is answer Markdown, not reasoning. Keep the live
+     ;; pre-form stream available as prose outside the THINKING accordion; once
+     ;; forms land, `:assistant-prose` and the form renderer own the visible body.
+     ;; Folding provider content into `thinking` made a cross-channel final answer
+     ;; disappear whenever THINKING was collapsed.
+     streamed-prose
      (when (empty? forms) content-stream)
-
-     thinking
-     (cond (and (seq (some-> thinking
-                             str
-                             str/trim))
-                (seq (some-> content-stream
-                             str
-                             str/trim)))
-           [thinking content-stream]
-           (seq (some-> content-stream
-                        str
-                        str/trim))
-           content-stream
-           :else thinking)
 
      _
      show-header?
@@ -5654,7 +5640,7 @@
      ;; dim italic thinking trace.
      prose-body
      (when-let
-       [p (some-> assistant-prose
+       [p (some-> (or assistant-prose streamed-prose)
                   str
                   str/trim
                   not-empty)]

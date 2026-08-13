@@ -608,21 +608,12 @@
               0
               trace))
 
-          ;; ▸ THINKING accordion: blank + band-top + header + band-gap
-          ;; + peek/full + bottom edge ≈ content + 5 chrome rows. The LIVE
-          ;; `:content-stream` merges into the same band while no form has
-          ;; landed yet — size them together under the same collapse cap.
+          ;; ▸ THINKING accordion contains reasoning only. Provider
+          ;; `:content-stream` is answer prose and stays outside the accordion.
           think-rows
           (long (reduce (fn [^long acc it]
                           (+ acc
-                             (long (let
-                                     [live
-                                      (when (empty? (:forms it)) (:content-stream it))
-
-                                      full
-                                      (+ (prose-rows-est (:thinking it) fold-w)
-                                         (prose-rows-est live fold-w))]
-
+                             (long (let [full (prose-rows-est (:thinking it) fold-w)]
                                      (cond (zero? full) 0
                                            expanded? (+ full 5)
                                            :else (+ (min full cap) 5))))))
@@ -634,7 +625,11 @@
           prose-rows
           (long (reduce (fn [^long acc it]
                           (+ acc
-                             (long (let [r (prose-rows-est (:assistant-prose it) fold-w)]
+                             (long (let
+                                     [r (prose-rows-est (or (:assistant-prose it)
+                                                            (when (empty? (:forms it))
+                                                              (:content-stream it)))
+                                                        fold-w)]
                                      (if (pos? r) (+ r 2) 0)))))
                         0
                         trace))]

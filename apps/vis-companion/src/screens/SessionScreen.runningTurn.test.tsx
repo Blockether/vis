@@ -40,4 +40,67 @@ describe("a running turn the session read cannot confirm", () => {
       (await screen.findAllByText(/Vis is waiting for an update/)).length,
     ).toBeGreaterThan(0);
   });
+
+  it("does not hand painted output to a matching but still empty settled row", async () => {
+    const now = Date.now();
+    const visible = {
+      id: "gateway-turn",
+      request: "current voice turn",
+      answer: "This answer must never blink away.",
+      iterations: [],
+      startedAt: now,
+      status: "completed" as const,
+    };
+    const emptySettledRow = {
+      id: "gateway-turn",
+      user_request: "current voice turn",
+      status: "completed",
+      created_at: now,
+      content: [],
+      iterations: [],
+    };
+
+    renderSessionScreen({
+      client: {
+        cachedLiveTurn: () => ({ turn: visible, seq: 42 }),
+        cachedTranscript: () => [emptySettledRow],
+        transcript: () => new Promise(() => {}),
+      },
+      subscriptions: {
+        hasEndedTurn: () => true,
+      },
+    });
+
+    expect(
+      await screen.findByText("This answer must never blink away."),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps an already painted answer when its terminal arrived while away", async () => {
+    const visible = {
+      id: "gateway-turn",
+      request: "current voice turn",
+      answer: "This answer was already visible.",
+      iterations: [],
+      startedAt: Date.now(),
+      status: "running" as const,
+    };
+
+    renderSessionScreen({
+      client: {
+        cachedLiveTurn: () => ({ turn: visible, seq: 42 }),
+        cachedTranscript: () => [],
+        // Keep the persisted handover pending for the duration of the assertion.
+        transcript: () => new Promise(() => {}),
+      },
+      subscriptions: {
+        hasEndedTurn: () => true,
+      },
+    });
+
+    expect(
+      await screen.findByText("This answer was already visible."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Vis is waiting for an update/)).toBeNull();
+  });
 });

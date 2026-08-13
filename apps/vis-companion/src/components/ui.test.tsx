@@ -2411,6 +2411,18 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(settingsSource).not.toContain("<button");
   });
 
+  it("keeps painted answer prose through mobile wake reconciliation", () => {
+    expect(sessionScreenSource).toContain(
+      "const liveHadProse = liveTurnCarriesProse(liveBefore)",
+    );
+    expect(sessionScreenSource).toContain(
+      "const liveHadOutput = liveTurnCarriesOutput(liveBefore)",
+    );
+    expect(sessionScreenSource).toMatch(
+      /liveTurnSettledRow\([\s\S]*?liveRequest,[\s\S]*?liveHadOutput,[\s\S]*?liveHadProse,[\s\S]*?\)/,
+    );
+  });
+
   it("uses the composer's own vocabulary where it used to repeat itself", () => {
     expect(sessionScreenSource).toContain("<ComposerButton");
     expect(sessionScreenSource).toContain("<MetaButton");
