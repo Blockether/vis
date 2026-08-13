@@ -31,6 +31,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, write
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { syncPackageVersion } from './version.mjs';
+import { configureAndroidPushPlugin } from './android-push-plugin.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = resolve(root, '..', '..');
@@ -141,6 +142,16 @@ if (!services) {
   writeFileSync(join(androidApp, 'google-services.json'), services, { mode: 0o600 });
   console.log(`\u2713 google-services.json \u2192 android/app  (${appId}, project ${parsed.project_info?.project_id ?? '?'})`);
 }
+
+// Capacitor registers plugins from this generated manifest. The package remains
+// installed for iOS and Firebase-enabled Android builds, but must not appear
+// available on Android without Firebase: register() throws on a native plugin
+// thread before JavaScript can catch it and terminates the app.
+const pluginsPath = join(androidApp, 'src', 'main', 'assets', 'capacitor.plugins.json');
+const plugins = JSON.parse(readFileSync(pluginsPath, 'utf8'));
+const configuredPlugins = configureAndroidPushPlugin(plugins, Boolean(services));
+writeFileSync(pluginsPath, `${JSON.stringify(configuredPlugins, null, '\t')}\n`);
+console.log(`\u2713 Android push plugin ${services ? 'enabled' : 'disabled'} (${services ? 'Firebase configured' : 'no Firebase config'})`);
 
 // ── 2. upload keystore ────────────────────────────────────────────────────────────────
 // Stored base64 because a JKS is binary and the keychain holds text. Play App Signing

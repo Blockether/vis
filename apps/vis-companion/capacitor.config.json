@@ -6,6 +6,9 @@
   "server": {
     "androidScheme": "https"
   },
+  "android": {
+    "allowMixedContent": true
+  },
   "ios": {
     "scheme": "App",
     "scrollEnabled": false,

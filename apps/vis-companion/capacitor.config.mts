@@ -25,6 +25,9 @@ const config: CapacitorConfig = {
   server: {
     androidScheme: 'https',
   },
+  android: {
+    allowMixedContent: true,
+  },
   ios: {
     // Xcode scheme name in ios/App/App.xcodeproj — NOT a URL scheme.
     scheme: 'App',
