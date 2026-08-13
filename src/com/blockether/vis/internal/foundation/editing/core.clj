@@ -11,7 +11,8 @@
                               ; A nil or blank path throws before any I/O.
         (grep query)          ; -> content hits + ranked file-NAME matches;
                               ; query = a term or list of terms (OR), smart-case
-                              ; substring. Opts: paths/include/limit/is_hidden
+                              ; substring — or a REGEX with `is_regex`.
+                              ; Opts: paths/include/limit/is_hidden/is_regex
         (struct_index paths)  ; -> per-file skeleton: imports, definitions, signatures
 
    2. Cwd-safe wrappers over the babashka.fs file API. `struct_patch` is the
@@ -165,8 +166,16 @@
   "Every file fff's native grep sees `query` in, PAGED to exhaustion (bounded by
    `rg-fff-grep-max-pages`). A single page stops at `page-limit` matches and hands
    back `:next-file-offset`; dropping that resume cursor silently truncated the
-   candidate set to one page, which the old fuzzy-path union then papered over."
-  [idx ^String query]
+   candidate set to one page, which the old fuzzy-path union then papered over.
+
+   `is-regex?` runs fff's NATIVE regex grep (`:mode :regex`) instead of the
+   literal one, so a pattern narrows the candidate set as tightly as a literal
+   needle does. fff's dialect is Rust's `regex` crate: on a pattern IT cannot
+   compile it silently FALLS BACK to literal matching and reports
+   `:regex-fallback-error` — a candidate set that misses every real hit, i.e.
+   exactly the false negative this whole path exists to avoid. So that fallback
+   is REFUSED here, naming the engine's own reason."
+  [idx ^String query is-regex?]
   (loop
     [offset
      0
@@ -178,15 +187,27 @@
      (transient [])]
 
     (let
-      [{:keys [matches next-file-offset]}
+      [{:keys [matches next-file-offset regex-fallback-error]}
        (fff/grep idx
                  {:query query
-                  :mode :plain
+                  :mode (if is-regex? :regex :plain)
                   :file-offset offset
                   :page-limit rg-fff-grep-page-limit
                   :max-matches-per-file 1
                   :max-file-size rg-fff-grep-max-file-size
                   :time-budget-ms 1500})
+
+       _
+       (when (and is-regex? (not (str/blank? (str regex-fallback-error))))
+         (throw (ex-info
+                  (str "grep is_regex pattern is not supported by the native scanner: " query
+                       " — " regex-fallback-error
+                       ". Rust regex syntax has no lookaround and no backreferences; rewrite the"
+                       " pattern without that construct, or drop is_regex to search it literally.")
+                  {:type :ext.foundation.editing/invalid-rg-spec
+                   :field :query
+                   :pattern query
+                   :engine-error (str regex-fallback-error)})))
 
        acc
        (reduce conj! acc matches)
@@ -218,30 +239,35 @@
   "Candidate files ONE `query` contributes from an open fff index `idx`: native-GREP
    content hits (paged to exhaustion) plus the literal-filtered fuzzy-PATH hits.
    A needle hostile to fff's fuzzy path search skips the path side entirely — native
-   grep is literal/smart-case, so it already sees every content candidate."
-  [idx ^File base query]
+   grep is literal/smart-case, so it already sees every content candidate.
+
+   `is-regex?` skips the path side for the same reason: fff's path search is a
+   FUZZY SUBSEQUENCE over path text, which reads a PATTERN as literal characters
+   and drags in a page of files that carry no match at all. Native regex grep
+   already owns content discovery in that mode."
+  [idx ^File base query is-regex?]
   (let
     [path-items
-     (when-not (rg-needle-hostile-to-fff? query)
+     (when (and (not is-regex?) (not (rg-needle-hostile-to-fff? query)))
        (->> (:items (fff/search idx {:query query :page-size 1000}))
             (filter #(rg-fff-path-hit? query %))))
 
      grep-items
-     (rg-fff-grep-files idx query)]
+     (rg-fff-grep-files idx query is-regex?)]
 
     (concat (rg-fff-rel-files base path-items) (rg-fff-rel-files base grep-items))))
 
 (defn- rg-fff-root-files
   "`rg-fff-candidate-files` for ONE root: a FILE root is its own only candidate, a
    directory root leases a single fff index and realizes every needle's hits in it."
-  [^File root needles overlay]
+  [^File root needles is-regex? overlay]
   (if (.isFile root)
     [root]
     (fff-index/with-index [idx (fff-index/lease root true overlay)]
                           (let [base (.getCanonicalFile root)]
                             ;; doall: realize the lazy hits INSIDE with-open, before the fresh
                             ;; instance is closed.
-                            (doall (mapcat #(rg-fff-query-files idx base %) needles))))))
+                            (doall (mapcat #(rg-fff-query-files idx base % is-regex?) needles))))))
 
 (defn- rg-fff-candidate-files
   "Files under `roots` that MIGHT contain a needle, via fff — the fast, nested-
@@ -262,10 +288,12 @@
    it already sees every content candidate. This used to fall back to the FULL fff
    enumeration, which then had rg OPEN AND READ every file in the tree (measured
    170ms vs 8ms on this repo) for no extra recall.
+   `is-regex?` swaps fff's literal content grep for its NATIVE regex grep, so a
+   pattern narrows the universe instead of widening it to the whole tree.
    Returns a File vec, deduped by canonical path."
-  [roots needles overlay]
+  [roots needles is-regex? overlay]
   (->> roots
-       (mapcat #(rg-fff-root-files % needles overlay))
+       (mapcat #(rg-fff-root-files % needles is-regex? overlay))
        ;; dedup by canonical path, keep File objects
        (reduce (fn [acc ^File f]
                  (assoc acc (.getCanonicalPath f) f))
@@ -1724,18 +1752,20 @@
            {:type :ext.foundation.editing/invalid-find-args :expected '([spec-map]) :got args})))
 
      allowed-keys
-     #{"query" "paths" "path" "limit" "offset" "include" "context" "is_hidden"}
+     #{"query" "paths" "path" "limit" "offset" "include" "context" "is_hidden" "is_regex"}
 
      unknown-keys
      (seq (remove allowed-keys (keys spec)))]
 
     (when unknown-keys
-      (throw (ex-info (str "find spec has unknown keys: "
-                           (str/join ", " (map str unknown-keys))
-                           ". Allowed: query, paths, limit, offset, include, context, is_hidden.")
-                      {:type :ext.foundation.editing/invalid-find-args
-                       :unknown (vec unknown-keys)
-                       :allowed (vec (sort allowed-keys))})))
+      (throw (ex-info
+               (str
+                 "find spec has unknown keys: "
+                 (str/join ", " (map str unknown-keys))
+                 ". Allowed: query, paths, limit, offset, include, context, is_hidden, is_regex.")
+               {:type :ext.foundation.editing/invalid-find-args
+                :unknown (vec unknown-keys)
+                :allowed (vec (sort allowed-keys))})))
     (let
       [raw-query
        (get spec "query")
@@ -1826,6 +1856,9 @@
        :limit limit
        :offset offset
        :is_hidden (boolean (get spec "is_hidden"))
+       ;; REGEX mode is a CONTENT dialect: it changes what a hit IS, so it rides
+       ;; the same spec as `context`/`include` rather than a second call shape.
+       :is_regex (boolean (get spec "is_regex"))
        :is_ls ls?})))
 
 (defn- find-direct-file-item
@@ -1970,7 +2003,7 @@
 (defn- find-search
   [args]
   (let
-    [{:keys [query paths limit offset is_hidden is_ls] scope-misses :missing}
+    [{:keys [query paths limit offset is_hidden is_ls is_regex] scope-misses :missing}
      (coerce-find-spec args)
 
      {roots :roots find-resolutions :resolutions searched-paths :searched-paths}
@@ -1994,7 +2027,7 @@
        (find-scan roots q is_hidden candidate-page search-overlay))
 
      strict
-     (if is_ls [] (scan query))
+     (if (or is_ls is_regex) [] (scan query))
 
      tokens
      (find-fallback-tokens query)
@@ -2009,53 +2042,57 @@
      ;; they match (coverage) then best term score. It stays a FILENAME tool
      ;; — it just stops requiring the whole sentence to be one filename.
      [ranked fuzzy?]
-     (if is_ls
-       [(find-ls roots (+ (long limit) (long offset)) is_hidden search-overlay) false]
-       (if (or (seq strict) (< (count tokens) 2))
-         [strict false]
-         (let
-           [stem
-            (fn [it]
-              (find-norm (str/replace (str (:file-name it)) #"\.[^.]*$" "")))
+     (cond
+       ;; `is_regex` is a CONTENT dialect. The NAME axis is a FUZZY SUBSEQUENCE
+       ;; score over filenames, which reads `^ns\b|foo.*bar` as literal
+       ;; characters and ranks unrelated paths above nothing at all — so in
+       ;; regex mode there is no name axis and `paths` stays empty.
+       is_regex [[] false]
+       is_ls [(find-ls roots (+ (long limit) (long offset)) is_hidden search-overlay) false]
+       (or (seq strict) (< (count tokens) 2)) [strict false]
+       :else (let
+               [stem
+                (fn [it]
+                  (find-norm (str/replace (str (:file-name it)) #"\.[^.]*$" "")))
 
-            by-path
-            (reduce (fn [m t]
-                      (reduce (fn [m it]
-                                (update m
-                                        (:path it)
-                                        (fn [cur]
-                                          (-> (or cur
-                                                  (assoc it
-                                                    :score 0.0
-                                                    :terms #{}))
-                                              (update :score max (:score it))
-                                              (update :terms conj t)))))
-                              m
-                              (scan t)))
-                    {}
-                    tokens)
+                by-path
+                (reduce (fn [m t]
+                          (reduce (fn [m it]
+                                    (update m
+                                            (:path it)
+                                            (fn [cur]
+                                              (-> (or cur
+                                                      (assoc it
+                                                        :score 0.0
+                                                        :terms #{}))
+                                                  (update :score max (:score it))
+                                                  (update :terms conj t)))))
+                                  m
+                                  (scan t)))
+                        {}
+                        tokens)
 
-            ;; A term that IS the filename stem (`render` → `render.clj`) is a
-            ;; bullseye — it must beat a 2-common-word loose match
-            ;; (`native`+`tool` → `native-tool-handlers.md`), so it gets a
-            ;; score bonus that ranks above raw term coverage.
-            scored
-            (map (fn [it]
-                   (let
-                     [s
-                      (stem it)
+                ;; A term that IS the filename stem (`render` → `render.clj`) is a
+                ;; bullseye — it must beat a 2-common-word loose match
+                ;; (`native`+`tool` → `native-tool-handlers.md`), so it gets a
+                ;; score bonus that ranks above raw term coverage.
+                scored
+                (map (fn [it]
+                       (let
+                         [s
+                          (stem it)
 
-                      bull?
-                      (contains? (:terms it) s)]
+                          bull?
+                          (contains? (:terms it) s)]
 
-                     (assoc it :rank-score (+ (double (:score it 0.0)) (if bull? 0.6 0.0)))))
-                 (vals by-path))]
+                         (assoc it :rank-score (+ (double (:score it 0.0)) (if bull? 0.6 0.0)))))
+                     (vals by-path))]
 
-           [(->> scored
-                 (sort-by (fn [it]
-                            [(- (double (:rank-score it))) (- (count (:terms it))) ;; then coverage
-                             (- (long (or (:frecency-score it) 0))) (:path it)]))
-                 vec) true])))
+               [(->> scored
+                     (sort-by (fn [it]
+                                [(- (double (:rank-score it))) (- (count (:terms it))) ;; then coverage
+                                 (- (long (or (:frecency-score it) 0))) (:path it)]))
+                     vec) true]))
 
      items
      (if fuzzy?
@@ -2152,7 +2189,10 @@
       (assoc "include" (get spec "include"))
 
       (contains? spec "is_hidden")
-      (assoc "is_hidden" (get spec "is_hidden")))))
+      (assoc "is_hidden" (get spec "is_hidden"))
+
+      (contains? spec "is_regex")
+      (assoc "is_regex" (get spec "is_regex")))))
 
 (defn- content-result
   "Build grep's CONTENT hits from an `rg-search` result: an ordered
@@ -2420,10 +2460,12 @@
 
 (defn- regex-looking-query?
   "True when `query` carries rg-style regex syntax that CONTENT search will match
-   LITERALLY. `grep` is a literal smart-case substring search, so a pattern like
-   `defn-? +grep`, `foo.*bar` or `^ns\\b` silently returns zero content hits and
-   the caller cannot tell a missing symbol from a wrong dialect — exactly the
-   dead end that invites a pointless re-run with cosmetic edits.
+   LITERALLY. `grep` is a literal smart-case substring search UNLESS the call
+   passes `is_regex`, so a pattern like `defn-? +grep`, `foo.*bar` or `^ns\\b`
+   silently returns zero content hits and the caller cannot tell a missing symbol
+   from a wrong dialect — exactly the dead end that invites a pointless re-run
+   with cosmetic edits. The hint this drives names the switch, so the recovery is
+   one flag rather than a guess.
 
    Deliberately conservative: `?`, `*`, `(` and `)` alone are ordinary code
    characters (`stale?`, `*warn-on-reflection*`, `(defn foo`) and never trip it."
@@ -2450,12 +2492,18 @@
      await grep({\"query\": \"grep-tool\"})
      await grep({\"query\": \"channel_tui render\", \"paths\": [\"src\"], \"limit\": 20})
      await grep({\"query\": [\"TODO\", \"FIXME\"], \"include\": [\"**/*.clj\"], \"context\": 2})
+     await grep({\"query\": \"defn-? +grep-data\", \"is_regex\": True})
 
    ONE options map is the WHOLE call surface — kwargs
    (`grep(query=…, paths=[…])`) fold into that same map. There is no positional
    query and no second positional argument.
 
-   CONTENT matching is smart-case literal substring; a query list is OR. Every
+   CONTENT matching is smart-case literal substring; a query list is OR.
+   `is_regex` switches CONTENT matching to REGULAR EXPRESSIONS — every term a
+   pattern, a list still OR, the SAME smart-case rule (no uppercase in the
+   pattern → case-insensitive) — and turns the fuzzy NAME axis OFF, because a
+   pattern scored as a filename subsequence is noise. A pattern that does not
+   compile is REFUSED with its syntax error, never answered as zero hits. Every
    hit lands in the CANONICAL flat result under `matches` —
    `{path {\"<lineno>\" {\"text\" … \"before\" [{\"line\" \"text\"}] \"after\" […]}}}`
    — each key the hit's 1-based line, `context` N adding the surrounding lines.
@@ -2492,6 +2540,9 @@
 
      content-spec
      (find-args->content-spec args)
+
+     is_regex
+     (boolean (get content-spec "is_regex"))
 
      ls?
      (str/blank? (str query))
@@ -2553,7 +2604,16 @@
                   "hint" nil
                   "next_offset" next-offset)
            (merge content))
-       (and (not ls?) (zero? (long (or item_count 0))) (zero? content-hits))
+       ;; REGEX mode: the NAME axis is off, so "nothing matched" is only ever a
+       ;; CONTENT story — and the pattern demonstrably RAN (it compiled on both
+       ;; sides), so the recovery is a looser pattern, never a different dialect.
+       (and (not ls?) is_regex (zero? content-hits))
+       (assoc "hint"
+         (str "No CONTENT matched the regex \"" query
+              "\" — the pattern compiled and ran. Loosen it or widen `paths`. "
+              "`is_regex` searches CONTENT only: file NAMES are not matched in this mode."))
+
+       (and (not ls?) (not is_regex) (zero? (long (or item_count 0))) (zero? content-hits))
        (assoc "hint"
          (str
            "No file NAME or CONTENT matched \""
@@ -2563,19 +2623,21 @@
              "Shorten to a single distinctive filename fragment or a real symbol/string that exists."
              "Try a different term, a real symbol/string, or widen the scope.")
            (when (regex-looking-query? query)
-             " CONTENT matching is LITERAL smart-case substring — regex syntax is not interpreted; search a plain distinctive fragment.")))
+             " CONTENT matching is LITERAL smart-case substring by DEFAULT — pass `is_regex: True` to run this query as a regular expression.")))
 
        ;; Names matched but content did not, and the query reads like a regex:
-       ;; say so, or the caller re-runs the same pattern with cosmetic edits.
+       ;; say so AND name the switch, or the caller re-runs the same pattern with
+       ;; cosmetic edits.
        (and (not ls?)
+            (not is_regex)
             (pos? (long (or item_count 0)))
             (zero? content-hits)
             (regex-looking-query? query))
        (assoc "hint"
          (str
            "No CONTENT matched \"" query
-           "\" — CONTENT matching is LITERAL smart-case substring, regex syntax is not interpreted. "
-           "Search a plain distinctive fragment; only the file NAME matches in `paths` are real."))
+           "\" — CONTENT matching is LITERAL smart-case substring by DEFAULT. Pass `is_regex: True` "
+           "to run it as a regular expression; only the file NAME matches in `paths` are real."))
 
        ;; The scan stopped at its wall-clock budget, so these results are
        ;; PARTIAL. Said LAST because it outranks every hint above: "nothing
@@ -2596,6 +2658,7 @@
      await grep({\"query\": \"grep-tool\"})
      await grep({\"query\": \"channel_tui render\", \"paths\": [\"src\"], \"limit\": 20})
      await grep({\"query\": [\"TODO\", \"FIXME\"], \"include\": [\"**/*.clj\"], \"context\": 2})
+     await grep({\"query\": \"defn-? +grep-tool\", \"is_regex\": True})
 
    The whole call surface is `grep-data`'s; this is its projection. Line 1 always
    summarizes — hits, files, truncation and the literal next call — then each
@@ -2643,12 +2706,45 @@
     raw))
 
 
+(defn- has-upper?
+  "True when `s` contains an uppercase letter — the smart-case trigger."
+  [^String s]
+  (boolean (some #(Character/isUpperCase ^char %) s)))
+
+(defn- needle-pattern
+  "One `is_regex` needle compiled to a `java.util.regex.Pattern` under the SAME
+   smart-case rule the literal side uses: no uppercase in the pattern →
+   CASE-INSENSITIVE, an uppercase anywhere → case-sensitive. That is verbatim the
+   rule fff's native regex grep applies to its own candidate pass (`build_regex`),
+   so discovery and JVM re-validation can never disagree about a hit.
+
+   A pattern that does not COMPILE is refused right here, at coercion time,
+   carrying the syntax error: a broken pattern must never read as `0 hits`."
+  ^java.util.regex.Pattern [^String needle]
+  (try (java.util.regex.Pattern/compile
+         needle
+         (int (if (has-upper? needle) 0 java.util.regex.Pattern/CASE_INSENSITIVE)))
+       (catch java.util.regex.PatternSyntaxException e
+         (throw (ex-info
+                  (str "grep is_regex pattern does not compile: "
+                       needle
+                       " — "
+                       (.getDescription e)
+                       " at index "
+                       (.getIndex e)
+                       ". Fix the pattern, or drop is_regex to search it literally.")
+                  {:type :ext.foundation.editing/invalid-rg-spec :field :query :pattern needle})))))
+
 (defn- coerce-rg-spec
   "Coerce the public rg spec map into the search engine's shape.
 
    `query` IS the search — a string, or a LIST of terms matched as OR (a line
    containing ANY term). Matching is smart-case literal substring (see
-   `make-line-matcher`). `any` is accepted as a back-compat alias for `query`
+   `make-line-matcher`) — unless `is_regex` is set, which makes every term a
+   REGULAR EXPRESSION instead (still OR, still smart-case) and turns the
+   comma-splitting and trimming below OFF: `a{1,3}` is ONE pattern, not two
+   terms, and a trailing space is part of the pattern.
+   `any` is accepted as a back-compat alias for `query`
    (and a stray `all` is treated as OR too — the same-line AND mode was dropped;
    filter the hits in Python for the rare \"both terms\" case).
 
@@ -2689,6 +2785,12 @@
        (throw (ex-info "rg needs `query`: a term or a list of terms."
                        {:type :ext.foundation.editing/invalid-rg-spec :spec spec})))
 
+     ;; REGEX mode is decided BEFORE the needles: it turns the comma-splitting
+     ;; and trimming below OFF (they would cut `a{1,3}` in half and silently
+     ;; change what a trailing-space pattern means).
+     is_regex
+     (boolean (get spec "is_regex"))
+
      ;; A query TERM is a substring; a LIST is OR. Models overwhelmingly write
      ;; the OR list as ONE comma-joined string (`\"model, cycle\"`) — which,
      ;; matched literally, hits nothing. So split every term on commas into
@@ -2697,14 +2799,24 @@
      ;; is virtually always \"these separate terms\".)
      needles
      (let
-       [ns (->> (vector-of-strings query-key (get spec query-key))
-                (mapcat #(str/split % #"\s*,\s*"))
-                (map str/trim)
-                (remove str/blank?)
-                vec)]
+       [raw
+        (vector-of-strings query-key (get spec query-key))
+
+        ns
+        (if is_regex
+          (into [] (remove str/blank?) raw)
+          (->> raw
+               (mapcat #(str/split % #"\s*,\s*"))
+               (map str/trim)
+               (remove str/blank?)
+               vec))]
+
        (when (empty? ns)
          (throw (ex-info "rg query has no non-blank terms."
                          {:type :ext.foundation.editing/invalid-rg-spec :field query-key})))
+       ;; REFUSE a broken pattern here, where the caller still gets a reason —
+       ;; not deep in the scan where it would surface as an empty result.
+       (when is_regex (run! needle-pattern ns))
        ns)
 
      raw-paths
@@ -2760,6 +2872,7 @@
      :paths paths
      :include (or include [])
      :is_hidden (boolean (get spec "is_hidden"))
+     :is_regex is_regex
      :limit (let [l (get spec "limit")]
               (if (and (integer? l) (pos? (long l))) (long l) default-grep-limit))
      :offset (let [o (get spec "offset")]
@@ -2767,37 +2880,44 @@
      :context context
      :is_files_only is_files_only}))
 
-(defn- has-upper?
-  "True when `s` contains an uppercase letter — the smart-case trigger."
-  [^String s]
-  (boolean (some #(Character/isUpperCase ^char %) s)))
-
 (defn- make-line-matcher
-  "A `(fn [line] boolean)` — true when the line contains ANY needle (OR). SMART-
-   CASE, the SAME rule the fff candidate pre-filter (`fff/grep :smart-case?`) uses,
-   so the two never disagree: a needle with NO uppercase matches case-INSENSITIVELY
-   (`rg(\"key\")` finds `Key`/`KEY`/`keymap`); a needle WITH an uppercase letter
-   matches case-sensitively (you typed a capital on purpose). Plain literal
-   substring — no regex, no per-line AND. \"Both terms\" is a Python filter on the
-   hits; a pattern is the rare case you `re` over `:text` yourself."
-  [needles]
-  (let
-    [grouped
-     (group-by has-upper? needles)
+  "A `(fn [line] boolean)` — true when the line matches ANY needle (OR). SMART-
+   CASE either way, the SAME rule the fff candidate pre-filter (`fff/grep
+   :smart-case?`) uses, so the two never disagree: a needle with NO uppercase
+   matches case-INSENSITIVELY (`rg(\"key\")` finds `Key`/`KEY`/`keymap`); a needle
+   WITH an uppercase letter matches case-sensitively (you typed a capital on
+   purpose).
 
-     cs
-     (vec (get grouped true))
+   `is-regex?` false — plain literal substring, no regex, no per-line AND. \"Both
+   terms\" is a Python filter on the hits.
 
-     ;; has uppercase → case-sensitive
-     ci
-     (mapv str/lower-case (get grouped false))]
+   `is-regex?` true — every needle is a `java.util.regex.Pattern` (`needle-pattern`)
+   and a line matches when any pattern is FOUND in it. Each line is matched on its
+   own, so `^`/`$` anchor the line exactly as they do in the native scanner."
+  [needles is-regex?]
+  (if is-regex?
+    (let [patterns (mapv needle-pattern needles)]
+      (fn [^String line]
+        (boolean (some (fn [^java.util.regex.Pattern p]
+                         (.find (.matcher p line)))
+                       patterns))))
+    (let
+      [grouped
+       (group-by has-upper? needles)
 
-    ;; no uppercase → case-insensitive
-    (fn [^String line]
-      (or (boolean (some #(str/includes? line %) cs))
-          (and (seq ci)
-               (let [low (str/lower-case line)]
-                 (boolean (some #(str/includes? low %) ci))))))))
+       cs
+       (vec (get grouped true))
+
+       ;; has uppercase → case-sensitive
+       ci
+       (mapv str/lower-case (get grouped false))]
+
+      ;; no uppercase → case-insensitive
+      (fn [^String line]
+        (or (boolean (some #(str/includes? line %) cs))
+            (and (seq ci)
+                 (let [low (str/lower-case line)]
+                   (boolean (some #(str/includes? low %) ci)))))))))
 
 ;; rg hit/context text is kept FULL in the result value — never per-line
 ;; mutilated. The model sees it by printing what it needs (context is print-only;
@@ -2921,7 +3041,7 @@
    `r[...]`); only the wire VIEW is bounded by the 64KB per-observation clip."
   [spec]
   (let
-    [{:keys [needles paths include is_hidden limit offset context is_files_only]}
+    [{:keys [needles paths include is_hidden is_regex limit offset context is_files_only]}
      (coerce-rg-spec spec)
 
      before-ctx
@@ -2984,7 +3104,7 @@
                   []))
 
      matches?
-     (make-line-matcher needles)
+     (make-line-matcher needles is_regex)
 
      ;; `.rgignore` + the `:grep` config overlay (issue #23) — handed to fff
      ;; itself, see `fff-ignore-overlay`.
@@ -2999,7 +3119,7 @@
      ;; this workspace). fff surfaces dotfiles a walk hid by descent, so re-apply the
      ;; include globs + hidden-below-root guard here.
      candidates
-     (->> (rg-fff-candidate-files roots needles search-overlay)
+     (->> (rg-fff-candidate-files roots needles is_regex search-overlay)
           (filter include-file?)
           (remove (fn [^File f]
                     (and (not is_hidden) (rg-hidden-below-root? roots f)))))
@@ -4859,6 +4979,7 @@
        "ONE options map is the whole call — `grep({\"query\": q, \"paths\": [\"src\"]})`, or that "
        "same map as kwargs; never a positional query. "
        "Literal smart-case content plus fuzzy filenames; use first when location is unknown. "
+       "`is_regex: True` runs the query as a REGEX over CONTENT instead (names are not matched). "
        "Hits come back ANCHORED, so a hit is already a `patch` argument. "
        "`query: \"\"` lists files. Page with `offset`: line 1 names the next call when capped.")
      :before-fn (fs-access-before-fn :grep :dir "file-read" find-arg-paths)

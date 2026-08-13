@@ -137,7 +137,6 @@
                          "path" "src"
                          "glob" "*.clj"
                          "excludes" ["t/**"]
-                         "is_regex" true
                          "is_counts" true
                          "limit" 5})]
           ;; removed aliases don't set :paths/:include; canonical defaults win
@@ -152,20 +151,20 @@
         (expect (throws? clojure.lang.ExceptionInfo
                          #(coerce {"query" ["x"] "context" {"before" 1 "after" 1}}))))
     (it "smart-case: a lowercase needle matches any case (make-line-matcher)"
-        (let [m (matcher ["key"])]
+        (let [m (matcher ["key"] false)]
           (expect (m "key"))
           (expect (m "Key"))
           (expect (m "KEY"))
           (expect (m "keymap"))
           (expect (not (m "nope")))))
     (it "smart-case: an uppercase-containing needle is case-sensitive"
-        (let [m (matcher ["Key"])]
+        (let [m (matcher ["Key"] false)]
           (expect (m "Key"))
           (expect (m "a Keyword"))
           (expect (not (m "key")))
           (expect (not (m "KEY")))))
     (it "make-line-matcher ORs across needles"
-        (let [m (matcher ["alpha" "gamma"])]
+        (let [m (matcher ["alpha" "gamma"] false)]
           (expect (m "alpha here"))
           (expect (m "gamma here"))
           (expect (not (m "beta here")))))
@@ -235,6 +234,140 @@
           (expect (contains? out :files))
           (expect (not (contains? out :hits)))
           (expect (= 2 (count (:files out))))))))
+
+(defdescribe
+  grep-is-regex-test
+  ;; `is_regex` makes CONTENT matching a REGULAR EXPRESSION instead of a literal
+  ;; smart-case substring: every term is a pattern, a list is still OR, the
+  ;; comma-splitting and trimming are off, the fuzzy NAME axis is off, and a
+  ;; pattern that cannot RUN is refused rather than answered as zero hits.
+  (let
+    [coerce-rg
+     (private-fn "coerce-rg-spec")
+
+     coerce-find
+     (private-fn "coerce-find-spec")
+
+     matcher
+     (private-fn "make-line-matcher")
+
+     rg
+     (private-fn "rg-search")
+
+     grep
+     (grep-data-fn)]
+
+    (it "coerce-rg-spec carries :is_regex and stops splitting/trimming the pattern"
+        (expect (false? (:is_regex (coerce-rg {"query" ["a"]}))))
+        (expect (true? (:is_regex (coerce-rg {"query" ["a"] "is_regex" true}))))
+        ;; a LITERAL query is comma-split into OR terms; a PATTERN must not be —
+        ;; that cuts `a{1,3}` in half and changes what it matches.
+        (expect (= ["a{1,3}"] (:needles (coerce-rg {"query" "a{1,3}" "is_regex" true}))))
+        (expect (= ["a{1" "3}"] (:needles (coerce-rg {"query" "a{1,3}"})))))
+    (it "a pattern that does not COMPILE is refused, never answered as 0 hits"
+        (let
+          [err (try (coerce-rg {"query" "foo(" "is_regex" true})
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+          (expect (some? err))
+          (expect (string/includes? (ex-message err) "does not compile"))
+          ;; the same broken pattern is a perfectly good LITERAL search
+          (expect (= ["foo("] (:needles (coerce-rg {"query" "foo("}))))))
+    (it "coerce-find-spec takes is_regex as a first-class key, and still names it when misspelled"
+        (expect (true? (:is_regex (coerce-find [{"query" "x" "is_regex" true}]))))
+        (expect (false? (:is_regex (coerce-find [{"query" "x"}]))))
+        (expect (string/includes? (ex-message (try (coerce-find [{"query" "x" "is_rgex" true}])
+                                                   nil
+                                                   (catch clojure.lang.ExceptionInfo e e)))
+                                  "is_regex")))
+    (it "make-line-matcher regex mode ORs patterns and keeps the smart-case rule"
+        (let [m (matcher ["defn-? +grep" "^ns\\b"] true)]
+          (expect (m "(defn grep [x] x)"))
+          (expect (m "(defn- grep [x] x)"))
+          (expect (m "ns foo"))
+          (expect (not (m "(def grepish)"))))
+        ;; no uppercase in the pattern → case-INSENSITIVE; an uppercase → case-sensitive
+        (expect ((matcher ["key.*map"] true) "KEY to MAP"))
+        (expect (not ((matcher ["Key.*map"] true) "key to map"))))
+    (it "rg-search runs the pattern over content, where the literal read finds nothing"
+        (let
+          [_
+           (write-temp! "rgregex/a.clj"
+                        "(defn grep-tool [] :one)\n(defn- grep-data [] :two)\nnothing\n")
+
+           _
+           (write-temp! "rgregex/b.clj" "unrelated line\n")
+
+           d
+           (temp-dir-path "rgregex")
+
+           out
+           (rg {"query" "defn-? +grep-(tool|data)" "paths" [d] "is_regex" true})]
+
+          (expect (= ["(defn grep-tool [] :one)" "(defn- grep-data [] :two)"]
+                     (mapv :text (:hits out))))
+          ;; the exact dead end `is_regex` exists to end
+          (expect (empty? (:hits (rg {"query" "defn-? +grep-(tool|data)" "paths" [d]}))))))
+    (it "a pattern the native scanner cannot run is refused, not silently narrowed"
+        ;; Java compiles lookbehind; the native candidate scanner's Rust regex
+        ;; does not, and would fall back to a LITERAL scan whose candidate set
+        ;; misses every real hit — a false negative dressed up as an answer.
+        (let
+          [_
+           (write-temp! "rgregexlook/a.txt" "foobar\n")
+
+           err
+           (try (rg {"query" "(?<=foo)bar" "paths" [(temp-dir-path "rgregexlook")] "is_regex" true})
+                nil
+                (catch clojure.lang.ExceptionInfo e e))]
+
+          (expect (some? err))
+          (expect (string/includes? (ex-message err) "native scanner"))))
+    (it "grep answers regex CONTENT hits and turns the fuzzy NAME axis off"
+        (let
+          [d
+           (temp-dir-path "grepregex")
+
+           _
+           (write-temp! "grepregex/alpha.txt" "one: alpha\ntwo:  beta\n")
+
+           out
+           (:result (grep {"query" "^two: +beta$" "paths" [d] "is_regex" true}))]
+
+          (expect (= 1 (get out "hit_count")))
+          (expect (= "two:  beta" (get-in out ["matches" (str d "/alpha.txt") "2" "text"])))
+          ;; a PATTERN is not a filename: no fuzzy name matches, and no hint
+          ;; telling the caller their dialect is wrong.
+          (expect (= [] (get out "paths")))
+          (expect (nil? (get out "hint")))))
+    (it "a zero-hit regex says the pattern RAN instead of blaming the dialect"
+        (let
+          [d
+           (temp-dir-path "grepregexzero")
+
+           _
+           (write-temp! "grepregexzero/only.txt" "nothing here\n")
+
+           out
+           (:result (grep {"query" "^ZZABSENT.*ZZ$" "paths" [d] "is_regex" true}))]
+
+          (expect (zero? (long (get out "hit_count"))))
+          (expect (string/includes? (get out "hint") "the pattern compiled and ran"))))
+    (it "a regex-looking LITERAL query is told which flag would run it"
+        ;; The old hint only said regex syntax was not interpreted, which left
+        ;; the caller re-running the same pattern with cosmetic edits.
+        (let
+          [d
+           (temp-dir-path "grepregexhint")
+
+           _
+           (write-temp! "grepregexhint/only.txt" "nothing here\n")
+
+           out
+           (:result (grep {"query" "ZZABSENT.*ZZ" "paths" [d]}))]
+
+          (expect (zero? (long (get out "hit_count"))))
+          (expect (string/includes? (get out "hint") "is_regex: True"))))))
 
 (defdescribe
   cwd-safety-test
@@ -1412,7 +1545,7 @@
 
         (expect (string/includes? out "0 hits · 0 files"))
         (expect (string/includes? out "hint: "))
-        (expect (string/includes? out "regex syntax is not interpreted"))))
+        (expect (string/includes? out "is_regex: True"))))
   (it
     "a capped sweep names the exact next call on line 1, breadth included"
     (let
