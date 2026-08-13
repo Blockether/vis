@@ -2,6 +2,13 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.35 (4047) — 2026-08-12
+<!-- commit: 3605627d4c480ff9816ae24f17724b8ca6e107a1 -->
+
+- Companion: record the 0.1.35 (4044) TestFlight build
+- Build the macOS asset on a cloud Mac, never on a laptop
+- One header per repository in the magit buffer
+
 ## 0.1.35 (4044) — 2026-08-12
 <!-- commit: c83786fd6d61b4a9810ec08a04b090fd12901637 -->
 
