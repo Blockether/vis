@@ -4,14 +4,13 @@ import { GatewayClient, GatewayError } from '../lib/gateway';
 import { parsePairing } from '../lib/pairing';
 import {
   REACH_LABEL,
-  bestAddress,
   hostOf,
   mergeAddresses,
   normalizeGatewayUrl,
   reachOf,
 } from '../lib/endpoints';
 import { onWake } from '../lib/wake';
-import { Banner, Button, Input, ListRow } from './ui';
+import { Banner, Button, Input, ListRow, Spinner } from './ui';
 import { ChevronIcon } from './icons';
 
 /**
@@ -349,6 +348,232 @@ export function MachineRows({
 }
 
 /**
+ * The wait BEFORE the camera: the scanner is a lazy chunk, so on a cold tap
+ * there is a fetch between "Scan QR" and the scanner's own first frame. With a
+ * `null` fallback that fetch was a blank screen with nothing on it at all — the
+ * first of the silences this pairing flow was reported for. The scanner narrates
+ * every wait it owns; this narrates the one before it exists.
+ */
+function ScannerOpening({ onCancel }: { onCancel: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-black">
+      <div className="grid flex-1 place-items-center px-6" role="status" aria-live="polite">
+        <div className="flex flex-col items-center gap-2 text-center">
+          <span className="font-mono text-display text-accent">
+            <Spinner />
+          </span>
+          <p className="font-mono text-ui text-white">Opening the scanner…</p>
+        </div>
+      </div>
+      <div className="border-t border-dialog-edge bg-panel px-[max(0.75rem,env(safe-area-inset-left))] pb-[max(0.75rem,env(safe-area-inset-bottom))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-3">
+        <Button variant="secondary" className="w-full" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One advertised address of the machine being paired, and the last thing this
+ * device learned about it. `probing` is a fact with an age like any other
+ * verdict here — it is what the panel is counting down against.
+ */
+interface CandidateProbe {
+  url: string;
+  state: 'probing' | 'online' | 'unauthorized' | 'unreachable';
+  /** Measured round trip, so an address that answered says how well. */
+  ms?: number;
+  /** Why this address failed — the row prints it, so red is diagnosable. */
+  why?: string;
+}
+
+/** A pairing attempt in flight: which machine, which addresses, since when. */
+interface PairRun {
+  /** The machine as the payload named it, before any address has won. */
+  label: string;
+  candidates: CandidateProbe[];
+  startedAt: number;
+}
+
+/**
+ * Probe ONE advertised address, under this app's own deadline.
+ *
+ * The client's request timeout is 30s, which is the right budget for a screen
+ * asking a gateway it already trusts for real work, and completely wrong for
+ * pairing: a QR carries one `alt=` per routable interface on that machine, most
+ * of which are virtual bridges no phone can reach, and every one of them cost
+ * the full 30s before this had a deadline of its own. `PROBE_TIMEOUT_MS` is the
+ * same bound the fleet sweep uses, for the same reason.
+ *
+ * `health()` rather than `ping()` because `ping` swallows the reason: an address
+ * that fails must be able to say WHY on its row. The verdicts are identical —
+ * only a 2xx `/healthz` is a pairable address, a 401 is reachable-but-refused.
+ */
+async function probeCandidate(
+  base: Omit<GatewayConn, 'alts'>,
+  url: string,
+  signal: AbortSignal,
+): Promise<Omit<CandidateProbe, 'url'>> {
+  const started = Date.now();
+  const deadline = new AbortController();
+  const timer = window.setTimeout(() => deadline.abort(), PROBE_TIMEOUT_MS);
+  const giveUp = () => deadline.abort();
+  signal.addEventListener('abort', giveUp, { once: true });
+  try {
+    await new GatewayClient({ ...base, url }).health(deadline.signal);
+    return { state: 'online', ms: Date.now() - started };
+  } catch (e) {
+    const ms = Date.now() - started;
+    if (e instanceof GatewayError && e.status === 401) return { state: 'unauthorized', ms };
+    if (signal.aborted) return { state: 'unreachable', ms, why: 'stopped' };
+    if (deadline.signal.aborted)
+      return { state: 'unreachable', ms, why: `no answer in ${PROBE_TIMEOUT_MS / 1000}s` };
+    const why = e instanceof GatewayError ? e.message : (e as Error).message;
+    return { state: 'unreachable', ms, why: why || 'no route to this address' };
+  } finally {
+    window.clearTimeout(timer);
+    signal.removeEventListener('abort', giveUp);
+  }
+}
+
+/**
+ * The most DURABLE address that works, decided as early as it can be known.
+ *
+ * Every candidate is probed at once and each verdict is reported the moment it
+ * lands, so the panel fills in rather than sitting on one word. Durability, not
+ * speed, picks the winner — pairing happens standing next to the machine, where
+ * the LAN address always replies first, and saving that one pins the app to an
+ * address that dies at the front door.
+ *
+ * Because `candidates` arrives most-durable-first, the winner is the first
+ * address that answers with nothing unresolved ahead of it: no address still in
+ * flight below that rank can beat it, so none is waited on. With the tailnet
+ * address up that ends pairing in its own round trip instead of holding the
+ * whole run open for every dead bridge address in the QR.
+ */
+function bestReachable(
+  base: Omit<GatewayConn, 'alts'>,
+  candidates: readonly string[],
+  report: (url: string, verdict: Omit<CandidateProbe, 'url'>) => void,
+  signal: AbortSignal,
+): Promise<{ chosen?: string; unauthorized: boolean }> {
+  return new Promise((resolve) => {
+    const verdicts: (boolean | undefined)[] = candidates.map(() => undefined);
+    let unauthorized = false;
+    let done = false;
+    const decide = () => {
+      if (done) return;
+      for (let i = 0; i < verdicts.length; i += 1) {
+        // A more durable address has not answered yet, and it would outrank
+        // anything already in hand: nothing can be decided.
+        if (verdicts[i] === undefined) return;
+        if (verdicts[i]) {
+          done = true;
+          resolve({ chosen: candidates[i], unauthorized });
+          return;
+        }
+      }
+      done = true;
+      resolve({ chosen: undefined, unauthorized });
+    };
+    candidates.forEach((url, index) => {
+      void probeCandidate(base, url, signal).then((verdict) => {
+        verdicts[index] = verdict.state === 'online';
+        if (verdict.state === 'unauthorized') unauthorized = true;
+        report(url, verdict);
+        decide();
+      });
+    });
+    decide();
+  });
+}
+
+/** What one candidate row says about itself right now. */
+function candidateView(probe: CandidateProbe): { note: string; textClass: string } {
+  switch (probe.state) {
+    case 'online':
+      return { note: probe.ms != null ? `${probe.ms}ms` : 'answered', textClass: 'text-ok' };
+    case 'unauthorized':
+      return { note: 'token refused', textClass: 'text-warn-strong' };
+    case 'unreachable':
+      return { note: probe.why ?? 'no answer', textClass: 'text-err' };
+    default:
+      return { note: 'trying\u2026', textClass: 'text-dialog-hint' };
+  }
+}
+
+/**
+ * WHAT IS HAPPENING WHILE A MACHINE IS BEING PAIRED — reported as it happens.
+ *
+ * This is the panel the report exists for: the scanner narrates every wait it
+ * has, states that iOS may be about to ask for permission and says when it is
+ * taking too long, and then it decoded a code and handed off to a probe whose
+ * entire account of itself was the word `Checking…` on a button it had just
+ * disabled. Which machine, how many addresses it advertised, which of them have
+ * already answered, why the others failed and how much longer this can possibly
+ * take were all known here and none of it was on screen.
+ *
+ * So the panel names the machine, lists every advertised address by the reach
+ * that makes it durable, marks each one as it settles, and counts the deadline
+ * down — a wait with a stated end. `Stop` is there because a wait nobody can
+ * end is the same dead screen with a spinner on it.
+ */
+function PairingProgress({
+  run,
+  secondsLeft,
+  onStop,
+}: {
+  run: PairRun;
+  secondsLeft: number;
+  onStop: () => void;
+}) {
+  const settled = run.candidates.filter((c) => c.state !== 'probing').length;
+  const plural = run.candidates.length === 1 ? 'address' : 'addresses';
+  return (
+    <div
+      className="mt-3 overflow-hidden border border-dialog-edge bg-panel"
+      role="status"
+      aria-live="polite"
+    >
+      <header className="flex items-center gap-2 border-b border-dialog-edge bg-panel-2 px-3 py-2.5">
+        <Spinner tone="accent" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-mono text-body font-bold text-white">
+            Pairing with {run.label}
+          </span>
+          <span className="block font-mono text-chip text-dialog-hint">
+            Trying {run.candidates.length} {plural} · {settled} of{' '}
+            {run.candidates.length} answered · up to {secondsLeft}s left
+          </span>
+        </span>
+        <Button variant="secondary" onClick={onStop}>
+          Stop
+        </Button>
+      </header>
+      <ul className="divide-y divide-dialog-edge">
+        {run.candidates.map((probe) => {
+          const view = candidateView(probe);
+          return (
+            <li key={probe.url} className="flex items-baseline gap-2 px-3 py-2">
+              <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-dialog-hint">
+                {REACH_LABEL[reachOf(probe.url)]}
+              </span>
+              <span className="min-w-0 flex-1 truncate font-mono text-chip text-dialog-hint">
+                {hostOf(probe.url)}
+              </span>
+              <span className={`shrink-0 font-mono text-chip font-bold ${view.textClass}`}>
+                {view.note}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+/**
  * THE TWO WAYS IN: the pairing link (or its QR) printed by `vis gateway pair`, and
  * an address typed by hand. Both end in the same handshake, so both report the same
  * reason when a machine cannot be reached.
@@ -369,9 +594,25 @@ export function AddMachine({
   const [payload, setPayload] = useState('');
   const [url, setUrl] = useState('');
   const [token, setToken] = useState('');
-  const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'warn' | 'err'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [run, setRun] = useState<PairRun | null>(null);
+  // The countdown's clock. A stated deadline that does not move is a label, not
+  // a report, so this ticks only while a run is live and stops with it.
+  const [now, setNow] = useState(0);
+  const stopRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (!run) return undefined;
+    setNow(Date.now());
+    const id = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(id);
+  }, [run?.startedAt]);
+
+  // Nothing may keep probing for a surface that is gone: leaving the dialog
+  // mid-pair aborted nothing and the panel's timer went on ticking.
+  useEffect(() => () => stopRef.current?.abort(), []);
 
   // Warm the scanner chunk once these controls are idle. Whoever is here is one
   // tap away from "Scan", and the fetch is off the launch critical path.
@@ -385,39 +626,48 @@ export function AddMachine({
     return () => window.cancelIdleCallback?.(handle);
   }, []);
 
-  // Handshake first: never save a gateway we cannot reach. `ping()` returns true
-  // on a 2xx /healthz, throws GatewayError(401) when reachable-but-unauthorized, and
-  // returns false on a genuine network failure. We only persist a gateway that
-  // actually answered — an unreachable URL/QR is rejected with a clear reason.
+  // Handshake first: never save a gateway we cannot reach. We only persist a
+  // gateway that actually answered — an unreachable URL/QR is rejected with a
+  // clear reason, and every address it advertised says which one it was.
   //
   // A pairing payload carries `alts` (the gateway's other reachable hosts:
-  // Tailscale, LAN, tunnel). Every candidate is probed CONCURRENTLY and the most
-  // DURABLE one that answers wins — not the first to answer. Pairing happens
-  // standing next to the machine, where the LAN address is always the quickest
-  // to reply; saving that one pins the app to an address that dies the moment
-  // the phone leaves the house. All candidates are kept on the connection so a
-  // later failover/upgrade has somewhere to go.
+  // Tailscale, LAN, tunnel). All of them are kept on the connection so a later
+  // failover/upgrade has somewhere to go; `bestReachable` decides which one this
+  // device connects on, and reports the whole race while it runs.
   async function tryConn(conn: GatewayConn) {
-    setBusy(true);
-    setMsg(null);
     const { alts, ...base } = conn;
     const candidates = mergeAddresses([base.url], alts);
-    let unauthorized = false;
-    try {
-      const reachable = (
-        await Promise.all(
-          candidates.map(async (candidate) => {
-            try {
-              return (await new GatewayClient({ ...base, url: candidate }).ping()) ? candidate : null;
-            } catch (e) {
-              if (e instanceof GatewayError && e.status === 401) unauthorized = true;
-              return null;
+    const ctrl = new AbortController();
+    stopRef.current?.abort();
+    stopRef.current = ctrl;
+    setBusy(true);
+    setMsg(null);
+    setRun({
+      label: hostOf(conn.url),
+      startedAt: Date.now(),
+      candidates: candidates.map((candidate) => ({ url: candidate, state: 'probing' as const })),
+    });
+    const report = (candidate: string, verdict: Omit<CandidateProbe, 'url'>) =>
+      setRun((current) =>
+        current
+          ? {
+              ...current,
+              candidates: current.candidates.map((probe) =>
+                probe.url === candidate ? { ...probe, ...verdict } : probe,
+              ),
             }
-          }),
-        )
-      ).filter((candidate): candidate is string => candidate !== null);
+          : current,
+      );
 
-      const chosen = bestAddress(reachable);
+    try {
+      const { chosen, unauthorized } = await bestReachable(base, candidates, report, ctrl.signal);
+      // Stop means STOP, and the banner promises nothing was saved. Aborting the
+      // run settles whatever was still in flight, so an address that had already
+      // answered would otherwise be chosen and paired by the act of giving up.
+      if (ctrl.signal.aborted) {
+        setMsg({ kind: 'warn', text: `Stopped pairing with ${hostOf(conn.url)}. Nothing was saved.` });
+        return;
+      }
       if (chosen) {
         const candidate: GatewayConn = {
           ...base,
@@ -450,6 +700,8 @@ export function AddMachine({
     } catch (e) {
       setMsg({ kind: 'err', text: `Can't reach ${hostOf(conn.url)}: ${(e as Error).message}` });
     } finally {
+      if (stopRef.current === ctrl) stopRef.current = null;
+      setRun(null);
       setBusy(false);
     }
   }
@@ -473,10 +725,14 @@ export function AddMachine({
     await tryConn({ url: u, token: token.trim() || undefined, label: hostOf(u) });
   }
 
+  const secondsLeft = run
+    ? Math.max(0, Math.ceil((run.startedAt + PROBE_TIMEOUT_MS - Math.max(now, run.startedAt)) / 1000))
+    : 0;
+
   return (
     <div className="min-w-0">
       {scanning && (
-        <Suspense fallback={null}>
+        <Suspense fallback={<ScannerOpening onCancel={() => setScanning(false)} />}>
           <QrScanner
             onResult={(raw) => {
               setScanning(false);
@@ -517,7 +773,7 @@ export function AddMachine({
                 onClick={addFromPayload}
                 disabled={busy || !payload}
               >
-                {busy ? 'Checking\u2026' : 'Pair'}
+                {busy ? 'Pairing\u2026' : 'Pair'}
               </Button>
               <Button variant="secondary" onClick={() => setScanning(true)} disabled={busy}>
                 Scan QR
@@ -553,15 +809,23 @@ export function AddMachine({
               onClick={addManual}
               disabled={busy || !url}
             >
-              {busy ? 'Checking\u2026' : 'Connect'}
+              {busy ? 'Connecting\u2026' : 'Connect'}
             </Button>
           </div>
         </div>
       </div>
 
+      {run && (
+        <PairingProgress
+          run={run}
+          secondsLeft={secondsLeft}
+          onStop={() => stopRef.current?.abort()}
+        />
+      )}
+
       {msg && (
         <div className="mt-3">
-          <Banner kind={msg.kind === 'ok' ? 'ok' : 'err'}>{msg.text}</Banner>
+          <Banner kind={msg.kind}>{msg.text}</Banner>
         </div>
       )}
     </div>
