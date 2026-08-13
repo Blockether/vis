@@ -154,12 +154,26 @@
    `<line>:<hash>│ <text>`, one line per tuple, `indent` prefixed to each. This
    is the single renderer behind `cat`, `grep`'s hit rows and `patch`'s
    re-anchored window, so all three speak one format and any of their lines can
-   be split on `hashline-gutter` and fed straight back to `patch`."
+   be split on `hashline-gutter` and fed straight back to `patch`.
+
+   A CRLF file's lines still carry their `\\r`: `split-content-lines` splits on
+   `\\n` alone because the char offsets an edit splices at must count every
+   character the file really has. RENDERING drops that trailing CR — it is
+   invisible on screen, `line-hash` never saw it (the hash is of the TRIMMED
+   line, so the anchor is unchanged), and a model that copies a rendered line
+   back as a replacement would otherwise write a SECOND carriage return in."
   (^String [tuples] (render-hashline-block tuples ""))
   (^String [tuples ^String indent]
    (->> tuples
         (map (fn [[ln s]]
-               (str indent (line-anchor ln s) hashline-gutter s)))
+               (let
+                 [^String s
+                  (str s)
+
+                  ^String s
+                  (if (str/ends-with? s "\r") (subs s 0 (dec (.length s))) s)]
+
+                 (str indent (line-anchor ln s) hashline-gutter s))))
         (str/join "\n"))))
 
 ;; =============================================================================

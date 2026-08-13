@@ -4400,7 +4400,8 @@
 ;; The refusal payload crosses the boundary as ex-data -> tool failure -> wire.
 (s/def :ext.editing.patch/reason
   #{:anchor-malformed :anchor-line-out-of-range :anchor-not-found :anchor-misplaced
-    :anchor-range-inverted :parse-broken :file-not-found :path-is-dir :path-escape})
+    :anchor-range-inverted :replacement-missing :replacement-is-anchor :parse-broken :file-not-found
+    :path-is-dir :path-escape})
 (s/def :ext.editing.patch/current-anchor :ext.editing.hashline/anchor)
 (s/def :ext.editing.patch/stated-line pos-int?)
 (s/def :ext.editing.patch/found-lines (s/coll-of pos-int? :kind vector?))
@@ -4767,8 +4768,9 @@
 
 (defn- patch-status-line
   "The one status line every successful patch answers with: what was written,
-   the span it replaced, how the file's size moved, and the parse verdict."
-  [rel from-line to-line new-lines parse-clause]
+   the span it replaced, how the file's size moved, and the trailing `clauses`
+   the write earned — the parse verdict, and any note about the replacement."
+  [rel from-line to-line new-lines clauses]
   (let
     [old-lines
      (inc (- (long to-line) (long from-line)))
@@ -4786,7 +4788,7 @@
          new-lines
          (if (= 1 (long new-lines)) " line" " lines")
          (when-not (zero? delta) (str " (" (if (pos? delta) "+" "") delta ")"))
-         parse-clause)))
+         clauses)))
 
 (defn- patch-one
   "ONE anchored span replace. Atomic: every refusal happens BEFORE the write, so
@@ -4831,11 +4833,26 @@
           (:replacement span)
           (subs original (long (:end span))))
 
+     ;; Only a CODE grammar may gate a write. `detect-language` answers for every
+     ;; extension it knows — `.txt` is `vimdoc`, whose grammar reports an ERROR node
+     ;; on ordinary prose — so gating on it alone told EVERY prose edit that its file
+     ;; was broken. `index/code-languages` is the set where a parse error means
+     ;; something; vimdoc, markdown and csv are not in it.
      lang
-     (zipper/detect-language rel)
+     (let [l (zipper/detect-language rel)]
+       (when (contains? index/code-languages l) l))
 
      parse-clause
      (patch-parse-gate rel lang original updated from-line to-line)
+
+     ;; `cat`'s gutter is an ADDRESS, not text. A replacement that carries one is a
+     ;; copied read, and it lands in the file verbatim — say so on the status line
+     ;; rather than refuse, because our own docs quote sample `cat` output.
+     gutter-clause
+     (when (some (fn [l]
+                   (re-find #"^\s*\d+:[0-9a-f]{3}│ " (str l)))
+                 (hashline/split-content-lines new-text))
+       "  note: the replacement carries a `line:hash│ ` gutter, written verbatim")
 
      ;; is_dirty_ok: an anchored span replace is SURGICAL and content-verified —
      ;; the dirty guard exists to stop a blind whole-file rewrite, not this.
@@ -4872,22 +4889,62 @@
                                              (subvec new-lines (dec window-from) window-to)))
            "")]
 
-        (tool-success {:op :patch
-                       :path (get-in result [:plan :path])
-                       :kind :file
-                       :result (str (patch-status-line rel from-line to-line written parse-clause)
-                                    (when (seq window) (str "\n" window)))
-                       ;; The unified diff is METADATA, not payload: the human channel can
-                       ;; render the write in full while the model pays only for the
-                       ;; re-anchored window it will actually spend.
-                       :metadata {:mode :patch
-                                  :file-count 1
-                                  :changed-count (if (= original updated) 0 1)
-                                  :from-line from-line
-                                  :to-line to-line
-                                  :diff (unified-diff-text original updated)
-                                  :lines (line-change-counts original updated)
-                                  :file-befores [{:path rel :before original}]}})))))
+        (tool-success
+          {:op :patch
+           :path (get-in result [:plan :path])
+           :kind :file
+           :result
+           (str (patch-status-line rel from-line to-line written (str parse-clause gutter-clause))
+                (when (seq window) (str "\n" window)))
+           ;; The unified diff is METADATA, not payload: the human channel can
+           ;; render the write in full while the model pays only for the
+           ;; re-anchored window it will actually spend.
+           :metadata {:mode :patch
+                      :file-count 1
+                      :changed-count (if (= original updated) 0 1)
+                      :from-line from-line
+                      :to-line to-line
+                      :diff (unified-diff-text original updated)
+                      :lines (line-change-counts original updated)
+                      :file-befores [{:path rel :before original}]}})))))
+
+(defn- patch-call-shape!
+  "Refuse — before anything is resolved — the two CALL SHAPES that would damage a
+   file silently.
+
+   A `patch` with NO replacement deleted the span: `(str nil)` is the empty
+   string, so a truncated two-argument call erased a line and reported success.
+
+   A THREE-argument call whose replacement is itself an anchor is the span the
+   model meant to name: `patch(path, from, to)` writes the text `to` over line
+   `from` instead of replacing `from..to`. Both shapes are refused with the call
+   that was meant, because neither can be recovered by reading the result."
+  [path from-anchor replacement span?]
+  (let [rel (str path)]
+    (cond
+      (nil? replacement)
+      (patch-refusal!
+        rel
+        {:reason :replacement-missing}
+        [(str "  "
+              rel
+              "  from_anchor "
+              (pr-str (str from-anchor))
+              ", but no replacement was passed.")
+         "  patch(path, anchor, new) replaces ONE line; patch(path, from, to, new) replaces a span."
+         "  to DELETE the span, pass the empty replacement explicitly: patch(path, anchor, \"\")."])
+      (and (not span?) (hashline/anchor-string? replacement))
+      (patch-refusal!
+        rel
+        {:reason :replacement-is-anchor}
+        [(str "  " rel "  the replacement is an ANCHOR: " (pr-str (str replacement)))
+         "  three arguments mean (path, anchor, new_text) — that anchor would be WRITTEN over the line."
+         (str "  for the span "
+              from-anchor
+              ".."
+              replacement
+              " pass four arguments: patch(path, from, to, new).")
+         "  to write that text literally, name the span: patch(path, a, a, text)."]))))
 
 (defn- patch-tool
   "patch — replace an ANCHORED span with new text, in any language and in prose.
@@ -4901,10 +4958,14 @@
    purpose — the hash is what makes a wrong-line write impossible. Several edits
    in one block go BOTTOM-UP, highest line first, and then every anchor from the
    same read is still exact."
-  ([path] (patch-one path nil nil nil))
-  ([path from-anchor] (patch-one path from-anchor nil nil))
-  ([path anchor replacement] (patch-one path anchor anchor replacement))
-  ([path from-anchor to-anchor replacement] (patch-one path from-anchor to-anchor replacement)))
+  ([path] (patch-call-shape! path nil nil false))
+  ([path from-anchor] (patch-call-shape! path from-anchor nil false))
+  ([path anchor replacement]
+   (patch-call-shape! path anchor replacement false)
+   (patch-one path anchor anchor replacement))
+  ([path from-anchor to-anchor replacement]
+   (patch-call-shape! path from-anchor replacement true)
+   (patch-one path from-anchor to-anchor replacement)))
 
 (def cat-symbol
   (vis/symbol

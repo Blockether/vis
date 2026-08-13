@@ -9,7 +9,9 @@
 
 (def ^:private content "alpha\nbeta\n\ngamma\ndelta\n")
 
-(defn- anchor-of [n] (hashline/line-anchor n (nth (hashline/split-content-lines content) (dec (long n)))))
+(defn- anchor-of
+  [n]
+  (hashline/line-anchor n (nth (hashline/split-content-lines content) (dec (long n)))))
 
 (defdescribe anchor-token-test
              (it "an anchor is a line number, a colon and exactly three hex chars"
@@ -164,3 +166,27 @@
         (expect (every? #(string/starts-with? % "  ") (string/split-lines indented)))
         ;; The gutter never occurs in source, so splitting on it is exact.
         (expect (= "beta" (second (string/split (second (string/split-lines block)) #"│ " 2)))))))
+;; Regression: a CRLF file's rendered lines kept their `\r`, so the text a model
+;; sliced off `cat` output ended in a carriage return and writing it back grew a
+;; SECOND one. The hash never saw it — `line-hash` trims — so the anchor is the
+;; same either way; only the rendering was wrong.
+(defdescribe render-drops-the-carriage-return-test
+             (it "a CRLF line renders without its CR, under the same anchor"
+                 (let
+                   [lines
+                    (hashline/split-content-lines "alpha\r\nbeta\r\ngamma\r\n")
+
+                    block
+                    (hashline/render-hashline-block (map-indexed (fn [i l]
+                                                                   [(inc i) l])
+                                                                 lines))
+
+                    rendered
+                    (string/split-lines block)]
+
+                   ;; The content the file really carries still has the CR: the char offsets
+                   ;; an edit splices at count it.
+                   (expect (= ["alpha\r" "beta\r" "gamma\r"] lines))
+                   (expect (not-any? #(string/includes? % "\r") rendered))
+                   (expect (= (hashline/line-anchor 2 "beta") (hashline/line-anchor 2 "beta\r")))
+                   (expect (= (str (hashline/line-anchor 2 "beta") "│ beta") (second rendered))))))

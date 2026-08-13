@@ -1485,7 +1485,92 @@
          (:result (patch-one rel (anchor-at (cat-tool rel) 2) nil "there"))]
 
         (expect (not (string/includes? out "parse:")))
-        (expect (= "hello\nthere\n" (slurp rel))))))
+        (expect (= "hello\nthere\n" (slurp rel)))))
+  ;; Regression: the gate ran for EVERY grammar `detect-language` knows, and it
+  ;; knows `.txt` as `vimdoc` — whose grammar reports an ERROR node on ordinary
+  ;; prose. So every prose patch ended `parse: still broken at line N`, naming a
+  ;; line the file often did not even have. Only a CODE language may gate.
+  (it "prose and markdown carry no parse verdict, but code still does"
+      (let
+        [cat-tool
+         (comp :result (private-fn "cat-tool"))
+
+         patch-one
+         (private-fn "patch-one")
+
+         edit
+         (fn [rel content replacement]
+           (let [rel (write-temp! rel content)]
+             (:result (patch-one rel (anchor-at (cat-tool rel) 2) nil replacement))))]
+
+        (expect (not (string/includes? (edit "patch/prose.txt" "alpha\nbeta\n" "BETA") "parse:")))
+        (expect (not (string/includes? (edit "patch/notes.md" "# One\n\ntwo\n" "TWO") "parse:")))
+        (expect (string/includes? (edit "patch/code.py" "def f():\n    return 1\n" "    return 2")
+                                  "parse: clean")))))
+
+
+(defdescribe patch-call-shape-test
+             ;; Regression: `patch(path, anchor)` reported success and DELETED the line —
+             ;; a missing replacement reached the splice as `(str nil)`, the empty string.
+             (it "a patch with no replacement is refused, not treated as a deletion"
+                 (let
+                   [rel
+                    (write-temp! "patch/shape-missing.txt" "alpha\nbeta\n")
+
+                    patch-tool
+                    (private-fn "patch-tool")
+
+                    thrown
+                    (try (patch-tool rel (hashline/line-anchor 2 "beta"))
+                         nil
+                         (catch clojure.lang.ExceptionInfo e e))]
+
+                   (expect (some? thrown))
+                   (expect (= :replacement-missing (:reason (ex-data thrown))))
+                   (expect (string/includes? (ex-message thrown) "patch(path, anchor, \"\")"))
+                   (expect (= "alpha\nbeta\n" (slurp rel)))))
+             ;; Regression: `patch(path, from, to)` — the model naming a SPAN and forgetting
+             ;; the text — wrote the string `6:70a` over line 3 and reported success.
+             (it "an anchor passed as the replacement is refused, and names the 4-argument call"
+                 (let
+                   [rel
+                    (write-temp! "patch/shape-anchor.txt" "alpha\nbeta\ngamma\n")
+
+                    patch-tool
+                    (private-fn "patch-tool")
+
+                    a1
+                    (hashline/line-anchor 1 "alpha")
+
+                    a3
+                    (hashline/line-anchor 3 "gamma")
+
+                    thrown
+                    (try (patch-tool rel a1 a3) nil (catch clojure.lang.ExceptionInfo e e))]
+
+                   (expect (some? thrown))
+                   (expect (= :replacement-is-anchor (:reason (ex-data thrown))))
+                   (expect (string/includes? (ex-message thrown) (str a1 ".." a3)))
+                   (expect (= "alpha\nbeta\ngamma\n" (slurp rel)))
+                   ;; The span it named, and the escape hatch for writing that text literally.
+                   (expect (string/starts-with? (:result (patch-tool rel a1 a3 "ONE")) "patched "))
+                   (expect (= "ONE\n" (slurp rel)))))
+             ;; Regression: a replacement copied straight out of `cat` kept its `line:hash│ `
+             ;; gutter and landed in the file verbatim, silently — the gutter is an ADDRESS.
+             (it "a replacement carrying the gutter is written, and the status line says so"
+                 (let
+                   [rel
+                    (write-temp! "patch/shape-gutter.txt" "alpha\nbeta\n")
+
+                    patch-tool
+                    (private-fn "patch-tool")
+
+                    out
+                    (:result (patch-tool rel (hashline/line-anchor 2 "beta") "2:5f0│ BETA"))]
+
+                   (expect
+                     (string/includes? out "note: the replacement carries a `line:hash│ ` gutter"))
+                   (expect (= "alpha\n2:5f0│ BETA\n" (slurp rel))))))
 
 
 (defdescribe
