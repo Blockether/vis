@@ -12,6 +12,12 @@
 # happens here, while the choice is still a Python object: a redirect GraalPy
 # would discard becomes a pipe, and a daemon thread copies bytes between that
 # pipe and the descriptor the extension actually asked for.
+#
+# The second repair is the pid. Emulated posix answers `Popen.pid` with a
+# per-context child-slot index that it recycles after a reap, so the handle
+# named no OS process and, once the slot was reused, named a stranger. The host
+# hands over the pid it really started (`python-process-handler/pid-handoff`)
+# and the slot index is kept for the syscalls that are keyed on it.
 
 
 def __vis_install_process_redirect__():
@@ -180,10 +186,88 @@ def __vis_install_process_redirect__():
         sink_fd = None if sink is not None else os.dup(fd)
         return start_pump("vis-redirect-" + name, lambda: pump_out(pipe, sink, sink_fd))
 
+    # ---- The pid the handle carries -----------------------------------------
+    #
+    # GraalPy serves `subprocess` from its EMULATED posix here (the context has
+    # `allowNativeAccess false`), and that layer answers `Popen.pid` with a
+    # per-context CHILD SLOT INDEX - 1, 2, 3 ... - reusing a slot once its child
+    # is reaped. The number names no OS process (1 is init), so `ps`, `lsof`, a
+    # pidfile or a supervisor all miss it, and a pid kept past `wait()` names
+    # whichever child later took the slot. The host handler knows the pid it
+    # really started, so the handle carries THAT, and the slot index stays on
+    # `__vis_virtual_pid__` for the syscalls that are keyed on it.
+    claim_child_pid = globals().get("__vis_host_claim_child_pid__")
+
+    # The pairing: the host fills a one-slot handoff during the spawn this
+    # constructor makes, and the claim empties it. Serializing construction is
+    # what stops a `Popen` on another thread from claiming this one's pid.
+    spawn_lock = threading.RLock()
+
+    # Real OS pid -> the slot emulated posix answers to, while the child lives.
+    # Dropped on reap, so a stale pid raises instead of signalling a stranger.
+    slot_of_pid = {}
+
+    def adopt_real_pid(process):
+        """Put the child's real OS pid on `process`, keeping its slot index."""
+        if claim_child_pid is None:
+            return
+        try:
+            real = int(claim_child_pid())
+        except (TypeError, ValueError):
+            # Nothing reached the host handler, so there is no pid to hand
+            # over: the slot index stays rather than becoming a guess.
+            return
+        if real <= 0:
+            return
+        slot = process.pid
+        process.__vis_virtual_pid__ = slot
+        process.pid = real
+        slot_of_pid[real] = slot
+
+    def through_slot(method):
+        """`method`, run with the slot index emulated posix keys children on."""
+
+        def patched(self, *args, **kwargs):
+            slot = self.__dict__.get("__vis_virtual_pid__")
+            # `poll` inside `send_signal`, `_internal_poll` inside `wait`: the
+            # nested call arrives with the swap already made.
+            if slot is None or self.pid == slot:
+                return method(self, *args, **kwargs)
+            real, self.pid = self.pid, slot
+            try:
+                return method(self, *args, **kwargs)
+            finally:
+                self.pid = real
+                if self.returncode is not None:
+                    slot_of_pid.pop(real, None)
+
+        return patched
+
+    original_kill = os.kill
+    original_waitpid = os.waitpid
+
+    def patched_kill(pid, sig):
+        return original_kill(slot_of_pid.get(pid, pid), sig)
+
+    def patched_waitpid(pid, options=0):
+        slot = slot_of_pid.get(pid)
+        if slot is None:
+            return original_waitpid(pid, options)
+        reaped, status = original_waitpid(slot, options)
+        if not reaped:
+            return reaped, status
+        slot_of_pid.pop(pid, None)
+        # The caller asked about an OS pid and is answered with one.
+        return pid, status
+
     def patched_init(self, *args, **kwargs):
         args = list(args)
         taken = piped(args, kwargs)
-        original_init(self, *args, **kwargs)
+        with spawn_lock:
+            original_init(self, *args, **kwargs)
+            # Inside the lock: this claim empties the handoff the host filled
+            # during the spawn `original_init` just made.
+            adopt_real_pid(self)
         self.__vis_redirect_pumps__ = [
             pump_stdin(self, fd) if name == "stdin" else pump_output(self, name, fd)
             for name, fd in taken.items()
@@ -199,6 +283,14 @@ def __vis_install_process_redirect__():
 
     subprocess.Popen.__init__ = patched_init
     subprocess.Popen.wait = patched_wait
+    # Wrapped LAST, over the final functions: each of these reads `self.pid`,
+    # which is now the OS pid, while emulated posix only answers to the slot.
+    for name in ("poll", "wait", "send_signal", "_internal_poll"):
+        setattr(subprocess.Popen, name, through_slot(getattr(subprocess.Popen, name)))
+    # An extension that pulls the pid off the handle and calls a syscall with it
+    # gets what the methods get, including the raise once the child is reaped.
+    os.kill = patched_kill
+    os.waitpid = patched_waitpid
     subprocess.Popen.__vis_redirect_repaired__ = True
 
 

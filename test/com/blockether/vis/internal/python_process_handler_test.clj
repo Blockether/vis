@@ -10,13 +10,18 @@
    (`vis-python/process_redirect.py`): GraalPy discards a `stdout=`/`stderr=`/
    `stdin=` file or descriptor before the handler can see it, so the file an
    extension named stayed empty and a `stdin=` file hung the child on the
-   JVM's own stdin."
+   JVM's own stdin.
+
+   The last group covers the pid the guest ends up holding: emulated posix
+   answers `Popen.pid` with a per-context child-slot index it recycles after a
+   reap, so the handle named no OS process and later named a stranger."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.python-extensions :as pyx]
             [com.blockether.vis.internal.python-process-handler :as process-handler]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.io ByteArrayOutputStream]
+           [java.lang ProcessHandle]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
@@ -48,10 +53,10 @@
             (> (System/currentTimeMillis) deadline) false
             :else (do (Thread/sleep 20) (recur))))))
 
-(defn- start!
-  "Start one process through the contained handler, exactly as a guest would."
-  ^Process [emit {:keys [command directory environment merged? in out err]}]
-  (.start ^ProcessHandler (process-handler/contained-handler emit)
+(defn- start-on!
+  "Start one process through `handler`, exactly as a guest would."
+  ^Process [^ProcessHandler handler {:keys [command directory environment merged? in out err]}]
+  (.start handler
           (ProcessHandler$ProcessCommand/create (vec command)
                                                 directory
                                                 (or environment (into {} (System/getenv)))
@@ -59,6 +64,11 @@
                                                 (or in ProcessHandler$Redirect/INHERIT)
                                                 (or out ProcessHandler$Redirect/INHERIT)
                                                 (or err ProcessHandler$Redirect/INHERIT))))
+
+(defn- start!
+  "Start one process through a contained handler of its own."
+  ^Process [emit opts]
+  (start-on! (process-handler/contained-handler emit (process-handler/pid-handoff)) opts))
 
 (defn- slurp-stream
   ^String [stream]
@@ -519,3 +529,107 @@
                                               (str/includes? line "TO-SYS-STDOUT"))
                                             (lines-of seen "stdout"))))
                  (finally (.close ctx true))))))))
+
+
+;; =============================================================================
+;; The pid on the handle
+;; =============================================================================
+
+(defdescribe pid-handoff-test
+             ;; Regression, issue #142: the real pid never left the host handler, so the
+             ;; guest was left holding GraalPy's per-context child-slot index.
+             (it "hands the started child's OS pid over exactly once"
+                 (let
+                   [[_ emit]
+                    (recorder)
+
+                    handoff
+                    (process-handler/pid-handoff)
+
+                    ^Process started
+                    (start-on! (process-handler/contained-handler emit handoff)
+                               {:command ["/bin/sh" "-c" "exit 0"]})]
+
+                   (expect (= (.pid started) (process-handler/claim-pid! handoff))
+                           "the pid of the process this handler really started")
+                   (expect (nil? (process-handler/claim-pid! handoff))
+                           "an emptied slot answers nothing rather than the previous child")
+                   (.waitFor started))))
+
+(def ^:private reap-guest-children
+  "Terminate every child still running in the context. A `Context.close(true)`
+   throws while a sub-process is alive, and that exception would otherwise
+   replace the assertion failure a test is reporting."
+  (str "import subprocess\n"
+       "for __handle in list(globals().values()):\n"
+       "    if isinstance(__handle, subprocess.Popen) and __handle.poll() is None:\n"
+       "        __handle.terminate()\n" "        __handle.wait()\n"))
+
+(defn- in-guest
+  "Eval `code` in a real extension context and hand `check` the context, so an
+   assertion can run while the child is still alive."
+  [label ^String code check]
+  (let [^Context ctx (pyx/build-context label)]
+    (try (.eval ctx "python" code)
+         (check ctx)
+         (finally (try (.eval ctx "python" reap-guest-children) (catch Exception _ nil))
+                  (.close ctx true)))))
+
+(defn- member [^Context ctx name] (.getMember (.getBindings ctx "python") ^String name))
+
+(defdescribe
+  guest-real-pid-test
+  ;; Regression, issue #142: `Popen.pid` was GraalPy's per-context child-slot
+  ;; index — `1` for the first child of every context, and 1 is init — so the
+  ;; handle named no OS process, nothing could `ps`, `lsof` or supervise the
+  ;; child, and a pid kept past `wait()` named whichever child later took the
+  ;; recycled slot.
+  (it "puts the child's real OS pid on the handle and keeps the slot index"
+      (in-guest "real-pid.py"
+                (str "import subprocess\n" "child = subprocess.Popen(['/bin/sleep', '30'])\n"
+                     "pid = child.pid\n" "slot = getattr(child, '__vis_virtual_pid__', pid)\n")
+                (fn [ctx]
+                  (let
+                    [pid
+                     (.asLong (member ctx "pid"))
+
+                     slot
+                     (.asLong (member ctx "slot"))
+
+                     found
+                     (ProcessHandle/of pid)]
+
+                    (expect (= 1 slot) "the first child of a context still lands in the first slot")
+                    (expect (not= slot pid) "the handle carries a pid, not the slot index")
+                    (expect (.isPresent found) "the pid names a process the host can see")
+                    (expect (str/includes?
+                              (str (.orElse (.command (.info ^ProcessHandle (.get found))) ""))
+                              "sleep")
+                            "and it is the child the extension started")))))
+  (it "still polls, terminates and waits through the slot index"
+      (in-guest "real-pid-signals.py"
+                (str "import subprocess\n" "child = subprocess.Popen(['/bin/sleep', '30'])\n"
+                     "alive = child.poll() is None\n" "child.terminate()\n"
+                     "code = child.wait()\n" "reaped = child.poll()\n")
+                (fn [ctx]
+                  (expect (.asBoolean (member ctx "alive")))
+                  (expect (= -15 (.asInt (member ctx "code"))) "SIGTERM reached the child")
+                  (expect (= -15 (.asInt (member ctx "reaped")))))))
+  (it "signals a live child by its OS pid and never signals a recycled slot"
+      (in-guest "real-pid-recycled.py"
+                (str "import os, signal, subprocess\n"
+                     "first = subprocess.Popen(['/bin/sleep', '30'])\n"
+                     "os.kill(first.pid, signal.SIGTERM)\n" "first_code = first.wait()\n"
+                     ;; Reaping `first` frees the slot it held, so this child takes it.
+                     "second = subprocess.Popen(['/bin/sleep', '31'])\n"
+                     "distinct = first.pid != second.pid\n"
+                     "try:\n" "    os.kill(first.pid, signal.SIGTERM)\n"
+                     "    stale = 'accepted'\n" "except Exception as error:\n"
+                     "    stale = type(error).__name__\n" "second_alive = second.poll() is None\n")
+                (fn [ctx]
+                  (expect (= -15 (.asInt (member ctx "first_code")))
+                          "os.kill with the real pid reached the child")
+                  (expect (.asBoolean (member ctx "distinct")) "two children never share a pid")
+                  (expect (.asBoolean (member ctx "second_alive"))
+                          (str "the reaped child's pid signalled nobody, os.kill answered "
+                               (.asString (member ctx "stale"))))))))

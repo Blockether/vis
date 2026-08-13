@@ -94,7 +94,9 @@
    JVM's own stdin. The choice is gone before `internal.python-process-handler`
    can see it, so the repair has to happen while it is still a Python object -
    `vis-python/process_redirect.py` turns it into a pipe pumped to the
-   descriptor the extension actually named."
+   descriptor the extension actually named — and, in the same pass, puts the
+   child's real OS pid on the `Popen` handle in place of GraalPy's per-context
+   child-slot index."
   (env/runtime-python-src "vis-python/process_redirect.py"))
 
 ;; =============================================================================
@@ -291,11 +293,17 @@
    `redirect-repair-python` is evaluated into the finished context because
    the host handler cannot see a redirect GraalPy already discarded - the two
    halves together are what makes an extension's process output land where
-   the extension asked for it."
+   the extension asked for it. The same pair repairs `Popen.pid`: the handler
+   hands every child's real OS pid to the guest through `pid-handoff`, because
+   emulated posix would otherwise leave the extension holding a per-context
+   child-slot index that names no process."
   ^Context [label]
   (let
     [emit
      (process-handler/log-emit label)
+
+     handoff
+     (process-handler/pid-handoff)
 
      ^Context ctx
      (-> (Context/newBuilder (into-array String ["python"]))
@@ -311,9 +319,15 @@
                                                    (emit "stdout" line))))
          (.err (process-handler/line-sink-stream (fn [line]
                                                    (emit "stderr" line))))
-         (.processHandler (process-handler/contained-handler emit))
+         (.processHandler (process-handler/contained-handler emit handoff))
          (.build))]
 
+    ;; Bound BEFORE the repair evaluates, because the repair captures it: it is
+    ;; how the guest's `Popen` learns the OS pid of the child it just started.
+    (.putMember (.getBindings ctx "python")
+                "__vis_host_claim_child_pid__"
+                (->executable (fn []
+                                (process-handler/claim-pid! handoff))))
     (.eval ctx "python" ^String redirect-repair-python)
     ctx))
 

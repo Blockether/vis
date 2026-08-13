@@ -773,7 +773,7 @@ your permissions, not that it owns Vis' terminal. Any stream the extension does
 not read itself — a child's stdout/stderr, the context's own `print()` and
 tracebacks — is piped, drained and logged under the extension's file name, so it
 lands in the diagnostic log instead of on whatever terminal happens to own the
-running Vis. Four consequences worth knowing before you write one:
+running Vis. Five consequences worth knowing before you write one:
 
 - A child that asks `isatty()` about an uncaptured stream now sees a pipe:
   progress bars render plain and a genuinely interactive child cannot work.
@@ -792,6 +792,12 @@ running Vis. Four consequences worth knowing before you write one:
   so `Popen(stdout=PIPE)` followed by `wait()` still completes. Beyond that the
   child is throttled until you read — never dropped — so a child that streams
   without end still needs you to read it or close the stream.
+- `Popen.pid` is the child's real OS pid, so `ps`, `lsof`, a pidfile or your own
+  supervisor all find it, and `poll()`, `wait()`, `terminate()` and
+  `os.kill(p.pid, sig)` work on it. GraalPy's emulated posix would otherwise
+  hand you a per-context child-slot index (`1`, `2`, ..., reused after a reap);
+  Vis replaces it and keeps the index on `__vis_virtual_pid__` for its own use.
+  A pid held past `wait()` names a dead process rather than another child.
 
 Ordinary process paths stay trusted and unrestricted: `subprocess`, `os.system`,
 `os.popen`, and `vis.shell({...})` ignore the process jail even when a session has
