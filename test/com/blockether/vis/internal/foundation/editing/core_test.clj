@@ -22,6 +22,7 @@
             [com.blockether.vis.internal.foundation.environment.core :as environment]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.foundation.editing.escapes :as escapes]
+            [com.blockether.vis.internal.foundation.editing.hashline :as hashline]
             [com.blockether.vis.internal.foundation.editing.structural :as structural]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.env-python :as ep]
@@ -31,6 +32,28 @@
 (defn- private-fn
   [name]
   (deref (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" name))))
+
+(defn- anchor-at
+  "The anchor `cat`/`patch`/`grep` printed for line `n` in one anchored text
+   block. Splitting on the gutter is exactly what the model does, so the tests
+   address lines the same way the contract promises."
+  [text n]
+  (->> (string/split-lines text)
+       (keep (fn [line]
+               (let [[a _] (string/split line #"│ " 2)]
+                 (when (= (str n) (first (string/split (string/trim (str a)) #":")))
+                   (string/trim a)))))
+       first))
+
+(defn- grep-data-fn
+  "grep answers in anchored TEXT now — `grep-tool` IS `render-grep-text` over
+   `grep-data`'s map — so every assertion about counts, keys, scopes, hints and
+   paging reads that pure core, wrapped in the same `{:result …}` envelope the
+   tool used to hand back. The RENDERING has its own describes below."
+  []
+  (let [f (private-fn "grep-data")]
+    (fn [& args]
+      {:symbol :grep :success? true :result (apply f args)})))
 
 (defn- ls-rows
   "Rows of the sandbox `ls` helper for one request map. `nil` environment is what
@@ -835,7 +858,7 @@
        (private-fn "rg-search")
 
        find-tool
-       (private-fn "grep-tool")
+       (grep-data-fn)
 
        rg
        ;; grep returns ONE flat result — content hits already sit at the top
@@ -872,7 +895,7 @@
        (private-fn "rg-search")
 
        find-tool
-       (private-fn "grep-tool")
+       (grep-data-fn)
 
        rg
        (fn [& a]
@@ -1032,47 +1055,448 @@
         (expect (not (string/includes? text "clipped"))))))
 
 (defdescribe
-  anchored-verbs-are-gone-test
-  ;; The `lineno:hash` verbs left the surface: reading a file whole is plain
-  ;; Python and every edit goes through `struct_patch`. Nothing may quietly
-  ;; grow them back — not a var, not a symbol, not a sandbox binding.
-  (it "bash helpers fully removed from the editing core"
-      (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
-                                     "run-bash-safe"))))
-      (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
-                                     "bash-tool"))))
-      (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
-                                     "strict-bash-command"))))
-      (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
-                                     "coerce-bash-opts"))))
-      (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
-                                     "bash-warnings"))))
-      (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
-                                     "channel-render-bash"))))
-      (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
-                                     "journal-render-bash")))))
-  (it "the anchored read/write verbs left the namespace"
+  anchored-verbs-are-back-test
+  ;; The inverse of the guard that used to keep these dead. `struct_patch`
+  ;; addresses a NAMED definition in a parsed language; prose, config, a comment,
+  ;; a docstring line and every unsupported language have no name and no node, so
+  ;; the only address left was the old text quoted back. `cat` mints the address
+  ;; and `patch` spends it — neither may quietly disappear again.
+  (it "bash helpers stay fully removed from the editing core"
       (doseq
-        [v ["cat-tool" "cat-symbol" "cat-one" "read-file" "read-file-ranges" "read-file-by-anchor"
-            "tail-file" "patch-tool" "patch-symbol" "patch-safe" "patch-analysis"
-            "coerce-patch-edits" "changed-region-anchors" "fresh-anchor-max-lines"]]
+        [v ["run-bash-safe" "bash-tool" "strict-bash-command" "coerce-bash-opts" "bash-warnings"
+            "channel-render-bash" "journal-render-bash"]]
         (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" v))))))
-  ;; The `lineno:hash` HANDLE is gone too, not just the verbs that consumed it:
-  ;; the hashline namespace was deleted and only the escape decoder survived it.
-  (it "the hashline namespace is gone and nothing re-requires it"
-      (expect (nil? (find-ns 'com.blockether.vis.internal.foundation.editing.patch)))
-      (expect (= :missing
-                 (try (require 'com.blockether.vis.internal.foundation.editing.patch)
+  (it "the anchored read/write verbs are in the namespace"
+      (doseq [v ["cat-tool" "cat-symbol" "cat-one" "patch-tool" "patch-symbol" "patch-one"]]
+        (expect (some? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
+                                        v))))))
+  ;; The multi-edit batch and its serializer-damage coercion layer stay dead: one
+  ;; call is one file is one span, and several calls in one block are the batch.
+  (it "no batch coercion layer came back with them"
+      (doseq [v ["coerce-patch-edits" "patch-analysis" "patch-safe" "read-file-by-anchor"]]
+        (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" v))))))
+  (it "the hashline namespace loads and owns the anchor"
+      (expect (= :loaded
+                 (try (require 'com.blockether.vis.internal.foundation.editing.hashline)
                       :loaded
                       (catch Exception _ :missing))))
+      (expect (= "12:000" (hashline/line-anchor 12 "")))
+      (expect (re-matches #"\d+:[0-9a-f]{3}" (hashline/line-anchor 7 "(defn f [] 1)")))
       (expect (some? (resolve (symbol "com.blockether.vis.internal.foundation.editing.escapes"
                                       "decode-unicode-escapes")))))
-  (it "no editing symbol is advertised under the retired names"
+  (it "both verbs are advertised beside the structural ones"
       (let [names (set (map #(str (:ext.symbol/symbol %)) (editing/available-editing-symbols)))]
-        (expect (not (contains? names "cat")))
-        (expect (not (contains? names "patch")))
+        (expect (contains? names "cat"))
+        (expect (contains? names "patch"))
         (expect (contains? names "struct_patch"))
         (expect (contains? names "grep")))))
+
+
+(defdescribe cat-returns-anchored-string-test
+             (it "every line is addressable, blanks included"
+                 (let
+                   [rel
+                    (write-temp! "cat/anchored.clj" "(ns a)\n\n(defn one [] 1)\n(defn two [] 2)\n")
+
+                    cat-tool
+                    (private-fn "cat-tool")
+
+                    out
+                    (cat-tool rel)
+
+                    lines
+                    (string/split-lines out)]
+
+                   ;; A plain String, never a map: `print(cat(...))` IS the whole surface.
+                   (expect (string? out))
+                   (expect (= 4 (count lines)))
+                   (expect (every? #(re-matches #"\d+:[0-9a-f]{3}│ .*" %) lines))
+                   ;; The blank line carries an anchor too, so the read is gap-free.
+                   (expect (string/starts-with? (nth lines 1) "2:000│"))))
+             (it "an anchor endpoint and a line number select the same window"
+                 (let
+                   [rel
+                    (write-temp! "cat/endpoints.txt" "alpha\nbeta\ngamma\ndelta\n")
+
+                    cat-tool
+                    (private-fn "cat-tool")
+
+                    by-number
+                    (cat-tool rel 2 3)
+
+                    anchor-from
+                    (first (string/split (first (string/split-lines by-number)) #"│"))
+
+                    by-anchor
+                    (cat-tool rel anchor-from 3)]
+
+                   (expect (= by-number by-anchor))
+                   (expect (= 2 (count (string/split-lines by-number))))))
+             (it "a window is capped and the clip names the call that continues it"
+                 (let
+                   [rel
+                    (write-temp! "cat/big.txt"
+                                 (string/join "\n" (map #(str "line " %) (range 1 3001))))
+
+                    cat-tool
+                    (private-fn "cat-tool")
+
+                    out
+                    (cat-tool rel)
+
+                    lines
+                    (string/split-lines out)]
+
+                   (expect (= 2001 (count lines)))
+                   (expect (string/starts-with? (last lines) "… clipped at 2000 lines"))
+                   (expect (string/includes? (last lines) "continue with cat("))
+                   (expect (string/includes? (last lines) ", 2001, "))))
+             (it "an unreadable path and an inverted window both refuse"
+                 (let [cat-tool (private-fn "cat-tool")]
+                   (expect (throws? clojure.lang.ExceptionInfo #(cat-tool "does/not/exist.txt")))
+                   (expect (throws? clojure.lang.ExceptionInfo
+                                    #(cat-tool (write-temp! "cat/inv.txt" "a\nb\nc\n") 3 1))))))
+
+
+(defdescribe
+  patch-spends-the-anchor-test
+  (it "returns a re-anchored window whose anchors resolve on the very next patch"
+      (let
+        [rel
+         (write-temp! "patch/window.txt" "one\ntwo\nthree\nfour\nfive\nsix\nseven\n")
+
+         cat-tool
+         (private-fn "cat-tool")
+
+         patch-one
+         (private-fn "patch-one")
+
+         a4
+         (anchor-at (cat-tool rel) 4)
+
+         first-out
+         (:result (patch-one rel a4 a4 "FOUR"))
+
+         ;; No `cat` between the two edits: the window patch just answered with
+         ;; is the address the next edit spends.
+         a5
+         (anchor-at first-out 5)
+
+         second-out
+         (:result (patch-one rel a5 a5 "FIVE"))]
+
+        (expect (string/starts-with? first-out "patched "))
+        (expect (string/includes? first-out "4..4 → 1 line"))
+        (expect (string/includes? first-out "4:"))
+        (expect (string/includes? second-out "5..5 → 1 line"))
+        (expect (= "one\ntwo\nthree\nFOUR\nFIVE\nsix\nseven\n" (slurp rel)))))
+  (it "a span replace and an empty replacement both report the size they moved"
+      (let
+        [rel
+         (write-temp! "patch/span.txt" "a\nb\nc\nd\ne\n")
+
+         cat-tool
+         (private-fn "cat-tool")
+
+         patch-one
+         (private-fn "patch-one")
+
+         text
+         (cat-tool rel)
+
+         shrunk
+         (:result (patch-one rel (anchor-at text 2) (anchor-at text 4) "B"))
+
+         deleted
+         (:result (patch-one rel (anchor-at (cat-tool rel) 1) nil ""))]
+
+        (expect (string/includes? shrunk "2..4 → 1 line (-2)"))
+        (expect (string/includes? deleted "→ 0 lines (-1)"))
+        (expect (= "B\ne\n" (slurp rel)))))
+  (it "a stale anchor is refused with the fresh one attached and nothing is written"
+      (let
+        [rel
+         (write-temp! "patch/stale.txt" "alpha\nbeta\ngamma\n")
+
+         cat-tool
+         (private-fn "cat-tool")
+
+         patch-one
+         (private-fn "patch-one")
+
+         stale
+         (anchor-at (cat-tool rel) 2)
+
+         _
+         (patch-one rel stale stale "BETA")
+
+         before
+         (slurp rel)
+
+         thrown
+         (try (patch-one rel stale stale "again") nil (catch clojure.lang.ExceptionInfo e e))]
+
+        (expect (some? thrown))
+        (expect (= :anchor-not-found (:reason (ex-data thrown))))
+        (expect (string/starts-with? (ex-message thrown) "patch refused — nothing was written."))
+        ;; The recovery is IN the refusal: one retry, not a re-read.
+        (expect (string/includes? (ex-message thrown) "current anchor at 2 →"))
+        (expect (string/includes? (ex-message thrown) (hashline/line-anchor 2 "BETA")))
+        (expect (= before (slurp rel)))))
+  (it "an anchor whose content moved far away is refused as misplaced"
+      (let
+        [rel
+         (write-temp! "patch/misplaced.txt"
+                      (string/join "\n" (concat ["needle"] (map #(str "filler " %) (range 1 200)))))
+
+         patch-one
+         (private-fn "patch-one")
+
+         moved
+         (str "160:" (hashline/line-hash "needle"))
+
+         thrown
+         (try (patch-one rel moved moved "x") nil (catch clojure.lang.ExceptionInfo e e))]
+
+        (expect (some? thrown))
+        (expect (= :anchor-misplaced (:reason (ex-data thrown))))
+        (expect (string/includes? (ex-message thrown) "drift window"))))
+  (it "a bare line number is refused — patch verifies, it does not guess"
+      (let
+        [rel
+         (write-temp! "patch/bare.txt" "alpha\nbeta\n")
+
+         patch-one
+         (private-fn "patch-one")
+
+         thrown
+         (try (patch-one rel "2" "2" "BETA") nil (catch clojure.lang.ExceptionInfo e e))]
+
+        (expect (some? thrown))
+        (expect (= :anchor-malformed (:reason (ex-data thrown))))
+        (expect (= "alpha\nbeta\n" (slurp rel))))))
+
+
+(defdescribe
+  patch-parse-gate-test
+  (it "a write that would break the parse is refused and nothing lands"
+      (let
+        [rel
+         (write-temp! "patch/gate.clj" "(ns gate)\n\n(defn ok [] 1)\n")
+
+         cat-tool
+         (private-fn "cat-tool")
+
+         patch-one
+         (private-fn "patch-one")
+
+         a3
+         (anchor-at (cat-tool rel) 3)
+
+         thrown
+         (try (patch-one rel a3 a3 "(defn ok [] 1") nil (catch clojure.lang.ExceptionInfo e e))]
+
+        (expect (some? thrown))
+        (expect (= :parse-broken (:reason (ex-data thrown))))
+        (expect (string/includes? (ex-message thrown) "would not parse"))
+        (expect (string/includes? (ex-message thrown) "parsed clean before this edit"))
+        (expect (= "(ns gate)\n\n(defn ok [] 1)\n" (slurp rel)))))
+  (it "an ALREADY broken file still accepts an edit — you must be able to repair it"
+      (let
+        [rel
+         (write-temp! "patch/broken.clj" "(ns broken)\n\n(defn oops [] 1\n")
+
+         cat-tool
+         (private-fn "cat-tool")
+
+         patch-one
+         (private-fn "patch-one")
+
+         a3
+         (anchor-at (cat-tool rel) 3)
+
+         out
+         (:result (patch-one rel a3 a3 "(defn oops [] 1)"))]
+
+        (expect (string/starts-with? out "patched "))
+        (expect (= "(ns broken)\n\n(defn oops [] 1)\n" (slurp rel)))))
+  (it "an unsupported language has no parse gate and no parse clause"
+      (let
+        ;; An extension tree-sitter has no grammar for: prose and config are
+        ;; exactly what `patch` exists to reach, and they must not be gated.
+        [rel
+         (write-temp! "patch/plain.zzz" "hello\nworld\n")
+
+         cat-tool
+         (private-fn "cat-tool")
+
+         patch-one
+         (private-fn "patch-one")
+
+         out
+         (:result (patch-one rel (anchor-at (cat-tool rel) 2) nil "there"))]
+
+        (expect (not (string/includes? out "parse:")))
+        (expect (= "hello\nthere\n" (slurp rel))))))
+
+
+(defdescribe
+  grep-returns-anchored-text-test
+  (it "line 1 summarizes and every content row carries an anchor"
+      (let
+        [d
+         (temp-dir-path "greptext")
+
+         _
+         (write-temp! "greptext/one.txt" "alpha\nZZNEEDLEZZ here\nomega\n")
+
+         grep-tool
+         (private-fn "grep-tool")
+
+         out
+         (:result (grep-tool {"query" "ZZNEEDLEZZ" "paths" [d]}))
+
+         lines
+         (string/split-lines out)]
+
+        (expect (string? out))
+        (expect (string/starts-with? (first lines) "grep 'ZZNEEDLEZZ'"))
+        (expect (string/includes? (first lines) "1 hit · 1 file"))
+        (expect (some #(re-matches #"  \d+:[0-9a-f]{3}│ .*" %) lines))))
+  (it "context lines are anchored too, so a context line is directly patchable"
+      (let
+        [d
+         (temp-dir-path "greptextctx")
+
+         _
+         (write-temp! "greptextctx/two.txt" "one\ntwo\nZZCTXZZ\nfour\nfive\n")
+
+         grep-tool
+         (private-fn "grep-tool")
+
+         rows
+         (->> (:result (grep-tool {"query" "ZZCTXZZ" "paths" [d] "context" 1}))
+              string/split-lines
+              (filter #(string/starts-with? % "  ")))]
+
+        (expect (= 3 (count rows)))
+        (expect (every? #(re-matches #"  \d+:[0-9a-f]{3}│ .*" %) rows))))
+  (it "zero hits is the summary plus the hint that explains it"
+      (let
+        [d
+         (temp-dir-path "greptextzero")
+
+         _
+         (write-temp! "greptextzero/three.txt" "nothing to see\n")
+
+         grep-tool
+         (private-fn "grep-tool")
+
+         out
+         (:result (grep-tool {"query" "ZZABSENT.*ZZ" "paths" [d]}))]
+
+        (expect (string/includes? out "0 hits · 0 files"))
+        (expect (string/includes? out "hint: "))
+        (expect (string/includes? out "regex syntax is not interpreted"))))
+  (it
+    "a capped sweep names the exact next call on line 1, breadth included"
+    (let
+      [render
+       (private-fn "render-grep-text")
+
+       head
+       (first (string/split-lines (render {"query" "defdescribe"
+                                           "matches" {}
+                                           "paths" []
+                                           "hit_count" 50
+                                           "file_count" 11
+                                           "total_file_count" 136
+                                           "total_file_count_is_exact" true
+                                           "hits_truncated_by" "limit"
+                                           "next_offset" 50})))]
+
+      (expect
+        (=
+          "grep 'defdescribe'  50 hits · 11 of 136 files  capped by limit → grep({…, \"offset\": 50})"
+          head)))))
+
+
+(defdescribe a-grep-hit-is-a-patch-anchor-test
+             ;; The point of the whole scheme: search, then edit, with NO read between.
+             (it "a hit's anchor feeds patch directly"
+                 (let
+                   [d
+                    (temp-dir-path "grepanchor")
+
+                    rel
+                    (write-temp! "grepanchor/target.txt" "keep\nZZHITZZ line\nkeep\n")
+
+                    grep-tool
+                    (private-fn "grep-tool")
+
+                    patch-one
+                    (private-fn "patch-one")
+
+                    hit-row
+                    (->> (:result (grep-tool {"query" "ZZHITZZ" "paths" [d]}))
+                         string/split-lines
+                         ;; Content rows are the indented ones; line 1 is the summary
+                         ;; and it echoes the query, so it must not be mistaken for a hit.
+                         (filter #(re-matches #"  \d+:[0-9a-f]{3}│ .*" %))
+                         first)
+
+                    anchor
+                    (string/trim (first (string/split hit-row #"│ ")))
+
+                    out
+                    (:result (patch-one rel anchor anchor "replaced"))]
+
+                   (expect (re-matches #"\d+:[0-9a-f]{3}" anchor))
+                   (expect (string/starts-with? out "patched "))
+                   (expect (= "keep\nreplaced\nkeep\n" (slurp rel))))))
+
+
+(defdescribe
+  struct-index-rows-are-patch-anchors-test
+  (it "a definition row's anchor feeds patch with no cat between"
+      (let
+        [rel
+         (write-temp! "structanchor/rows.clj"
+                      "(ns rows)\n\n(defn alpha [] 1)\n\n(defn beta [] 2)\n")
+
+         index-tool
+         (private-fn "index-tool")
+
+         patch-one
+         (private-fn "patch-one")
+
+         row
+         (->> (get-in (index-tool {"paths" [rel]}) [:result "results" 0 "definitions"])
+              (filter #(= "alpha" (get % "name")))
+              first)
+
+         out
+         (:result (patch-one rel (get row "anchor") (get row "end_anchor") "(defn alpha [] 42)"))]
+
+        ;; The anchor rides BESIDE the line, never instead of it: struct_nodes
+        ;; still consumes the row's `line` as data.
+        (expect (= 3 (get row "line")))
+        (expect (re-matches #"\d+:[0-9a-f]{3}" (get row "anchor")))
+        (expect (string/starts-with? out "patched "))
+        (expect (string/includes? (slurp rel) "(defn alpha [] 42)"))))
+  (it "a struct_nodes entry carries its anchor too"
+      (let
+        [rel
+         (write-temp! "structanchor/nodes.clj" "(ns nodes)\n\n(defn gamma [] 3)\n")
+
+         nodes-tool
+         (private-fn "nodes-tool")
+
+         entry
+         (first (get-in (nodes-tool {"path" rel "nodes" [{"line" 3}]}) [:result "results"]))]
+
+        (expect (= 3 (get entry "line")))
+        (expect (re-matches #"\d+:[0-9a-f]{3}" (get entry "anchor"))))))
 
 
 (defdescribe
@@ -2262,7 +2686,7 @@
   "The `rg` TOOL over real files: the comma-split + smart-case fixes end-to-end."
   (let
     [find-tool
-     (private-fn "grep-tool")
+     (grep-data-fn)
 
      rg
      (fn [& a]
@@ -2677,7 +3101,7 @@
              "`grep` and `struct_nodes` take ONE options map — never a positional query or path."
              (let
                [grep-tool
-                (private-fn "grep-tool")
+                (grep-data-fn)
 
                 nodes-tool
                 (private-fn "nodes-tool")
@@ -2717,7 +3141,7 @@
                      (expect (:success? (nodes-tool {"path" p})))))))
 
 (defdescribe find-files-directory-scope-test
-             (let [find-files (private-fn "grep-tool")]
+             (let [find-files (grep-data-fn)]
                (it "does not widen an existing filename scope to its parent on zero content hits"
                    (let
                      [dir (temp-dir-path "find-file-parent")
@@ -2755,7 +3179,7 @@
   (it "expands the default scope into the primary and searchable workspace roots"
       (let
         [grep-tool
-         (private-fn "grep-tool")
+         (grep-data-fn)
 
          rel-path
          (private-fn "rel-path")
@@ -2796,7 +3220,7 @@
    the whole answer, so a paging loop terminates on a value test."
   (let
     [grep-tool
-     (private-fn "grep-tool")
+     (grep-data-fn)
 
      page
      (fn [spec]
@@ -2885,7 +3309,7 @@
      (private-fn "content-result")
 
      find-files
-     (private-fn "grep-tool")]
+     (grep-data-fn)]
 
     (it "a content sweep capped by the hit limit reports hits_truncated_by"
         (let
@@ -3141,7 +3565,7 @@
           (expect (= 30 (get out "item_count")))))
     (it "EVERY grep result carries the SAME TOTAL key set — hit, miss, ls, stale scope"
         (let
-          [gt (private-fn "grep-tool")
+          [gt (grep-data-fn)
            _ (write-temp! "greptotal/one.clj" ";; needle-total\n")
            dir (temp-dir-path "greptotal")
            ks #(set (keys (:result %)))
@@ -3996,11 +4420,12 @@
          ls-shim
          (some #(when (= "ls" (:shim/name %)) %) (extension/sandbox-shims))]
 
-        ;; `cat` and `patch` left the surface entirely: no binding, no doc entry.
-        (expect (nil? (get bind 'cat)))
-        (expect (nil? (get docs 'cat)))
-        (expect (nil? (get bind 'patch)))
-        (expect (nil? (get docs 'patch)))
+        ;; `cat` and `patch` are BOUND and DOCUMENTED: the anchored read/write
+        ;; pair is a first-class part of the sandbox surface again.
+        (expect (some? (get bind 'cat)))
+        (expect (some? (get docs 'cat)))
+        (expect (some? (get bind 'patch)))
+        (expect (some? (get docs 'patch)))
         ;; `ls` left the tool layer too: a shim global, never an engine-bound
         ;; symbol, so it costs no schema and no tool result.
         (expect (nil? (get bind 'ls)))
@@ -4257,7 +4682,7 @@
    kill and return nothing at all."
   (let
     [gt
-     (private-fn "grep-tool")
+     (grep-data-fn)
 
      rg-search
      (private-fn "rg-search")

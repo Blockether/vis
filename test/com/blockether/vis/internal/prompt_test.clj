@@ -84,7 +84,7 @@
       ;; The win of that change is not here; it is the provider `:tools` payload, which
       ;; went from eighteen JSON Schemas to one.
       ;; 4.75k → 4.8k exactly once more, for the fifty characters that make §6 executable:
-      ;; the section ordered a fold and named no callable, so `session_fold`'s NAME and call
+      ;; the section ordered a fold and named no callable, so `fold_session`'s NAME and call
       ;; shape now ride inline. A rule the model cannot execute costs its whole section.
       ;; 4.8k → 5k exactly once more, for the budget line: `session_utilization` reports
       ;; `saturation`/`headroom_tokens` against the HARD per-call limit, while every fold
@@ -92,7 +92,14 @@
       ;; `auto_compress_above`. On a 1M-window model 150k of the 200k operating budget reads
       ;; as `saturation 15%, headroom 850k`, so "watch `session[\"utilization\"]`" pointed the
       ;; model at the one pair of numbers that stays calm while the budget empties.
-      (expect (< (count text) 5000))
+      ;; 5k → 5.5k exactly once more, for the two verbs that give an edit a COORDINATE:
+      ;; `cat` mints `line:hash` and `patch` spends it. §3 previously ordered the opposite —
+      ;; "CHANGING the tree is plain Python" — and that sentence is gone, but naming both
+      ;; verbs, the anchor format the model has to recognize, and the bottom-up rule for
+      ;; several edits in one block does not fit in what it freed. Measured against 40 real
+      ;; sessions, the instruction it replaces cost 48% of ALL block characters in blocks
+      ;; that write a file, 80% of it the old text quoted back; this is the cheaper order.
+      (expect (< (count text) 5500))
       (let
         [steps (mapv #(str/index-of text %)
                      ["`grep` locates unknown code" "`struct_index` every known file"
@@ -114,7 +121,9 @@
       ;; native verbs again would re-open the `mkdir -p`/`test -f` reflex it exists to close.
       (doseq [verb ["`copy`" "`move`" "`delete`" "`create_directory`" "`file_exists`"]]
         (expect (not (str/includes? text verb))))
-      (expect (str/includes? text "CHANGING the tree is plain Python"))
+      ;; The routing rule survived the arrival of `patch`: a filesystem CHANGE that is not
+      ;; an ADDRESSED edit — create, move, delete — is still Python, never a native verb.
+      (expect (str/includes? text "creating/moving/deleting is plain Python"))
       ;; The shell is a Python call now, not a native tool: the core must say WHERE it lives.
       (expect (str/includes? text "`shell(...)` runs programs"))
       (expect (str/includes? text "No shell TOOL"))
@@ -163,9 +172,9 @@
                    "the gist discards outright" "named unresolved decision blocks the edit"
                    "no repeated search/read"
                    ;; Regression, user report: sessions stopped folding. §6 ORDERED the fold
-                   ;; but named no callable, so `session_fold` had to be remembered or
+                   ;; but named no callable, so `fold_session` had to be remembered or
                    ;; rediscovered through `doc()` — every other verb in the core is named.
-                   "`session_fold(target, gist)`" "Fold obsolete settled work"
+                   "`fold_session(target, gist)`" "Fold obsolete settled work"
                    "one broad `through`/range fold"
                    ;; Nothing stores a folded step for later: the gist is the whole survivor,
                    ;; and a prompt that hints otherwise buys a fold the model regrets.
@@ -201,7 +210,7 @@
                   "Complete tasks autonomously" "canonical decision table" "anything complicated"
                   ;; schema-owned or removed contracts stay out of the core prompt
                   "stales anchors" "benchmark/profile" "Route vis issues upstream"
-                  "Before every `session_fold`" "`await session_state" "≤120 words"
+                  "Before every `fold_session`" "`await read_session" "≤120 words"
                   "never offer a menu"
                   ;; The sleep/poll prohibition is OWNED by `python_execution`'s own
                   ;; description (pinned in loop_test). §1 already makes native
@@ -642,3 +651,24 @@
         (expect (str/includes? block "<turn_cancelled>"))
         (expect (str/includes? block "persisted results remain valid; do not repeat settled work"))
         (expect (not (str/includes? block "INTERRUPTED before it finished"))))))
+
+
+(defdescribe core-prompt-routes-text-edits-to-patch-test
+             ;; The verbs exist only if the prompt spends them. Before this, the core
+             ;; prompt told the model to CHANGE the tree with `Path.write_text` — which is
+             ;; how a 2 KB block that restates the old text becomes the normal way to edit.
+             (it "names both anchored verbs and the address they speak"
+                 (let [text (prompt/build-system-prompt {})]
+                   (expect (str/includes? text "cat(path, from, to)"))
+                   (expect (str/includes? text "patch(path, from, to, new)"))
+                   (expect (str/includes? text "line:hash"))))
+             (it "never tells the model to write a text EDIT in plain Python"
+                 (let [text (prompt/build-system-prompt {})]
+                   (expect (not (str/includes? text "CHANGING the tree is plain Python")))
+                   (expect (not (str/includes? text "are edited in plain Python")))
+                   (expect (str/includes? text "never restate the text you"))))
+             (it "says a grep hit is already an address, and how to spend several at once"
+                 (let [text (prompt/build-system-prompt {})]
+                   (expect (str/includes? text "hits arrive ANCHORED"))
+                   (expect (str/includes? text "bottom-up (highest line first)"))
+                   (expect (str/includes? text "RE-ANCHORED window")))))

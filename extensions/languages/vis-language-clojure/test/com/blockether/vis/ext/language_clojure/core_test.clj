@@ -119,9 +119,11 @@
                     ops
                     (set (map (juxt :op :phase) hooks))]
 
-                   (expect (= 1 (count hooks)))
+                   ;; Both editors are covered: `struct_patch` repairs its `:code`, `patch`
+                   ;; repairs its trailing positional `replacement`.
+                   (expect (= 2 (count hooks)))
                    (expect (contains? ops [:struct_patch :around]))
-                   (expect (not (contains? ops [:patch :around])))
+                   (expect (contains? ops [:patch :around]))
                    ;; every entry names a real fn — no imperative register-op-hook! at load
                    (expect (every? ifn? (map :fn hooks))))))
 
@@ -583,3 +585,65 @@
                                                               next-fn)
                         nil
                         (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
+
+
+(defdescribe
+  clj-patch-repairs-delimiters-test
+  ;; `patch` is POSITIONAL — (path from_anchor [to_anchor] replacement) — so the
+  ;; text to repair is the LAST argument, not a `:code` key.
+  (it "repairs the trailing replacement and retries once, saying so on the status line"
+      (let
+        [seen
+         (atom [])
+
+         balanced?
+         (fn [s]
+           (= (count (re-seq #"\(" (str s))) (count (re-seq #"\)" (str s)))))
+
+         next-fn
+         (fn [args]
+           (let [replacement (last args)]
+             (swap! seen conj replacement)
+             (if (balanced? replacement)
+               {:success? true
+                :result (str "patched x.clj  3..3 → 1 line  parse: clean\n3:abc│ " replacement)}
+               (throw (ex-info "syntax broken" {:type :ext.foundation.editing/patch-refused})))))
+
+         out
+         (core/clj-patch-no-fail-around {}
+                                        :patch
+                                        ["x.clj" "3:abc" "3:abc" "(defn f [] (+ 1 2)"]
+                                        next-fn)]
+
+        (expect (:success? out))
+        (expect (= 2 (count @seen)))
+        (expect (balanced? (last @seen)))
+        ;; The repair is REPORTED, on the status line and nowhere else.
+        (expect (str/includes? (first (str/split-lines (:result out))) "(delimiters repaired)"))
+        (expect (not (str/includes? (second (str/split-lines (:result out))) "repaired")))))
+  (it "passes a NON-clj refusal straight through"
+      (let
+        [calls
+         (atom 0)
+
+         next-fn
+         (fn [_]
+           (swap! calls inc)
+           (throw (ex-info "boom" {})))]
+
+        (expect (true?
+                  (try (core/clj-patch-no-fail-around {} :patch ["x.txt" "3:abc" "oops ("] next-fn)
+                       false
+                       (catch clojure.lang.ExceptionInfo _ true))))
+        (expect (= 1 @calls))))
+  (it "surfaces the ORIGINAL refusal when the repair cannot make the edit land"
+      (let
+        [next-fn (fn [_]
+                   (throw (ex-info "stale anchor" {:reason :anchor-not-found})))]
+        (expect (= :anchor-not-found
+                   (try (core/clj-patch-no-fail-around {}
+                                                       :patch
+                                                       ["x.clj" "3:abc" "(defn f [] (+ 1 2)"]
+                                                       next-fn)
+                        nil
+                        (catch clojure.lang.ExceptionInfo e (:reason (ex-data e)))))))))

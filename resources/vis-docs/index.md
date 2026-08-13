@@ -16,7 +16,7 @@ manages that window and *when*.
 - **The engine owns the context, not the transcript.** Each step is tagged and
   addressable. At the start of a new turn, after the new intent is understood,
   completed earlier-turn work can collapse into a one-line summary
-  (`session_fold`) or disappear from the wire (`session_fold` with no summary).
+  (`fold_session`) or disappear from the wire (`fold_session` with no summary).
 
 - **Compaction happens at a safe boundary, not under pressure.** Vis never emits
   a context-pressure nudge and rejects folds aimed at the current or a future
@@ -39,7 +39,7 @@ a working set, not a full transcript, on every turn.
 Vis hands the model exactly ONE tool — `python_execution` — and everything else is
 a function inside it:
 
-- **The sandbox** — every capability (`grep`, `struct_index`, `shell`, `attach`, an
+- **The sandbox** — every capability (`grep`, `cat`, `patch`, `struct_index`, `shell`, `attach`, an
   MCP tool) is a bare Python name in an embedded GraalPython runtime. The
   agent writes Python that runs many of them, filters and chains their output, and
   `print()`s only the slice worth keeping. Ten file reads, one search, and a
@@ -58,7 +58,8 @@ Contracts are PULLED, not pushed: `apropos(text)` is full-text search over every
 function docstring, documentation page, skill body and MCP tool description, and
 `doc(name)` returns the authoritative contract for one of them. From there,
 `struct_index` → `struct_nodes` (a node's verbatim source + zipper cursor) →
-`struct_patch` for supported code. See [Token
+`struct_patch` for supported code; `grep` → `cat` → `patch` for everything
+addressed by line rather than by name. See [Token
 optimization](token-optimization.md) and [Extending Vis](extending.md#one-tool-and-it-is-python_execution).
 
 ```text

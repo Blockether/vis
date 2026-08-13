@@ -583,12 +583,52 @@ It lands LAST because it is the most entangled: unlike grep, these rows are *con
 
 ## State of the plan
 
-**ACCEPTED** — nothing has landed. Every open question is settled and written into the phases above
-rather than kept as a list: no batch and no atomic multi-file edit (Context, *What we explicitly do not
-solve*); a refusal RAISES (Phase 3); `grep` groups its hits under a path header instead of repeating the
-path on every line (Context, *Alternatives considered*) and its counts stay prose on line 1 with no
-structured field surviving (Phase 5); and `struct_index` / `struct_nodes` do get anchors, so Phase 6 is
-in the first cut.
+**DONE** — every phase landed, verified and committed in one change.
+
+- **Phase 1** — `src/com/blockether/vis/internal/foundation/editing/hashline.clj` (new, pure, no IO):
+  `split-content-lines`, `char-offset-at-line`, `line-hash`, `line-anchor`, `anchor->line`,
+  `anchor-string?`, `render-hashline-block`, `indices-matching-hash`, `hash-line-drift-tolerance`,
+  `parse-anchor`, `resolve-one-anchor`, `resolve-anchor-range`, `resolve-anchor-range-read`,
+  `resolve-anchor-edit-span`, plus the `:ext.editing.hashline/*` specs. The old `:hashline-*`
+  refusal keywords are now the plan's `:anchor-*` vocabulary, with `:anchor-range-inverted` added
+  because an inverted span is reachable and had to be nameable.
+  `test/…/editing/hashline_test.clj` — 20 assertions, including the five outcomes one by one.
+- **Phase 2** — `cat(path[, from[, to]])`, positional, one file, one string;
+  `path, from=None, to=None` is the signature the sandbox actually advertises.
+- **Phase 3** — `patch(path, anchor, new)` / `patch(path, from, to, new)`, positional, atomic,
+  refusals RAISE with the recovery anchor in the message; the tree-sitter gate refuses a write that
+  would break a file that parsed clean and permits one that repairs an already-broken file.
+  `:patch-stale-anchor` is classified in `introspection.clj`, and the Clojure pack's
+  `clj-patch-no-fail-around` parinfer-repairs the trailing `replacement` and appends
+  `(delimiters repaired)` to the status line.
+- **Phase 4** — the core prompt routes text edits to `cat`/`patch`, `doc_corpus/curated` lists both,
+  and `token-optimization.md` / `index.md` teach the ladder. `env_python.clj` needed no change: the
+  hint the plan pointed at no longer names a read/edit verb.
+- **Phase 5** — `grep-data` is the pure ordered core and `grep-tool` is now only
+  `render-grep-text` over it. Its ~20 shape/paging/hint assertions retarget that core through one
+  test helper; the rendering has its own describes.
+- **Phase 6** — `struct_index` definition rows carry `anchor`/`end_anchor` beside `line`/`end_line`,
+  and `struct_nodes` entries carry the same pair; `line` is untouched for every existing caller.
+
+Verified: `hashline-test` 20/20, `editing/core-test` 241/241, `prompt-test` 25/25,
+`ext/language-clojure/core-test` 32/32, `foundation/core-test` 10/10,
+`private-deployment-hygiene-test` 1/1; `format_code` run; `lint_code` clean for every touched file
+(the 25 boxed-math warnings in `editing/core.clj`'s diff-rendering region are byte-identical at the
+parent commit and are not part of this change).
+
+Two deviations from the plan as written, both deliberate:
+
+1. **The core-prompt budget guard moved 5 000 → 5 500 chars** (`prompt_test.clj`), the fourth
+   documented raise in that test's history and commented in its voice. Naming two verbs, the anchor
+   format and the bottom-up rule does not fit inside what deleting "CHANGING the tree is plain
+   Python" freed.
+2. **No `loop.clj` change.** The acceptance asked the TUI headline to take line 1 of a string
+   result; at runtime a printed STRING has no `"op"`, so `printed-result-op` yields nil, no card is
+   built, and `printed-cards-result-render` falls through to the stdout fence — which paints the
+   anchored text verbatim. That is the better rendering and needed no code.
+
+Not carried: the journal re-measurement in Phase 4 needs sessions recorded AFTER this change, so the
+6.7x / 80% / 41% table is the before-picture until those exist.
 
 **Supersedes** *"Collapse the model-facing tool surface to `python_execution` alone"*, which held this
 file through `e51669e06` and whose Phase 6 (`e51669e06:PLAN.md:526-557`) is the decision this plan
@@ -596,14 +636,5 @@ overturns. Its phases 1-12 landed and are recorded there; its unfinished cross-c
 45-47, 49-53, 56b, 57, 58, 58b, 58c (the `:schema` literals, `form.clj`'s reduction,
 `extension_bootstrap.py`, the tool wall, the replay policy, `:tag`, `extending.md`, the language-pack
 renderers, and the two shipped-UI evidence steps) — is preserved verbatim at `git show
-e51669e06:PLAN.md` and is NOT carried into the TODO below: it is separate work that takes the root again
-when it is picked up.
-
-TODO, in order:
-
-1. Phase 1 — `editing/hashline.clj` restored from `7fda0cee2^` + `hashline_test.clj`; `anchored-verbs-are-gone-test` inverted.
-2. Phase 2 — `cat`: one file, positional, one anchored string.
-3. Phase 3 — `patch`: positional span replace, tree-sitter gate, Clojure delimiter repair hook, raising refusals.
-4. Phase 4 — prompt, `doc` contracts, `vis-docs`, then re-measure the journals against the table in Context.
-5. Phase 5 — `grep` returns one anchored text block; retarget its tests onto `content-result`.
-6. Phase 6 — `struct_index` / `struct_nodes` rows carry `anchor`/`end_anchor` beside `line`/`end_line`.
+e51669e06:PLAN.md` and is NOT carried here: it is separate work that takes the root again when it is
+picked up.

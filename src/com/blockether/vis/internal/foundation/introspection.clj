@@ -334,6 +334,14 @@
           (and (str/includes? tool-name "patch")
                (str/includes? lower-message "unmatched delimiter"))
           :struct-patch-invalid-code
+          ;; A refused ANCHOR is its own loop: the anchor drifted or was reused
+          ;; after an edit, and the refusal already carries the fresh one. Left
+          ;; generic it would only ever be counted, never explained.
+          (and (str/includes? tool-name "patch")
+               (or (str/includes? lower-message "patch refused")
+                   (str/includes? lower-message "carries")
+                   (str/includes? lower-message "drift window")))
+          :patch-stale-anchor
           (str/includes? lower-message "unable to resolve symbol") :unresolved-symbol
           :else :code-execution-error)))
 
@@ -351,6 +359,9 @@
 
     :struct-patch-invalid-code
     "The struct_patch `code` likely lost the closing quote or a delimiter. Re-emit it with a Python triple-quoted string for multi-line content."
+
+    :patch-stale-anchor
+    "The anchor no longer matches the line it names. The refusal already carries the CURRENT anchor — retry with that one instead of re-reading the file, and apply several patches in one block bottom-up (highest line first) so earlier edits cannot drift later anchors."
 
     :turn-cancelled
     "Not a code defect: the turn was cancelled and the interrupt surfaced on the frame that was running. Re-run the interrupted step if you still need it."
@@ -681,7 +692,10 @@
 
         (contains? classes :struct-patch-invalid-code)
         (conj
-          "Re-emit struct_patch with balanced `code`; use a triple-quoted Python string for multi-line replacement text.")))))
+          "Re-emit struct_patch with balanced `code`; use a triple-quoted Python string for multi-line replacement text.")
+        (contains? classes :patch-stale-anchor)
+        (conj
+          "Spend the anchor the refusal handed back instead of re-reading; order several patches in one block bottom-up, highest line first."))))))))
 
 (defn- foundation-diagnose
   "Compact current-turn diagnosis built from failure data. Returns a

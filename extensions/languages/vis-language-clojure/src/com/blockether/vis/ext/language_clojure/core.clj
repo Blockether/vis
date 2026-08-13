@@ -961,6 +961,57 @@
               (throw e))) ; repaired retry failed → original
           (throw e))))))
 
+(defn clj-patch-no-fail-around
+  "MIDDLEWARE (:around) on `patch` so an anchored Clojure edit does NOT fail on
+   unbalanced delimiters. `patch` is POSITIONAL — `(path from_anchor [to_anchor]
+   replacement)` — so the replacement is always the LAST argument. If the call
+   throws against a `.clj` file, parinfer-repair that replacement and retry
+   ONCE, and say so on the status line the model reads. If the repair changes
+   nothing, or the retried edit still fails, the ORIGINAL error is surfaced: a
+   real refusal (a stale anchor, a broken parse) is never buried. Non-clj calls
+   pass straight through to `next`.
+
+   Per repo doctrine the repair stays SYNTAX-ONLY: the smallest mechanical
+   change that restores parseable source, never a semantic rewrite."
+  [_env _op-kw args next]
+  (try
+    (next args)
+    (catch clojure.lang.ExceptionInfo e
+      (let
+        [argv
+         (vec args)
+
+         path
+         (first argv)
+
+         idx
+         (dec (count argv))
+
+         replacement
+         (when (>= idx 2) (nth argv idx))
+
+         fixed
+         (when (and (clj-source-file? path) (string? replacement))
+           (repair/fix-delimiters replacement))]
+
+        (if (and fixed (not= fixed replacement))
+          (try (let [res (next (assoc argv idx fixed))]
+                 (if (string? (:result res))
+                   (update res
+                           :result
+                           (fn [^String s]
+                             (let [[head & tail] (str/split-lines s)]
+                               (str/join "\n" (cons (str head " (delimiters repaired)") tail)))))
+                   res))
+               (catch Throwable retry-t
+                 (tel/log!
+                   {:level :warn
+                    :id :clojure-patch-repair-retry-failed
+                    :data {:path path :error (.getMessage retry-t)}}
+                   "Clojure patch delimiter repair retry failed; surfacing original editor error")
+                 (throw e))) ; repaired retry failed → original
+          (throw e))))))
+
 ;; =============================================================================
 ;; Extension manifest
 ;; =============================================================================
@@ -989,10 +1040,12 @@
                                             (repl-start-fn env op opts))}]
      ;; Declarative cross-cutting op-hooks — registered/unregistered WITH this
      ;; extension's lifecycle (no imperative side effects at ns load). They make
-     ;; struct_patch NOT fail on unbalanced delimiters: an :around that
-     ;; parinfer-repairs the `:code` and retries once. :owner is set to this
+     ;; the two Clojure editors NOT fail on unbalanced delimiters: an :around
+     ;; that parinfer-repairs the new code — struct_patch's `:code`, patch's
+     ;; trailing `replacement` — and retries once. :owner is set to this
      ;; extension automatically.
-     :ext/op-hooks [{:op :struct_patch :phase :around :fn clj-struct-patch-no-fail-around}]
+     :ext/op-hooks [{:op :struct_patch :phase :around :fn clj-struct-patch-no-fail-around}
+                    {:op :patch :phase :around :fn clj-patch-no-fail-around}]
      :ext/kind "language"}))
 
 (vis/register-extension! vis-extension)

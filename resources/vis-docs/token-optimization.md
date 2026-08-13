@@ -9,7 +9,7 @@ The live runtime is the source of truth, and it answers exactly two questions. `
 ```python
 apropos("skeleton")      # full text: the word need not be in any name
 apropos("wire contract") # terms are ANDed, hits come back ranked
-doc("struct_patch")      # one function's whole contract
+doc("patch")             # one function's whole contract
 doc("gateway")           # a Vis documentation page, by slug
 doc("spel")              # a skill, whole — reading it is the whole of using it
 doc()                    # the curated index: the verbs a session starts from
@@ -39,11 +39,11 @@ definitions (29):
 
 Each row carries plain 1-based `line`/`end_line` numbers. Read that one definition with `struct_nodes` at its `line` instead of paging the file. In Python, the structured `definitions` and `imports` values can stay bound while the model prints only the rows it needs.
 
-For unsupported text, generated files, or one already-known region, read the bytes in `python_execution` (`Path(path).read_text()`) and print only the slice you need.
+For unsupported text, generated files, or one already-known region, `cat(path, from, to)` returns that window as `line:hash│ text` — one anchored line per source line, so the read that shows you the region also ADDRESSES it. `Path(path).read_text()` is for a file you only consume, never for one you are about to edit.
 
 ## Edit structure, not surrounding text
 
-Prefer `struct_patch` for supported code. It re-parses the file and refuses syntax-breaking writes.
+Two editors, two coordinates. Edit by NAME with `struct_patch` for supported code: it re-parses the file and refuses syntax-breaking writes. Edit by ADDRESS with `patch` — prose, config, comments, docstrings, and every unsupported language — spending an anchor `cat` or `grep` already produced.
 
 A definition from `struct_index` can be edited by name:
 
@@ -74,7 +74,19 @@ await struct_patch({
 
 The same editor supports named-definition moves, docs, nested child insertion, and unique sub-expression replacement. For a project-wide rename, first `grep` the identifier, then pass its candidate file paths to `struct_index({"paths": [...], "include_occurrences": True})` to inspect declarations and occurrence blast radius, then rename every one of them in ONE `struct_patch` batch — top-level keys are the shared defaults for each entry: `struct_patch({"op": "rename", "target": "handle_click", "code": "handle_tap", "edits": [{"path": path} for path in paths]})`.
 
-For prose, unsupported code, a new file, or a wholesale replacement, write from `python_execution` (`Path.write_text`) — the same filesystem gate applies.
+For prose, unsupported code, or one known region, spend the anchor instead of restating the text you are replacing:
+
+```python
+print(patch(path, "4439:a80", '     :result "One row/edit: `path`, `op`, `changed`."'))
+patched src/…/editing/core.clj  4439..4439 → 1 line  parse: clean
+4436:88f│   (vis/symbol
+4437:111│     #'struct-patch-tool
+4438:21c│     {:symbol 'struct_patch
+4439:b16│      :result "One row/edit: `path`, `op`, `changed`."
+4440:056│      :active-fn structural-supported?
+```
+
+`patch(path, from_anchor, to_anchor, new)` replaces a span, `new=""` deletes it, and the returned window is RE-ANCHORED — a follow-up edit needs no second `cat`. Several patches in one block go bottom-up, highest line first. Only a new file or a genuine wholesale replacement is a `python_execution` write (`Path.write_text`) — the same filesystem gate applies.
 
 ## Keep intermediate data in Python
 
@@ -95,10 +107,10 @@ This turns many reads plus a reduction into one visible result instead of one tr
 
 ## Fold settled steps
 
-`session_fold` removes **settled wire steps** from future model calls; it does not delete database history. Settled means every completed prior turn AND the current turn's already-finished iterations. At the start of a new turn, understand the new request first, then fold earlier work that no longer needs raw detail:
+`fold_session` removes **settled wire steps** from future model calls; it does not delete database history. Settled means every completed prior turn AND the current turn's already-finished iterations. At the start of a new turn, understand the new request first, then fold earlier work that no longer needs raw detail:
 
 ```python
-session_fold(
+fold_session(
     ["t2/i4", "t2/i5"],
     "HTTP timeout fixed in src/vis/net/http.clj:52; regression test passes",
 )
@@ -114,12 +126,12 @@ Targets may be step ids, whole prior turns, or `through` / `from`+`to` / `since`
 
 A folded step is not re-readable inline, and there is no destructive `unfold` command:
 
-- Current conversation: `s = await session_state()`, select `s["transcript"]["turns"]` by numeric `position`, then filter `['iterations'][...]['blocks']` for the raw code/results.
-- Another conversation: `await sessions()` to find its id, then `await session_state(id)` and filter the same path.
+- Current conversation: `s = await read_session()`, select `s["transcript"]["turns"]` by numeric `position`, then filter `['iterations'][...]['blocks']` for the raw code/results.
+- Another conversation: `await list_sessions(search="…")` — the same ranked search the TUI and the companion app run — to find its id, then `await read_session(id)` and filter the same path. `get_session(id)` answers ONE descriptor row when the id is all you need.
 
 This recovers evidence without restoring it to the model wire. Filter in `python_execution`; never dump a full transcript back into context.
 
-`session_state` and `sessions` are bound only while the `introspection` toggle is ON (default OFF — enable it in `vis.yml` under `toggles:` or from the settings dialog). Compact token/tool/provider diagnostics live at `session_state()["usage"]`. With introspection OFF a folded step is not recoverable at all — the gist is what survives, so write one that carries the finding.
+`read_session`, `get_session` and `list_sessions` are bound only while the `introspection` toggle is ON (default OFF — enable it in `vis.yml` under `toggles:` or from the settings dialog). Compact token/tool/provider diagnostics live at `read_session()["usage"]`. With introspection OFF a folded step is not recoverable at all — the gist is what survives, so write one that carries the finding.
 
 ### The budget stays visible
 
@@ -134,9 +146,9 @@ When handled context climbs above the ceiling, `session["utilization"]["hint"]` 
 The efficient path is:
 
 1. Discover capabilities with `apropos`, then read the one contract with `doc`.
-2. Locate relevant files and symbols with `grep`.
-3. Map supported code with `struct_index`, then read only the needed body with `struct_nodes`.
-4. Edit with `struct_patch`; fall back to a `python_execution` write only when structure is unavailable.
+2. Locate relevant files and symbols with `grep` — its hits arrive anchored, so a hit is already a `patch` argument.
+3. Map supported code with `struct_index`, then read only the needed body with `struct_nodes`; `cat(path, from, to)` for anything else you are about to edit.
+4. Edit by NAME with `struct_patch`, by ADDRESS with `patch`; fall back to a `python_execution` write only for a new file or a wholesale replacement.
 5. Keep batch intermediates in `python_execution`.
 6. Fold completed prior-turn noise while preserving durable evidence.
 
