@@ -302,16 +302,20 @@
 ;; asked for, so it could not tell two runs apart.
 (defdescribe test-target-test
              (let [target #'language-surface/test-target]
-               (it "reports the narrowest selection the call made"
-                   (expect (= "foo-test/a, foo-test/b"
-                              (target {"only" ["foo-test/a" "foo-test/b"]
-                                       "namespaces" ["foo-test"]})))
-                   (expect (= "foo-test" (target {"namespaces" ["foo-test"] "paths" ["test"]})))
+               (it "reports what the call selected - its paths, node ids and all"
                    (expect (= "test/foo" (target {"paths" ["test/foo"]})))
-                   (expect (= "filter: slow" (target {"filter" "slow"}))))
+                   (expect (= "test/a_test.clj::adds-test, ::subs-test"
+                              (target {"paths" ["test/a_test.clj::adds-test" "::subs-test"]}))))
+               ;; `only` / `filter` / `namespaces` no longer select anything, so they
+               ;; must not be echoed as a selection either - the headline would name a
+               ;; narrowing that never happened.
+               (it "reads no selector but paths"
+                   (expect (= "full suite" (target {"only" ["foo-test/a"]})))
+                   (expect (= "full suite" (target {"filter" "slow"})))
+                   (expect (= "full suite" (target {"namespaces" ["foo-test"]}))))
                (it "falls back to the whole suite when nothing narrows the run"
                    (expect (= "full suite" (target {})))
-                   (expect (= "full suite" (target {"paths" [] "only" [nil ""] "filter" "   "}))))))
+                   (expect (= "full suite" (target {"paths" [nil "  "]}))))))
 
 (defdescribe
   language-process-jail-refresh-test

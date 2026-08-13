@@ -15,7 +15,8 @@
             [com.blockether.vis.ext.language-typescript-bun.repl-manager :as repl]
             [com.blockether.vis.ext.language-typescript-bun.runner :as runner]
             [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.paths :as paths]))
+            [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.test-contract :as contract]))
 
 ;; =============================================================================
 ;; Activation
@@ -269,10 +270,38 @@
       fail
       (assoc "fail" fail))))
 
+(defn- test-command
+  "The `bun test` argv for ONE call: the resolved runner command, then the `-t`
+   name pattern and the path targets the `{paths}` node ids split into. bun's -t
+   is a REGEX over the test name and bun keeps ONE pattern, so several node ids
+   ALTERNATE inside it instead of fighting over the flag. Pure, so the grammar is
+   pinned without launching bun."
+  [dir opts]
+  (let
+    [ids
+     (mapv contract/split-node-id (map str (get opts "paths")))
+
+     locations
+     (into [] (keep :path) ids)
+
+     names
+     (into [] (comp (keep :var) (distinct)) ids)]
+
+    (cond-> (conj (runner/resolve-command dir) "test")
+      (seq names)
+      (conj "-t" (str/join "|" names))
+
+      (seq locations)
+      (into locations))))
+
 (defn ts-test-fn
-  "run_tests handler: `bun test` in the workspace (or `{dir}`), optionally
-   narrowed to `{paths [...]}` / a `{filter \"name\"}` (-t). Returns the parsed
-   pass/fail counts + the output tail."
+  "run_tests handler: `bun test` in the workspace (or `{dir}`), narrowed by
+   `{paths [...]}` — files, directories, or `<path>::<test-name>` NODE IDS. The
+   `::<test-name>` half becomes bun's own `-t` (a name REGEX), so the several
+   names of one run are joined with `|` into the single pattern bun accepts, and
+   a PATHLESS `::<test-name>` filters the whole suite. There is no second
+   `filter` key: one grammar names where AND which, in every pack.
+   Returns the parsed pass/fail counts + the output tail."
   [env arg]
   (let
     [root
@@ -281,19 +310,19 @@
      opts
      (if (map? arg) arg {})
 
+     _
+     (when (contains? opts "filter")
+       (throw (ex-info (str "run_tests(typescript) no longer takes filter — put the test name IN"
+                            " the path as a node id instead. {\"paths\":"
+                            " [\"src/math.test.ts::adds\"]} runs that one test, and \"::adds\""
+                            " finds it wherever it lives.")
+                       {:type :ts/bad-args :got arg})))
+
      dir
      (resolve-dir root (get opts "cwd"))
 
-     paths
-     (seq (map str (get opts "paths")))
-
      cmd
-     (cond-> (conj (runner/resolve-command dir) "test")
-       (get opts "filter")
-       (conj "-t" (str (get opts "filter")))
-
-       paths
-       (into paths))
+     (test-command dir opts)
 
      launch
      (vis/session-process-launch (:session-id env) cmd)

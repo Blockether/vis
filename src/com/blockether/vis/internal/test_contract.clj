@@ -13,14 +13,16 @@
    never drifts out of sync with its documentation.
 
    SELECTOR keys (all optional; the Python dict the tool receives):
-     :paths    vector of file / directory PATHS - WHERE the tests are. The ONE
-               way a call names what to run, in every language: a pack resolves
-               a path the way its own runner discovers tests under it (clojure
-               reads each *_test.clj for its ns and maps a SOURCE file to its
-               *-test ns; python/bun hand the paths to pytest / bun test). No
-               namespace, module or package key rides beside it.
-     :only     vector of test-name strings - run ONLY these tests/vars within
-               the selected paths. (lazytest -v / source :focus)
+     :paths    vector of ENTRIES - WHERE the tests are. The ONE way a call names
+               what to run, in every language. An entry is a file, a directory,
+               or a NODE ID `<path>::<test-name>` naming ONE test inside it
+               (`::<test-name>` alone = wherever it lives). Splitting on the
+               first `::` is pytest's own node-id grammar, so the same string
+               selects in every pack: a pack resolves the path the way its
+               runner discovers tests under it (clojure reads each *_test.clj
+               for its ns and maps a SOURCE file to its *-test ns; python/bun
+               hand paths to pytest / bun test) and narrows to the named test.
+               No namespace, module, package or second name key rides beside it.
      :include  vector of metadata-tag strings - run only tests carrying one of
                these tags, e.g. \"integration\". (lazytest -i)
      :exclude  vector of metadata-tag strings - skip tests carrying one of
@@ -28,6 +30,7 @@
 
    PRECEDENCE (copied verbatim from lazytest):
      - :exclude OVERRIDES :include (a test tagged both is skipped).
+     - a node id's test name narrows within what :paths already selected.
      - source-level :skip OVERRIDES :focus.
 
    RESULT keys (the uniform map every pack returns):
@@ -57,17 +60,18 @@
 ;; Selector specs
 ;; =============================================================================
 
-;; WHERE the tests are - files or directories. The only way in.
+;; WHERE the tests are - files, directories, or `<path>::<test-name>` node ids.
+;; The only way in: no second key ever names a test beside them. This is the WIRE
+;; shape (plain strings off the Python boundary); `normalize-selectors` SPLITS
+;; each entry into {:path :var} for the pack that resolves it.
 (s/def ::paths (s/coll-of string?))
-
-(s/def ::only (s/coll-of string?))
 
 (s/def ::include (s/coll-of string?))
 
 (s/def ::exclude (s/coll-of string?))
 
 ;; The selector map a runner tool accepts on its opts dict (all keys optional).
-(s/def ::selectors (s/keys :opt-un [::paths ::only ::include ::exclude]))
+(s/def ::selectors (s/keys :opt-un [::paths ::include ::exclude]))
 
 ;; =============================================================================
 ;; Result specs
@@ -168,40 +172,55 @@
          (remove str/blank?)
          vec)))
 
+(defn split-node-id
+  "Split ONE `:paths` entry into `{:path :var}`. An entry is a path, a NODE ID
+   `<path>::<test-name>`, or `::<test-name>` (no path - wherever it lives).
+   The split is on the FIRST `::`, which is pytest's own node-id grammar, so one
+   string names a file, a directory AND a single test in every pack instead of a
+   second `only` / `filter` key repeating what a path already said. Blank halves
+   come back nil, so `{:path nil :var nil}` is a total answer for junk."
+  [entry]
+  (let [[p v] (str/split (str entry) #"::" 2)]
+    {:path (not-empty (str/trim (str p))) :var (not-empty (str/trim (str v)))}))
+
 (defn normalize-selectors
   "Normalize a raw selector map (the Python dict the tool received) into the
-   canonical shape `{:paths [str] :only [str] :include [str] :exclude [str]}`.
-   ONE selection vocabulary - paths in, whatever the pack's runner discovers
-   under them out. A pack that runs namespaces (clojure) resolves :paths to
-   them itself and carries the result in its OWN key, so no second selector
-   spelling ever reaches this map."
+   canonical shape `{:paths [{:path :var}] :include [str] :exclude [str]}`.
+   ONE selection vocabulary - entries in, whatever the pack's runner discovers
+   under them out. Each entry is SPLIT here (see `split-node-id`) so every pack
+   reads the node id the same way; a pack that runs namespaces (clojure)
+   resolves the path halves to them itself and carries the result in its OWN
+   key, so no second selector spelling ever reaches this map."
   [m]
   (let [m (or m {})]
-    {:paths (->str-vec (:paths m))
-     :only (->str-vec (:only m))
+    {:paths (mapv split-node-id (->str-vec (:paths m)))
      :include (->str-vec (:include m))
      :exclude (->str-vec (:exclude m))}))
 
 (defn selected?
-  "Apply the lazytest precedence to one test, given normalized selectors.
-   `test-name` is the test/var name string; `tags` the set of metadata-tag
-   strings on it. Returns true when the test should RUN. exclude wins over
-   include/only; only narrows by name; include gates by tag when present."
-  [{:keys [only include exclude]} test-name tags]
+  "Apply the lazytest precedence to ONE test, given selectors a pack has already
+   RESOLVED. `vars` is what the node ids in :paths became -
+   `[{:ns <ns-or-nil> :name <test-name>}]`, nil :ns meaning 'wherever it lives' -
+   because only the pack knows how a path turns into a namespace. `test` is
+   `{:ns :name :tags}`. Returns true when the test should RUN: an :exclude tag
+   wins over everything, a non-empty var list narrows by name, and :include
+   gates by tag when present."
+  [{:keys [vars include exclude]} {test-ns :ns test-name :name tags :tags}]
   (let
     [tags
      (set tags)
-
-     only
-     (set only)
 
      inc*
      (set include)
 
      exc*
-     (set exclude)]
+     (set exclude)
+
+     var-hit?
+     (fn [{:keys [ns name]}]
+       (and (or (nil? ns) (= ns test-ns)) (= name test-name)))]
 
     (cond (some exc* tags) false
-          (and (seq only) (not (only test-name))) false
+          (and (seq vars) (not (some var-hit? vars))) false
           (and (seq inc*) (not (some inc* tags))) false
           :else true)))

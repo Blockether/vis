@@ -438,25 +438,14 @@
            seq
            (str/join ", ")))
 
-(defn- input-str
-  "Trimmed non-blank scalar call key `k`, else nil."
-  [input k]
-  (some-> (get input k)
-          str
-          str/trim
-          not-empty))
-
 (defn- test-target
-  "WHAT a run_tests call selected, as one line: `only` > `paths` > `filter: <q>`,
-   else the whole suite. The pending card and the finished headline read the SAME
-   string off the call, because a runner reports only what it RAN — two runs that
+  "WHAT a run_tests call selected, as one line: its `paths` entries — files,
+   directories, or `<path>::<test-name>` node ids, the ONE selector — else the
+   whole suite. The pending card and the finished headline read the SAME string
+   off the call, because a runner reports only what it RAN — two runs that
    selected different tests must never render the same summary."
   [input]
-  (or (input-list input "only")
-      (input-list input "paths")
-      (some->> (input-str input "filter")
-               (str "filter: "))
-      "full suite"))
+  (or (input-list input "paths") "full suite"))
 
 (defn format-code
   "Format through a pack: `format_code(language,arg)`; omit `language` only for paths-based inference. Source/`{\"code\":...}` returns changed + char-delta, never text. `{\"paths\":[...]}` (always a list) recursively formats files/dirs in place and returns per-file changes, never text. Omit code/paths for default source paths recursively."
@@ -469,7 +458,7 @@
   (dispatch! env :lint-fn args))
 
 (defn run-tests
-  "Run through a pack: `run_tests(language,arg)`. `arg` is a path string or map: `paths` (files or directories — the ONE way to choose what runs, in every language) selects; `only`, `include`, `exclude` and `filter` narrow; `cwd` chooses the project; `environment` picks the python backend (`project` for the project interpreter's own pytest, else the hermetic sandbox). List selectors stay lists, even one. Omit `arg` for all tests."
+  "Run through a pack: `run_tests(language,arg)`. `arg` is a path string or map: `paths` (files, directories, or `<path>::<test-name>` node ids — the ONE way to choose what runs, in every language; `::<test-name>` alone finds that test wherever it lives) selects; `include` / `exclude` narrow by metadata tag; `cwd` chooses the project; `environment` picks the python backend (`project` for the project interpreter's own pytest, else the hermetic sandbox). List selectors stay lists, even one. Omit `arg` for all tests."
   [env & args]
   (let
     [started-at
@@ -566,7 +555,7 @@
        "String-keyed, stamped with `op`; absent fields mean not applicable. Carries execution metadata, "
        "counts/details, output, timeout, and REPL-recovery diagnostics.")
      :description
-     "Run pack tests; prefer the smallest target: `namespaces` beats `paths`, `only`/`filter`/tags narrow."
+     "Run pack tests; prefer the smallest target: a `paths` entry is a file, a directory, or `<path>::<test-name>` for ONE test; include/exclude narrow by tag."
      :call {:lead-opt "language" :rest :always}
      ;; run_tests can exceed the generic Python eval watchdog; dispatch it
      ;; directly in Clojure so the language pack's own timeout budget wins.

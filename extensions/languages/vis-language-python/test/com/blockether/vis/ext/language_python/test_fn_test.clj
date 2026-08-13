@@ -28,6 +28,12 @@
 
 (def ^:private resolve-test-paths @#'core/resolve-test-paths)
 
+(defn- test-paths
+  "The `:paths` half of `resolve-test-paths` — the absolute targets a runner is
+   handed. `:names` (the PATHLESS `::test-name` ids) is asserted on its own."
+  [& args]
+  (:paths (apply resolve-test-paths args)))
+
 (def ^:private on-path? @#'interp/on-path?)
 
 (defn- has-python? [] (boolean (or (on-path? "python3") (on-path? "python"))))
@@ -38,12 +44,11 @@
                  (let [root (tmp-dir)]
                    (try (.mkdirs (io/file root "tests"))
                         (expect (= [(.getCanonicalPath (io/file root "tests"))]
-                                   (resolve-test-paths (.getPath root) {})))
+                                   (test-paths (.getPath root) {})))
                         (finally (cleanup root)))))
              (it "falls back to the workspace root with no tests/ dir"
                  (let [root (tmp-dir)]
-                   (try (expect (= [(.getCanonicalPath root)]
-                                   (resolve-test-paths (.getPath root) {})))
+                   (try (expect (= [(.getCanonicalPath root)] (test-paths (.getPath root) {})))
                         (finally (cleanup root)))))
              (it "honors explicit {paths} that EXIST, resolved to absolute"
                  (let [root (tmp-dir)]
@@ -51,15 +56,57 @@
                         (.mkdirs (io/file root "b"))
                         (expect (= [(.getCanonicalPath (io/file root "a"))
                                     (.getCanonicalPath (io/file root "b"))]
-                                   (resolve-test-paths (.getPath root) {"paths" ["a" "b"]})))
+                                   (test-paths (.getPath root) {"paths" ["a" "b"]})))
                         (finally (cleanup root)))))
              (it "throws on a {paths} entry that does not exist"
                  (let [root (tmp-dir)]
                    (try (expect (= :py/bad-args
-                                   (try (resolve-test-paths (.getPath root) {"paths" ["ghost"]})
+                                   (try (test-paths (.getPath root) {"paths" ["ghost"]})
                                         nil
                                         (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                        (finally (cleanup root)))))
+             ;; A `<path>::<test-name>` node id is pytest's OWN grammar and the one
+             ;; way every vis pack names a single test, so it rides through intact.
+             (it "keeps a node id's ::test-name on the path it hands pytest"
+                 (let [root (tmp-dir)]
+                   (try (spit (io/file root "test_math.py") "")
+                        (expect
+                          (= [(str (.getCanonicalPath (io/file root "test_math.py")) "::test_adds")]
+                             (test-paths (.getPath root) {"paths" ["test_math.py::test_adds"]})))
+                        (finally (cleanup root)))))
+             (it "checks only the PATH half of a node id for existence"
+                 (let [root (tmp-dir)]
+                   (try (expect (= :py/bad-args
+                                   (try (test-paths (.getPath root) {"paths" ["ghost.py::test_a"]})
+                                        nil
+                                        (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+                        (finally (cleanup root)))))
+             (it "sends a PATHLESS ::test-name to -k instead of inventing a path"
+                 (let [root (tmp-dir)]
+                   (try (.mkdirs (io/file root "tests"))
+                        (let [r (resolve-test-paths (.getPath root) {"paths" ["::test_adds"]})]
+                          (expect (= ["test_adds"] (:names r)))
+                          (expect (= [(.getCanonicalPath (io/file root "tests"))] (:paths r))))
                         (finally (cleanup root))))))
+
+;; The hermetic backend runs whole FILES: it has no test-name filter, so a node
+;; id it cannot honor is refused instead of running the file and reporting that
+;; as the selection the caller asked for.
+(defdescribe
+  graalpy-node-id-refusal-test
+  (it "refuses a node id in the sandbox and names the environment that reads it"
+      (let [root (tmp-dir)]
+        (try (.mkdirs (io/file root "tests"))
+             (spit (io/file root "tests/test_math.py") "def test_adds():\n    assert True\n")
+             (let
+               [e (try (core/py-test-fn {:workspace/root (.getPath root) :session-id "sid"}
+                                        {"paths" ["tests/test_math.py::test_adds"]
+                                         "environment" "graalpy"})
+                       nil
+                       (catch clojure.lang.ExceptionInfo e e))]
+               (expect (= :py/bad-args (:type (ex-data e))))
+               (expect (re-find #"environment" (ex-message e))))
+             (finally (cleanup root))))))
 
 (defdescribe
   graalpy-backend-test
@@ -209,14 +256,14 @@
       (let [root (tmp-dir)]
         (try (.mkdirs (io/file root "a"))
              (expect (= [(.getCanonicalPath (io/file root "a"))]
-                        (resolve-test-paths (.getPath root) {"paths" ["a"]} ["/declared"])))
-             (expect (= ["/declared"] (resolve-test-paths (.getPath root) {} ["/declared"])))
+                        (test-paths (.getPath root) {"paths" ["a"]} ["/declared"])))
+             (expect (= ["/declared"] (test-paths (.getPath root) {} ["/declared"])))
              (finally (cleanup root)))))
   (it "a project declaring nothing keeps the tests/ then cwd fallback"
       (let [root (tmp-dir)]
         (try (.mkdirs (io/file root "tests"))
              (expect (= [(.getCanonicalPath (io/file root "tests"))]
-                        (resolve-test-paths (.getPath root) {} nil)))
+                        (test-paths (.getPath root) {} nil)))
              (finally (cleanup root))))))
 
 ;; ── backend selection + a layout read that FAILED (Blockether/vis#98) ──────────

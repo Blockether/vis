@@ -14,7 +14,8 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.python-project :as pyproj]
-            [com.blockether.vis.internal.python-test-runner :as ptr]))
+            [com.blockether.vis.internal.python-test-runner :as ptr]
+            [com.blockether.vis.internal.test-contract :as contract]))
 
 ;; =============================================================================
 ;; Activation
@@ -364,28 +365,48 @@
            (assoc "file" (str file))))))
 
 (defn- resolve-test-paths
-  "Absolute path strings to hand a test runner. Honors `{paths}` — FILES or
-   directories, resolved against `dir` (the run's `cwd`), never the workspace
-   root; else the project's own declared pytest `testpaths`; else `tests/` under
-   `dir` when it exists, otherwise `dir`.
+  "What to hand a test runner: `{:paths [absolute-string] :names [string]}`.
+   Honors `{paths}` — FILES, directories, or `<path>::<test-name>` NODE IDS
+   (pytest's own grammar, and the ONE way every vis pack names a single test) —
+   resolved against `dir` (the run's `cwd`), never the workspace root; else the
+   project's own declared pytest `testpaths`; else `tests/` under `dir` when it
+   exists, otherwise `dir`.
+   A node id keeps its `::<test-name>` on the returned path — pytest selects
+   with it — and only the PATH half has to exist. A PATHLESS `::<test-name>`
+   names a test wherever it lives, so it comes back under `:names` for `-k`
+   instead, leaving the default paths to say where to look.
    A named path that does not exist THROWS: silently running nothing reads as a
    false green."
   ([^String dir opts] (resolve-test-paths dir opts nil))
   ([^String dir opts testpaths]
-   (let [given (seq (map str (get opts "paths")))]
-     (cond given (let
-                   [abs (mapv #(resolve-dir dir %) given)
-                    missing (vec (remove #(.exists (io/file ^String %)) abs))]
+   (let
+     [ids
+      (mapv contract/split-node-id (map str (get opts "paths")))
 
-                   (when (seq missing)
-                     (throw (ex-info (str "run_tests(python) target does not exist: "
-                                          (str/join ", " missing)
-                                          " — relative paths resolve against the run's cwd")
-                                     {:type :py/bad-args :paths missing})))
-                   abs)
-           (seq testpaths) (vec testpaths)
-           (.isDirectory (io/file dir "tests")) [(resolve-dir dir "tests")]
-           :else [(resolve-dir dir nil)]))))
+      located
+      (filterv :path ids)
+
+      names
+      (into [] (comp (remove :path) (keep :var)) ids)
+
+      abs
+      (mapv (fn [{:keys [path var]}]
+              (str (resolve-dir dir path) (when var (str "::" var))))
+            located)
+
+      missing
+      (vec (remove #(.exists (io/file ^String (first (str/split % #"::" 2)))) abs))]
+
+     (when (seq missing)
+       (throw (ex-info (str "run_tests(python) target does not exist: "
+                            (str/join ", " missing)
+                            " — relative paths resolve against the run's cwd")
+                       {:type :py/bad-args :paths missing})))
+     {:names names
+      :paths (cond (seq abs) abs
+                   (seq testpaths) (vec testpaths)
+                   (.isDirectory (io/file dir "tests")) [(resolve-dir dir "tests")]
+                   :else [(resolve-dir dir nil)])})))
 
 (defn- graalpy-test
   "Hermetic backend: discover test_*.py / *_test.py under `paths` and run each in
@@ -487,17 +508,26 @@
    `xunit1` family, the only one that still carries `file` / `line`), reads the
    per-test faults out of it and deletes it. That report is the ONLY
    machine-readable record pytest offers: without it the result could carry
-   counts and not one node id (issue #136)."
-  [session-id ^String dir paths]
+   counts and not one node id (issue #136).
+
+   `paths` are files, dirs or node ids (pytest reads `file.py::test_name`
+   itself); `names` are the PATHLESS `::test_name` ids, joined into ONE `-k`
+   expression because pytest keeps only the last `-k` flag it is given."
+  [session-id ^String dir paths names]
   (let
     [^java.io.File junit
      (java.io.File/createTempFile "vis-pytest-" ".xml")
 
      cmd
-     (-> (interpreter/resolve-command dir)
-         (conj "-m" "pytest")
-         (into paths)
-         (conj "-o" "junit_family=xunit1" (str "--junitxml=" (.getPath junit))))
+     (cond->
+       (-> (interpreter/resolve-command dir)
+           (conj "-m" "pytest")
+           (into paths))
+       (seq names)
+       (conj "-k" (str/join " or " names))
+
+       :always
+       (conj "-o" "junit_family=xunit1" (str "--junitxml=" (.getPath junit))))
 
      launch
      (vis/session-process-launch session-id cmd)
@@ -576,13 +606,18 @@
        `testpaths`, else `tests/` if present, else the run's `cwd`) and runs
        each in a TRUSTED GraalPy context via the built-in pytest shim.
        `{paths}` entries may be FILES or dirs, resolve against `cwd`, must
-       exist, and discovering nothing is NOT a pass. The project's declared
+       exist, and discovering nothing is NOT a pass. It runs whole FILES and
+       has no test-name filter, so a `<path>::<test-name>` node id is REFUSED
+       here (pointing at `{environment \"project\"}`) rather than quietly
+       running every test in the file. The project's declared
        import roots (a `src` layout) are on `sys.path`; installed third-party
        deps are NOT visible. When that layout could not be READ, the result
        carries a `warning` instead of quietly claiming the project has none.
      - `{environment \"project\"}` shells the project interpreter's pytest
        (the argv pinned as `python.interpreter`, else `uv`/`poetry`/`.venv`/
-       `python3` `-m pytest <paths>`) so installed test dependencies are visible.
+       `python3` `-m pytest <paths>`) so installed test dependencies are
+       visible. Node ids go straight through as pytest's own
+       `file.py::test_name`, and a PATHLESS `::test_name` becomes `-k`.
    BOTH backends name their faults: every failing/erroring test comes back in
    ONE `failures` list as `{ns test type message file line}`, `type` telling a
    thrown `\"error\"` from a false-assertion `\"fail\"` (the project backend
@@ -609,12 +644,28 @@
      layout
      (when (= "graalpy" runner) (pyproj/project-layout dir))
 
-     paths
+     ;; The hermetic backend discovers and runs whole files; it has no
+     ;; test-name filter, so a node id it CANNOT honor is refused by name
+     ;; instead of running every test in the file and reporting that as the
+     ;; selection the caller asked for.
+     _
+     (when (= "graalpy" runner)
+       (when-let
+         [named (seq (filter :var (map contract/split-node-id (map str (get opts "paths")))))]
+         (throw (ex-info (str "run_tests(python) cannot select a single test in the hermetic"
+                              " sandbox: " (pr-str (mapv (fn [{:keys [path var]}]
+                                                           (str path "::" var))
+                                                         named))
+                              " — rerun with {\"environment\": \"project\"} so the project's own"
+                              " pytest reads the node id, or name the FILE to run all of it.")
+                         {:type :py/bad-args :paths (mapv :path named)}))))
+
+     {:keys [paths names]}
      (resolve-test-paths dir opts (:testpaths layout))]
 
     (extension/success {:result (cond->
                                   (assoc (if (= "project" runner)
-                                           (project-test (:session-id env) dir paths)
+                                           (project-test (:session-id env) dir paths names)
                                            (graalpy-test paths (:import-roots layout)))
                                     "language" "python")
                                   (:warning layout)

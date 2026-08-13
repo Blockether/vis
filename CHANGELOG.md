@@ -51,6 +51,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   walked for both). Two vocabularies for one selection meant the same run could be named two ways
   and only one of them reached a pack; the old spellings are refused by name rather than silently
   running the WHOLE suite.
+- A `paths` entry may name ONE TEST: `<path>::<test-name>` — pytest's own node-id grammar, now the
+  single way to say it in every pack. The name half translates the way the file half already did
+  (`src/a/core.clj::adds` runs `adds-test` in `com.example.core-test`, just as `core.clj` runs
+  `core-test`), a namespace-less `::adds-test` finds that var wherever it lives, and each id is
+  paired with its OWN file instead of cross-producting names over namespaces. Clojure's `only` and
+  bun's `filter` are deleted — a second key that narrowed a run could disagree with the path beside
+  it, and only one pack understood each spelling. Python passes node ids straight to pytest and
+  turns a pathless `::name` into `-k`; the hermetic GraalPy backend runs whole files, so it REFUSES
+  a node id (naming `{"environment": "project"}`) instead of quietly running the rest of the file.
 - Every language pack now emits the `run_tests` result vocabulary ITSELF — `pass`, `fail`,
   `errored`, `command`, `is_pass`. The surface's translation table (`passed`/`failed` -> `pass`/
   `fail`, `ok` -> `is_pass`, an argv `cmd` -> `command`) is deleted: it guessed each runner's

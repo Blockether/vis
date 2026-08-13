@@ -155,7 +155,7 @@
    "command" nil
    "cwd" nil
    "ns" nil
-   ;; WHAT THE CALL SELECTED (`only`/`paths`/`filter`, else the whole suite) — a
+   ;; WHAT THE CALL SELECTED (the `paths` entries, else the whole suite) — a
    ;; runner reports what it RAN, never what was ASKED FOR, so without this two
    ;; different selections render the same headline.
    "target" nil

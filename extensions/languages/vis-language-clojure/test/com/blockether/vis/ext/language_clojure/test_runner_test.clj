@@ -262,7 +262,8 @@
 (defn- run-capturing
   "Run `clj-test-fn` for workspace `ws` with the nREPL and the repl runner
    stubbed, answering `{:root <where the nREPL booted> :nses <what the runner was
-   handed>}` — the two facts every selector case is about."
+   handed> :sel <the resolved selector map>}` — the three facts every selector
+   case is about."
   [ws arg]
   (let [seen (atom {})]
     (with-redefs
@@ -270,8 +271,8 @@
                                            (swap! seen assoc :root root)
                                            {:port 12345})
        com.blockether.vis.ext.language-clojure.test-runner/run-via-repl
-       (fn [_root nses _sel _port]
-         (swap! seen assoc :nses nses)
+       (fn [_root nses sel _port]
+         (swap! seen assoc :nses nses :sel sel)
          {"mode" "repl" "ns" (first nses)})]
 
       (tr/clj-test-fn {:workspace/root ws :session-id "sid"} arg)
@@ -345,39 +346,125 @@
                           (expect (= :clj/bad-args (:type (ex-data e))))
                           (expect (re-find #"paths" (ex-message e)))))))))
 
+;; A path may carry the TEST NAME too — `<path>::<name>`, pytest's node-id
+;; grammar — so the one selector says where AND which. `only` used to be that
+;; second key.
 (defdescribe
-  only-miss-output-test
-  (it
-    "reports a bounded selector miss without dumping namespaces or vars"
-    (let
-      [fixture-ns
-       'vis.test-runner-only-miss-fixture
-
-       n
-       (create-ns fixture-ns)
-
-       run-form
-       @#'com.blockether.vis.ext.language-clojure.test-runner/run-form]
-
-      (try
-        (doseq [test-name '[first-test second-test]]
-          (alter-meta! (intern n
-                               test-name
-                               (fn []))
-                       assoc
-                       :test
-                       (fn [])))
-        (with-redefs [clojure.core/require (fn [& _])]
+  clj-test-fn-node-id-test
+  (it "narrows a test FILE to the one var its node id names"
+      (with-project
+        thing-test-file
+        (fn [root]
+          (let [seen (run-capturing root {"paths" ["test/com/example/thing_test.clj::adds-test"]})]
+            (expect (= ["com.example.thing-test"] (:nses seen)))
+            (expect (= [{:ns "com.example.thing-test" :name "adds-test"}] (:vars (:sel seen))))))))
+  (it "carries a SOURCE file's node id onto the *-test namespace it resolves to"
+      ;; The file half translates (thing.clj -> thing-test); the name half is
+      ;; matched against LIVE vars in the repl, where `adds` also finds `adds-test`.
+      (with-project (assoc thing-test-file "src/com/example/thing.clj" "(ns com.example.thing)\n")
+                    (fn [root]
+                      (let [seen (run-capturing root {"paths" ["src/com/example/thing.clj::adds"]})]
+                        (expect (= ["com.example.thing-test"] (:nses seen)))
+                        (expect (= [{:ns "com.example.thing-test" :name "adds"}]
+                                   (:vars (:sel seen))))))))
+  (it "runs the whole workspace narrowed by a PATHLESS id"
+      ;; `::name` names no location, so it must not read as explicit-but-empty:
+      ;; every test ns runs and the var filter (nil :ns) does the narrowing.
+      (with-project
+        (assoc thing-test-file "test/com/example/other_test.clj" "(ns com.example.other-test)\n")
+        (fn [root]
+          (let [seen (run-capturing root {"paths" ["::adds-test"]})]
+            (expect (= ["com.example.other-test" "com.example.thing-test"] (:nses seen)))
+            (expect (= [{:ns nil :name "adds-test"}] (:vars (:sel seen))))))))
+  (it "pairs each name with its OWN file instead of cross-producting them"
+      (with-project
+        (assoc thing-test-file "test/com/example/other_test.clj" "(ns com.example.other-test)\n")
+        (fn [root]
           (let
-            [result ((eval run-form) [fixture-ns] {:only ["missing-test"]} {})
-             error (get result "error")]
+            [seen (run-capturing root
+                                 {"paths" ["test/com/example/thing_test.clj::adds-test"
+                                           "test/com/example/other_test.clj::subs-test"]})]
+            (expect (= ["com.example.other-test" "com.example.thing-test"] (:nses seen)))
+            (expect (= [{:ns "com.example.thing-test" :name "adds-test"}
+                        {:ns "com.example.other-test" :name "subs-test"}]
+                       (:vars (:sel seen))))))))
+  (it "refuses the REMOVED only selector, naming the node id that replaced it"
+      (with-project thing-test-file
+                    (fn [root]
+                      (let
+                        [e (try (run-capturing root {"paths" ["test"] "only" ["adds-test"]})
+                                (catch clojure.lang.ExceptionInfo e e))]
+                        (expect (= :clj/bad-args (:type (ex-data e))))
+                        (expect (re-find #"::adds-test|node id" (ex-message e))))))))
 
-            (expect
-              (=
-                "only [\"missing-test\"] matched no test vars (searched 2 test vars across 1 namespace)"
-                error))
-            (expect (not (re-find #"first-test|second-test|vis\\.test-runner" error)))))
-        (finally (remove-ns fixture-ns))))))
+(defn- run-form-selecting
+  "Evaluate `run-form` over a throwaway namespace holding `var-names` as
+   clojure.test vars, under the RESOLVED selector map `sel`, and return its
+   result map. Every var-granularity case needs the same fixture, so it is built
+   once here instead of re-interned per test."
+  [ns-sym var-names sel]
+  (let
+    [n
+     (create-ns ns-sym)
+
+     run-form
+     @#'com.blockether.vis.ext.language-clojure.test-runner/run-form]
+
+    (try (doseq [nm var-names]
+           (alter-meta! (intern n
+                                nm
+                                (fn []))
+                        assoc
+                        :test
+                        (fn [])))
+         (with-redefs [clojure.core/require (fn [& _])]
+           ((eval run-form) [ns-sym] sel {}))
+         (finally (remove-ns ns-sym)))))
+
+(defdescribe
+  var-miss-output-test
+  (it "reports a bounded selector miss without dumping namespaces or vars"
+      (let
+        [result
+         (run-form-selecting 'vis.test-runner-var-miss-fixture
+                             '[first-test second-test]
+                             {:vars [{:ns nil :name "missing-test"}]})
+
+         error
+         (get result "error")]
+
+        (expect
+          (= "no test var matched [\"::missing-test\"] (searched 2 test vars across 1 namespace)"
+             error))
+        (expect (not (re-find #"first-test|second-test|vis\\.test-runner" error))))))
+
+;; The var-level half of the path translation: `thing.clj` runs `thing-test`, and
+;; one step down `::adds` runs `adds-test`. Without it a node id copied off a
+;; SOURCE var would be a hard miss.
+(defdescribe node-id-var-name-test
+             (it "selects the *-test var when the id named the SOURCE var it covers"
+                 (let
+                   [result (run-form-selecting 'vis.test-runner-node-id-fixture
+                                               '[adds-test subtracts-test]
+                                               {:vars [{:ns nil :name "adds"}]})]
+                   (expect (nil? (get result "error")))
+                   (expect (= 1 (get result "selected")))
+                   (expect (= 1 (get result "skipped")))))
+             (it "selects the test var when the id named it outright"
+                 (let
+                   [result (run-form-selecting 'vis.test-runner-node-id-fixture
+                                               '[adds-test subtracts-test]
+                                               {:vars [{:ns nil :name "adds-test"}]})]
+                   (expect (= 1 (get result "selected")))))
+             (it "scopes the name to the namespace its path resolved to"
+                 ;; A node id that named a FILE must not select the same var name in some
+                 ;; other namespace — that is the cross-product `only` used to do.
+                 (let
+                   [result (run-form-selecting 'vis.test-runner-node-id-fixture
+                                               '[adds-test]
+                                               {:vars [{:ns "com.example.elsewhere-test"
+                                                        :name "adds-test"}]})]
+                   (expect (re-find #"no test var matched" (get result "error"))))))
 (def ^:private run-via-cli @#'com.blockether.vis.ext.language-clojure.test-runner/run-via-cli)
 
 (defn- with-cli-run
