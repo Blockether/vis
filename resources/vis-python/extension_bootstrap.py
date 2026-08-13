@@ -262,6 +262,7 @@ class Shell(dict):
         return Shell(self._vis_call(dict(opts, id=self.get('id'))), self._vis_call)
 
     def logs(self, offset=None, limit=None):
+        # A NEGATIVE offset reads the last n LINES; a positive one is a byte cursor.
         opts = {'op': 'logs'}
         if offset is not None:
             opts['offset'] = int(offset)

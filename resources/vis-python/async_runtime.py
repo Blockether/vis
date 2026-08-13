@@ -620,6 +620,8 @@ class __VisShell__(__VisResult__):
 
     def logs(self, offset=None, limit=None):
         # Read the log and return NOW — nothing blocks on the caller's behalf.
+        # A NEGATIVE offset is the last n LINES (`sh.logs(-50)`), the same
+        # reading `cat(path, -50)` has; a positive one is a byte cursor.
         args = {"id": self["id"]}
         if offset is not None:
             args["offset"] = int(offset)

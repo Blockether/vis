@@ -569,6 +569,29 @@
                      (expect (= "exited" (get r "status"))))
                    (expect (threw? #(shell-logs* env "no-such-shell"))))
                  (finally (resources/stop-all! sid))))))))
+  (it "reads the last n LINES when logs is given a NEGATIVE offset"
+      ;; Regression, handle audit: `sh.logs(-50)` was refused as a negative number, so
+      ;; the ordinary question — what did it just print — cost a read of the whole log
+      ;; and byte arithmetic over output the caller had already been billed for.
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-neg-tail"
+               env {:session-id sid}]
+
+              (try (shell-bg* env "tail" "for i in $(seq 1 200); do echo line-$i; done; sleep 60")
+                   (let
+                     [r (poll #(:result (shell-logs* env "tail" {:offset -3}))
+                              #(str/includes? (str (get % "stdout")) "line-200"))]
+                     (expect (= ["line-198" "line-199" "line-200"]
+                                (str/split-lines (str/trim (str (get r "stdout"))))))
+                     ;; The offset it answers with is a real line boundary: fed back as
+                     ;; a POSITIVE cursor it reads exactly the same bytes.
+                     (expect (= (get r "stdout")
+                                (get (:result (shell-logs* env "tail" {:offset (get r "offset")}))
+                                     "stdout"))))
+                   (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))))
   (it "keeps an exited process listed (status :exited) with readable logs + exit"
       (with-shell-on
         (fn []
@@ -1470,10 +1493,20 @@
       ;; caller cannot have meant silently became a different one.
       (binding [workspace/*workspace-root* (workspace/trunk-root)]
         (expect (str/includes? (str (throw-message #(shell* {:session-id "t"}
-                                                            {"op" "logs" "id" "nope" "offset" -5})))
+                                                            {"op" "logs" "id" "nope" "limit" -5})))
                                "must not be negative"))
         (expect (str/includes? (str (throw-message #(shell* {:session-id "t"}
                                                             {"op" "logs" "id" "nope" "limit" 0.4})))
+                               "whole number"))
+        ;; A NEGATIVE `logs` offset is a READING, not a mistake — the last n LINES —
+        ;; so it reaches the read, which then fails on the unknown id alone.
+        (expect (str/includes? (str (throw-message #(shell* {:session-id "t"}
+                                                            {"op" "logs" "id" "nope" "offset" -5})))
+                               "No shell 'nope'"))
+        ;; A fraction is still a different number, whichever side of zero it is on.
+        (expect (str/includes? (str (throw-message #(shell*
+                                                      {:session-id "t"}
+                                                      {"op" "logs" "id" "nope" "offset" -0.5})))
                                "whole number")))))
 
 
@@ -1536,7 +1569,11 @@
   (it "points the shell verbs at the HANDLE that replaced a blocking wait"
       (expect (str/includes? (:ext.symbol/description shell/shell-symbol) "HANDLE"))
       (expect (str/includes? (:ext.symbol/description shell/shell-symbol) "sh.wait(secs)"))
-      (expect (str/includes? (:ext.symbol/description shell/shell-logs-symbol) "sh.logs(")))
+      (expect (str/includes? (:ext.symbol/description shell/shell-logs-symbol) "sh.logs("))
+      ;; Regression, handle audit: a negative offset was refused as a bad number, so
+      ;; the contract could not offer the tail by LINES at all.
+      (expect (str/includes? (:ext.symbol/description shell/shell-logs-symbol) "sh.logs(-50)"))
+      (expect (str/includes? (:ext.symbol/description shell/shell-logs-symbol) "LINES")))
   ;; Regression, handle audit: the description taught the SHAPE of a run but not what to put
   ;; IN it, so commands arrived pre-trimmed - `| tail -50`, `| grep foo`, `2>/dev/null` - which
   ;; threw away bytes the handle already keeps whole and hid a nonzero exit behind the
@@ -1544,8 +1581,7 @@
   (it "teaches that trimming belongs on the HANDLE, never inside the command"
       (let [text (:ext.symbol/description shell/shell-symbol)]
         (doseq
-          [needle ["| head" "| tail" "| grep" "2>/dev/null" "> file" "sh.logs(offset=…)"
-                   "log_path"]]
+          [needle ["| head" "| tail" "| grep" "2>/dev/null" "> file" "sh.logs(-50)" "log_path"]]
           (expect (str/includes? text needle) needle))
         ;; The reason, not only the prohibition: a pipeline reports the LAST stage's exit.
         (expect (str/includes? text "LAST stage")))))

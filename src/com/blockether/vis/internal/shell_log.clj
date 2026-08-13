@@ -10,7 +10,8 @@
    it starts at.
 
    A chunk is the paging contract for a growing file, key for key: give an
-   `offset`, get the bytes and the `next-offset` to continue from. Feeding
+   `offset`, get the bytes and the `next-offset` to continue from; a NEGATIVE
+   `offset` names LINES from the end instead (`-50` is the last 50). Feeding
    `next-offset` back in a loop yields the WHOLE stream with no overlap and no
    gap, which is why there is no `dropped` count anywhere in this namespace —
    nothing is dropped, so nothing has to be reported as lost.
@@ -223,13 +224,58 @@
           (let [got (.read raf buf (int read) (int (- n read)))]
             (if (neg? got) (java.util.Arrays/copyOf buf (int read)) (recur (+ read got)))))))))
 
+(defn- tail-line-offset
+  "Byte offset of the FIRST of the last `n` lines of `file`, searched inside the
+   last `lim` bytes.
+
+   A watcher counts lines, not bytes: \"the last 50 lines\" is the question, and a
+   byte offset is an answer only after someone has already read the file to work
+   it out. A NEGATIVE `:offset` asks it directly, exactly as a negative endpoint
+   does in `cat`.
+
+   More tail than the file holds — or than `lim` covers — clamps to the start of
+   the window instead of refusing: asking for 500 lines of a 3-line log is a
+   request for the whole log, never an error. A trailing newline ENDS the last
+   line rather than beginning an empty one, so `-1` on `a\\nb\\n` is `b`."
+  ^long [^File f ^long len ^long lim ^long n]
+  (let
+    [win
+     (long (min len lim))
+
+     base
+     (- len win)
+
+     ^bytes buf
+     (if (pos? win) (read-bytes f base win) (byte-array 0))
+
+     got
+     (long (alength buf))
+
+     end
+     (long (if (and (pos? got) (= 10 (bit-and (aget buf (dec got)) 0xFF))) (dec got) got))]
+
+    (loop
+      [i
+       (dec end)
+
+       seen
+       0]
+
+      (cond (neg? i) base
+            (= 10 (bit-and (aget buf i) 0xFF))
+            (if (>= (inc (long seen)) n) (+ base i 1) (recur (dec i) (inc (long seen))))
+            :else (recur (dec i) seen)))))
+
 (defn read-chunk
   "Read shell `id`'s log `file` from `:offset` and answer a [[::log-chunk]].
 
    With no `:offset` the read is the TAIL — the last [[default-chunk-bytes]] —
    because that is what someone watching a live command wants, and the head is
-   one `{:offset 0}` away rather than gone. With an offset it reads FORWARD from
-   exactly that byte, which is what a loop feeding `next-offset` does.
+   one `{:offset 0}` away rather than gone. With a POSITIVE offset it reads
+   FORWARD from exactly that byte, which is what a loop feeding `next-offset`
+   does. A NEGATIVE offset counts LINES back from the end — `{:offset -50}` is
+   the last 50 lines — and clamps to the start of the window when the log holds
+   fewer, so more tail than exists is the whole log rather than an error.
 
    A missing file is an empty chunk at offset 0, not an error: a shell that has
    printed nothing yet and a shell whose log was deleted read alike, and neither
@@ -246,11 +292,17 @@
           (min (long max-chunk-bytes)))
 
       off
-      (long (if (nil? offset)
-              (max 0 (- len lim))
-              (-> (long offset)
-                  (max 0)
-                  (min len))))
+      (long (cond
+              ;; No offset: the tail bytes, what a watcher of a live command wants.
+              (nil? offset) (max 0 (- len lim))
+              ;; NEGATIVE: the last `n` LINES, the same reading `cat(path, -50)` has.
+              ;; A line count is the unit a caller actually holds; a byte offset for
+              ;; it is only knowable after reading the file, which is the read they
+              ;; were trying to make.
+              (neg? (long offset)) (tail-line-offset file len lim (- (long offset)))
+              :else (-> (long offset)
+                        (max 0)
+                        (min len))))
 
       want
       (long (min (- len off) lim))

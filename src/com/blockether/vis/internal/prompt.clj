@@ -223,7 +223,7 @@
     "  not shell.\n"
     "- Batch independent work in ONE block: plural arguments first, `await gather(...)` for\n"
     "  independent calls.\n"
-    "- No shell TOOL: `await shell(\"npm test\")` in Python answers a HANDLE — `sh.logs()`/`sh.wait(s)`/`sh.type(\"y\")`/`sh.stop()`, each carrying status.\n"
+    "- No shell TOOL: `await shell(\"npm test\")` answers a HANDLE — `sh.logs(-50)` (last n LINES)/`sh.wait(s)`/`sh.type(\"y\")`/`sh.stop()`, each carrying status.\n"
     "- Define once and reuse a small higher-order helper (functions that accept or return\n"
     "  callables): NEVER paste a near-identical loop or block twice; on the second occurrence factor it out and call it.\n"
     "- A result is an ordinary Python value: keep it in a variable and print only what the answer needs —\n"

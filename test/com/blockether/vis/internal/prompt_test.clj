@@ -149,7 +149,7 @@
                    ;; Regression, issue #137: the handle line spelled `sh.type()` among the
                    ;; status accessors, so following it verbatim raised a TypeError —
                    ;; `type` SENDS keystrokes and its text argument is required.
-                   "No shell TOOL" "`sh.logs()`" "`sh.wait(s)`" "`sh.type(\"y\")`"
+                   "No shell TOOL" "`sh.logs(-50)`" "`sh.wait(s)`" "`sh.type(\"y\")`"
                    "functions that accept or return\n  callables"
                    "NEVER paste a near-identical loop or block twice" "Define once and reuse"
                    "second occurrence factor it out and call it" "ordinary Python value"
@@ -682,4 +682,10 @@
                    (expect (str/includes? text "answers anchored TEXT, never a map"))
                    (expect (not (str/includes? text "returns a MAP")))
                    (expect (str/includes? text "bottom-up (highest line first)"))
-                   (expect (str/includes? text "RE-ANCHORED window")))))
+                   (expect (str/includes? text "RE-ANCHORED window"))))
+             ;; Regression: `sh.logs` grew the same negative tail `cat` has, and the
+             ;; prompt named the method with no arguments at all, so a watcher still
+             ;; paged bytes to answer "what did it just print".
+             (it "says a shell handle reads its last n LINES"
+                 (let [text (prompt/build-system-prompt {})]
+                   (expect (str/includes? text "`sh.logs(-50)` (last n LINES)")))))

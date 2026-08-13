@@ -101,6 +101,56 @@
                (expect (false? (:is-eof head)))
                (expect (true? (:is-truncated head))))
              (finally (shell-log/delete-session-logs! sid)))))
+  (it "counts LINES back from the end when the offset is NEGATIVE"
+      ;; Regression, handle audit: `sh.logs(-50)` was refused with "offset must not be
+      ;; negative", so "the last 50 lines" cost a read of the whole log plus byte
+      ;; arithmetic over output the caller had just paid to receive.
+      (let
+        [sid
+         (session-id "neg")
+
+         text
+         (str/join (map #(str "line-" % "\n") (range 500)))
+
+         text-at
+         (fn [off]
+           (:text (shell-log/read-chunk "n" (shell-log/log-file sid "n") {:offset off})))]
+
+        (try (write-log! sid "n" text)
+             ;; -1 is the LAST line: the trailing newline ENDS it rather than
+             ;; beginning an empty one after it.
+             (expect (= "line-499\n" (text-at -1)))
+             (expect (= "line-497\nline-498\nline-499\n" (text-at -3)))
+             ;; More tail than the log holds is the whole log, never an error.
+             (expect (= text (text-at -100000)))
+             (let [c (shell-log/read-chunk "n" (shell-log/log-file sid "n") {:offset -3})]
+               (expect (s/valid? ::shell-log/log-chunk c))
+               (expect (true? (:is-eof c)))
+               ;; The offset it answers with is a real line boundary, so feeding it
+               ;; back as a POSITIVE cursor reads exactly the same bytes.
+               (expect (= (:text c) (text-at (:offset c)))))
+             ;; A byte cap still caps: a tail bigger than the window clamps into it.
+             (let
+               [c (shell-log/read-chunk "n" (shell-log/log-file sid "n") {:offset -500 :limit 64})]
+               (expect (>= 64 (count (:text c))))
+               (expect (true? (:is-eof c))))
+             (finally (shell-log/delete-session-logs! sid)))))
+  (it "reads a negative tail off a log whose last line is unfinished"
+      ;; A live command mid-line is the normal case for a watcher, and it has no
+      ;; trailing newline to count from.
+      (let
+        [sid
+         (session-id "neg-partial")
+
+         text-at
+         (fn [off]
+           (:text (shell-log/read-chunk "p" (shell-log/log-file sid "p") {:offset off})))]
+
+        (try (write-log! sid "p" "alpha\nbeta\ngamma")
+             (expect (= "gamma" (text-at -1)))
+             (expect (= "beta\ngamma" (text-at -2)))
+             (expect (= "alpha\nbeta\ngamma" (text-at -9)))
+             (finally (shell-log/delete-session-logs! sid)))))
   (it "never splits a multi-byte character across two reads"
       (let
         [sid

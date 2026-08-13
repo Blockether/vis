@@ -31,7 +31,7 @@
 
    The result IS the HANDLE: every shell answer is a dict-with-methods in the
    sandbox, so the process is driven on the object the call already returned —
-   `sh.logs(offset=0)` reads the log from a byte OFFSET and returns NOW,
+   `sh.logs(-50)` reads the last 50 LINES (or a byte OFFSET) and returns NOW,
    `sh.wait(30)` is the bounded poll loop written once in the engine, `sh.type(\"y\")`
    types into the pty and `sh.stop()` kills the tree. There are no id-taking verbs to
    re-type an id into; re-issuing a LIVE id gives the same handle back.
@@ -217,32 +217,43 @@
            " — the text carries an inline marker and no longer parses; narrow the output"
            " (`--jq`, `--limit`, `head -c`) or redirect it to a file and read that."))))
 
-(defn- ->pos-long
-  "Coerce a GraalPy-crossed numeric option to a NON-NEGATIVE WHOLE long, or throw a
-   typed error. nil passes through (caller supplies the default).
+(defn- ->whole-long
+  "Coerce a GraalPy-crossed numeric option to a WHOLE long, or throw a typed
+   error. nil passes through (caller supplies the default).
 
-   Rounding a fraction and clamping a negative are both silent MODE CHANGES, not
-   conveniences: an `offset: 0.4` rounded to a different byte and a `limit: -5`
-   clamped to a real read. A number the caller cannot have meant is refused at the
-   boundary, where the message can still name the option."
+   Rounding a fraction is a silent MODE CHANGE, not a convenience: an
+   `offset: 0.4` rounds to a different byte. A number the caller cannot have
+   meant is refused at the boundary, where the message can still name the option."
   [x what]
   (cond (nil? x) nil
-        (number? x)
-        (let [d (double x)]
-          (cond (or (Double/isNaN d) (Double/isInfinite d))
-                (throw (ex-info (str what " must be a finite number, got " (pr-str x) ".")
-                                {:type ::bad-option :option what :value x}))
-                (neg? d) (throw (ex-info (str what " must not be negative, got " (pr-str x) ".")
-                                         {:type ::bad-option :option what :value x}))
-                (not= d (Math/rint d)) (throw (ex-info
-                                                (str what
-                                                     " must be a whole number, got "
-                                                     (pr-str x)
-                                                     " — a fraction rounds into a different value.")
-                                                {:type ::bad-option :option what :value x}))
-                :else (long d)))
+        (number? x) (let [d (double x)]
+                      (cond (or (Double/isNaN d) (Double/isInfinite d))
+                            (throw (ex-info
+                                     (str what " must be a finite number, got " (pr-str x) ".")
+                                     {:type ::bad-option :option what :value x}))
+                            (not= d (Math/rint d))
+                            (throw (ex-info (str what
+                                                 " must be a whole number, got "
+                                                 (pr-str x)
+                                                 " — a fraction rounds into a different value.")
+                                            {:type ::bad-option :option what :value x}))
+                            :else (long d)))
         :else (throw (ex-info (str what " must be a number, got " (pr-str x) ".")
                               {:type ::bad-option :option what :value x}))))
+
+(defn- ->pos-long
+  "[[->whole-long]] that also refuses a NEGATIVE, for an option where a negative
+   has no reading: clamping a `limit: -5` into a real read is the same silent
+   mode change as rounding a fraction.
+
+   `logs` takes its `offset` through [[->whole-long]] instead, because there a
+   negative IS a reading — the last n LINES, as in `cat(path, -50)`."
+  [x what]
+  (let [n (->whole-long x what)]
+    (when (and n (neg? (long n)))
+      (throw (ex-info (str what " must not be negative, got " (pr-str x) ".")
+                      {:type ::bad-option :option what :value x})))
+    n))
 
 (defn- one-line
   "Collapse a command to a single display line capped at `limit` chars."
@@ -1994,7 +2005,7 @@
       "status" "exited")))
 
 (defn- shell-logs-impl
-  "ONE read of a shell's log, from a byte OFFSET.
+  "ONE read of a shell's log, by byte OFFSET or by LINES from the end.
 
    The log is a file, so a read is a WINDOW on it and the caller owns the cursor:
    feed `next_offset` back and the loop walks the whole stream, however long it
@@ -2003,7 +2014,9 @@
 
    With no `:offset` the window is the TAIL, which is what someone watching a live
    command wants; `{:offset 0}` is the head, and a loop from there is the whole
-   log. `is_eof` false means read again NOW rather than sleep.
+   log. A NEGATIVE `:offset` is the last n LINES — `{:offset -50}` reads back 50
+   lines, the same reading `cat(path, -50)` has, and clamps to the head when the
+   log holds fewer. `is_eof` false means read again NOW rather than sleep.
 
    The id may name a LIVE shell or a finished RUN: every run claims a handle before
    it waits, so a batch that ended inside its wait still has a log to read, and the
@@ -2459,7 +2472,7 @@
           (reject-text)
           (shell-logs-impl env
                            (need-id)
-                           {:offset (->pos-long (opt opts :offset) "offset")
+                           {:offset (->whole-long (opt opts :offset) "offset")
                             :limit (->pos-long (opt opts :limit) "limit")}))
 
       "wait"
@@ -2696,9 +2709,10 @@
 
 
 (defn shell-logs
-  "`sh.logs()` — read a background shell's log from a byte offset
-   and return NOW. Nothing blocks on your behalf: a wait is a bounded loop you
-   write in `python_execution` and break on what you actually read."
+  "`sh.logs()` — read a background shell's log from a byte offset, or the last
+   n LINES with a negative one (`sh.logs(-50)`), and return NOW. Nothing blocks
+   on your behalf: a wait is a bounded loop you write in `python_execution` and
+   break on what you actually read."
   {:arglists '([id] [id opts])}
   [env & args]
   (shell-dispatch env (assoc (shell-call-opts ["id"] args) "op" "logs")))
@@ -3107,7 +3121,8 @@
           "real pty and return its HANDLE NOW; every run is a background run. Chain with `&&`; "
           "run independent work as separate calls. Drive "
           "it through the handle: `sh.wait(secs)` (the ONLY wait; `timed_out` means the WAIT "
-          "expired, not the process), `sh.logs(offset=…)`, `sh.type(text)`, `sh.stop()` — never "
+          "expired, not the process), `sh.logs(-50)` (the last 50 LINES; `offset=…` bytes), "
+          "`sh.type(text)`, `sh.stop()` — never "
           "a rerun; re-issuing a live `id` returns THAT shell. Every answer already carries the "
           "STATUS — `status`/`exit`, the clock, `log_path` and live cpu/rss — so nothing asks "
           "twice. NEVER trim inside the command: `| head`, "
@@ -3132,8 +3147,9 @@
           "means read again now.")
      :description
      (str "TRANSPORT for `sh.logs(offset=…, limit=…)` — call the HANDLE the shell result already "
-          "is, not this. Reads a background shell's log from a byte offset and returns NOW. No "
-          "offset reads the TAIL; `offset=0` starts at the beginning.")
+          "is, not this. Reads a background shell's log and returns NOW. No offset reads the TAIL; "
+          "`offset=0` starts at the beginning; a NEGATIVE offset is the last n LINES "
+          "(`sh.logs(-50)`), the same reading `cat(path, -50)` has.")
      :inject-env? true
      :tag :observation
      :ticker-fn (shell-ticker "logs")
