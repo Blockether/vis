@@ -76,11 +76,34 @@
   (it "returns None when the tree has no ruff configuration"
       (let [d (tmp-dir)]
         (spit (str d "/a.py") "x = 1\n")
+        (with-fs-context
+          d
+          (expect (nil? (ev python-context
+                            (str "import ruff\nruff.config_for(" (pr-str (str d "/a.py")) ")")))))))
+  ;; Regression: a file reached through a SYMLINKED path lost every per-file
+  ;; ignore — ruff discovered the config from the canonicalized path but matched
+  ;; the `per-file-ignores` globs against the path it was handed, so `check_file`
+  ;; reported F401 on a file the project had exempted.
+  (it "honours per-file-ignores through a symlinked path"
+      (let [d (tmp-dir)]
+        (.mkdirs (java.io.File. (str d "/real/pkg")))
+        (spit (str d "/real/ruff.toml") "[lint.per-file-ignores]\n\"pkg/*.py\" = [\"F401\"]\n")
+        (spit (str d "/real/pkg/exempt.py") "import os\n")
+        (spit (str d "/real/checked.py") "import os\n")
+        (Files/createSymbolicLink (.toPath (java.io.File. (str d "/link")))
+                                  (.toPath (java.io.File. (str d "/real")))
+                                  (make-array FileAttribute 0))
         (with-fs-context d
-                         (expect (nil? (ev python-context
-                                           (str "import ruff\nruff.config_for("
-                                                (pr-str (str d "/a.py"))
-                                                ")"))))))))
+                         (expect (= 0
+                                    (ev python-context
+                                        (str "import ruff\nlen(ruff.check_file("
+                                             (pr-str (str d "/link/pkg/exempt.py"))
+                                             "))"))))
+                         (expect (= "F401"
+                                    (ev python-context
+                                        (str "import ruff\nruff.check_file("
+                                             (pr-str (str d "/link/checked.py"))
+                                             ")[0]['code']"))))))))
 
 (defdescribe
   ruff-shim-cli-test

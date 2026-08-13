@@ -31,6 +31,18 @@
                str)]
     (when-not (or (nil? s) (= "" s)) s)))
 
+(defn- canon-path
+  "The path ruff must ANCHOR its `per-file-ignores` globs at: absolute, with
+   symlinks resolved. Ruff DISCOVERS the config from the canonicalized path but
+   matches those globs against the path it was HANDED, so a file reached through
+   a symlink (macOS `/tmp` -> `/private/tmp`, a temp dir, a linked workspace)
+   silently lost every per-file ignore and reported rules the project had turned
+   off. `lint_code`'s Python pack normalizes the same way."
+  [s]
+  (when-let [p (blank->nil s)]
+    (let [f (java.io.File. ^String p)]
+      (try (.getCanonicalPath f) (catch Exception _ p)))))
+
 (defn- diagnostic->py
   "One ruff diagnostic as a STRING-keyed map — the boundary marshals that to a
    plain Python dict."
@@ -50,7 +62,7 @@
   []
   {"__vis_ruff_format__" (fn [code path config line-length]
                            (envelope #(ruff/format (str code)
-                                                   {:path (blank->nil path)
+                                                   {:path (canon-path path)
                                                     :config (blank->nil config)
                                                     :line-length (when (pos? (long (or line-length
                                                                                        0)))
@@ -58,7 +70,7 @@
    "__vis_ruff_lint__" (fn [code path config line-length select ignore preview]
                          (envelope #(mapv diagnostic->py
                                           (ruff/lint (str code)
-                                                     {:path (blank->nil path)
+                                                     {:path (canon-path path)
                                                       :config (blank->nil config)
                                                       :line-length (when (pos? (long (or line-length
                                                                                          0)))
@@ -69,7 +81,7 @@
    "__vis_ruff_fix__" (fn [code path config line-length select ignore preview unsafe-fixes]
                         (envelope #((requiring-resolve 'com.blockether.ruff/fix)
                                       (str code)
-                                      {:path (blank->nil path)
+                                      {:path (canon-path path)
                                        :config (blank->nil config)
                                        :line-length (when (pos? (long (or line-length 0)))
                                                       (long line-length))
