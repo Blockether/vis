@@ -657,14 +657,14 @@
 
 (defn- fmt-toks
   "Compact token count for the model-facing budget: `1000+` → `\"<n>k\"`, else the
-   raw integer. Matches the `session_fold` card's `~<n>k tokens` spelling so the
+   raw integer. Matches the `fold_session` card's `~<n>k tokens` spelling so the
    once-per-fold card and the per-iteration `now` budget read the same way."
   [t]
   (let [t (long t)]
     (if (>= t 1000) (str (Math/round (/ (double t) 1000.0)) "k") (str t))))
 
 (defn folds-view
-  "Model-facing LIVE BUDGET derived from the recorded `session_fold` intents.
+  "Model-facing LIVE BUDGET derived from the recorded `fold_session` intents.
 
    The GIST of each fold lives ONCE — in its transcript breadcrumb, rendered in
    place where the collapsed content was, carrying its file:line anchors (see
@@ -678,7 +678,7 @@
               inflate it) is folded away, priced BOTH in scopes (`<C>/<T>`) AND —
               when `weights` are stamped — in reclaimed context (`~<toks> tok`,
               summed from `engine_iter_weights` with the SAME estimator the
-              `session_fold` card and the over-budget nudge use, PLUS the Q/A
+              `fold_session` card and the over-budget nudge use, PLUS the Q/A
               recaps of explicitly whole-turn-folded turns priced from
               `turn-weights` / `engine_turn_weights`); and `live` the
               compressed scopes STILL on the wire (accounting only; current-turn
@@ -772,7 +772,7 @@
    Pressure starts at 75% of `auto_compress_above`, escalates at 90%, and becomes
    mandatory above the operating ceiling. Once armed it remains visible while
    pressure remains; an ignored warning must never silently expire. The hint names
-   `session_fold`, the safe settled boundary, and the evidence to preserve. Pure."
+   `fold_session`, the safe settled boundary, and the evidence to preserve. Pure."
   [util current-turn since-turn]
   (let
     [req
@@ -808,8 +808,8 @@
         (fmt-toks cap)
         " compaction budget. "
         (if required?
-          "Fold settled search/tool sweeps and superseded reads NOW with one broad session_fold through the last completed scope"
-          (str "Use one broad session_fold through the last completed scope"
+          "Fold settled search/tool sweeps and superseded reads NOW with one broad fold_session through the last completed scope"
+          (str "Use one broad fold_session through the last completed scope"
                (when urgent? " before another large tool call")))
         "; If the edit is ready and the next patch fits available headroom, patch first; otherwise preserve a compact actionable checkpoint: exact paths/symbols, hypothesis, intended edit/test, and dirty files; preserve decisions, edits, and verification; preserve exact physical paths—never bare or abbreviated filenames—then confirm the receipt saved tokens."))))
 

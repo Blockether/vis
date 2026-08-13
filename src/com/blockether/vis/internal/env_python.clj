@@ -110,7 +110,7 @@
      host object GraalPy materialises it as a Python datetime, which needs
      the context's datetime module data: never imported ⇒
      `NullPointerException: Cannot read field \"utc\" because \"moduleData\"
-     is null` (session 9c829d10, `sessions()`). ISO-8601 string instead.
+     is null` (session 9c829d10, `list_sessions()`). ISO-8601 string instead.
    - numbers and other auto-convertible boxed types hand straight to
      polyglot."
   [x path]
@@ -820,7 +820,7 @@
    and foundation tools are (re)installed via this fn AFTER the context's own
    defer pass — without deferring here they'd stay raw/synchronous and the
    `await` the prompt teaches would fail. The compaction verbs
-   (`session_fold`/`session_drop`/`__vis_par__`) are bound via `create-python-context`, not
+   (`fold_session`/`session_drop`/`__vis_par__`) are bound via `create-python-context`, not
    here, so they stay direct. No-op when the async preamble isn't installed
    (the printer/parser helper contexts never bind tools)."
   [python-context sym val]
@@ -1155,8 +1155,8 @@
       "gather(*awaitables) -> list. Concurrently run independent deferred tool calls/awaitables on a bounded host pool; results preserve input order. One list/tuple works. Use `await gather(...)`; keep dependent calls sequential. All settle before failure reports every failing slot index.")
     (set-python-binding-doc!
       ctx
-      'session-fold
-      "session_fold(target, gist=None) -> str. Collapse SETTLED steps: prior turns and the current turn only through its last completed iteration; live/future steps cannot fold. Targets: step/turn ids or through/from/to/since selectors. Folding changes rendering, not storage; there is no destructive unfold command, and a folded step is not re-readable inline — its GIST is what survives. With introspection on, `s = await session_state()` and filter `['transcript']['turns'][...]['iterations'][...]['blocks']`. A broader newer fold supersedes fully covered breadcrumbs; equal scope keeps newer. Partial overlaps remain separate.")))
+      'fold-session
+      "fold_session(target, gist=None) -> str. Collapse SETTLED steps: prior turns and the current turn only through its last completed iteration; live/future steps cannot fold. Targets: step/turn ids or through/from/to/since selectors. Folding changes rendering, not storage; there is no destructive unfold command, and a folded step is not re-readable inline — its GIST is what survives. With introspection on, `s = await read_session()` and filter `['transcript']['turns'][...]['iterations'][...]['blocks']`. A broader newer fold supersedes fully covered breadcrumbs; equal scope keeps newer. Partial overlaps remain separate.")))
 
 
 (def PROCESS_SURFACE
@@ -2117,7 +2117,7 @@
     ;; ASYNC-BY-DEFAULT runtime: install the trampoline + `gather`, then DEFER
     ;; every tool binding (so `await grep(x)` / `gather(grep(x), grep(y))` work).
     ;; `__vis_par__` (the bounded host platform pool) is wired as a binding above;
-    ;; the compaction verbs (`session_fold`/`session_drop`) stay direct (never deferred).
+    ;; the compaction verbs (`fold_session`/`session_drop`) stay direct (never deferred).
     ;; Eval'd before the snapshot so all `__vis_*` names land in the baseline.
     (.eval ctx "python" async-runtime-python)
     ;; Auto-import `re` so the model can use regex without writing `import re`.
@@ -2180,7 +2180,7 @@
                                   (fn? v)))
                         (mapcat (fn [[sym _]]
                                   (cons (sym->py-name sym) (py-aliases-for-sym sym))))
-                        (remove #{"session_fold" "__vis_par__" "__vis_par_isolated__"})
+                        (remove #{"fold_session" "__vis_par__" "__vis_par_isolated__"})
                         distinct
                         vec)]
       (.putMember g "__vis_defer_names__" (->py defer-names))
@@ -2190,7 +2190,7 @@
       ;; is already in `__vis_docs__`/`__vis_sigs__` for it to carry.
       (.eval ctx "python" "__vis_stamp_tools__()"))
     ;; The DIRECT (never-deferred) verbs keep their synchronous identity but still
-    ;; accept Python kwargs: wrap them so `session_fold(target, gist="…")` folds
+    ;; accept Python kwargs: wrap them so `fold_session(target, gist="…")` folds
     ;; its kwargs into ONE trailing dict positional the Clojure verb unwraps
     ;; (a bare ProxyExecutable is positional-only and would raise a TypeError).
     (let
@@ -2199,7 +2199,7 @@
                                    (fn? v)))
                          (mapcat (fn [[sym _]]
                                    (cons (sym->py-name sym) (py-aliases-for-sym sym))))
-                         (filter #{"session_fold"})
+                         (filter #{"fold_session"})
                          distinct
                          vec)]
       (when (seq direct-names)

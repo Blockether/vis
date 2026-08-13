@@ -25,41 +25,54 @@
                      (expect (str/includes? message "triple-quoted"))
                      (expect (not (str/includes? message "anchor")))))))
 
-(defdescribe
-  introspection-public-surface-test
-  (it "exposes one canonical state tool plus the session index"
-      (let
-        [symbols
-         (set (map :ext.symbol/symbol introspection/all-symbols))
+(defdescribe introspection-public-surface-test
+             (it
+               "exposes the read, the single descriptor and the index under verb_noun names"
+               (let
+                 [symbols
+                  (set (map :ext.symbol/symbol introspection/all-symbols))
 
-         session-state-doc
-         (:doc (meta #'introspection/session-state))]
+                  read-doc
+                  (:doc (meta #'introspection/read-session))
 
-        (expect (= #{'session-state 'sessions} symbols))
-        (expect (not (contains? symbols 'session-usage)))
-        (expect (not (contains? symbols 'session-report-html)))
-        (expect (str/starts-with?
-                  session-state-doc
-                  "await session_state(session_id=None)  # current session by default"))
-        (expect (str/includes? session-state-doc "\"usage\""))
-        (expect (re-find #"tool rows overlap" session-state-doc))
-        (expect (re-find #"recovery path for raw folded current-session" session-state-doc))
-        (expect (re-find #"does not undo fold intents or restore them" session-state-doc))
-        ;; engine-symbol-* tools were retired in favour of the bare
-        ;; `doc` / `apropos` engine system calls.
-        (expect (not (contains? symbols 'engine-symbol-documentation)))
-        (expect (not (contains? symbols 'engine-symbol-apropos)))
-        (expect (= 2 (count symbols)))))
-  (it "defaults session_state to the current session when no id is passed"
-      (let
-        [inspect-data
-         @#'introspection/foundation-inspect-data
+                  get-doc
+                  (:doc (meta #'introspection/get-session))
 
-         data
-         (inspect-data {:session-id "current-session" :db-info nil} nil)]
+                  list-doc
+                  (:doc (meta #'introspection/list-sessions))]
 
-        (expect (= "current-session" (:session-id data)))
-        (expect (contains? data :usage)))))
+                 (expect (= #{'read-session 'get-session 'list-sessions} symbols))
+                 ;; The storage noun is gone from the agent surface: `session_state` is a
+                 ;; DB TABLE, never a tool, and the bare plural `sessions` is not a verb.
+                 (expect (not (contains? symbols 'session-state)))
+                 (expect (not (contains? symbols 'sessions)))
+                 (expect (not (contains? symbols 'session-usage)))
+                 (expect (not (contains? symbols 'session-report-html)))
+                 (expect (str/starts-with?
+                           read-doc
+                           "await read_session(target=None)  # current session by default"))
+                 (expect (str/includes? read-doc "\"usage\""))
+                 (expect (re-find #"tool rows overlap" read-doc))
+                 (expect (re-find #"recovery path for raw folded current-session" read-doc))
+                 (expect (re-find #"does not undo fold intents or restore them" read-doc))
+                 (expect (str/starts-with? get-doc "await get_session(target=None)"))
+                 (expect (str/starts-with? list-doc "await list_sessions(search=None)"))
+                 (expect (re-find #"is_in_title" list-doc))
+                 ;; engine-symbol-* tools were retired in favour of the bare
+                 ;; `doc` / `apropos` engine system calls.
+                 (expect (not (contains? symbols 'engine-symbol-documentation)))
+                 (expect (not (contains? symbols 'engine-symbol-apropos)))
+                 (expect (= 3 (count symbols)))))
+             (it "defaults read_session to the current session when no id is passed"
+                 (let
+                   [inspect-data
+                    @#'introspection/foundation-inspect-data
+
+                    data
+                    (inspect-data {:session-id "current-session" :db-info nil} nil)]
+
+                   (expect (= "current-session" (:session-id data)))
+                   (expect (contains? data :usage)))))
 
 (defdescribe
   session-usage-ledger-test
@@ -227,7 +240,7 @@
                    (expect (:tool-errors-truncated? result))
                    (expect (= "excess error" (get-in result [:tool-errors 0 :message]))))))
 
-(defdescribe session-state-envelope-test
+(defdescribe read-session-envelope-test
              (it "returns one canonical envelope with the compact usage ledger embedded"
                  (let
                    [inspect
@@ -241,14 +254,14 @@
 
                    (expect (extension/tool-result? result))
                    ;; Envelope key stays keyword — internal, unwrapped before the boundary.
-                   (expect (= :session-state (:symbol result)))
+                   (expect (= :read-session (:symbol result)))
                    (expect (map? data))
                    (expect (contains? data "usage"))
                    (expect (map? (get data "usage"))))))
 
 (defdescribe
-  session-state-strings-only-test
-  ;; session_state is a MODEL-FACING verb: its `:result` crosses the strings-only
+  read-session-strings-only-test
+  ;; read_session is a MODEL-FACING verb: its `:result` crosses the strings-only
   ;; Clojure->Python boundary, which throws on any keyword/symbol key OR value.
   ;; The verb stringifies once at egress (deep-stringify), so the whole surface —
   ;; including the embedded diagnosis / failures / transcript sub-maps — reads
@@ -272,7 +285,7 @@
         ;; the exact contract (a keyword anywhere would throw here).
         (expect (map? (env-python/boundary-view data)))))
   (it
-    "a POPULATED session_state (turns/calls/timeline/diagnosis + string-keyed llm maps) crosses the boundary with no keyword leak"
+    "a POPULATED read_session (turns/calls/timeline/diagnosis + string-keyed llm maps) crosses the boundary with no keyword leak"
     (let [s (vis/db-create-connection! :memory)]
       (try
         (let
@@ -312,31 +325,32 @@
           (expect (every? string? (keys data))))
         (finally (vis/db-dispose-connection! s))))))
 
-(defdescribe sessions-envelope-test
-             ;; Regression (session 9c829d10): `sessions()` was the ONE introspection
+(defdescribe list-sessions-envelope-test
+             ;; Regression (session 9c829d10): the index verb was the ONE introspection
              ;; verb without the `session-envelope` wrap — it returned the raw vector,
              ;; so `assert-symbol-envelope!` rejected EVERY call ("Symbol 'sessions'
              ;; must return a canonical :envelope map").
              (it "no-arg arity returns a canonical envelope (empty index without a db)"
                  (let
-                   [sessions
+                   [list-sessions
                     @#'introspection/foundation-sessions
 
                     result
-                    (sessions {:session-id nil :db-info nil})]
+                    (list-sessions {:session-id nil :db-info nil})]
 
                    (expect (extension/tool-result? result))
-                   (expect (= :sessions (:symbol result)))
+                   (expect (= :list-sessions (:symbol result)))
                    (expect (= [] (:result result)))))
-             (it "channel-filtered arity is enveloped too"
+             (it "the search arity is enveloped too"
                  (let
-                   [sessions
+                   [list-sessions
                     @#'introspection/foundation-sessions
 
                     result
-                    (sessions {:db-info nil} :tui)]
+                    (list-sessions {:db-info nil} "anything")]
 
                    (expect (extension/tool-result? result))
+                   (expect (= :list-sessions (:symbol result)))
                    (expect (= [] (:result result))))))
 
 (defdescribe
@@ -361,7 +375,7 @@
         (expect (false? (boolean (activation {}))))
         (with-redefs [vis/toggle-enabled? (constantly true)]
           (expect (true? (boolean (activation {})))))))
-  (it "keeps gateway-event / session_state guidance out of core, in its own prompt"
+  (it "keeps gateway-event / read_session guidance out of core, in its own prompt"
       (let
         [text
          ((:ext/prompt-fn introspection/vis-extension) {})
@@ -370,9 +384,10 @@
          (var-get #'com.blockether.vis.internal.prompt/CORE_SYSTEM_PROMPT)]
 
         (expect (str/includes? text "~/.vis/gateway/events/<id>.ndjson"))
-        (expect (str/includes? text "await session_state()"))
+        (expect (str/includes? text "await read_session()"))
+        (expect (str/includes? text "list_sessions(search="))
         (expect (not (str/includes? core "gateway/events")))
-        (expect (not (str/includes? core "session_state")))))
+        (expect (not (str/includes? core "read_session")))))
   (it "is not bundled into foundation-core's symbol set"
       (let
         [core-symbols (set (:ext.engine/symbols
@@ -388,7 +403,7 @@
 
 (defdescribe
   inspect-other-session-current-turn-test
-  ;; Regression (session 227812d4): `session_state("<other-id>")` built
+  ;; Regression (session 227812d4): `read_session("<other-id>")` built
   ;; `:current-turn` from `env` alone, so inspecting ANOTHER session
   ;; answered with the CALLER's own live turn — its user request, its
   ;; attempts and its cost, filed under the other session's id.
@@ -441,8 +456,8 @@
           (finally (vis/db-dispose-connection! s))))))
 
 (defdescribe
-  session-state-live-turn-ledger-test
-  ;; Regression (session e95e1cb2): `session_state()` removed the live turn from
+  read-session-live-turn-ledger-test
+  ;; Regression (session e95e1cb2): `read_session()` removed the live turn from
   ;; `session.turns`, and a foreign live turn reported the turn row's stale zero
   ;; instead of the iteration rows already persisted for it.
   (it "returns the live turn and its persisted iterations consistently"
@@ -530,3 +545,127 @@
                (it "keeps genuine agent failures classified as code errors"
                    (expect (= :code-execution-error
                               (classify "python_execution(...)" "NameError: name 'x'"))))))
+
+;; ---------------------------------------------------------------------------
+;; The renamed surface's two new behaviours: `list_sessions(search=…)` is the
+;; SAME ranked search the TUI and the companion app run, and `get_session` is
+;; the single-row read that used to be missing between the index and the
+;; whole transcript.
+;; ---------------------------------------------------------------------------
+
+(defdescribe
+  list-sessions-search-test
+  (it "answers `search` in the SERVER's ranked order, tagged with where it hit"
+      (let [s (vis/db-create-connection! :memory)]
+        (try (let
+               [titled (h/store-session! s {:channel :tui :title "the needle title"})
+                spoken (h/store-session! s {:channel :tui :title "something else"})
+                _ (vis/db-store-session-turn!
+                    s
+                    {:parent-session-id spoken :user-request "find the needle" :status :done})
+                _ (h/store-session! s {:channel :tui :title "unrelated"})
+                rows (@#'introspection/foundation-sessions-data {:db-info s} "needle")
+                by-id (into {} (map (juxt #(str (:id %)) identity)) rows)
+                titled-row (get by-id (str titled))
+                spoken-row (get by-id (str spoken))]
+
+               ;; Title band (0) before the request band (1); the third session
+               ;; never matched, so it is simply absent.
+               (expect (= [(str titled) (str spoken)] (mapv #(str (:id %)) rows)))
+               (expect (= 0 (:rank titled-row)))
+               (expect (true? (:is-in-title titled-row)))
+               (expect (= 1 (:rank spoken-row)))
+               (expect (true? (:is-in-request spoken-row)))
+               (expect (false? (:is-in-title spoken-row)))
+               ;; A search row is still an INDEX row - same keys, no transcript.
+               (expect (= "the needle title" (:title titled-row)))
+               (expect (= 1 (:turn-count spoken-row)))
+               (expect (not (contains? titled-row :transcript))))
+             (finally (vis/db-dispose-connection! s)))))
+  (it "a blank or absent search is the plain newest-first index"
+      (let [s (vis/db-create-connection! :memory)]
+        (try (let
+               [_ (h/store-session! s {:channel :tui :title "one"})
+                _ (h/store-session! s {:channel :tui :title "two"})
+                index (@#'introspection/foundation-sessions-data {:db-info s})]
+
+               (expect (= 2 (count index)))
+               (expect (= index (@#'introspection/foundation-sessions-data {:db-info s} nil)))
+               (expect (= index (@#'introspection/foundation-sessions-data {:db-info s} "   ")))
+               ;; No search means no ranking keys to paint.
+               (expect (every? #(not (contains? % :rank)) index)))
+             (finally (vis/db-dispose-connection! s))))))
+
+(defdescribe
+  get-session-descriptor-test
+  (it "answers ONE row - identity, counts and the last turn - with no transcript"
+      (let [s (vis/db-create-connection! :memory)]
+        (try (let
+               [cid (h/store-session!
+                      s
+                      {:channel :tui :title "Descriptor fixture" :provider :openai :model "gpt-4o"})
+                _ (vis/db-store-session-turn!
+                    s
+                    {:parent-session-id cid :user-request "first ask" :status :done})
+                _ (vis/db-store-session-turn!
+                    s
+                    {:parent-session-id cid :user-request "second ask" :status :running})
+                row
+                (@#'introspection/foundation-session-descriptor {:db-info s :session-id cid} cid)]
+
+               (expect (= (str cid) (str (:id row))))
+               (expect (= "Descriptor fixture" (:title row)))
+               (expect (= 2 (:turn-count row)))
+               (expect (true? (:is-current row)))
+               (expect (= "openai/gpt-4o" (:provider-model row)))
+               (expect (= "second ask" (get-in row [:last-turn :user-request])))
+               ;; The whole point of the middle read: no transcript, no per-turn roll-up.
+               (expect (not (contains? row :transcript)))
+               (expect (not (contains? row :turns))))
+             (finally (vis/db-dispose-connection! s)))))
+  (it "defaults to the current session and answers nil for an unknown target"
+      (let [s (vis/db-create-connection! :memory)]
+        (try (let
+               [cid (h/store-session! s {:channel :tui :title "Default fixture"})
+                env {:db-info s :session-id cid}]
+
+               (expect (= (str cid)
+                          (str (:id (@#'introspection/foundation-session-descriptor env)))))
+               (expect (false? (:is-current (@#'introspection/foundation-session-descriptor
+                                             {:db-info s :session-id nil}
+                                             cid))))
+               (expect (nil? (@#'introspection/foundation-session-descriptor
+                              env
+                              "00000000-0000-0000-0000-000000000000"))))
+             (finally (vis/db-dispose-connection! s))))))
+
+(defdescribe session-verb-keyword-argument-test
+             ;; A Python KEYWORD call crosses as ONE trailing dict whose keys are verbatim
+             ;; STRINGS, so `read_session(target=…)` / `list_sessions(search=…)` must bind
+             ;; exactly like the positional call rather than treating the dict as an id.
+             (let
+               [target-arg
+                @#'introspection/target-arg
+
+                search-arg
+                @#'introspection/search-arg]
+
+               (it "unwraps the trailing kwargs dict for both reads"
+                   (expect (= "abc" (target-arg "abc")))
+                   (expect (= "abc" (target-arg {"target" "abc"})))
+                   (expect (= "abc" (target-arg {"session_id" "abc"})))
+                   (expect (= "abc" (target-arg {"id" "abc"})))
+                   (expect (nil? (target-arg nil)))
+                   (expect (= "needle" (search-arg "needle")))
+                   (expect (= "needle" (search-arg {"search" "needle"})))
+                   (expect (= "needle" (search-arg {"query" "needle"}))))
+               (it "binds a keyword search end-to-end through the enveloped verb"
+                   (let [s (vis/db-create-connection! :memory)]
+                     (try (let
+                            [cid (h/store-session! s {:channel :tui :title "kwarg needle"})
+                             rows (:result (@#'introspection/foundation-sessions
+                                            {:db-info s}
+                                            {"search" "needle"}))]
+
+                            (expect (= [(str cid)] (mapv #(str (get % "id")) rows))))
+                          (finally (vis/db-dispose-connection! s)))))))

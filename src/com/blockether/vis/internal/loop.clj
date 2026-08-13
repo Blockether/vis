@@ -1494,7 +1494,7 @@
    in resume context.)
 
    Both a fold and a drop collapse to ONE breadcrumb per distinct GIST/reason —
-   NOT one per form and NOT one per covered iteration. One `session_fold` over 40
+   NOT one per form and NOT one per covered iteration. One `fold_session` over 40
    iterations carries one gist, so repeating that gist 40 times is 40x the tokens
    for zero information; every later request (and every message queued behind a
    running turn) paid it. Dedup therefore keys on the breadcrumb TEXT: a fold →
@@ -1650,7 +1650,7 @@
                           :iter-scopes (into #{} (keep #(iter-of-scope (:scope %))) forms)})))))
                turns)
          ;; Q/A recap weight per turn (~tokens, chars/4 — the SAME estimator as
-         ;; `engine_iter_weights`): stamped on the ctx so `session_fold`'s ack and
+         ;; `engine_iter_weights`): stamped on the ctx so `fold_session`'s ack and
          ;; the `now` budget can price the recap a whole-turn fold removes. Built
          ;; from the DB turn rows (not the fold ledger), so an already-folded
          ;; turn keeps a stable weight instead of dropping to zero.
@@ -1711,7 +1711,7 @@
                                                not-empty)
                                        (str "(dropped — raw turn data remains in session storage"
                                             (when (toggles/enabled? "introspection")
-                                              "; recover via `await session_state()`")
+                                              "; recover via `await read_session()`")
                                             ")"))}))))
                 (conj out
                       (cond->
@@ -2415,7 +2415,7 @@
 ;;    ...,
 ;;    <mutable context tail>]
 ;;
-;; Compaction (`session_fold`) REWRITES pins → the frozen
+;; Compaction (`fold_session`) REWRITES pins → the frozen
 ;; messages change → one deliberate cache bust, paid only under window
 ;; pressure instead of on every call.
 ;; -----------------------------------------------------------------------------
@@ -2443,7 +2443,7 @@
 
 (defn- compaction-verbs
   "Build the model-facing compaction verb bound into the sandbox as
-   `session_fold`, closing over `ctx-atom`. It records a `:session/summaries`
+   `fold_session`, closing over `ctx-atom`. It records a `:session/summaries`
    intent the wire applies via `apply-summaries`, and RETURNS a visible
    confirmation string (NOT the `\"vis_silent\"` row-suppression sentinel) so the
    action shows in the Python result instead of vanishing.
@@ -2800,10 +2800,10 @@
            {:note (str saved ctx-pct off-wire-note) :reclaimed-tokens toks})
          (catch Throwable _ {:note "" :reclaimed-tokens 0})))]
 
-    {'session-fold
-     (fn session-fold [scopes & [gist]]
+    {'fold-session
+     (fn fold-session [scopes & [gist]]
        ;; Python kwargs cross as ONE trailing dict (`__vis_direct_kwargs__`):
-       ;; `session_fold(sel, gist="…")` arrives as (sel {"gist" "…"}) and a fully
+       ;; `fold_session(sel, gist="…")` arrives as (sel {"gist" "…"}) and a fully
        ;; keyword call as ({"target" … "gist" …}). Unwrap both so keyword and
        ;; positional calls bind identically; a SELECTOR dict carries only
        ;; through/since/from/to, never these keys, so it is never mistaken for
@@ -2852,17 +2852,17 @@
                                   (get resolved "scopes")))]
 
              (when-not turn
-               (throw (ex-info "session_fold cannot prove the current turn; folding is blocked."
-                               {:type :vis/session-fold-turn-unknown})))
+               (throw (ex-info "fold_session cannot prove the current turn; folding is blocked."
+                               {:type :vis/fold-session-turn-unknown})))
              (when (seq live-scopes)
                (throw (ex-info
                         (str
-                          "session_fold blocked: " (str/join ", " live-scopes)
+                          "fold_session blocked: " (str/join ", " live-scopes)
                           " name the live iteration you are emitting right now — not yet a "
                           "settled wire step. Fold only COMPLETED steps: every prior turn AND "
                           "the current turn's finished iterations (e.g. {\"through\": \"tN/iK\"} "
                           "up to the last settled iteration). Do not retry THESE scopes this turn.")
-                        {:type :vis/session-fold-active-turn
+                        {:type :vis/fold-session-active-turn
                          :current-turn turn
                          :blocked-scopes live-scopes})))
              (let
@@ -2894,16 +2894,16 @@
                        (assoc state
                          :reclaimed-tokens total
                          :pending? (>= (long total) (long SESSION_REBASE_RECLAIMED_TOKENS)))))))
-               (tel/log! {:level :info :id ::session-fold :data {:intent intent}}
+               (tel/log! {:level :info :id ::fold-session :data {:intent intent}}
                          "model folded scopes")
                (str "folded " label note (when g (str " → " g)))))
-           (str "session_fold: nothing to fold — pass [\"t1/i2\", …] (a bare \"t1\" folds "
+           (str "fold_session: nothing to fold — pass [\"t1/i2\", …] (a bare \"t1\" folds "
                 "the whole turn), or a selector {\"through\"|\"since\": \"t1/i2\"} / "
                 "{\"from\": \"t1/i2\", \"to\": \"t1/i5\"}"))))}))
 
 
 (defn- apply-summaries
-  "Wire-only rewrite of `trailer-iters` applying the model's `session_fold`/
+  "Wire-only rewrite of `trailer-iters` applying the model's `fold_session`/
    `session_drop` intents at ITERATION granularity. Each summary is
    `{\"scopes\" #{\"tN/iN\" …} \"gist\" <string|nil>}` (drop = nil gist), or a range
    `{\"through\" \"tN/iN\" …}` which `expand-through` resolves to the trailer's own
@@ -3338,7 +3338,7 @@
                    (or (seq (:forms b)) [b]))
                  (:blocks iter-record)))
 
-     ;; `session_fold(...)` / `session_drop(...)` folds (synthetic forms
+     ;; `fold_session(...)` / `session_drop(...)` folds (synthetic forms
      ;; apply-summaries injected) render FIRST as one Python comment naming the
      ;; iteration scopes they replaced. `:summary-drop?` picks the label; the
      ;; gist carries the takeaway (fold) or the reason (drop):
@@ -3616,7 +3616,7 @@
    oldest are the ones a summary already covers. The single newest image is
    ALWAYS kept, even alone over budget — a request that shows the model nothing
    is worse than a large one. `:collapsed?` iterations are skipped outright:
-   `session_fold` already removed their whole pair.
+   `fold_session` already removed their whole pair.
 
    Pure. Returns `{pos {:images [...] :dropped [...]}}` keyed by trailer
    position, so each iteration's verdict lands in ITS place in the transcript."
@@ -3752,7 +3752,7 @@
                (into (vec msgs) img))]
 
             (cond
-              ;; Collapse WINS over provenance: a `session_fold`/`session_drop`
+              ;; Collapse WINS over provenance: a `fold_session`/`session_drop`
               ;; that covered this iteration removes its whole assistant +
               ;; tool_result pair AND its generated image. The figure's vision
               ;; visibility TRACKS its iteration's textual visibility (one
@@ -6286,7 +6286,7 @@
 
 (defn- emergency-fold-projection
   "Build a provider projection with settled trailer iterations collapsed through the
-   same `apply-summaries` path as `session_fold`.
+   same `apply-summaries` path as `fold_session`.
 
    Folding is GRADUATED: the foldable universe is walked OLDEST first and the search
    keeps the SMALLEST prefix whose projection fits the budget `budget-fn` derives from
@@ -9889,13 +9889,13 @@
      ;; ONE model-driven context-compaction verb, recording a
      ;; `:session/summaries` intent the wire applies via `apply-summaries`:
      ;;
-     ;;   session_fold(["tN/iN", …], "what this step established")  — KEEP the
+     ;;   fold_session(["tN/iN", …], "what this step established")  — KEEP the
      ;;     conclusion. Collapses those scopes into a single summary line; the
      ;;     summary is the distilled takeaway you still need.
-     ;;   session_fold({"through": "tN/iN"}, "…")  — RANGE: fold every step at
+     ;;   fold_session({"through": "tN/iN"}, "…")  — RANGE: fold every step at
      ;;     or before tN/iN in one shot (a positional options dict, NOT a kwarg:
      ;;     Python kwargs don't cross into a Clojure verb — see wrap-ifn).
-     ;;   session_fold(["tN/iN", …])  — the gist is OPTIONAL: OMIT it to just
+     ;;   fold_session(["tN/iN", …])  — the gist is OPTIONAL: OMIT it to just
      ;;     DISCARD the step outright (an approach you abandoned, a read you
      ;;     misread) where keeping even a summary would mislead. Replaces the
      ;;     old `session_drop`.

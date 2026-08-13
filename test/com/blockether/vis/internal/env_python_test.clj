@@ -354,7 +354,7 @@
             (expect (some? (:error r)))
             (expect (str/includes? (str (:message (:error r))) "NameError")))))
     (it "no sandbox doc still advertises a stored-result coordinate"
-        (let [out (str (:stdout (run "print(apropos(''))\nprint(doc('session_fold'))")))]
+        (let [out (str (:stdout (run "print(apropos(''))\nprint(doc('fold_session'))")))]
           (expect (not (str/includes? out "ntr[")))
           (expect (not (str/includes? out "ntr.describe")))
           (expect (not (str/includes? out "# saved:")))))))
@@ -443,17 +443,17 @@
           (expect (str/includes? out "every failing slot index"))))
     ;; The fold receipt promises nothing it cannot keep: with the native-result
     ;; store gone there is no coordinate to hand back, so the doc says the gist is
-    ;; what survives and `session_state()` is the only door to the rest.
-    (it "session_fold documents what a fold keeps and what it drops"
-        (ep/set-python-binding! ctx 'session-fold identity)
+    ;; what survives and `read_session()` is the only door to the rest.
+    (it "fold_session documents what a fold keeps and what it drops"
+        (ep/set-python-binding! ctx 'fold-session identity)
         (let
-          [out (run (str "print(apropos('session_fold')['session_fold'])\n"
-                         "print(doc('session_fold'))"))]
-          (expect (str/includes? out "session_fold(target, gist=None) -> str"))
+          [out (run (str "print(apropos('fold_session')['fold_session'])\n"
+                         "print(doc('fold_session'))"))]
+          (expect (str/includes? out "fold_session(target, gist=None) -> str"))
           (expect (str/includes? out "Folding changes rendering, not storage"))
           (expect (str/includes? out "there is no destructive unfold command"))
           (expect (str/includes? out "its GIST is what survives"))
-          (expect (str/includes? out "s = await session_state()"))
+          (expect (str/includes? out "s = await read_session()"))
           (expect (str/includes? out "['iterations'][...]['blocks']"))
           (expect (str/includes? out "broader newer fold supersedes fully covered"))
           (expect (str/includes? out "Partial overlaps remain separate"))
@@ -510,7 +510,7 @@
   (it "java.util.Date crosses as an ISO-8601 instant string"
       (let [d (java.util.Date. 1782986254012)]
         (expect (= (str (.toInstant d)) (get (ep/boundary-view {"created_at" d}) "created_at")))))
-  (it "dates nested in the sessions() index shape survive"
+  (it "dates nested in the list_sessions() index shape survive"
       (let [v (ep/boundary-view {"sessions" [{"id" "x" "created_at" (java.util.Date. 0)}]})]
         (expect (= "1970-01-01T00:00:00Z" (get (first (get v "sessions")) "created_at"))))))
 

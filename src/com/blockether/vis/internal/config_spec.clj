@@ -956,7 +956,7 @@
    entry the engine always grants, independent of what a project declares and of
    `jail.filesystem.allow`: Vis must reach its own state even inside a live jail,
    and that reach is engine-level — never a feature toggle (the `introspection`
-   toggle governs the session_state/sessions TOOLS, not this grant). Kept out of
+   toggle governs the read_session/get_session/list_sessions TOOLS, not this grant). Kept out of
    the DEFAULT search sweep (`search: false`); explicit paths still reach it."
   {"id" "vis-home"
    "path" "~/.vis"

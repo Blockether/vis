@@ -28,6 +28,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   back.
 
 ### Changed
+- The session introspection surface reads as VERBS instead of storage nouns: `session_state` is
+  now `read_session`, `sessions` is `list_sessions`, `session_fold` is `fold_session`, and the
+  read that was missing between them is `get_session(target)` — ONE descriptor row (identity,
+  turn count, last activity, provider/model, the last turn) so asking what a session IS no longer
+  costs a whole transcript. `session_state` was the name of a DB TABLE, and a bare plural noun is
+  not a verb. `list_sessions` drops the `channel` filter for `search=`, which is the SAME ranked
+  answer the TUI and the companion app paint: the server ranks title (0), request (1), reply (2)
+  and thinking (3), and each matched row carries `rank`,
+  `is_in_title`/`is_in_request`/`is_in_reply`/`is_in_thinking` plus the request/reply snippet
+  windows. There are no aliases — the old names are gone.
 - Prepare `vis-foundation-bridge` for Bridge 0.3: migrate the project profile and policy to the
   reduced YAML schema, recognize every 0.3 profile filename, preserve exact validation paths, and
   keep malformed Bridge configuration from crashing ordinary filesystem access.

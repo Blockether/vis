@@ -3201,7 +3201,7 @@
                            :idx 1
                            :code "cat"
                            :forms [{:vis/tool-name "cat" :success? false}
-                                   {:vis/tool-name "session_fold" :result "folded"}]})
+                                   {:vis/tool-name "fold_session" :result "folded"}]})
       (let [u (stats)]
         (expect (= 4 (:tool-call-count u)))
         (expect (= 1 (:fold-count u)))

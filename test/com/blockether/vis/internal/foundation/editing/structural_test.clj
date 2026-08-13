@@ -605,7 +605,7 @@
   "A Clojure var can carry its doc in a `^{:doc \"…\"}` METADATA map instead of the
    docstring position, and the pack reports that shape nowhere: no `docComment`,
    and no entry in the result-level docstrings list. Every metadata-documented
-   var — the whole sandbox tool surface (`session_state`, `sessions`,
+   var — the whole sandbox tool surface (`read_session`, `list_sessions`,
    `shell`, `mcp_*`) documents itself this way — indexed with a blank doc until
    `doc-snippet` learned to read the definition's own metadata head."
   (it "reads :doc from var metadata on def and defonce"

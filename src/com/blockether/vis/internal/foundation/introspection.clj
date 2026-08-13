@@ -2,8 +2,9 @@
   "Programmatic introspection of the agent's own state from inside
    `:code`. The public state surface is deliberately small:
 
-   - `(session-state [session-id])` -> canonical data map, including usage and raw LLM diagnostics
-   - `(sessions [channel])` -> metadata-only session index
+   - `(read-session [target])` -> canonical data map, including usage and raw LLM diagnostics
+   - `(get-session [target])` -> ONE session's descriptor, no transcript
+   - `(list-sessions [search])` -> metadata-only index, RANKED when `search` is given
 
    Everything else in this namespace is implementation detail. The agent
    gets the data once and manipulates it with ordinary Python collection
@@ -505,51 +506,146 @@
   ([env] (foundation-session env (current-session-id env)))
   ([env session-id] (session-snapshot (:db-info env) session-id)))
 
+(defn- session-turn-rows
+  [db-info session-id]
+  (try (vis/db-list-session-turns db-info session-id) (catch Throwable _ [])))
+
+(defn- session-index-row
+  "ONE index row for `session`: identity, turn count and last activity - never
+   transcript text. Shared by the index, its ranked `search` projection and the
+   single-session descriptor, so a row means the same thing whichever verb
+   produced it."
+  ([db-info session] (session-index-row db-info session (session-turn-rows db-info (:id session))))
+  ([_db-info session turns]
+   (let
+     [modified-at (or (->> turns
+                           (keep :created-at)
+                           (sort-by #(if (inst? %) (inst-ms %) 0))
+                           last)
+                      (:created-at session))]
+     (cond->
+       {:id (:id session)
+        :channel (:channel session)
+        :title (:title session)
+        :created-at (:created-at session)
+        :modified-at modified-at
+        :turn-count (count turns)}
+       (:external-id session)
+       (assoc :external-id (:external-id session))))))
+
+(defn- recency-key
+  "Newest-first sort key over `:created-at` (inst or epoch millis)."
+  [row]
+  (if-let [c (:created-at row)]
+    (cond (inst? c) (- (long (inst-ms c)))
+          (integer? c) (- (long c))
+          :else 0)
+    0))
+
+(defn- channel-session-rows
+  "Index rows for every session of one channel. `[]` on any failure."
+  [env channel]
+  (if-let [db (:db-info env)]
+    (try (mapv #(session-index-row db %) (vis/db-list-sessions db channel)) (catch Throwable _ []))
+    []))
+
+(defn- search-tags
+  "The where-it-hit half of a search row, in the same vocabulary the gateway
+   wire uses (`is_<foo>`): the band it earned plus which side matched, with the
+   server's snippet windows when it carries them."
+  [match]
+  (cond->
+    {:rank (:rank match)
+     :is-in-title (boolean (:in-title? match))
+     :is-in-request (boolean (:in-request? match))
+     :is-in-reply (boolean (:in-reply? match))
+     :is-in-thinking (boolean (:in-thinking? match))}
+    (:request-snippet match)
+    (assoc :request-snippet (:request-snippet match))
+
+    (:reply-snippet match)
+    (assoc :reply-snippet (:reply-snippet match))))
+
+(defn- search-session-rows
+  "The SAME session search the TUI and the companion app run
+   (`db-search-session-matches`): the server ranks title/request/reply/thinking
+   and returns best band first, newest first inside a band. This projection
+   hydrates each match into an index row and KEEPS that order, so the agent
+   paints one relevance order instead of inventing a fourth."
+  [env query]
+  (if-let [db (:db-info env)]
+    (try (into []
+               (keep (fn [match]
+                       (when-let [session (vis/db-get-session db (:id match))]
+                         (merge (session-index-row db session) (search-tags match)))))
+               (vis/db-search-session-matches db :all query))
+         (catch Throwable _ []))
+    []))
+
 (defn- foundation-sessions-data
-  "List every session the DB knows about, newest-first. With no
-   arg, scans every channel surfaced by `known-channels`. With a
-   channel kw, filters to that channel. Returns `[]` (never nil) when
-   the env is missing a `:db-info` handle so callers can chain seq
-   operations safely."
+  "List every session the DB knows about, newest-first, scanning every channel
+   surfaced by `known-channels`. With a non-blank `search` the SERVER's ranked
+   answer replaces that order (see `search-session-rows`); a blank search is the
+   plain index. Returns `[]` (never nil) when the env is missing a `:db-info`
+   handle so callers can chain seq operations safely."
   ([env]
    (if (:db-info env)
-     (vec (sort-by (comp #(if-let [c (:created-at %)]
-                            (cond (inst? c) (- (long (inst-ms c)))
-                                  (integer? c) (- (long c))
-                                  :else 0) 0)
-                         identity)
-                   (mapcat #(foundation-sessions-data env %) (known-channels))))
+     (vec (sort-by recency-key (mapcat #(channel-session-rows env %) (known-channels))))
      []))
-  ([env channel]
-   (if (:db-info env)
-     (try (mapv (fn [session]
-                  (let
-                    [session-id
-                     (:id session)
+  ([env search]
+   (if-let
+     [q (some-> search
+                str
+                str/trim
+                not-empty)]
+     (search-session-rows env q)
+     (foundation-sessions-data env))))
 
-                     turns
-                     (try (vis/db-list-session-turns (:db-info env) session-id)
-                          (catch Throwable _ []))
+(defn- foundation-session-descriptor
+  "ONE session's descriptor: its index row plus provider/model, whether it is
+   THIS session, and the last turn rolled up to `{:id :outcome :user-request}`.
+   The cheap middle read between the whole index and the whole transcript, so
+   \"what is that session\" never costs a transcript. `nil` when nothing
+   matches `target` (an id or an unambiguous prefix)."
+  ([env] (foundation-session-descriptor env (current-session-id env)))
+  ([env target]
+   (let
+     [db
+      (:db-info env)
 
-                     modified-at
-                     (or (->> turns
-                              (keep :created-at)
-                              (sort-by #(if (inst? %) (inst-ms %) 0))
-                              last)
-                         (:created-at session))]
+      wanted
+      (or target (current-session-id env))
 
+      session-id
+      (or (try (vis/db-resolve-session-id db wanted) (catch Throwable _ nil)) wanted)]
+
+     (when (and db session-id)
+       (try (when-let [session (vis/db-get-session db session-id)]
+              (let
+                [turns (session-turn-rows db (:id session))
+                 last-turn (last turns)]
+
+                (cond->
+                  (assoc (session-index-row db session turns)
+                    :is-current (boolean (same-uuid? (:id session) (current-session-id env))))
+                  (:provider session)
+                  (assoc :provider (:provider session))
+
+                  (:model session)
+                  (assoc :model (:model session))
+
+                  (format-provider-model (:provider session) (:model session))
+                  (assoc :provider-model
+                    (format-provider-model (:provider session) (:model session)))
+
+                  last-turn
+                  (assoc :last-turn
                     (cond->
-                      {:id session-id
-                       :channel (:channel session)
-                       :title (:title session)
-                       :created-at (:created-at session)
-                       :modified-at modified-at
-                       :turn-count (count turns)}
-                      (:external-id session)
-                      (assoc :external-id (:external-id session)))))
-                (vis/db-list-sessions (:db-info env) channel))
-          (catch Throwable _ []))
-     [])))
+                      {:id (:id last-turn)
+                       :outcome (or (:prior-outcome last-turn) (:status last-turn))}
+                      (:user-request last-turn)
+                      (assoc :user-request (preview (:user-request last-turn) 200)))))))
+            (catch Throwable _ nil))))))
 
 (defn- foundation-session-forks
   "List every `session_state` row for the session soul behind
@@ -677,7 +773,7 @@
 
         (contains? classes :provider-schema-rejected)
         (conj
-          "Treat schema rejection as provider noise, not a reason to inspect SQLite. Use raw_preview from session_state()[\"failures\"] and retry/switch model only if it repeats.")
+          "Treat schema rejection as provider noise, not a reason to inspect SQLite. Use raw_preview from read_session()[\"failures\"] and retry/switch model only if it repeats.")
 
         (contains? classes :regex-unsupported-escape)
         (conj
@@ -693,9 +789,10 @@
         (contains? classes :struct-patch-invalid-code)
         (conj
           "Re-emit struct_patch with balanced `code`; use a triple-quoted Python string for multi-line replacement text.")
+
         (contains? classes :patch-stale-anchor)
         (conj
-          "Spend the anchor the refusal handed back instead of re-reading; order several patches in one block bottom-up, highest line first."))))))))
+          "Spend the anchor the refusal handed back instead of re-reading; order several patches in one block bottom-up, highest line first.")))))
 
 (defn- foundation-diagnose
   "Compact current-turn diagnosis built from failure data. Returns a
@@ -1181,7 +1278,7 @@
      :transcript transcript-data}))
 
 ;; ---------------------------------------------------------------------------
-;; Strings-only boundary egress. session_state / sessions
+;; Strings-only boundary egress. read_session / get_session / list_sessions
 ;; are MODEL-FACING verbs: the `:result` they return crosses the Clojure->Python
 ;; boundary, which throws on any keyword/symbol key or value. The internal
 ;; builders + the transcript projection stay idiomatic keyword Clojure (the
@@ -1225,27 +1322,50 @@
 
 (defn- session-envelope [op result] (extension/success {:op op :result (deep-stringify result)}))
 
-(defn- foundation-inspect
-  "Canonical session-state data surface. Returns a Vis tool envelope;
-   sandbox callers receive the unwrapped data map."
-  ([env] (foundation-inspect env (:session-id env)))
-  ([env session-id] (session-envelope :session-state (foundation-inspect-data env session-id))))
+(defn- target-arg
+  "Unwrap the ONE argument these reads take. A Python KEYWORD call
+   (`read_session(target=…)`) crosses as a trailing dict whose keys are
+   VERBATIM STRINGS, so accept that shape as well as the bare positional value
+   and never make the caller choose between `target=` and a positional id."
+  [value]
+  (if (map? value) (or (get value "target") (get value "session_id") (get value "id")) value))
 
+(defn- search-arg
+  "`list_sessions(search=…)`'s argument, positional or keyword (see
+   `target-arg`)."
+  [value]
+  (if (map? value) (or (get value "search") (get value "query")) value))
+
+(defn- foundation-inspect
+  "Canonical session read. Returns a Vis tool envelope; sandbox callers
+   receive the unwrapped data map."
+  ([env] (foundation-inspect env (:session-id env)))
+  ([env target]
+   (session-envelope :read-session
+                     (foundation-inspect-data env (or (target-arg target) (:session-id env))))))
+
+(defn- foundation-get-session
+  "Envelope-wrapped single-session descriptor (see
+   `foundation-session-descriptor`)."
+  ([env] (session-envelope :get-session (foundation-session-descriptor env)))
+  ([env target]
+   (session-envelope :get-session (foundation-session-descriptor env (target-arg target)))))
 
 (defn- foundation-sessions
   "Envelope-wrapped session index (see `foundation-sessions-data`).
    Returns a Vis tool envelope; sandbox callers receive the unwrapped
    vector. The raw-data fn stays separate because `foundation-inspect-data`
-   EMBEDS the index inside its own envelope — the guard
+   EMBEDS the index inside its own envelope - the guard
    (`assert-symbol-envelope!`) rejects a bare vector, which is exactly how
-   `sessions()` was broken for every caller (session 9c829d10)."
-  ([env] (session-envelope :sessions (foundation-sessions-data env)))
-  ([env channel] (session-envelope :sessions (foundation-sessions-data env channel))))
+   the index verb was broken for every caller (session 9c829d10)."
+  ([env] (session-envelope :list-sessions (foundation-sessions-data env)))
+  ([env search]
+   (session-envelope :list-sessions (foundation-sessions-data env (search-arg search)))))
 
 ;; Removed extra workflow surfaces.
 
 ;; ---------------------------------------------------------------------------
-;; Session-state IR render helpers
+;; Session-read IR render helpers
 ;;
 ;; Symbol introspection is not a foundation `v/` tool: the engine owns it
 ;; as the bare `doc` / `apropos` system calls wired into the Python
@@ -1253,39 +1373,56 @@
 ;; ---------------------------------------------------------------------------
 
 ;; -- public, doc-bearing aliases -----------------------------------------------
-;; The underlying defs (`foundation-inspect`, `foundation-report-html`) are
-;; private and named for clarity inside this ns. Re-export them under their
-;; sandbox-visible names with `:doc` and `:arglists` baked into the var meta so
-;; `vis/symbol` can read both straight off the var.
+;; The underlying defs (`foundation-inspect`, `foundation-get-session`,
+;; `foundation-sessions`) are private and named for clarity inside this ns.
+;; Re-export them under their sandbox-visible names with `:doc` and `:arglists`
+;; baked into the var meta so `vis/symbol` can read both straight off the var.
+;;
+;; The names are the attachment surface's rule applied here: `verb_noun`, plural
+;; noun = the index and singular = ONE target, every read taking exactly one
+;; target so name and id are never a question the caller answers, and variants
+;; (`search`) staying ARGUMENTS instead of becoming more globals. `session_state`
+;; in particular was a storage noun on the agent surface - it is a DB TABLE
+;; (`session_state`, the fork rows `session_forks` reads) - so the tool that
+;; reads a conversation is `read_session`.
 (def
   ^{:doc
-    "await session_state(session_id=None)  # current session by default; pass id for another
-String-keyed fields: `session`, `current_turn`, `failures`, `diagnosis`, `session_forks`, `turn_retries`, \"usage\", `transcript`. \"usage\" is compact token/cost/outcome/error/routing; tool rows overlap, so never sum them. Filter `transcript/turns/iterations/blocks` (`code`/`result`) in python_execution; don't dump. Use live `session` for current state. This is the recovery path for raw folded current-session content; it does not undo fold intents or restore them. Find ids via `sessions()`."
-    :arglists '([] [session-id])}
-  session-state
+    "await read_session(target=None)  # current session by default; pass an id for another
+String-keyed fields: `session`, `current_turn`, `failures`, `diagnosis`, `session_forks`, `turn_retries`, \"usage\", `transcript`. \"usage\" is compact token/cost/outcome/error/routing; tool rows overlap, so never sum them. Filter `transcript/turns/iterations/blocks` (`code`/`result`) in python_execution; don't dump. Use live `session` for current state. This is the recovery path for raw folded current-session content; it does not undo fold intents or restore them. Find ids via `list_sessions(search=\"…\")`; one row alone is `get_session(id)`."
+    :arglists '([] [target])}
+  read-session
   foundation-inspect)
 
-
+(def
+  ^{:doc
+    "await get_session(target=None)  # ONE session's descriptor; current session by default
+String-keyed row: `{id,channel,title,turn_count,created_at,modified_at,is_current}`, plus `provider`/`model`/`provider_model` and `last_turn` (`{id,outcome,user_request}`) when known. `target` is an id or an unambiguous prefix; `None` when nothing matches. No transcript - the content is `read_session(id)`, the whole index is `list_sessions()`."
+    :arglists '([] [target])}
+  get-session
+  foundation-get-session)
 
 (def
   ^{:doc
-    "await sessions(channel=None)  # newest-first conversation index
-String-keyed rows: `{id,channel,title,turn_count,created_at,modified_at}`; optional `channel` filter. Content: `session_state(id)`. Filter in python_execution; don't stringify or slice blindly."
-    :arglists '([] [channel])}
-  sessions
+    "await list_sessions(search=None)  # newest-first conversation index
+String-keyed rows: `{id,channel,title,turn_count,created_at,modified_at}`. `search` is THE session search the TUI and the companion app run: the SERVER ranks title (`rank` 0), request (1), reply (2) and thinking (3) and answers best band first, newest first inside a band - paint that order, never re-sort it. Matched rows add `rank`, `is_in_title`/`is_in_request`/`is_in_reply`/`is_in_thinking` and the `request_snippet`/`reply_snippet` windows. One row: `get_session(id)`. Content: `read_session(id)`. Filter in python_execution; don't stringify or slice blindly."
+    :arglists '([] [search])}
+  list-sessions
   foundation-sessions)
 
-(def session-state-symbol (vis/symbol #'session-state {:inject-env? true :tag :observation}))
+(def read-session-symbol (vis/symbol #'read-session {:inject-env? true :tag :observation}))
 
 
-(def sessions-symbol (vis/symbol #'sessions {:inject-env? true :tag :observation}))
+(def get-session-symbol (vis/symbol #'get-session {:inject-env? true :tag :observation}))
 
 
-(def all-symbols [session-state-symbol sessions-symbol])
+(def list-sessions-symbol (vis/symbol #'list-sessions {:inject-env? true :tag :observation}))
+
+
+(def all-symbols [read-session-symbol get-session-symbol list-sessions-symbol])
 
 ;; ---------------------------------------------------------------------------
-;; The introspection extension. Self-inspection (`session_state` / `sessions`,
-;; plus the gateway event journals) is NOT core agent
+;; The introspection extension. Self-inspection (`read_session` / `get_session` /
+;; `list_sessions`, plus the gateway event journals) is NOT core agent
 ;; policy: most projects never want the agent reading its own transcripts, so
 ;; the whole surface — symbols AND prompt guidance — hangs off the
 ;; `introspection` toggle, which is OFF by default. Turn it on in `vis.yml`
@@ -1307,9 +1444,9 @@ String-keyed rows: `{id,channel,title,turn_count,created_at,modified_at}`; optio
   (str
     "## Session introspection\n"
     "- Raw wire history: `~/.vis/gateway/events/<id>.ndjson`; never grep `.`.\n"
-    "- Call `await session_state()` once. `usage` summarizes per-turn/iteration/tool/provider routing; tool rows overlap, never sum them.\n"
+    "- Call `await read_session()` once. `usage` summarizes per-turn/iteration/tool/provider routing; tool rows overlap, never sum them.\n"
     "- Folded content is readable ONLY here: `transcript/turns/iterations/blocks` (`code`/`result`).\n"
-    "- Other conversation: `await sessions()`, then `await session_state(id)`.\n"
+    "- Other conversation: `await list_sessions(search=\"…\")` ranks like the TUI/app search; then `get_session(id)` for one row, `read_session(id)` for its content.\n"
     "- Filter in `python_execution`; never dump whole structures.\n"))
 
 (defn- introspection-prompt [_env] INTROSPECTION_PROMPT)
@@ -1318,7 +1455,7 @@ String-keyed rows: `{id,channel,title,turn_count,created_at,modified_at}`; optio
   (vis/extension
     {:ext/name "foundation-introspection"
      :ext/description
-     "`session_state`: transcript + compact usage/tool/routing ledger; `sessions`: newest-first metadata. Raw journal: `~/.vis/gateway/events/<id>.ndjson`. Requires the default-off `introspection` toggle."
+     "`read_session`: transcript + compact usage/tool/routing ledger; `get_session`: ONE session's descriptor; `list_sessions`: newest-first metadata index, ranked by `search`. Raw journal: `~/.vis/gateway/events/<id>.ndjson`. Requires the default-off `introspection` toggle."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

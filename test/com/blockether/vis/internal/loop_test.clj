@@ -707,7 +707,7 @@
       (let [env {:session-id "s1" :db-info ::db :ctx-atom (atom {})}]
         (expect (= (previous-turn-context env "t9") (previous-turn-context env "t9"))))))
   (it
-    "is summary-aware at ITERATION granularity: session_drop leaves a dropped breadcrumb, session_fold collapses to one gist"
+    "is summary-aware at ITERATION granularity: session_drop leaves a dropped breadcrumb, fold_session collapses to one gist"
     ;; Folds are recorded at iteration scope (tN/iN) — what the prompt instructs
     ;; and what the live wire (apply-summaries) matches. Each form carries a FORM
     ;; scope (tN/iN/fN); prior-turn-scope-index normalizes form→iteration before
@@ -1003,7 +1003,7 @@
                (it "is a no-op on a nil ctx-atom" (expect (nil? (stamp nil util1))))))
 
 (defdescribe
-  session-fold-scope-test
+  fold-session-scope-test
   (let
     [scope-key
      (var-get #'eng/scope-key)
@@ -1170,7 +1170,7 @@
     (it
       "prior-turn-scope-index: ONE fold over many iterations emits ONE gist line, not one per iteration"
       ;; The resume-bloat regression: dedup used to key on the ITERATION scope, so a
-      ;; single session_fold covering 40 iterations replayed its identical gist 40
+      ;; single fold_session covering 40 iterations replayed its identical gist 40
       ;; times in every later request (and in every message queued behind a running
       ;; turn). Dedup keys on the breadcrumb TEXT, so one fold costs one line.
       (let
@@ -1743,9 +1743,9 @@
           (expect (= 3 (count mixed)))
           (expect (= [(str "data:image/png;base64," replay-png-b64)]
                      (mapv #(get-in % [:image_url :url]) (:content (last mixed)))))))
-    (it "drops the image when session_fold collapsed the iteration"
+    (it "drops the image when fold_session collapsed the iteration"
         ;; The invariant: a figure's vision visibility TRACKS its iteration's
-        ;; textual visibility. Once session_fold/session_drop collapses the
+        ;; textual visibility. Once fold_session/session_drop collapses the
         ;; step, its image bytes leave the wire with it — never re-billed.
         (let
           [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}

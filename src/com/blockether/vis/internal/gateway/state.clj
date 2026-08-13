@@ -702,7 +702,7 @@
    callers all set it here, persisted in the DB and shared across channels.
 
    A changed manual preference also receives a small durable audit sidecar for
-   the `usage` section of `session_state()`; the live `session.model_updated`
+   the `usage` section of `read_session()`; the live `session.model_updated`
    event remains non-replayable so old cursor events cannot overwrite a newer preference."
   [sid provider model]
   ;; `fresh-entry`, never a bare zero: an entry seeded at 0 restarts the seq

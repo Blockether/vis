@@ -3296,7 +3296,7 @@
        toggle always registers and the feature is one settings flip away (the tools
        stay gated OFF behind the `shell` toggle until the user enables it).
 
-     introspection — session self-inspection (`session_state` / `sessions`).
+     introspection — session self-inspection (`read_session` / `get_session` / `list_sessions`).
        INTERNAL core so its `introspection` toggle always registers, but the
        symbols and prompt stay OFF until the toggle is ON.
 

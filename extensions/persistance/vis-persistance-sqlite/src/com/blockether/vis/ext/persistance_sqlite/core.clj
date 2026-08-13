@@ -1857,7 +1857,7 @@
    (`session_turn_state`), which the turn writer already maintains — no
    iteration scan. Tool and fold counts have no column: they live inside each
    iteration's nippy `tool_calls` BLOB, so those are counted by `:vis/tool-name`
-   (a fold is the `session_fold` tool) through `usage-tally`, which thaws any one
+   (a fold is the `fold_session` tool) through `usage-tally`, which thaws any one
    row's blob at most ONCE per process and memoises the merged result per
    session — a re-read costs two skinny id-only queries, a repeat read of an
    unchanged session costs nothing beyond them, and a live session pays only for
@@ -1925,7 +1925,7 @@
            (usage-tally db-info soul-id-s iter-ids)
 
            folds
-           (long (get counts "session_fold" 0))]
+           (long (get counts "fold_session" 0))]
 
           (cond->
             {:turn-count (long (or (:turns agg) 0))

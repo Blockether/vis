@@ -59,7 +59,7 @@
       (let [doc (:ext/description foundation/vis-extension)]
         ;; Session introspection moved out to `foundation-introspection`
         ;; (toggle-gated), so the kernel copy points AT that extension instead
-        ;; of advertising `session_state` itself.
+        ;; of advertising `read_session` itself.
         (expect (str/includes? doc "foundation-introspection"))
         (expect (str/includes? doc "language facade"))
         (expect (str/includes? doc "file and structural editing"))
