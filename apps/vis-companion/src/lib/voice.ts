@@ -1,4 +1,24 @@
+import { Capacitor, registerPlugin } from "@capacitor/core";
 import type { VoiceProgress } from "./types";
+
+interface AndroidAudioRoutePlugin {
+  startBluetoothMicrophone(): Promise<{ connected: boolean }>;
+  stopBluetoothMicrophone(): Promise<void>;
+}
+
+const androidAudioRoute = registerPlugin<AndroidAudioRoutePlugin>("AudioRoute");
+
+async function claimAndroidBluetoothMicrophone(): Promise<boolean> {
+  if (Capacitor.getPlatform() !== "android") return false;
+  try {
+    await androidAudioRoute.startBluetoothMicrophone();
+    return true;
+  } catch {
+    // Recording from the device microphone is still useful when no headset mic
+    // is connected or Android refuses the communication route.
+    return false;
+  }
+}
 
 export interface WavRecording {
   stop: () => Promise<Blob>;
@@ -131,14 +151,31 @@ export async function startWavRecording(
     if (heldAudioSession) claimAudioSession('auto');
   };
 
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      channelCount: 1,
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-    },
-  });
+  // A2DP is playback-only. Android WebView does not promote a connected headset
+  // to its HFP/SCO microphone for getUserMedia, so establish that native route
+  // before WebView chooses an input device.
+  const heldAndroidRoute = await claimAndroidBluetoothMicrophone();
+  const releaseAndroidRoute = async () => {
+    if (heldAndroidRoute) {
+      await androidAudioRoute.stopBluetoothMicrophone().catch(() => undefined);
+    }
+  };
+
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+  } catch (cause) {
+    await releaseAndroidRoute();
+    releaseAudioSession();
+    throw cause;
+  }
   const context = new AudioContext({ latencyHint: 'interactive' });
   const source = context.createMediaStreamSource(stream);
   const processor = context.createScriptProcessor(4096, 1, 1);
@@ -201,6 +238,7 @@ export async function startWavRecording(
   if (context.state !== 'running') {
     for (const track of stream.getTracks()) track.stop();
     await context.close();
+    await releaseAndroidRoute();
     releaseAudioSession();
     throw new Error('Microphone could not start — tap the mic again');
   }
@@ -236,6 +274,7 @@ export async function startWavRecording(
     silentOutput.disconnect();
     for (const track of stream.getTracks()) track.stop();
     await context.close();
+    await releaseAndroidRoute();
     releaseAudioSession();
   };
 

@@ -304,6 +304,15 @@ if (!existsSync(nscPath) || readFileSync(nscPath, 'utf8') !== nsc) writeFileSync
 const manifestPath = join(root, 'android', 'app', 'src', 'main', 'AndroidManifest.xml');
 let manifest = readFileSync(manifestPath, 'utf8');
 const manifestBefore = manifest;
+for (const permission of [
+  'android.permission.RECORD_AUDIO',
+  'android.permission.MODIFY_AUDIO_SETTINGS',
+  'android.permission.BLUETOOTH',
+]) {
+  if (!manifest.includes(`android:name="${permission}"`)) {
+    manifest = manifest.replace(/\s*<application\b/, `\n    <uses-permission android:name="${permission}" />\n\n    <application`);
+  }
+}
 if (!manifest.includes('android:usesCleartextTraffic')) {
   manifest = manifest.replace(/<application\b/, '<application\n        android:usesCleartextTraffic="true"');
 }
@@ -311,7 +320,7 @@ if (!manifest.includes('android:networkSecurityConfig')) {
   manifest = manifest.replace(/<application\b/, '<application\n        android:networkSecurityConfig="@xml/network_security_config"');
 }
 if (manifest !== manifestBefore) writeFileSync(manifestPath, manifest);
-console.log('\u2713 cleartext HTTP  network_security_config.xml + AndroidManifest (LAN + tailnet gateway)');
+console.log('\u2713 Android network + microphone permissions');
 
 /**
  * 6. System share target.
@@ -354,6 +363,7 @@ public class MainActivity extends BridgeActivity {
         // Before super: the bridge reads the launch intent while it starts up,
         // and a cold-start share must already look like a vis:// link by then.
         setIntent(asShareLink(getIntent()));
+        registerPlugin(AudioRoutePlugin.class);
         super.onCreate(savedInstanceState);
     }
 
@@ -450,6 +460,96 @@ public class MainActivity extends BridgeActivity {
 mkdirSync(javaPackageDir, { recursive: true });
 if (!existsSync(mainActivityPath) || readFileSync(mainActivityPath, 'utf8') !== mainActivity) {
   writeFileSync(mainActivityPath, mainActivity);
+}
+
+const audioRoutePluginPath = join(javaPackageDir, 'AudioRoutePlugin.java');
+const audioRoutePlugin = `package ${appId};
+
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.media.AudioManager;
+import android.os.Handler;
+import android.os.Looper;
+import com.getcapacitor.JSObject;
+import com.getcapacitor.Plugin;
+import com.getcapacitor.PluginCall;
+import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.CapacitorPlugin;
+
+@CapacitorPlugin(name = "AudioRoute")
+public class AudioRoutePlugin extends Plugin {
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private AudioManager audio;
+    private int previousMode = AudioManager.MODE_NORMAL;
+    private BroadcastReceiver receiver;
+    private PluginCall pending;
+
+    @PluginMethod
+    public void startBluetoothMicrophone(PluginCall call) {
+        stop(false);
+        audio = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+        previousMode = audio.getMode();
+        pending = call;
+        receiver = new BroadcastReceiver() {
+            @Override public void onReceive(Context context, Intent intent) {
+                int state = intent.getIntExtra(AudioManager.EXTRA_SCO_AUDIO_STATE, AudioManager.SCO_AUDIO_STATE_ERROR);
+                if (state == AudioManager.SCO_AUDIO_STATE_CONNECTED) finish(true);
+            }
+        };
+        getContext().registerReceiver(receiver, new IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED));
+        audio.setMode(AudioManager.MODE_IN_COMMUNICATION);
+        audio.startBluetoothSco();
+        audio.setBluetoothScoOn(true);
+        handler.postDelayed(() -> finish(audio != null && audio.isBluetoothScoOn()), 4000);
+    }
+
+    @PluginMethod
+    public void stopBluetoothMicrophone(PluginCall call) {
+        stop(true);
+        call.resolve();
+    }
+
+    private void finish(boolean connected) {
+        if (pending == null) return;
+        JSObject result = new JSObject();
+        result.put("connected", connected);
+        pending.resolve(result);
+        pending = null;
+        unregister();
+    }
+
+    private void stop(boolean restoreMode) {
+        handler.removeCallbacksAndMessages(null);
+        unregister();
+        if (pending != null) {
+            JSObject result = new JSObject();
+            result.put("connected", false);
+            pending.resolve(result);
+            pending = null;
+        }
+        if (audio != null) {
+            audio.setBluetoothScoOn(false);
+            audio.stopBluetoothSco();
+            if (restoreMode) audio.setMode(previousMode);
+            audio = null;
+        }
+    }
+
+    private void unregister() {
+        if (receiver == null) return;
+        try { getContext().unregisterReceiver(receiver); } catch (IllegalArgumentException ignored) {}
+        receiver = null;
+    }
+
+    @Override protected void handleOnDestroy() {
+        stop(true);
+    }
+}
+`;
+if (!existsSync(audioRoutePluginPath) || readFileSync(audioRoutePluginPath, 'utf8') !== audioRoutePlugin) {
+  writeFileSync(audioRoutePluginPath, audioRoutePlugin);
 }
 
 // The filters that put Vis in the system share sheet. `text/plain` is what a

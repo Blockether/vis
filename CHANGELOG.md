@@ -86,6 +86,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and thinking (3), and each matched row carries `rank`,
   `is_in_title`/`is_in_request`/`is_in_reply`/`is_in_thinking` plus the request/reply snippet
   windows. There are no aliases — the old names are gone.
+- Android voice capture now opens a connected Bluetooth headset's HFP/SCO microphone before
+  WebView starts recording, then restores the normal audio route when recording ends.
 - Prepare `vis-foundation-bridge` for Bridge 0.3: migrate the project profile and policy to the
   reduced YAML schema, recognize every 0.3 profile filename, preserve exact validation paths, and
   keep malformed Bridge configuration from crashing ordinary filesystem access.
