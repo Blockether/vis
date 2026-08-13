@@ -195,6 +195,31 @@
                  (expect (= "from-the-project-file" (get r "stdout")))))
              (finally (io/delete-file env-path true))))))
 
+;; Regression: the sandbox shell handed its children `TERM` and a no-op pager but
+;; nothing about locks, so every agent-run `git status` / `git diff` REFRESHED the
+;; index — which takes `.git/index.lock` — and fought Vis' own footer poll,
+;; environment snapshot and rewind baseline over the one lock a repository has.
+;; The user's own add/commit then failed with
+;; "Unable to create '.git/index.lock': File exists".
+(defdescribe
+  shell-git-optional-locks-test
+  (it "hands a SYNC child GIT_OPTIONAL_LOCKS=0, so an agent git read takes no index lock"
+      (let [r (shell-run* {} "printf 'locks=[%s]\\n' \"$GIT_OPTIONAL_LOCKS\"")]
+        (expect (str/includes? (str (get r "stdout")) "locks=[0]"))))
+  (it "hands the PTY child the same, pager and all"
+      (with-shell-on
+        (fn []
+          (binding [workspace/*workspace-root* (workspace/trunk-root)]
+            (let
+              [sid "shell-ext-locks"
+               env {:session-id sid}]
+
+              (try (shell-bg* env "locks" "printf 'locks=[%s]\\n' \"$GIT_OPTIONAL_LOCKS\"")
+                   (let [{:keys [out status]} (wait-exited* env "locks")]
+                     (expect (= {:locks-off? true :status "exited"}
+                                {:locks-off? (str/includes? out "locks=[0]") :status status})))
+                   (finally (resources/stop! sid "locks")))))))))
+
 ;; Regression: a background `git stash list` came back with a stray `=` above the
 ;; output, a `>` welded to the next command's first line and long paths broken
 ;; mid-token. Nothing was corrupt — the pty made isatty() true, git forked `less`

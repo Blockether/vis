@@ -483,6 +483,19 @@
   (try (resolve-dir (assoc (or opts {}) ::environment (or (::environment policy) env)))
        (catch Throwable t (cleanup-jail-policy! policy) (throw t))))
 
+(def ^:private child-env
+  "What EVERY shell child is handed, pty or not, confined or not.
+
+   `GIT_OPTIONAL_LOCKS=0` is this extension's half of the index-lock contract
+   `internal.git/git-argv` keeps for Vis' own calls. A plain `git status` or
+   `git diff` REFRESHES the index, and refreshing WRITES it through
+   `.git/index.lock` — so an agent-run status competed for the one lock the
+   repo has against the footer poll, the environment snapshot and the rewind
+   baseline, and one that was killed mid-refresh left the lock behind for
+   every later git to trip over. `0` drops only the OPTIONAL locks: `add`,
+   `commit`, `stash` and every other writer still take the lock they need."
+  {"GIT_OPTIONAL_LOCKS" "0"})
+
 (defn- spawn!
   ^Process [cmd ^File dir policy]
   (try
@@ -514,6 +527,8 @@
           (.putAll e ^java.util.Map full))
         (let [pe (process-jail/child-env-additions policy)]
           (when (seq pe) (.putAll (.environment pb) ^java.util.Map pe))))
+      ;; AFTER the policy branch on purpose: the confined one REPLACED the map.
+      (.putAll (.environment pb) ^java.util.Map child-env)
       ;; ONE stream, exactly like the pty path every model-facing run takes: a
       ;; terminal has no separate error channel, so a result that offered a second
       ;; one could only ever answer nil and be read as "nothing went wrong".
@@ -547,8 +562,13 @@
    `cat` as the pager makes the captured bytes the bytes the command printed.
    `GIT_PAGER` is set as well as `PAGER` because it also outranks a `core.pager`
    the operator configured; a caller who genuinely wants paging still prefixes
-   its own assignment (`PAGER=less …`), which wins over an inherited value."
-  {"TERM" "xterm-256color" "PAGER" "cat" "GIT_PAGER" "cat"})
+   its own assignment (`PAGER=less …`), which wins over an inherited value.
+
+   [[child-env]] rides along: a pty child is a shell child like any other."
+  (assoc child-env
+    "TERM" "xterm-256color"
+    "PAGER" "cat"
+    "GIT_PAGER" "cat"))
 
 (defn- pty-spawn!
   "Spawn `cmd` under a REAL pseudo-terminal (internal.foundation.pty — pure Java
@@ -1452,7 +1472,9 @@
                       {:type ::blank-command})))
     ;; A CLAIM is this start's own reservation of the id and has no process to
     ;; retire; only a previous generation's entry does.
-    (when-let [stale (let [e (bg-entry session id)] (when (:proc e) e))]
+    (when-let
+      [stale (let [e (bg-entry session id)]
+               (when (:proc e) e))]
       ;; The caller established that this generation has exited. Retire its
       ;; async pump/bridge under the lifecycle lock before reusing the socket path.
       ;; The pump re-checks this flag + process identity under the same lock, so it

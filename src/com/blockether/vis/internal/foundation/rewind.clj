@@ -408,24 +408,27 @@
 
 (defn- run-git
   [root args]
-  (try (let
-         [pb
-          (doto (ProcessBuilder. ^java.util.List (into ["git"] args))
-            (.directory (io/file root))
-            (.redirectError java.lang.ProcessBuilder$Redirect/DISCARD))
+  (let [spawned (volatile! nil)]
+    (try (let
+           [pb (doto (ProcessBuilder. ^java.util.List (into ["git" "--no-optional-locks"] args))
+                 (.directory (io/file root))
+                 (.redirectError java.lang.ProcessBuilder$Redirect/DISCARD))
+            pr (.start pb)
+            _ (vreset! spawned pr)
+            out (with-open [is (.getInputStream pr)]
+                  (.readAllBytes is))]
 
-          pr
-          (.start pb)
+           (.waitFor pr)
+           {:exit (.exitValue pr) :bytes out :out (String. ^bytes out StandardCharsets/UTF_8)})
+         (catch Throwable t
+           (cancellation/preserve-interrupt! t)
+           ;; Never abandon the child. The baseline runs once per TURN, so on a
+           ;; cancelled turn an orphaned `git status` sits there holding
+           ;; `.git/index.lock`; SIGTERM lets git unlink its own lock.
+           (when-let [^Process pr @spawned]
+             (.destroy pr))
+           {:exit -1 :out "" :bytes (byte-array 0) :error (ex-message t)}))))
 
-          out
-          (with-open [is (.getInputStream pr)]
-            (.readAllBytes is))]
-
-         (.waitFor pr)
-         {:exit (.exitValue pr) :bytes out :out (String. ^bytes out StandardCharsets/UTF_8)})
-       (catch Throwable t
-         (cancellation/preserve-interrupt! t)
-         {:exit -1 :out "" :bytes (byte-array 0) :error (ex-message t)})))
 
 (defn- git-repo-root
   [root]

@@ -791,12 +791,15 @@
    git could not be spawned or timed out. `env` entries are added to the child's
    environment (used to point git at a PRIVATE index). Deliberately LOCAL:
    `internal.git` already requires this namespace, so requiring it back would
-   close a load cycle."
+   close a load cycle — but it keeps `internal.git/git-argv`'s contract:
+   `--no-optional-locks`, so a workspace read never takes `.git/index.lock`
+   away from a concurrent git."
   ([^File dir args] (git* dir args nil))
   ([^File dir args env]
    (try (let
           [pb
-           (doto (ProcessBuilder. ^java.util.List (into ["git"] (map str) args))
+           (doto (ProcessBuilder. ^java.util.List
+                                  (into ["git" "--no-optional-locks"] (map str) args))
              (.directory dir)
              (.redirectErrorStream true))
 

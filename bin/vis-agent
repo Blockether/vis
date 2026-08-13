@@ -734,7 +734,7 @@ update_dev() {
     branch="$(git -C "$dev_checkout" rev-parse --abbrev-ref HEAD 2>/dev/null)"
     upstream="$(git -C "$dev_checkout" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)"
     warn "update --dev: 'git pull --ff-only' failed on branch '${branch:-?}'."
-    if [[ -n "$(git -C "$dev_checkout" status --porcelain 2>/dev/null)" ]]; then
+    if [[ -n "$(git -C "$dev_checkout" --no-optional-locks status --porcelain 2>/dev/null)" ]]; then
       echo "  - Working tree has local changes: commit or stash them, then retry." >&2
     fi
     if [[ -n "$upstream" ]]; then

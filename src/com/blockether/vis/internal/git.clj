@@ -44,29 +44,67 @@
 ;; git subprocess primitive
 ;; =============================================================================
 
+(defn- git-argv
+  "Argv for `git <args>`. EVERY Vis invocation is prefixed with
+   `--no-optional-locks`. The footer poll, the rewind baseline, the environment
+   snapshot and magit all read status far more often than the user types, and a
+   plain `git status` REFRESHES the index — it takes `.git/index.lock` to write
+   the refreshed stat cache back. That lock is OPTIONAL for a reader and
+   REQUIRED for the user's own `add`/`commit`/`checkout`, so polling without
+   this flag makes their git fail with `Unable to create '.git/index.lock':
+   File exists`. Locks a command genuinely needs are unaffected."
+  [args]
+  (into ["git" "--no-optional-locks"] (map str) args))
+
+(defn- terminate!
+  "End `p` without stranding a lock. SIGTERM first (`.destroy`) — git's lockfile
+   handler unlinks `.git/index.lock` on the way out — and escalate to SIGKILL
+   (`.destroyForcibly`) only for a child that ignores it. A bare
+   `destroyForcibly` on a git that happens to be rewriting the index leaves the
+   lock file behind for good, and every later git command in that repository
+   dies on it."
+  [^Process p]
+  (when (and p (.isAlive p))
+    (.destroy p)
+    (try (when-not (.waitFor p 2 TimeUnit/SECONDS) (.destroyForcibly p))
+         (catch Throwable t
+           ;; Interrupted while waiting: the TERM is already delivered, so let git
+           ;; finish its own cleanup rather than SIGKILL it mid index write.
+           (cancellation/preserve-interrupt! t)))))
+
 (defn run-git
   "Run `git <args>` in `dir` (a File). `args` is a seq of stringable tokens.
    Returns `{:exit <int|nil> :out <stdout> :err <stderr> :duration-ms <long>}`;
-   `:exit` is nil when the process could not be spawned or timed out. Never
-   throws — repo-less and git-less environments degrade to `{:exit nil …}`.
-   The 3-arity opts map takes `:timeout-secs` (default 10)."
+   `:exit` is nil when the process could not be spawned, timed out, or the
+   calling thread was interrupted. Never throws — repo-less and git-less
+   environments degrade to `{:exit nil …}`.
+   The 3-arity opts map takes `:timeout-secs` (default 10).
+
+   The child is ALWAYS reaped. A cancelled turn re-arms the thread's interrupt
+   flag, so `.waitFor` throws INSTANTLY on this and every following call: an
+   abandoned `git status` would keep running, holding `.git/index.lock`, while
+   the caller spawns the next one."
   ([^File dir args] (run-git dir args nil))
   ([^File dir args {:keys [timeout-secs]}]
-   (let [t0 (System/currentTimeMillis)]
-     (try
-       (let
-         [cmd (into ["git"] (map str) args)
-          pb (ProcessBuilder. ^java.util.List cmd)]
+   (let
+     [t0
+      (System/currentTimeMillis)
 
+      spawned
+      (volatile! nil)]
+
+     (try
+       (let [pb (ProcessBuilder. ^java.util.List (git-argv args))]
          (.directory pb (or dir (cwd-file)))
          (let
            [p (.start pb)
+            _ (vreset! spawned p)
             out (future (slurp (io/reader (.getInputStream p))))
             err (future (slurp (io/reader (.getErrorStream p))))
             done (.waitFor p (long (or timeout-secs default-git-timeout-secs)) TimeUnit/SECONDS)]
 
            (when-not done
-             (.destroyForcibly p)
+             (terminate! p)
              (doseq [^java.io.InputStream s [(.getInputStream p) (.getErrorStream p)]]
                (try (.close s)
                     (catch Throwable t
@@ -80,6 +118,7 @@
             :duration-ms (- (System/currentTimeMillis) t0)}))
        (catch Throwable t
          (cancellation/preserve-interrupt! t)
+         (terminate! @spawned)
          (tel/log! :warn
                    ["git: run-git failed"
                     {:dir (some-> dir
@@ -91,6 +130,7 @@
           :err ""
           :timed-out? false
           :duration-ms (- (System/currentTimeMillis) t0)})))))
+
 
 (defn- git-ok
   "stdout of `git <args>` when it exits 0, else nil."
