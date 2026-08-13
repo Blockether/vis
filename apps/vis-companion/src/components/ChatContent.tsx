@@ -24,6 +24,8 @@ import {
   RAIL_PAGE,
 } from "../lib/artifacts";
 import {
+  BandLabel,
+  BandTally,
   CopyChip,
   Disclosure,
   LoadMore,
@@ -1082,18 +1084,24 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
     : running
       ? "text-code-result"
       : "text-accent-ink";
-  // A card wears NO badge. The op-name title (GREP, RESULT, a private transport's
-  // _SHELL_WAIT) is gone from every channel: a result is its own tally and its
-  // own body, and the TUI card (`tool-card-entries`) paints the same way.
+  // A card wears no OP-NAME badge — GREP, a private transport's _SHELL_WAIT, the
+  // op that produced it: a result is its own tally and its own body, and the TUI
+  // card (`tool-card-entries`) paints the same way. What a card with NO tally
+  // wears is the band's own NAME, because the whole content of that row was a
+  // duration: it named nothing, in either channel.
   const headline = (
     <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
-      {summary && <ToolSummary className={summaryClass}>{summary}</ToolSummary>}
-      {/* A finished call that produced NO summary and NO body still says so: an
-          otherwise bare "RESULT 39ms" row reads as a rendering bug rather than as
-          the empty result it is. `running` keeps the spinner-less placeholder
-          quiet until the outcome actually lands. */}
+      {summary ? (
+        <ToolSummary className={summaryClass}>{summary}</ToolSummary>
+      ) : (
+        !running && <BandLabel className="min-w-0 flex-1">RESULT</BandLabel>
+      )}
+      {/* A finished call that produced NO summary and NO body still says so: a
+          `RESULT 39ms` row reads as a rendering bug rather than as the empty
+          result it is. `running` keeps the spinner-less placeholder quiet until
+          the outcome actually lands. */}
       {!summary && !body && !running && !failed && (
-        <span className="min-w-0 flex-1 truncate font-mono text-chip font-medium text-code-duration">
+        <span className="shrink-0 truncate font-mono text-chip font-medium text-code-duration">
           none
         </span>
       )}
@@ -1227,13 +1235,12 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
               onClick={() => setExpanded((current) => !current)}
             >
               <span className="min-w-0 truncate">
-                {expanded ? label : `${label} +${hiddenLines} more`}
+                {label}
+                {!expanded && <BandTally> +{hiddenLines} more</BandTally>}
               </span>
             </Disclosure>
           ) : (
-            <span className="min-w-0 flex-1 select-none truncate font-mono text-chip font-extrabold tracking-[0.06em] text-accent-ink">
-              {label}
-            </span>
+            <BandLabel className="min-w-0 flex-1">{label}</BandLabel>
           )}
           <CopyChip value={value} label="Copy code" className="shrink-0">
             Copy
@@ -1453,7 +1460,8 @@ export const ThinkingBand = memo(function ThinkingBand({
           onClick={() => setExpandRequested((value) => !value)}
         >
           <span className="min-w-0 truncate">
-            {expanded ? "THINKING" : `THINKING +${hiddenRows} more`}
+            THINKING
+            {!expanded && <BandTally> +{hiddenRows} more</BandTally>}
           </span>
         </Disclosure>
       )}

@@ -243,7 +243,7 @@ describe("collapsed tool results", () => {
   });
 });
 
-describe("a card wears no badge", () => {
+describe("a card wears no op badge, but its band has a name", () => {
   const card = (form: Record<string, unknown>) =>
     text(
       renderToStaticMarkup(
@@ -261,12 +261,21 @@ describe("a card wears no badge", () => {
     const rendered = card({ op: "grep", result_summary: "12 results" });
     expect(rendered).toContain("12 results");
     expect(rendered).not.toContain("GREP");
+    // The tally IS the headline; the band's name would only repeat it.
+    expect(rendered).not.toContain("RESULT");
   });
 
-  it("leaves the block's own output unlabeled", () => {
-    expect(card({ result_render: "```\nprinted\n```" })).not.toContain(
-      "RESULT",
-    );
+  // The block's own output carries no tally, so this row was a chevron and a
+  // duration with no word at all for what it held. The TUI names it RESULT
+  // (`render/tool-card-entries`); the app said nothing.
+  it("names the band when the value carried no tally", () => {
+    expect(card({ result_render: "```\nprinted\n```" })).toContain("RESULT");
+    expect(card({ duration_ms: 39 })).toContain("RESULT");
+  });
+
+  it("names nothing while the op is still running", () => {
+    expect(card({})).not.toContain("RESULT");
+    expect(card({ result_summary: "Running…" })).not.toContain("RESULT");
   });
 
   it("never paints a private transport op a handle method answered", () => {

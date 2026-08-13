@@ -480,6 +480,18 @@ export const ListRow = forwardRef<
 });
 
 /**
+ * THE WEIGHT A BAND'S NAME WEARS, pressable or not.
+ *
+ * `PYTHON` over a program, `RESULT` over what it printed, `THINKING` over the
+ * reasoning that produced it: one word, in caps, saying what the band under it
+ * holds. It is ONE weight because a row the reader cannot press must read as
+ * the same kind of row as the one they can — `Disclosure` tone `step` is this
+ * ink on a button, `BandLabel` is it standing on its own, and the TUI paints
+ * the same names in the same weight (`render/band-label`).
+ */
+const BAND_NAME = 'font-extrabold tracking-[0.06em]';
+
+/**
  * A TRACE ROW YOU EXPAND, and there is only one of it.
  *
  * A tool step's header, the THINKING band and an attachment rail's summary all
@@ -488,7 +500,9 @@ export const ListRow = forwardRef<
  * hovers, and only two of them tagged `data-disclosure-toggle`, which is what
  * the transcript uses to keep the scroll anchored when a row opens.
  *
- * `tone` is the ink of the thing it opens, because that is the only difference.
+ * `tone` is the ink of the thing it opens, because that is the only difference —
+ * ink INCLUDING the slant: the reasoning a thinking band opens is set in italic,
+ * so that band's own name is italic, and bold with it.
  * The height follows the pointer, never the width: 32px under a finger, the
  * tight 24px rhythm only where there is a cursor.
  */
@@ -512,9 +526,9 @@ export function Disclosure({
 }) {
   const ink =
     tone === 'step'
-      ? 'font-extrabold tracking-[0.06em] text-accent-ink hover:bg-hover'
+      ? `${BAND_NAME} text-accent-ink hover:bg-hover`
       : tone === 'thinking'
-        ? 'font-bold not-italic tracking-[0.07em] text-thinking hover:text-dialog-hint-key'
+        ? 'font-bold italic tracking-[0.07em] text-thinking hover:text-dialog-hint-key'
         : 'text-footer-muted hover:bg-hover';
   return (
     <button
@@ -528,6 +542,42 @@ export function Disclosure({
       {children}
     </button>
   );
+}
+
+/**
+ * THE NAME OF A BAND THAT DOES NOT OPEN.
+ *
+ * A program's header when the whole program is already on screen, a result card
+ * whose value carried no tally: there is nothing to disclose, so the row is not
+ * a `Disclosure` — but it is the same NAME in the same weight. Without it those
+ * rows said nothing at all, a chevron and a duration standing for whatever the
+ * band happened to hold.
+ */
+export function BandLabel({
+  className = '',
+  children,
+}: {
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <span
+      className={`select-none truncate font-mono text-chip ${BAND_NAME} text-accent-ink ${className}`}
+    >
+      {children}
+    </span>
+  );
+}
+
+/**
+ * THE COUNT BESIDE A BAND'S NAME, and it never takes the name's weight.
+ *
+ * `+3 more`, `+8 more`: what is HIDDEN is not what the band IS, so the name
+ * stays the one constant the eye can find down the column and the tally steps
+ * back out of it.
+ */
+export function BandTally({ children }: { children: ReactNode }) {
+  return <span className="font-normal tracking-normal">{children}</span>;
 }
 
 /**

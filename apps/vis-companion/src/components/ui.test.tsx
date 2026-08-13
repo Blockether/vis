@@ -24,6 +24,8 @@ import { DraftIcon, PlusIcon, ProjectsIcon } from "./icons";
 import { MACHINE_COLORS } from "../lib/machine-colors";
 import {
   BackButton,
+  BandLabel,
+  BandTally,
   EditableName,
   Button,
   Chip,
@@ -2008,6 +2010,54 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
       expect(first(html({ tone: "step" }))).toContain("text-accent-ink");
       expect(first(html({ tone: "thinking" }))).toContain("text-thinking");
       expect(first(html())).toContain("text-footer-muted");
+    });
+
+    // Bold AND italic at the same time: the reasoning this band opens is set in
+    // italic, so the name of that band is italic too, exactly as the TUI paints
+    // it. It used to spell `not-italic` and cancel the slant.
+    it("slants the name of the band whose own text is slanted", () => {
+      expect(first(html({ tone: "thinking" }))).toContain("italic");
+      expect(first(html({ tone: "thinking" }))).toContain("font-bold");
+      expect(first(html({ tone: "thinking" }))).not.toContain("not-italic");
+      expect(first(html({ tone: "step" }))).not.toContain("italic");
+    });
+  });
+
+  // A band says in ONE word what it holds — `PYTHON` over a program, `RESULT`
+  // over what it printed, `THINKING` over the reasoning — and that word wears
+  // one weight whether or not its row can be pressed.
+  describe("BandLabel", () => {
+    const label = renderToStaticMarkup(<BandLabel>RESULT</BandLabel>);
+    const pressable = first(
+      renderToStaticMarkup(
+        <Disclosure isOpen={false} tone="step">
+          PYTHON
+        </Disclosure>,
+      ),
+    );
+
+    it("names a band in the weight the pressable one wears", () => {
+      expect(label).toContain("RESULT");
+      for (const token of [
+        "font-extrabold",
+        "tracking-[0.06em]",
+        "text-accent-ink",
+      ]) {
+        expect(label).toContain(token);
+        expect(pressable).toContain(token);
+      }
+    });
+
+    it("keeps the count beside a name out of the name's weight", () => {
+      expect(renderToStaticMarkup(<BandTally> +3 more</BandTally>)).toContain(
+        "font-normal",
+      );
+    });
+
+    it("is the only place that weight is spelled", () => {
+      expect(chatSource).not.toContain("font-extrabold");
+      expect(chatSource).toContain("<BandLabel");
+      expect(chatSource).toContain("<BandTally");
     });
   });
 
