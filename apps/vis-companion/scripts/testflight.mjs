@@ -66,31 +66,6 @@ export const linkTargets = (groups, namedId) => [
     .map((g) => g.id),
 ];
 
-/**
- * Run `call` with a token, and on 401 mint a fresh one and run it exactly once more.
- *
- * Apple answered a perfectly good token with 401 on POST /v1/betaAppReviewSubmissions
- * (run 30766271157) moments after that same token had read the app and its beta groups,
- * and accepted the identical request minutes later. A release whose build is already
- * uploaded must not die on that.
- */
-export const retryUnauthorized = async (mint, call) => {
-  try {
-    return await call(mint());
-  } catch (err) {
-    if (err.status !== 401) throw err;
-    return call(mint());
-  }
-};
-
-/**
- * An ASC caller bound to a token MINT instead of one token: EVERY request in a
- * distribution gets one fresh-token retry, not just the two that happened to fail
- * in run 30766271157. The build is already uploaded by the time any of this runs.
- */
-export const retryingApi = (mint) => (method, path, body) =>
-  retryUnauthorized(mint, (token) => asc(token, method, path, body));
-
 /** Beta App Review refuses a submission when these are unset; they are per-app and set once. */
 const ensureBetaMeta = async (
   api,
@@ -233,12 +208,12 @@ export const distribute = async ({
       reason: "no App Store Connect API key (npm run secrets asc …)",
     };
   const credentials = { keyId, issuerId, keyPem };
+  // A token MINT, not a token: `asc` signs a fresh JWT per attempt and retries Apple's
+  // transient failures itself, so nothing in this file wraps a request (scripts/asc.mjs).
   const mint = () => ascToken(credentials);
-  const api = retryingApi(mint);
+  const api = (method, path, body) => asc(mint, method, path, body);
   try {
-    const appId = await retryUnauthorized(mint, (token) =>
-      appIdFor(token, bundleId),
-    );
+    const appId = await appIdFor(mint, bundleId);
     if (!appId)
       return {
         ok: false,

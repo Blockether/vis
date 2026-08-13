@@ -33,9 +33,9 @@ import { appIdFor, asc, ascToken } from './asc.mjs';
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** Every build of the app, newest upload first, with its version-string group. */
-export const listBuilds = async (token, appId, { limit = 200 } = {}) => {
+export const listBuilds = async (mint, appId, { limit = 200 } = {}) => {
   const res = await asc(
-    token,
+    mint,
     'GET',
     `/v1/builds?filter[app]=${appId}&limit=${limit}&sort=-uploadedDate&include=preReleaseVersion`,
   );
@@ -50,8 +50,8 @@ export const listBuilds = async (token, appId, { limit = 200 } = {}) => {
   }));
 };
 
-export const expireBuild = (token, id) =>
-  asc(token, 'PATCH', `/v1/builds/${id}`, { data: { type: 'builds', id, attributes: { expired: true } } });
+export const expireBuild = (mint, id) =>
+  asc(mint, 'PATCH', `/v1/builds/${id}`, { data: { type: 'builds', id, attributes: { expired: true } } });
 
 // ── standalone CLI ────────────────────────────────────────────────────────────────────
 
@@ -79,14 +79,14 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   }
 
   const bundleId = flag('bundle') ?? JSON.parse(readFileSync(join(appDir, 'capacitor.config.json'), 'utf8')).appId;
-  const token = ascToken({ keyId, issuerId, keyPem });
-  const appId = await appIdFor(token, bundleId);
+  const mint = () => ascToken({ keyId, issuerId, keyPem });
+  const appId = await appIdFor(mint, bundleId);
   if (!appId) {
     console.error(`\n✗ no app with bundle id ${bundleId} in this API key's team\n`);
     process.exit(1);
   }
 
-  const builds = await listBuilds(token, appId);
+  const builds = await listBuilds(mint, appId);
   const live = builds.filter((b) => !b.expired);
   const show = (b) => `  ${b.expired ? '·' : '●'} ${b.version} (${b.build})  ${b.state}  ${b.uploaded ?? ''}`;
   console.log(`\n${bundleId} — ${builds.length} builds (● active, · expired):`);
@@ -117,7 +117,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   let failed = 0;
   for (const b of targets) {
     try {
-      await expireBuild(token, b.id);
+      await expireBuild(mint, b.id);
       console.log(`· expired ${b.version} (${b.build})`);
     } catch (err) {
       failed += 1;

@@ -457,6 +457,13 @@ console.log(
 // must ride along with the build. The build only exists in App Store Connect AFTER
 // processing, hence the poll inside publishNotes.
 const wantsPublicDistribution = has('public') || Boolean(flag('group'));
+// The one command that re-pushes notes for a build already in App Store Connect.
+const notesRecovery = `npm run release:notes -- --build ${buildNumber}`;
+/**
+ * Publish the notes, and answer whether App Store Connect still owes the build a
+ * "What to Test": false ONLY when Apple was asked and would not take them, so a caller can
+ * fail the release on that without failing an upload that never had an API key to ask with.
+ */
 const publishWhatToTest = async (timeoutMs) => {
   if (has('no-notes')) return true;
   if (!notes.text) {
@@ -464,12 +471,14 @@ const publishWhatToTest = async (timeoutMs) => {
     return true;
   }
   if (!keyId || !issuerId || !(keyPem || process.env.VIS_ASC_KEY_PATH)) {
+    // An Apple-ID/app-password upload (the branch above) has no API to publish notes with,
+    // so this is a credential fact, not a failed publish — reportable, never fatal.
     console.log(
       '· no App Store Connect API key — What to Test not published.\n' +
         `  Notes are in ${join(appDir, 'CHANGELOG.md')}; paste them into TestFlight ▸ the build ▸ What to Test,\n` +
-        '  or store a key (`npm run secrets`) and run `npm run release:notes`.',
+        `  or store a key (\`npm run secrets\`) and run \`${notesRecovery}\`.`,
     );
-    return false;
+    return true;
   }
 
   const res = await publishNotes({
@@ -484,12 +493,17 @@ const publishWhatToTest = async (timeoutMs) => {
     log: (m) => console.log(`· ${m}`),
   });
   if (res.ok) console.log(`\n✓ TestFlight "What to Test" set for build ${buildNumber}.\n`);
-  else console.log(`\n! notes not published: ${res.reason}\n  They are in CHANGELOG.md — paste them in App Store Connect.\n`);
+  else console.log(`\n! notes not published: ${res.reason}\n  They are in CHANGELOG.md — re-push them with: ${notesRecovery}\n`);
   return res.ok;
 };
 
+// A build whose testers see no "What to Test" is an unfinished release, not a warning: the
+// public branch below has always said so, while this one printed a line that scrolls past in
+// a build log — which is how 0.1.35 (4075) shipped with its notes stranded. Same rule now,
+// and `asc` has already retried everything transient by the time we get here.
 if (!wantsPublicDistribution) {
-  await publishWhatToTest(Number(flag('notes-timeout') ?? 15 * 60 * 1000));
+  const notesOk = await publishWhatToTest(Number(flag('notes-timeout') ?? 15 * 60 * 1000));
+  if (!notesOk) die(`TestFlight release notes were not published for build ${buildNumber}.\nThe build is uploaded; recover with: ${notesRecovery}`);
 }
 
 // PUBLIC TestFlight. Off by default because it costs a Beta App Review round trip and
@@ -513,7 +527,7 @@ if (wantsPublicDistribution) {
   console.log(`\n✓ build ${buildNumber} is with public TestFlight.${res.publicLink ? `\n  Join link: ${res.publicLink}` : ''}\n`);
 
   const notesOk = await publishWhatToTest(Number(flag('notes-timeout') ?? 2 * 60 * 1000));
-  if (!notesOk && !has('no-notes')) {
-    die(`TestFlight release notes were not published for build ${buildNumber}`);
+  if (!notesOk) {
+    die(`TestFlight release notes were not published for build ${buildNumber}.\nThe build is uploaded; recover with: ${notesRecovery}`);
   }
 }

@@ -123,14 +123,14 @@ const download = async (url, path) => {
 
 const collectAscFeedback = async ({ bundleId, cutoff, limit, outDir }) => {
   mkdirSync(outDir, { recursive: true });
-  const token = ascToken(credentials());
-  const appId = await appIdFor(token, bundleId);
+  const mint = () => ascToken(credentials());
+  const appId = await appIdFor(mint, bundleId);
   if (!appId) throw new Error(`no App Store Connect app has bundle id ${bundleId}`);
 
   const query = `limit=${limit}&include=build`;
   const [crashResponse, screenshotResponse] = await Promise.all([
-    asc(token, 'GET', `/v1/apps/${appId}/betaFeedbackCrashSubmissions?${query}`),
-    asc(token, 'GET', `/v1/apps/${appId}/betaFeedbackScreenshotSubmissions?${query}`),
+    asc(mint, 'GET', `/v1/apps/${appId}/betaFeedbackCrashSubmissions?${query}`),
+    asc(mint, 'GET', `/v1/apps/${appId}/betaFeedbackScreenshotSubmissions?${query}`),
   ]);
   const entries = [
     ...feedbackEntries(crashResponse, 'crash', cutoff),
@@ -144,7 +144,7 @@ const collectAscFeedback = async ({ bundleId, cutoff, limit, outDir }) => {
     if (entry.kind === 'crash') {
       try {
         const response = await asc(
-          token,
+          mint,
           'GET',
           `/v1/betaFeedbackCrashSubmissions/${encodeURIComponent(entry.id)}/crashLog`,
         );

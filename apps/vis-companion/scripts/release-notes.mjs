@@ -151,27 +151,29 @@ export const publishNotes = async ({ keyId, issuerId, keyPem, bundleId, version,
   if (!keyId || !issuerId || !keyPem) return { ok: false, reason: 'no App Store Connect API key' };
 
   const credentials = { keyId, issuerId, keyPem };
-  let token = ascToken(credentials);
+  // A MINT, not a token: `asc` signs a fresh JWT per attempt, which is what lets it retry a
+  // dropped socket, a 401 or a 429 without the caller noticing (scripts/asc.mjs).
+  const mint = () => ascToken(credentials);
 
-  // Every failure here is reportable, never fatal: the build is already uploaded and the
-  // notes are already in CHANGELOG.md, so a bad token must not take the release down.
+  // Every failure that survives those retries is reportable, never fatal: the build is
+  // already uploaded and the notes are already in CHANGELOG.md, so Apple having a bad
+  // minute must not take the release down.
   try {
-    const appId = await appIdFor(token, bundleId);
+    const appId = await appIdFor(mint, bundleId);
     if (!appId) return { ok: false, reason: `no app with bundle id ${bundleId}` };
 
-    const found = await waitForBuild(() => ascToken(credentials), { appId, build, timeoutMs, log: (m) => log(`· ${m}`) });
+    const found = await waitForBuild(mint, { appId, build, timeoutMs, log: (m) => log(`· ${m}`) });
     const buildId = found?.id;
     if (!buildId) return { ok: false, reason: `build ${build} not visible in App Store Connect yet` };
-    token = ascToken(credentials);
 
-    const existing = await asc(token, 'GET', `/v1/builds/${buildId}/betaBuildLocalizations?limit=50`);
+    const existing = await asc(mint, 'GET', `/v1/builds/${buildId}/betaBuildLocalizations?limit=50`);
     const mine = existing.data?.find((l) => l.attributes?.locale === locale);
     if (mine) {
-      await asc(token, 'PATCH', `/v1/betaBuildLocalizations/${mine.id}`, {
+      await asc(mint, 'PATCH', `/v1/betaBuildLocalizations/${mine.id}`, {
         data: { type: 'betaBuildLocalizations', id: mine.id, attributes: { whatsNew: notes } },
       });
     } else {
-      await asc(token, 'POST', '/v1/betaBuildLocalizations', {
+      await asc(mint, 'POST', '/v1/betaBuildLocalizations', {
         data: {
           type: 'betaBuildLocalizations',
           attributes: { locale, whatsNew: notes },
@@ -232,7 +234,8 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   if (result.ok) console.log(`✓ TestFlight "What to Test" set for build ${build}\n`);
   else {
     console.error(`\n✗ notes not published: ${result.reason}`);
-    console.error('  They are in CHANGELOG.md — paste them into App Store Connect ▸ TestFlight ▸ the build ▸ What to Test.\n');
+    console.error(`  Apple was already retried; they are in CHANGELOG.md, so re-running is safe: npm run release:notes -- --build ${build}`);
+    console.error('  Or paste them into App Store Connect ▸ TestFlight ▸ the build ▸ What to Test.\n');
     process.exit(1);
   }
 }
