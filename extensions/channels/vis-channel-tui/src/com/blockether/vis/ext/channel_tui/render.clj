@@ -3751,11 +3751,10 @@
   (if (odd? (count (filterv #(= \` %) s))) (str s "`") s))
 
 (defn- format-detail-summary-line
-  "Put the human-readable detail info on the right edge. The
-   whole row is already painted as a bold disclosure band by
-   `draw-chat-bubble!`, so keep the suffix as plain text. Inline code
-   would drop that inherited bold style and switch to a weaker code
-   background."
+  "Put the human-readable detail info on the right edge. The row's own NAME
+   carries the bold span (`band-label`), so keep the suffix as plain text: an
+   id badge is orientation, not emphasis, and inline code would swap its ink
+   for a weaker code background."
   ^String [left suffix max-w]
   (let
     [suffix-w
@@ -3972,6 +3971,23 @@
             ;; key shape (and every already-warmed cache entry) is unchanged.
             (if baseline (into [baseline] per-turn) per-turn))))
 
+(defn- band-label
+  "The NAME a collapsible band wears on its disclosure row - `PYTHON`,
+   `THINKING`, `RESULT` - in caps and BOLD. The row is a CONTROL, so the name
+   that says what folds carries the weight; the tally beside it (`+3 more`)
+   stays outside the span and reads quiet.
+
+   Emphasis is emitted as `INLINE_BOLD` sentinels instead of `**markdown**`
+   because these labels reach the painter by two routes and only sentinels
+   survive both: the code and result summaries are lifted through
+   `markdown->ast` (which passes an inline sentinel through untouched), while
+   the THINKING header is ellipsized and painted straight by
+   `p/paint-styled-line!`, where `**` would show up as two asterisks. The
+   sentinels measure ZERO columns in `p/display-width`, so bolding a label
+   costs its row no width and never shifts the id badge on the right edge."
+  ^String [^String label]
+  (str p/INLINE_BOLD_ON label p/INLINE_BOLD_OFF))
+
 (defn- detail-summary-entries
   [{:keys [marker max-w summary collapsed? session-id node-id] :as detail-ctx}]
   (let
@@ -4125,7 +4141,13 @@
          preview-n (image-safe-split-n entries reasoning-auto-collapse-line-threshold)
          hidden-n (max 0 (- (count entries) (long preview-n)))
          shown (if expanded? entries (vec (take preview-n entries)))
-         label (if (or expanded? (zero? hidden-n)) "THINKING" (str "THINKING  +" hidden-n " more"))
+         ;; The whole thinking band paints ITALIC, and `p/paint-styled-line!`
+         ;; INHERITS the modifiers already active on the surface - so the bold
+         ;; span on the name reads bold AND italic: the band's own voice, at
+         ;; the weight of a control.
+         label (if (or expanded? (zero? hidden-n))
+                 (band-label "THINKING")
+                 (str (band-label "THINKING") "  +" hidden-n " more"))
          ;; Header is a THINKING-MARKER row → painted in the dim
          ;; band (so it sits INSIDE the bubble), and carries the
          ;; toggle-details meta the thinking-marker painter now
@@ -4840,12 +4862,13 @@
      ;; headline so expanded cards breathe, but drop markdown/code-fence pad rows
      ;; inside COMMAND / RESULT / STDOUT sections. The labels themselves provide
      ;; the visual structure after that first separator.
-     ;; A card wears NO badge. The op-name title (`GREP`, `RESULT`, a private
-     ;; transport's `_SHELL_WAIT`) is gone: a result is its own tally and its own
-     ;; body. A card that carried no tally still needs a word on its disclosure
-     ;; row, and `result` is the one the unlabeled long-result disclosure uses.
+     ;; A card wears NO op-name badge. The title (`GREP`, a private transport's
+     ;; `_SHELL_WAIT`) is gone: a result is its own tally and its own body. A
+     ;; card that carried no tally still needs a word on its disclosure row, and
+     ;; it is the same bold `RESULT` the unlabeled long-result disclosure wears
+     ;; - one name for the band, never a lowercase filler.
      head-line
-     (or summary "result")
+     (or summary (band-label "RESULT"))
 
      ->result
      (fn [e]
@@ -5335,7 +5358,9 @@
                (detail-summary-entries
                  {:marker c-marker
                   :max-w fill-w
-                  :summary (if expanded? "PYTHON" (str "PYTHON +" (count hidden-groups) " more"))
+                  :summary (if expanded?
+                             (band-label "PYTHON")
+                             (str (band-label "PYTHON") " +" (count hidden-groups) " more"))
                   :collapsed? (not expanded?)
                   :session-id session-id
                   :node-id code-node-id})]
@@ -5474,8 +5499,8 @@
                                          :session-id session-id
                                          :detail-expansions detail-expansions
                                          :node-id result-node-id})
-                ;; Non-tool, long result: keep the first rows visible
-                ;; and collapse only the surplus (unlabeled).
+                ;; Non-tool, long result: keep the first rows visible and
+                ;; collapse only the surplus behind the band's own name.
                 (and result-node-id (seq hidden))
                 (let
                   [expanded?
@@ -5488,7 +5513,13 @@
                    (detail-summary-entries
                      {:marker result-marker
                       :max-w fill-w
-                      :summary (if expanded? "result" (str "+" (count hidden) " more result lines"))
+                      ;; Collapsed used to read `+N more result lines` with no
+                      ;; name at all - the one band whose control never said what
+                      ;; it folds. It wears `RESULT` in both states now, exactly
+                      ;; like the code band above it.
+                      :summary (if expanded?
+                                 (band-label "RESULT")
+                                 (str (band-label "RESULT") " +" (count hidden) " more lines"))
                       :hidden-entries hidden
                       :collapsed? (not expanded?)
                       :session-id session-id

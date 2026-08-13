@@ -31,6 +31,14 @@
 
 (def ^:private coalesce-bubble-blanks @#'render/coalesce-bubble-blanks)
 
+(defn- strip-sentinels
+  "Drop inline-style sentinels (PUA U+E110..U+E2FF) so equality
+   assertions compare the visible text only."
+  [s]
+  (->> s
+       (remove #(<= 0xE110 (int %) 0xE2FF))
+       (apply str)))
+
 (defn- put-text
   "Coerce a `putString` 3rd argument to the String it paints. The plain body path
    now hands the fork's `putString(TextCharacter[])` overload a pre-segmented,
@@ -210,7 +218,7 @@
 
          txt
          (str/join "\n"
-                   (map (comp strip-ansi :line)
+                   (map (comp strip-sentinels strip-ansi :line)
                         (format-iteration-entry-entries
                           (iteration/canonicalize
                             {:position 0
@@ -273,14 +281,6 @@
    not crash when iterating over a frame that includes blank rows."
   [s]
   (when (string? s) (if (zero? (count s)) "" (subs s 1))))
-
-(defn- strip-sentinels
-  "Drop inline-style sentinels (PUA U+E110..U+E2FF) so equality
-   assertions compare the visible text only."
-  [s]
-  (->> s
-       (remove #(<= 0xE110 (int %) 0xE2FF))
-       (apply str)))
 
 (defdescribe input-overflow-hint-test
              (it "shows hidden visual-row count as an N more label for the input top border"
@@ -4336,3 +4336,142 @@
           (expect (str/includes? text "Provider stream stalled"))
           (expect (not (str/includes? text "**")))
           (expect (not (str/includes? text "ERROR:")))))))
+
+;; Every collapsible band NAMES itself on its disclosure row, and that name is
+;; the control: `PYTHON`, `THINKING` and `RESULT` paint in caps and BOLD while
+;; the `+N more` tally beside them stays at body weight. The three used to
+;; disagree — an op-card that carried no tally said a lowercase `result`, the
+;; long-result disclosure said `+N more result lines` with no name at all, and
+;; neither `PYTHON` nor `THINKING` was ever bold, so the loudest word in a
+;; bubble was whichever one happened to be uppercase. Pixel truth from a real
+;; paint: emphasis lives in inline sentinels the painter CONSUMES, so the entry
+;; strings alone cannot prove a single bold cell.
+(defdescribe
+  band-label-emphasis-test
+  (let
+    [thinking
+     (str "The patch was applied successfully. Now I need to verify the change "
+          "works by evaluating the namespace in the REPL, then close the task.\n\n"
+          "Let me verify by loading the file or at least checking the changed "
+          "lines look correct.\n\n" "The diff looks correct.\n\n"
+          "More reasoning after the diff that should be hidden.\n"
+          "Even more hidden reasoning lines here.\n")
+
+     trace
+     [{:thinking thinking
+       :forms [{:success? true
+                :code "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8"
+                :result-render (str/join " " (repeat 200 "abcdefghij"))
+                :result-kind :value
+                :duration-ms 1
+                :silent? false}]}]
+
+     _
+     (render/invalidate-cache!)
+
+     rendered
+     (render/format-answer-with-thinking-data*
+       nil
+       trace
+       80
+       {:show-thinking true :show-iterations true}
+       nil
+       false
+       {:session-id "sid" :session-turn-id "abcd1234-5678-9999" :detail-expansions {}})
+
+     message
+     {:role :assistant
+      :text ""
+      :prewrapped-lines (:lines rendered)
+      :line-meta (:line-meta rendered)}
+
+     grid
+     (first (:frames
+              (cap/capture!
+                {:cols 90
+                 :rows 40
+                 :paint!
+                 (fn [{:keys [screen]}]
+                   (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
+                     (render/draw-chat-bubble! (.newTextGraphics s) message 1 2 84 {:viewport-h 40})
+                     (.refresh s)))})))
+
+     row-text
+     (fn [row]
+       (str/trimr (apply str (map :ch row))))
+
+     ;; The one painted row carrying this band's label.
+     band-row
+     (fn [needle]
+       (first (filter #(str/includes? (row-text %) needle) grid)))
+
+     ink
+     (fn [row pred]
+       (apply str (map :ch (filter pred row))))]
+
+    (it "paints the collapsed code band's name bold and leaves its tally quiet"
+        (let [row (band-row "PYTHON")]
+          (expect (str/includes? (row-text row) "▸ PYTHON +3 more"))
+          (expect (= "PYTHON" (ink row :bold)))))
+    (it "paints THINKING bold ON TOP of the band's own italic"
+        ;; The thinking band is painted italic as a whole and
+        ;; `p/paint-styled-line!` inherits the modifiers already active on the
+        ;; surface, so its name is the one label that is bold AND italic.
+        (let [row (band-row "THINKING")]
+          (expect (str/includes? (row-text row) "▸ THINKING  +8 more"))
+          (expect (= "THINKING" (ink row :bold)))
+          (expect (= "THINKING" (ink row #(and (:bold %) (:italic %)))))
+          (expect (str/includes? (ink row :italic) "+8 more"))))
+    (it "names an op-card that carried no tally RESULT, in caps and bold"
+        (let [row (band-row "RESULT")]
+          (expect (str/includes? (row-text row) "▸ RESULT"))
+          (expect (not (str/includes? (row-text row) "result")))
+          (expect (= "RESULT" (ink row :bold)))))))
+
+;; The unlabeled long-result disclosure was the one control that never said
+;; what it folded: collapsed it read `+12 more result lines`, so the row could
+;; only be understood from the rows above it. It wears the band's own name in
+;; both states now, exactly like the code band.
+(defdescribe
+  long-result-disclosure-label-test
+  (let
+    [long-result
+     (str/join "\n" (map #(str "line " % " of the value") (range 1 40)))
+
+     label-of
+     (fn [detail-expansions]
+       (render/invalidate-cache!)
+       (->> (:lines (render/format-answer-with-thinking-data*
+                      nil
+                      [{:forms [{:success? true :code "x = 1" :result long-result}]}]
+                      80
+                      {:show-thinking true :show-iterations true}
+                      nil
+                      false
+                      {:session-id "sid"
+                       :session-turn-id "abcd1234-5678-9999"
+                       :detail-expansions detail-expansions}))
+            (map (comp str/trim strip-sentinels strip-ansi body-of))
+            (filter #(str/includes? % "RESULT"))
+            first))]
+
+    (it "names the collapsed disclosure and counts what it hides"
+        (expect (= "▸ RESULT +8 more lines" (label-of {}))))
+    (it "keeps the name once expanded"
+        (expect (= "▾ RESULT" (label-of {:vis.channel-tui/expand-all-details? true}))))
+    (it "wraps that name in the painter's bold sentinels"
+        (render/invalidate-cache!)
+        (let
+          [line (->> (:lines (render/format-answer-with-thinking-data*
+                               nil
+                               [{:forms [{:success? true :code "x = 1" :result long-result}]}]
+                               80
+                               {:show-thinking true :show-iterations true}
+                               nil
+                               false
+                               {:session-id "sid"
+                                :session-turn-id "abcd1234-5678-9999"
+                                :detail-expansions {}}))
+                     (filter #(str/includes? (str %) "RESULT"))
+                     first)]
+          (expect (str/includes? (str line) (str p/INLINE_BOLD_ON "RESULT" p/INLINE_BOLD_OFF)))))))

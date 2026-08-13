@@ -318,8 +318,11 @@
           (expect (not (some #(= last-idx (:idx %)) visible)))))
     (it "folds a huge streaming result behind its own disclosure"
         ;; A live bubble must never grow by the SIZE of what the block produced:
-        ;; the result rides behind its own `▸ result` disclosure, so a 10 000-char
-        ;; value costs the streaming frame one row, not a wall.
+        ;; the result rides behind its own `▸ RESULT` disclosure, so a 10 000-char
+        ;; value costs the streaming frame one row, not a wall. A projection's
+        ;; `:text` is the COPY payload, sentinel-free, so it pins the band's
+        ;; NAME only; that the name paints bold is pinned on the real grid in
+        ;; `render-test/band-label-emphasis-test`.
         (render/invalidate-cache!)
         (let
           [huge-result
@@ -350,7 +353,7 @@
            projected
            (:projected (first visible))]
 
-          (expect (str/includes? (:text projected) "▸ result"))
+          (expect (str/includes? (:text projected) "▸ RESULT"))
           (expect (not (str/includes? (:text projected) "chars hidden")))
           (expect (not (str/includes? (:text projected) huge-result)))
           (expect (some #(= :toggle-details (:kind %)) (:line-meta projected)))))
