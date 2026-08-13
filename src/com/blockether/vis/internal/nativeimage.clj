@@ -145,15 +145,18 @@
                     nil
                     (into-array Object [desc (into-array opt-t options)]))))]
 
-      ;; NEVER on Linux. v0.1.32 was the last native release that shipped; v0.1.33
-      ;; (which first carried this registration), v0.1.34 and v0.1.35 all died in
-      ;; `native-binary-paints-the-tui-test` with a SIGSEGV inside the generated
-      ;; downcall stub for `open("/dev/tty", O_RDWR|O_NOCTTY)` — both x64 and arm64,
-      ;; every attempt. Registering the descriptor is what lets lanterna's
-      ;; `TTYDeviceControl` <clinit> SUCCEED in the image; without it the very same
-      ;; <clinit> catches Throwable, leaves SUPPORTED false, and the terminal drives
-      ;; the tty by forking /bin/stty exactly as it did through v0.1.32. macOS keeps
-      ;; the fast path: it is the only platform this has ever been proven on.
+      ;; NEVER on Linux, where the TTY is driven by forking /bin/stty exactly as it
+      ;; was through v0.1.32: this registration has never been proven there, and
+      ;; lanterna's `TTYDeviceControl` <clinit> catches the resulting
+      ;; MissingForeignRegistrationError and leaves SUPPORTED false. macOS keeps the
+      ;; termios/ioctl fast path.
+      ;;
+      ;; The SIGSEGV that killed v0.1.33-v0.1.35 inside the generated downcall stub
+      ;; was NOT caused by registering here — skipping it did not stop the crash
+      ;; (measured again on the 2026-08-13 dry run). The class was INITIALIZED AT
+      ;; BUILD TIME, so the image inherited the builder JVM's MethodHandles and
+      ;; SUPPORTED=true with no stubs behind them; `build.clj` now initializes
+      ;; `TTYDeviceControl` at run time, which is what makes either outcome safe.
       (if (.contains (.toLowerCase (str (System/getProperty "os.name" ""))) "linux")
         (println "[vis/native-image] FFM downcall registration SKIPPED on Linux -"
                  "the TTY is driven by forking /bin/stty (see the comment above)")

@@ -1145,8 +1145,20 @@
        ;; first paint — and a future JDK blocks the call outright. The downcall
        ;; DESCRIPTORS themselves are registered in the build Feature
        ;; (com.blockether.vis.internal.nativeimage/-duringSetup).
-       "--enable-native-access=ALL-UNNAMED" "-H:IncludeResources=META-INF/vis-extension/.*"
-       "-H:IncludeResources=.*\\.edn$"
+       "--enable-native-access=ALL-UNNAMED"
+       ;; …and that class must decide IN THE BINARY. Its <clinit> builds the
+       ;; termios/ioctl MethodHandles; graal-build-time initializes it inside the
+       ;; BUILDER JVM, where java.lang.foreign simply works, so the image
+       ;; inherited SUPPORTED=true together with handles whose downcall stubs the
+       ;; image never generated. The Linux binary then SIGSEGV'd inside
+       ;; `DowncallStubsHolder` the first time the TUI opened /dev/tty — measured
+       ;; on v0.1.33-v0.1.35 and again on the 2026-08-13 dry run, in
+       ;; `native-binary-paints-the-tui-test`, on x64 and arm64 alike. Initialized
+       ;; at RUN time it decides for itself: the termios fast path where the
+       ;; descriptors were registered (macOS), and lanterna's own catch-and-degrade
+       ;; to forking /bin/stty where they were not.
+       "--initialize-at-run-time=com.googlecode.lanterna.terminal.ansi.TTYDeviceControl"
+       "-H:IncludeResources=META-INF/vis-extension/.*" "-H:IncludeResources=.*\\.edn$"
        ;; the build-written `vis/VERSION` (git sha) read by `vis-agent --version`
        "-H:IncludeResources=vis/VERSION"
        ;; Flyway migration SQL (not in the agent-traced metadata)

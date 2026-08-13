@@ -102,6 +102,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   block, file picker) and the TUI Magit surface are unchanged.
 
 ### Fixed
+- The native binary crashed the moment the TUI painted. Lanterna's `TTYDeviceControl` builds its
+  termios/ioctl `MethodHandle`s in a class initializer that ran in the image BUILDER, where
+  `java.lang.foreign` works — so the binary inherited `SUPPORTED = true` and handles with no
+  downcall stubs behind them, and segfaulted inside `DowncallStubsHolder` on the first
+  `open("/dev/tty")` (v0.1.33-v0.1.35, x64 and arm64). The class now initializes at RUN time, so
+  the binary decides for itself: the termios fast path where the descriptors are registered, and
+  lanterna's own fallback to forking `/bin/stty` where they are not.
 - The native binary could not open its own terminal UI or touch its database. The TUI's `screen`
   and `chat`, the sqlite backend's `core` and voice's `input` are reached BY NAME
   (`requiring-resolve`) on first use, so nothing required them at discovery and the image never
