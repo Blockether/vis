@@ -585,12 +585,24 @@
    `Context.interrupt` (or a cancelling close) unwinds guest frames. Safe from
    any thread that is not itself executing this context (the loop/eval-timeout
    thread and the canceller are not), never throws, and leaves the context
-   REUSABLE for the next turn."
+   REUSABLE for the next turn — the interrupt is NON-DESTRUCTIVE, so nothing here
+   ever needs a fresh interpreter.
+
+   Returns TRUE when it landed, i.e. every thread executing the context left it
+   inside the grace. FALSE is the javadoc's own failure mode — \"a context thread
+   may not be interruptible if it uses non-interruptible waiting or executes
+   non-interruptible host code\", reported as a `TimeoutException` — and it is
+   the ONLY reason to fall back on `Thread.interrupt`, which lands inside
+   GraalPy's GIL re-acquire (`PythonContext.ensureGilAfterFailure` takes the lock
+   uninterruptibly) and leaves a worker abandoned there dead OWNING the GIL. Host
+   waits that poll [[rt/guest-safepoint!]] keep this returning true."
   [python-context]
-  (try (when python-context
-         (.interrupt ^org.graalvm.polyglot.Context python-context
-                     (java.time.Duration/ofMillis (long GUEST_INTERRUPT_GRACE_MS))))
-       (catch Throwable _ nil)))
+  (boolean (when python-context
+             (try (.interrupt ^org.graalvm.polyglot.Context python-context
+                              (java.time.Duration/ofMillis (long GUEST_INTERRUPT_GRACE_MS)))
+                  true
+                  (catch java.util.concurrent.TimeoutException _ false)
+                  (catch Throwable _ false)))))
 
 (defn attachment-descriptor
   "One `session_attachment` row as the compact DESCRIPTOR `list_attachments()` and
@@ -727,11 +739,16 @@
      (when cancel-token
        (cancellation/on-cancel! cancel-token
                                 (fn []
-                                  (try (.cancel ^java.util.concurrent.Future exec-future true)
-                                       (catch Throwable _ nil))
-                                  ;; The Java interrupt alone leaves runaway GUEST
-                                  ;; code spinning forever — unwind it too.
-                                  (interrupt-guest! python-context))))
+                                  ;; The DOCUMENTED cancel first: it unwinds guest
+                                  ;; frames and every host wait that polls
+                                  ;; `rt/guest-safepoint!`, and leaves the context
+                                  ;; reusable. Fall back on the Java interrupt only
+                                  ;; when that did not land — it hits GraalPy's
+                                  ;; uninterruptible GIL re-acquire, where an
+                                  ;; abandoned worker dies owning the GIL.
+                                  (when-not (interrupt-guest! python-context)
+                                    (try (.cancel ^java.util.concurrent.Future exec-future true)
+                                         (catch Throwable _ nil))))))
 
      timeout-sentinel
      (Object.)
@@ -740,16 +757,17 @@
      (try (rt/await-wall exec-future eval-deadline timeout-sentinel)
           (catch Throwable e
             (reset! thrown e)
-            (try (.cancel ^java.util.concurrent.Future exec-future true) (catch Throwable _ nil))
-            (interrupt-guest! python-context)
+            (when-not (interrupt-guest! python-context)
+              (try (.cancel ^java.util.concurrent.Future exec-future true) (catch Throwable _ nil)))
             {:result nil :lru {} :error (python-op-error python-context e code)})
           (finally (when dispose-cancel-hook (try (dispose-cancel-hook) (catch Throwable _ nil)))))]
 
     (if (identical? timeout-sentinel execution-result)
-      (do (.cancel ^java.util.concurrent.Future exec-future true)
-          ;; Eval timeout: the worker future is cancelled, but the guest frame is
-          ;; only unwound by a Truffle safepoint interrupt.
-          (interrupt-guest! python-context)
+      ;; Eval timeout: the guest frame is unwound by a Truffle safepoint interrupt,
+      ;; and only a guest that refuses to unwind is worth the Java interrupt on top
+      ;; of it.
+      (do (when-not (interrupt-guest! python-context)
+            (.cancel ^java.util.concurrent.Future exec-future true))
           ;; What the block PRINTED before the wall is real work — progress lines
           ;; of a fetch loop, results already computed. The guest never reaches
           ;; its own `{:stdout}` outcome here, so drain the capture buffer onto

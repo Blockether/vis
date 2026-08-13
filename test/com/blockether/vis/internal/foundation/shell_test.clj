@@ -1769,6 +1769,60 @@
              (finally (resources/stop-all! sid))))))
 
 
+(defdescribe shell-wait-cancel-test
+             "A cancel reaches the block THROUGH the host wait it is parked in."
+             ;; Regression (session 7df808ff): a cancel could not reach a block parked in
+             ;; this loop. Its chatty branch never blocks — bytes are always available, so
+             ;; it re-reads without sleeping — and it polled no safepoint, so
+             ;; `Context.interrupt` timed out on the javadoc's own \"non-interruptible host
+             ;; code\" and only the WAITER unwound. The guest thread was then abandoned
+             ;; inside GraalPy, where it dies OWNING the GIL
+             ;; (`PythonContext.ensureGilAfterFailure` takes it uninterruptibly, and a
+             ;; ReentrantLock whose owner is dead is never released), so every later turn of
+             ;; that session parked forever in `PythonContext.acquireGil` at `:engine-start`.
+             (it
+               "unwinds a parked sh.wait at the polyglot interrupt and REUSES the context"
+               (let
+                 [sid
+                  (str "py-wait-interrupt-" (System/nanoTime))
+
+                  c
+                  (py-ctx {:session-id sid})
+
+                  outcome
+                  (promise)
+
+                  _worker
+                  (doto (Thread. ^Runnable
+                                 (fn []
+                                   (deliver outcome
+                                            (try (py c
+                                                     (str "sh = __vis_settle__(shell("
+                                                          "'while true; do echo x; done',"
+                                                          " {'id':'parked'}))\n" "sh.wait(60)"))
+                                                 :returned
+                                                 (catch Throwable _ :unwound))))
+                                 "shell-wait-cancel-test")
+                    (.setDaemon true)
+                    (.start))]
+
+                 (try
+                   ;; Long enough that the block is inside the host wait, and far from its
+                   ;; own deadline: nothing but the interrupt can end it.
+                   (Thread/sleep 2000)
+                   (let
+                     [landed (try (.interrupt c (java.time.Duration/ofMillis 5000))
+                                  true
+                                  (catch java.util.concurrent.TimeoutException _ false))]
+                     (expect landed)
+                     (expect (= :unwound (deref outcome 5000 :still-parked)))
+                     ;; The interrupt is NON-DESTRUCTIVE and the GIL came back with the
+                     ;; unwinding thread: the SAME context serves the next turn. A leaked
+                     ;; GIL parks this eval forever instead.
+                     (expect (= 2 (py c "1 + 1"))))
+                   (finally (resources/stop-all! sid))))))
+
+
 (def ^:private fd-exhaustion? @#'shell/fd-exhaustion?)
 
 (def ^:private spawn-retrying-fds @#'shell/spawn-retrying-fds)

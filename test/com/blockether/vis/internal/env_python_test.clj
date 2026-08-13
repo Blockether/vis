@@ -5,8 +5,11 @@
             [com.blockether.vis.internal.doc-corpus :as doc-corpus]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.extension :as ext]
+            [com.blockether.vis.internal.runtime-settings :as rt]
             [com.blockether.vis.test-python-context :as tpc]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it]])
+  (:import [org.graalvm.polyglot Context]
+           [org.graalvm.polyglot.proxy ProxyExecutable]))
 
 (defdescribe
   canonical-python-literal-test
@@ -994,3 +997,65 @@
                                               "print(kw, mapped)\n"))]
 
                    (expect (= "called:1 called:1\n" (:stdout result))))))
+
+(defn- spinning-binding!
+  "Install `vis_test_spin()` on `ctx`: a HOST callable that burns wall clock in a
+   loop containing no blocking call at all — the shape of `sh.wait`'s branch that
+   re-reads a chatty log — polling the guest safepoint only when `poll?`."
+  [^Context ctx poll?]
+  (ep/set-python-binding!
+    ctx
+    'vis_test_spin
+    (reify
+      ProxyExecutable
+        (execute [_ _args]
+          (let [end (+ (System/currentTimeMillis) 4000)]
+            (loop []
+
+              (when (< (System/currentTimeMillis) end) (when poll? (rt/guest-safepoint!)) (recur))))
+          nil))))
+
+(defn- interrupt-lands?
+  "Park a guest thread inside that host spin, then soft-cancel it the documented
+   way. True when `Context.interrupt` landed inside its grace, false on the
+   `TimeoutException` the javadoc raises when it could not."
+  [k poll?]
+  (let
+    [ctx
+     (tpc/context k)
+
+     _
+     (spinning-binding! ctx poll?)
+
+     done
+     (promise)]
+
+    (doto (Thread. ^Runnable
+                   (fn []
+                     (deliver done
+                              (try (.eval ctx "python" "vis_test_spin()")
+                                   :returned
+                                   (catch Throwable _ :unwound))))
+                   "guest-safepoint-test")
+      (.setDaemon true)
+      (.start))
+    (Thread/sleep 400)
+    (try (.interrupt ctx (java.time.Duration/ofMillis 1500))
+         true
+         (catch java.util.concurrent.TimeoutException _ false))))
+
+(defdescribe guest-safepoint-test
+             ;; Regression (session 7df808ff): a turn cancelled while its block sat in a host
+             ;; wait unwound only the WAITER. Host code that polls no safepoint is exactly what
+             ;; the polyglot javadoc calls "non-interruptible host code": the interrupt timed
+             ;; out on it, and the guest thread was left inside GraalPy to be abandoned, where
+             ;; it dies OWNING the GIL (`PythonContext.ensureGilAfterFailure` takes it
+             ;; uninterruptibly, and a ReentrantLock whose owner is dead is never released).
+             ;; Every later turn of that session then parked in `PythonContext.acquireGil`
+             ;; forever, at `:engine-start`.
+             (it "unwinds a non-blocking host loop that polls, and keeps the context USABLE"
+                 (expect (true? (interrupt-lands? ::polling true)))
+                 ;; Non-destructive by contract: no rebuilt interpreter, no lost globals.
+                 (expect (= 2 (ep/->clj (.eval (tpc/context ::polling) "python" "1 + 1")))))
+             (it "cannot reach that same loop when it polls nothing"
+                 (expect (false? (interrupt-lands? ::not-polling false)))))

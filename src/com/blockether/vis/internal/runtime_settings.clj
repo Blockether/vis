@@ -3,8 +3,13 @@
    (with clamping and a shell-timeout-aware widener), the `svar/ask-code!` stream
    watchdog defaults, and the dynamic vars the loop binds per call.
 
+   Also the HOST half of the cancel contract: [[park-blocking-wall]] stops a
+   wall's clock while host code legitimately blocks, and [[guest-safepoint!]]
+   keeps that block cancellable.
+
    A LEAF — depends on nothing else in the engine, so the loop and its tests read
-   these settings from one place instead of carrying them in the loop namespace.")
+   these settings from one place instead of carrying them in the loop namespace."
+  (:import [org.graalvm.polyglot Context]))
 
 (def DEFAULT_EVAL_TIMEOUT_MS
   "Default timeout in milliseconds for code evaluation in the Python sandbox."
@@ -241,6 +246,34 @@
   (if-let [park *blocking-wall-park*]
     (park thunk)
     (thunk)))
+
+(defn guest-safepoint!
+  "Poll the polyglot safepoint of the context this host call is running inside,
+   and let whatever it raises propagate.
+
+   The other half of [[park-blocking-wall]]: a wall stops the CLOCK, this makes
+   the wait CANCELLABLE. Every bounded host loop a sandbox block can enter — the
+   `sh.wait` poll above all — calls this once per iteration, exactly as
+   `Context.safepoint`'s javadoc prescribes: \"Polyglot embeddings that rely on
+   cancellation should call this method whenever a potentially long-running host
+   operation is executed.\"
+
+   Without it a cancel cannot reach a block parked in host code: `Context.interrupt`
+   is documented to fail on a thread that \"uses non-interruptible waiting or
+   executes non-interruptible host code\", so the interrupt times out
+   and only the WAITER unwinds while the guest thread stays inside GraalPy. That
+   abandoned thread then takes the GIL UNINTERRUPTIBLY on its way out
+   (`PythonContext.ensureGilAfterFailure`) and can die owning it; a
+   `ReentrantLock` whose owner is dead is never released, and every later turn of
+   that session parks in `PythonContext.acquireGil` forever. Polling here keeps
+   the interrupt NON-DESTRUCTIVE instead: the guest unwinds through its own
+   frames, the GIL is released on the way out, and the SAME context serves the
+   next turn.
+
+   A no-op off a guest thread (native tool call, tests): nothing is entered
+   there, so there is no safepoint to poll."
+  []
+  (try (.safepoint (Context/getCurrent)) (catch IllegalStateException _ nil)))
 
 (defn parkable-wall
   "One MOVABLE wall clock for a bounded execution that began at `start` with

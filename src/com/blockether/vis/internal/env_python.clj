@@ -2331,8 +2331,8 @@
 
 (def ^:private gc-in-flight
   "Context identities with an abandoned [[collect-garbage!]] thread still parked on
-   the GIL. Without it every subsequent turn of every session would add another
-   parked thread while one holder keeps the GIL."
+   the GIL. Without it every subsequent turn of that session would add another
+   parked thread to a GIL its dead owner will never release."
   (java.util.concurrent.ConcurrentHashMap/newKeySet))
 
 (defn collect-garbage!
@@ -2347,17 +2347,24 @@
    Runs while the interpreter is idle between turns, the cheapest time for a
    pause. Never throws; a closed/cancelled context is ignored.
 
-   BOUNDED, and that is the whole point. `.eval` first acquires the Python GIL,
-   which a SIBLING session holds for the entire duration of its own in-flight
-   Python — a `shell` subprocess or a long tool call holds it for minutes or
-   hours. Waiting for it here is unbounded AND uninterruptible (a cancelled token
-   does not unpark `PythonContext.acquireGil`), and it sits between the engine
-   unwinding and `gateway.state/run-turn!` appending the terminal event. One busy
-   sibling therefore wedged a finished turn forever: no `turn.completed` /
-   `turn.cancelled` on the wire, the session pinned to a turn nobody was running,
-   the queued backlog never drained, and every channel showed a live panel that
-   Esc could not close. GC is best effort, so give it a budget and walk away; the
-   abandoned daemon thread completes the collect whenever the GIL frees."
+   BOUNDED, and that is the whole point. `.eval` first acquires this context's
+   Python GIL. In-flight guest work is NOT what holds it up — GraalPy releases
+   the GIL around foreign calls (`PythonContext.releaseGilAroundForeignCall`;
+   `PythonLanguage.shouldGilBeLockedDuringForeignCalls` defaults to false), which
+   is why a sibling thread keeps ticking through a whole `sh.wait`. What blocks
+   here is a LEAKED GIL: a guest thread `Thread.interrupt`-ed at a GIL boundary
+   and then abandoned dies inside `PythonContext.ensureGilAfterFailure`, which
+   takes the lock UNINTERRUPTIBLY, and a `ReentrantLock` whose owner is dead is
+   never released by anyone. Waiting for that is unbounded AND uninterruptible (a
+   cancelled token does not unpark `PythonContext.acquireGil`), and it sits
+   between the engine unwinding and `gateway.state/run-turn!` appending the
+   terminal event. One such context wedged a finished turn forever: no
+   `turn.completed` / `turn.cancelled` on the wire, the session pinned to a turn
+   nobody was running, the queued backlog never drained, and every channel showed
+   a live panel that Esc could not close. GC is best effort, so give it a budget
+   and walk away; the abandoned daemon thread completes the collect whenever the
+   GIL frees. `rt/guest-safepoint!` is what keeps a cancel from leaking one in
+   the first place."
   [environment]
   (when-let [python-context (:python-context environment)]
     (let [k (System/identityHashCode python-context)]
