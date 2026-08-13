@@ -25,6 +25,20 @@
                      (expect (str/includes? message "triple-quoted"))
                      (expect (not (str/includes? message "anchor")))))))
 
+;; Regression: grep gained `is_regex` and started answering ONE anchored TEXT
+;; block, but this advice still read "Regex is not supported - filter the matches
+;; in Python", so a model that hit an escape error was told to index a string.
+(defdescribe grep-advice-names-is-regex-and-text-test
+             (let [advice @#'introspection/advice-for-classification]
+               (it "points at is_regex instead of denying regex"
+                   (let [message (advice :regex-unsupported-escape)]
+                     (expect (str/includes? message "is_regex"))
+                     (expect (not (str/includes? message "Regex is not supported")))))
+               (it "tells the model grep answers TEXT, not a keyed map"
+                   (let [message (advice :regex-unsupported-escape)]
+                     (expect (str/includes? message "anchored TEXT"))
+                     (expect (str/includes? message ".splitlines()"))))))
+
 (defdescribe introspection-public-surface-test
              (it
                "exposes the read, the single descriptor and the index under verb_noun names"

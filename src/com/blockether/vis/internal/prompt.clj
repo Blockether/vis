@@ -238,7 +238,7 @@
     "- After the initial search make at most two targeted discovery rounds before reproducing a\n"
     "  bug or writing the smallest test; exceed only if it fails or a named unresolved decision blocks the edit.\n"
     "- Code: `grep` locates unknown code — ONE `{query, paths}` map ORs every needle, every scope,\n"
-    "  and its hits arrive ANCHORED: a hit IS a `patch` argument. `struct_index` every known file;\n"
+    "  and it answers anchored TEXT, never a map: a hit IS a `patch` argument. `struct_index` every known file;\n"
     "  read bodies in ONE call with `struct_nodes` (`line`→`source`+`at`). Edit by NAME with\n"
     "  `struct_patch`, by ADDRESS with `patch(path, anchor, new)` for one line or\n"
     "  `patch(path, from_anchor, to_anchor, new)` for a span (`new=\"\"` deletes) — never\n"

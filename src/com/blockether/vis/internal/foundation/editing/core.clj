@@ -9,14 +9,16 @@
         (ls dir, depth=2)     ; nested rows sit in `children`. A SANDBOX helper, not a
                               ; native tool: it is called inside a python_execution block.
                               ; A nil or blank path throws before any I/O.
-        (grep query)          ; -> content hits + ranked file-NAME matches;
+        (grep query)          ; -> ONE anchored TEXT block, never a map: a summary line,
+                              ; then `  <line>:<hash>| <text>` rows under each path;
                               ; query = a term or list of terms (OR), smart-case
                               ; substring — or a REGEX with `is_regex`.
                               ; Opts: paths/include/limit/is_hidden/is_regex
         (struct_index paths)  ; -> per-file skeleton: imports, definitions, signatures
 
-   2. Cwd-safe wrappers over the babashka.fs file API. `struct_patch` is the
-      canonical edit surface; plain Python owns whole-file reads and writes:
+   2. Cwd-safe wrappers over the babashka.fs file API. Code is edited by NAME with
+      `struct_patch` and anything else by ADDRESS with `cat`/`patch`; plain Python
+      owns whole-file creation and deletion:
 
         (create-dirs path)
         (copy src dest)
@@ -374,7 +376,7 @@
   (when (str/blank? (str p))
     (throw
       (ex-info
-        "Path is nil or blank - ls/grep/struct_index take a concrete path string; note grep returns a MAP, so use (:paths r) or the keys under (get r \"matches\"), not the result itself"
+        "Path is nil or blank - ls/grep/struct_index take a concrete path string; grep answers anchored TEXT, not a map, so take a path from its per-path header or an anchor from a `line:hash` row, never the result itself"
         {:type :ext.foundation.editing/blank-path :path p})))
   (let
     [cwd
@@ -2144,7 +2146,7 @@
          (:source it)
          (assoc "source" (name (:source it)))))]
 
-    ;; Model-facing grep result — string keys, no keyword values, and TOTAL:
+    ;; grep's canonical DATA result — `grep-tool` RENDERS this as anchored text;
     ;; every key ships on every call (empty vector / false, never absent) so
     ;; caller code can index a field without a `contains?` dance first.
     {"items" (mapv ->item items)

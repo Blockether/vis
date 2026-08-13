@@ -668,8 +668,12 @@
                    (expect (not (str/includes? text "CHANGING the tree is plain Python")))
                    (expect (not (str/includes? text "are edited in plain Python")))
                    (expect (str/includes? text "restate the text you replace: quote the anchor"))))
-             (it "says a grep hit is already an address, and how to spend several at once"
+             ;; Regression: after grep started answering ONE anchored TEXT block the
+             ;; prompt still said only "hits arrive ANCHORED", never WHAT arrives, so the
+             ;; model kept treating the answer as a keyed map.
+             (it "says grep answers anchored TEXT, and how to spend several hits at once"
                  (let [text (prompt/build-system-prompt {})]
-                   (expect (str/includes? text "hits arrive ANCHORED"))
+                   (expect (str/includes? text "answers anchored TEXT, never a map"))
+                   (expect (not (str/includes? text "returns a MAP")))
                    (expect (str/includes? text "bottom-up (highest line first)"))
                    (expect (str/includes? text "RE-ANCHORED window")))))

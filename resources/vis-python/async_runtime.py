@@ -385,7 +385,7 @@ class __vis_Call__:
     # ALWAYS a single-expression use of that ONE call's result — there is no
     # concurrency to forfeit (unlike a batchable set of calls), so we settle it
     # synchronously right here instead of raising 'not subscriptable'. This kills
-    # the `shell(...)["stdout"]` / `grep(...)["matches"]` papercut. We deliberately
+    # the `shell(...)["stdout"]` / `run_tests(...)["output"]` papercut. We deliberately
     # do NOT add `__iter__`: iteration is exactly the batch-me-instead case the
     # loud repr must keep nudging toward `await gather(...)`.
     def __getitem__(self, k):
@@ -523,7 +523,7 @@ def __vis_exec_call__(c):
 def __vis_key_hint__(__vis_d__, __vis_k__):
     # A missing key on a TOOL RESULT is a LOOKUP mistake, not a broken tool: shapes
     # differ per tool (shell -> stdout/exit/duration_ms, run_tests -> output,
-    # grep -> matches/hit_count). A bare `KeyError: 'output'` reads as a broken tool, so
+    # struct_index -> results/definitions). A bare `KeyError: 'output'` reads as a broken tool, so
     # the model guesses another name and spins. Name the tool, the near miss, and every
     # key it DID return — one wrong guess then ends the guessing.
     __vis_keys__ = list(__vis_d__.keys())

@@ -3,8 +3,8 @@
 
    Smoke-checks the loaded extension surface (symbol vector, doc
    strings, prompt fragment) plus behavioral coverage of the
-   structured preview/search helpers (`cat`, `rg`) and the new
-   thin babashka.fs wrappers (`patch`, `copy`, ...).
+   anchored-text read/search verbs (`cat`, `grep`), the anchored writer
+   (`patch`) and the thin babashka.fs wrappers (`copy`, `move`, ...).
 
    Tests reach private fns directly through the registry to avoid
    bringing up a full SCI sandbox. Temp files land under
@@ -5177,3 +5177,31 @@
                      (try (safe-path (str secret "/c.txt"))
                           nil
                           (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
+
+;; Regression: grep answers ONE anchored TEXT block, but the model-facing prose still
+;; described a keyed map — the blank-path refusal told the model to use "the keys under
+;; matches", so it kept subscripting a string.
+(defdescribe grep-is-described-as-text-test
+             "Every model-facing description of grep says TEXT, never a map."
+             (it "the grep symbol contract promises text and names no result keys"
+                 (let
+                   [result
+                    (:ext.symbol/result editing/grep-symbol)
+
+                    description
+                    (:ext.symbol/description editing/grep-symbol)]
+
+                   (expect (string/includes? result "Text, not a map"))
+                   (expect (not (string/includes? result "hit_count")))
+                   (expect (not (string/includes? description "hit_count")))))
+             (it "the blank-path refusal no longer says grep returns a map"
+                 (let
+                   [safe-path
+                    (private-fn "safe-path")
+
+                    message
+                    (try (safe-path "") nil (catch clojure.lang.ExceptionInfo e (ex-message e)))]
+
+                   (expect (string/includes? message "anchored TEXT"))
+                   (expect (not (string/includes? message "returns a MAP"))))))
