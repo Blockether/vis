@@ -399,3 +399,22 @@ _rq.request = _echo
                    (ev python-context
                        (str echo-fake
                             "httpx.Client(cert='/c.pem').get('http://svc/a').json()['cert']")))))))
+
+;; Regression, issue #141 (cross-validation follow-up): an unreadable CA bundle
+;; or client-certificate path came back as httpx.RequestError, which hid the
+;; OSError that names the file the caller has to fix.
+(defdescribe
+  httpx-tls-configuration-error-test
+  (it "raises the configuration error verbatim (was: wrapped in RequestError)"
+      (with-python-context
+        (expect (= "OSError"
+                   (ev python-context
+                       (str
+                         echo-fake
+                         "def _boom(*a, **k):\n"
+                         "    raise OSError('Could not find a suitable TLS CA certificate bundle, "
+                         "invalid path: /nope')\n" "_rq.request = _boom\n"
+                         "try:\n" "    httpx.get('https://svc/a', verify='/nope')\n"
+                         "    out = 'NOT RAISED'\n" "except httpx.RequestError as e:\n"
+                         "    out = 'WRAPPED:' + type(e).__name__\n" "except OSError as e:\n"
+                         "    out = type(e).__name__\n" "out")))))))

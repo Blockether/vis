@@ -410,6 +410,11 @@ def __vis_install_httpx__():
         except PermissionError:
             raise  # vis network guard denial -- keep the clear message legible
         except Exception as e:
+            if not isinstance(e, rq.exceptions.RequestException):
+                # Not a transport failure: an unreadable CA bundle or client-cert
+                # path, a refused option. httpx raises those verbatim too, and
+                # RequestError would hide the OSError that says which file.
+                raise
             en = type(e).__name__
             msg = str(e) or en
             # Map the requests-shim exception onto its httpx counterpart by CLASS,

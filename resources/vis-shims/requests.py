@@ -656,13 +656,50 @@ def __vis_install_requests_compat__():
     _no_redirect_opener = _ur.build_opener(_NoRedirect())
 
     # ---- TLS ---------------------------------------------------------------
+    def _tls_path(value, what):
+        """Normalises ONE TLS path -- a CA bundle, or a client certificate/key.
+
+        str, bytes and os.PathLike all name a file. This runtime's ssl REFUSES a
+        pathlib.Path ("cafile should be a valid filesystem path"), and a Path that
+        merely fell through used to restore the DEFAULT CA store: the narrow
+        bundle the caller pinned silently became the wide one. A missing path is
+        requests' own OSError naming the file, not a bare FileNotFoundError from
+        inside ssl. True / False / None mean "no path here" and answer None.
+        """
+        if value is None or isinstance(value, bool):
+            return None
+        value = _os.fspath(value)  # TypeError for a non-path, exactly like ssl's
+        if isinstance(value, bytes):
+            value = value.decode("utf-8", "surrogateescape")
+        try:
+            missing = not _os.path.exists(value)
+        except Exception:
+            # A JAILED sandbox refuses the stat outright instead of answering
+            # False. The ssl load below then reports what it can or cannot read;
+            # turning a perfectly good bundle path into a SecurityException here
+            # would be a new failure mode, not a clearer message.
+            missing = False
+        if missing:
+            raise OSError("Could not find " + what + ", invalid path: " + value)
+        return value
+
+    def _env_ca_bundle():
+        """The CA bundle requests reads from the ENVIRONMENT when the call named
+        none: REQUESTS_CA_BUNDLE first, then cURL's CURL_CA_BUNDLE."""
+        return (
+            _os.environ.get("REQUESTS_CA_BUNDLE")
+            or _os.environ.get("CURL_CA_BUNDLE")
+            or None
+        )
+
     def _tls_context(verify=None, cert=None, check_hostname=None):
         """Builds the ssl.SSLContext for ONE request, or None for the stdlib default.
 
         requests' vocabulary: `verify=True` checks the chain against the default
         CA store, `verify=False` checks nothing, `verify="<path>"` uses that CA
         file (or directory), and `cert=` is the client certificate -- a combined
-        PEM path or a (cert, key) pair. A ready ssl.SSLContext is accepted too
+        PEM path or a (cert, key) pair. Every path may be a str, bytes or any
+        os.PathLike. A ready ssl.SSLContext is accepted too
         (httpx spells `verify=` that way) and is handed through untouched, and
         `check_hostname=False` keeps chain verification while skipping the name
         check -- urllib3's `assert_hostname`, which requests cannot express.
@@ -680,11 +717,16 @@ def __vis_install_requests_compat__():
 
         if verify:
             cafile = capath = None
-            if isinstance(verify, str):
-                if _os.path.isdir(verify):
-                    capath = verify
+            bundle = _tls_path(verify, "a suitable TLS CA certificate bundle")
+            if bundle is not None:
+                try:
+                    is_dir = _os.path.isdir(bundle)
+                except Exception:
+                    is_dir = False  # a jailed sandbox refuses the stat; assume a file
+                if is_dir:
+                    capath = bundle
                 else:
-                    cafile = verify
+                    cafile = bundle
             ctx = _ssl.create_default_context(cafile=cafile, capath=capath)
         else:
             ctx = _ssl.create_default_context()
@@ -700,6 +742,8 @@ def __vis_install_requests_compat__():
                 keyfile = cert[1] if len(cert) > 1 else None
             else:
                 certfile, keyfile = cert, None
+            certfile = _tls_path(certfile, "the TLS certificate file")
+            keyfile = _tls_path(keyfile, "the TLS key file")
             ctx.load_cert_chain(certfile, keyfile)
         return ctx
 
@@ -739,6 +783,7 @@ def __vis_install_requests_compat__():
         files=None,
         verify=None,
         cert=None,
+        trust_env=True,
         **kwargs,
     ):
         method = str(method).upper()
@@ -797,6 +842,10 @@ def __vis_install_requests_compat__():
         # TLS: verify=/cert= decide the context for THIS request. urlopen takes
         # one directly; OpenerDirector.open does not, so the no-redirect path
         # bakes it into an HTTPSHandler of its own.
+        if trust_env and (verify is None or verify is True):
+            # requests takes the CA bundle from the environment when the call did
+            # not name one; an explicit verify= -- False included -- still wins.
+            verify = _env_ca_bundle() or verify
         ctx = _tls_context(verify, cert)
         if verify is not None and not verify and low.startswith("https://"):
             _warn_insecure(full)
@@ -902,6 +951,8 @@ def __vis_install_requests_compat__():
             self.cookies = RequestsCookieJar()
             self.verify = True
             self.cert = None
+            # requests' switch for "read REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE".
+            self.trust_env = True
             self.max_redirects = 30
             self.hooks = {"response": []}
             self.adapters = {}
@@ -938,6 +989,7 @@ def __vis_install_requests_compat__():
             # an explicit verify=/cert= on the call still wins.
             kwargs.setdefault("verify", self.verify)
             kwargs.setdefault("cert", self.cert)
+            kwargs.setdefault("trust_env", self.trust_env)
             resp = request(
                 method,
                 url,

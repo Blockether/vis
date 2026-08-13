@@ -132,6 +132,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   options now build the TLS context for the request, warning with urllib3's own
   `InsecureRequestWarning` (which `urllib3.disable_warnings()` really silences); only `asyncio` is
   still rewritten, and every other stdlib import reaches the block verbatim.
+- Sandbox TLS options were honoured only in their most common spelling, and every other one
+  failed QUIETLY. A `pathlib.Path` CA bundle fell through the shim's `str` check and restored the
+  DEFAULT store, so the narrow bundle a caller pinned silently became the wide one; a missing
+  bundle or client certificate surfaced as a bare `FileNotFoundError` from inside `ssl` instead of
+  requests' own message naming the file; `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE` were never read;
+  urllib3 reported a certificate failure as a bare `ProtocolError`, so
+  `except urllib3.exceptions.SSLError` never fired, and dressed an unreadable CA path as a
+  transport error; `cert_reqs="NONE"` — upstream's own bare spelling — and an unknown name both
+  verified anyway; and `assert_fingerprint`, `ciphers` and the TLS version bounds were swallowed
+  whole, reporting a guarantee nothing enforced. Paths are now any `str` / `bytes` / `os.PathLike`,
+  the environment's bundle is read unless `Session.trust_env` is off, a certificate failure is
+  `urllib3.exceptions.SSLError`, a configuration error is raised verbatim,
+  `ssl_minimum_version` / `ssl_maximum_version` reach the context,
+  `urllib3.util.ssl_.create_urllib3_context` is published, and the two options this transport
+  cannot honour are REFUSED with a message instead of ignored.
 - A committed `vis.yml` forced one developer's provider and model on every clone. The visible
   project file merges LAST, over `~/.vis`, so `default_provider`, `default_model`,
   `fallback_provider` and `fallback_model` written there silently replaced each teammate's own

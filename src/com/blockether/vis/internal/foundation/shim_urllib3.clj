@@ -47,8 +47,10 @@
        :shim/description
        (str
          "`urllib3` as a package: `PoolManager`/`ProxyManager`, `HTTPResponse`, `request`, `util`, "
-         "`fields`, `filepost`, `exceptions`. TLS options (`cert_reqs`, `ca_certs`, `ssl_context`) "
-         "reach the socket; retries and pooling are best-effort no-ops.")
+         "`fields`, `filepost`, `exceptions`. TLS options (`cert_reqs`, `ca_certs`, `assert_hostname`, "
+         "`ssl_context`, `ssl_minimum_version`/`ssl_maximum_version`, `util.ssl_.create_urllib3_context`) "
+         "reach the socket, and a certificate failure raises `exceptions.SSLError`; retries and pooling "
+         "are best-effort no-ops. Not supported: `assert_fingerprint`, `ciphers` (`NotImplementedError`).")
        :shim/source "vis-shims/urllib3.py"}]}))
 
 (vis/register-extension! vis-extension)

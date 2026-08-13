@@ -666,6 +666,8 @@ def __vis_install_urllib3__():
     # underneath spells them verify=/cert=. Mapping one onto the other is what
     # makes `PoolManager(cert_reqs="CERT_NONE")` reach the socket instead of
     # being swallowed as an unknown kwarg.
+    _VERSION_KEYS = ("ssl_version", "ssl_minimum_version", "ssl_maximum_version")
+
     _TLS_KEYS = (
         "cert_reqs",
         "ca_certs",
@@ -673,12 +675,145 @@ def __vis_install_urllib3__():
         "cert_file",
         "key_file",
         "assert_hostname",
+        "assert_fingerprint",
+        "ciphers",
         "ssl_context",
+    ) + _VERSION_KEYS
+
+    # Options this transport cannot honour. They are REFUSED, never ignored:
+    # dropping a fingerprint pin or a cipher list reports a guarantee the
+    # connection does not have -- the caller pinned something and nothing was
+    # pinned. They are in _TLS_KEYS precisely so they are SEEN and refused.
+    _UNSUPPORTED_TLS = (
+        (
+            "assert_fingerprint",
+            "the peer certificate never reaches this transport, so no fingerprint"
+            " can be compared -- pin the issuing CA with ca_certs= instead",
+        ),
+        (
+            "ciphers",
+            "this runtime's JSSE-backed ssl cannot select an OpenSSL cipher list"
+            " ('No cipher can be selected.') -- pin ssl_minimum_version= instead",
+        ),
+    )
+
+    _LEGACY_TLS_VERSIONS = (
+        ("PROTOCOL_SSLv3", "SSLv3"),
+        ("PROTOCOL_TLSv1", "TLSv1"),
+        ("PROTOCOL_TLSv1_1", "TLSv1_1"),
+        ("PROTOCOL_TLSv1_2", "TLSv1_2"),
     )
 
     def _split_tls(kw):
         """Picks urllib3's TLS options out of a pool's kwargs (the rest is dropped)."""
         return {k: kw[k] for k in _TLS_KEYS if k in kw}
+
+    def resolve_cert_reqs(candidate):
+        """urllib3.util.ssl_.resolve_cert_reqs: None means verify; an ssl.CERT_*
+        member or its int passes through; a string may be spelled with or without
+        the CERT_ prefix, because upstream resolves it with a getattr on ssl --
+        `cert_reqs="NONE"` is as real as `cert_reqs="CERT_NONE"`. An unknown name
+        is REFUSED: quietly verifying a name the caller meant as CERT_NONE turns
+        their mistake into a mystery handshake failure."""
+        import ssl as _ssl
+
+        if candidate is None:
+            return _ssl.CERT_REQUIRED
+        if isinstance(candidate, bool):
+            return _ssl.CERT_REQUIRED if candidate else _ssl.CERT_NONE
+        if isinstance(candidate, int):
+            return candidate
+        name = str(getattr(candidate, "name", candidate)).upper()
+        if not name.startswith("CERT_"):
+            name = "CERT_" + name
+        value = getattr(_ssl, name, None)
+        if value is None:
+            raise ValueError(
+                "urllib3 shim: unknown cert_reqs "
+                + repr(candidate)
+                + " -- expected CERT_NONE, CERT_OPTIONAL or CERT_REQUIRED"
+            )
+        return value
+
+    def resolve_ssl_version(candidate):
+        """urllib3.util.ssl_.resolve_ssl_version: a PROTOCOL_* constant, its bare
+        name, or None for this runtime's default client protocol."""
+        import ssl as _ssl
+
+        if candidate is None:
+            return getattr(_ssl, "PROTOCOL_TLS_CLIENT", None)
+        if isinstance(candidate, int):
+            return candidate
+        name = str(candidate)
+        value = getattr(_ssl, name, None)
+        if value is None:
+            value = getattr(_ssl, "PROTOCOL_" + name, None)
+        if value is None:
+            raise ValueError("urllib3 shim: unknown ssl_version " + repr(candidate))
+        return value
+
+    def _refuse_unsupported_tls(opts):
+        """Raises for a TLS option that would otherwise be silently dropped."""
+        for key, why in _UNSUPPORTED_TLS:
+            if opts.get(key) is not None:
+                raise NotImplementedError(
+                    "urllib3 shim: " + key + " is not supported -- " + why
+                )
+
+    def _apply_tls_versions(ctx, opts):
+        """Applies urllib3's version bounds to a context. `ssl_minimum_version` /
+        `ssl_maximum_version` are ssl.TLSVersion members; the deprecated
+        `ssl_version` names ONE protocol, so it pins both bounds to it (a
+        PROTOCOL_TLS / PROTOCOL_TLS_CLIENT means "any version" and pins nothing).
+        """
+        import ssl as _ssl
+
+        low = opts.get("ssl_minimum_version")
+        high = opts.get("ssl_maximum_version")
+        legacy = opts.get("ssl_version")
+        if legacy is not None and low is None and high is None:
+            legacy = resolve_ssl_version(legacy)
+            for attr, version in _LEGACY_TLS_VERSIONS:
+                if getattr(_ssl, attr, None) == legacy:
+                    low = high = getattr(_ssl.TLSVersion, version, None)
+                    break
+        if low is not None:
+            ctx.minimum_version = low
+        if high is not None:
+            ctx.maximum_version = high
+        return ctx
+
+    def create_urllib3_context(
+        ssl_version=None,
+        cert_reqs=None,
+        options=None,
+        ciphers=None,
+        ssl_minimum_version=None,
+        ssl_maximum_version=None,
+    ):
+        """urllib3.util.ssl_.create_urllib3_context: the ssl.SSLContext real code
+        builds, tweaks and then hands back as `ssl_context=` -- which this shim
+        gives the transport verbatim."""
+        import ssl as _ssl
+
+        _refuse_unsupported_tls({"ciphers": ciphers})
+        ctx = _ssl.create_default_context()
+        if cert_reqs is not None:
+            reqs = resolve_cert_reqs(cert_reqs)
+            if reqs == _ssl.CERT_NONE:
+                # CERT_NONE while the name check is still on is a ValueError.
+                ctx.check_hostname = False
+            ctx.verify_mode = reqs
+        if options is not None:
+            ctx.options |= options
+        return _apply_tls_versions(
+            ctx,
+            {
+                "ssl_version": ssl_version,
+                "ssl_minimum_version": ssl_minimum_version,
+                "ssl_maximum_version": ssl_maximum_version,
+            },
+        )
 
     def _tls_pair(opts):
         """Maps urllib3's TLS options onto the requests shim's (verify, cert).
@@ -693,10 +828,11 @@ def __vis_install_urllib3__():
         """
         if not opts:
             return None, None
+        _refuse_unsupported_tls(opts)
         verify = None
         reqs = opts.get("cert_reqs")
         if reqs is not None:
-            verify = str(getattr(reqs, "name", reqs)).upper() not in ("CERT_NONE", "0")
+            verify = resolve_cert_reqs(reqs) != 0
         bundle = opts.get("ca_certs") or opts.get("ca_cert_dir")
         if bundle and verify is not False:
             verify = bundle
@@ -704,8 +840,18 @@ def __vis_install_urllib3__():
         cert = (cert_file, key_file) if (cert_file and key_file) else cert_file
         if opts.get("ssl_context") is not None:
             verify = opts["ssl_context"]
-        if opts.get("assert_hostname") is False and verify is not False:
-            verify = _req()._vis_tls_context(verify, cert, check_hostname=False)
+        skip_name = opts.get("assert_hostname") is False
+        if skip_name or any(opts.get(k) is not None for k in _VERSION_KEYS):
+            # Anything the requests vocabulary cannot say -- "verify the chain but
+            # skip the name", a version bound -- needs the context built HERE.
+            ctx = _req()._vis_tls_context(
+                verify, cert, check_hostname=False if skip_name else None
+            )
+            if ctx is None:
+                # "change nothing" answers None -- but a version bound has to be
+                # SET on something, so the default context is built here.
+                ctx = create_urllib3_context()
+            verify = _apply_tls_versions(ctx, opts)
         return verify, cert
 
     def _dispatch(
@@ -760,6 +906,11 @@ def __vis_install_urllib3__():
         except PermissionError:
             raise  # vis network guard denial -- keep the clear message legible
         except Exception as e:
+            if not isinstance(e, rq.exceptions.RequestException):
+                # Not a transport failure at all: an unreadable CA bundle, a
+                # refused option, a bad argument. Upstream lets these through
+                # verbatim, and dressing one as ProtocolError hides what to fix.
+                raise
             en = type(e).__name__
             msg = str(e) or en
             if "ConnectTimeout" in en:
@@ -770,6 +921,11 @@ def __vis_install_urllib3__():
                 raise TimeoutError(msg)
             if "Schema" in en or "URL" in en or "Location" in en:
                 raise LocationParseError(msg)
+            if "SSL" in en or "Certificate" in en:
+                # A certificate failure is urllib3's SSLError -- the class real
+                # code catches. It used to arrive as a bare ProtocolError, so
+                # `except urllib3.exceptions.SSLError` never fired.
+                raise SSLError(msg)
             if "Connection" in en:
                 raise NewConnectionError(msg)
             raise ProtocolError(msg)
@@ -1015,8 +1171,18 @@ def __vis_install_urllib3__():
         make_headers=make_headers,
         SKIP_HEADER=SKIP_HEADER,
         SKIPPABLE_HEADERS=SKIPPABLE_HEADERS,
+        create_urllib3_context=create_urllib3_context,
+        resolve_cert_reqs=resolve_cert_reqs,
+        resolve_ssl_version=resolve_ssl_version,
     )
     _util_mod.__path__ = []
+    _mk(
+        "urllib3.util.ssl_",
+        _util_mod,
+        create_urllib3_context=create_urllib3_context,
+        resolve_cert_reqs=resolve_cert_reqs,
+        resolve_ssl_version=resolve_ssl_version,
+    )
     _mk("urllib3.util.retry", _util_mod, Retry=Retry)
     _mk("urllib3.util.timeout", _util_mod, Timeout=Timeout)
     _mk("urllib3.util.url", _util_mod, Url=Url, parse_url=parse_url)

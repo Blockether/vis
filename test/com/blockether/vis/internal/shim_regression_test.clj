@@ -411,3 +411,65 @@ import requests
                          "    requests.get('https://svc/x', verify=False)\n" "[len(w),\n"
                          " isinstance(w[0].message, urllib3.exceptions.InsecureRequestWarning),\n"
                          " len(w2)]")))))))
+
+;; Regression, issue #141 (cross-validation follow-up): the TLS paths were
+;; honoured ONLY as `str`. A pathlib.Path fell through the isinstance check and
+;; silently restored the DEFAULT CA store, so the narrow bundle a caller pinned
+;; quietly became the wide one; a missing bundle surfaced as a bare
+;; FileNotFoundError from inside ssl instead of requests' OSError naming the
+;; file; and REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE were never read at all.
+(defdescribe
+  requests-tls-path-and-environment-test
+  (it "hands an os.PathLike CA bundle to ssl (was: dropped, the default store used)"
+      (with-fresh-python-context
+        (expect (= ["/ca/bundle.pem" nil]
+                   (ev python-context
+                       (str urlopen-fake
+                            "import os, ssl, pathlib\n" "_calls = []\n"
+                            "_real_ctx = ssl.create_default_context\n"
+                            "_real_exists = os.path.exists\n"
+                            ;; The sandbox context has no filesystem: pretend the bundle
+                            ;; is there and record what ssl was asked to load.
+                            "os.path.exists = lambda p: True\n"
+                            "def _spy(cafile=None, capath=None, **kw):\n"
+                            "    _calls.append([cafile, capath])\n" "    return _real_ctx()\n"
+                            "ssl.create_default_context = _spy\n" "_serve()\n"
+                            "requests.get('https://svc/x', verify=pathlib.Path('/ca/bundle.pem'))\n"
+                            "ssl.create_default_context = _real_ctx\n"
+                            "os.path.exists = _real_exists\n" "_calls[-1]"))))))
+  (it "names the file it could not read, for the CA bundle and for the client certificate"
+      (with-fresh-python-context
+        (expect
+          (= ["Could not find a suitable TLS CA certificate bundle, invalid path: /no/such/ca.pem"
+              "Could not find the TLS certificate file, invalid path: /no/such/client.pem"]
+             (ev python-context
+                 (str
+                   urlopen-fake
+                   "_serve()\n"
+                   "out = []\n"
+                   "for kw in ({'verify': '/no/such/ca.pem'}, {'cert': '/no/such/client.pem'}):\n"
+                   "    try:\n" "        requests.get('https://svc/x', **kw)\n"
+                   "        out.append('NOT RAISED')\n" "    except OSError as e:\n"
+                   "        out.append(str(e))\n" "out"))))))
+  (it "reads REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE when the call names no bundle (was: ignored)"
+      (with-fresh-python-context
+        (expect
+          (= [true true true true true]
+             (ev python-context
+                 (str urlopen-fake
+                      "import os, ssl\n" "_serve()\n"
+                      "os.environ['REQUESTS_CA_BUNDLE'] = '/no/such/env-ca.pem'\n" "try:\n"
+                      "    requests.get('https://svc/x')\n" "    from_env = 'NOT RAISED'\n"
+                      "except OSError as e:\n"
+                      "    from_env = str(e).endswith('invalid path: /no/such/env-ca.pem')\n"
+                      "requests.get('https://svc/x', verify=False)\n"
+                      "call_wins = _seen['context'].verify_mode == ssl.CERT_NONE\n"
+                      "s = requests.Session()\n" "s.trust_env = False\n"
+                      "s.get('https://svc/x')\n" "opted_out = _seen['context'] is None\n"
+                      "del os.environ['REQUESTS_CA_BUNDLE']\n"
+                      "os.environ['CURL_CA_BUNDLE'] = '/no/such/env-ca.pem'\n"
+                      "try:\n" "    requests.get('https://svc/x')\n"
+                      "    curl_too = 'NOT RAISED'\n" "except OSError:\n"
+                      "    curl_too = True\n" "del os.environ['CURL_CA_BUNDLE']\n"
+                      "requests.get('https://svc/x')\n"
+                      "[from_env, call_wins, opted_out, curl_too, _seen['context'] is None]")))))))

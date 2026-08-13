@@ -478,3 +478,88 @@ _rq.request = _echo
                           "    warnings.simplefilter('always')\n" "    urllib3.disable_warnings()\n"
                           "    warnings.warn('x', urllib3.exceptions.InsecureRequestWarning)\n"
                           "len(w) == 0")))))))
+
+;; Regression, issue #141 (cross-validation follow-up): a certificate failure
+;; arrived as a bare ProtocolError, so `except urllib3.exceptions.SSLError` --
+;; the class real code catches -- never fired; an unreadable CA bundle was
+;; dressed up as a transport error too; `cert_reqs='NONE'` (upstream's own bare
+;; spelling) and an unknown name both silently VERIFIED; and a fingerprint or
+;; cipher pin was swallowed whole, reporting a guarantee nothing enforced.
+(defdescribe
+  urllib3-tls-fidelity-test
+  (it "raises exceptions.SSLError for a certificate failure (was: ProtocolError)"
+      (with-python-context
+        (expect (= "SSLError:certificate verify failed"
+                   (ev python-context
+                       (str fake
+                            "def _boom(*a, **k):\n"
+                            "    raise _rq.exceptions.SSLError('certificate verify failed')\n"
+                            "_rq.request = _boom\n"
+                            "try:\n" "    urllib3.PoolManager().request('GET', 'https://svc/d')\n"
+                            "    out = 'NOT RAISED'\n" "except urllib3.exceptions.SSLError as e:\n"
+                            "    out = 'SSLError:' + str(e)\n" "out"))))))
+  (it "lets a configuration error through verbatim (was: dressed as ProtocolError)"
+      (with-python-context
+        (expect
+          (= "OSError"
+             (ev python-context
+                 (str fake
+                      "def _boom(*a, **k):\n"
+                      "    raise OSError('Could not find a suitable TLS CA certificate bundle, "
+                      "invalid path: /nope')\n" "_rq.request = _boom\n"
+                      "try:\n"
+                      "    urllib3.PoolManager(ca_certs='/nope').request('GET', 'https://svc/d')\n"
+                      "    out = 'NOT RAISED'\n" "except urllib3.exceptions.HTTPError as e:\n"
+                      "    out = 'WRAPPED:' + type(e).__name__\n" "except OSError as e:\n"
+                      "    out = type(e).__name__\n" "out"))))))
+  (it "resolves cert_reqs like upstream and refuses an unknown name (was: silently verified)"
+      (with-python-context
+        (expect
+          (= [true "ValueError" 0 2]
+             (ev python-context
+                 (str fake
+                      "urllib3.PoolManager(cert_reqs='NONE').request('GET', 'https://svc/d')\n"
+                      "bare = _last['verify'] is False\n" "try:\n"
+                      "    urllib3.PoolManager(cert_reqs='NOPE').request('GET', 'https://svc/d')\n"
+                      "    bad = 'NOT RAISED'\n"
+                      "except ValueError:\n" "    bad = 'ValueError'\n"
+                      "[bare, bad, int(urllib3.util.ssl_.resolve_cert_reqs('CERT_NONE')),\n"
+                      " int(urllib3.util.ssl_.resolve_cert_reqs(None))]"))))))
+  (it "refuses assert_fingerprint and ciphers instead of dropping them silently"
+      (with-python-context
+        (expect
+          (= ["NotImplementedError" "NotImplementedError"]
+             (ev python-context
+                 (str fake
+                      "out = []\n"
+                      "for opts in ({'assert_fingerprint': 'aa:bb'}, {'ciphers': 'AES256-SHA'}):\n"
+                      "    try:\n"
+                      "        urllib3.PoolManager(**opts).request('GET', 'https://svc/d')\n"
+                      "        out.append('NOT RAISED')\n" "    except NotImplementedError as e:\n"
+                      "        out.append(type(e).__name__)\n" "out"))))))
+  (it
+    "publishes util.ssl_.create_urllib3_context and hands that context to the transport"
+    (with-python-context
+      (expect
+        (=
+          [true false true]
+          (ev
+            python-context
+            (str
+              fake
+              "import ssl\n"
+              "ctx = urllib3.util.ssl_.create_urllib3_context(cert_reqs='CERT_NONE')\n"
+              "urllib3.PoolManager(ssl_context=ctx).request('GET', 'https://svc/d')\n"
+              "[ctx.verify_mode == ssl.CERT_NONE, ctx.check_hostname, _last['verify'] is ctx]"))))))
+  (it "sets ssl_minimum_version / ssl_maximum_version on the context (was: dropped)"
+      (with-python-context
+        (expect (= [true true]
+                   (ev python-context
+                       (str fake
+                            "import ssl\n"
+                            "urllib3.PoolManager(ssl_minimum_version=ssl.TLSVersion.TLSv1_2,\n"
+                            "                    ssl_maximum_version=ssl.TLSVersion.TLSv1_2\n"
+                            "                    ).request('GET', 'https://svc/d')\n"
+                            "c = _last['verify']\n"
+                            "[c.minimum_version == ssl.TLSVersion.TLSv1_2,\n"
+                            " c.maximum_version == ssl.TLSVersion.TLSv1_2]")))))))
