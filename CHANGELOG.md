@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- One `C-x g` status buffer for EVERY repository a session works on: the project, every Git
+  repository nested below it (a mega-repo's `repositories/` clones) and every read-write
+  repository declared in `vis.yml`'s `workspace.filesystem` catalog. Each earns a header carrying
+  its branch and dirty counts — a clean one folded to that single line — and every verb (`s`/`u`,
+  `S`/`U`, `c`, `P`, `F`, `b`, `z`) acts on the repository under the cursor. Nothing caps how many
+  are shown; only DISCOVERY is bounded, and a walk that stops early says `scan truncated` in the
+  title instead of quietly listing fewer.
 - `jail.environment` — one MODE, not a list, over the operator's ambient environment in a
   confined child: `declared` (the default: only the project's own `.env` + `environment:` plus a
   non-secret basics allowlist) or `inherit` (the whole ambient environment, secrets included,

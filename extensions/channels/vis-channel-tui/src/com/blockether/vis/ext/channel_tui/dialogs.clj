@@ -3074,6 +3074,12 @@
      multi?
      (> (count @repos*) 1)
 
+     ;; Discovery bound its own walk? Then a repository exists that this buffer
+     ;; is NOT showing, and the title says so — a short list must never be
+     ;; mistaken for the whole fleet.
+     scan-truncated?
+     (and multi? (magit/nested-scan-truncated? primary-root))
+
      expanded
      (atom #{})
 
@@ -3165,7 +3171,7 @@
 
          title
          (if multi?
-           (str "Git — " (count repos) " roots")
+           (str "Git — " (count repos) " roots" (when scan-truncated? " · scan truncated"))
            (let [model (:model (first repos))]
              (str "Git — "
                   (cond (nil? model) "?"

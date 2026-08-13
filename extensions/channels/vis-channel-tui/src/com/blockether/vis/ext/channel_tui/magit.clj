@@ -997,28 +997,55 @@
           :draft? (boolean (or (wget ws :draft?) (wget ws :fork-ms)))}])
       []))
 
-(def ^:const nested-repo-limit
-  "Ceiling on the repositories the status buffer discovers BELOW the session
-   root. A mega-repo that vendors clones under `repositories/` pays one
-   `status-model` (a handful of git calls) per repo on every refresh, so the
-   buffer stays bounded no matter how many clones the tree holds."
-  12)
+(def ^:const nested-scan-limit
+  "Ceiling on the repositories the discovery WALK may find below the session
+   root. NOT a display limit: every repository the walk finds earns its own
+   header, however many that is — a mega-repo of forty clones opens as forty
+   rows. A walk over an unknown tree has to terminate somewhere, and when this
+   bound (or the budget below) does bite, the buffer SAYS so
+   (`nested-scan-truncated?`) instead of quietly showing fewer repositories."
+  512)
+
+(def ^:private nested-scan-budget
+  "The status buffer's discovery budget: stop at `nested-scan-limit`
+   repositories, 200k visited files or 2s, whichever comes first. Deliberately
+   more generous than the host's default inventory budget, which serves the
+   prompt's environment block and only ever prints a handful of rows; the buffer
+   is opened deliberately (`C-x g`) and must show the whole fleet."
+  {:max-repos nested-scan-limit :max-files 200000 :deadline-ms 2000})
+
+(defn- nested-inventory
+  "The host's CACHED inventory of Git roots below `root`, read with the status
+   buffer's budget (`/reload` refreshes it after a clone). `opts` overrides that
+   budget — the same override must be passed to every reader of one scan, since
+   the cache is keyed by the budget. Never throws: a blank, missing or
+   unreadable root answers nil."
+  [root opts]
+  (when-let [root (not-empty (str root))]
+    (try (repositories/inventory root (merge nested-scan-budget opts)) (catch Throwable _ nil))))
 
 (defn nested-roots
-  "Repo entries for the Git repositories nested BELOW `root`, newest scan of the
-   host's bounded, CACHED inventory (`/reload` refreshes it after a clone). The
+  "Repo entries for EVERY Git repository nested BELOW `root` — the clones a
+   mega-repo keeps under `repositories/`, all of them, not a first dozen. The
    root itself is dropped — `workspace-roots` already owns it — and each entry
    is labelled by its path RELATIVE to the session root, so a mega-repo reads as
    `repositories/svar` and not as a second `svar`. Never throws: a missing or
    unreadable root yields no entries."
-  [root]
-  (if-let [root (not-empty (str root))]
-    (->> (try (:repositories (repositories/inventory root)) (catch Throwable _ nil))
-         (remove #(= "." (:path %)))
-         (take nested-repo-limit)
-         (mapv (fn [{:keys [path] repo-root :root}]
-                 {:root (str repo-root) :trunk (str repo-root) :label (str path) :draft? false})))
-    []))
+  ([root] (nested-roots root nil))
+  ([root opts]
+   (->> (:repositories (nested-inventory root opts))
+        (remove #(= "." (:path %)))
+        (mapv (fn [{:keys [path] repo-root :root}]
+                {:root (str repo-root) :trunk (str repo-root) :label (str path) :draft? false})))))
+
+(defn nested-scan-truncated?
+  "Did discovery stop on its own budget rather than on the end of the tree? Then
+   repositories exist below `root` that this buffer is NOT showing, and the
+   dialog title carries `scan truncated`: a short list must never be mistaken
+   for a complete one. Reads the SAME cached scan `nested-roots` did, so it
+   costs a map lookup."
+  ([root] (nested-scan-truncated? root nil))
+  ([root opts] (boolean (:truncated? (nested-inventory root opts)))))
 
 (defn- canonical-path
   "Canonical path of `root` — the identity two repo entries are compared by. A

@@ -39,14 +39,16 @@
 
 (defn- init-repo! [] (init-repo-at! (temp-dir!)))
 
-(defn- mega-repo!
-  "A repository that VENDORS other repositories: the root repo keeps two clones
-   of its own under `repositories/`, the shape a mega-repo has on disk."
-  []
+(defn- mega-repo-of!
+  "A repository that VENDORS other repositories: one clone per name under
+   `repositories/`, the shape a mega-repo has on disk."
+  [names]
   (let [root (init-repo!)]
-    (doseq [nm ["alpha" "beta"]]
+    (doseq [nm names]
       (init-repo-at! (str root "/repositories/" nm)))
     root))
+
+(defn- mega-repo! [] (mega-repo-of! ["alpha" "beta"]))
 
 (defn- real-path
   "Canonical path of `p` — a temp dir under macOS `/var` really lives in
@@ -1135,6 +1137,37 @@
          (magit/session-roots {:root root} nil [])]
 
         (expect (= (count roots) (count (distinct (mapv (comp canonical :root) roots)))))))
+  ;; Regression: the buffer took only the first 12 nested repositories, so a
+  ;; mega-repo that vendors more than a dozen clones showed 12 headers and the
+  ;; rest could not be staged, committed or pushed from the buffer at all —
+  ;; silently, since nothing on screen said any were missing.
+  (it "a mega-repo of more than a dozen clones lists every one of them"
+      (let
+        [names
+         (mapv #(format "repo-%02d" (long %)) (range 14))
+
+         root
+         (mega-repo-of! names)
+
+         roots
+         (magit/session-roots nil root [])]
+
+        (expect (= 15 (count roots)))
+        (expect (= (mapv #(str "repositories/" %) names) (mapv :label (rest roots))))
+        (expect (false? (magit/nested-scan-truncated? root)))))
+  (it "a walk that stops on its budget SAYS so instead of hiding repositories"
+      (let
+        [root
+         (mega-repo-of! ["alpha" "beta" "gamma"])
+
+         ;; the root itself is one of the three the walk may find
+         bounded
+         {:max-repos 3}]
+
+        (expect (= 3 (count (magit/nested-roots root))))
+        (expect (false? (magit/nested-scan-truncated? root)))
+        (expect (= 2 (count (magit/nested-roots root bounded))))
+        (expect (true? (magit/nested-scan-truncated? root bounded)))))
   (it "a blank root discovers nothing instead of scanning the filesystem"
       (expect (= [] (magit/nested-roots nil)))
       (expect (= [] (magit/nested-roots "")))

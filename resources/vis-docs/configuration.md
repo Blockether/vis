@@ -428,6 +428,13 @@ private copy — earns no second header. Two repositories that would wear the sa
 name are told apart by as much of their path as it takes (`work/vis` beside
 `src/vis`), because that header is what every verb acts on.
 
+Nothing caps how many repositories a buffer shows: a mega-repo that vendors forty
+clones under `repositories/` opens as forty headers, each clean one folded to its
+single summary line. The only bound is on DISCOVERY — the walk that finds nested
+repositories stops after 512 of them, 200k visited files or two seconds — and
+when it does stop early the title reads `Git — N roots · scan truncated`, so a
+short list is never mistaken for the whole fleet.
+
 `when` and `optional` let ONE catalog serve several machines: `when.os` mounts a
 root only on `macos`, `linux`, `wsl` or `windows`, `when.exists` only when that
 path is present, and `optional: true` only when the root's own path is. A root
