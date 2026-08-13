@@ -1067,6 +1067,7 @@ export function SessionsScreen({
   async function commitRowAction() {
     if (!rowAction) return;
     const api = clientFor(rowAction.conn);
+    const key = machineKey(rowAction.conn);
     // The words that made a row dirty die with it: a draft message kept under a
     // session id that no longer exists is unreachable forever, and a star on a
     // session nobody can open is the same litter.
@@ -1074,6 +1075,35 @@ export function SessionsScreen({
       for (const sid of ids) clearDraftMessage(draftMessageKey(api.base, sid));
       forgetFavorites(ids.map((sid) => favoriteKey(api.base, sid)));
       if (ids.length > 0) void flushDraftMessages();
+    };
+    // A finished row action is not news to go and FETCH. The gateway has already
+    // answered — which ids died, or the row it stored — so the new list is the old
+    // one with that answer applied, on THIS machine, because no other one was
+    // touched.
+    //
+    // Regression, user report (paraphrased: removing a single session re-downloaded
+    // every session): this used to end in `load()`, a full walk of every 100-row
+    // window on every paired machine (~728KB over 11 serial round trips on a
+    // 1100-session gateway, see `createSession`) to be told one id that was already
+    // in hand — with the confirm standing over the list until the whole fleet
+    // drained. Deleting one row costs no request beyond the DELETE itself.
+    //
+    // Returning the SAME array means nothing changed, which bails `patchMachine`
+    // out before any row re-renders.
+    const patchRows = (update: (rows: Session[]) => Session[]) =>
+      patchMachine(key, (machine) => {
+        const rows = machine.sessions;
+        if (!rows) return machine;
+        const next = update(rows);
+        return next === rows ? machine : { ...machine, sessions: next };
+      });
+    const forgetRows = (ids: string[]) => {
+      if (ids.length === 0) return;
+      const gone = new Set(ids);
+      patchRows((rows) => {
+        const kept = rows.filter((row) => !gone.has(row.id));
+        return kept.length === rows.length ? rows : kept;
+      });
     };
     const title = renameDraft.trim();
     if (rowAction.mode === 'rename' && !title) {
@@ -1083,16 +1113,33 @@ export function SessionsScreen({
     setActionBusy(true);
     setActionError(null);
     try {
-      if (rowAction.mode === 'rename') await api.renameSession(rowAction.session.id, title);
-      else if (rowAction.mode === 'delete') {
+      if (rowAction.mode === 'rename') {
+        // The gateway echoes the row it stored, so the new name arrives WITH the
+        // answer. Keyed by the id we asked about and with the requested title left
+        // standing under the echo, so a thin answer still repaints the row rather
+        // than leaving the old name up until the next poll. Ordering is deliberately
+        // untouched: a row that jumps out from under the thumb the instant it is
+        // named reads as a bug, and the poll re-ranks it soon enough.
+        const sid = rowAction.session.id;
+        const renamed = await api.renameSession(sid, title);
+        patchRows((rows) =>
+          rows.some((row) => row.id === sid)
+            ? rows.map((row) => (row.id === sid ? { ...row, title, ...renamed, id: sid } : row))
+            : rows,
+        );
+      } else if (rowAction.mode === 'delete') {
         await api.deleteSession(rowAction.session.id);
         forgetDrafts([rowAction.session.id]);
+        forgetRows([rowAction.session.id]);
       } else {
         const plan = projectDelete(rowAction.sessions);
         // One recursive request when a project row owns the whole group: the gateway
         // deletes the members it knows about, which is more than this list paints.
-        if (plan.kind === 'project') forgetDrafts(await api.deleteProject(plan.projectId));
-        else {
+        if (plan.kind === 'project') {
+          const deleted = await api.deleteProject(plan.projectId);
+          forgetDrafts(deleted);
+          forgetRows(deleted);
+        } else {
           // No project row to hand the group to, so the fan-out IS the delete. It
           // keeps going past a failure and says what survived, instead of stopping
           // half way with nothing said.
@@ -1109,15 +1156,16 @@ export function SessionsScreen({
             setActionProgress({ done: gone.length + failed, total: plan.sessionIds.length });
           }
           forgetDrafts(gone);
+          // A partial fan-out is exactly known too: the ids that died leave, the ones
+          // that refused keep their rows, and the note says how many refused.
+          forgetRows(gone);
           if (failed > 0) {
             setActionError(`${failed} of ${plan.sessionIds.length} sessions could not be deleted.`);
-            await load();
             return;
           }
         }
       }
       setRowAction(null);
-      await load();
     } catch (cause) {
       setActionError((cause as Error).message);
     } finally {

@@ -83,3 +83,76 @@ describe("deleting one session confirms inside its own row", () => {
     expect(view.requests.some((request) => request.method === "DELETE")).toBe(false);
   });
 });
+
+// Regression, issue #2216: deleting ONE session re-read the WHOLE fleet's session
+// list — every paired machine, every window of it — although the app already knew
+// exactly which row had gone. On a few-hundred-session store that was ~315 KB
+// re-downloaded, on every machine, to remove one row the app had just removed.
+describe("deleting a session does not re-download the fleet", () => {
+  const fleet = () => [
+    {
+      label: "alpha",
+      sessions: [
+        listSession({ id: "a1", title: "First" }),
+        listSession({ id: "a2", title: "Second" }),
+      ],
+    },
+    { label: "beta", sessions: [listSession({ id: "b1", title: "Elsewhere" })] },
+  ];
+
+  const listReads = (view: { requests: { method: string; path: string }[] }) =>
+    view.requests.filter(
+      (request) => request.method === "GET" && request.path.startsWith("/v1/sessions?"),
+    );
+
+  it("drops the row locally and re-lists nothing", async () => {
+    const view = renderSessionsScreen({ machines: fleet() });
+    restore = view.restore;
+    await screen.findByText("First");
+    await screen.findByText("Elsewhere");
+    view.requests.length = 0;
+
+    fireEvent.click(
+      screen.getByRole("group", { name: "First actions" }).querySelector(
+        "button[aria-label='Delete']",
+      )!,
+    );
+    fireEvent.click(await screen.findByText("Yes, delete"));
+
+    // The row goes because the delete succeeded, not because a fresh list said so.
+    await waitFor(() => expect(screen.queryByText("First")).toBeNull());
+    expect(screen.getByText("Second")).toBeTruthy();
+    expect(screen.getByText("Elsewhere")).toBeTruthy();
+    expect(listReads(view)).toEqual([]);
+  });
+
+  it("renames from the gateway's own answer, re-listing nothing", async () => {
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          label: "alpha",
+          sessions: [listSession({ id: "a1", title: "First" })],
+          routes: { "/v1/sessions/a1": listSession({ id: "a1", title: "Renamed" }) },
+        },
+        { label: "beta", sessions: [listSession({ id: "b1", title: "Elsewhere" })] },
+      ],
+    });
+    restore = view.restore;
+    await screen.findByText("First");
+    await screen.findByText("Elsewhere");
+    view.requests.length = 0;
+
+    fireEvent.click(
+      screen.getByRole("group", { name: "First actions" }).querySelector(
+        "button[aria-label='Rename']",
+      )!,
+    );
+    fireEvent.change(await screen.findByPlaceholderText("Session name"), {
+      target: { value: "Renamed" },
+    });
+    fireEvent.click(screen.getByText("Save"));
+
+    await waitFor(() => expect(screen.getByText("Renamed")).toBeTruthy());
+    expect(listReads(view)).toEqual([]);
+  });
+});
