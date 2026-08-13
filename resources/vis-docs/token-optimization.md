@@ -125,7 +125,20 @@ def hits(needles, *paths, ctx=0):
     return [l for l in text.splitlines() if "│ " in l]
 ```
 
-When the same helper survives across turns — a deploy check, a fixture loader, a project-specific guard — it has outgrown the sandbox. Propose a **Python extension**: one file in `.vis/extensions/*.py` registers a named tool for every future session in that project, `vis-agent extension check` validates it, and `doc("extending")` is the whole recipe. Propose it; write it when the user asks.
+A definition lives as long as the **session**, not the block and not the turn: a helper written in turn 2 is still callable in turn 9. Read it back before you change it, and list what is already bound instead of guessing:
+
+```python
+import inspect
+
+print(inspect.getsource(hits))  # refine the definition; never re-paste it from memory
+print(sorted(n for n, v in globals().items()
+             if not n.startswith("_")
+             and getattr(getattr(v, "__code__", None), "co_filename", "").startswith("<prog")))
+```
+
+What does **not** persist is anything written into `session`. That map is host-owned and rebuilt from the engine snapshot before every block, so `session["helpers"] = …` succeeds and is gone by the next one — a silent loss, not an error. Keep state in ordinary names.
+
+When the same helper survives across turns — a deploy check, a fixture loader, a project-specific guard — it has outgrown the sandbox. Propose a **Python extension**: one file in `.vis/extensions/*.py` registers a named tool for every future session in that project, `vis-agent extension check` validates it, and `doc("extending")` is the whole recipe — including the durable `state` an extension owns by NAME, which is the only storage that survives `/reload` and a restart. Propose it; write it when the user asks.
 
 ## Fold settled steps
 

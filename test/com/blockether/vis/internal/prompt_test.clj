@@ -107,7 +107,10 @@
       ;; and re-derived what an earlier block had already computed. Naming the `session` key,
       ;; the extension path and `doc("extending")` is what makes the rule executable rather
       ;; than a slogan; the paragraph it replaced ("A result is an ordinary Python value") is
-      ;; folded into it.
+      ;; folded into it. The budget did NOT move for the session-scope correction that
+      ;; followed (a `def` lives for the whole session; `session` itself is rebuilt before
+      ;; every block and cannot hold one): it was paid for by deleting the glossary
+      ;; parenthetical after "higher-order helper", and lands at 5 871.
       (expect (< (count text) 5900))
       (let
         [steps (mapv #(str/index-of text %)
@@ -159,10 +162,9 @@
                    ;; status accessors, so following it verbatim raised a TypeError —
                    ;; `type` SENDS keystrokes and its text argument is required.
                    "No shell TOOL" "`sh.logs(-50)`" "`sh.wait(s)`" "`sh.type(\"y\")`"
-                   "functions that accept or return callables"
                    "NEVER paste a near-identical loop or block twice" "Define once and reuse"
                    "factor it out on the second occurrence" "keep results in"
-                   "an unprinted value costs no context" "gone when the block ends"
+                   "a value you never printed costs nothing" "gone when the block ends"
                    "Inspect shape before indexing" "nothing lists one for you"
                    "tests-only work starts with `run_tests`" "interactive work uses `repl_eval`"
                    "Keep reproduction as a suite test" "rerun after the fix"
@@ -708,10 +710,20 @@
                    (expect (str/includes? text "Write a PROGRAM, not a transcript"))
                    (expect (str/includes? text "Path(session[\"workspace\"][\"root\"])"))
                    (expect (str/includes? text "`await gather(...)`"))))
-             (it "orders a helper CALLED again, never pasted again"
+             ;; Regression, user report ("can I write function definitions into the session
+             ;; object and refine them over time?"): §2 said "definitions persist between
+             ;; blocks", which reads as within-turn scratch, and called `session` a "read-only
+             ;; map" — a write there SUCCEEDS and is erased before the next block, so the
+             ;; obvious place to keep a helper is the one place that silently loses it.
+             (it "scopes a definition to the whole session and refuses `session` as storage"
                  (let [text (prompt/build-system-prompt {})]
                    (expect (str/includes? text "CALL the one an earlier block defined"))
-                   (expect (str/includes? text "definitions persist between blocks"))))
+                   (expect (str/includes? text "persists for the whole session, across turns"))
+                   (expect (str/includes? text "`inspect.getsource(f)` reads it back"))
+                   (expect (str/includes? text "REBUILT before every block"))
+                   (expect (str/includes? text "never store in it"))
+                   (expect (not (str/includes? text "definitions persist between blocks")))
+                   (expect (not (str/includes? text "live read-only map")))))
              ;; A chore that repeats across turns is the one thing a session can turn into
              ;; project-durable tooling, and the rule is executable only if it names the file
              ;; it lives in and the document that shows how to write it.

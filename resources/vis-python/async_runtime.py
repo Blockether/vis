@@ -1961,6 +1961,44 @@ def __vis_pin_runtime__(g):
 __vis_blocks_kept__ = 128
 
 
+def __vis_source_is_live__(name):
+    # Does a definition the model can still CALL come from this block? A `def`
+    # persists for the WHOLE SESSION, across turns — so dropping its source made a
+    # helper unreadable while it was still callable: `inspect.getsource(helper)`
+    # raised OSError and the only way to change it was to re-paste it from memory.
+    # Best effort, and deliberately cheap: a function bound to a global NAME.
+    # Engine names are skipped — `__vis_main__` is THIS runtime's wrapper for the
+    # block that ran last, so counting it would pin one dead block forever.
+    for __n__, __v__ in list(globals().items()):
+        if __n__.startswith("__vis_") or __n__.startswith("__Vis"):
+            continue
+        try:
+            __c__ = getattr(__v__, "__code__", None)
+            if __c__ is not None and __c__.co_filename == name:
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def __vis_evict_sources__(kept):
+    # Oldest-first, but a block that still backs a live definition is PINNED and
+    # skipped instead of dropped: the cap bounds DEAD blocks, not live ones. A
+    # redefinition unbinds the old function, so the block that held it stops being
+    # live and evicts on the next pass — this cannot grow without a live referent.
+    # `len(kept) - 1` because the NEWEST entry is the block about to RUN: nothing is
+    # bound from it yet, so a liveness test would call it dead and drop the source
+    # its own traceback and assert introspection are about to read.
+    over = len(kept) - __vis_blocks_kept__
+    i = 0
+    while over > 0 and i < len(kept) - 1:
+        if __vis_source_is_live__(kept[i]):
+            i += 1
+        else:
+            __vis_linecache__.cache.pop(kept.pop(i), None)
+            over -= 1
+
+
 def __vis_register_source__(src):
     # Make a block READABLE BACK. Every `def`/`class` the model writes lands in
     # a code object whose co_filename is synthetic, and nothing on disk backs
@@ -1973,7 +2011,8 @@ def __vis_register_source__(src):
     # The name is UNIQUE PER BLOCK. Two blocks share no line numbering, so one
     # shared `<prog>` would hand a LATER block's text back for an EARLIER
     # block's function — wrong source, silently, which is worse than the error.
-    # Only the newest `__vis_blocks_kept__` sources stay resident.
+    # Only the newest `__vis_blocks_kept__` sources stay resident, EXCEPT the
+    # ones that still back a live definition — see `__vis_evict_sources__`.
     g = globals()
     n = int(g.get("__vis_block_no__") or 0) + 1
     g["__vis_block_no__"] = n
@@ -1989,8 +2028,7 @@ def __vis_register_source__(src):
         kept = []
         g["__vis_block_names__"] = kept
     kept.append(name)
-    while len(kept) > __vis_blocks_kept__:
-        __vis_linecache__.cache.pop(kept.pop(0), None)
+    __vis_evict_sources__(kept)
     return name
 
 

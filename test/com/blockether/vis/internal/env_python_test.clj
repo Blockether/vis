@@ -1035,6 +1035,85 @@
 
         (expect (= "True\nTrue\n" (:stdout result))))))
 
+(defdescribe
+  live-source-eviction-test
+  ;; A `def` persists for the whole session, but its block's source was evicted
+  ;; oldest-first, so a helper defined a few hundred blocks back stayed CALLABLE
+  ;; while `inspect.getsource` on it died with "could not get source code" — the
+  ;; model could run its own helper and could not read or refine it, so it
+  ;; re-pasted the definition instead of changing it.
+  (it "keeps the source of an old block that still backs a live definition"
+      (let
+        [ctx
+         (tpc/context ::source-eviction)
+
+         _
+         (ep/run-python-block ctx "__vis_blocks_kept__ = 1")
+
+         _
+         (ep/run-python-block ctx "def kept_helper(a):\n    return a + 1\n")
+
+         _
+         (ep/run-python-block ctx "dead_one = 1")
+
+         _
+         (ep/run-python-block ctx "dead_two = 2")
+
+         result
+         (ep/run-python-block ctx
+                              "import inspect\nprint(inspect.getsource(kept_helper).strip())\n")]
+
+        (expect (str/includes? (:stdout result) "def kept_helper(a):"))
+        (expect (str/includes? (:stdout result) "return a + 1"))))
+  (it "still evicts a block once nothing live comes from it"
+      (let
+        [ctx
+         (tpc/context ::source-eviction-churn)
+
+         _
+         (ep/run-python-block ctx "__vis_blocks_kept__ = 1")
+
+         _
+         (ep/run-python-block ctx "def churn():\n    return 1\n")
+
+         _
+         (ep/run-python-block ctx "def churn():\n    return 2\n")
+
+         _
+         (ep/run-python-block ctx "pass")
+
+         result
+         (ep/run-python-block ctx
+                              (str
+                                "import inspect\n"
+                                "print(len(__vis_block_names__))\n"
+                                "print(inspect.getsource(churn).strip().endswith('return 2'))\n"))]
+
+        ;; The superseded definition's block is dropped; only the live one and the
+        ;; running block stay resident.
+        (expect (= "2\nTrue\n" (:stdout result)))))
+  (it "never drops the source of the block that is about to run"
+      (let
+        [ctx
+         (tpc/context ::source-eviction-current)
+
+         _
+         (ep/run-python-block ctx "__vis_blocks_kept__ = 1")
+
+         _
+         (ep/run-python-block ctx "def pin_one():\n    return 1\n")
+
+         _
+         (ep/run-python-block ctx "def pin_two():\n    return 2\n")
+
+         result
+         (ep/run-python-block
+           ctx
+           (str "import inspect\n"
+                "def defined_here():\n    return 3\n"
+                "print(inspect.getsource(defined_here).strip().endswith('return 3'))\n"))]
+
+        (expect (= "True\n" (:stdout result))))))
 (defdescribe tool-introspection-test
              ;; Every bound tool was a bare `(*a, **k)` trampoline with an empty docstring,
              ;; so `help(tool)` and `inspect.signature(tool)` showed nothing of the
