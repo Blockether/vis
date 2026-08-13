@@ -10,16 +10,19 @@
  * scripts/android-prepare.mjs, so `android/` stays a disposable Capacitor output (it is
  * gitignored) and two uploads can never collide on a version code.
  *
- * Tracks — "public testing" on Play is the `beta` track (Open testing), the closest thing
- * to a TestFlight public link. Anyone with the link joins, no invite, no per-tester list:
+ * Tracks — a build testers can install belongs on EVERY tester channel at once, so `--track`
+ * takes a list (comma-separated, or repeat the flag) and defaults to all three testing
+ * tracks, written in ONE transactional Play edit. No track is ever left a version behind:
  *   --track internal    up to 100 named testers, no review wait
  *   --track alpha       closed testing, tester lists/groups
- *   --track beta        OPEN testing — the public one                     (default)
- *   --track production  the store itself
+ *   --track beta        OPEN testing — the public one, the TestFlight-public analogue
+ *   --track production  the store itself — never implied, always asked for
+ *   (default)           internal,alpha,beta
  *
  * Usage (workflow/store recovery only; normal releases use `npm run release:android`):
- *   npm run release:android:store                          # build + sign + beta/open testing
+ *   npm run release:android:store                          # build + sign + internal, alpha AND beta
  *   npm run release:android:store -- --track internal      # named internal testers only
+ *   npm run release:android:store -- --track beta,production  # any subset, one edit
  *   npm run release:android:store -- --no-upload           # stop at the signed .aab
  *   npm run release:android:store -- --draft               # upload, do not release
  *   npm run release:android:store -- --rollout 0.1         # staged 10% (production/beta)
@@ -37,7 +40,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JDK, jdkHelp, pickJdk } from './jdk.mjs';
-import { promoteBundle, publishBundle, tracks as readTracks } from './play.mjs';
+import { planRelease, promoteBundle, publishBundle, tracks as readTracks } from './play.mjs';
 import { buildNotes } from './release-notes.mjs';
 import { syncPackageVersion } from './version.mjs';
 
@@ -49,6 +52,8 @@ const flag = (name) => {
   const i = args.indexOf(`--${name}`);
   return i === -1 ? undefined : args[i + 1];
 };
+// Repeatable flags: `--track internal --track beta` reads as both, not as the last one.
+const flags = (name) => args.flatMap((a, i) => (a === `--${name}` && args[i + 1] ? [args[i + 1]] : []));
 const has = (name) => args.includes(`--${name}`);
 
 const die = (msg) => {
@@ -102,10 +107,33 @@ if (!/^\d+$/.test(versionCode)) die(`version code must be a positive integer, go
 const reuseExisting = has('reuse-existing');
 if (reuseExisting && !flag('build')) die('--reuse-existing requires an explicit --build <versionCode>');
 
-const track = flag('track') ?? 'beta';
-if (!['internal', 'alpha', 'beta', 'production'].includes(track)) die(`unknown track "${track}" (internal | alpha | beta | production)`);
+// Plan the tracks BEFORE the build: an unknown track or a staged rollout aimed at several
+// tracks must fail in a second, not after Gradle has spent ten minutes signing an .aab.
+let tracks;
+try {
+  ({ tracks } = planRelease({ tracks: flags('track'), userFraction: flag('rollout'), draft: has('draft') }));
+} catch (err) {
+  die(err.message);
+}
 
-console.log(`\nVis Companion ${versionName} (${versionCode}) → Play ${track}\n`);
+console.log(`\nVis Companion ${versionName} (${versionCode}) → Play ${tracks.join(', ')}\n`);
+
+// What the human does next depends on which tracks were written, and the promote path and the
+// upload path owe the same lines.
+const report = (res) =>
+  console.log(
+    `\n✓ ${versionName} (${res.versionCode}) is on ${res.tracks.join(', ')} [${res.status}].\n` +
+      [
+        res.tracks.includes('internal') && '  Internal testing is live within minutes for the testers on that list.',
+        res.tracks.includes('beta') &&
+          '  Open testing: share the link from Play Console ▸ Testing ▸ Open testing ▸ Testers ▸ Copy link.\n' +
+            '  First rollout on a new open track waits for Google review (hours to a day); later ones do not.',
+        res.tracks.includes('production') && '  Production is live for everyone once Google finishes reviewing the rollout.',
+      ]
+        .filter(Boolean)
+        .join('\n') +
+      '\n',
+  );
 
 // Release notes come first so an empty/broken changelog fails before a long build or Play edit.
 // Play caps release notes at 500 characters per language (App Store Connect allows 4000).
@@ -118,14 +146,14 @@ if (reuseExisting) {
     serviceAccount,
     packageName,
     versionCode,
-    track,
+    tracks,
     releaseName: `${versionName} (${versionCode})`,
     notes: notes.text,
     userFraction: flag('rollout'),
     draft: has('draft'),
     log: (m) => console.log(m),
   });
-  console.log(`\n✓ existing ${versionName} (${res.versionCode}) is on the ${track} track [${res.status}].\n`);
+  report(res);
   process.exit(0);
 }
 
@@ -196,7 +224,7 @@ const res = await publishBundle({
   serviceAccount,
   packageName,
   aab,
-  track,
+  tracks,
   releaseName: `${versionName} (${versionCode})`,
   notes: notes.text,
   userFraction: flag('rollout'),
@@ -204,12 +232,4 @@ const res = await publishBundle({
   log: (m) => console.log(m),
 });
 
-console.log(
-  `\n✓ ${versionName} (${res.versionCode}) is on the ${track} track [${res.status}].\n` +
-    (track === 'beta'
-      ? '  Open testing: share the link from Play Console ▸ Testing ▸ Open testing ▸ Testers ▸ Copy link.\n' +
-        '  First rollout on a new open track waits for Google review (hours to a day); later ones do not.\n'
-      : track === 'internal'
-        ? '  Internal testing is live within minutes for the testers on that list.\n'
-        : ''),
-);
+report(res);

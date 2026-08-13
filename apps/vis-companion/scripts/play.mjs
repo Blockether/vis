@@ -9,7 +9,8 @@
 // is read from the login keychain (scripts/secrets.mjs) or an env var and stays in memory.
 //
 // Track names Play understands: internal, alpha (closed testing), beta (OPEN testing —
-// the public one, the true TestFlight-public analogue), production.
+// the public one, the true TestFlight-public analogue), production. A release names as many
+// as it likes: they are written in ONE edit, so every tester channel serves one build.
 
 import { createPrivateKey, sign as cryptoSign } from 'node:crypto';
 
@@ -63,59 +64,79 @@ const call = async (token, method, path, { body, contentType = 'application/json
   return json;
 };
 
+/** Every track Play knows, lowest to highest. */
+export const PLAY_TRACKS = ['internal', 'alpha', 'beta', 'production'];
+
 /**
- * Upload an .aab and roll it out on `track`, atomically: Play edits are transactional, so
- * either the commit lands with the bundle AND the track assignment, or nothing changed at
- * all. A half-published release is therefore not a state this can produce.
- *
- * `userFraction` staged-rolls the release (0 < f < 1 ⇒ status inProgress); omit it for a
- * full rollout. `draft: true` uploads without releasing — the Play Console "draft" state.
+ * The default fan-out. A build testers can install is the SAME build on every tester
+ * channel: publishing to one track and leaving the rest behind is how `internal` ended up
+ * serving 0.1.21 while `beta` served 0.1.35. `production` is never implied — it is asked for.
  */
-export const publishBundle = async ({
-  serviceAccount,
-  packageName,
-  aab,
-  track = 'internal',
-  releaseName,
-  notes,
-  locale = 'en-US',
-  userFraction,
-  draft = false,
-  log = console.log,
-}) => {
-  const { token, account } = await playToken(serviceAccount);
-  log(`· authenticated as ${account}`);
+export const TESTING_TRACKS = ['internal', 'alpha', 'beta'];
 
-  const edit = await call(token, 'POST', `/applications/${packageName}/edits`);
-  log(`· edit ${edit.id}`);
+/**
+ * `internal,beta`, `['internal', 'beta']` or nothing at all → the tracks to write, unique and
+ * ordered internal → production. Asking for nothing is asking for the tester fan-out.
+ */
+export const parseTracks = (values) => {
+  const asked = (Array.isArray(values) ? values : [values])
+    .flatMap((v) => (v == null ? [] : String(v).split(',')))
+    .map((v) => v.trim())
+    .filter(Boolean);
+  if (!asked.length) return [...TESTING_TRACKS];
+  const unknown = asked.find((t) => !PLAY_TRACKS.includes(t));
+  if (unknown) throw new Error(`unknown track "${unknown}" (${PLAY_TRACKS.join(' | ')})`);
+  return PLAY_TRACKS.filter((t) => asked.includes(t));
+};
 
-  let committed = false;
-  try {
-    const uploaded = await call(token, 'POST', `/applications/${packageName}/edits/${edit.id}/bundles?uploadType=media`, {
-      body: aab,
-      contentType: 'application/octet-stream',
-      base: UPLOAD,
-    });
-    const versionCode = uploaded.versionCode;
-    log(`· uploaded versionCode ${versionCode} (sha1 ${uploaded.sha1?.slice(0, 12) ?? '?'}…)`);
-
-    const status = draft ? 'draft' : userFraction ? 'inProgress' : 'completed';
-    const release = {
+/**
+ * Everything decided before Play is touched: which tracks the release lands on, its status,
+ * and how to shape it once a version code exists. Publish and promote both plan through here
+ * so the rules are stated once, and the CLI can plan BEFORE a ten-minute Gradle build and
+ * refuse an impossible combination in a second instead of after the .aab is signed.
+ *
+ * `userFraction` staged-rolls the release (0 < f < 1 ⇒ status inProgress); omit it for a full
+ * rollout. `draft: true` uploads without releasing — the Play Console "draft" state.
+ */
+export const planRelease = ({ tracks, releaseName, notes, locale = 'en-US', userFraction, draft = false }) => {
+  const wanted = parseTracks(tracks);
+  // Play stages a rollout per track, so one fraction shared by several tracks is not a thing
+  // the API can express — and guessing which track the fraction meant is worse than refusing.
+  if (userFraction && wanted.length > 1) throw new Error(`a staged rollout targets exactly one track, not ${wanted.join(', ')}`);
+  const status = draft ? 'draft' : userFraction ? 'inProgress' : 'completed';
+  return {
+    tracks: wanted,
+    status,
+    release: (versionCode) => ({
       name: releaseName ?? String(versionCode),
       versionCodes: [String(versionCode)],
       status,
       ...(userFraction && !draft ? { userFraction: Number(userFraction) } : {}),
       ...(notes?.trim() ? { releaseNotes: [{ language: locale, text: notes.trim().slice(0, 500) }] } : {}),
-    };
-    await call(token, 'PUT', `/applications/${packageName}/edits/${edit.id}/tracks/${track}`, { body: { track, releases: [release] } });
-    log(`· track ${track} ← ${release.name} (${status})`);
+    }),
+  };
+};
 
+/**
+ * Run `body` inside ONE Play edit, then commit it. Play edits are transactional, so either
+ * the commit lands with the bundle AND every track assignment, or nothing changed at all: a
+ * half-published release — the new build on internal, an older one on beta — is not a state
+ * this can produce.
+ *
+ * An abandoned edit is not merely untidy: Play refuses a NEW edit while a stale one holds the
+ * app, so the next release would fail on a failure that already happened.
+ */
+const withEdit = async ({ token, packageName, log }, body) => {
+  const edit = await call(token, 'POST', `/applications/${packageName}/edits`);
+  log(`· edit ${edit.id}`);
+
+  let committed = false;
+  try {
+    const result = await body(edit.id);
     await call(token, 'POST', `/applications/${packageName}/edits/${edit.id}:commit`);
     committed = true;
-    return { ok: true, versionCode, track, status, editId: edit.id };
+    return { ...result, editId: edit.id };
   } finally {
-    // An abandoned edit is not merely untidy: Play refuses a NEW edit while a stale one
-    // holds the app, so the next release would fail on a failure that already happened.
     if (!committed) {
       await call(token, 'DELETE', `/applications/${packageName}/edits/${edit.id}`).catch(() => {});
       log('· edit rolled back (nothing was published)');
@@ -123,52 +144,48 @@ export const publishBundle = async ({
   }
 };
 
-/**
- * Roll an already-uploaded bundle onto another track without re-uploading its versionCode.
- * This is the safe recovery path after a successful upload landed on the wrong track.
- */
-export const promoteBundle = async ({
-  serviceAccount,
-  packageName,
-  versionCode,
-  track = 'beta',
-  releaseName,
-  notes,
-  locale = 'en-US',
-  userFraction,
-  draft = false,
-  log = console.log,
-}) => {
-  if (!/^\d+$/.test(String(versionCode))) throw new Error(`versionCode must be a positive integer, got "${versionCode}"`);
+/** Put the one release on every planned track, inside the caller's edit. */
+const assignTracks = async ({ token, packageName, editId, plan, versionCode, log }) => {
+  const release = plan.release(versionCode);
+  for (const track of plan.tracks) {
+    await call(token, 'PUT', `/applications/${packageName}/edits/${editId}/tracks/${track}`, { body: { track, releases: [release] } });
+    log(`· track ${track} ← ${release.name} (${release.status})`);
+  }
+  return { ok: true, versionCode: String(versionCode), tracks: plan.tracks, status: plan.status };
+};
 
+/** Upload an .aab and roll it out on every planned track, atomically. */
+export const publishBundle = async ({ serviceAccount, packageName, aab, log = console.log, ...plan }) => {
+  const planned = planRelease(plan);
   const { token, account } = await playToken(serviceAccount);
   log(`· authenticated as ${account}`);
 
-  const edit = await call(token, 'POST', `/applications/${packageName}/edits`);
-  log(`· edit ${edit.id}`);
+  return withEdit({ token, packageName, log }, async (editId) => {
+    const uploaded = await call(token, 'POST', `/applications/${packageName}/edits/${editId}/bundles?uploadType=media`, {
+      body: aab,
+      contentType: 'application/octet-stream',
+      base: UPLOAD,
+    });
+    log(`· uploaded versionCode ${uploaded.versionCode} (sha1 ${uploaded.sha1?.slice(0, 12) ?? '?'}…)`);
+    return assignTracks({ token, packageName, editId, plan: planned, versionCode: uploaded.versionCode, log });
+  });
+};
 
-  let committed = false;
-  try {
-    const status = draft ? 'draft' : userFraction ? 'inProgress' : 'completed';
-    const release = {
-      name: releaseName ?? String(versionCode),
-      versionCodes: [String(versionCode)],
-      status,
-      ...(userFraction && !draft ? { userFraction: Number(userFraction) } : {}),
-      ...(notes?.trim() ? { releaseNotes: [{ language: locale, text: notes.trim().slice(0, 500) }] } : {}),
-    };
-    await call(token, 'PUT', `/applications/${packageName}/edits/${edit.id}/tracks/${track}`, { body: { track, releases: [release] } });
-    log(`· existing versionCode ${versionCode} → track ${track} (${status})`);
+/**
+ * Roll an ALREADY-uploaded bundle onto tracks without re-uploading its version code: the
+ * recovery path after an upload landed on the wrong track, and the cheap way to line a
+ * lagging track up with the build the others already serve.
+ */
+export const promoteBundle = async ({ serviceAccount, packageName, versionCode, log = console.log, ...plan }) => {
+  if (!/^\d+$/.test(String(versionCode))) throw new Error(`versionCode must be a positive integer, got "${versionCode}"`);
+  const planned = planRelease(plan);
+  const { token, account } = await playToken(serviceAccount);
+  log(`· authenticated as ${account}`);
 
-    await call(token, 'POST', `/applications/${packageName}/edits/${edit.id}:commit`);
-    committed = true;
-    return { ok: true, versionCode: String(versionCode), track, status, editId: edit.id };
-  } finally {
-    if (!committed) {
-      await call(token, 'DELETE', `/applications/${packageName}/edits/${edit.id}`).catch(() => {});
-      log('· edit rolled back (nothing was published)');
-    }
-  }
+  return withEdit({ token, packageName, log }, async (editId) => {
+    log(`· reusing versionCode ${versionCode}`);
+    return assignTracks({ token, packageName, editId, plan: planned, versionCode, log });
+  });
 };
 
 /** Read back what each track currently serves — the post-release proof, and a dry-run probe. */

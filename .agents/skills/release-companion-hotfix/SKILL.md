@@ -10,7 +10,8 @@ compatibility: agents
 
 Ships `apps/vis-companion` to both public beta channels **without touching
 `VIS_VERSION`**: iOS → TestFlight (plus the public-link group after Beta App
-Review), Android → Play track `beta` (that IS "open testing").
+Review), Android → the Play tester tracks `internal`, `alpha` and `beta` in one
+edit (`beta` IS "open testing"); one build, every channel, nothing to promote.
 
 Use `release-vis` instead when the CLI/native/gateway changed, or when the
 marketing version must move. Marketing version bumps are that skill's job, never
@@ -81,7 +82,7 @@ which `release-vis` owns.
 6L. **Release**, one leg at a time so a failure names its platform:
    ```bash
    npm run release:ios:store          # web → cap sync → signed archive → .ipa → TestFlight
-   npm run release:android:store      # web → cap sync → signed .aab → Play beta (open testing)
+   npm run release:android:store      # web → cap sync → signed .aab → Play internal+alpha+beta
    ```
    Add `-- --public` to the iOS leg only when the build should go to the public
    TestFlight link (beta review). Report the build number each leg uploaded and the

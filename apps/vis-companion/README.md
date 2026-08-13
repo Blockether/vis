@@ -97,7 +97,7 @@ The low-level one-store commands are only for CI and recovery:
 
 ```sh
 npm run release:ios:store -- --no-upload
-npm run release:android:store -- --track beta --no-upload
+npm run release:android:store -- --no-upload
 ```
 
 Versioning has **no hand-edited app state**. `scripts/version.mjs` mirrors `VIS_VERSION` into `package.json` and `package-lock.json`; the store scripts pass both numbers as native build settings:
@@ -164,12 +164,21 @@ uses it.
 ## Release to Google Play (Android)
 
 ```sh
-npm run release:android:store                        # signed .aab → internal track
-npm run release:android:store -- --track beta        # OPEN testing — the public one
-npm run release:android:store -- --no-upload         # stop at the signed .aab
-npm run release:android:store -- --rollout 0.1       # staged 10%
-npm run release:android:store -- --tracks            # what each track serves today
+npm run release:android:store                             # signed .aab → internal, alpha AND beta
+npm run release:android:store -- --track internal         # one channel only
+npm run release:android:store -- --track beta,production  # any subset, comma-separated
+npm run release:android:store -- --no-upload              # stop at the signed .aab
+npm run release:android:store -- --track beta --rollout 0.1          # staged 10%, one track
+npm run release:android:store -- --reuse-existing --build 4090 --track alpha  # no rebuild
+npm run release:android:store -- --tracks                 # what each track serves today
 ```
+
+**One build, every tester channel.** `--track` takes a list and defaults to
+`internal,alpha,beta`, all written in ONE transactional Play edit: either every
+track gets the new build or none does, so no channel is left a version behind
+and nothing has to be promoted afterwards. `production` is never implied — name
+it and it ships. A staged `--rollout` is per-track by definition, so it requires
+exactly one `--track`; both refusals happen before the build, not after it.
 
 Play's equivalent of a public TestFlight link is the **`beta` (Open testing)**
 track: anyone with the URL joins, no invite and no tester list. `internal` is
@@ -233,7 +242,7 @@ npm run release:mobile
 
 That creates an immutable tag such as `companion-v1.0.2-build.2874` for current
 `origin/main`. The tag push runs `.github/workflows/mobile-release.yml`, ships iOS
-to public TestFlight and Android to the `beta` track, keeps marketing version
+to public TestFlight and Android to the internal, alpha and beta tracks, keeps marketing version
 `1.0.2`, and gets the same unique store build number from `git rev-list --count HEAD`. A manual **Run workflow**
 can recover one platform. The workflow calls the direct `release:ios` /
 `release:android` scripts with repository secrets, so local and CI build logic

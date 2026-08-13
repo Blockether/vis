@@ -5,7 +5,8 @@ name: Mobile release
 # app-only rebuilds arrive through immutable `companion-vX.Y.Z-build.N` tags. Both
 # paths must match the repo-root VIS_VERSION exactly.
 #   iOS      → TestFlight, and (with `public`) an external PUBLIC-LINK group after Beta App Review
-#   Android  → Google Play; track `beta` IS the public "Open testing" channel
+#   Android  → Google Play; every tester track (internal, alpha, beta) in one edit —
+#              `beta` IS the public "Open testing" channel
 #
 # Store build logic stays in scripts/{ios-release,android-release}.mjs. Public
 # npm release commands only orchestrate the regular/companion tag contract;
@@ -36,7 +37,7 @@ on:
         default: both
       track:
         type: string
-        default: beta
+        default: internal,alpha,beta
       public:
         type: boolean
         default: true
@@ -48,10 +49,10 @@ on:
         options: [both, ios, android]
         default: both
       track:
-        description: "Play track (beta = public open testing)"
+        description: "Play tracks, comma-separated (beta = public open testing)"
         type: choice
-        options: [internal, alpha, beta, production]
-        default: internal
+        options: ['internal,alpha,beta', internal, alpha, beta, production]
+        default: internal,alpha,beta
       public:
         description: "iOS: also submit for Beta App Review and link the public TestFlight group"
         type: boolean
@@ -266,7 +267,7 @@ jobs:
           VIS_ANDROID_KEY_ALIAS: ${{ secrets.VIS_ANDROID_KEY_ALIAS }}
           VIS_ANDROID_KEY_PASSWORD: ${{ secrets.VIS_ANDROID_KEY_PASSWORD }}
           VIS_ANDROID_GOOGLE_SERVICES: ${{ secrets.VIS_ANDROID_GOOGLE_SERVICES }}
-        run: npm run release:android:store -- --track ${{ inputs.track || 'beta' }}
+        run: npm run release:android:store -- --track ${{ inputs.track || 'internal,alpha,beta' }}
 
       - name: No Play credentials
         if: steps.creds.outputs.ok != 'true'

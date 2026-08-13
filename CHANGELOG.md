@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   back.
 
 ### Changed
+- One Android release lands on EVERY Play tester track. `release:android:store` wrote a single
+  `--track`, so the channels drifted apart — internal served 0.1.21 (2861) while beta already
+  served 0.1.35 (4075), and lining them up again was a second, manual promote afterwards.
+  `--track` now takes a LIST (comma-separated, or the flag repeated) and defaults to
+  `internal,alpha,beta`, all assigned inside ONE transactional Play edit: either every track gets
+  the build or none does, so no channel can be left a version behind. `production` is never
+  implied, and a staged `--rollout` — which Play defines per track — refuses more than one track
+  BEFORE the build rather than after a signed .aab.
 - `run_tests` selects by `paths` and nothing else, in every language. The `ns` / `namespace` /
   `namespaces` selector is gone: name a test file, a directory, or the SOURCE file whose `*-test`
   namespace should run, and the clojure pack does that translation itself (a `*_test.clj` file is
