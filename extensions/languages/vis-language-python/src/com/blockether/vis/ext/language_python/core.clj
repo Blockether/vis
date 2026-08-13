@@ -172,7 +172,7 @@
 (def ^:private output-char-cap
   "Chars of the pytest transcript carried back in `output`. A long run prints
    megabytes; what the cut drops is recoverable, because every fault also comes
-   back structured in `failures` / `errors`."
+   back structured in `failures`."
   8000)
 
 (defn- clamp-output
@@ -226,10 +226,12 @@
 
 (defn- junit-fault
   "One `<testcase>`'s `<failure>` / `<error>` child as the surface contract's
-   `{ns test message file line}`. `file` is resolved against the run's `cwd`
-   when it lands there (pytest writes it relative to its own rootdir), and
-   pytest's 0-based `line` becomes the contract's 1-based one."
-  [^String dir case-attrs fault]
+   `{ns test type message file line}`. `fault-type` is the contract's `\"fail\"`
+   (a `<failure>`: an assertion came back false) or `\"error\"` (an `<error>`:
+   the test threw), so ONE `failures` list carries both. `file` is resolved
+   against the run's `cwd` when it lands there (pytest writes it relative to its
+   own rootdir), and pytest's 0-based `line` becomes the contract's 1-based one."
+  [^String dir case-attrs fault ^String fault-type]
   (let
     [rel
      (str (or (:file case-attrs) ""))
@@ -252,6 +254,7 @@
 
     (cond->
       {"test" (str (:name case-attrs))
+       "type" fault-type
        "message" (fault-headline (if (seq attr-message) attr-message (apply str (:content fault))))}
       (seq ns-name)
       (assoc "ns" ns-name)
@@ -263,7 +266,8 @@
       (assoc "line" (inc (long line))))))
 
 (defn- junit-report
-  "pytest's `--junitxml` report as `{:failures [...] :errors [...] :counts {...}}`,
+  "pytest's `--junitxml` report as `{:failures [...] :counts {...}}` — one fault
+   list, each fault typed `\"fail\"` (a `<failure>`) or `\"error\"` (an `<error>`) —
    or nil when no readable report was written (a crash before pytest got there).
 
    Issue #136: pytest's summary line carries COUNTS and no node ids, so the
@@ -294,7 +298,7 @@
            c)
 
          faults
-         (fn [tag]
+         (fn [tag fault-type]
            (vec (for
                   [c
                    cases
@@ -304,7 +308,7 @@
 
                    :when (= tag (:tag f))]
 
-                  (junit-fault dir (:attrs c) f))))
+                  (junit-fault dir (:attrs c) f fault-type))))
 
          attr-sum
          (fn ^long [k]
@@ -327,8 +331,7 @@
          skipped
          (long (attr-sum :skipped))]
 
-        {:failures (faults :failure)
-         :errors (faults :error)
+        {:failures (into (faults :failure "fail") (faults :error "error"))
          :counts {"passed" (max 0 (- tests failed errored skipped))
                   "failed" failed
                   "errored" errored
@@ -338,9 +341,11 @@
 
 (defn- graalpy-faults
   "The hermetic backend's per-test records as surface-contract faults — one map
-   per test whose `:outcome` is in `outcomes`, carrying the node id, its file and
-   the assertion headline. Same reason as the project backend (issue #136):
-   counts alone name nothing the reader can open."
+   per test whose `:outcome` is in `outcomes`, carrying the node id, its file,
+   the assertion headline and its `\"type\"` (`:errored` -> `\"error\"`, anything
+   else -> `\"fail\"`), so ONE `failures` list carries both kinds. Same reason as
+   the project backend (issue #136): counts alone name nothing the reader can
+   open."
   [tests outcomes]
   (vec (for
          [{:keys [nodeid outcome message file]}
@@ -350,6 +355,7 @@
 
          (cond->
            {"test" (or (second (str/split (str nodeid) #"::" 2)) (str nodeid))
+            "type" (if (= :errored outcome) "error" "fail")
             "message" (fault-headline message)}
            (seq (str file))
            (assoc "file" (str file))))))
@@ -409,8 +415,7 @@
        "failed" (or (:failed res) 0)
        "errored" (or (:errored res) 0)
        "skipped" (or (:skipped res) 0)
-       "failures" (graalpy-faults (:tests res) #{:failed})
-       "errors" (graalpy-faults (:tests res) #{:errored})
+       "failures" (graalpy-faults (:tests res) #{:failed :errored})
        "output" (ptr/render-test-report res)}
       (:error res)
       (assoc "error" (:error res))
@@ -533,10 +538,7 @@
                      "output" (clamp-output s output-char-cap)}
                     counts)
              (seq (:failures report))
-             (assoc "failures" (:failures report))
-
-             (seq (:errors report))
-             (assoc "errors" (:errors report))))
+             (assoc "failures" (:failures report))))
          (finally (.delete junit)))))
 
 (defn- select-runner
@@ -577,7 +579,8 @@
        (the argv pinned as `python.interpreter`, else `uv`/`poetry`/`.venv`/
        `python3` `-m pytest <paths>`) so installed test dependencies are visible.
    BOTH backends name their faults: every failing/erroring test comes back in
-   `failures` / `errors` as `{ns test message file line}` (the project backend
+   ONE `failures` list as `{ns test type message file line}`, `type` telling a
+   thrown `\"error\"` from a false-assertion `\"fail\"` (the project backend
    reads pytest's own `--junitxml` report), and `output` carries the transcript
    capped in the middle behind a marker that says how much it dropped.
    `python.runner` in merged config chooses the DEFAULT backend; an explicit

@@ -112,8 +112,7 @@
               "fail" 0
               "selected" 0
               "skipped" (count all)
-              "failures" []
-              "errors" []}))
+              "failures" []}))
 
          all-ct
          (mapcat (fn [n]
@@ -206,10 +205,7 @@
                     "fail" (+ (:fail c) (:error c))
                     "selected" (count selected)
                     "skipped" skipped
-                    "failures" fs
-                    "errors" (vec (filter (fn [f]
-                                            (= "error" (get f "type")))
-                                          fs))})))
+                    "failures" fs})))
              (or
                (only-miss "lazytest" all-lt)
                (let
@@ -297,11 +293,7 @@
                   "fail" (count fails)
                   "selected" (count selected)
                   "skipped" skipped
-                  "failures" (mapv ->fail fails)
-                  "errors" (mapv ->fail
-                                 (filter (fn [x]
-                                           (= :error (:type x)))
-                                         results))}))))]
+                  "failures" (mapv ->fail fails)}))))]
 
         (assoc result "output" (clojure.core/str out-writer))))))
 
@@ -409,10 +401,10 @@
       "line" (when (nat-int? line) line))))
 
 (defn- normalize-faults
-  "Make every fault's location in `parsed` (both \"failures\" and \"errors\") honest:
-   an unresolvable location is dropped (`locate-fault`) and a real absolute path is
-   rewritten relative to workspace `root`. Idempotent — an already-relative path
-   and an already-dropped location are left as-is."
+  "Make every fault's location in `parsed`'s \"failures\" honest: an unresolvable
+   location is dropped (`locate-fault`) and a real absolute path is rewritten
+   relative to workspace `root`. Idempotent — an already-relative path and an
+   already-dropped location are left as-is."
   [root parsed]
   (let
     [root-file
@@ -421,10 +413,7 @@
      clean
      (comp (partial rel-fault-file root-file) locate-fault)]
 
-    (reduce (fn [m k]
-              (if (seq (get m k)) (update m k (partial mapv clean)) m))
-            parsed
-            ["failures" "errors"])))
+    (if (seq (get parsed "failures")) (update parsed "failures" (partial mapv clean)) parsed)))
 
 (defn- failures->text
   "Concise, framework-neutral digest of the structured failure/error maps a
@@ -463,32 +452,33 @@
        (str/join "\n")))
 
 (defn group-faults-by-cwd
-  "Regroup the flat `failures` / `errors` vectors into the SAME directory-nested
-   `by-cwd` shape lint and format expose, writing each file's directory ONCE:
-   `{<dir> {<basename> {\"failures\" [...] \"errors\" [...]}}}`.
+  "Regroup the flat `failures` vector into the SAME directory-nested `by-cwd`
+   shape lint and format expose, writing each file's directory ONCE:
+   `{<dir> {<basename> {\"failures\" [...]}}}`.
    `<dir>` is the failing file's parent (`\".\"` when it has none, e.g. a bare JVM
    frame like `Numbers.java` or a missing file) and the inner key is the
    basename, so the long path prefix isn't repeated per file — the same
    character saving `lint/group-by-cwd` gives lint. A fault with no usable file
-   lands under `\".\"`/`\"<unknown>\"`, and a kind with no faults is absent."
-  [failures errors]
-  (let
-    [entries (concat (map (fn [f]
-                            ["failures" f])
-                          failures)
-                     (map (fn [e]
-                            ["errors" e])
-                          errors))]
-    (reduce (fn [m [kind fault]]
-              (let
-                [raw (get fault "file")
-                 file (when-not (str/blank? (str raw)) (str raw))
-                 dir (if file (or (.getParent (java.io.File. ^String file)) ".") ".")
-                 base (if file (.getName (java.io.File. ^String file)) "<unknown>")]
+   lands under `\".\"`/`\"<unknown>\"`. Erroring tests are not grouped apart: each
+   fault carries its own `\"type\"`."
+  [failures]
+  (reduce (fn [m fault]
+            (let
+              [raw
+               (get fault "file")
 
-                (update-in m [dir base kind] (fnil conj []) fault)))
-            {}
-            entries)))
+               file
+               (when-not (str/blank? (str raw)) (str raw))
+
+               dir
+               (if file (or (.getParent (java.io.File. ^String file)) ".") ".")
+
+               base
+               (if file (.getName (java.io.File. ^String file)) "<unknown>")]
+
+              (update-in m [dir base "failures"] (fnil conj []) fault)))
+          {}
+          failures))
 
 (defn- compose-repl-output
   "Final `output` for a repl-mode result: the tests' OWN captured stdout (ANSI-
@@ -1099,16 +1089,8 @@
         ;; lint/format expose, so a 30-failure run writes each path prefix ONCE.
         ;; Only present when there's something to group.
         result''
-        (let
-          [failures
-           (get result' "failures")
-
-           errors
-           (get result' "errors")]
-
-          (if (or (seq failures) (seq errors))
-            (assoc result' "by-cwd" (group-faults-by-cwd failures errors))
-            result'))]
+        (let [failures (get result' "failures")]
+          (if (seq failures) (assoc result' "by-cwd" (group-faults-by-cwd failures)) result'))]
 
        (extension/success {:result (surface/check :test-fn
                                                   (assoc result'' "language" "clojure"))})))))

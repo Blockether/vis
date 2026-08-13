@@ -345,10 +345,13 @@
         (let
           [r (junit-report (.getPath root) (io/file root "report.xml"))
            f (first (:failures r))
-           e (first (:errors r))]
+           e (second (:failures r))]
 
-          (expect (= 1 (count (:failures r))))
-          (expect (= 1 (count (:errors r))))
+          ;; ONE fault list: the `<failure>` and the `<error>` both ride it,
+          ;; each saying which it is in "type".
+          (expect (= 2 (count (:failures r))))
+          (expect (= "fail" (get f "type")))
+          (expect (= "error" (get e "type")))
           (expect (= "test_bad" (get f "test")))
           (expect (= "tests.test_x" (get f "ns")))
           (expect (= "assert 1 == 2" (get f "message")))
@@ -381,7 +384,8 @@
                 f (first (get res "failures"))]
 
                (expect (= 1 (count (get res "failures"))))
-               (expect (= [] (get res "errors")))
+               (expect (= "fail" (get f "type")))
+               (expect (nil? (get res "errors")))
                (expect (str/includes? (str (get f "test")) "test_bad"))
                (expect (str/includes? (str (get f "file")) "test_sample.py"))
                (expect (seq (str (get f "message")))))

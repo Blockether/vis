@@ -37,8 +37,10 @@
      :fail      failing + erroring count
      :selected  count chosen by the selectors (before skips)
      :skipped   count filtered out by :exclude / source :skip
-     :failures  [{:ns :test :message :file :line} ...]
-     :errors    the erroring-test subset of :failures
+     :failures  [{:ns :test :type :message :file :line} ...] - EVERY fault, in
+                ONE list; :type is \"fail\" (an assertion came back false) or
+                \"error\" (the test threw), so nothing is restated in a second
+                parallel collection
      :output    captured run log (framework report + error/exception traces)"
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]))
@@ -80,7 +82,10 @@
 
 (s/def ::line (s/nilable int?))
 
-(s/def ::failure (s/keys :opt-un [::ns ::test ::message ::file ::line]))
+;; WHY a test is in :failures - an assertion came back false, or it threw.
+(s/def ::type #{"fail" "error"})
+
+(s/def ::failure (s/keys :opt-un [::ns ::test ::type ::message ::file ::line]))
 
 (s/def ::total nat-int?)
 
@@ -94,17 +99,15 @@
 
 (s/def ::failures (s/coll-of ::failure))
 
-(s/def ::errors (s/coll-of ::failure))
-
 (s/def ::output string?)
 
 ;; The uniform result map every language pack's runner returns. :output is the
 ;; captured run log (the framework's own printed report plus any error /
-;; exception stacktraces written to *out* / *err*); :errors is the erroring-test
-;; subset of :failures.
+;; exception stacktraces written to *out* / *err*); :failures is the ONE fault
+;; list, each fault carrying its :type.
 (s/def ::result
   (s/keys :opt-un [::language ::mode ::framework ::tool ::ns ::total ::pass ::fail ::selected
-                   ::skipped ::failures ::errors ::output]))
+                   ::skipped ::failures ::output]))
 
 ;; =============================================================================
 ;; Key vectors DERIVED from the specs (spec is the single source of truth)

@@ -23,7 +23,7 @@
              (describe "result-keys - derived from the ::result spec"
                        (it "lists every uniform result key in order"
                            (expect (= [:language :mode :framework :tool :ns :total :pass :fail
-                                       :selected :skipped :failures :errors :output]
+                                       :selected :skipped :failures :output]
                                       contract/result-keys)))
                        (it "stays in sync with the ::result spec :opt-un keys"
                            (let [opts (apply hash-map (rest (s/form ::contract/result)))]
@@ -61,23 +61,27 @@
                            :selected 6
                            :skipped 0
                            :failures []
-                           :errors []
                            :output "Ran 32 tests."})))
     (it "validates a failing result with a failure entry"
-        (expect (s/valid? ::contract/result
-                          {:language "clojure"
-                           :mode "repl"
-                           :framework "clojure.test"
-                           :total 3
-                           :pass 2
-                           :fail 1
-                           :selected 3
-                           :skipped 0
-                           :failures [{:ns "x" :test "adds" :message "boom" :file "x.clj" :line 12}]
-                           :errors []})))
+        (expect (s/valid?
+                  ::contract/result
+                  {:language "clojure"
+                   :mode "repl"
+                   :framework "clojure.test"
+                   :total 3
+                   :pass 2
+                   :fail 1
+                   :selected 3
+                   :skipped 0
+                   :failures
+                   [{:ns "x" :test "adds" :type "fail" :message "boom" :file "x.clj" :line 12}
+                    {:ns "x" :test "boom" :type "error" :message "threw"}]})))
     (it "validates a cli result (no selectors apply)"
         (expect (s/valid? ::contract/result
                           {:language "clojure" :mode "cli" :tool "clj" :ns "my.app.core-test"})))
+    (it "rejects a fault whose :type is outside the closed fail/error vocabulary"
+        (expect (not (s/valid? ::contract/result
+                               {:failures [{:ns "x" :test "adds" :type "exploded"}]}))))
     (it "rejects an unknown :mode value"
         (expect (not (s/valid? ::contract/result {:mode "weird"}))))
     (it "rejects a negative count" (expect (not (s/valid? ::contract/result {:total -1}))))))

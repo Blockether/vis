@@ -125,48 +125,49 @@
 
 (defdescribe
   group-faults-by-cwd-test
-  "`group-faults-by-cwd` folds the flat failures/errors vectors into the same
+  "`group-faults-by-cwd` folds the ONE flat failures vector into the same
    directory-nested `by-cwd` shape lint and format expose — the file's dir written
-   once, basename inner, failures/errors kinds separated, edge files handled."
+   once, basename inner, edge files handled. An erroring test is not split into a
+   parallel bucket: it rides `failures` carrying `\"type\" \"error\"`."
   (it "nests faults by directory then basename, writing each dir prefix once"
       (let
         [f1
-         {"ns" "a.core" "test" "adds" "file" "src/a/core.clj" "line" 12}
+         {"ns" "a.core" "test" "adds" "type" "fail" "file" "src/a/core.clj" "line" 12}
 
          f2
-         {"ns" "a.core" "test" "subs" "file" "src/a/core.clj" "line" 20}
+         {"ns" "a.core" "test" "subs" "type" "fail" "file" "src/a/core.clj" "line" 20}
 
          f3
-         {"ns" "a.util" "test" "trim" "file" "src/a/util.clj" "line" 3}
+         {"ns" "a.util" "test" "trim" "type" "fail" "file" "src/a/util.clj" "line" 3}
 
          e1
-         {"ns" "a.core" "test" "boom" "file" "src/a/core.clj" "line" 99}
+         {"ns" "a.core" "test" "boom" "type" "error" "file" "src/a/core.clj" "line" 99}
 
          grouped
-         (tr/group-faults-by-cwd [f1 f2 f3] [e1])]
+         (tr/group-faults-by-cwd [f1 f2 f3 e1])]
 
         (expect (= #{"src/a"} (set (keys grouped))))
         (expect (= #{"core.clj" "util.clj"} (set (keys (get grouped "src/a")))))
-        (expect (= [f1 f2] (get-in grouped ["src/a" "core.clj" "failures"])))
-        (expect (= [e1] (get-in grouped ["src/a" "core.clj" "errors"])))
+        (expect (= [f1 f2 e1] (get-in grouped ["src/a" "core.clj" "failures"])))
         (expect (= [f3] (get-in grouped ["src/a" "util.clj" "failures"])))
-        (expect (nil? (get-in grouped ["src/a" "util.clj" "errors"])))))
+        ;; ONE fault kind per file — the erroring test is typed, not re-listed
+        (expect (= #{"failures"} (set (keys (get-in grouped ["src/a" "core.clj"])))))))
   (it "buckets a bare JVM frame (no parent dir) under \".\" by its basename"
       (let
         [e
-         {"ns" "a.core" "file" "Numbers.java" "line" 7}
+         {"ns" "a.core" "type" "error" "file" "Numbers.java" "line" 7}
 
          grouped
-         (tr/group-faults-by-cwd [] [e])]
+         (tr/group-faults-by-cwd [e])]
 
-        (expect (= [e] (get-in grouped ["." "Numbers.java" "errors"])))))
+        (expect (= [e] (get-in grouped ["." "Numbers.java" "failures"])))))
   (it "buckets a fileless fault under \".\"/\"<unknown>\""
       (let
         [f
          {"ns" "a.core" "test" "nofile"}
 
          grouped
-         (tr/group-faults-by-cwd [f] [])]
+         (tr/group-faults-by-cwd [f])]
 
         (expect (= [f] (get-in grouped ["." "<unknown>" "failures"])))))
   (it "treats a blank file string as fileless"
@@ -175,11 +176,11 @@
          {"ns" "a.core" "file" "   "}
 
          grouped
-         (tr/group-faults-by-cwd [f] [])]
+         (tr/group-faults-by-cwd [f])]
 
         (expect (= [f] (get-in grouped ["." "<unknown>" "failures"])))))
   (it "returns an empty map when there is nothing to group"
-      (expect (= {} (tr/group-faults-by-cwd [] [])))))
+      (expect (= {} (tr/group-faults-by-cwd [])))))
 
 ;; Regression: a lazytest fault whose location came from a stack frame the JVM
 ;; could not place carried `"file" "Unknown"` (or `NO_SOURCE_PATH`) and
@@ -207,21 +208,21 @@
                        "type" "fail"
                        "message" "KeyError: 0"
                        "file" "Unknown"
-                       "line" -1}]
-          "errors" [{"ns" "a.core-test"
-                     "test" "bang"
-                     "type" "error"
-                     "message" "nope"
-                     "file" "NO_SOURCE_PATH"
-                     "line" -2}]}
+                       "line" -1}
+                      {"ns" "a.core-test"
+                       "test" "bang"
+                       "type" "error"
+                       "message" "nope"
+                       "file" "NO_SOURCE_PATH"
+                       "line" -2}]}
 
          normalized
          (normalize-faults "." parsed)]
 
         (expect (nil? (get-in normalized ["failures" 0 "file"])))
         (expect (nil? (get-in normalized ["failures" 0 "line"])))
-        (expect (nil? (get-in normalized ["errors" 0 "file"])))
-        (expect (nil? (get-in normalized ["errors" 0 "line"])))
+        (expect (nil? (get-in normalized ["failures" 1 "file"])))
+        (expect (nil? (get-in normalized ["failures" 1 "line"])))
         ;; the message still identifies the failure — only the fake location goes
         (expect (= "KeyError: 0" (get-in normalized ["failures" 0 "message"])))
         (expect (contract/valid? :test-fn normalized))))

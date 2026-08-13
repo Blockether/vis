@@ -37,7 +37,6 @@
    "pass" 3
    "fail" 0
    "failures" []
-   "errors" []
    "output" ""})
 
 (defdescribe
@@ -92,9 +91,20 @@
                                  "fail" 1
                                  "failures" [{"ns" "my.app.core-test"
                                               "test" "adds-test"
+                                              "type" "fail"
                                               "file" "core_test.clj"
                                               "line" 12
                                               "message" "expected 3"}]))))
+  (it "types a fault as fail or error INSIDE failures — there is no errors list"
+      (expect (contract/valid? :test-fn
+                               (assoc test-ok
+                                 "fail" 1
+                                 "failures" [{"test" "boom" "type" "error" "message" "threw"}])))
+      (expect (not (contract/valid? :test-fn
+                                    (assoc test-ok
+                                      "fail" 1
+                                      "failures" [{"test" "boom" "type" "exploded"}]))))
+      (expect (not (contains? contract/test-result-base "errors"))))
   (it "rejects a test failure whose line is not a non-negative int"
       (expect (not (contract/valid? :test-fn
                                     (assoc test-ok "failures" [{"message" "boom" "line" "12"}]))))
@@ -110,7 +120,7 @@
 
          by-cwd
          {"src/com/blockether/vis" {"core.clj" {"failures" [fail]}}
-          "." {"<unknown>" {"errors" [err]}}}]
+          "." {"<unknown>" {"failures" [err]}}}]
 
         (expect (contract/valid? :test-fn
                                  (assoc test-ok
@@ -133,7 +143,6 @@
              {"mode" "repl" "ns" "my.app.core-test" "port" 7888 "error" "nREPL is down"})]
         (expect (every? #(contains? r %) (keys contract/test-result-base)))
         (expect (= [] (get r "failures")))
-        (expect (= [] (get r "errors")))
         (expect (= {} (get r "by-cwd")))
         (expect (nil? (get r "total")))
         (expect (false? (get r "is_pass")))
@@ -162,8 +171,11 @@
         (expect (= 13 (get r "total"))) ; derived: pass + fail + skipped
         (expect (= "pytest tests" (get r "command")))
         (expect (= "python" (get r "language")))
-        (expect (false? (get r "is_pass")))))
+        (expect (false? (get r "is_pass")))
+        ;; FOLDED, not carried alongside — a completed result names each fact once
+        (expect (every? #(not (contains? r %)) ["passed" "failed" "errored" "ok" "cmd"]))))
   (it "derives is_pass from ok / exit when the pack reports no counts"
+      (expect (nil? (get (contract/complete-test-result "python" {"ok" true}) "ok")))
       (expect (true? (get (contract/complete-test-result "python" {"ok" true}) "is_pass")))
       (expect (false? (get (contract/complete-test-result "python" {"ok" false}) "is_pass")))
       (expect (true? (get (contract/complete-test-result "typescript" {"exit" 0}) "is_pass")))

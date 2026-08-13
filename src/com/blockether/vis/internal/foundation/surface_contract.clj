@@ -93,7 +93,7 @@
 ;; run_tests result
 ;; =============================================================================
 
-;; One failing/erroring test. The map carries \"ns\"/\"test\"/\"message\"/\"file\"/
+;; One failing test. The map carries \"ns\"/\"test\"/\"type\"/\"message\"/\"file\"/
 ;; \"line\". Like `::finding`, every present field is type-pinned (strings for
 ;; ns/test/message/file, a non-negative line), but all stay OPTIONAL so a branch
 ;; that omits a field never rejects — close parity with lint's `::finding`.
@@ -102,13 +102,17 @@
          (opt "message" string?)
          (opt "ns" string?)
          (opt "test" string?)
+         ;; WHY the test is in `failures`: "fail" (an assertion came back false)
+         ;; or "error" (the test threw). ONE fault list, every fault saying which
+         ;; — never a second `errors` collection restating the same maps.
+         (opt "type" #{"fail" "error"})
          (opt "file" string?)
          (opt "line" nat-int?)))
 
 ;; The uniform run_tests result. \"mode\" (repl|cli) and \"language\" are the two
 ;; invariants EVERY branch returns; counts / exit / flags are per-branch optional.
 ;; "by-cwd" is the SAME directory-nested grouping format + lint expose — here
-;; `{<dir> {<basename> {\"failures\" [...] \"errors\" [...]}}}` off each fault's file.
+;; `{<dir> {<basename> {\"failures\" [...]}}}` off each fault's file.
 (s/def ::test-result
   (s/and map?
          #(contains? #{"repl" "cli"} (get % "mode"))
@@ -126,7 +130,6 @@
          (count-key "selected")
          (count-key "skipped")
          (opt "failures" #(s/valid? (s/coll-of ::test-failure) %))
-         (opt "errors" #(s/valid? (s/coll-of ::test-failure) %))
          (opt "by-cwd" #(s/valid? ::by-cwd %))))
 
 ;; =============================================================================
@@ -166,14 +169,16 @@
    "fail" nil
    "selected" nil
    "skipped" nil
-   ;; structured faults + their directory-nested view
+   ;; structured faults + their directory-nested view — ONE list, where an
+   ;; erroring test is a fault with "type" "error"
    "failures" []
-   "errors" []
    "by-cwd" {}
    ;; narrative
    "output" nil
    "note" nil
    "hint" nil
+   ;; Why the RUN could not produce results (nREPL down, timed out, no project,
+   ;; an unparseable report) — never a failing test, which rides `failures`.
    "error" nil
    ;; flags
    "timed_out" false
@@ -198,8 +203,10 @@
    Per-pack key VOCABULARY is folded onto the canonical names, so the caller
    reads `pass`/`fail` whatever ran: pytest/bun `passed`/`failed`/`errored` ->
    `pass`/`fail` (errored counts as failed), an argv `cmd` -> a `command`
-   string. `total`, `is_pass` and `language` are DERIVED only when the pack
-   reported none — nothing a pack said is ever overwritten.
+   string, `ok` -> `is_pass`. The folded alias is then DROPPED: a completed
+   result names each fact ONCE, never `passed` beside `pass`. `total`,
+   `is_pass` and `language` are DERIVED only when the pack reported none —
+   nothing a pack said is ever overwritten.
 
    Non-map results (a pack that returned something else) pass through."
   [language result]
@@ -244,17 +251,17 @@
            (cond (coll? cmd) (str/join " " (map str cmd))
                  (some? cmd) (str cmd)))]
 
-      (assoc (merge test-result-base result)
-        "language" (or (get result "language") language)
-        "pass" pass
-        "fail" fail
-        "total" total
-        "skipped" skipped
-        "is_pass" is-pass
-        "command" command
-        "failures" (->faults (get result "failures"))
-        "errors" (->faults (get result "errors"))
-        "by-cwd" (or (get result "by-cwd") {})))))
+      (-> (merge test-result-base result)
+          (assoc "language" (or (get result "language") language)
+                 "pass" pass
+                 "fail" fail
+                 "total" total
+                 "skipped" skipped
+                 "is_pass" is-pass
+                 "command" command
+                 "failures" (->faults (get result "failures"))
+                 "by-cwd" (or (get result "by-cwd") {}))
+          (dissoc "passed" "failed" "errored" "ok" "cmd")))))
 
 ;; =============================================================================
 ;; Capability -> spec + the check the packs run
