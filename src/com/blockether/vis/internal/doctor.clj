@@ -385,9 +385,8 @@
                                  (str (if (seq known)
                                         (str "Available: " (string/join ", " known) ". ")
                                         "No provider is currently available. ")
-                                      "Pick the pair again in the TUI provider manager, the"
-                                      " gateway or the companion app — hand-written config no"
-                                      " longer selects a provider."))))))
+                                      "Fix default_provider / fallback_provider in"
+                                      " ~/.vis/config.yml — never the committed vis.yml."))))))
 
 (defn- provider-selection-messages
   "Validate that every router root config names (`default_provider` /

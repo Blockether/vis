@@ -1091,74 +1091,71 @@
   []
   (read-yaml-config-map-lenient (state-path)))
 
-(def machine-store-config-keys
-  "The four keys HAND-WRITTEN config does not get to decide: the router's default
-   pair and its fallback pair. They are a REMEMBERED SELECTION, not project
-   policy — `providers/save-selection!` writes them into the machine store
-   `~/.vis/state.yml` every time a person picks a provider and model in the TUI
-   provider manager, the gateway or the companion app, and
-   `providers/default-selection` reads them straight back. A hand-edited copy in
-   any other tier could only fight that store: the committed `<cwd>/vis.yml`
-   merges LAST, so one author's pair silently replaced every teammate's own
-   choice on the first clone (issue #140). Every hand-written tier is therefore
-   loaded with these dropped and one warning naming the file — pick the pair in a
-   picker, which is the only thing that persists it."
-  #{"default_provider" "default_model" "fallback_provider" "fallback_model"})
-
-(defonce ^:private warned-selection-keys
-  ;; `{[path keys] …}` already warned about. `load-config-raw` re-reads on every
-  ;; source edit and every `/reload`, so an unconditional log would repeat the
-  ;; same line all session.
-  (atom #{}))
-
-(defn- read-hand-written-config-map
-  "Read one HAND-WRITTEN YAML tier leniently, minus `machine-store-config-keys`,
-   warning ONCE per file and key set. Never throws: the rest of the file is
-   legitimate configuration and the session must keep loading."
-  [^String path]
-  (when-let [raw (read-yaml-config-map-lenient path)]
-    (when-let
-      [dropped (not-empty (vec (sort (filter #(contains? raw %) machine-store-config-keys))))]
-      (let [seen [path dropped]]
-        (when-not (contains? @warned-selection-keys seen)
-          (swap! warned-selection-keys conj seen)
-          (tel/log! {:level :warn
-                     :id ::selection-keys-ignored
-                     :data {:source path :keys dropped}
-                     :msg (str path
-                               " sets " (str/join ", " dropped)
-                               " — ignored, because the provider and model pair is a remembered"
-                               " selection rather than configuration. Pick it in the TUI provider"
-                               " manager, the gateway or the companion app; Vis stores it in"
-                               " ~/.vis/state.yml")}))))
-    (reduce dissoc raw machine-store-config-keys)))
-
 (defn load-global-yaml-config-raw
   "Load only the hand-written global YAML tier: the first existing of
    `~/.vis/config.yml` / `config.yaml` / `vis.yml` / `vis.yaml`, or nil. This
    hand-written base is deep-merged UNDER the machine-written `~/.vis/state.yml`
    store (`state.yml` wins per key), keeping user-authored config separate from
-   the RMW machine file. Hand-written, so `machine-store-config-keys` are
-   dropped from it — see that Var."
+   the RMW machine file."
   []
-  (some read-hand-written-config-map (global-config-yaml-paths)))
+  (some read-yaml-config-map-lenient (global-config-yaml-paths)))
 
 (defn load-project-config-raw
   "Load the hidden project overlay tier: the first existing of
    `<invocation-cwd>/.vis/config.yml` / `.vis/config.yaml`, or nil. Skipped when
    the overlay dir resolves to the global `~/.vis` store, so running Vis from
-   $HOME never aliases a global file as a project overlay. Hand-written, so
-   `machine-store-config-keys` are dropped from it — see that Var."
+   $HOME never aliases a global file as a project overlay."
   []
   (let [overlay-dir (io/file (System/getProperty "user.dir") ".vis")]
     (when-not (= (.getCanonicalPath overlay-dir) (.getCanonicalPath (io/file (config-dir))))
-      (some read-hand-written-config-map (project-config-yaml-paths)))))
+      (some read-yaml-config-map-lenient (project-config-yaml-paths)))))
+
+(def user-only-config-keys
+  "The four keys the VISIBLE, committed project file may not decide: the router's
+   default pair and its fallback pair. Which provider a developer is entitled to
+   (account, quota, corporate entitlement) and which model they pay for is a
+   PERSON's decision, never a property of the repository — and the project-root
+   tier merges LAST over `~/.vis`, so a committed one silently replaced every
+   teammate's own selection on the first clone. They stay legal in every file a
+   person owns: `~/.vis/config.yml`, the machine-written `~/.vis/state.yml`, and
+   the gitignored `<cwd>/.vis/config.yml` overlay."
+  #{"default_provider" "default_model" "fallback_provider" "fallback_model"})
+
+(defonce ^:private warned-project-root-routing
+  ;; `{[path keys] …}` already warned about. `load-config-raw` re-reads on every
+  ;; source edit and every `/reload`, so an unconditional log would repeat the
+  ;; same line all session.
+  (atom #{}))
+
+(defn- without-user-only-keys!
+  "Strip `user-only-config-keys` from the committed project-root map, warning
+   ONCE per file and key set. Never throws: the rest of the file is legitimate
+   project config and the session must keep loading."
+  [^String path raw]
+  (when-let [dropped (not-empty (vec (sort (filter #(contains? raw %) user-only-config-keys))))]
+    (let [seen [path dropped]]
+      (when-not (contains? @warned-project-root-routing seen)
+        (swap! warned-project-root-routing conj seen)
+        (tel/log! {:level :warn
+                   :id ::project-root-routing-keys-ignored
+                   :data {:source path :keys dropped}
+                   :msg (str path
+                             " sets "
+                             (str/join ", " dropped)
+                             " — ignored, because provider and model selection is per user,"
+                             " not per repository. Set it in ~/.vis/config.yml, or in this"
+                             " project's gitignored .vis/config.yml overlay")}))))
+  (reduce dissoc raw user-only-config-keys))
 
 (defn load-project-root-config-raw
   "Load the visible project-root tier: the first existing of
-   `<invocation-cwd>/vis.yml` / `vis.yaml`, or nil."
+   `<invocation-cwd>/vis.yml` / `vis.yaml`, or nil. This file is COMMITTED, so
+   `user-only-config-keys` are dropped from it with one warning — see that Var."
   []
-  (some read-hand-written-config-map (project-root-yaml-paths)))
+  (some (fn [path]
+          (when-let [raw (read-yaml-config-map-lenient path)]
+            (without-user-only-keys! path raw)))
+        (project-root-yaml-paths)))
 
 (defn- config-source-paths
   "Every YAML path that can contribute to `load-config-raw`, existing or not."
@@ -1214,10 +1211,6 @@
       config
    4. `<cwd>/.vis/config.yml` (or `.yaml`) — hidden project overlay; the NESTED
       overlay wins over the root file (personal beats committed)
-
-   The router's remembered provider/model pair comes from tier 2 ALONE: tiers 1,
-   3 and 4 are hand-written and are loaded with `machine-store-config-keys`
-   dropped and one warning naming the file.
 
    Memoized against the sources' mtime+size (see `config-raw-cache`)."
   []

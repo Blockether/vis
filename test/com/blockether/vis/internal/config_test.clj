@@ -923,12 +923,13 @@
 ;; teammate without that entitlement got a broken session, and validation
 ;; reported no problem at all.
 (defdescribe
-  hand-written-config-cannot-select-provider-test
-  "The provider/model pair is a REMEMBERED SELECTION, not configuration. Only the
-   machine store `~/.vis/state.yml` — what the TUI, the gateway and the companion
-   write when a person picks — carries `config/machine-store-config-keys`; every
-   hand-written tier is loaded with those four keys dropped and one warning naming
-   the file, and everything else in that file is untouched."
+  project-root-user-only-keys-test
+  "Provider and model selection is a per-user entitlement, so the VISIBLE project
+   file cannot decide it: `load-project-root-config-raw` drops
+   `config/user-only-config-keys` from `<cwd>/vis.yml` and warns once, naming the
+   files a PERSON owns. Everything else in that file is untouched, and every
+   file a PERSON owns still sets the pair: the hand-written
+   `~/.vis/config.yml` and the gitignored `.vis/` overlay."
   (it
     "drops the routing keys from a committed vis.yml, keeps the rest, warns once"
     (let
@@ -952,9 +953,10 @@
 
                ;; the project keeps its own config, and only its own
                (expect (= {"system_prompt" "Prefer RST."} raw))
-               (expect (every? #(nil? (get raw %)) config/machine-store-config-keys))
+               (expect (every? #(nil? (get raw %)) config/user-only-config-keys))
                ;; the developer is TOLD, by file and by key, and is not failed
-               (expect (= :com.blockether.vis.internal.config/selection-keys-ignored (:id signal)))
+               (expect (= :com.blockether.vis.internal.config/project-root-routing-keys-ignored
+                          (:id signal)))
                (expect (= (.getPath root-yml)
                           (-> signal
                               :data
@@ -967,39 +969,70 @@
                (expect (nil? (tel/with-signal (config/load-project-root-config-raw))))))
            (finally (rm-rf! dir)))))
   (it
-    "drops them from the hand-written ~/.vis and .vis/ tiers too, and the machine store decides"
+    "a hand-written ~/.vis/config.yml still decides the pair"
     (let
       [dir
-       (io/file
-         (str (System/getProperty "java.io.tmpdir") "/vis-selection-tiers-" (System/nanoTime)))
+       (io/file (str (System/getProperty "java.io.tmpdir") "/vis-global-pair-" (System/nanoTime)))
 
-       home-yml
-       (io/file dir "home-config.yml")
+       global-yml
+       (io/file dir "config.yml")]
+
+      (try (.mkdirs dir)
+           (spit global-yml
+                 (str "default_provider: mine\n"
+                      "default_model: my-model\n"
+                      "fallback_provider: my-backup\n"))
+           (with-redefs
+             [config/global-config-yaml-paths
+              (fn []
+                [(.getPath global-yml)])
+
+              config/state-path
+              (constantly (.getPath (io/file dir "absent-state.yml")))
+
+              config/project-root-yaml-paths
+              (fn []
+                [])
+
+              config/project-config-yaml-paths
+              (fn []
+                [])]
+
+             ;; the personal hand-written tier is read WHOLE — the pair is the
+             ;; selection the TUI, the gateway and the companion remember, and a
+             ;; person may equally write their own
+             (expect (= {"default_provider" "mine"
+                         "default_model" "my-model"
+                         "fallback_provider" "my-backup"}
+                        (config/load-global-yaml-config-raw)))
+             (config/invalidate-config-cache!)
+             (let [merged (config/load-config-raw)]
+               (expect (= "mine" (get merged "default_provider")))
+               (expect (= "my-model" (get merged "default_model")))
+               (expect (= "my-backup" (get merged "fallback_provider")))))
+           (finally (config/invalidate-config-cache!) (rm-rf! dir)))))
+  (it
+    "the gitignored .vis/ overlay still decides the pair"
+    (let
+      [dir
+       (io/file (str (System/getProperty "java.io.tmpdir") "/vis-root-overlay-" (System/nanoTime)))
 
        root-yml
        (io/file dir "vis.yml")
 
        overlay-yml
-       (io/file dir ".vis" "config.yml")
-
-       state-yml
-       (io/file dir "state.yml")]
+       (io/file dir ".vis" "config.yml")]
 
       (try (.mkdirs (io/file dir ".vis"))
-           (spit home-yml (str "default_provider: home-forced\n" "default_model: home-model\n"))
            (spit root-yml (str "default_provider: team-forced\n" "system_prompt: Prefer RST.\n"))
-           (spit overlay-yml
-                 (str "default_provider: overlay-forced\n"
-                      "fallback_provider: overlay-backup\n"
-                      "fallback_model: overlay-backup-model\n"))
-           (spit state-yml (str "default_provider: mine\n" "default_model: my-model\n"))
+           (spit overlay-yml (str "default_provider: mine\n" "default_model: my-model\n"))
            (with-redefs
              [config/global-config-yaml-paths
               (fn []
-                [(.getPath home-yml)])
+                [])
 
               config/state-path
-              (constantly (.getPath state-yml))
+              (constantly (.getPath (io/file dir "absent-state.yml")))
 
               config/project-root-yaml-paths
               (fn []
@@ -1011,15 +1044,7 @@
 
              (config/invalidate-config-cache!)
              (let [merged (config/load-config-raw)]
-               ;; a hand-written file loses the pair whoever wrote it — the personal
-               ;; `~/.vis/config.yml` and the gitignored `.vis/` overlay included
-               (expect (= {} (config/load-global-yaml-config-raw)))
-               (expect (= {} (config/load-project-config-raw)))
-               ;; the machine store — the file a picker writes — still decides it
                (expect (= "mine" (get merged "default_provider")))
                (expect (= "my-model" (get merged "default_model")))
-               (expect (nil? (get merged "fallback_provider")))
-               (expect (nil? (get merged "fallback_model")))
-               ;; and the project file's own, non-routing config is untouched
                (expect (= "Prefer RST." (get merged "system_prompt")))))
            (finally (config/invalidate-config-cache!) (rm-rf! dir))))))

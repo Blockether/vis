@@ -266,16 +266,14 @@
    whatever `~/.vis` says and the binary has no reason to look for a vendor. It
    carries NO `api_key` and no `api_key_command` on purpose — a stub needs no
    credential, and a test that supplied one could no longer tell a configured
-   provider apart from a machine that happens to be signed in somewhere.
-
-   The overlay does NOT name the default pair: no hand-written tier selects a
-   provider any more (`config/machine-store-config-keys`), so the run pins the
-   stub with `--model stub-local/stub-model`, which persists nothing."
+   provider apart from a machine that happens to be signed in somewhere."
   [^File dir port]
   (let [vis-dir (io/file dir ".vis")]
     (.mkdirs vis-dir)
     (spit (io/file vis-dir "config.yml")
-          (str "providers:\n"
+          (str "default_provider: stub-local\n"
+               "default_model: stub-model\n"
+               "providers:\n"
                "  - id: stub-local\n"
                "    base_url: http://127.0.0.1:"
                port
@@ -362,8 +360,7 @@
                       (let
                         [{:keys [exit output]}
                          (run-binary dir
-                                     [(.getAbsolutePath (require-binary)) "--db" ":memory"
-                                      "--model" "stub-local/stub-model" "--raw"
+                                     [(.getAbsolutePath (require-binary)) "--db" ":memory" "--raw"
                                       "Reply with exactly: hello world"]
                                      180)
 
@@ -390,7 +387,7 @@
                         (expect (str/includes? path "/chat/completions")
                                 (str "unexpected provider route: " path))
                         (expect (str/includes? body "\"stub-model\"")
-                                "the request did not carry the model the run pins")
+                                "the request did not carry the model the overlay names")
                         (expect (str/includes? body "Reply with exactly: hello world")
                                 "the request did not carry the prompt")
                         ;; The overlay names no key, so nothing may authenticate on its behalf.
