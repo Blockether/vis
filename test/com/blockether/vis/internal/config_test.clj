@@ -916,3 +916,91 @@
                  (expect (= (paths/log-file) (config/log-path)))
                  (expect (str/ends-with? (paths/unixify (config/log-path))
                                          (str "/.vis/logs/vis-" (paths/process-id) ".log")))))
+
+;; Regression, issue #140: `<cwd>/vis.yml` is the COMMITTED, team-shared project
+;; file, yet it was deep-merged whole and merges over `~/.vis` — so one author's
+;; `default_provider`/`default_model` was silently forced on every clone, a
+;; teammate without that entitlement got a broken session, and validation
+;; reported no problem at all.
+(defdescribe
+  project-root-user-only-keys-test
+  "Provider and model selection is a per-user entitlement, so the VISIBLE project
+   file cannot decide it: `load-project-root-config-raw` drops
+   `config/user-only-config-keys` from `<cwd>/vis.yml` and warns once, naming the
+   files a PERSON owns. Everything else in that file is untouched, and the
+   gitignored `.vis/` overlay still sets the pair."
+  (it
+    "drops the routing keys from a committed vis.yml, keeps the rest, warns once"
+    (let
+      [dir
+       (io/file (str (System/getProperty "java.io.tmpdir") "/vis-root-routing-" (System/nanoTime)))
+
+       root-yml
+       (io/file dir "vis.yml")]
+
+      (try (.mkdirs dir)
+           (spit root-yml
+                 (str "default_provider: team-forced\n"
+                      "default_model: team-model\n" "fallback_provider: team-backup\n"
+                      "fallback_model: team-backup-model\n" "system_prompt: Prefer RST.\n"))
+           (with-redefs
+             [config/project-root-yaml-paths (fn []
+                                               [(.getPath root-yml)])]
+             (let
+               [signal (tel/with-signal (config/load-project-root-config-raw))
+                raw (config/load-project-root-config-raw)]
+
+               ;; the project keeps its own config, and only its own
+               (expect (= {"system_prompt" "Prefer RST."} raw))
+               (expect (every? #(nil? (get raw %)) config/user-only-config-keys))
+               ;; the developer is TOLD, by file and by key, and is not failed
+               (expect (= :com.blockether.vis.internal.config/project-root-routing-keys-ignored
+                          (:id signal)))
+               (expect (= (.getPath root-yml)
+                          (-> signal
+                              :data
+                              :source)))
+               (expect (= ["default_model" "default_provider" "fallback_model" "fallback_provider"]
+                          (-> signal
+                              :data
+                              :keys)))
+               ;; once per file: the per-turn load path must not repeat it
+               (expect (nil? (tel/with-signal (config/load-project-root-config-raw))))))
+           (finally (rm-rf! dir)))))
+  (it
+    "the gitignored .vis/ overlay still decides the pair"
+    (let
+      [dir
+       (io/file (str (System/getProperty "java.io.tmpdir") "/vis-root-overlay-" (System/nanoTime)))
+
+       root-yml
+       (io/file dir "vis.yml")
+
+       overlay-yml
+       (io/file dir ".vis" "config.yml")]
+
+      (try (.mkdirs (io/file dir ".vis"))
+           (spit root-yml (str "default_provider: team-forced\n" "system_prompt: Prefer RST.\n"))
+           (spit overlay-yml (str "default_provider: mine\n" "default_model: my-model\n"))
+           (with-redefs
+             [config/global-config-yaml-paths
+              (fn []
+                [])
+
+              config/state-path
+              (constantly (.getPath (io/file dir "absent-state.yml")))
+
+              config/project-root-yaml-paths
+              (fn []
+                [(.getPath root-yml)])
+
+              config/project-config-yaml-paths
+              (fn []
+                [(.getPath overlay-yml)])]
+
+             (config/invalidate-config-cache!)
+             (let [merged (config/load-config-raw)]
+               (expect (= "mine" (get merged "default_provider")))
+               (expect (= "my-model" (get merged "default_model")))
+               (expect (= "Prefer RST." (get merged "system_prompt")))))
+           (finally (config/invalidate-config-cache!) (rm-rf! dir))))))

@@ -1110,11 +1110,52 @@
     (when-not (= (.getCanonicalPath overlay-dir) (.getCanonicalPath (io/file (config-dir))))
       (some read-yaml-config-map-lenient (project-config-yaml-paths)))))
 
+(def user-only-config-keys
+  "The four keys the VISIBLE, committed project file may not decide: the router's
+   default pair and its fallback pair. Which provider a developer is entitled to
+   (account, quota, corporate entitlement) and which model they pay for is a
+   PERSON's decision, never a property of the repository — and the project-root
+   tier merges LAST over `~/.vis`, so a committed one silently replaced every
+   teammate's own selection on the first clone. They stay legal in every file a
+   person owns: `~/.vis/config.yml`, the machine-written `~/.vis/state.yml`, and
+   the gitignored `<cwd>/.vis/config.yml` overlay."
+  #{"default_provider" "default_model" "fallback_provider" "fallback_model"})
+
+(defonce ^:private warned-project-root-routing
+  ;; `{[path keys] …}` already warned about. `load-config-raw` re-reads on every
+  ;; source edit and every `/reload`, so an unconditional log would repeat the
+  ;; same line all session.
+  (atom #{}))
+
+(defn- without-user-only-keys!
+  "Strip `user-only-config-keys` from the committed project-root map, warning
+   ONCE per file and key set. Never throws: the rest of the file is legitimate
+   project config and the session must keep loading."
+  [^String path raw]
+  (when-let [dropped (not-empty (vec (sort (filter #(contains? raw %) user-only-config-keys))))]
+    (let [seen [path dropped]]
+      (when-not (contains? @warned-project-root-routing seen)
+        (swap! warned-project-root-routing conj seen)
+        (tel/log! {:level :warn
+                   :id ::project-root-routing-keys-ignored
+                   :data {:source path :keys dropped}
+                   :msg (str path
+                             " sets "
+                             (str/join ", " dropped)
+                             " — ignored, because provider and model selection is per user,"
+                             " not per repository. Set it in ~/.vis/config.yml, or in this"
+                             " project's gitignored .vis/config.yml overlay")}))))
+  (reduce dissoc raw user-only-config-keys))
+
 (defn load-project-root-config-raw
   "Load the visible project-root tier: the first existing of
-   `<invocation-cwd>/vis.yml` / `vis.yaml`, or nil."
+   `<invocation-cwd>/vis.yml` / `vis.yaml`, or nil. This file is COMMITTED, so
+   `user-only-config-keys` are dropped from it with one warning — see that Var."
   []
-  (some read-yaml-config-map-lenient (project-root-yaml-paths)))
+  (some (fn [path]
+          (when-let [raw (read-yaml-config-map-lenient path)]
+            (without-user-only-keys! path raw)))
+        (project-root-yaml-paths)))
 
 (defn- config-source-paths
   "Every YAML path that can contribute to `load-config-raw`, existing or not."

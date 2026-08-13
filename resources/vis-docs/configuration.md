@@ -244,7 +244,7 @@ There is one default in the whole config — one provider and one model — not 
   ```
 - Vis does **not** remember a model per provider. Change `default_provider` alone and you get that provider's first model until you set `default_model` too.
 - Choosing a default never reorders `providers:` — order stays yours (above), the pair is just a pointer into it.
-- Both keys are plain config, so a project `vis.yml` can pin a run's provider/model for a repository, and `--model provider/model` (above) overrides both for one run without persisting anything.
+- **The pair is per user, never per repository.** Which provider you are entitled to and which model you pay for is your own decision, so the committed `<project>/vis.yml` may not carry it: that tier is loaded with `default_provider`, `default_model`, `fallback_provider` and `fallback_model` **dropped**, and one warning naming the file. Their homes are `~/.vis/config.yml` (hand-written), `~/.vis/state.yml` (what the TUI, gateway and companion write when you pick a model), and the gitignored `<project>/.vis/config.yml` overlay when a pin really is per-checkout. `--model provider/model` (above) still overrides both for one run without persisting anything.
 
 ### The fallback selection is a SECOND pair
 
@@ -260,6 +260,7 @@ Same shape and the same resolution rules as the default pair: the model is looke
 - **It must be a different provider.** A fallback on the default's own provider is not a fallback at all: the TUI and the companion app both disable the action on the current default's card, the daemon answers `400`, and a config file that tags it anyway is ignored when the router is built.
 - The tagged provider is seated **immediately behind the default** in router priority, so it is the first provider Vis moves to; every other provider keeps its configured order behind the two.
 - The tag lives and dies with its provider: logging that provider out clears the pair, and clearing the fallback from any client drops both keys.
+- Per user, exactly like the default pair: a committed `<project>/vis.yml` cannot tag a fallback — both keys are dropped from that tier with a warning.
 - Unrelated key, easy to confuse: `router.rate_limit.is_fallback_provider` (below) is the *boolean* deciding whether a rate-limit budget exhaustion may move on at all — it does not name a provider.
 
 ### Model capabilities: chat and vision

@@ -385,7 +385,8 @@
                                  (str (if (seq known)
                                         (str "Available: " (string/join ", " known) ". ")
                                         "No provider is currently available. ")
-                                      "Fix default_provider / fallback_provider in vis.yml."))))))
+                                      "Fix default_provider / fallback_provider in"
+                                      " ~/.vis/config.yml — never the committed vis.yml."))))))
 
 (defn- provider-selection-messages
   "Validate that every router root config names (`default_provider` /

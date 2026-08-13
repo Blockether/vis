@@ -107,6 +107,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   block, file picker) and the TUI Magit surface are unchanged.
 
 ### Fixed
+- A committed `vis.yml` forced one developer's provider and model on every clone. The visible
+  project file merges LAST, over `~/.vis`, so `default_provider`, `default_model`,
+  `fallback_provider` and `fallback_model` written there silently replaced each teammate's own
+  selection — a teammate without that entitlement got a broken session on first run, and
+  validation reported no problem at all. Those four keys are now dropped from
+  `<project>/vis.yml` (and `vis.yaml`) with one warning naming the file and the right home.
+  They still decide routing in every file a person owns: `~/.vis/config.yml`, the
+  machine-written `~/.vis/state.yml`, and the gitignored `<project>/.vis/config.yml` overlay.
 - The native binary crashed the moment the TUI painted. Lanterna's `TTYDeviceControl` builds its
   termios/ioctl `MethodHandle`s in a class initializer that ran in the image BUILDER, where
   `java.lang.foreign` works — so the binary inherited `SUPPORTED = true` and handles with no
