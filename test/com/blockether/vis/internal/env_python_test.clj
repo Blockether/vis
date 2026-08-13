@@ -1015,17 +1015,38 @@
               (when (< (System/currentTimeMillis) end) (when poll? (rt/guest-safepoint!)) (recur))))
           nil))))
 
-(defn- interrupt-lands?
-  "Park a guest thread inside that host spin, then soft-cancel it the documented
-   way. True when `Context.interrupt` landed inside its grace, false on the
-   `TimeoutException` the javadoc raises when it could not."
-  [k poll?]
+(defn- park-ending
+  "Park a guest thread in a HOST wait for a promise nothing ever delivers — the
+   shape of a dialog nobody answers, or any wait whose end is not this thread's to
+   decide — then soft-cancel the context the documented way.
+
+   Answers `[landed? outcome ending]`: whether `Context.interrupt` landed inside
+   its grace, what the eval did, and HOW the park itself ended."
+  [k]
   (let
     [ctx
      (tpc/context k)
 
+     never
+     (promise)
+
+     ending
+     (atom :still-parked)
+
      _
-     (spinning-binding! ctx poll?)
+     (ep/set-python-binding! ctx
+                             'vis_test_park
+                             (reify
+                               ProxyExecutable
+                                 (execute [_ _args]
+                                   (reset! ending
+                                     ;; The deadline is 30s only so a REGRESSION fails instead of
+                                     ;; hanging CI: the cancel arrives at ~2s, so nothing but the
+                                     ;; cancel can be what ends this park.
+                                     (try (deref never 30000 :expired)
+                                          (catch InterruptedException _ :thread-interrupt)
+                                          (catch Throwable _ :polyglot-unwind)))
+                                   nil)))
 
      done
      (promise)]
@@ -1033,10 +1054,39 @@
     (doto (Thread. ^Runnable
                    (fn []
                      (deliver done
-                              (try (.eval ctx "python" "vis_test_spin()")
+                              (try (.eval ctx "python" "vis_test_park()")
                                    :returned
                                    (catch Throwable _ :unwound))))
-                   "guest-safepoint-test")
+                   "host-park-cancel-test")
+      (.setDaemon true)
+      (.start))
+    (Thread/sleep 400)
+    (let
+      [landed (try (.interrupt ctx (java.time.Duration/ofMillis 1500))
+                   true
+                   (catch java.util.concurrent.TimeoutException _ false))]
+      [landed (deref done 5000 :still-parked) @ending])))
+
+(defn- interrupt-lands?
+  "Park a guest thread inside a HOST wait `install!` binds, then soft-cancel it the
+   documented way. True when `Context.interrupt` landed inside its grace, false on
+   the `TimeoutException` the javadoc raises when it could not."
+  [k install! code]
+  (let
+    [ctx
+     (tpc/context k)
+
+     _
+     (install! ctx)
+
+     done
+     (promise)]
+
+    (doto (Thread.
+            ^Runnable
+            (fn []
+              (deliver done (try (.eval ctx "python" code) :returned (catch Throwable _ :unwound))))
+            "guest-safepoint-test")
       (.setDaemon true)
       (.start))
     (Thread/sleep 400)
@@ -1044,18 +1094,35 @@
          true
          (catch java.util.concurrent.TimeoutException _ false))))
 
-(defdescribe guest-safepoint-test
-             ;; Regression (session 7df808ff): a turn cancelled while its block sat in a host
-             ;; wait unwound only the WAITER. Host code that polls no safepoint is exactly what
-             ;; the polyglot javadoc calls "non-interruptible host code": the interrupt timed
-             ;; out on it, and the guest thread was left inside GraalPy to be abandoned, where
-             ;; it dies OWNING the GIL (`PythonContext.ensureGilAfterFailure` takes it
-             ;; uninterruptibly, and a ReentrantLock whose owner is dead is never released).
-             ;; Every later turn of that session then parked in `PythonContext.acquireGil`
-             ;; forever, at `:engine-start`.
-             (it "unwinds a non-blocking host loop that polls, and keeps the context USABLE"
-                 (expect (true? (interrupt-lands? ::polling true)))
+(defdescribe
+  guest-safepoint-test
+  ;; Regression (session 7df808ff): a turn cancelled while its block sat in a host
+  ;; wait unwound only the WAITER. Host code that polls no safepoint is exactly what
+  ;; the polyglot javadoc calls "non-interruptible host code": the interrupt timed
+  ;; out on it, and the guest thread was left inside GraalPy to be abandoned, where
+  ;; it dies OWNING the GIL (`PythonContext.ensureGilAfterFailure` takes it
+  ;; uninterruptibly, and a ReentrantLock whose owner is dead is never released).
+  ;; Every later turn of that session then parked in `PythonContext.acquireGil`
+  ;; forever, at `:engine-start`.
+  (it "unwinds a non-blocking host loop that polls, and keeps the context USABLE"
+      (expect (true? (interrupt-lands? ::polling #(spinning-binding! % true) "vis_test_spin()")))
+      ;; Non-destructive by contract: no rebuilt interpreter, no lost globals.
+      (expect (= 2 (ep/->clj (.eval (tpc/context ::polling) "python" "1 + 1")))))
+  (it "cannot reach that same loop when it polls nothing"
+      (expect (false?
+                (interrupt-lands? ::not-polling #(spinning-binding! % false) "vis_test_spin()")))))
+
+(defdescribe host-park-cancel-test
+             "How a wait waits decides whether a cancel reaches it. Its LENGTH never does."
+             ;; Regression (session 7df808ff): a turn cancelled while its block sat in host
+             ;; code left the guest thread inside GraalPy, where an abandoned thread dies
+             ;; owning the GIL and every later turn of that session parks in
+             ;; `PythonContext.acquireGil` forever. This pins the other half of
+             ;; `guest-safepoint-test`: a park that BLOCKS needs no poll of its own — the
+             ;; polyglot interrupt reaches it through the JDK wait it is blocked in, so a
+             ;; park with no deadline anywhere near it is still cancelled in milliseconds.
+             (it "reaches a park nothing else could ever end, and keeps the context USABLE"
+                 (expect (= [true :unwound :thread-interrupt] (park-ending ::indefinite-park)))
                  ;; Non-destructive by contract: no rebuilt interpreter, no lost globals.
-                 (expect (= 2 (ep/->clj (.eval (tpc/context ::polling) "python" "1 + 1")))))
-             (it "cannot reach that same loop when it polls nothing"
-                 (expect (false? (interrupt-lands? ::not-polling false)))))
+                 (expect (= 2
+                            (ep/->clj (.eval (tpc/context ::indefinite-park) "python" "1 + 1"))))))
