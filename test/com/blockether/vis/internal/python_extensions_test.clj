@@ -1320,7 +1320,7 @@ vis.extension(
 (def ^:private shell-provider-py
   "The ONE shelling-provider fixture. Both process-boundary cases load it — the
    session jail and the user's `shell` toggle — so the two cannot drift apart."
-  "import vis\ndef detect():\n    result = vis.shell({'command': 'printf regular-shell'}).wait(20)\n    return {'token': result['stdout'], 'source': 'shell'}\nvis.extension(name='shell-provider', description='shell provider', providers=[vis.provider(id='shell-provider', label='Shell provider', detect_fn=detect)])")
+  "import vis\ndef detect():\n    handle = vis.shell({'command': 'printf regular-shell'})\n    result = handle.wait(30)\n    for _ in range(3):\n        if not result.get('timed_out'):\n            break\n        result = handle.wait(30)\n    return {'token': result['stdout'], 'source': 'shell'}\nvis.extension(name='shell-provider', description='shell provider', providers=[vis.provider(id='shell-provider', label='Shell provider', detect_fn=detect)])")
 
 (defdescribe
   python-extension-process-boundary-test

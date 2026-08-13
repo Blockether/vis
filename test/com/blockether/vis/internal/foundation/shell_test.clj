@@ -118,6 +118,25 @@
   ([env id] (wait* env id 30))
   ([env id secs] (:result (shell-wait* env id {:seconds secs}))))
 
+(defn- wait-exited*
+  "Everything a background run printed, waiting for the CHILD instead of for a
+   clock. One bounded wait reports at its OWN deadline, so on a loaded shared
+   runner it can answer an empty string about a child that has not printed yet —
+   which is how this suite failed on CI while passing everywhere else. Repeats
+   the product's own wait (each reads from offset 0, so the last answer is the
+   whole log) until the run is no longer running, and hands back the status too
+   so a failure says WHY the output is empty."
+  ([env id] (wait-exited* env id 4))
+  ([env id attempts]
+   (loop [n 1]
+     (let
+       [r (wait* env id 30)
+        status (str (get r "status"))]
+
+       (if (or (not= "running" status) (>= n (long attempts)))
+         {:out (str (get r "stdout")) :status status}
+         (recur (inc n)))))))
+
 (defdescribe
   shell-env-injection-test
   (it "uses declarative env injection rather than a before middleware shim"
@@ -195,8 +214,12 @@
                 ;; WAIT for the child rather than poll its log against a clock: the
                 ;; assertion is about the PAGER the pty child was handed, and a loaded
                 ;; shared runner outran every poll budget worth writing.
-                (let [out (str (get (wait* env "pager" 30) "stdout"))]
-                  (expect (str/includes? out "pager=[cat] git=[cat]")))
+                (let [{:keys [out status]} (wait-exited* env "pager")]
+                  ;; Asserted as a MAP so a failure names the run's status next to
+                  ;; the output instead of only reporting `false`.
+                  (expect (= {:pager-handed-over? true :status "exited"}
+                             {:pager-handed-over? (str/includes? out "pager=[cat] git=[cat]")
+                              :status status})))
                 (finally (resources/stop! sid "pager"))))))))
   (it "strips the TWO-BYTE keypad escapes a full-screen tool writes, not only CSI"
       (let
