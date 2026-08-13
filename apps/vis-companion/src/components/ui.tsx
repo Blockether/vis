@@ -728,18 +728,31 @@ export function OptionRow({
 export function ComposerButton({
   label,
   tone = 'quiet',
+  isHolding = false,
   className = '',
   children,
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   /** Icon-only, so the name is not optional. */
   label: string;
-  tone?: 'quiet' | 'send' | 'stop' | 'recording';
+  tone?: 'quiet' | 'send' | 'stop' | 'recording' | 'voice';
+  /**
+   * A press-and-hold is UNDERWAY. The paper rises through the button for as
+   * long as the switch takes, so the gesture reports itself while it happens
+   * instead of only when it lands — the one confirmation available to an app
+   * with no haptics.
+   */
+  isHolding?: boolean;
 }) {
   const face = {
     quiet: 'h-8 w-7 text-dialog-hint hover:bg-hover hover:text-dialog-hint-key disabled:text-muted mouse:h-7 mouse:w-6',
     recording:
       'h-8 w-7 animate-pulse bg-warn-surface text-err disabled:text-muted motion-reduce:animate-none mouse:h-7 mouse:w-6',
+    // The MODE, not an action: the button keeps the strip's box and changes its
+    // paper, so "which microphone am I holding" is answered by the control
+    // itself rather than by a badge stuck to its corner.
+    voice:
+      'h-8 w-7 bg-accent text-accent-foreground hover:bg-accent-2 disabled:bg-button disabled:text-muted mouse:h-7 mouse:w-6',
     send: 'size-8 border border-dialog-edge bg-dialog-title text-ui font-bold text-dialog-title-foreground hover:bg-accent-2 disabled:scale-100 disabled:bg-button disabled:text-dialog-hint mouse:size-7',
     // It stands in the send's slot, which is already the right size: taking the
     // whole of it is how the two never disagree about where the strip ends.
@@ -749,10 +762,16 @@ export function ComposerButton({
     <button
       type="button"
       aria-label={label}
-      className={`grid shrink-0 place-items-center transition-[background-color,color,opacity,transform,translate,scale,rotate] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 active:scale-[0.94] motion-reduce:transition-none ${face} ${className}`}
+      className={`relative grid shrink-0 place-items-center transition-[background-color,color,opacity,transform,translate,scale,rotate] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 active:scale-[0.94] motion-reduce:transition-none ${face} ${className}`}
       {...props}
     >
-      {children}
+      {isHolding && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 origin-bottom scale-y-100 bg-accent/30 transition-transform duration-[450ms] ease-linear starting:scale-y-0 motion-reduce:hidden"
+        />
+      )}
+      <span className="relative grid place-items-center">{children}</span>
     </button>
   );
 }

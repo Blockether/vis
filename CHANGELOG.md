@@ -28,6 +28,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   back.
 
 ### Changed
+- The Companion composer has ONE microphone. Tap it and it acts in the mode you are in; press and
+  hold it for 450ms and the mode flips — dictation writes into the box, voice conversation sends
+  what you said and reads the answer aloud. The disclosure beside it, the two-item mode menu, the
+  rule that welded them and the separate leave button are gone: the mode was always one piece of
+  state, and holding is now both the way in and the way out (the exit runs the full teardown —
+  lease, queued utterance, speech, an in-flight recording and the audio route). Voice conversation
+  wears its own drawn mark and the accent square instead of a `V` badge, the accessible name spells
+  the gesture out in both modes, and a pointer that cannot hold gets the same switch from a
+  right-click or Shift+Enter. Entering the conversation now only ARMS it; the next tap is what
+  starts talking.
 - The Vis JVM heap ceiling is an explicit 5 GiB instead of a share of host RAM. `-XX:MaxRAMPercentage=75.0`
   scaled with the machine — ~27 GiB on a 48 GB host — so a gateway running for hours sat at ~5 GB resident
   with a 3.2 GiB live set and shrank nothing: the tight free ratios beside it only uncommit once the heap

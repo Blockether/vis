@@ -224,6 +224,25 @@ export function MicIcon({ className }: { className?: string }) {
   );
 }
 
+/**
+ * VOICE CONVERSATION — the microphone that answers back. Dictation's mic writes
+ * into the box and stops; this one sends what you said and reads the reply
+ * aloud, so it is the same capsule with the reply coming out of it. Two marks,
+ * because one control now carries two modes and the mode has to be visible
+ * without a word beside it.
+ */
+export function VoiceLoopIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <rect x="8" y="4.8" width="4.6" height="8.6" rx="2.3" />
+      <path d="M6 11.4a4.3 4.3 0 0 0 8.6 0" strokeLinecap="square" />
+      <path d="M10.3 15.7V18.8M8 18.8h4.6" strokeLinecap="square" />
+      <path d="M15.2 10.6a1.9 1.9 0 0 1 0 2.8" />
+      <path d="M17.4 8.8a4 4 0 0 1 0 6.4" />
+    </Icon>
+  );
+}
+
 /** Rename. */
 export function PencilIcon({ className }: { className?: string }) {
   return (

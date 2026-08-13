@@ -7,6 +7,7 @@ import {
   useState,
   type ClipboardEvent as ReactClipboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
   AssistantMessage,
@@ -41,10 +42,10 @@ import {
 import {
   ArrowDownIcon,
   CameraIcon,
-  ChevronIcon,
   ImageIcon,
   MicIcon,
   PlusIcon,
+  VoiceLoopIcon,
 } from "../components/icons";
 import { HumanInputPrompt } from "../components/HumanInputPrompt";
 import { speechOutput } from "../lib/speech";
@@ -1326,10 +1327,13 @@ export function SessionScreen({
   // Native hides two distinct acts behind one composer control, so the plus has
   // to ask which one: the OS gallery sheet never opens a shutter.
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
-  // Dictation and voice conversation share one microphone control. The adjacent
-  // disclosure keeps the alternate mode discoverable without relying on a hidden
-  // long-press gesture (especially on iOS).
-  const [voiceModeMenuOpen, setVoiceModeMenuOpen] = useState(false);
+  // Dictation and voice conversation are ONE control: a tap acts in the current
+  // mode, a press and hold flips it. `voiceModeHolding` paints the hold while it
+  // fills; `voiceModeSwitchedRef` swallows the click that iOS still delivers
+  // when the finger comes off after a long press.
+  const [voiceModeHolding, setVoiceModeHolding] = useState(false);
+  const voiceModeHoldRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const voiceModeSwitchedRef = useRef(false);
   const [pastes, setPastes] = useState<Map<number, ComposerPaste>>(
     () =>
       new Map(
@@ -1632,6 +1636,11 @@ export function SessionScreen({
     speechOutput.stop();
     setVoiceSpeaking(false);
     setPendingVoiceSend(null);
+    if (voiceModeHoldRef.current != null) {
+      clearTimeout(voiceModeHoldRef.current);
+      voiceModeHoldRef.current = null;
+    }
+    setVoiceModeHolding(false);
     setLoading(!fresh);
     setVeiled(!fresh);
     setVisibleTurnCount(INITIAL_VISIBLE_TURNS);
@@ -4720,7 +4729,6 @@ export function SessionScreen({
   }, [pendingVoiceSend, voicePhase]);
 
   const leaveVoiceConversation = async () => {
-    setVoiceModeMenuOpen(false);
     voiceConversationRef.current = false;
     voiceLeaseRef.current = null;
     voiceOwnershipRef.current.leave();
@@ -4737,30 +4745,74 @@ export function SessionScreen({
     await endVoiceAudioSession();
   };
 
-  const toggleVoiceConversation = async () => {
-    setVoiceModeMenuOpen(false);
-    if (
-      !voiceConversation &&
-      (Boolean(prompt.trim()) || attachments.length > 0 || pastes.size > 0)
-    ) {
+  // How long the finger stays down before the mode flips. Long enough that a tap
+  // is never a switch, short enough that the switch is not a wait.
+  const VOICE_MODE_HOLD_MS = 450;
+
+  // Entering the conversation only ARMS it: the audio route opens and the lease
+  // is taken, but nothing records until the next TAP. The menu item this
+  // replaced started recording in the same gesture, which is right for a menu
+  // and wrong for a hold — holding is how you change modes, not how you talk.
+  const enterVoiceConversation = async () => {
+    if (Boolean(prompt.trim()) || attachments.length > 0 || pastes.size > 0) {
       setComposerNotice(
         "Send or clear the current message before starting voice conversation.",
       );
       return;
     }
+    voiceConversationRef.current = true;
+    voiceLeaseRef.current = voiceOwnershipRef.current.enter();
+    setVoiceConversation(true);
+    setComposerNotice(null);
+    await beginVoiceAudioSession();
+  };
+
+  // The one exit, and the one entrance. Leaving is the FULL teardown — lease,
+  // ownership, queued utterance, speech, an in-flight recording and the audio
+  // route — which is exactly what the separate leave button used to do, so the
+  // hold replaces it rather than leaving the route open behind a flag.
+  const switchVoiceMode = async () => {
+    if (voiceConversationRef.current) {
+      await leaveVoiceConversation();
+      setComposerNotice("Dictation · tap the microphone to write into the box");
+      return;
+    }
+    await enterVoiceConversation();
+  };
+
+  const beginVoiceModeHold = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    // A right-click is the pointer's own switch (below); it must not also arm
+    // the hold that a left press arms.
+    if (event.button !== 0) return;
+    voiceModeSwitchedRef.current = false;
+    if (voiceModeHoldRef.current != null) {
+      clearTimeout(voiceModeHoldRef.current);
+    }
+    setVoiceModeHolding(true);
+    voiceModeHoldRef.current = setTimeout(() => {
+      voiceModeHoldRef.current = null;
+      setVoiceModeHolding(false);
+      voiceModeSwitchedRef.current = true;
+      void switchVoiceMode();
+    }, VOICE_MODE_HOLD_MS);
+  };
+
+  // A scroll, a drag off the button or a cancelled pointer is not a switch.
+  const cancelVoiceModeHold = () => {
+    if (voiceModeHoldRef.current != null) {
+      clearTimeout(voiceModeHoldRef.current);
+      voiceModeHoldRef.current = null;
+    }
+    setVoiceModeHolding(false);
+  };
+
+  // A tap while the conversation is armed: stop the answer being read aloud, or
+  // start / finish the utterance.
+  const speakVoiceTurn = async () => {
     if (voiceSpeaking) {
       speechOutput.stop();
       setVoiceSpeaking(false);
       return;
-    }
-    if (!voiceConversation) {
-      voiceConversationRef.current = true;
-      voiceLeaseRef.current = voiceOwnershipRef.current.enter();
-      setVoiceConversation(true);
-      await beginVoiceAudioSession();
-      // Leaving or switching sessions while Android negotiates Bluetooth must
-      // not start a recorder after that voice-conversation lease was revoked.
-      if (!voiceConversationRef.current) return;
     }
     await toggleVoice();
   };
@@ -5399,130 +5451,71 @@ export function SessionScreen({
                 </ComposerButton>
               </div>
 
+              {/* ONE microphone, the way a messenger does it: TAP acts in the mode
+                you are in, PRESS AND HOLD switches the mode. The mode was always a
+                single boolean — the disclosure beside this button was a menu built
+                around it, and the border welding the two read as a divider in the
+                strip. A gesture nobody can see needs the name to say it, so the
+                accessible label carries the act AND the switch, and a pointer that
+                cannot hold gets the same switch from a right-click or Shift+Enter. */}
               {voiceSupported && (
-                <div
-                  className="relative flex shrink-0 items-stretch"
+                <ComposerButton
+                  tone={
+                    voicePhase === "recording" || voiceSpeaking
+                      ? "recording"
+                      : voiceConversation
+                        ? "voice"
+                        : "quiet"
+                  }
+                  isHolding={voiceModeHolding}
+                  onMouseDown={keepKeyboard}
+                  onPointerDown={beginVoiceModeHold}
+                  onPointerUp={cancelVoiceModeHold}
+                  onPointerLeave={cancelVoiceModeHold}
+                  onPointerCancel={cancelVoiceModeHold}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    cancelVoiceModeHold();
+                    void switchVoiceMode();
+                  }}
                   onKeyDown={(event) => {
-                    if (event.key === "Escape" && voiceModeMenuOpen) {
-                      event.stopPropagation();
-                      setVoiceModeMenuOpen(false);
+                    if (event.key === "Enter" && event.shiftKey) {
+                      event.preventDefault();
+                      void switchVoiceMode();
                     }
                   }}
+                  onClick={() => {
+                    // iOS still delivers the click that ended a long press, and
+                    // acting on it would speak the moment the mode changed.
+                    if (voiceModeSwitchedRef.current) {
+                      voiceModeSwitchedRef.current = false;
+                      return;
+                    }
+                    void (voiceConversation ? speakVoiceTurn() : toggleVoice());
+                  }}
+                  disabled={
+                    voicePhase === "transcribing" ||
+                    voiceModel?.status === "downloading" ||
+                    (voiceConversation && running && !voiceSpeaking)
+                  }
+                  label={
+                    voiceSpeaking
+                      ? "Stop speaking — hold to switch to dictation"
+                      : voicePhase === "recording"
+                        ? voiceConversation
+                          ? "Finish voice utterance — hold to switch to dictation"
+                          : "Finish dictation — hold to switch to voice conversation"
+                        : voiceConversation
+                          ? "Start voice utterance — hold to switch to dictation"
+                          : "Dictate message — hold to switch to voice conversation"
+                  }
+                  title={
+                    voiceConversation
+                      ? "Voice conversation — hold to switch to dictation"
+                      : "Dictate message — hold to switch to voice conversation"
+                  }
                 >
-                  {voiceModeMenuOpen && (
-                    <>
-                      <div
-                        role="presentation"
-                        className="fixed inset-0 z-20"
-                        onMouseDown={keepKeyboard}
-                        onClick={() => setVoiceModeMenuOpen(false)}
-                      />
-                      <div
-                        role="menu"
-                        aria-label="Microphone mode"
-                        onMouseDown={keepKeyboard}
-                        className="absolute bottom-full left-0 z-30 mb-1.5 w-max min-w-52 border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
-                      >
-                        <MenuItem
-                          title="Dictate message"
-                          hint="Transcribe into the composer"
-                          icon={<MicIcon />}
-                          onSelect={() => {
-                            setVoiceModeMenuOpen(false);
-                            void toggleVoice();
-                          }}
-                        />
-                        <MenuItem
-                          title="Voice conversation"
-                          hint="Submit speech and read responses aloud"
-                          icon={<span className="font-mono text-chip font-bold">V</span>}
-                          onSelect={() => void toggleVoiceConversation()}
-                        />
-                      </div>
-                    </>
-                  )}
-
-                  <ComposerButton
-                    tone={
-                      voicePhase === "recording" || voiceSpeaking
-                        ? "recording"
-                        : "quiet"
-                    }
-                    onMouseDown={keepKeyboard}
-                    onClick={() =>
-                      void (voiceConversation
-                        ? toggleVoiceConversation()
-                        : toggleVoice())
-                    }
-                    disabled={
-                      voicePhase === "transcribing" ||
-                      voiceModel?.status === "downloading" ||
-                      (voiceConversation && running && !voiceSpeaking)
-                    }
-                    label={
-                      voiceSpeaking
-                        ? "Stop speaking"
-                        : voicePhase === "recording"
-                          ? voiceConversation
-                            ? "Finish voice utterance"
-                            : "Finish dictation"
-                          : voiceConversation
-                            ? "Start voice utterance"
-                            : "Dictate message"
-                    }
-                    title={
-                      voiceConversation
-                        ? voiceSpeaking
-                          ? "Stop speaking"
-                          : "Voice conversation"
-                        : "Dictate message"
-                    }
-                    className={voiceConversation ? "bg-warn-surface" : ""}
-                  >
-                    <span className="relative grid place-items-center">
-                      <MicIcon />
-                      {voiceConversation && (
-                        <span
-                          className="absolute -right-1.5 -top-1 font-mono text-chip font-bold"
-                          aria-hidden="true"
-                        >
-                          V
-                        </span>
-                      )}
-                    </span>
-                  </ComposerButton>
-
-                  {!voiceConversation && (
-                    <ComposerButton
-                      onMouseDown={keepKeyboard}
-                      onClick={() => setVoiceModeMenuOpen((open) => !open)}
-                      disabled={
-                        voicePhase !== "idle" ||
-                        voiceModel?.status === "downloading"
-                      }
-                      aria-haspopup="menu"
-                      aria-expanded={voiceModeMenuOpen}
-                      label="Choose microphone mode"
-                      title="Choose dictation or voice conversation"
-                      className="w-4 border-l border-dialog-edge mouse:w-4"
-                    >
-                      <ChevronIcon
-                        open={voiceModeMenuOpen}
-                        className="size-2.5 rotate-90"
-                      />
-                    </ComposerButton>
-                  )}
-                </div>
-              )}
-
-              {voiceConversation && (
-                <ComposerButton
-                  onMouseDown={keepKeyboard}
-                  onClick={() => void leaveVoiceConversation()}
-                  label="Leave voice conversation"
-                  title="Leave voice conversation"
-                >
-                  <span className="font-mono text-ui" aria-hidden="true">×</span>
+                  {voiceConversation ? <VoiceLoopIcon /> : <MicIcon />}
                 </ComposerButton>
               )}
 

@@ -24,6 +24,7 @@ import {
   SortIcon,
   StarIcon,
   TrashIcon,
+  VoiceLoopIcon,
 } from "./icons";
 
 const ICONS = {
@@ -48,6 +49,7 @@ const ICONS = {
   "SortIcon desc": <SortIcon dir="desc" />,
   StarIcon: <StarIcon />,
   TrashIcon: <TrashIcon />,
+  VoiceLoopIcon: <VoiceLoopIcon />,
 };
 
 /**

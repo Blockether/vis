@@ -2249,7 +2249,7 @@ describe("the composer's own controls", () => {
     (/<button[^>]*class="([^"]*)"/.exec(html)?.[1] ?? "").split(" ");
 
   it("gives attach, dictate, send and stop ONE rhythm and one press", () => {
-    const box = (tone: "quiet" | "send" | "stop" | "recording") =>
+    const box = (tone: "quiet" | "send" | "stop" | "recording" | "voice") =>
       classes(
         renderToStaticMarkup(
           <ComposerButton tone={tone} label="Send message">
@@ -2266,7 +2266,19 @@ describe("the composer's own controls", () => {
     expect(box("send")).toContain("size-8");
     expect(box("send")).toContain("mouse:size-7");
     expect(box("stop")).toContain("size-full");
-    for (const tone of ["quiet", "send", "stop", "recording"] as const) {
+    // The voice MODE keeps the dictation box exactly: switching mode must not
+    // move the strip, only repaint the control.
+    expect(box("voice")).toContain("h-8");
+    expect(box("voice")).toContain("w-7");
+    expect(box("voice")).toContain("mouse:h-7");
+    expect(box("voice")).toContain("bg-accent");
+    for (const tone of [
+      "quiet",
+      "send",
+      "stop",
+      "recording",
+      "voice",
+    ] as const) {
       expect(box(tone)).toContain("active:scale-[0.94]");
       // None of the four had a focus ring when each was written by hand.
       expect(box(tone)).toContain("focus-visible:ring-accent/60");
@@ -2279,6 +2291,26 @@ describe("the composer's own controls", () => {
         <ComposerButton label="Dictate message">{"\u25cf"}</ComposerButton>,
       ),
     ).toContain('aria-label="Dictate message"');
+  });
+
+  // The app has no haptics, so the only way a press-and-hold can report itself
+  // is on screen: the paper rises through the button for exactly as long as the
+  // switch takes, and a reader who asked for less motion is shown nothing
+  // rather than a jump.
+  it("shows a press-and-hold filling, and only while it is held", () => {
+    const held = renderToStaticMarkup(
+      <ComposerButton isHolding label="Dictate message">
+        {"●"}
+      </ComposerButton>,
+    );
+    const idle = renderToStaticMarkup(
+      <ComposerButton label="Dictate message">{"●"}</ComposerButton>,
+    );
+    expect(held).toContain("origin-bottom");
+    expect(held).toContain("duration-[450ms]");
+    expect(held).toContain("starting:scale-y-0");
+    expect(held).toContain("motion-reduce:hidden");
+    expect(idle).not.toContain("origin-bottom");
   });
 
   it("reports the turn's model and level in one type step, hovered one way", () => {
@@ -2411,7 +2443,7 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(settingsSource).not.toContain("<button");
   });
 
-  it("uses one microphone control and names each voice-conversation phase", () => {
+  it("uses ONE microphone control: tap acts, hold switches the mode", () => {
     expect(sessionScreenSource).not.toContain("tap V again");
     expect(sessionScreenSource).toContain(
       "Voice conversation · Listening · tap the microphone again to finish",
@@ -2423,14 +2455,30 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(sessionScreenSource).toContain(
       "Voice conversation · Speaking · tap the microphone to stop",
     );
+    // The mode menu, the disclosure that opened it (and the `border-l` divider
+    // painted on that disclosure), and the separate leave button are all gone:
+    // one control carries the mode now, so there is nothing left to disclose
+    // and nothing left to leave by.
+    expect(sessionScreenSource).not.toContain('aria-label="Microphone mode"');
+    expect(sessionScreenSource).not.toContain('label="Choose microphone mode"');
+    expect(sessionScreenSource).not.toContain("voiceModeMenuOpen");
+    expect(sessionScreenSource).not.toContain('label="Leave voice conversation"');
+    expect(sessionScreenSource).not.toContain("border-l border-dialog-edge");
+    // A hidden gesture is only hidden if nothing says it: the accessible name
+    // carries the act AND the switch, in both modes.
     expect(sessionScreenSource).toContain(
-      'aria-label="Microphone mode"',
+      '"Dictate message — hold to switch to voice conversation"',
     );
-    expect(sessionScreenSource).toContain('title="Dictate message"');
-    expect(sessionScreenSource).toContain('title="Voice conversation"');
-    expect(sessionScreenSource).toContain('label="Choose microphone mode"');
-    expect(sessionScreenSource).not.toContain(
-      'label={voiceSpeaking ? "Stop speaking"',
+    expect(sessionScreenSource).toContain(
+      '"Start voice utterance — hold to switch to dictation"',
+    );
+    // A finger is not the only pointer, and a keyboard cannot press and hold.
+    expect(sessionScreenSource).toContain("onContextMenu");
+    expect(sessionScreenSource).toContain('event.key === "Enter" && event.shiftKey');
+    // Holding ARMS the conversation; it must not start recording in the same
+    // gesture, so the entry path opens the route and stops there.
+    expect(sessionScreenSource).toMatch(
+      /const enterVoiceConversation[\s\S]*?await beginVoiceAudioSession\(\);\n  \};/,
     );
   });
 
