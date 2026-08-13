@@ -1,1797 +1,609 @@
-# PLAN — Collapse the model-facing tool surface to `python_execution` alone
+# PLAN — Bring back `cat` and `patch` as positional verbs over one anchored line, and make `grep` speak the same text
 
-*One jail, one verb: Python is the whole instrument, and everything else is a name inside it.*
+*The read hands you the address; the write spends it — nobody retypes the file.*
 
 ## Context
 
 ### State before
 
-The provider request today advertises **eighteen** JSON-schema tools. They are assembled in
-`src/com/blockether/vis/internal/loop.clj:4843` (`native-tools`) from two sources:
+Commit `7fda0cee2` (*"refactor(editing)!: remove cat/patch and retire the lineno:hash anchor"*) deleted both verbs and the `lineno:hash` handle they existed to consume: `editing/patch.clj` (700 lines) went outright, `editing/core.clj` lost ~1265 lines, and every structural surface was rewritten onto plain line numbers. Today the model-facing editing surface is four symbols — `src/com/blockether/vis/internal/foundation/editing/core.clj:4776`:
 
-| Tool | Declared at | Kind |
-| --- | --- | --- |
-| `struct_index` | `src/com/blockether/vis/internal/foundation/editing/core.clj:6180` | extension symbol, `:native-tool? true` |
-| `cat` | `src/com/blockether/vis/internal/foundation/editing/core.clj:6272` | extension symbol |
-| `grep` | `src/com/blockether/vis/internal/foundation/editing/core.clj:6296` | extension symbol |
-| `patch` | `src/com/blockether/vis/internal/foundation/editing/core.clj:6341` | extension symbol |
-| `struct_patch` | `src/com/blockether/vis/internal/foundation/editing/core.clj:6746` | extension symbol |
-| `struct_nodes` | `src/com/blockether/vis/internal/foundation/editing/core.clj:6966` | extension symbol |
-| `format_code` | `src/com/blockether/vis/internal/foundation/language_surface.clj:1081` | extension symbol |
-| `lint_code` | `src/com/blockether/vis/internal/foundation/language_surface.clj:1111` | extension symbol |
-| `run_tests` | `src/com/blockether/vis/internal/foundation/language_surface.clj:1135` | extension symbol |
-| `repl_eval` | `src/com/blockether/vis/internal/foundation/language_surface.clj:1178` | extension symbol |
-| `repl` | `src/com/blockether/vis/internal/foundation/language_surface.clj:1208` | extension symbol |
-| `skill` | `src/com/blockether/vis/internal/foundation/harness/core.clj:180` | extension symbol |
-| `mcp__call` | `src/com/blockether/vis/internal/foundation/mcp/core.clj:1114` | extension symbol |
-| `search` | `extensions/common/vis-foundation-search/src/com/blockether/vis/ext/foundation_search/core.clj:1968` | extension symbol |
-| `apropos` | `src/com/blockether/vis/internal/loop.clj:4799` | engine tool |
-| `doc` | `src/com/blockether/vis/internal/loop.clj:4821` | engine tool |
-| `session_fold` | `src/com/blockether/vis/internal/loop.clj:4765` | engine tool |
-| `python_execution` | `src/com/blockether/vis/internal/loop.clj:4735` | engine tool |
+```clojure
+(defn available-editing-symbols [] [index-symbol grep-symbol struct-patch-symbol nodes-symbol])
+```
 
-Every one of those fourteen extension symbols is ALSO a bare Python name in the sandbox: no symbol in the
-tree declares `:engine-bound? false` (verified by grep over `src/**` and `extensions/**`), so the entire
-native surface is a duplicate advertisement of names that already exist inside `python_execution`.
+and the prompt tells the model to write text edits by hand — `src/com/blockether/vis/internal/prompt.clj:237-238, 243-244`:
 
-The machinery that exists ONLY to support that duplicate advertisement:
+> READING a whole file is `Path.read_text`; CHANGING the tree is plain Python (`Path.write_text`, `os`, `shutil`).
+> Edit with `struct_patch` by def NAME; text and unsupported languages are edited in plain Python.
 
-- **Declaration + validation** — `src/com/blockether/vis/internal/extension.clj`:
-  `:ext.symbol/native-tool?` and `:ext.symbol/schema` specs at `:421-500`; the flat-form assembly at
-  `:1428-1470`; five refusal rules at `:1495-1553` (`native-tool-missing-schema`,
-  `native-tool-nonportable-schema`, `native-tool-missing-description`, `native-tool-missing-result`,
-  `native-tool-result-in-description`, `native-tool-result-has-label`, `native-tool-over-budget`).
-- **Projection** — `extension.clj:993` `native-tools-for`, `:1027` `native-tool-replay-policies`,
-  `:1036-1146` `wire-schema` / `advertise-tool` / `native-tool-schemas`, `:1148` `native-tool-handlers`,
-  `:1173` `native-tool-call-shapes`, `:1187`/`:1199` finish/start call renderers, `:2157`
-  `native-tool-finish-call-renderers-by-op`, `:1211` `native-tool-tags`, `:1226` `symbol-bound?`.
-- **Dispatch** — `loop.clj:978-1060` (native `:handler` execution under the
-  `:vis/native-tool-timeout` watchdog), `:4707` `finalize-engine-native-tool`, `:4838`
-  `engine-native-tool-call-shapes`, `:4856` `advertised-native-capability-names`, `:4867` `py-literal` +
-  `tool-call->python-source` (synthesizing a Python call from tool-call JSON), `:5169`
-  `native-tool-call-block`, `:5370-5373` and `:5516-5527` in the request/response path,
-  `:8257` replay policies, `:9413` renderer lookup.
-- **Rendering** — `src/com/blockether/vis/internal/form.clj:43-63` (native-tool badge identity and the
-  `python_execution` → `RESULT` label table), `:158-180` `native-tool-form?`;
-  `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj:2570, 3624,
-  5201-5645` (native-tool cards, per-tool op-cards, error compaction, code-chrome hiding);
-  `.../channel_tui/chat.clj:214, 918`.
-- **Prior-result recovery (`ntr`)** — `resources/vis-python/async_runtime.py:1884-1890, 2103-2550`;
-  host callbacks in `src/com/blockether/vis/internal/loop.clj:11156-11214`; delegates in
-  `src/com/blockether/vis/internal/persistance.clj:616-634`; storage/queries in
-  `extensions/persistance/vis-persistance-sqlite/src/com/blockether/vis/ext/persistance_sqlite/core.clj:4548-4740`;
-  guard lists in `src/com/blockether/vis/internal/env_python.clj:886, 997-1002, 2117-2122`.
-- **Three documentation verbs and none of them searches the documents** — `apropos`/`doc` are
-  GraalPy `ProxyExecutable`s in `src/com/blockether/vis/internal/env_python.clj:1000-1130` plus
-  `resources/vis-python/apropos_table.py`, and `apropos` matches a substring against the NAME and
-  GROUP only — never a gist, never a `__vis_docs__` body. Product documentation is a SEPARATE verb
-  `vis_docs` in `src/com/blockether/vis/internal/foundation/self_docs.clj:52-110`, and skill bodies
-  (`foundation/harness/discovery.clj:531`) and MCP tool descriptions are searchable from nowhere at
-  all.
-- **Prompt text that exists to arbitrate between surfaces** —
-  `src/com/blockether/vis/internal/prompt.clj:209-269` (`CORE_SYSTEM_PROMPT`, in particular `:214`
-  "`vis_docs()` is product docs", `:217` "Native descriptions and JSON Schemas are authoritative",
-  `:219-229` the batching/routing paragraphs), plus `foundation/introspection.clj:1310` and
-  `foundation/language_surface.clj:110-116` (the `LANGUAGE TOOLS` block).
+The prediction recorded in the plan this one supersedes (`e51669e06:PLAN.md:534-537`) was: *"What is lost is the atomic anchor-verified multi-file text edit; that is re-expressed as a small Python helper in the sandbox prelude if a reproduction shows it is missed."*
 
-Measured cost of the duplicate surface: the eighteen advertised schemas plus their projected
-`Raw result:` contracts are re-sent on EVERY provider request in the turn, and the per-symbol budget
-check at `extension.clj:1534-1553` exists purely to keep that block from growing without limit.
+**The reproduction is the journals.** Across 805 unique blocks:
 
-### Root problem
+| Measurement | Value |
+| --- | --- |
+| Blocks that write a file | 96 — **12 %** of blocks |
+| Share of ALL block characters those 96 carry | **48 %** (201,520 of 423,036) |
+| Mean chars, writing block vs non-writing block | 2,099 vs 312 — **6.7×** |
+| Share of a writing block that is triple-quoted literal payload | **80 %** (162,300 chars) |
+| Blocks that re-read a whole file and rewrite it | 61 |
+| Blocks that edit via `x.replace(old, new)` | 49 |
+| Blocks that define their own `def edit(path, old, new)` helper | 6 |
+| Blocks that call `struct_patch` | **11** |
 
-A tool schema is a weak, non-polymorphic description of a capability: it cannot express a union, a
-callable, a lazily-composed pipeline, or "do these four things and print only the difference". Every
-capability we ship therefore exists TWICE — once as a rich Python name, once as a flattened JSON
-schema — and the model spends its routing budget choosing between two spellings of the same thing.
-Because a native call is cheap to emit and its result lands whole in context, the presence of the
-native surface actively pulls the model AWAY from the surface that can filter. The duplication also
-propagates: it forces `ntr` (a persistence-backed way to get a native result back after it was
-folded), the op-card renderers, the badge vocabulary, six extension-registry refusal rules, and a
-prompt paragraph whose only job is to arbitrate between the two surfaces.
+The invented helper is verbatim, three times over, in three different sessions:
+
+```python
+def edit(path, old, new, count=1): ...
+def edit(path, pairs): ...
+def edit(rel, pairs): ...
+```
+
+and the canonical shape of a text edit today is:
+
+```python
+p = root/"src/com/blockether/vis/internal/foundation/shell.clj"
+s = p.read_text()
+old = '''   The `shell` toggle is registered HERE, extension-owned under the vis namespace."'''
+new = '''   The `shell` toggle is registered HERE, extension-owned under the vis
+   namespace. It closes the MODEL's door only: …"'''
+assert s.count(old) == 1
+s = s.replace(old, new)
+```
+
+*(Minor, stated with its caveat: 9 blocks in the sample still call `cat(...)`/`patch(...)` with the OLD keyword signatures. Those journals straddle the removal, so read it as "the shape is still in the model's head", not as a post-removal failure.)*
+
+**One more piece of evidence the removal left behind.** `grep`'s shipped result contract still *promises* the anchor — `src/com/blockether/vis/internal/foundation/editing/core.clj:4056`:
+
+```clojure
+"`matches={path:{\"line:hash\":{\"text\":string,\"before\"?:[{\"line\",\"text\"}],\"after\"?:[…]}}}` "
+```
+
+while `content-result` (`:2135`) actually keys every hit with `(str line)` — a bare line number. The model is told each hit is an address and handed a coordinate that is not one. The same boundary test still carries an anchor-shaped key as its fixture (`test/com/blockether/vis/internal/env_python_test.clj:542`, `{"matches" {"a/b-c.clj" {"1:h" "z"}}}`). The contract wants what this plan restores.
+
+### The root problem
+
+An edit needs a **coordinate**. `struct_patch` supplies one for a *named definition in a parsed language* (`core.clj:4150`), and that covers the minority of edits: prose, config, YAML, Markdown, a comment, a docstring line, a string literal inside a form, and every unsupported language have **no address at all**. So the model mints one the only way plain Python allows — **by quoting the old text back**. That coordinate is (a) O(size-of-region) in tokens, (b) unverified except by a hand-written `assert s.count(old) == 1`, (c) re-derived from scratch on every call, and (d) never reusable: after the write, the quoted text no longer exists.
+
+The anchor scheme solved exactly this. `line:hash` is **4–7 characters** that carry both a location and a content proof, and — the part that matters — **it is produced by the read the model already had to do**. Removing it did not remove the cost; it moved the cost from a 5-character token into a 2 KB block, and moved the safety from a re-parse into an `assert`.
 
 ### What we solve
 
-- The model is offered exactly ONE tool, `python_execution`. Everything else is a Python name.
-- Function discovery moves entirely to `apropos()` / `doc()` inside the sandbox, paid for only when
-  the model actually asks.
-- `doc()` becomes the single documentation verb: bare `doc()` is the index, `doc(name)` is a
-  function contract, `doc(slug)` is a Vis documentation page, `doc(skill)` is its whole `SKILL.md`.
-  `vis_docs` is deleted.
-- `ntr` and the native-result persistence lookups are deleted: with one tool, every result the model
-  sees is what its own program printed.
-- Rendering collapses to one card shape (code + printed output), so the TUI stops carrying per-tool
-  op-card identity.
+- One read verb whose **output is the address**: `cat` returns text already carrying anchors, so no separate "get me handles" step exists.
+- One write verb that spends that address: `patch` names a span and the new text — **the old text is never restated**.
+- The write is refused when the coordinate no longer agrees with the file (stale/misplaced anchor) and refused again when the result would not parse (tree-sitter), with the correct anchor handed back so recovery is one call, not a re-read.
+- `patch` returns the **re-anchored** window, so a follow-up edit needs no second `cat`.
+- `grep` answers in that **same anchored text** instead of a nested map, so a search hit *is* a `patch` argument and the printed result costs 41 % less than the dict it replaces.
 
-### What we explicitly do NOT solve
+### What we explicitly do not solve
 
-- We do not remove any CAPABILITY. `grep`, `struct_index`, `struct_nodes`, `struct_patch`,
-  `run_tests`, `repl_eval`, `skill`, `search`, `mcp__call`, `shell`, … all remain, as Python names.
-- We do not touch the gateway wire contract, human-input contract, or channel protocols beyond the
-  form fields that only existed to identify a native tool.
-- We do not add a compatibility flag, a toggle, or a "legacy native tools" mode. There is no
-  migration path: the old surface is deleted (repo rule: no backward compatibility).
+- **No batch, no multi-file, no `edits` list.** One call = one file = one span. Batching lives where it already lives: several `patch(...)` calls in one `python_execution` block. This deletes the entire `normalize-edits-arg` / `coerce-patch-edits` coercion layer (~120 lines at old `core.clj:789-835, 3300-3369`) that existed only to survive serializer damage to a nested list. The atomic multi-file text edit that died with `7fda0cee2` stays dead — decided, not open.
+- **No return to `struct_patch`.** Name-addressed structural ops (rename, move, `append_child`, `add_doc`) stay exactly as they are. `patch` is the address-addressed editor beside it, not above it.
+- **No compatibility layer.** Per repo doctrine there is no legacy `from_anchor`/`to_anchor`/`replace` keyword form; the positional signature is the only one.
 
 ### Alternatives considered
 
-1. **Keep a small native surface (`grep`, `struct_index`, `struct_patch`) and drop the rest.** Lost:
-   it keeps every line of machinery — schema specs, advertisement, dispatch, call-shape synthesis,
-   op-card renderers, `ntr` — for three tools, so none of the complexity is actually removed, and the
-   model still faces the "which surface?" decision that causes the behaviour we are fixing.
-2. **Keep the native surface but hide it behind a config toggle.** Lost: two live code paths, both
-   needing tests and prompt text forever; the token cost returns for anyone with the toggle on, and
-   the repo forbids stopgaps kept "for later".
-3. **Keep `ntr` after removing the native surface.** Lost: with one tool there is nothing to look up
-   — a `python_execution` block stores printed text, not a structured result — so `ntr` would index
-   an empty table while still costing a DB schema, five host callbacks, an AST scanner and a prompt
-   sentence.
-4. **Keep `vis_docs` separate from `doc`.** Lost: two verbs, two prompt sentences and a permanent
-   "which one?" question, for one lookup that differs only in where the text is stored.
-5. **Delete `cat`/`patch` immediately in phase 1.** Lost: they are still the safest anchored write
-   path and are used by the harness's own tests; removing them at the same time as the surface change
-   would make a regression impossible to attribute. It gets its own phase, last.
+| Alternative | Why it lost |
+| --- | --- |
+| **Leave it; add a prelude `edit()` helper to the sandbox** (the superseded plan's recommendation, `e51669e06:PLAN.md:536`) | Measured and refuted. A prelude helper still takes the old text as its argument — 80 % of the cost is the *payload*, not the loop around it. It also cannot re-parse, cannot verify, and cannot hand back a fresh coordinate. |
+| **Extend `struct_patch` to text files** | `struct_patch` addresses by *name in a parse tree*. Markdown prose, a YAML value and a comment line have no name and no node; giving it a line locator recreates `patch` inside a verb whose whole contract is "structural". |
+| **Bare line ranges, no hash** (`patch(path, 120, 134, new)`) | This is what corrupts files. A line number alone is stale the moment anything above it moves, and it fails **silently and plausibly** — it writes to the wrong place instead of refusing. The hash is what makes the refusal possible. |
+| **Keep `grep` structured, just re-key `matches` by anchor** (the first cut of this plan) | Half the win. The anchor fixes addressing but the model still prints a nested dict: measured over six real greps, the dict repr is 10,622 chars against 6,297 for the text — and `print(r)` is what the model actually pays. |
+| **Flat `path:line:hash│ text` on every grep line** (ripgrep shape) | Measured: 9,551 chars against 6,297 grouped — only 10 % under the dict, because this repo's paths run ~60 chars and every hit repeats one. Grouped under a path header wins by 31 points. |
+| **Return a map from `cat` (the old `{results, ranges, anchors}`)** | The old shape forced the model to index it and re-print, so the read cost was paid twice. A bare string is `print(cat(...))`, is sliceable in Python, and has no key vocabulary to learn. |
+| **Content hash only, no line number** (the pre-`7fda0cee2` `#N` ordinal scheme) | Already tried and already replaced: a 3-hex hash collides, and disambiguating needed a whole-file rescan. Line locates + hash verifies is the design that survived. |
+| **A wider hash (6–8 hex)** | The line number is the primary coordinate; the hash only has to disambiguate within a ±40-line window. 3 hex chars keep an anchor at 4–7 characters, which is the point. |
 
-## Phase 1 — Advertise only `python_execution`
+---
 
-**Rationale.** Without this nothing else is provable: as long as eighteen schemas are on the wire, no
-measurement of prompt size or model routing reflects the change. This phase is the one that must ship
-first and be observable on its own.
+## Phase 1 — Restore the hashline engine as `editing/hashline.clj`
 
-**Data.** None. The change deletes entries from the provider `:tools` vector; no persisted, wire, or
-cross-language shape changes.
+**Rationale.** Both verbs are thin IO wrappers over one pure module. Without it there is nothing to mint an address from, and the two verbs would each grow their own hash math inside the channel/IO namespace. It comes back verbatim from `7fda0cee2^:src/com/blockether/vis/internal/foundation/editing/patch.clj` **minus** its escape-decoder half, which already lives at `editing/escapes.clj:1-155` and stays there. New name, because the namespace should name the concept (`hashline`), not the verb.
 
-**Acceptance criteria.**
-- `src/com/blockether/vis/internal/loop.clj` — `native-tools` (`:4843`) returns exactly
-  `[(finalize-engine-native-tool (python-execution-tool caps))]`; the `apropos`/`doc`/`session_fold`
-  engine tools are no longer advertised.
-- `src/com/blockether/vis/internal/loop.clj` — `advertised-native-capability-names` (`:4856`) and its
-  call site (`:5371`) are deleted; `env/set-advertised-native-tools!` no longer exists.
-- `src/com/blockether/vis/internal/env_python.clj` — `set-advertised-native-tools!` (`:939`) and the
-  `__vis_advertised_native_tools__` global (`:945`) removed; `apropos` in
-  `resources/vis-python/apropos_table.py` stops suppressing "already advertised" names, since nothing
-  is advertised.
-- Test: `test/com/blockether/vis/internal/loop_test.clj` gains
-  `only-python-execution-is-advertised-test` asserting the provider `:tools` vector has exactly one
-  entry named `python_execution`; `test/com/blockether/vis/internal/native_tool_provider_contract_test.clj:69,116`
-  is rewritten to that single-tool contract (or deleted with its assertions moved, decided in phase 2).
+Surface restored: `split-content-lines`, `char-offset-at-line`, `line-hash` (3 hex chars of the trimmed line's `String/hashCode`, a JIT intrinsic — one pass per rendered line), `line-anchor`, `anchor->line`, `render-hashline-block`, `indices-matching-hash`, `hash-line-drift-tolerance` (40), `resolve-one-anchor`, `resolve-anchor-range`, `resolve-anchor-range-read`, `resolve-anchor-edit-span`.
 
-**Unknowns.** Does any provider adapter in `svar` require a non-empty tool list with more than one
-entry for a particular model family? Do any channel clients read the advertised-name set for
-autocompletion?
+The five resolution outcomes are the contract and come back unchanged (old `patch.clj:329`):
 
-## Phase 2 — Delete the native-tool declaration and dispatch machinery
+1. **exact** — the stated line still hashes to the anchor's hash → use it.
+2. **drifted** — that hash sits at exactly one line within 40 → follow the content.
+3. **line wins** — the hash is ambiguous but the model named an explicit line → use the line.
+4. **misplaced** — the hash exists only far from the stated line → **refuse** (this is the guard that stops a write landing on the wrong line).
+5. **not-found** — the hash matches nothing → **refuse**, and hand back the anchor that IS at the stated line.
 
-**Rationale.** Phase 1 leaves the whole apparatus alive but unused, which is the worst state: dead
-code that still has to be maintained, still validated at registry build, and still tempting. Without
-this phase the `:schema` blocks stay in every symbol registration and keep drifting.
+Newline semantics come back with it (old `patch.clj:498`): a replacement need not end in `\n`; the matched region's terminator is preserved, `\r\n` stays `\r\n` on a CRLF file; and `replacement == ""` consumes the trailing newline so the lines actually vanish instead of leaving blanks.
 
-**Data.** None. `:ext.symbol/native-tool?` / `:ext.symbol/schema` are registry-internal keys that never
-cross a boundary; this phase only deletes them.
-
-**Acceptance criteria.**
-- `src/com/blockether/vis/internal/extension.clj` — delete `:ext.symbol/native-tool?` and
-  `:ext.symbol/schema` specs (`:421-500`), `native-tool-root-union-keys` /
-  `portable-native-tool-schema?` (`:440-448`), `native-tools-for` (`:993`),
-  `native-tool-replay-policies` (`:1027`), `wire-schema` / `advertise-tool` / `native-tool-schemas`
-  (`:1036-1146`), `native-tool-handlers` (`:1148`), `native-tool-call-shapes` (`:1173`),
-  `native-tool-finish-call-renderers` (`:1187`), `native-tool-start-call-renderers` (`:1199`),
-  `native-tool-tags` (`:1211`), `native-tool-finish-call-renderers-by-op` (`:2157`), `symbol-bound?`
-  (`:1226`, every symbol is bound now) and the six refusal rules at `:1495-1553`.
-- `src/com/blockether/vis/internal/extension.clj:1805` — `remove :ext.symbol/native-tool?` filter in the
-  sandbox-symbol projection becomes an unconditional pass; `:2766-2769` loses the `symbol-bound?` filter.
-- `src/com/blockether/vis/internal/loop.clj` — delete native handler execution (`:978-1060`, including
-  the `:vis/native-tool-timeout` error type), `finalize-engine-native-tool` (`:4707`),
-  `engine-native-tool-call-shapes` (`:4838`), `py-literal` + `tool-call->python-source` (`:4867`+),
-  `native-tool-call-block` (`:5169`), the handler/call-shape lookups at `:5516-5527`, the replay-policy
-  lookup at `:8257`, the renderer lookups at `:5565-5622` and `:9413`. The block builder becomes: one
-  tool call, name `python_execution`, `:lang "python"`, `:source` = its `code` argument.
-- `src/com/blockether/vis/internal/runtime_settings.clj:17-51` — `NATIVE_TOOL_TIMEOUT_MS` and
-  `native-tool-timeout-ms` are removed or renamed to the python-block budget they now exclusively serve.
-- Symbol registrations lose `:native-tool? true`, `:schema`, `:call`, `:render-start-call-fn`,
-  `:render-finish-call-fn`, `:replay` where those existed only for the native surface:
-  `foundation/editing/core.clj:6180,6272,6296,6341,6746,6966`;
-  `foundation/language_surface.clj:1081,1111,1135,1178,1208`; `foundation/harness/core.clj:180`;
-  `foundation/mcp/core.clj:1114`;
-  `extensions/common/vis-foundation-search/.../core.clj:1848-1971` (the `:native-tool? false` lines at
-  `:1848,1873,1898,1924,1948` are deleted outright as the key no longer exists). `:description` and
-  `:result` REMAIN — they become the `doc(name)` body.
-- Tests: see the test map in part 5 for the exact per-describe disposition. Deleted here:
-  `test/com/blockether/vis/internal/extension_test.clj` (`flat-native-tool` + `flat-native-tool-spec-test`,
-  `:22-234`, 44 assertions; `constrained-native-tool` + `wire-schema-constraints-test`, `:519-551`),
-  `test/com/blockether/vis/internal/native_tool_provider_contract_test.clj` (whole file, 166 lines),
-  seven `loop_test` describes (`:449, 509, 701, 3712, 3719, 3823, 4028`),
-  `foundation/language_surface_test.clj:442,591`, `foundation/shell_test.clj:1469,1604`,
-  `python_extensions_test.clj:1672`. Kept and narrowed:
-  `test/com/blockether/vis/internal/tool_surface_boundary_test.clj:75` (keep the
-  "string-keyed payload for every no-arg observation tool" assertions, drop the native-schema half),
-  `extensions/common/vis-foundation-search/test/.../core_test.clj:586-590` (delete both expectations),
-  `test/com/blockether/vis/internal/foundation/surface_contract_test.clj:43` (rewrite to assert every
-  symbol is Python-bound and carries `:description` + `:result`).
-- Test that proves it done: `surface_contract_test` gains
-  `every-function-is-a-python-name-test` — walk the live registry, assert no symbol declares a
-  schema key and every symbol resolves to a bound sandbox name.
-
-**Unknowns.** Does any channel read `:vis/native-handler` off a persisted block from an older session
-file? (`:ext.symbol/replay` is RESOLVED — see cross-validation §G: no production symbol declares it,
-so the whole policy path is already dead and goes with the surface.)
-
-## Phase 3 — Collapse rendering to the single `python_execution` card
-
-**Rationale.** Until the renderers stop branching on tool identity, the TUI keeps painting op-cards
-that can never appear again, and `form.clj` keeps a badge vocabulary with one live entry. The visible
-promise of the whole change — "you see the program and what it printed, nothing else" — lands here.
-
-**Data.** None. Form keys are in-process display data between the loop and the channels; the phase
-deletes keys rather than adding any.
-
-**Acceptance criteria.**
-- `src/com/blockether/vis/internal/form.clj:43-63` — delete the native-tool badge identity block and
-  the wire-name → label table; `:158-180` `native-tool-form?` and the `errored?`/`python_execution`
-  branch collapse to "a form is a python block". `result-card`/`result-cards` (`:88-154`) SURVIVE —
-  they now describe a PRINTED result, not a native call (see §K).
-- `src/com/blockether/vis/internal/loop.clj:5600-5620` — the printed-card renderer stops being
-  `native-tool-finish-call-renderers-by-op` and becomes one function of the result value (`:op` +
-  count → headline, pretty value → body), so §A's 21 renderer defns can go without a printed `grep`
-  result degrading to raw EDN.
-- `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj` — delete the
-  native-tool headline band (`:2570`), the tool identity in the render cache key (`:3611-3632`),
-  `native-tool-error?` and its compaction (`:5205-5298`), the native-only `:result-render` gate
-  (`:5381-5409`), `tool-label` (`:5483, 5513`), the running-native headline (`:5599-5604`), the
-  code-less op-card and its stacking (`:5625-5652`), the tool name in the progress label (`:5859,
-  5929`) and every `(not= … "python_execution")` guard — the condition is now always true. KEEP
-  `compact-tool-card-body-entries` and `tool-card-entries`: they paint printed results.
-- `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/chat.clj:214, 918` —
-  drop the pre-rendered native-tool card path and the `:vis/tool-name` badge read-back.
-- `apps/vis-companion/src/components/ChatContent.tsx` — delete `toolLabelOverrides` (`:118`),
-  `toolLabel` (`:970`), `compactToolSummary` (`:1010`), `RUNNING_CODE_TOOLS` (`:1229`) and the eleven
-  `form.tool_name` branches; `toolCards` (`:999`) becomes `form.cards ?? []`. `ToolCard`, `CardGrid`,
-  `FormTrace` and `CARD_BAND` keep their geometry. Followers: `lib/types.ts:708, 728`,
-  `SessionScreen.tsx:507, 516, 561, 686-688`, `lib/artifacts.ts:239`.
-- `src/com/blockether/vis/internal/loop.clj:3854-4290` — the tool-result display path keeps only the
-  `python_execution` branch: `:stdout` verbatim, the "printed nothing" hint (`:4283`), and the error row.
-- Tests: `render_test.clj:75` and `chat_test.clj:619-650` are reduced to the single card;
-  `render_test.clj:150` `native-tool-error-compact-test` is deleted and its intent re-expressed as
-  `python-block-error-row-test`; the ~33 tool-IDENTITY sites in `render_test.clj` go, the
-  card-GEOMETRY sites are rewritten against printed results; `chat_test.clj:548,553,637-657` follow.
-  `virtual_test.clj:150,333,370,673,1140` stays UNTOUCHED on purpose — its `:result-render` fixtures are
-  python-block stdout, the thing that survives, and a prefix-match deletion there would drop the
-  height-estimation and huge-output regressions. Companion: `ChatContent.test.tsx:228-231`
-  and `artifacts.test.ts:163-189` re-fixture, plus one ADDED `a-card-titles-itself-from-its-op`;
-  `npm run lint && npm run build` must pass, and the card band is measured at 390 and 1440 on the
-  running app (`npm run dev` + `spel`), height unchanged.
-- Test that proves it done: `render_test.clj` gains `one-card-shape-test` — a rendered iteration with
-  three tool calls paints three code+output cards and zero per-tool op-cards — and `loop_test.clj`
-  gains `printed-result-card-headline-test`, which builds a headline for `{:op "grep" …}` with NO
-  extension registered.
-
-**Unknowns.** Phase 3's original Unknown is RESOLVED: the companion reads `tool_name` in five places,
-all of them a label or a memo key — grouping is `scope`, which survives. Remaining: is `user-shell`
-op-card identity (`loop.clj:9318`) a separate concern that must survive, and does the data headline need
-a count for shapes other than a map of files (decide from the printed results a real session produces,
-not from taste)?
-
-## Phase 4 — Two discovery verbs with one job each: `apropos` SEARCHES, `doc` RETRIEVES
-
-**Rationale.** With no schemas on the wire, discovery IS the contract surface, so it must answer two
-different questions and never three. Today it answers neither well. `apropos(query)`
-(`env_python.clj:1050-1057`) lowercases the query and matches a SUBSTRING against the NAME and the
-GROUP only — the gist it prints is never searched, the full `__vis_docs__` body is never searched,
-and Vis's own documentation pages are not in the corpus at all, because they live behind a third
-verb (`foundation/self_docs.clj:52`, `vis_docs`). A model that knows the word "viewport" but not the
-name `spel`, or the phrase "wire contract" but not the slug, finds nothing and guesses instead.
-`doc(name)` (`:1092-1116`) is equally narrow: it resolves a sandbox GLOBAL and nothing else, so a
-documentation page is unreachable through it, and `:1112` even advertises the dead end
-(`<not found> — try apropos("")`).
-
-The resolved split, and it is the whole phase:
-
-- **`apropos(query)` is FULL-TEXT SEARCH over every document the session can reach.** One corpus,
-  assembled once per env from four seeders and closed so nothing hides behind a fifth verb:
-  function contracts (sandbox verbs, shims, providers, language tools), Vis documentation pages
-  (`foundation/self_docs.clj` `pages`), skills — the WHOLE `SKILL.md` body, `foundation/harness/
-  discovery.clj:531` `:content` — and MCP tools (server, tool name and the server-supplied
-  description, the only place that text survives once `mcp__call` stops being a schema).
-  `apropos("viewport")` finds `spel`, `apropos("wire contract")` finds the gateway page,
-  `apropos("TestFlight")` finds the release skill; `apropos("")` is still the complete dict.
-- **`doc(target)` RETRIEVES the one authoritative text** for a function name, a documentation slug or
-  a skill name — the model never has to know which of the four it is holding. `doc()` with no
-  argument returns the CURATED index (below).
-
-### One record, one vocabulary: `function | skill | documentation_page | mcp_tool`
-
-Four seeders, four words, and those are the ONLY words used for them anywhere — code, tests, prompt
-sentences, this plan. They are snake_case because they are read in Python:
-
-- **`function`** — a Python name callable in the sandbox (`grep`, `attach`, `shell`, `run_tests`).
-  It replaces "capability", a word that named nothing the model can type.
-- **`skill`** — a `SKILL.md` in the precedence chain, possibly owned by a nested project.
-- **`documentation_page`** — Vis product markdown (`foundation/self_docs.clj` `pages`).
-- **`mcp_tool`** — a tool on a paired MCP server.
-
-The word is still NOT a column on the row. `:kind` was a taxonomy the model cannot act on: it does
-not change how anything is read, and it costs a field on every hit. What a hit actually needs is ONE
-thing — the Python expression that uses it — so `call` is the field, and the vocabulary is what it
-says:
-
-- a `function` answers `grep(query=...)`,
-- an `mcp_tool` answers `mcp__call("server", "tool", {...})`,
-- a `skill` answers NOTHING either, since phase 12: a skill is prose, and reading it is the whole
-  of using it,
-- a `documentation_page` answers NOTHING; a missing `call` is exactly "this is prose, read it".
-
-**A skill's `text` IS its `SKILL.md`, in full — no gist, no metadata stub.** Every entry, whatever
-seeded it, carries the authoritative document and nothing else, so `doc("spel")` returns the same
-body `apropos` searched and there is no second, shorter description of a skill anywhere to drift
-from it. That leaves `skill(name)` with exactly the job `doc` cannot do: activation is a SESSION
-effect — it marks the skill active, resolves its owning project root, cwd and bundled resources, and
-survives past this iteration — while `doc` is a read inside one iteration with no tape effect. The
-prompt says that in one line: read a skill with `doc`, work under it with `skill`.
-
-**`group` is deleted.** `filesystem | shell | mcp | providers | languages | shims | engine` is an
-editorial taxonomy maintained by hand, stale the day a function lands in the wrong bucket, printed
-on every row of every listing and searched as if it were content. Once `apropos` is full text, a
-group name is just a word: `apropos("filesystem")` matches the sentences that actually say what the
-filesystem verbs do, which is a better answer than a bucket label. The one thing group bought — a
-bare group name listing a family — is replaced by the curated index, which is written rather than
-bucketed.
-
-**`gist` stops being a stored field and becomes a RENDERING.** Two texts for one entry are two
-places to drift, and the drift is invisible because nothing reads both at once. There is ONE
-document per entry; its FIRST LINE is the gist, by construction. The index prints first lines, `doc`
-prints the whole thing, and an entry whose first line is not a usable one-liner is a lint failure on
-the contract text, not a second field.
-
-**`doc()` is CURATED, not a dump.** Roughly 60 functions plus documentation pages plus skills is not
-it is another prompt. `doc()` answers a hand-ordered short list — the verbs a session actually
-starts from — each as `name — first line`, and ends with the sentence that the rest is reachable by
-`apropos(text)`. The curated order lives beside the seeders as data, one vector of names; anything
-not on it is discoverable but not advertised, which is the whole point of dropping the schemas.
-
-**Data.** The `apropos` and `doc` payloads cross the Clojure -> GraalPy boundary and are what the
-model reads, so they are specified before the code:
+**Data.** The anchor token is the one string that crosses Clojure → GraalPy → the model → back, so it is spec'd before the code:
 
 ```clojure
-;; ONE record for every document, whatever seeded it.
-(s/def :vis.doc/name string?)              ;; the only handle: "grep", "spel", "gateway-wire"
-(s/def :vis.doc/text string?)              ;; full markdown; its FIRST LINE is the gist
-(s/def :vis.doc/call (s/nilable string?))  ;; python that USES it; nil = prose, nothing to call
-(s/def :vis.doc/entry (s/keys :req-un [:vis.doc/name :vis.doc/text]
-                              :opt-un [:vis.doc/call]))
-
-;; `doc()` = curated index; `doc(target)` = one entry.
-(s/def :vis.doc/entries (s/coll-of :vis.doc/entry :kind vector?))
-(s/def :vis.doc/result (s/or :index (s/keys :req-un [:vis.doc/entries])
-                             :entry :vis.doc/entry))
-
-;; `apropos` = the same records, ranked. Rank IS the "where did it match" answer:
-;; a name hit outranks a body hit, so a per-hit field set would only restate the order.
-(s/def :vis.apropos/score number?)
-(s/def :vis.apropos/hit (s/merge :vis.doc/entry (s/keys :req-un [:vis.apropos/score])))
-(s/def :vis.apropos/result (s/coll-of :vis.apropos/hit :kind vector?))
+(s/def :ext.editing.hashline/hash   (s/and string? #(re-matches #"[0-9a-f]{3}" %)))
+(s/def :ext.editing.hashline/line   pos-int?)
+;; `<1-based line>:<hash>` — the ONLY parseable anchor form. `cat` mints it,
+;; `patch` consumes it, and nothing else in the tree parses one.
+(s/def :ext.editing.hashline/anchor
+  (s/and string? #(re-matches #"\d+:[0-9a-f]{3}" %)))
+(s/def :ext.editing.hashline/parsed
+  (s/keys :req-un [:ext.editing.hashline/line :ext.editing.hashline/hash]))
 ```
 
 **Acceptance criteria.**
-- `src/com/blockether/vis/internal/env_python.clj:1026-1091` — `apropos` searches the full corpus:
-  the `matched` filter at `:1053-1057` becomes a scorer over name and the whole text, ANDing
-  whitespace-separated terms, ranking name above body with a stable tie-break. The returned value
-  stays a real guest dict `{name -> first line}` so `list()/in/sorted/**` keep working (`:1082-1089`);
-  `call` and `score` ride in the rendering and in `apropos(query, detail=True)`.
-- `src/com/blockether/vis/internal/env_python.clj` env build — one corpus, one record shape, four
-  seeders (function contracts, `self_docs/pages`, `discovery.clj:531` skill bodies, live MCP
-  catalogue),
-  assembled once and cached with the docs registry; a fifth source is a new seeder, not a new verb.
-- The `group`/`__vis_groups__` machinery is DELETED — `env_python.clj:1984+` group seeding,
-  `apropos_table.py`'s group column, `extension.clj:3822-3939` group assembly, and every prompt
-  sentence that names a group.
-- Searching a skill must NOT activate it: `apropos`/`doc` read the discovery registry only and never
-  call `foundation/harness/core.clj` `skill`, so no search touches the provider tape.
-- `src/com/blockether/vis/internal/env_python.clj:1092-1116` — `doc` resolves in order: function
-  name, then documentation slug (case-, whitespace- and `.md`-insensitive, exactly as `self_docs`
-  normalizes today), then skill name; a skill answers its whole `SKILL.md`. No argument returns the
-  curated index; a miss answers with the top `apropos` hits for the same string, not `<not found>`.
-- `src/com/blockether/vis/internal/foundation/self_docs.clj` — `vis-docs-tool` (`:52`) and
-  `render-vis-docs` (`:94`) are deleted and the symbol leaves `foundation/core.clj:100`;
-  `pages`/`listing`/slug normalization stay as a seeder into the corpus.
-- `resources/vis-python/apropos_table.py:13` — the table becomes `name — first line` plus `call`,
-  loses the group column, and drops the `__vis_advertised_native_tools__` hiding (after phase 1 that
-  set holds only `python_execution`).
-- `src/com/blockether/vis/internal/prompt.clj:214` — one sentence: `apropos` searches everything,
-  `doc` retrieves one thing, `doc()` is the index (see phase 7).
-- Tests: `test/com/blockether/vis/internal/env_python_test.clj` (33 doc/apropos sites) gains
-  `apropos-searches-doc-body-test`, `apropos-searches-documentation-pages-test`,
-  `apropos-searches-skill-bodies-test`, `apropos-does-not-activate-a-skill-test`,
-  `apropos-searches-mcp-tool-descriptions-test`, `apropos-ranks-name-above-body-test`,
-  `apropos-ands-multiple-terms-test`, `doc-no-arg-returns-curated-index-test`,
-  `doc-resolves-page-slug-test`, `doc-resolves-skill-name-test`,
-  `doc-returns-whole-skill-body-test` (the text `doc` answers for a skill ENDS WITH
-  `discovery.clj` `:content` verbatim — the frontmatter description is its first line, which is
-  what the index prints — and no shorter skill description exists in the corpus),
-  `doc-resolves-function-before-page-test`, and `every-entry-has-a-usable-first-line-test` (the
-  lint that replaces the gist field: first line non-empty, one sentence, <= 240 chars, for every
-  seeded entry); `test/com/blockether/vis/internal/foundation/self_docs_test.clj` is rewritten
-  against `doc`/`apropos`.
-- Test that proves it done: `env_python_test/discovery-is-two-verbs-test` — `vis_docs` is absent
-  from the sandbox globals, no entry carries a group or a kind, a word appearing ONLY inside a page
-  body finds that page through `apropos`, and `doc` answers the same record shape for a function
-  name, a page slug and a skill name.
+- `src/com/blockether/vis/internal/foundation/editing/hashline.clj` — new; the pure surface above, no IO, no tool wiring.
+- `src/com/blockether/vis/internal/foundation/editing/escapes.clj` — unchanged; `hashline` does not touch escapes.
+- `test/com/blockether/vis/internal/foundation/editing/hashline_test.clj` — restored from `7fda0cee2^:…/editing/patch_test.clj` (236 lines), renamed.
+- `test/com/blockether/vis/internal/foundation/editing/core_test.clj:1034-1075` — `anchored-verbs-are-gone-test` is the standing guard that these verbs stay dead (`"the hashline namespace is gone and nothing re-requires it"`, `"no editing symbol is advertised under the retired names"`). It is **inverted**, not deleted: it becomes the test that `cat`/`patch` ARE advertised and that `hashline` loads. `dev/benches/w6_forced.sh:19` still names the old `:from-hash/:to-hash` keyword flags and is re-pointed at the positional form.
+- Test that proves it done: `hashline-test/resolve-one-anchor-five-outcomes-test` — one case per outcome, including a **misplaced** anchor that must refuse and a **drifted** one that must follow.
 
-**Unknowns.** When a documentation slug collides with a function name, the function wins — is an
-explicit
-`doc("docs:<slug>")` escape worth it, or is renaming the page the right answer? Does the scorer need
-a real inverted index, or is a linear scan enough (roughly 60 functions, the embedded pages, and
-every `SKILL.md` body in the precedence chain — measure the assembled corpus size and the p95
-`apropos` call before building one)? Should the corpus reach further still — the workspace guidance
-chain (`AGENTS.md` and nearer overrides) is already injected into the prompt verbatim, so indexing
-it would be a second copy; is a repo `docs/` tree in scope, or does that belong to `grep`?
+**Unknowns.** None. This is a verbatim restore of code that had a green suite.
 
-## Phase 5 — Retire `ntr` / `native_tools_results`, the native-result store, AND the fold's recovery half
+---
 
-**Rationale.** `ntr` exists to hand back a native call's STRUCTURED result after its wire step was
-collapsed. `loop.clj:2024-2025` already states the rule that kills it: *"python_execution PRINTS
-instead of returning a `:result`, so it stores nothing and contributes no accessor."* With
-`python_execution` the only tool, `ntr-entries-of` returns `[]` for every iteration, by construction —
-so the store is empty, `ntr.describe()` lists nothing, every `# saved:` stamp is unreachable, and the
-`session_fold` receipt's whole recovery half (`recover raw result/no rerun: …`, `· more results:
-ntr.describe()`) is a promise about rows that do not exist. Leaving it is worse than removing it: the
-model is told a coordinate exists, spends tokens fetching it, and gets a `KeyError`. **Folding becomes
-one job — a breadcrumb with a gist — and its only recovery pointer is `session_state()`.**
+## Phase 2 — `cat`: one file, three positional arguments, one string
 
-**Data.** Deletes read paths over already-persisted rows; no new persisted shape. The SQLite columns
-that stored native results are dropped in the same phase (repo rule: no compatibility layer), and the
-persistence namespace docstring records that a session file from before this change simply has rows
-nothing reads.
+**Rationale.** Without this, `patch` has no address to spend and the model is still quoting old text. This is also the phase that makes the read cheaper than the read it replaces: `Path.read_text()` returns a blob the model must re-emit to point at anything in it.
 
-**Acceptance criteria — the sandbox side.**
-- `resources/vis-python/async_runtime.py` — delete `ntr` / `native_tools_results` and their machinery:
-  the prime-on-scan hook (`:1884-1890`), the whole `__VisNativeResults__` mapping object and every
-  accessor on it (`:2103-2550`) — subscript `ntr["tN/iM/fK"]`, the coordinate resolver
-  `__vis_entries_at__`/`ntr.at()` (`:2171-2260`), **`ntr.describe(limit, ids)` (`:2457-2523`), which is
-  the labelled discovery half and dies with the rest — there is no shorter surviving "list what is
-  stored" verb, because nothing is stored** — the literal-id AST scanner `__vis_native_result_scan__`
-  (`:2542`), the stored-result dict normalization and its mixed-sweep comments (`:643`, `:662`, `:678`,
-  `:852`), the "call returns what it print()s" nudge (`:2220-2230`), the `# saved:` coordinate
-  sentences (`:2312`, `:2333`) and the `repr` blurb advertising `ntr.describe()` (`:2527-2530`). The
-  non-deferred kwargs list at `:2004-2006` STAYS — `session_fold(target, gist=…)` still takes kwargs.
-- `src/com/blockether/vis/internal/loop.clj:11156-11214` — delete the five `__vis_native_result_*`
-  host callbacks (`prime`, `fetch`, `ids`, `index`, `scope`). `index` (`:11170`) is `describe()`'s
-  backend and has no other caller; the sqlite `db-native-result-index-*` queries below are its store
-  half, so `describe` disappears end to end — sandbox verb, host callback and SQL.
-- `src/com/blockether/vis/internal/env_python.clj:886, 997-1002, 2117-2122` — drop `ntr` /
-  `native_tools_results` and the five `__vis_native_result_*` names from the protected-name,
-  non-deferred and defer-exclusion sets; `:2696` loses "re-read stored results with `ntr[\"<tool id>\"]`"
-  from the block-failure recovery nudge.
+### Signature
 
-**Acceptance criteria — the store.**
-- `src/com/blockether/vis/internal/persistance.clj:616-634` — delete the five `defdelegate`s.
-- `extensions/persistance/vis-persistance-sqlite/src/.../core.clj:4487-4740` — delete the
-  `ntr[tool_id]` branch index section header, `db-native-results-for-tool-ids`,
-  `db-native-result-ids-for-session`, `db-native-result-index-for-session`,
-  `db-native-result-index-for-latest-turn`, `db-native-result-index-for-scope` and the result-body
-  persistence and columns that fed them.
+```python
+cat(path)                       # whole file, capped
+cat(path, from)                 # from → EOF, capped
+cat(path, from, to)             # closed range, inclusive
+```
 
-**Acceptance criteria — the fold, which is the point of this phase.**
-- `loop.clj:2017-2043` — delete `ntr-entries-of` outright (its own docstring says python_execution
-  contributes nothing).
-- `loop.clj:2045-2175` `stamp-iter-universe!` — delete the `:2104-2105` branch that accumulates a
-  scope → ntr-id map; the fn keeps stamping the iteration universe and live skill activations, and its
-  docstring drops "recoverable native result ids" from the sentence at `:2046`.
-- `loop.clj:2734` — delete `(declare ntr-recover-hint)`. This is the repo's only forward declaration in
-  this file's fold section and the AGENTS.md `declare` ban makes its removal non-optional; nothing is
-  re-ordered to keep it.
-- `loop.clj:3140, 3153-3163, 3244, 3270` — the fold receipt builder loses `recover-hint` and the
-  `ntr-recover-hint` call; the receipt becomes `folded <label><note><kept-note> → <gist>`.
-- `loop.clj:3290-3296` — delete `ntr-recover-hint` (the `· more results: ntr.describe()` suffix).
-- `loop.clj:3384-3392` `code-ntr`, `3426-3460` `recover-bullet`, and the `3514-3517` branches inside
-  `session-fold-card` — deleted; the card's `markup-bullet` collapses to `bold-lead-word`, and the
-  metric vocabulary in the `:3413` comment loses `recover`.
-- `loop.clj:3568-3569, 3660-3665, 3690` — delete `rec-ntr-ids` and `:summary-ntr-ids` from the fold
-  summary form; `loop.clj:4091-4100` loses the `recover` metric from the rendered summary.
-- `loop.clj:4187` — delete the per-result `# saved: ntr[…] — re-read without re-running` stamp
-  emitter. No result line carries a coordinate any more.
-- `loop.clj:4748` — the `python_execution` description loses "stay at their `# saved:` coordinate
-  (`ntr[\"t5/i1/f2\"]`); engine-bound natives are bare snake_case" (phase 7 rewrites the rest).
-- `loop.clj:4775-4777` — the `session_fold` description loses the recoverable/`ntr` clause entirely:
-  folding changes rendering, not storage, and a folded step's content is readable only through
-  `await session_state()` when introspection is on.
-- `src/com/blockether/vis/internal/env_python.clj:1141` — the sandbox `session_fold` docstring loses
-  both `ntr` sentences and keeps the `session_state()` filter path.
-- `resources/vis-docs/token-optimization.md:111, 116` — delete the "One folded native result: its
-  `# saved:` coordinate" bullet and the sentence claiming the coordinate survives with introspection
-  OFF (with introspection OFF a folded step is simply not recoverable — say that).
-- `apps/vis-companion/src/components/ChatContent.tsx:534` — the comment naming `ntr[…]`-carrying
-  metric bullets is reworded to the surviving metric bullets; no rendering change (the column rule
-  stays).
+- **Positional only.** One file. No `files`, no `ranges`, no keywords.
+- `from` / `to` accept **either** a 1-based line number **or** an anchor `"4435:7f2"`, mixed freely. The read is the forgiving side: a stale anchor resolves through `resolve-anchor-range-read` and only refuses when it truly cannot be located.
+- **Returns a plain `str`** — nothing else. No dict, no `results` key, no metadata. `print(cat(...))` shows it; `cat(...).splitlines()` slices it in Python without printing anything.
+- Every line — **including blank lines** — carries an anchor, so the read is gap-free and every line is addressable. (An empty line hashes to `000`.)
+- Caps: 2000 lines / 50 KiB per call (the shipped `default-cat-limit` / `max-cat-window-bytes`). When clipped, the **last line of the string** says so and names the next call; nothing is silently dropped.
+- Gate: `(fs-access-before-fn :cat :file "file-read" …)`, identical to the other read verbs.
+- Raises on: missing file, directory, `from > to`, line out of range, unresolvable anchor.
 
-**Tests.**
-- DELETE: `extensions/persistance/vis-persistance-sqlite/test/.../core_test.clj:2562-2925` (four
-  describes, ~364 lines — `native-results-for-tool-ids-test`, `native-result-ids-for-session-test`,
-  `native-result-index-for-session-test`, `native-result-index-for-scope-test`);
-  `test/com/blockether/vis/internal/env_python_test.clj:680, 723` (both `ntr` describes);
-  `test/com/blockether/vis/internal/compaction_verbs_test.clj:574-613`
-  (`session-fold-native-tool-test`).
-- REWRITE: any `compaction_verbs_test` describe asserting the receipt's shape keeps its fold/gist/
-  supersede claims and loses the `recover …` and `more results:` segments.
-- ADD: `env_python_test/ntr-is-gone-test` — `ntr`, `native_tools_results`, `ntr.describe`, `ntr.at`
-  and every `__vis_native_result_*` name raise `NameError` in a fresh sandbox, and no sandbox
-  docstring, prompt line or tool description mentions `describe()` or `# saved:`;
-  `compaction_verbs_test/fold-receipt-has-no-recovery-coordinate-test` — a fold over an iteration that
-  ran `python_execution` produces a receipt containing neither `ntr` nor `# saved:` nor `recover`, and
-  the description of `session_fold` names `session_state()` as the only recovery path.
+### stdout — real, rendered from `editing/core.clj`
 
-**Unknowns.** None. The companion reads no native-result row (the only hit is a comment), and
-compaction decides what is safe to fold from the iteration universe and skill activations, never from
-native-result rows (`stamp-iter-universe!` keeps both after the `:2104` branch is removed).
+```
+>>> print(cat("src/com/blockether/vis/internal/foundation/editing/core.clj", 4435, 4450))
+4435:7f2│ (def struct-patch-symbol
+4436:88f│   (vis/symbol
+4437:111│     #'struct-patch-tool
+4438:21c│     {:symbol 'struct_patch
+4439:a80│      :result "One row/edit: `path`, `op`, `changed`, `diff`, `lines`."
+4440:056│      :active-fn structural-supported?
+4441:b82│      :description
+4442:d09│      (str
+4443:036│        "Structurally edit supported code: definition by NAME (`target`) or node by "
+4444:094│        "`at`/`line`. Renames, docs, moves, `append_child`. Writes re-parse: code that will not parse "
+4445:e74│        "is REFUSED; unbalanced Clojure delimiters auto-repaired. A batch of `edits` applies in order "
+4446:753│        "and is never rolled back: an entry that fails leaves the earlier ones written.")
+4447:c7a│      :before-fn (plan-gated-before-fn :struct_patch :file struct-arg-paths)
+4448:1e3│      :tag :mutation
+4449:92b│      :on-error-fn (tool-failure-on-error :struct_patch :file)}))
+4450:000│
+```
 
+Gutter is `│ ` (U+2502 + space) — it never occurs in source, so `line.split("│ ", 1)` is exact, and it cannot be confused with the `:` inside the anchor. Cost of the whole addressing scheme in that block: **8 characters per line.**
 
-## Phase 6 — Decide the fate of `cat` and `patch`
+Clipped tail:
 
-**Rationale.** These two are the anchored `lineno:hash` protocol. Once they are no longer schema-
-advertised, their cost is entirely in the prompt and in the model's head: `cat` competes with
-`open().read()` and `patch` competes with `Path.write_text()` plus `struct_patch`. Keeping them
-undecided leaves a permanent "which read?" question inside the one surface we just cleaned.
+```
+6134:c0a│ (def editing-prompt
+… clipped at 2000 lines — file has 6134; continue with cat(path, 2001, 4000)
+```
 
-Recommendation: **delete `cat` and `patch` as model-facing verbs.** `grep` (with `context`) covers
-targeted reading, `struct_index`/`struct_nodes` cover structured reading, `struct_patch` covers
-structured writing, and plain Python covers everything else. What is lost is the atomic
-anchor-verified multi-file text edit; that is re-expressed as a small Python helper in the sandbox
-prelude if a reproduction shows it is missed.
-
-**Data.** None. Both verbs are read/write helpers over the filesystem; nothing persisted changes.
+**Data.** None — `cat` returns a `string?`. The only structured token inside it is `:ext.editing.hashline/anchor`, spec'd in Phase 1.
 
 **Acceptance criteria.**
-- `src/com/blockether/vis/internal/foundation/editing/core.clj` — `cat-tool` (`:6272`) and
-  `patch-tool` (`:6341`) registrations removed; internal functions they wrapped are kept only if a
-  remaining verb calls them, otherwise deleted with them.
-- `test/com/blockether/vis/internal/foundation/editing/core_test.clj` — the `cat`/`patch`
-  describes are deleted; anchor-hash helpers used only by them go with them.
-- `src/com/blockether/vis/internal/prompt.clj` — the `cat`/`patch` sentences in `CORE_SYSTEM_PROMPT`
-  (`:215-233`) are replaced by "read with `grep`/`struct_*` or plain Python; write with `struct_patch`
-  or plain Python".
-- `AGENTS.md` — no rule references `cat`/`patch`; if one does, it changes in the same commit.
-- Test that proves it done: `editing/core_test/anchored-verbs-are-gone-test` plus the existing
-  `struct_patch` suite still green, proving structural editing carries the load.
-
-**Unknowns.** Does any harness skill, extension, or bundled documentation page instruct the model to
-call `cat`/`patch`? Is atomic multi-file text editing exercised anywhere the structural path cannot
-reach (Markdown, YAML, plain prose)?
-
-## Phase 7 — Rewrite every model-facing sentence for a one-tool world, and measure the win
-
-**Rationale.** Nine files still teach a world with eighteen doors. The prompt arbitrates between
-surfaces that no longer exist ("Direct native tools *vs* `python_execution`"), names a retrieval verb
-that is gone (`vis_docs()`), and spends four lines on a recovery store that stores nothing (`ntr`).
-Left alone, the model keeps choosing between one thing and one thing, keeps calling a function that
-returns a `NameError`, and keeps paying for text describing deleted machinery. This is also the phase
-that produces the number the whole plan is justified by.
-
-**Data.** None. Prompt text is assembled per request from source strings; it is never persisted, never
-sent as structured data, and no other language mirrors it.
-
-### 7.1 The complete model-facing inventory (every string the model reads, with its producer)
-
-| # | Producer | `file:line` | Block in the assembled prompt | Fate |
-|---|---|---|---|---|
-| 1 | `CORE_SYSTEM_PROMPT` | `prompt.clj:209-269` | `;; -- SYSTEM-PROMPT --` | REWRITTEN §1 §2 §3 §6 (7.2) |
-| 2 | `python-execution-tool` `:description`/`:result` | `loop.clj:4735-4762` | the ONE tool schema | REWRITTEN (7.3) |
-| 3 | `session-fold-tool` description | `loop.clj:4765-4797` | was a schema → becomes `doc("session_fold")` | REWRITTEN (7.3) |
-| 4 | `apropos-tool` / `doc-tool` descriptions | `loop.clj:4799-4836` | was a schema → becomes `doc("apropos")`, `doc("doc")` | REWRITTEN by Phase 4 (7.3) |
-| 5 | 33 extension symbol `:description` + `:result` | 7 files (see cross-validation B) | were schemas → become each function's `doc` text | KEPT, deduped (7.4) |
-| 6 | `extensions-prompt-block` fragments | `prompt.clj:530-556` | `;; -- EXTENSIONS --` | BUDGETED + linted (7.4) |
-| 7 | `capability-matrix` (`LANGUAGE TOOLS`) | `language_surface.clj:107-127` | inside EXTENSIONS | REWORDED (7.5) |
-| 8 | `skills-prompt` / `agents-prompt` | `harness/core.clj:343-371` | inside EXTENSIONS | REWORDED (7.5) |
-| 9 | `INTROSPECTION_PROMPT` | `introspection.clj:1303-1310` | inside EXTENSIONS (toggle) | REWORDED (7.5) |
-| 10 | `sandbox-shims-prompt-block` | `prompt.clj:558-640` | `;; -- SANDBOX-SHIMS --` | ONE line changed (7.5) |
-| 11 | `cli-autonomous-rules` | `prompt.clj:719` | `;; -- CLI-AUTONOMOUS --` | UNTOUCHED (no tool nouns) |
-| 12 | `AGENTS.md` (workspace guidance) | repo root | `;; -- PROJECT-INSTRUCTIONS --` | REWRITTEN (7.6) |
-| 13 | `resources/vis-docs/*.md` | `index.md:37-46`, `extending.md` | `doc(slug)` corpus | Phase 4 + (7.6) |
-
-Nothing else reaches the model. `form.clj`, `render.clj` and the companion render the TRANSCRIPT, not
-the prompt, and are Phase 3's problem.
-
-### 7.2 `CORE_SYSTEM_PROMPT` — the exact rewrite
-
-Four of seven sections change. §4, §5 and §7 are untouched, word for word — nothing in them names a
-tool. Each edit below is stated as *what is deleted*, *what replaces it*, and *why the sentence exists*.
-
-**§1 Identity + Epistemic stance** (`:213-218`)
-
-- DELETE `:214-215` — "`vis_docs()` is product docs, open it only for product questions." The verb is
-  deleted in Phase 4.
-- DELETE `:217-218` — "Native descriptions and JSON Schemas are authoritative: obey hard
-  preconditions and follow the documented contract." There is one schema left and it has one field.
-- KEEP `:214` first clause and `:216` (trust order) verbatim.
-- ADD the discovery contract, which is the whole point of Phase 4 and must be in §1 because a model
-  that does not know `apropos` exists will never type it:
-
-```
-- Host project default. Code: `grep(...)` FIRST, scoped to real paths.
-- Trust order: runtime > source > docs > assumption; report what the tools showed.
-- `apropos(text)` full-text searches every function, skill and Vis documentation page; `doc(name)`
-  returns one whole document and is the authoritative contract — obey its stated preconditions;
-  bare `doc()` is the curated index. Read a skill with `doc`, work under it with `skill`.
-```
-
-**§2 Execution surfaces** (`:219-231`) — the section that shrinks most: 13 lines → 11, and every
-sentence about *choosing* a surface dies.
-
-- DELETE `:219-220` — "Direct native tools: single operations, simple edits, small fixed call sets."
-  This is the routing rule for a fork that no longer exists.
-- DELETE `:225-228` — the four `ntr` lines (`ntr[key]`, `# saved:`, `ntr.describe()`,
-  `ntr.keys()/items()`). Phase 5 deletes the store; the shape-inspection half of the sentence is kept
-  because it is about Python data, not about `ntr`.
-- DELETE from `:229-230` — "Call advertised native tools directly; use `apropos`/`doc` only for
-  unadvertised capabilities." Nothing is advertised; §1 now owns discovery unconditionally.
-- KEEP verbatim: `:221` (Python default for data work), `:222` (shell handle), `:223-224` (the
-  higher-order-helper rule), `:229` first clause (`session` map) and `:231` (REPL reuse).
-- ADD one opening sentence that states the new world once, and one printing rule that replaces what
-  `ntr` used to buy:
-
-```
-- ONE call exists: `python_execution`. Every action — search, read, edit, test, shell, browse — is
-  Python in that sandbox; there is no second door and no tool to choose.
-- Batch independent work in ONE block: plural arguments first, then `await gather(...)` for
-  independent calls. State persists between blocks; only `print(...)` returns.
-- `python_execution`: default for most Python/data work, YAML/JSON/TOML/CSV; prefer over shell.
-- No shell TOOL: `await shell("npm test")` answers a HANDLE — `sh.logs()`/`sh.wait(s)`/`sh.type()`/`sh.stop()`, each carrying status.
-- Define once and reuse a small higher-order helper (functions that accept or return callables):
-  NEVER paste a near-identical loop or block twice; on the second occurrence factor it out and call it.
-- Results are raw Python data, not rendered text: inspect shape before indexing, and after an error
-  inspect keys/types, then adapt. Print only what the answer needs — an unprinted result costs no context,
-  and a result you did not print is gone when the block ends.
-- `session` is a live read-only map; inspect it directly. Reuse a live REPL; query status only when
-  absent or stale.
-```
-
-  The last clause of the printing rule is load-bearing and NEW: with `ntr` gone, "I can fetch it later"
-  is false, and the prompt must say so or the model will under-print and re-run work.
-
-**§3 Inspect** (`:232-246`)
-
-- REWRITE `:232-235`. "**Filesystem work goes through native tools**" is now a contradiction:
-
-```
-- **Filesystem work is Python**: `grep(...)` searches, `ls(dir)` maps an unknown tree FIRST
-  (`depth` descends) so no path is guessed, `shell(...)` runs programs, and reading or CHANGING the
-  tree is plain Python (`pathlib`, `os`, `shutil`).
-```
-
-  The five deleted-verb guards in `prompt_test.clj:94` (`copy`/`move`/`delete`/`create_directory`/
-  `file_exists`) stay green and stay meaningful.
-- REWRITE `:239-241` — drop `cat` and `patch` per Phase 6, keep the ordered workflow the test at
-  `prompt_test.clj:78-83` pins: `grep` → `struct_index` → `struct_nodes` → `struct_patch`.
-- REWRITE `:244-245` — "BATCH every tool" → "BATCH inside one block", since batching is now a
-  property of the Python program, not of a tool's plural argument.
-- KEEP `:236-238`, `:242-243`, `:246` verbatim.
-
-**§6 Manage context** (`:257-263`)
-
-- DELETE from `:261` the words "recovery IDs" — Phase 5 removes the only IDs that phrase meant.
-- ADD to the fold bullet the sentence the receipt used to carry: "Folding changes rendering, not
-  storage — a folded step is NOT re-readable, so the gist is the only thing that survives."
-- KEEP the rest verbatim.
-
-**Budget ratchet.** `prompt_test.clj:76` asserts `(< (count text) 4750)` with a comment recording every
-time the budget moved. This phase moves it DOWN — the first time it has ever gone down — and the
-comment records why in the same shape as the existing entries: *4750 → 4300, when eighteen tools
-became one: §1 lost `vis_docs` and the JSON-Schema clause, §2 lost the native/Python routing fork and
-the four `ntr` lines, §3 stopped naming `cat`/`patch`.* The exact new ceiling is set from the measured
-count + 5 %, recorded in step 39.
-
-### 7.3 The four engine descriptions
-
-- `loop.clj:4744-4756` `python_execution` `:description` — DELETE the `# saved:`/`ntr` sentence at
-  `:4747-4748` and the "engine-bound natives are bare snake_case, native-only ones absent" clause,
-  which described a distinction that no longer exists. First sentence becomes: *"Run Python in the
-  session sandbox — the only call. Batch, filter and chain work here, then print only what the answer
-  needs."* Everything from "A shell is WATCHED here" to the descriptor cap is KEPT verbatim: it is the
-  only place the file-handle and bounded-loop rules are stated. The `caps` capability line stays.
-- `loop.clj:4757-4758` `:result` — kept as prose, but it stops being schema metadata: with
-  `advertise-tool` gone it is appended to the description directly (`:4731` does this today).
-- `loop.clj:4765-4797` `session_fold` — Phase 5 already deletes `:4775-4777` and `:4784`. Here the
-  remaining text is re-pointed: the description becomes the `doc("session_fold")` document, its
-  `:schema` argument prose (`:4788-4795`) folded into that text as the argument paragraph, since a
-  Python function's arguments are documented in its docstring, not in a JSON Schema.
-- `loop.clj:4799-4836` `apropos`/`doc` — Phase 4 rewrites these; Phase 7 only verifies each is a valid
-  `doc` document under the "first line is the gist" lint from Phase 4.
-
-### 7.4 The EXTENSIONS block — the largest measured win, and the rule that keeps it won
-
-Once schemas are gone, every symbol's `:description`/`:result` becomes its `doc(name)` text: pulled on
-demand, not pushed every request. The failure mode is obvious and must be blocked in this commit — an
-extension author, seeing the schema gone, pastes the signature into `:ext/prompt-fn` and the payload
-comes back in the prompt where it costs MORE.
-
-- RULE, written into `extension.clj`'s prompt docstring and into `resources/vis-docs/extending.md`: an
-  `:ext/prompt-fn` fragment states ROUTING and POLICY only — when this extension is the right approach,
-  and what it refuses. It never restates a signature, an argument name, a return shape or an example
-  call; that text lives in the symbol docstring and is reached with `doc(name)`.
-- TEST `prompt_test/extension-fragments-do-not-restate-doc-text-test`: for every active extension
-  fragment, assert it contains no `(` immediately following a registered function name (a call
-  signature), and that no line of it is a duplicate of that symbol's `doc` first line.
-- `extension.clj:1785-1830` `symbol-doc-text` becomes the single renderer for every symbol (previously
-  Python-only ones); its docstring loses the "Native tools use the separate contract below" split.
-
-### 7.5 The four small blocks
-
-- `language_surface.clj:110` — docstring example header "LANGUAGE TOOLS (active packs; call via the
-  facade, language first)" → "(active packs; language first)", matching the emitted string at `:116`
-  which already says it. `:126-127`'s clj-kondo sentence is unchanged. The block itself stays: it is
-  the only place the ACTIVE language set is stated, and it is ~6 lines.
-- `harness/core.clj:351-353` — "call `skill(\"name\")` to load the FULL instructions on demand" →
-  "`doc(\"name\")` reads a skill, `await skill(\"name\")` activates it (session effect: sets its project
-  root, cwd and resources)". The `[project]` clause is kept. `:360` `clip … 180` stays: the listing is
-  progressive disclosure and `apropos` now indexes the full body behind it.
-- `harness/core.clj:369` agents line — unchanged; `agent(...)` was never a native tool.
-- `introspection.clj:1308` — "Current transcript and folded-content recovery" →
-  "Folded content is readable ONLY here: `transcript/turns/iterations/blocks` (`code`/`result`)", the
-  sentence Phase 5 makes true. `:1306`, `:1307`, `:1309`, `:1310` unchanged.
-- `prompt.clj:621` — "Auto-imported by `python_execution` (no `import`)" is unchanged and now simply
-  accurate. The block's closing sentence about `subprocess` never spawning is unchanged.
-
-### 7.6 Documentation in the tree
-
-- `AGENTS.md` — three edits, in this same commit: the `run_tests`/`repl_eval` guidance keeps its
-  content but stops calling them native tools; "BATCH every tool" phrasing aligned with §3; the
-  gateway-client and companion-dev-server sections are untouched (they name Clojure/npm, not tools).
-- `resources/vis-docs/index.md:37-46` — the "Two gears: native tools and the Python sandbox" section
-  becomes "One gear: the Python sandbox", deleting the `:42` and `:45` bullets.
-- `resources/vis-docs/extending.md` — Phase 2's `:schema` deletion already removes the authoring
-  chapter (`:184` "Native tools from Python", `:1146`); Phase 7 adds the replacement paragraph: what a
-  symbol's docstring must contain now that it IS the contract, plus the `:ext/prompt-fn` rule from 7.4.
-- `resources/vis-docs/token-optimization.md:111,116` — Phase 5 removes the `ntr` advice; Phase 7
-  replaces it with the print-discipline rule, since that file is the one page about this exact cost.
-
-**Acceptance criteria.**
-
-- `prompt.clj:209-269` rewritten as 7.2; `loop.clj:4735-4797` as 7.3; the five files in 7.5-7.6 as
-  written there.
-- `test/com/blockether/vis/internal/prompt_test.clj` surgery, exactly:
-  - `prompt-core-test:59-63` ("keeps live native contracts authoritative") — DELETE the two `expect`s
-    at `:61-62`; the describe survives on `:63` plus new assertions.
-  - `:100` ordering expect (`grep` FIRST before `vis_docs()`) — REWRITE to `grep` FIRST before
-    `apropos(text)`.
-  - `:112-115` required-terms vector — DROP `"`vis_docs()`"`, `"Native descriptions and JSON Schemas
-    are authoritative"`, `"hard preconditions"` (now in the new §1 sentence, re-added in its new
-    spelling), `"Direct native tools: single operations"`.
-  - `:122` — DROP `"Use `ntr[key]"`, `"# saved:"`, `"`ntr.describe()`"`; KEEP `"Inspect shape before
-    indexing"`.
-  - `:145-147` — DELETE the `ntr[key]` single-occurrence assertion and its two comment lines.
-  - `:91` — `"**Filesystem work goes through native tools**"` → `"**Filesystem work is Python**"`.
-  - `:79-81` ordered-steps vector — DROP `"`cat` `ranges`"`.
-  - `:149-155` surplus vector — ADD `"native tool"`, `"JSON Schema"`, `"vis_docs"`, `"ntr"`,
-    `"# saved:"`, `"Direct native tools"`; this is the regression gate that stops the old vocabulary
-    creeping back.
-  - `:76` budget — `4750` → the measured ceiling, with the ratchet comment from 7.2.
-  - ADD `prompt-names-one-tool-test`: the assembled prompt contains `python_execution`, and contains
-    none of `ntr`, `vis_docs`, `native tool`, `JSON Schema`, `advertised`.
-  - ADD `extension-fragments-do-not-restate-doc-text-test` (7.4).
-- `run_tests` green: `prompt-test`, `loop-test`, `env-python-test`, `harness/core-test`,
-  `language-surface-test`, `introspection-test`.
-
-**Measurement (the number this plan is justified by).** Recorded in part 5 below and in the commit
-message, captured with `repl_eval` on a clean REPL against a fixed fixture env (workspace = this repo,
-all default extensions active, `introspection` OFF), before on `main` and after on the branch:
-
-| metric | how |
-|---|---|
-| CORE prompt chars | `(count CORE_SYSTEM_PROMPT)` |
-| assembled system prompt chars | `(count (prompt/build-system-prompt {}))` |
-| EXTENSIONS block chars | `(count (#'prompt/extensions-prompt-block env exts))` |
-| shims block chars | `(count (#'prompt/sandbox-shims-prompt-block exts))` |
-| provider `:tools` payload chars | `(count (wire/json-str (#'loop/native-tools env)))` — after: one tool |
-| total first-request overhead | sum of the above |
-| approximate tokens | chars ÷ 3.6, stated as approximate |
-
-The `:tools` payload is expected to dominate: 18 advertised tools with full JSON Schemas today, one
-tool with a single `code` property after. A drop under 40 % of total first-request overhead means the
-savings landed somewhere unmeasured — find it before claiming the phase done.
+- `src/com/blockether/vis/internal/foundation/editing/core.clj` — `cat-one`, `cat-tool`, `cat-symbol` restored, single-path and positional (`:call {:pos ["path"] :opt-pos ["from" "to"]}`, the shape already proven at `foundation/mcp/core.clj:1119`); added to `available-editing-symbols` (`:4776`).
+- `test/com/blockether/vis/internal/foundation/editing/core_test.clj` — `cat` describes restored.
+- Test that proves it done: `editing/core-test/cat-returns-anchored-string-test` — asserts the return is a `String`, that every line matches `\d+:[0-9a-f]{3}│ `, that a blank line still carries an anchor, and that an anchor endpoint and an integer endpoint select the same window.
 
 **Unknowns.**
+- Whole-file `cat` with no range: cap at 2000 lines, or refuse over some size and demand a range? *(Proposed: cap and say so in the last line.)*
+- Should `cat` accept a `struct_index` row's `line`/`end_line` pair directly, i.e. is the integer form enough of a bridge from the structural verbs? *(Proposed: yes, no extra affordance.)*
 
-- How much of §3's batching discipline survives once batching is a property of writing one Python
-  block? Resolved by measurement: keep the sentence if removing it changes nothing, delete it if the
-  new §2 "Batch independent work in ONE block" already says it. Decide with the count, not by taste.
-- Does the EXTENSIONS block need a hard character budget (a test that fails over N chars), or is the
-  7.4 lint enough? Answer after the after-measurement shows what that block actually costs.
+---
 
+## Phase 3 — `patch`: a positional span replace with a tree-sitter consistency gate
 
-## Phase 8 — Move pushed area doctrine into pulled skills, and measure
+**Rationale.** This is the phase that deletes the 2 KB block. Without it Phase 2 is just a prettier read.
 
-**Rationale.** Phase 7 measured the first-request prefix and found the tool payload was no longer the
-problem: `AGENTS.md` was 32,553 chars — 64% of a 50,590-char prefix, bigger than the CORE prompt, the
-shim block and the tool payload combined. 13,648 of it was Companion/UI doctrine and 7,000 more was
-per-area contract (HITL, TUI paint, `PLAN.md`, shims) that rides into every request of every session,
-including sessions that never open a browser, a dialog or a terminal grid. The file's own preamble
-already says a rule owned by one place is only POINTED AT from here; skills are the repo's existing
-PULL mechanism (`doc("name")` reads, `await skill("name")` activates) and cost one clipped 180-char
-line each in the prompt. Without this phase the tool-schema win is spent back on prose.
+### Signature
 
-**Data.** None. Nothing crosses a boundary: markdown moves between files and a frontmatter value is
-normalized in memory before it reaches the same `{:name :description}` skill entry as before.
+```python
+patch(path, anchor, replacement)                   # ONE line  — 3 args
+patch(path, from_anchor, to_anchor, replacement)   # a span    — 4 args
+```
 
-**Acceptance criteria.**
-- `AGENTS.md` — repo-wide invariants only, plus one "Area doctrine is PULLED" index; 32,305 → 9,799 chars.
-- `apps/vis-companion/.agents/skills/companion-ui/SKILL.md` — the four Companion sections, verbatim.
-- `.agents/skills/{human-input,tui-rendering,plan-md,python-shims}/SKILL.md` — the four per-area contracts, verbatim.
-- `src/…/foundation/harness/discovery.clj` — `fold-value` drops a YAML block-scalar indicator and unwraps a
-  quoted scalar, so `description: >` stops reaching the prompt as a literal `> ` (it did for every folded
-  skill) and `issue-triage`/`spel` stop leading with a stray quote.
-- Test: `discovery-test` gains the block-scalar and quoted-scalar cases; `prompt-test`, `agents-test`,
-  `env-digest-test`, `harness.core-test` and `private-deployment-hygiene-test` stay green.
-- Measured prefix: 50,590 → 29,554 chars (-41.6%), PROJECT-INSTRUCTIONS 32,553 → 10,047 (-69%), paid for
-  with +1,470 in the skills listing.
+- **Positional only.** Arity disambiguates and cannot be ambiguous, because `replacement` is always last: 3 args ⇒ `to_anchor = from_anchor`.
+- **`patch` requires anchors, never bare line numbers** — deliberately asymmetric with `cat`. The read is forgiving; the write is *verified*. A bare line number is exactly the silent-corruption case this scheme exists to refuse.
+- `replacement` is text: multi-line allowed; `""` deletes the span; drifted `\uXXXX` escapes are decoded once via `escapes/decode-unicode-escapes`.
+- **Atomic per call**: a refusal writes nothing.
+- **Several edits in one block are applied bottom-up**, highest line first — then every anchor from the same `cat` is still exact. (Small drift is forgiven up to 40 lines anyway; this is the rule that makes it free.) This replaces the old atomic multi-edit batch and is a prompt line, not machinery.
+- Gate: `(plan-gated-before-fn :patch :file …)`, same as `struct_patch`.
 
-**Unknowns.** None. A rule now reaches the model only when the session pulls its skill — the index in
-`AGENTS.md` is what makes that reachable, so if a future area is added its skill goes in that list.
+### The consistency check (the hook you asked for)
 
-## Phase 9 — Split the shim block into a pushed line and a pulled page, and measure
+After splicing, **before writing**:
 
-**Rationale.** After phase 8 the shim block was the biggest thing left in the prefix that is not
-`AGENTS.md`: 10,397 chars, 8,694 of them the 23 `:shim/description` values. Those values were carrying
-`doc()` pages — `anydoc` alone was 1,842 chars of query-language reference (field scopes, `NEAR(a b, 5)`,
-error types), pushed into every request of every session including the ones that never open a document.
-The push/pull split phase 8 applied to prose applies here unchanged: the description is what a model
-must know to NOT write against the upstream library (surface + refusals), everything else is what it
-needs once it is already calling the shim, and `doc(name)` already answers from the sandbox.
+1. If the file's language is structurally supported (`structural-supported?`, `core.clj:4007`), re-parse the new content with tree-sitter.
+2. If it has an ERROR node **and the original parsed clean** → **refuse**, write nothing, name the first error line.
+3. If the original was **already** broken → write, and say `parse: still broken at line N`. You must be able to repair a broken file; refusing there would strand it.
+4. Unsupported language / prose / config → no parse gate, write.
 
-**Data.** None crosses a boundary. `:shim/docs` is a new OPTIONAL string on the existing shim spec;
-`env-python`'s `__vis_docs__` seeding reads `(or :shim/docs :shim/description)`, and a shim's own Python
-`__vis_docs__` still wins over both.
+The Clojure pack's existing repair hook is extended to the new op — `extensions/languages/vis-language-clojure/src/com/blockether/vis/ext/language_clojure/core.clj:995`:
 
-**Acceptance criteria.**
-- Every one of the 23 `:shim/description` values is one tight line: what it reimplements and what it
-  refuses. Total 8,694 → 4,865 chars.
-- The 7 shims that lost real contract detail (`anydoc`, `attach`, `pytest`, `paramiko`, `matplotlib`,
-  `bs4`, `ruff`) carry the ORIGINAL text verbatim as `:shim/docs`; nothing was deleted.
-- `extension.clj` — `:shim/docs` spec + the push/pull authoring rule in the shim-spec comment;
-  `env_python.clj` — the seeding prefers it; `extending.md` — the authoring example shows both keys.
-- The prompt preamble stops claiming the line "is its whole supported surface".
-- Test: `sandbox-shim-contract-test` caps `:shim/description` at 340 chars (the ratchet — a line that
-  wants to teach a query language has outgrown the prompt) and proves the pull path end to end by
-  reading `__vis_docs__` out of a real sandbox context.
-- Measured: sandbox-shims block 10,397 → 6,539 chars (-37.1%, ~1,070 tokens off every request).
+```clojure
+:ext/op-hooks [{:op :struct_patch :phase :around :fn clj-struct-patch-no-fail-around}
+               {:op :patch        :phase :around :fn clj-patch-no-fail-around}]
+```
 
-**Unknowns.** None. `attach`'s SAME DOCUMENT, SAME NAME rule stays PUSHED on purpose — its test pins it
-in the description because a model reads it BEFORE attaching, not while calling.
+so an unbalanced `(` `[` `{` in a `.clj` replacement is parinfer-repaired once and retried (`core.clj:930-961`), and the status line reports `repaired`. Per AGENTS.md this stays **syntax-only** — the smallest mechanical change that restores parseable source, never a semantic rewrite.
 
-## Phase 10 — Stop reprinting finished background shells in ctx
+### stdout — success, real
 
-**Rationale.** `session["resources"]["other"]` is real and stays: a background `shell` is the one thing
-an agent starts that outlives its own call, and a running one it cannot see is one it never stops. But
-nothing ever LEFT that block. A background shell registers on spawn, flips to `status "exited"` when it
-finishes, and its record is deliberately retained so the TUI footer can still open the log card — so the
-model paid for every shell it had ever started, for the rest of the session. This session had 67 of them,
-all `exit 0`: 10,537 chars (~2,900 tokens) reprinted on every request, more than the whole sandbox-shims
-block after phase 9, and growing with every command run.
+`patch` returns a `str` too: one status line, then the **re-anchored** window with 3 lines of context each side (the shipped `patch-diff-context-lines`). Those anchors are fresh, so the next edit needs no second `cat`.
 
-**Data.** None crosses a boundary and nothing is retired early. `resources/model-view` — the ctx-only
-projection, used by `ctx_loop/enrich-ctx` and nothing else — drops a non-REPL resource whose `status` is
-`"exited"`. The registry, `list-resources`, the footer, the gateway `/resources` route and
-`resource_stop` are untouched, and a finished shell's log still answers by id from the file
-(`shell-logs-impl` reads the FILE once the entry is gone — `retired-log-core`).
+Single line, 3-arg form:
 
-**Acceptance criteria.**
-- A `running` shell and a `failed` one still appear; both change what the agent does next.
-- `other` disappears entirely once every shell has finished, instead of listing 67 dead ones.
-- Test: `resources-test/model-view-test` gains the mixed exited/running/failed case and the
-  all-finished case.
+```
+>>> print(patch("src/…/editing/core.clj", "4439:a80",
+...             '     :result "One row/edit: `path`, `op`, `changed`, `diff`, `lines`, `anchors`."'))
+patched src/com/blockether/vis/internal/foundation/editing/core.clj  4439..4439 → 1 line  parse: clean
+4436:88f│   (vis/symbol
+4437:111│     #'struct-patch-tool
+4438:21c│     {:symbol 'struct_patch
+4439:b16│      :result "One row/edit: `path`, `op`, `changed`, `diff`, `lines`, `anchors`."
+4440:056│      :active-fn structural-supported?
+4441:b82│      :description
+4442:d09│      (str
+```
 
-**Unknowns.** None. Retiring the RECORD at exit was rejected: the footer's log card is that retention,
-and the detail string ("logs retained until resource_stop") is a promise to the human reader, not to the
-model.
+Span replace that shortens the file, 4-arg form:
 
-## Phase 11 — Remove `session["resources"]` from the model-facing session entirely
+```
+>>> print(patch("src/…/editing/core.clj", "4443:036", "4446:753", new_text))
+patched src/com/blockether/vis/internal/foundation/editing/core.clj  4443..4446 → 2 lines (-2)  parse: clean
+4440:056│      :active-fn structural-supported?
+4441:b82│      :description
+4442:d09│      (str
+4443:133│        "Structurally edit supported code by NAME (`target`) or node `at`/`line`. Writes re-parse: "
+4444:43b│        "code that will not parse is REFUSED.")
+4445:c7a│      :before-fn (plan-gated-before-fn :struct_patch :file struct-arg-paths)
+4446:1e3│      :tag :mutation
+4447:92b│      :on-error-fn (tool-failure-on-error :struct_patch :file)}))
+```
 
-**Rationale.** Phase 10 treated the symptom. The mechanism was the disease: `render-turn-boundary`
-re-assigned `session["resources"]` **in full, unconditionally, once per turn**, deliberately opting out
-of the structural delta that every other ctx key gets — so the block could only ever grow, and one
-session reached 74 entries / 12,214 chars. The comment defending that special case is wrong on both
-counts. Its stated fear — a resumed turn inheriting the previous gateway's shell/REPL list — cannot
-happen: `ctx-engine/strip-ephemeral` already removed `session_resources` before the Nippy snapshot, the
-delta baseline lives in the loop process and dies with it, and gateway lease teardown STOPS background
-resources anyway. And its fallback `[]` was a LIST where every real value is a MAP, so the clearing case
-rendered a `session["resources"]` that would raise on the first subscript.
+With repair: `… → 2 lines (-2)  parse: clean (delimiters repaired)`.
 
-Nothing in ctx was load-bearing. The id an agent needs comes from the caller that started the resource —
-a `shell` handle (`sh.logs()`/`sh.wait()`/`sh.stop()`, each carrying status) or a `repl` `status` result
-— never from a list it reads back. This is the same push→pull move as phases 8 and 9, applied to live
-state instead of prose.
+### stdout — refusals, real shapes
 
-**Data.** `session_resources` is gone from `ctx-loop/enrich-ctx`, `ctx-renderer/project-ctx`,
-`static-context-keys`, `render-turn-boundary` and `ctx-engine/model-facing-keys`; `strip-ephemeral` is
-back to engine bookkeeping only. `resources/model-view` and its projection helpers (`repl-ctx-keys`,
-`other-ctx-keys`, `ctx-leaf`, `model-dir`, `repl-kind?`) are deleted — 4,949 chars, the whole ctx-only
-half of the namespace. The registry, `list-resources`, the footer, `/resources`, `resource_stop` and
-every `shell` handle op are untouched.
+A refusal **raises** — decided, not proposed — so it surfaces as a failed tool result the model cannot skim past; a returned failure row is skimmable, and this one carries the anchor that fixes it. House style, matching `tool-failure-on-error`. Each refusal carries the one-step recovery.
 
-**Acceptance criteria.**
-- Nothing renders resources: turn boundary, static ctx map, `enrich-ctx` and `model-facing-keys` — one
-  regression test in `ctx-cache-test` covers all four.
-- The two docs that sent the model to the dead key say the live door instead: `repl`'s description
-  ("Nothing lists live REPLs for you: `status` is the only answer") and CORE §2 ("Reuse a live REPL;
-  nothing lists one for you — `repl` `status` does").
-- `prompt-test`'s surplus list forbids `session["resources"]` from ever re-entering the core prompt.
+Stale anchor (`:anchor-not-found`) — the common case, and it costs **zero** extra reads:
 
-**Unknowns.** None. The teardown obligation (§7, "stop managed REPLs you started") is unchanged — it is
-now discharged from the handle the agent already holds rather than from a list it re-reads.
+```
+patch refused — nothing was written.
+  src/…/editing/core.clj  from_anchor 4439:a80
+  line 4439 now hashes b16, and no line within 40 lines carries a80.
+  current anchor at 4439 →  4439:b16│      :result "One row/edit: `path`, …, `anchors`."
+  retry with that anchor, or re-read: cat(path, 4436, 4446)
+```
 
-## Phase 12 — Delete the `skill` verb: a skill is prose, and `doc` reads it
+Misplaced anchor (`:anchor-misplaced`) — the wrong-line guard:
 
-**Rationale.** A skill body is text. Once `doc(name)` has printed it, the rules are in context and in
-effect; there is no second state in which they are obeyed harder. `skill(name)` nonetheless carried a
-state machine around that text: an `:op "skill"` result with `{name, status, scope, note,
-project_root, resources}`, an ACTIVE record per iteration (`current-iter-scope`, `same-activation?`),
-an idempotent re-read that answered a RECEIPT instead of the body, and a fold-protection path
-(`exclude-protected` plus a `protected-scopes` argument threaded through `apply-summaries`,
-`emergency-fold-projection`, `context-overflow-recovery!` and `ctx-engine/folds-view`) whose only job
-was keeping an activated body off the fold list. All of it is bookkeeping ABOUT text. Worse, it
-undoes phase 4: the discovery surface was reduced to two verbs with one job each — `apropos` SEARCHES,
-`doc` RETRIEVES — and a third verb that also delivers a document puts the model back to choosing.
-Reading a skill is the whole of using it; the `cwd` effect that was the one real difference is an
-ordinary directory to work in, which the `[project]` tag in the pushed listing already names.
+```
+patch refused — nothing was written.
+  src/…/editing/core.clj  from_anchor 4439:a80
+  a80 is not at line 4439; it is at line 217, beyond the 40-line drift window.
+  current anchor →  217:a80
+  the anchor is stale or belongs to another region; confirm with cat before retrying.
+```
 
-**Data.** None. The phase only deletes. The discovered skill entry
-(`:name`, `:description`, `:body`, `:dir`, `:tool`, `:resources`) crosses no boundary and is
-unchanged — it loses only the `:call` the corpus used to attach to it.
+Parse gate (`:parse-broken`) — the check that made `patch` safe:
+
+```
+patch refused — the edit would not parse; nothing was written.
+  src/…/editing/core.clj  4443..4446
+  clojure: ERROR node at line 4444, col 41 — near `:REFUSED.")`
+  the file parsed clean before this edit, so the replacement introduced it.
+```
+
+**Data.** The refusal payload crosses the boundary as ex-data → tool failure → wire, so it is spec'd:
+
+```clojure
+(s/def :ext.editing.patch/reason
+  #{:anchor-malformed :anchor-line-out-of-range :anchor-not-found :anchor-misplaced
+    :parse-broken :file-not-found :path-is-dir :path-escape})
+(s/def :ext.editing.patch/current-anchor :ext.editing.hashline/anchor)
+(s/def :ext.editing.patch/stated-line    pos-int?)
+(s/def :ext.editing.patch/found-lines    (s/coll-of pos-int? :kind vector?))
+(s/def :ext.editing.patch/error-line     pos-int?)
+(s/def :ext.editing.patch/refusal
+  (s/keys :req-un [:ext.editing.patch/reason]
+          :opt-un [:ext.editing.patch/current-anchor :ext.editing.patch/stated-line
+                   :ext.editing.patch/found-lines :ext.editing.patch/error-line]))
+```
 
 **Acceptance criteria.**
-- `foundation/harness/core.clj`: `skill-result`, `skill-tool`, `skill`, `skill-symbol`,
-  `current-iter-scope` and `same-activation?` are deleted and the extension binds `agent-symbol`
-  alone; `discovery`, `agents-prompt` and the slash templates are untouched. `skills-prompt` keeps the
-  name — description listing and its 180-char clip, and now heads it "`doc("name")` prints one whole
-  SKILL.md, `apropos(text)` searches them all; reading one has no session effect".
-- `loop.clj`: `stamp-iter-universe!` stamps `engine_iter_universe` and the weights only;
-  `exclude-protected` and every `protected-scopes` parameter are gone from `apply-summaries`,
-  `emergency-fold-projection` and `context-overflow-recovery!`. `ctx_engine.clj`: `folds-view` loses
-  the same argument.
-- `doc_corpus.clj`: a skill entry carries no `:call`, and `"skill"` leaves the curated index.
-- `env_python.clj` `doc`'s own description and CORE §1 stop teaching the read-versus-activate split;
-  `resources/vis-docs/skills.md`, `context-and-prompts.md`, `index.md` and `AGENTS.md` say `doc("name")`
-  wherever they said `skill("name")`.
-- The USER's `/<name>` slash keeps NO effect either: it stopped pasting the body. `skill-template-text`
-  expands to one sentence — use skill "X" for this task, read it with `doc("X")` unless its SKILL.md
-  is already in this conversation — plus the task, the owner sentence of a nested skill and the
-  absolute paths of its bundled resources (the two facts `doc` cannot print). Fetching is the
-  model's decision, because the model is the only party that can see whether that text is still in
-  front of it. Nothing injected means nothing to remember: no digest, no `session_slash_skills`
-  ledger, and two `/<name>`s of the same skill expand to the identical string.
-- Tests: `harness/core_test` pins that no prompt line advertises `skill(`, that the extension binds
-  one symbol, and that `/<name>` expands to a pointer with the task, the owner sentence and the
-  resource paths but never the body, identically on every invocation, recording nothing on the ctx
-  atom; `compaction_verbs_test` and `loop_test` lose the protection describes; `doc_corpus_test`
-  pins a skill entry WITHOUT a `call`; `env_python_test` and `prompt_test` pin the new wording.
-
-**Unknowns.** None. Skill DISCOVERY stays exactly as it is — the pushed one-line listing is what makes
-a skill findable without reading it, and it is the cheapest half of the mechanism.
-
-## Cross-validation — the SECOND inventory (measured against the tree; phases 1-7 missed these)
-
-Every figure below was counted this pass — balanced-brace spans and full-tree greps, not recall.
-Each item names the phase it attaches to; none of them is a new phase.
-
-### Two corrections to the first inventory
-
-- **`:native-tool? false` DOES appear — 12 sites**, the whole `shell` family among them
-  (`foundation/shell.clj:3136, 3174, 3205, 3234, 3257`). The turn-1 claim was about
-  `:ext.symbol/engine-bound?`, which is still declared `false` NOWHERE (`extension.clj:423`,
-  default true) — so the capability claim stands: all **33** `:native-tool? true` symbols are also
-  engine-bound Python names and lose nothing when the schema goes.
-- **Those 12 `false` symbols carry `:schema` and renderer callbacks anyway** — `shell.clj:3241-3247`
-  is a JSON Schema on a symbol that explicitly is not a native tool. That is dead weight ALREADY in
-  the tree; the sweep removes it in the same edit instead of leaving a second inventory behind.
-
-### A. Per-symbol renderer callbacks — ~895 lines that exist only to paint op-cards (Phase 3)
-
-Phase 3 said "collapse rendering to one card" and named `form.clj` and the TUI. It never named the
-CALLBACKS the cards are painted from. Declarations: `:render-finish-call-fn` **49**,
-`:render-start-call-fn` **29**, `:on-error-fn` **26**, `:ticker-fn` **11**. Behind them sit **21 named
-`defn`s totalling ~895 lines**, plus the factories `shell-start-renderer`, `shell-ticker`,
-`shell-on-error`, `mcp-on-error`, `tool-failure-on-error` and the two adapters
-`render-start-call-adapter` / `render-finish-call-adapter` (`python_extensions.clj`).
-Owning files: `foundation/editing/core.clj`, `foundation/language_surface.clj`, `foundation/shell.clj`,
-`extensions/common/vis-foundation-search/.../core.clj`, `foundation/mcp/core.clj`,
-`foundation/harness/core.clj`.
-
-- **Delete** `:render-start-call-fn`, `:render-finish-call-fn`, their spec keys, the adapters and the
-  IDENTITY renderers: with one form kind there is no op-card to render into. **§L confirms this holds for
-  ALL 21** — including the four language-pack renderers — so this bullet has no exception.
-- **`:on-error-fn` — verify before deleting.** Read `shell-on-error` and `tool-failure-on-error`
-  first: if they only shape a DISPLAY string they go with the renderers; if they build the structured
-  failure map the Python caller receives, they stay and lose only their display half. A named step,
-  never an assumption.
-- **`:ticker-fn` — KEEP (recommendation).** It is not a card: it feeds `progress.clj:340-352`
-  (`:activity :tool-call`, `:tool/op`, `:tool/label`), the live spinner for a call running INSIDE a
-  `python_execution` block. A three-minute `shell` run with a frozen bubble is a regression, not a
-  simplification. If it should go too, `progress.clj:340-352`, `:tool/op`, `:tool/label` and the 11
-  declarations go in one step.
-
-### L. The language packs lose their presentation too — the raw result IS the answer (Phase 3, confirms §A)
-
-**The worry, stated plainly:** with everything printed from Python, does a Clojure REPL blow-up, a lint run
-or a failing test suite still read like something a human can use, or does it become a raw dict in a stdout
-wall? It becomes the raw dict. **The human ACCEPTED that trade explicitly** (turn 15: *"the REPL eval will
-be going by Python. I ACCEPT THAT. We don't need it to be pretty."*), so this section exists to record the
-decision and its blast radius, not to argue it back.
-
-**Verdict: all 21 renderers die. There is no Family 2.** The four editorial functions in
-`foundation/language_surface.clj` go with the identity ones:
-
-| function | line | lines | what disappears from the screen |
-|---|---|---|---|
-| `render-lint-result` + `findings->table` | `:498-567` | ~70 | the boxed `file` / `row:col` / `level` / `provider` / `message` grid and the fenced stdin snippet |
-| `render-test-result` + `failures->table` | `:569-700` | ~132 | expected/actual columns, the "`message` only when there is no expected/actual pair" rule, `<what ran> — pass/total (Nms)` |
-| `render-test-call` | `:797-836` | ~40 | the pending "SELECTION" card (a call inside a python block has no start event anyway) |
-| `render-repl-eval-result` + `sect` | `:788-950` | ~163 | FORM / RESULT / ERROR / STDOUT / STDERR / TIMEOUT sections, `(+ 1 1)  ⇒ 2`, `⧖ timed out after 30000ms` |
-| `render-repl-start-result` | `:750-786` | ~37 | the REPL start/connect line (`repl up on port N`) |
-| `render-format-result` | `:1093` | ~8 | `` `path` — <label> `` |
-
-What replaces them is §K's data card: `<op>` + a count the result already carries + the pretty-printed
-value. Every fact the tables drew is still IN the result map — `findings` carry `file/row/col/level/message`,
-a fault carries `expected`/`actual`, a `repl_eval` failure carries `err`/`ex`/`root_ex`/`timed_out`. The
-layout is gone; the data is not. **No `:vis.result/rendered` spec, no `dispatch!` merge step, no summary/body
-keys** — that whole mechanism is withdrawn from the plan, and `dispatch!` (`language_surface.clj:172-280`)
-returns exactly what the pack produced.
-
-- **This deletes ~413 more lines than §A counted**, and removes the last reason for a callback to survive
-  "for just these four" — the seam the entire plan exists to close.
-- **The model is not worse off.** It already received the raw vectors; only the channel got the grid. A block
-  that wants a table writes one — `tabulate` is a prebound shim, and `findings` is a list of dicts.
-- *Alternative — move the four renderers into the result map (`:summary`/`:body`).* Rejected BY THE HUMAN
-  after being proposed: it keeps 413 lines of layout code, adds a spec that crosses into GraalPy, spends
-  tokens on markdown in every printed result, and buys prettiness that was explicitly declined.
-- *Alternative — keep `:render-finish-call-fn` for language packs only.* Rejected: one surviving callback
-  re-opens the per-symbol renderer table.
-
-**Two things that still do NOT die, so nobody deletes them by association:**
-
-- **`:ticker-fn` — KEEP (§A stands).** It is not a card; it feeds `progress.clj:340-352` while a call runs
-  INSIDE a python block. `test-target` (`language_surface.clj:662-673`) survives ONLY as the ticker's label
-  source, so a multi-minute Clojure suite still names what it is running instead of showing a mute spinner.
-- **`:on-error-fn`'s error→DATA half — KEEP.** This is not about prettiness: a pack failure must reach Python
-  as a value the block can print and branch on (`{:ok false :error … :trace …}`), never as a Python
-  traceback wrapping a Java stack trace. Its DISPLAY half goes with the renderers. Same verdict for
-  `shell-on-error` / `mcp-on-error` / `tool-failure-on-error`, which step 44 confirms by reading them.
-
-### B. JSON Schema literals — 371 lines, in SEVEN files, not two (Phase 2)
-
-Measured by balanced-brace span of every `:schema {`:
-
-| file | schema lines |
-|---|---|
-| `foundation/editing/core.clj` | 135 |
-| `vis-foundation-search/.../core.clj` | 84 |
-| `foundation/language_surface.clj` | 78 |
-| `foundation/shell.clj` | 37 |
-| `loop.clj` | 25 |
-| `foundation/mcp/core.clj` | 8 |
-| `foundation/harness/core.clj` | 4 |
-
-Phase 2 named only `extension.clj` and `loop.clj`. The other five files are where the schemas
-actually live; without them the `:schema` spec key is deleted while 346 lines of orphan maps stay.
-
-### C. `form.clj` is not a guard change — 344 lines go to roughly 115 (Phase 3, amended by §K)
-
-`native-tool-form?` (`:158`) is only the entry point. Everything TOOL-IDENTITY below dies with it:
-`label-overrides` (`:55`), `tool-label` (`:66`), `compact-path-summary-tools` (`:75`),
-`compact-tool-summary` (`:77`), `hide-tool-code?` (`:164`), `coalescable-tools` (`:182`), `tool-name-s`
-(`:189`), `coalesce-error-form?` (`:194`), `result-field` (`:200`), `format-summary-entries` (`:210`),
-`merge-format-forms` (`:245`), `merge-run` (`:268`), `coalesce-key` (`:278`), `coalesce-forms` (`:284`)
-— the entire adjacent-op-card COALESCING subsystem, whose only real customer is per-file `format_code`
-acks. `display-fields` (`:18-49`) shrinks to the python-block fields; `with-display-code`, `->display`,
-`<-wire` survive.
-
-**Amended by §K:** `result-card` (`:88`) and `result-cards` (`:143`) STAY. They describe a PRINTED
-result inside a python block, not a native call, and they lose only their `:vis/tool-name` badge
-lookup. That is why this section now says ~115 lines rather than ~80, and why the TUI's
-`tool-card-entries` is kept rather than deleted.
-
-Consumers to follow: `src/com/blockether/vis/core.clj` (public re-exports of `coalesce-forms` /
-`hide-tool-code?`), TUI `render.clj` (26 display/card sites), and the tests — `form_test.clj` (10
-`hide-tool-code?` assertions) and TUI `render_test.clj` (**50** display/card sites, 33 renderer sites),
-which the test map splits: identity assertions to DELETE, card geometry to REWRITE.
-
-### D. The Python extension AUTHORING surface still teaches native tools (Phases 2 + 7)
-
-`resources/vis-python/extension_bootstrap.py:106-158`: `vis.symbol(...)` takes `schema=`,
-`is_native_tool=`, `description=`, `result=`, `render_start_call_fn=`, `render_finish_call_fn=` and
-carries ~40 lines of validation for them (root must be `type: object`, no root `oneOf/anyOf/allOf`,
-non-empty `description`/`result`, the reserved `Raw result:` label). All of it goes; the signature
-becomes `symbol(fn, name=None, tag='observation', is_hidden=False)` and **the docstring is the doc**,
-which is exactly Phase 4's "one document per entry". The `Raw result:` label rule disappears with it
-(**24** sites tree-wide: `extension.clj` 6, `loop.clj` 5, bootstrap 2, `extending.md` 2, tests 9).
-
-### E. Wire, DB and companion carry a per-tool identity that becomes a constant (Phase 3)
-
-`:vis/tool-name` has **160** references. Once every form is `python_execution` the name is a constant
-and the field is noise:
-
-- `gateway/state.clj:1214-1236` — `tool_name` in the `:tool-preview` / `:form-start` / `:form-result`
-  payloads (`tool_call_id` STAYS: `python_execution` is still a provider `tool_use`).
-- `ctx_engine.clj:1035-1044` — `:vis/tool-name` and `:result-render` on the restored block.
-- `persistance_sqlite/.../core.clj` and `resources/db/sqlite/migration/V1__schema.sql` — the
-  `tool_name` and `result_render` columns. No compatibility layer, per repo rule: drop the columns.
-- Companion: `lib/types.ts` (`result_render`, `tool_name`), `components/ChatContent.tsx` (4 sites),
-  `screens/SessionScreen.tsx`, `ChatContent.test.tsx`.
-- `progress.clj:198-232` — both `form/->display` merges shrink with `display-fields`.
-
-### F. The per-tool wall clock, and the hook that exists to escape it (Phase 2)
-
-`runtime_settings.clj:17-53` — `NATIVE_TOOL_TIMEOUT_MS`, `native-tool-timeout-grace-ms` and
-`native-tool-timeout-ms` (37 lines) exist because a native HANDLER runs outside the Python eval
-watchdog. With one tool there is one watchdog: `*eval-timeout-ms*`. The escape hatch goes with it —
-**`:vis/outside-tool-wall`, 6 sites** (`extension.clj` 2, `loop.clj` 2, `runtime_settings.clj` 1,
-`language_surface_test.clj` 1) plus the language-clojure `test_runner.clj` declarations. Phase 2 named
-only the constant.
-
-### G. Per-tool context REPLAY policy — DEAD IN PRODUCTION, delete the whole path (Phase 2)
-
-**The finding that decides it: nothing declares `:replay`.** Grepping `:replay {` / `:elide-args`
-across `src`, `extensions` and `resources` returns the spec itself (`extension.clj:479-493`), the
-projection (`:1021`), the builder passthrough (`:1456-1457`), the loop's consumers — and **zero
-registrations**. The only producers in the tree are two test literals
-(`extension_test.clj:40` `{"x" 1024}`, `loop_test.clj:1806` `{"python_execution" {"code" 8192}}`)
-and one docs paragraph (`extending.md:1156,1178`). So `native-tool-replay-policies` returns `{}` on
-every real request, `compactable-native-call` returns `nil` on every iteration, and the `compacted-call`
-branch of `conversation-suffix` has never been taken outside a test. This is not "a table with one
-row" as the earlier draft said — it is a table with **no** rows, threaded through six function
-signatures.
-
-The exact removal, in order (each step leaves the file compiling):
-
-| site | what goes |
-|---|---|
-| `extension.clj:479-493` | the `:ext.symbol/replay` spec + its two comment lines |
-| `extension.clj:503` | `:ext.symbol/replay` out of `::fn-symbol-entry` `:opt` |
-| `extension.clj:997, 1021` | `:replay` out of the `native-tools-for` docstring and projection map (the fn itself dies in Phase 2 anyway) |
-| `extension.clj:1027-1034` | `native-tool-replay-policies`, both arities |
-| `extension.clj:1456-1457` | the `(:replay opts)` passthrough in the symbol builder |
-| `loop.clj:4301-4309` | `oversized-arg-receipts` |
-| `loop.clj:4311-4330` | `compactable-native-call` |
-| `loop.clj:4332-4376` | `plain-tool-results` and `compacted-native-replay` — reachable ONLY from the compacted branch |
-| `loop.clj:4296-4299` | `successful-tool-call?` — verify it has no other caller, then delete with them |
-| `loop.clj:4565` | `conversation-suffix` loses its `& [replay-policies]` tail arg |
-| `loop.clj:4598-4599, 4631` | the `compacted-call` binding and its `cond` branch; every iteration takes the verbatim path |
-| `loop.clj:7430, 7459, 7494, 7556, 7576` | `replay-policies` out of the emergency-fold parameter lists and both `conversation-suffix` calls |
-| `loop.clj:8257, 8270, 8422-8423` | the `extension/native-tool-replay-policies` call site and the `:replay-policies` key on the request map |
-| `resources/vis-docs/extending.md:1156, 1178` | the `:replay` table row and the `elide-args` paragraph (folds into step 53) |
-
-**`replay-target` STAYS** — different concept, same prefix: it carries provider/model so
-`conversation-suffix` can decide thinking-block preservation and vision-capable image replay
-(`loop.clj:4561-4582`). Only `replay-policies` goes.
-
-**Decision, with the alternative recorded.** The rejected alternative is *keep argument elision as an
-unconditional constant on `python_execution`'s `code`* — plausible, because `code` is now the only big
-string the provider re-uploads on every request. It loses because nobody ever turned it on: shipping a
-threshold no measurement asked for re-introduces a compaction path whose behaviour (a successful call's
-arguments silently replaced by a sha256 receipt) is invisible until it misleads the model about what it
-ran. If Phase 7's measurement shows replayed `code` payloads dominate the trailer, it comes back as ONE
-constant in `conversation-suffix` with a test — not as a per-symbol policy key.
-
-**Tests.** DELETE `loop_test/large-arg-replay-compaction-test` (`:1799-1846`, 48 lines) — the behaviour
-is gone. ADJUST `loop_test/tool-call-door-strings-only-test` (`:5875-5903`): drop the
-`#'lp/oversized-arg-receipts` assertion at `:5897` and keep the rest of the describe.
-`extension_test:40,55,62-63` disappear with `flat-native-tool-spec-test` (already in the DELETE table).
-The `:replay? false` / `:preserved-thinking/replay?` keys in `loop_test:1607,1744-2009` are the
-THINKING-preservation flag, not this policy — untouched. Add nothing: the removal is proven by the
-surviving `conversation-suffix` describes still passing with a shorter signature.
-
-
-### H. Two more `ntr` sites, and the advertisement SUPPRESSION list (Phases 1 + 5)
-
-- `env_python.clj:886` — `ntr` / `native_tools_results` in `protected-baseline-names`.
-- `env_python.clj:1001-1002` — `non-tool-names #{"ntr" "native_tools_results" "asyncio"}`; only
-  `asyncio` remains.
-- `env_python.clj:939-947` — `set-advertised-native-tools!` and the
-  `__vis_advertised_native_tools__` global, whose whole job is teaching `apropos` to SUPPRESS names
-  the provider already advertised. With one advertised tool that suppression is unconditional, so the
-  global, the setter and the suppression branch in `install-introspection!` all go (Phase 1 named the
-  setter, not the global or the branch).
-
-### I. `:tag` — verify, then probably delete (Phase 2)
-
-`:tag :mutation` / `:observation`, **20** sites. Trace the consumers (`extension.clj:1148-1224` tags,
-`foundation_bridge/core.clj`, `transcript_test.clj`) before deciding: if it only colours a badge or
-feeds the tool advertisement it goes; if `transcript.clj` uses it to decide what a REPLAY keeps, it
-stays. One read, one decision, recorded here.
-
-### J. Documentation that teaches the removed surface (Phase 7)
-
-Phase 7 named the prompt, `introspection.clj`, `language_surface.clj` and `AGENTS.md`. It missed the
-PRODUCT docs, which are exactly the pages `doc(slug)` serves after Phase 4:
-`resources/vis-docs/extending.md` (the native-tool authoring chapter — `:schema`, `:native-tool?`,
-`Raw result:`, renderer callbacks; **7** native-tool sites) and `resources/vis-docs/index.md:55`. A
-page documenting a deleted API is WORSE after Phase 4, because `apropos` full-text searches it.
-
-### K. The presentation layer — what the TUI and the companion actually lose (Phase 3)
-
-Phase 3 named `form.clj`, `render.clj` and `chat.clj`; §C added `form.clj`'s coalescing and §E the wire
-fields. None of them answered the question that decides how much presentation code survives: **a python
-block PRINTS results, and a printed result is still rendered as a card.**
-
-**The op-card is not only the native-tool card.** `loop.clj:5751-5777` builds `:cards` — one canonical
-MINI-FORM per printed tool result inside a block — through
-`extension/native-tool-finish-call-renderers-by-op` (`:5610`), keyed by the printed value's own `:op`.
-`form.clj:143-154` (`result-cards`) turns them into op-cards, TUI `render.clj:4833-4946`
-(`tool-card-entries`) paints them, and the companion paints the same thing with
-`toolCards`/`ToolCard`/`CardGrid` (`ChatContent.tsx:999, 1072, 1326`). So deleting §A's 21 renderer
-defns does not merely delete badges — **it silently turns every printed `grep` result back into raw
-EDN in a stdout wall.** That is a regression this plan would have shipped.
-
-**Decision — ONE card, driven by DATA, and every per-symbol renderer still goes.** The printed-card
-renderer is replaced by a single function of the RESULT: headline `<op>` plus a count the value already
-carries, body the pretty-printed value. `:vis/tool-name` still dies (§E), because a card's identity is
-now the printed result's own `:op`, not a symbol registered at boot.
-
-- *Alternative — keep the 21 renderers.* Rejected: it preserves ~895 lines and the per-tool identity the
-  whole change exists to remove, for prettier headlines on a handful of ops.
-- *Alternative — delete cards entirely, print stdout verbatim.* Tempting and the smallest code, but a
-  block that prints five results becomes one undifferentiated wall — which is the exact problem the
-  coalescing subsystem was built to paper over. Rejected unless Phase 7's measurement reopens it.
-
-**TUI — what dies, what stays** (`extensions/channels/vis-channel-tui/src/…/channel_tui/`):
-
-| stays | dies |
-|---|---|
-| `render.clj:4769-4831` `compact-tool-card-body-entries`, `:4833-4946` `tool-card-entries` — they paint PRINTED results | `:2570` native headline band; `:3611-3632` `:vis/tool-name` in the render cache key; `:5205-5208`, `:5265-5267`, `:5298` `native-tool-error?` + compaction; `:5331`; `:5381-5409` the "`:result-render` for NATIVE TOOL forms only" gate; `:5483`, `:5513` `tool-label`; `:5599-5604` running-native headline-first; `:5625-5652` the code-less op-card and its adjacent-card stacking; `:5859`, `:5929` the tool name in the progress label |
-| `virtual.clj:440, 566` — `:result-render` is now stdout, `:cards` bodies still measure | `chat.clj:214, 918` pre-rendered native card + badge read-back |
-| `screen.clj:995`, `theme.clj:128` — comments only, one word each | — |
-
-`format-iteration-entry-entries` (`:4948-5759`, **812 lines**) is where most of this sits: it loses every
-`(not= … "python_execution")` branch and its two card paths collapse into one.
-
-**Companion — the surface is smaller than it looks, and mostly it SIMPLIFIES rather than disappears**
-(`apps/vis-companion/src/`):
-
-- Dies: `ChatContent.tsx:118-122` `toolLabelOverrides`, `:970-973` `toolLabel`, `:1010-1020`
-  `compactToolSummary`, `:1229` `RUNNING_CODE_TOOLS` (a two-member set with one member left), and the
-  eleven `form.tool_name` branches (`:1007, 1099, 1122, 1195, 1233, 1245, 1348, 1374-1376, 2039, 2195`).
-- Stays, retitled: `toolCards` (`:999-1008`) becomes `form.cards ?? []`; `ToolCard` (`:1072-1192`),
-  `CardGrid` (`:1326-1354`) and `FormTrace` (`:1356-1414`) keep their geometry — a card is now "a printed
-  result", named by its `op`. `CARD_BAND` is untouched: one header band, as `ui.tsx` requires.
-- Follows: `lib/types.ts:708, 728` (`result_render`, `tool_name` out; `cards` stays),
-  `SessionScreen.tsx:507, 516, 561, 686-688` (form kind is always `code`), `lib/artifacts.ts:239`
-  (`op`, not `tool_name`), `ChatContent.test.tsx:228-231`, `artifacts.test.ts:163-189`.
-- **Answers Phase 3's Unknown:** the companion does read `tool_name` — five places — but only for a
-  LABEL and a memo key, never for grouping. Grouping is `card.scope` / `form.scope` (`:1348, 2039`),
-  which is the iteration/form coordinate and survives untouched.
-
-The gateway is the same story: `gateway/state.clj:1214-1236` drops two payload fields; `cards`,
-`tool_call_id` and the phases stay, so no channel needs a new event.
-
-### Revised size of the change
-
-| bucket | lines removed |
-|---|---|
-| JSON Schema literals (7 files) | ~371 |
-| renderer / ticker / on-error defns (21) | ~895 |
-| `form.clj` op-card + coalescing (card entry points KEPT) | ~230 |
-| TUI tool-identity branches (`render.clj`, `chat.clj`) | ~260 |
-| companion label/identity paths (`ChatContent.tsx` and followers) | ~120 |
-| `runtime_settings.clj` native wall | ~37 |
-| `extension_bootstrap.py` native branch | ~40 |
-| previously counted production (phases 1-7) | ~1 400 |
-| §L language-pack renderers (`language_surface.clj`, no exception) | ~413 |
-| tests (~1 150 counted, ~415 §L render describes, plus ~33 TUI identity sites) | ~1 900 |
-
-Roughly **5 300 lines removed** against ~600 added (the `apropos`/`doc` corpus and seeders, the one data
-card renderer, the 16 new tests — no `:vis.result/rendered` spec, since §L withdrew it).
-
-
-## How we verify the whole change
-
-1. **Unit/behaviour, smallest namespaces first** — `run_tests` on
-   `com.blockether.vis.internal.extension-test`, `…loop-test`, `…env-python-test`,
-   `…prompt-test`, `…foundation.surface-contract-test`, `…foundation.editing.core-test`,
-   `…foundation.harness.core-test`, `…compaction-verbs-test`, `…tool-surface-boundary-test`,
-   `…python-extensions-test`, the `vis-channel-tui` render/chat tests, and the sqlite
-   persistence tests.
-2. **Registry-wide contract** — `surface_contract_test` (`test/…/foundation/surface_contract_test.clj:43`)
-   walks the LIVE registry, so a symbol that still declares a removed key fails the build rather
-   than the wire.
-3. **Prompt regression** — `prompt_test` pins the ABSENCE of every removed term, which is what stops
-   the old vocabulary creeping back one sentence at a time.
-4. **End to end, by hand, once per phase** — a real session in the TUI: ask for a code change that
-   needs search, structural edit and a test run; confirm the transcript shows only
-   `python_execution` cards, that `apropos` finds a documentation page by a word in its body and a
-   skill by a word only inside its `SKILL.md` (without activating it), that `doc(<skill>)` answers
-   that whole body, that `doc()` answers the curated index, and that a fold receipt no longer
-   promises `ntr`.
-5. **Gate** — `lint_code` (clj-kondo + reflection) clean, `format_code` run, `vis-agent python -m ruff
-   check resources/vis-python` clean for the `async_runtime.py` edit. `test/com/blockether/vis/native_reachability_test.clj`
-   is about GraalVM REFLECTION metadata, not native tools — it must simply stay green; nothing in
-   this plan edits it.
-
-### Test map — every test this plan touches, and what happens to it
-
-The surface shrinks, so the suite shrinks with it. Measured on the current tree: **36 top-level
-describes are DELETED, 14 are REWRITTEN, 13 are ADJUSTED (wording/filters only), and 16 new ones are
-added** — a net loss of 20 describes and roughly 1 565 test lines. A test is deleted only when the
-BEHAVIOUR it pinned no longer exists; a test that pinned a behaviour we keep is rewritten in the new
-vocabulary, never dropped.
-
-**DELETE — the behaviour itself is gone.**
-
-| Phase | File | Describe / var (line) | Why it can go |
+- `src/com/blockether/vis/internal/foundation/editing/core.clj` — `patch-tool` + `patch-symbol` restored with `:call {:pos ["path" "from_anchor"] :opt-pos ["to_anchor" "replacement"]}` and arity folding; added to `available-editing-symbols`. `coerce-patch-edits` / `normalize-edits-arg` are **not** restored.
+- `src/com/blockether/vis/internal/foundation/introspection.clj` — `:patch-stale-anchor` re-added beside `:struct-patch-invalid-code` (`:336, :352, :682`), so a stale-anchor loop is classified rather than counted as a generic failure.
+- `extensions/languages/vis-language-clojure/src/com/blockether/vis/ext/language_clojure/core.clj:995` — the `:op :patch :phase :around` hook.
+- Tests that prove it done:
+  - `editing/core-test/patch-refuses-stale-anchor-and-returns-fresh-one-test`
+  - `editing/core-test/patch-refuses-a-write-that-breaks-the-parse-test` (and its twin: an **already broken** file still accepts an edit)
+  - `editing/core-test/patch-returns-reanchored-window-test` — the returned anchors resolve on the very next `patch` with no `cat` between
+  - `ext/language-clojure/core-test/clj-patch-repairs-delimiters-test`
+
+**Unknowns.**
+- Should the human/TUI channel keep the unified diff (the old `unified-diff-text` at `7fda0cee2^:core.clj:4778`) while the model gets the re-anchored window? *(Proposed: yes — the renderer builds the diff from the write; the model never pays for it.)*
+- Should the consecutive-failure loop detector come back (`patch-fail-loop-threshold` 3, old `core.clj:3370-3399`), or does `introspection` now cover it?
+
+---
+
+## Phase 4 — Rewrite the model-facing sentences off the two verbs, and measure
+
+**Rationale.** Without this the verbs exist and the prompt still tells the model to hand-roll the edit; the measured behavior would not change.
+
+### `src/com/blockether/vis/internal/prompt.clj` — §3 Inspect
+
+Line 237-238, today:
+
+> READING a whole file is `Path.read_text`; CHANGING the tree is plain Python (`Path.write_text`, `os`, `shutil`).
+
+becomes:
+
+> READING a region you will EDIT is `cat(path, from, to)` — its output IS the address: every line arrives as `line:hash│ text`. `Path.read_text` is for a file you only consume; creating/moving/deleting files is plain Python.
+
+Line 243-244, today:
+
+> Edit with `struct_patch` by def NAME; text and unsupported languages are edited in plain Python.
+
+becomes:
+
+> Edit by NAME with `struct_patch`; edit by ADDRESS with `patch(path, from, to, new)` — prose, config, comments, docstrings, unsupported languages. **Never restate the text you are replacing and never hand-roll read/replace/write in Python**: quote the anchor, not the file.
+
+The `grep` sentence in §3 gains its consequence — the phrase that makes Phase 5 pay off in behavior rather than only in bytes:
+
+> `grep` locates unknown code — ONE `{query, paths}` map ORs every needle, every scope. **Its hits come back anchored (`line:hash│ text`), so a hit is already a `patch` argument** — go straight to `patch`, do not re-read the region to find it again.
+
+And the grep symbol contract:
+
+```clojure
+;; grep
+:result "Text, not a map: line 1 summarizes (hits, files, truncation and the exact next
+         call); then per path a header and one `  <line>:<hash>│ <text>` row per hit,
+         context lines anchored too. Feed an anchor straight to `patch`."
+```
+
+### `prompt.clj` — §4 Edit + verify
+
+Line 252-253 gains one sentence:
+
+> `patch` hands back the re-anchored window, so a follow-up edit needs no second `cat`; several edits in one block go **bottom-up**, highest line first. A stale anchor is refused with the fresh one attached — a retry costs one call, not a re-read.
+
+### Symbol contracts (what `doc(name)` prints)
+
+```clojure
+;; cat
+:description "Read one file's region as patch-ready `line:hash` text — the read that
+              produces the address `patch` spends. `from`/`to` are line numbers or
+              anchors. `ls(dir)` lists directories; `struct_index` maps code first."
+:result      "A plain string: one `<line>:<hash>│ <text>` line per source line,
+              blanks included. No map, no keys. Clipped windows say so on the last line."
+
+;; patch
+:description "Replace an anchored span with new text — prose, config, or any language.
+              `patch(path, anchor, new)` for one line, `patch(path, from, to, new)` for a
+              span, `new=\"\"` deletes. Atomic: a refusal writes NOTHING. A stale or
+              misplaced anchor is refused with the correct one attached; supported code
+              is re-parsed and a syntax-breaking write is refused; unbalanced Clojure
+              delimiters are auto-repaired."
+:result      "A plain string: a status line, then the re-anchored window with 3 lines of
+              context — those anchors are fresh, so the next patch needs no cat."
+```
+
+### The rest of the surface
+
+- `src/com/blockether/vis/internal/env_python.clj:2787` — the read/edit hint names `cat`/`patch`.
+- `src/com/blockether/vis/internal/doc_corpus.clj:252` — `"cat"` and `"patch"` back in the doc index list.
+- `resources/vis-docs/token-optimization.md:12, 46, 51, 59, 67, 75, 139` — the editing ladder becomes: `grep` → `cat` for the region → `patch` by anchor; `struct_index`/`struct_nodes`/`struct_patch` for name-addressed structural work.
+- `resources/vis-docs/index.md:61` and `resources/vis-docs/graalpython.md:7` — the verb list.
+- `AGENTS.md` — no change needed; it names no editing verb.
+
+### Measurement (this is the acceptance)
+
+Re-run the journal scan over the 40 sessions that follow the change and report the same table. Target: **writing blocks fall below 2× the non-writing mean** (from 6.7×), and **triple-quoted payload inside writing blocks falls below 30 %** (from 80 %). Third number, from Phase 5: **printed grep output per call falls ~41 %** against the dict repr it replaces, measured the same way over the six-grep table.
+
+**Data.** None — prose and documentation only.
+
+**Acceptance criteria.**
+- `src/com/blockether/vis/internal/prompt.clj` — §3/§4 as above.
+- `src/com/blockether/vis/internal/env_python.clj`, `doc_corpus.clj`, the four `resources/vis-docs/*.md` pages.
+- `test/com/blockether/vis/internal/prompt_test.clj` — asserts the core prompt names `cat(` and `patch(`, and asserts it does **not** tell the model to write text edits with `Path.write_text`.
+- Test that proves it done: `prompt-test/core-prompt-routes-text-edits-to-patch-test`.
+
+**Unknowns.** How much does the core prompt grow? It should be net-neutral: two verbs named, one "edit in plain Python" instruction removed.
+
+---
+
+## Phase 5 — `grep` answers in anchored text, not a nested map
+
+**Rationale.** `grep` is the verb that finds the thing you are about to edit, and today it answers in the one shape the model cannot spend: a four-level nested map (`matches → path → "lineno" → {text, before, after}`) whose keys are bare line numbers. Two costs follow, and both are measured, not argued.
+
+*It costs more to say the same thing.* The model pays for what it **prints**, and `print(grep(...))` prints the Python dict repr. Across six real greps against this repo:
+
+| Grep | dict repr | anchored text | saved |
 | --- | --- | --- | --- |
-| 2 | `test/…/internal/native_tool_provider_contract_test.clj` | WHOLE NAMESPACE, 166 lines: `native-tool-provider-contract-test` (`:69`), `provider-test-router` (`:106`), `native-tool-provider-callability-test` (`:117`) | The file exists to prove native tools reach a provider. There is one tool and phase 1 pins it. |
-| 2 | `test/…/internal/extension_test.clj` | `flat-native-tool` fixture (`:22`), `flat-native-tool-spec-test` (`:28-234`, 44 assertions), `constrained-native-tool` (`:519`), `wire-schema-constraints-test` (`:530-551`) | ~230 of 741 lines: they validate `:ext.symbol/schema` shapes that the spec no longer defines. |
-| 2 | `test/…/internal/loop_test.clj` | `native-tool-timeout-settings-test` (`:449`), `native-handler-timeout-test` (`:509`), `native-tool-call-execution-test` (`:701`), `native-introspection-tools-test` (`:3719-3819`), `real-call-shapes` (`:3712`), `tool-call->python-source-test` (`:3823-3841`), `native-tool-call-block` + `native-tool-call-block-test` (`:4028-4063`) | Handler dispatch, call shapes and the tool-call→Python transcription all disappear with the machinery. |
-| 2 | `test/…/internal/foundation/language_surface_test.clj` | `render-test-call-test` (`:442`), `format-schema-advertises-recursion-test` (`:591`) | One reads `native-tool-start-call-renderers`, the other asserts a JSON-Schema recursion depth. |
-| 2 | `test/…/internal/foundation/shell_test.clj` | `shell-native-contract-test` (`:1469`), `shell-pending-call-render-test` (`:1604`) | "No shell symbol is a native tool" becomes vacuous; the pending-call renderer no longer exists. |
-| 2 | `test/…/internal/python_extensions_test.clj` | `python-native-tool-test` (`:1672-1694`) and the `weather-py` schema half of the fixture (`:1601`) | A Python extension can no longer declare a native tool; it declares a sandbox function. |
-| 3 | `extensions/channels/vis-channel-tui/test/…/render_test.clj` | `native-tool-error-compact-test` (`:150`) | Compacting a native-tool error card: no such card. |
-| 4 | `test/…/internal/foundation/self_docs_test.clj` | WHOLE NAMESPACE, 146 lines, 8 describes: `vis-docs-listing-test` (`:17`), `vis-docs-blurb-test` (`:45`), `vis-docs-fetch-test` (`:72`), `vis-docs-forgiving-slug-test` (`:108`), `vis-docs-blank-slug-test` (`:121`), `vis-docs-unknown-slug-test` (`:131`), `vis-docs-symbol-test` (`:139`) | `vis_docs` is deleted. Its three real behaviours — forgiving slug, blank slug lists, unknown slug helps — are RE-EXPRESSED against `doc` in `env_python_test` (see ADD), so nothing is lost but the verb. |
-| 4 | `test/…/internal/env_python_test.clj` | `apropos-groups-and-bare-verb-docs-test` (`:966-999`) | `group` and `__vis_groups__` are deleted; the family listing it protected is replaced by the curated `doc()` index. |
-| 2 (G) | `test/…/internal/loop_test.clj` | `large-arg-replay-compaction-test` (`:1799-1846`, 48 lines) | The only test of the `:elide-args` replay policy, which no production symbol ever declared. Behaviour deleted, not moved. |
-| 5 | `extensions/persistance/vis-persistance-sqlite/test/…/core_test.clj` | `native-results-for-tool-ids-test` (`:2562-2678`), `native-result-ids-for-session-test` (`:2681-2735`), `native-result-index-for-session-test` (`:2738-2814`), `native-result-index-for-scope-test` (`:2820-2925`) | ~364 lines over four describes covering five DB query fns that are deleted with the store. |
-| 5 | `test/…/internal/env_python_test.clj` | `ntr-browse-test` (`:680-685`), `ntr-coordinate-test` (`:723-834`) | `ntr` no longer exists in the sandbox. |
-| 5 | `test/…/internal/compaction_verbs_test.clj` | `session-fold-native-tool-test` (`:574-613`) | Folding a native-tool call: there are none. The receipt's whole recovery half (`recover …`, `· more results:`) goes with it. |
-| 6 | `test/…/internal/foundation/editing/core_test.clj` | `native-tools-flat-spec-guard` helper (`:78`, 6 call sites) and every `cat`/`patch` describe | The guard checks a spec that is gone; the verbs are gone. |
-| 3 (§L) | `test/…/internal/foundation/language_surface_test.clj` | `render-test-result-test` (`:323`), `render-test-call-test` (`:439`), `render-repl-start-result-test` (`:462`), `render-repl-eval-result-test` (`:482`), `render-lint-result-names-target-test` (`:604`), `render-lint-snippet-test` (`:746`), plus `format-schema-advertises-recursion-test` (`:552`) | Seven describes, ~415 lines. The six render describes pin layout the human declined to keep (§L); the schema describe pins a `:schema` literal deleted in phase 2. |
+| 1 needle, no hits, `src` | 528 | 138 | 74 % |
+| zero hits + regex hint | 531 | 139 | 74 % |
+| blank query (ls mode), 5 files | 741 | 356 | 52 % |
+| `hashline`, 8 hits / 5 files | 2,043 | 1,377 | 33 % |
+| `structural-supported?`, `context: 2` | 2,682 | 1,645 | 39 % |
+| `defdescribe`, 50 hits / 11 files | 4,097 | 2,642 | 36 % |
+| **aggregate** | **10,622** | **6,297** | **41 %** |
 
-**REWRITE — the behaviour survives, the vocabulary does not.**
+*And the shape itself is friction.* `resources/vis-python/async_runtime.py:384-392` documents the papercut in its own comment — the deferred-call auto-settle exists because the model writes `grep(...)["matches"]`. `src/com/blockether/vis/internal/env_python.clj:130-135` and `:175-180` carry two separate ordering machineries whose *named* motivating case is grep: *"Without this, a round-tripped ordered tool result (grep's matches LinkedHashMap) comes back HASH-ordered and the model reads the file out of line order."* A string is ordered because it is a string. (The machinery stays — other verbs still return maps — but grep stops being the thing that justifies it.)
 
-| Phase | File | From (line) | To |
-| --- | --- | --- | --- |
-| 1 | `loop_test.clj` | `tool-result-display-timeout-test` (`:462`) | `python-block-timeout-display-test` — same assertion, one tool. |
-| 2 | `loop_test.clj` | `tool-call-protocol-leak-test` (`:5916-5965`, 10 sites) | Keep the leak assertions, drop the per-tool matrix: the only door is `python_execution`. |
-| 2 | `loop_test.clj` | `normalize-tool-input-strings-only-test` (`:5857`), `tool-call-door-strings-only-test` (`:5903`) | Both survive and TIGHTEN: the door now has exactly one argument, `code`. |
-| 2 | `loop_test.clj` | `human-input-parks-native-tool-wall-test` (`:5813`) | `human-input-parks-python-block-wall-test` — the parking behaviour is real and stays. |
-| 2 | `loop_test.clj` | `native-tools-results-e2e-test` (`:2482`), `native-tool-result-pairing-test` (`:2636`) | Result PAIRING (call id ↔ result block) survives the machinery; re-expressed for the single tool. |
-| 2 | `test/…/foundation/surface_contract_test.clj` | `surface-contract-test` (`:43`) | Becomes the registry gate: every symbol is Python-bound and carries `:description` + `:result`, no symbol declares a schema key. |
-| 2 | `extensions/common/vis-foundation-search/test/…/core_test.clj` | `unified-search-test` (`:586-590`) | Two `:ext.symbol/native-tool?` expectations deleted; the rest of the describe stands. |
-| 2 | `test/…/foundation/shell_test.clj` | `shell-one-wait-test` (`:1200`), `no-wait-knob-test` (`:2157`) | Drop the `:native-tool?` predicate/filter; keep the one-wait and no-knob claims. |
-| 3 | `render_test.clj` | `result-summary-color-test` (`:75`) | "native-tool headlines" → "the python card headline". |
-| 3 | `chat_test.clj` | `restore-block-record-test` (`:619-650`) | Keep the `:cards` restore half, delete the native-tool card identity half. |
-| 4 | `env_python_test.clj` | `doc-apropos-surface-test` (`:328-413`, 19 sites) | Split into `apropos-searches-every-document-body-test` and `doc-retrieves-one-entry-test`; forgiving/blank/unknown slug cases arrive here from `self_docs_test`. |
-| 4 | `test/…/foundation/harness/core_test.clj` | `skill-native-tool-test` (`:149-214`, 11 sites) | `skill-activation-is-a-session-effect-test` — activation still marks, resolves project root and resources; the schema half goes. |
-| 5 | `compaction_verbs_test.clj` | the `tool-call->python-source` reference (`:40`) and the fold receipts | Fold assertions stop naming a recovery coordinate. |
-| 7 | `prompt_test.clj` | `prompt-core-test` (`:100-180`) | Asserts the new sentences and, negatively, every removed term. |
+With Phase 1 in place the fix is one step further: **every rendered line carries its anchor**, context lines included. A grep hit is then not "a place to go read" but an argument. In the sample below, `4439:a80` is literally the anchor the Phase 3 `patch` example spends — same file, same algorithm, no `cat` in between.
 
-**ADJUST — one line or one word, no structural change.**
+### Format
 
-`posix_refusal_shim_test/shell-toggle-off-test` (`:78`, 5 sites — a shell-shaped query is answered by
-apropos TEXT, not by a vanished `shell` group) and `process-surface-is-said-once-test` (`:139`, drop
-`apropos_table.py` from the scanned file list once that file is deleted);
-`shim_attach_test/attach-discovery-test` (`:313`); `shim_ls_test/ls-shim-listing-test` (`:87`);
-`sandbox_shim_contract_test/shim-source-test` (`:120` — "one `doc()`/`apropos` gist" becomes "the
-first line of its `doc` text"); `env_python_form_eval_test/sandbox-auto-import-test` (`:168`) and
-`run-python-block-form-eval-test` (`:1134`); `introspection_test/introspection-public-surface-test`
-(`:49`); `editing/core_test/editing-extension-loads-test` (`:373`, drop the `:native-tool?` filter),
-`find-fuzzy-fallback-test` (`:5064`, a fixture FILENAME mentions native tools) and
-`grep-large-file-and-deadline-test` (`:6305`, a comment names the native-tool wall);
-`human_input_test/blocking-wall-park-test` (`:709`, comment); `tool_surface_boundary_test` (`:75`,
-unchanged claims, new tool count); `apps/vis-companion/src/components/ChatContent.tsx:534` (a comment
-about `ntr[…]`-carrying metric bullets).
+```
+<summary>                       ← ALWAYS line 1
+<path>  (<hits in this file>)
+  <line>:<hash>│ <text>
+  ⋮                             ← gap marker, only when `context` > 0
+~ <path>                        ← fuzzy NAME matches, after the content block
+hint: …                         ← only when there is one
+```
 
-**ADD — 14 new describes, one per claim the change makes.**
+- **Every rendered line carries an anchor, context lines included** — a `context: 2` line is directly patchable without a second read.
+- Hashes collide freely across files (every `(defdescribe` line hashes `ca8`); that is harmless, because an anchor is only ever spent inside `patch(path, …)` and the path is on the header line.
+- Gutter is `│ `, exactly as `cat` — `line.split("│ ", 1)` is exact and the anchor's `:` is unambiguous. Two-space indent under the header.
+- Blank query is ls mode: summary plus `~ path` lines, no content block.
+- Zero hits is the summary plus the existing `hint:` — the regex-looking-query hint keeps working.
+- **The counts stay prose on line 1 and no structured field survives** — decided. `r["hit_count"]` is gone; control flow reads the summary (`"0 hits" in first_line`) or counts the lines it just split. One structured field would re-introduce a map around a string and the whole 41 % with it.
 
-`loop_test/only-python-execution-is-advertised-test` (1) · `surface_contract_test/every-function-is-a-python-name-test` (2) ·
-`render_test/one-card-shape-test` and `render_test/python-block-error-row-test` (3) ·
-`env_python_test/apropos-searches-every-document-body-test`, `…/apropos-does-not-activate-a-skill-test`,
-`…/doc-resolves-function-before-page-test`, `…/doc-returns-whole-skill-body-test`,
-`…/doc-index-is-curated-test`, `…/every-entry-has-a-usable-first-line-test` (4) ·
-`env_python_test/ntr-is-gone-test`, `compaction_verbs_test/fold-receipt-has-no-recovery-coordinate-test` (5) ·
-`editing/core_test/anchored-verbs-are-gone-test` (6) · `prompt_test/prompt-mentions-one-tool-test` (7).
+**The summary line goes FIRST, and that is a decision, not a layout preference.** A block's printed output is *head*-clipped at `MAX_FORM_WIRE_CHARS` (`src/com/blockether/vis/internal/loop.clj:3119-3148`, 65,536 chars): a trailing summary is the first casualty of a wide grep — exactly the grep whose truncation you must know about. First also gives the TUI card its headline, which it currently derives from the `matches` key via `tally-keys` (`loop.clj:3150-3155`) and would otherwise lose when the result stops being a map.
+
+### stdout — real, rendered against this repo
+
+Plain, two files:
+
+```
+>>> print(grep({"query": ["defn- grep-", "def grep-"], "paths": ["src"], "limit": 4}))
+grep 'defn- grep- def grep-'  4 hits · 2 files
+src/com/blockether/vis/internal/config_spec.clj  (2)
+  336:498│ (def grep-keys #{"include_gitignored_paths" "always_exclude"})
+  356:136│ (def grep-schema {"include_gitignored_paths" string-list? "always_exclude" string-list?})
+src/com/blockether/vis/internal/foundation/editing/core.clj  (2)
+  2253:42b│ (defn- grep-tool
+  4047:3ac│ (def grep-symbol
+```
+
+With `context: 2` — note the anchors on the context lines, and `4439:a80`:
+
+```
+>>> print(grep({"query": "structural-supported?", "paths": ["src"], "context": 2}))
+grep 'structural-supported?'  5 hits · 1 file
+src/com/blockether/vis/internal/foundation/editing/core.clj  (5)
+  4002:2d9│    while tree-sitter calls it `bash` — so this is the reconciled set, NOT just
+  4003:dbe│    `code-languages`. (Languages the scan doesn't recognize at all — e.g. `.elm`,
+  4004:794│    `.jl` — simply don't appear, and `structural-supported?` fails OPEN on them.)"
+  4005:e7c│   (conj index/code-languages "shell"))
+  4006:000│ 
+  4007:292│ (defn structural-supported?
+  4008:0a0│   "Whether the STRUCTURAL editors should be advertised for the current project:
+  4009:812│    true when its language scan finds at least one file in a structurally-supported
+  ⋮
+  4035:c8d│        "`include_occurrences` adds a group per name: `symbols` (`path,line,end_line,kind,visibility,signature,use_count,uses{path,lines}`), `other_uses`, `count`, `definition_count`, `scanned`, `failed`. "
+  4036:beb│        "No source — pass a row `line` to `struct_nodes`.")
+  4037:056│      :active-fn structural-supported?
+  4038:b82│      :description
+  4039:d09│      (str
+  ⋮
+  4438:21c│     {:symbol 'struct_patch
+  4439:a80│      :result "One row/edit: `path`, `op`, `changed`, `diff`, `lines`."
+  4440:056│      :active-fn structural-supported?
+  4441:b82│      :description
+  4442:d09│      (str
+  ⋮
+  4629:a82│        "`kind,line,end_line,source` (verbatim), `sexp,named_child_count,children,can,has_error`. "
+  4630:150│        "Misses add `error`/`reason`; other fields nil.")
+  4631:056│      :active-fn structural-supported?
+  4632:b82│      :description
+  4633:c1b│      (str "ONE options map is the whole call — `struct_nodes({\"path\": p, \"line\": n})` or "
+```
+
+Truncated and paged — the summary carries the literal next call, and breadth survives as *N of M files*:
+
+```
+grep 'defdescribe'  50 hits · 11 of 136 files  capped by limit → grep({…, "offset": 50})
+```
+
+Zero hits:
+
+```
+>>> print(grep({"query": "resolve-anchor.*range", "paths": ["src"]}))
+grep 'resolve-anchor.*range'  0 hits · 0 files
+hint: No file NAME or CONTENT matched "resolve-anchor.*range". Try a different term, a real symbol/string, or widen the scope. CONTENT matching is LITERAL smart-case substring — regex syntax is not interpreted; search a plain distinctive fragment.
+```
+
+**Data.** The tool's declared result changes from a 19-key map to `string?`, and these keys stop crossing the wire as keys — every one of them is folded into the summary line or the body: `op query needles searched_paths missing_paths paths matches file_counts first_hit hint hit_count file_count total_file_count total_file_count_is_exact limit offset next_offset truncated_by hits_truncated_by`.
+
+The seam already exists, so nothing pure is lost:
+
+```clojure
+;; `content-result` (core.clj:2135) KEEPS returning the ordered data — it is the
+;; tested pure core. `grep-tool` becomes its renderer, and the anchor is minted
+;; on the already-materialized hit text.
+(defn- render-grep-text
+  "grep's model-facing projection: summary line, then per-path anchored hits."
+  ^String [result spec] …)
+```
+
+Verified blast radius: **no in-tree Clojure consumer parses grep's tool result.** `file_picker.clj` goes straight to `fff-index`, `channel_tui/file_suggest.clj` touches neither, and `loop.clj`/`security_policy.clj` matched only on unrelated `re-matches`. The consumers are the model, the TUI headline, and the tests.
+
+**Acceptance criteria.**
+- `src/com/blockether/vis/internal/foundation/editing/core.clj` — `render-grep-text` added; `grep-tool` returns its string; `grep-symbol`'s `:result` (`:4047-4057`) rewritten off the map — and its stale `"line:hash"` promise (`:4056`) becomes true again.
+- `test/com/blockether/vis/internal/foundation/editing/core_test.clj` — the ~20 assertions that read `hit_count` / `matches` / `first_hit` off the tool result (`:859`, `:2280`, `:2293-2296`, `:2703-2745`, `:2805`, `:2825-2846`, `:2928-2954`, `:3156`) retarget the pure `content-result`; a small set pins the rendering instead.
+- `src/com/blockether/vis/internal/loop.clj` — the TUI headline for a string result takes line 1 (`tally-keys` no longer sees `matches`).
+- `resources/vis-docs/token-optimization.md`, `index.md` — the grep examples show text, not a map.
+- Tests that prove it done:
+  - `editing/core-test/grep-returns-anchored-text-test` — every content line matches `^  \d+:[0-9a-f]{3}│ `, the summary is line 1, and a `context` line carries an anchor too.
+  - `editing/core-test/a-grep-hit-is-a-patch-anchor-test` — grep a literal, take the anchor off the hit line with `split("│ ", 1)`, feed it straight to `patch`, assert it resolves with no `cat` between.
+  - `editing/core-test/grep-text-states-its-own-truncation-test` — a capped sweep names the exact next call on line 1.
+
+**Unknowns.**
+- Do `find_files` / `find` — the compatibility aliases on the same var (`env_python.clj:258-263`) — follow grep into text? *(Proposed: yes, same var, same shape.)*
+- Should the whole options map become positional like `cat` (`grep(query, paths)`)? *(Proposed: no. `grep` has ten knobs; `cat`/`patch` have three. The map stays.)*
+
+---
+
+## Phase 6 — Put the anchor back in `struct_index` and `struct_nodes`
+
+**Rationale.** `7fda0cee2` moved these onto plain line numbers too. With Phase 5 done, `grep` is address-bearing and these two are the last locators that are not — a `struct_index` row still has to be turned into an address by a `cat` before it can be edited. The cost is one `line-hash` per rendered row and 4 characters per key.
+
+It lands LAST because it is the most entangled: unlike grep, these rows are *consumed as data* by each other — `struct_nodes` takes a row's `line` — so the anchor goes **beside** the line and never instead of it, and `line` stays exactly what it is today for every existing caller. Phases 1-5 ship a complete product without it; it is in the first cut anyway, because a locator that is not an address sends the model back through `cat` for the one case `struct_index` exists to make cheap.
+
+**Data.**
+
+```clojure
+;; index rows and node entries carry the anchor BESIDE the line, never instead of it.
+(s/def :ext.editing.index/anchor     :ext.editing.hashline/anchor)
+(s/def :ext.editing.index/end-anchor :ext.editing.hashline/anchor)
+```
+
+**Acceptance criteria.**
+- `src/com/blockether/vis/internal/foundation/editing/core.clj` — `index-one` rows carry `anchor`/`end_anchor` beside `line`/`end_line`; `nodes-tool` entries carry `anchor`.
+- Test that proves it done: `editing/core-test/struct-index-rows-are-patch-anchors-test` — an index row's `anchor` feeds `patch` directly.
+
+**Unknowns.**
+- Anything downstream parsing these rows as integers — the companion, the TUI, `ctx_renderer`?
+
+---
 
 ## State of the plan
 
-**REQUIRES WORK** — phases 1-12 have LANDED. What is left is the cross-cutting cleanup list (steps 45-47 and 49-53: the `:schema` literals, `form.clj`'s reduction, `extension_bootstrap.py`, the tool wall, the replay policy, `:tag`) and the two pieces of shipped-UI evidence (56b's `spel` figures, 57's `cap/shot!` PNG). Step 48 (**E**) is DONE and rescoped: the wire and the sqlite schema had already dropped `tool_name`/`result_render`, `result_render` and `:vis/tool-name` both STAY for reasons recorded there, and the only remaining work was the companion's dead `tool_name` read.
-
-**Phase 12 — the `skill` verb is deleted: DONE.** A skill is a document; `doc(name)` prints it and
-`apropos(text)` finds it, and that is the whole mechanism. Gone with the verb: `skill-result`,
-`skill-tool`, `skill`, `skill-symbol`, `current-iter-scope` and `same-activation?` in
-`harness/core.clj`; the `:op "skill"` card's activation receipt; and the fold-protection half that
-existed only to defend an activated body — `exclude-protected` and the `protected-scopes` argument
-threaded through `stamp-iter-universe!`, `apply-summaries`, `emergency-fold-projection`,
-`context-overflow-recovery!` and `ctx-engine/folds-view`. 634 deletions against 202 insertions across
-17 files, `loop.clj` -227 and `harness/core.clj` -143. Skill DISCOVERY is untouched: the pushed
-listing still names every skill with its clipped description and its `[project]` owner, and now
-points at `doc`/`apropos` instead of an activation. A skill entry in the corpus carries no `:call`,
-because a missing `call` already means "this is prose, read it". No effect survives anywhere, not even on the USER
-surface: `/<name>` NAMES a skill instead of injecting it — one sentence pointing at `doc(name)`,
-plus the task, a nested skill's owning project and its bundled resource paths — so the model decides
-whether the instructions still have to be fetched, and there is no digest, no `session_slash_skills`
-ledger and no claim about what is "already in the conversation" that a fold could falsify.
-
-**Phase 11 — `session["resources"]` is gone from the model-facing session: DONE.** Phase 10 treated
-the symptom; the mechanism was `render-turn-boundary` re-assigning the whole registry once per turn,
-unconditionally, opting out of the delta every other ctx key gets — so the block could only grow (74
-entries / 12,214 chars in one session), and its clearing fallback rendered `[]`, a LIST where every real
-value is a MAP. The special case defended a state that cannot occur: `strip-ephemeral` already kept
-resources out of the snapshot, the delta baseline dies with the loop process, and lease teardown stops
-background resources. `session_resources` is now absent from `enrich-ctx`, `project-ctx`,
-`static-context-keys`, the turn boundary and `model-facing-keys`, and `resources/model-view` plus its
-five projection helpers are deleted (4,949 chars). The id an agent acts on comes from the `shell` handle
-or a `repl` `status` result — both untouched, along with the registry, the footer, `/resources` and
-`resource_stop`. `prompt-test` now forbids `session["resources"]` from re-entering the core prompt.
-
-**Phase 10 — finished background shells leave ctx: DONE.** `session["resources"]["other"]` stays — a
-running background shell is the one thing an agent starts that outlives its own call — but a shell that
-already exited now drops out of `resources/model-view`, the ctx-only projection. The registry, the
-footer's log card, `list-resources` and `resource_stop` keep every record. This session had accumulated
-67 exited shells: 10,537 chars (~2,900 tokens) of `exit 0` on every request, bigger than the whole
-sandbox-shims block after phase 9. `running` and `failed` still show.
-
-**Phase 9 — the shim block splits into a pushed line and a pulled page: DONE.** All 23
-`:shim/description` values are one tight line (surface + refusals), 8,694 → 4,865 chars; the 7 that lost
-contract detail keep it verbatim as the new OPTIONAL `:shim/docs`, which `env-python` seeds into the
-sandbox's `__vis_docs__` so `doc(name)` still answers in full. Sandbox-shims block 10,397 → 6,539 chars
-(-37.1%). `sandbox-shim-contract-test` caps the pushed line at 340 chars and reads the pulled page out
-of a real sandbox.
-
-**Phase 8 — pushed doctrine becomes pulled skills: DONE.** `AGENTS.md` 32,305 → 9,799 chars; five
-SKILL.md files carry the Companion UI, HITL, TUI-paint, `PLAN.md` and shim contracts verbatim;
-`discovery/fold-value` fixes the folded-frontmatter descriptions the prompt was rendering as `> …`.
-First-request prefix 50,590 → 29,554 chars (~14,050 → ~8,200 tokens).
-
-**Phase 1 — advertise only `python_execution`: DONE** (commit `118237e6b`).
-`loop.clj/native-tools` takes `caps` alone and returns the one finalized `python_execution` tool;
-`advertised-native-capability-names`, `apropos-tool`, `doc-tool`, `session-fold-tool` and
-`env_python/set-advertised-native-tools!` with its `__vis_advertised_native_tools__` global are deleted;
-`apropos_table.py` suppresses nothing and says so. Tests: `native-introspection-tools-test` became
-`loop_test/only-python-execution-is-advertised-test` (exactly one advertised tool, unconstrained, one
-`Raw result:` per description); `native_tool_provider_contract_test.clj` deleted, since its whole subject
-was per-tool schema portability across four providers; the engine-schema `it` in `compaction_verbs_test`
-and the suppression `it` in `env_python_test` are rewritten. Nine failures in
-`env-python-test`/`loop-test` are PRE-EXISTING on `ffeaa9db0` — verified by stashing the phase and
-re-running — seven of them the `ntr`/fold describes phase 5 deletes.
-
-**Phase 2 — delete the declaration and dispatch machinery: DONE.** The SOURCE half landed inside
-commit `5bf7f5bab` (its message names only the per-process log file — the deletion was swept in by a
-`git add -A` while that commit was being made; recorded here rather than rewritten, since the commit
-is pushed). `extension.clj` and `loop.clj` now grep ZERO for `:ext.symbol/schema` and
-`native-tool`; `foundation/shell.clj`, `foundation/editing/core.clj`,
-`foundation/language_surface.clj`, `foundation/mcp/core.clj` and the search extension carry no
-`:schema` literal. The TEST half is this commit.
-
-One correction to step 12: **`:ext.symbol/call` STAYS.** It is not a schema — `extension.clj:2256`
-`folded-kwargs->positional` reads it to map a kwargs dict onto positional parameters for a PYTHON
-call. Eight symbols declare it (`format_code`, `run_tests`, `repl_eval`, `repl`, `repl_connect`,
-`repl_stop`, `patch`, `call`).
-
-Because a description is now the whole contract, three of them gained the argument names their
-schema used to carry: `editing/core.clj` `struct_patch` (a batch of `edits` applies in order and is
-never rolled back), `vis-foundation-search` `search` / `download_archive` (kinds, `repository`,
-`directory`), and `foundation/shell.clj` `shell` (`shell(command, {"id": …, "cwd": …})`).
-
-Step 14's registry gate lives in `extension_test/every-function-is-a-python-name-test`, not
-`surface_contract_test` — that namespace pins language-surface RESULT contracts and has no registry
-in it. It walks the live registry: 28 symbols, no `:ext.symbol/schema`, `:ext.symbol/native-tool?`
-or `:ext.symbol/replay` key survives, every doc key is a typeable one-segment name, and every bound
-built-in door is documented.
-
-Deleted with their behaviour: `extension_test/flat-native-tool-spec-test` and the schema-refusal
-items; seven `loop_test` describes plus `large-arg-replay-compaction-test`; both `env_python_test`
-`ntr` describes (`ntr-browse-test`, `ntr-coordinate-test` — the store they read has no rows once
-`python_execution` is the only call); the schema items in `language_surface_test`, `shell_test`
-(`gives each tool a satisfiable schema…`, `puts the command only on the tool that starts a
-process…`, `refuses a `wait` on the request…`), `python_extensions_test`, `mcp/core_test` and
-`vis-language-python/test_fn_test`. Rewritten: `only-python-execution-is-advertised-test`, the
-tool-call door/leak tests (one argument, `code`), `harness/core_test`'s skill test as
-`skill-activation-is-a-session-effect-test`, and `env_python_test`'s `session_fold` doc test, which
-now asserts the receipt promises NO coordinate (no `` `ntr` ``, no `# saved:`).
-
-Adjusted: `posix_refusal_shim_test` (the refusal says "`shell` is not bound"; `apropos` misses with
-"nothing matches."; the handle probe calls `logs()` since `status()` went with the native shell
-tool) and `editing/zipper_test/op-keyword-regression-test` (`:create-dirs` and `:delete` left the
-op registry with the native write verbs).
-
-Four suite failures are PRE-EXISTING on `6e7b0b0ee` and belong to other work, not this phase:
-`audit-inventory-test` (`com.blockether/rift` pinned at `0.0.10-11`, `audit/README.md` still says
-`0.0.10-10`), `gateway/fcm-test` + `gateway/relay-test` (push status answers `web`, the tests expect
-`relay`), and `native-image-env-capture-test` (`config/log-path` is now the per-process
-`~/.vis/logs/vis-<pid>.log` from `5bf7f5bab`). `loop-test/providers-router-rebuild-hook-wiring-test`
-fails only in the whole-suite JVM (two loads of `loop.clj`) and passes in its own run.
-
-**Phase 3 — one card: DONE.** A card is DATA, and the data is the printed value. `form.clj` drops
-from 300 to 188 lines: the display field `[:vis/tool-name "tool_name"]` is REPLACED by `[:op "op"]`,
-`card-label` uppercases that op and falls back to `"RESULT"`, and `result-card` answers only when a
-summary or a body exists. `loop.clj` builds it — `printed-result-op` / `printed-result-tally` /
-`printed-result-card` — so a result from an op with NO extension registered still paints, which
-`loop_test/printed-result-card-headline-test` pins with `totally_unknown_op`. §K's trap held: the
-op-card subsystem could not simply be deleted, because a printed `grep` inside a python block is a
-card too; it is now built from the value instead of from a symbol table, and that is what lets §A's
-renderer defns go.
-
-The TUI keeps `compact-tool-card-body-entries` / `tool-card-entries` and loses the identity half
-(203 lines); the two surviving locals are renamed `card-badge` and `activity-label`, and the
-extension tree greps ZERO for `native-tool|native_tool|tool-label|vis/tool-name`. The companion
-keeps `ToolCard`/`CardGrid`/`FormTrace` and loses `toolLabelOverrides`, `toolLabel`,
-`compactToolSummary`, `RUNNING_CODE_TOOLS` and every `form.tool_name` branch; `tool_name` and
-`result_render` leave the gateway payload, `ctx_engine` and `types.ts`, while `tool_call_id`,
-`cards` and the phases stay, so no channel needed a new event.
-
-Two corrections to what the plan claimed: `virtual_test.clj` was declared UNTOUCHED and is not —
-three of its assertions described a shape production never had, and they are rewritten (`virtual.clj`
-itself is unchanged; an estimator tweak was tried and REVERTED). `progress.clj` and
-`gateway/state.clj` also carried the vocabulary in the `:tool-preview` path: the preview names no
-tool at all now, and `(:tool_name payload)` is asserted nil.
-
-Green: `vis-channel-tui` 1658/1658; the core suite 4128/4133 with the same FIVE pre-existing
-failures listed above (`audit-inventory`, two `fcm`, `relay`, `native-image-env-capture`) — none of
-them touches a form, a card or a display projection. `format_code` and `lint_code` clean (the three
-`render.clj` boxed-math warnings are pre-existing on `HEAD`, verified against `git show`). Companion
-`npm run lint`, `tsc`, `vitest` and `build` green. REMAINING for this phase, tracked as steps 56b
-and 57: the `spel` shipped-UI numbers at 390/1440 and one `cap/shot!` PNG.
-
-**Phase 4 — two discovery verbs: DONE.** The corpus is its own namespace,
-`src/com/blockether/vis/internal/doc_corpus.clj` (253 lines), not a lump inside `env_python.clj`: the
-`clojure.spec.alpha` block (`:vis.doc/entry` = `name` + `text` + optional `call`, `:vis.apropos/hit` =
-entry + `score`) is written there before the code because the record crosses into GraalPy. Sources are a
-registry, not a `case`: `register-source!` replaces by id, the namespace itself registers
-`:documentation-pages` (`internal.docs/collect`) and `:skills` (`harness.discovery/skills` — text is the
-frontmatter description plus the WHOLE `:body`, `call` is `await skill("name")`), and
-`foundation/mcp/core.clj` registers `:mcp-tools` from the CACHED `(:tools conn)` only, so discovery never
-starts a server. A fifth seeder is a `register-source!` call, never a new verb.
-
-`apropos(query)` is ranked full text over the one corpus: terms are ANDed, a name hit scores 100, a name
-substring 50, the gist 10 and the body 1, ties break by name, and a blank query lists everything by name.
-It answers a guest dict `{name: gist}` in RANK order — `sorted(...)` sees the names, `list(...)` sees the
-ranking. `doc(target)` resolves the exact name, then the normalized one (trim / `.md` / lowercase), and
-prints the whole text with a "callable" line when the entry carries a `call`; bare `doc()` prints the
-curated index (one hand-ordered vector of 19 names, first lines only, capped at 140 chars); a miss says so
-and points at `apropos`. There is no second description anywhere: an entry's FIRST LINE is its gist, which
-`doc_corpus_test/every-entry-has-a-usable-first-line-test` enforces.
-
-Deleted with their behaviour: `foundation/self_docs.clj` and its `vis_docs` symbol in
-`foundation/core.clj`, `resources/vis-python/apropos_table.py` (the whole group table), and
-`extension.clj`'s `ext-group-overrides` / `ext-group-label` / `sandbox-symbol-groups` — a group was a
-hand-maintained bucket that a full-text query answers better. One real bug fell out of the port:
-`sandbox-corpus` reads `__vis_docs__` with `.asString`, never `str`, because `Value.toString` on a guest
-string is the Python `repr` and was quoting every doc body.
-
-Tests: `foundation/self_docs_test.clj` deleted (whole file); `doc_corpus_test.clj` ADDED (8 describes —
-entry shape, first-line lint, a skill entry carrying its whole body, `reading-a-skill-does-not-activate-it`
-proven by scanning the namespace source for `harness.core`, ranking, AND-ing, blank query, curated index);
-`env_python_test` gained `discovery-is-two-verbs-test` and `a-page-never-shadows-a-function-test` and lost
-`apropos-groups-and-bare-verb-docs-test` (now `bare-verb-docs-test`). `shim_attach_test:313,329` reads the
-first N of the RANKED answer instead of the whole set, because full text now also matches every document
-that merely mentions attaching. `posix_refusal_shim_test` moved from `__vis_apropos_table__` to
-`doc('shell')`: with the toggle off, `shell` is still a corpus entry whose text carries both
-`PROCESS_SURFACE` sentences, and with the tool bound the extension-door sentence is absent.
-
-One Phase-7 sentence was pulled forward because the ratchet at `prompt_test.clj:76` (< 4750 chars) left no
-room: §1's discovery lines are the SHORT form ("`apropos(text)` SEARCHES every document; `doc(name)`
-prints one whole, bare `doc()` the index; a Vis doc page only for product questions"), and §2's "Call
-advertised native tools directly; use `apropos`/`doc` only for unadvertised capabilities" is deleted as a
-direct contradiction of it. CORE is 4735 chars. Phase 7 restores the skill clause once it deletes the
-`ntr` block and the JSON-Schema line.
-
-Green: the whole suite 4131/4137. SIX failures are pre-existing and belong to other work — the five
-already listed, plus `loop-test/providers-router-rebuild-hook-wiring-test`, which fails whenever the whole
-namespace runs (two loads of `loop.clj` give `identical?` two distinct fn objects) and passes with
-`--var`; verified against a clean `HEAD` worktree, so it is not this phase's.
-
-**Phase 5 — retire `ntr` / `native_tools_results` and the fold's recovery half: DONE.** The store is
-gone at all three layers and so is every promise about it. SANDBOX: `async_runtime.py` lost the whole
-`__VisNativeResults__` class with subscript, `at()`, `describe()`, the coordinate resolver, the AST
-literal-id scanner and the `repr` blurb, plus the pre-scan/prime block inside `__vis_run_async__` (454
-lines); the direct-kwargs list STAYS, because `session_fold(target, gist="…")` still crosses on it.
-HOST: `loop.clj` lost the five `__vis_native_result_*` callbacks — `index` was `describe()`'s backend
-and had no other caller. STORE: `persistance.clj`'s five `defdelegate`s and the sqlite extension's
-entire `ntr[tool_id]` branch-index section (278 lines: the cache atoms, `ntr-entries-of-forms`,
-`ntr-branch-index` and all five `db-native-result-*` fns) are deleted with no compatibility layer; the
-registrar never named them, so nothing else moved.
-
-The FOLD lost its recovery half, which was the point: `ntr-entries-of`, the scope→entries accumulation
-and the `"engine_iter_ntr"` ctx key, `ntr-recover-hint` with the `recover-hint` closure and the
-`(declare)` that forward-referenced it (the AGENTS.md ban made that non-optional), `rec-ntr-ids` /
-`:ntr-ids` / `:summary-ntr-ids` on the breadcrumb, and the `# saved: ntr[…]` STAMP EMITTER. A receipt is
-now `folded <label><note><kept-note> → <gist>` and a breadcrumb `# ⋯ folded t1/i1-i2 · <gist>`. The
-contract in one sentence, and the docs say exactly it: folding changes rendering, not storage; a folded
-step is readable only through `await session_state()`, and with introspection OFF it is not recoverable —
-the gist is what survives.
-
-Tests: −5 describes (`loop_test/native-tools-results-e2e-test`, the four sqlite describes) ≈ 457 lines;
-7 rewritten (both `compaction_verbs_test` receipt claims, three `loop_test` handle `it`s collapsed into
-one absence claim, the advertised-description fact list, the pricing test, `env_python_test`'s
-store-normalization describe — it now drives `__vis_deferred__`, the surviving settle path —
-`env_python_form_eval_test`'s cancelled-context assertion, `prompt_test`'s vectors); +1 added,
-`env_python_test/ntr-is-gone-test`, which pins that `ntr`, `native_tools_results`, `ntr.describe`,
-`ntr.at`, `__vis_entries_at__`, `__vis_native_result_scan__` and all five host callbacks raise
-`NameError`, and that no sandbox doc still advertises a coordinate. One trap worth recording: `ntr` bare
-cannot be a `prompt_test` surplus term — it is a substring of *control*, *contract* and *introspection* —
-so the surplus vector names `ntr[`, `ntr.describe()` and `# saved:`.
-
-Green on a clean JVM (`clojure -M:test`): 6433 cases, SIX failures, all pre-existing and named above.
-`format_code` and `lint_code` clean on every touched file.
-
-**Cross-validation of phases 1-5 (this pass).** Clean JVM `clojure -M:test`: 6435 cases, SIX
-failures, all the pre-existing ones named above; `vis-channel-tui` 1659/1659. One REAL regression
-was found and fixed in the same commit: `stamp-iter-universe!` still derived skill activations from
-`(= "skill" (:vis/tool-name form))`, a shape phase 1 removed — every form is `python_execution`
-now, so `engine_live_skill_activations`, `engine_protected_iter_scopes` and `session_active_skills`
-were stamped EMPTY on every request. `skill(...)` therefore repeated the whole body on every call
-and a fold could collapse the iteration holding it. The activation is now the durable pointer
-(`harness/skill-result` stamps name + digest + scope at the call) held live for exactly as long as
-the iteration that PRINTED the body is on the wire — proven by the form's `:op "skill"` CARD, since
-the form's own result is the block's value. Four `loop_test` items rewritten to the shipped shape
-(they fail against unfixed `HEAD` for that reason). Two prose corrections to the phase blocks
-above: `tool_name` left the gateway PAYLOAD only — `:vis/tool-name` still rides `loop.clj`,
-`ctx_engine.clj`, `introspection.clj` and the sqlite tally, and `result_render` still rides
-`types.ts`/`ChatContent.tsx`, which is step 48's work, not phase 3's; and `toolLabel` survives in
-`ChatContent.tsx` as the op→badge function (it mirrors `form/card-label`), so step 56's zero-grep
-covers the label TABLE, not the name. `resources/examples/python-extensions/README.md` lost its
-last `vis_docs` reference.
-
-**Phase 6 — remove `cat` and `patch`: DONE.** The two anchored verbs are gone, and with them the
-`lineno:hash` ANCHOR they existed to consume. Reading is `grep` → `struct_index` → `struct_nodes`, or
-plain `Path.read_text()` in `python_execution`; writing is `struct_patch` or `Path.write_text`.
-`editing/core.clj` lost ~1 265 lines and `editing/patch.clj` was deleted outright — only its escape
-decoder was still reachable from a live path, so it moved verbatim to `editing/escapes.clj`. Every
-structural surface now reports plain 1-based LINE numbers (`line`/`end_line`, the `struct_patch`
-locator key `"line"`, `grep`'s per-file `matches` keyed by line), which is the whole point: a handle
-that goes stale on every write was a tax the model paid on data it can re-read for free. Tests:
-`anchored-verbs-are-gone-test` pins the retired names AND the deleted namespace; `patch_test.clj` and
-`hashline_bench_test.clj` are deleted; `zipper-line-path-test` covers the four refusals. The
-`language-clojure` pack lost `clj-patc**Phase 7 — rewrite every model-facing sentence, and measure: DONE.** The prompt now describes the
-product that shipped. §1 points authority at the document a capability CARRIES (`doc(name)`), not at
-a JSON Schema that no longer exists; §2 opens "ONE call exists: `python_execution`" and the
-native-vs-Python routing fork is gone, because routing between one thing and one thing was the
-sentence that cost the most and taught the least; §3 says filesystem work IS Python; §6 states the
-folding truth the receipt used to carry. The measured overhead of a first request went 35 191 → 18 789
-chars (~9 775 → ~5 219 tokens, **−46.6 %**), and all of it came from ONE metric: the provider `:tools`
-payload, 18 607 chars of 16 JSON Schemas → 1 342 chars of one. The CORE prompt itself moved 18 chars —
-the plan predicted the EXTENSIONS block would be the big win and that prediction was wrong; the block
-GREW by 870 chars, because the `LANGUAGE TOOLS` matrix is now the only statement of which packs are
-active, where before it rode as five tool schemas inside the payload.
-
-Two stale sentences the plan's own inventory had missed were found by reading the code rather than the
-plan: the sandbox capability line still told the model to "prefer native file tools", and the
-`;; ── Native tool surface (maki-style HYBRID) ──` banner still explained a hybrid. And the new
-`prompt-names-one-tool-test` — which asserts over the ASSEMBLED prompt, not the core string — caught
-`AGENTS.md` teaching "a native tool survives only if it is a jail" as its example catchy phrase, in a
-file that rides into every single request. That is exactly why the assertion is on the assembly.
-
-h-no-fail-around` and its `{:op :patch :phase :around}` hook —
-an op-hook on an unregistered op throws `has no mandatory observation/mutation tag`, so a dead verb
-could not simply be left hooked. Clean JVM `clojure -M:test`: 6 265 cases, only the 6 known
-pre-existing failures.
-
-TODO — one checkable step per line, in order. Each step names the file, the thing it does to it, and
-the test that flips. A step is done when its own tests are green; a PHASE is done when its whole
-block is green, lint and format are clean, and it is committed with its tests.
-
-**Phase 1 — advertise only `python_execution`.**
-
-1. DONE — `loop.clj:4843` — `native-tools` returns `[(finalize-engine-native-tool (python-execution-tool caps))]`; delete the `apropos`, `doc` and `session_fold` entries and the `native-tools-for` splice.
-2. DONE — `loop.clj:4856` + call site `:5371` — delete `advertised-native-capability-names` and the `env/set-advertised-native-tools!` call.
-3. DONE — `env_python.clj:939,945` — delete `set-advertised-native-tools!` and the `__vis_advertised_native_tools__` global.
-4. DONE — `resources/vis-python/apropos_table.py` — delete the "already advertised, suppress it" branch that read that global.
-5. DONE — ADD `loop_test/only-python-execution-is-advertised-test`; delete `native_tool_provider_contract_test.clj`; run `…loop-test`, `…env-python-test`, `…compaction-verbs-test`, `…prompt-test`, `…foundation.surface-contract-test`, `…extension-test`. Commit.
-
-**Phase 2 — delete the declaration and dispatch machinery.**
-
-6. DONE — `extension.clj:421-500` — delete the `:ext.symbol/native-tool?` and `:ext.symbol/schema` specs; `:440-448` `native-tool-root-union-keys` / `portable-native-tool-schema?`.
-7. DONE — `extension.clj:993,1027,1036-1146` — delete `native-tools-for`, `native-tool-replay-policies`, `wire-schema`, `advertise-tool`, `native-tool-schemas`.
-8. DONE — `extension.clj:1148-1224` — delete `native-tool-handlers`, `native-tool-call-shapes`, `native-tool-finish-call-renderers`, `native-tool-start-call-renderers`, `native-tool-tags`; `:2157` `native-tool-finish-call-renderers-by-op`; `:1226` `symbol-bound?` (every symbol is bound now).
-9. DONE — `extension.clj:1495-1553` — delete the six refusal rules that only guarded schemas; `:1805` the `remove :ext.symbol/native-tool?` filter becomes an unconditional pass; `:2766-2769` loses the `symbol-bound?` filter.
-10. DONE — `loop.clj:978-1060` — delete native handler execution and the `:vis/native-tool-timeout` error type; `:4707` `finalize-engine-native-tool`; `:4838` `engine-native-tool-call-shapes`; `:4867+` `py-literal` and `tool-call->python-source`; `:5169` `native-tool-call-block`; the lookups at `:5516-5527`, `:8257`, `:5565-5622`, `:9413`. The block builder becomes: one call, name `python_execution`, `:lang "python"`, `:source` = `code`.
-11. DONE — `runtime_settings.clj:17-51` — `NATIVE_TOOL_TIMEOUT_MS` / `native-tool-timeout-ms` renamed to the python-block budget they now exclusively serve.
-12. DONE — Strip `:native-tool?`, `:schema`, `:call`, `:render-start-call-fn`, `:render-finish-call-fn`, `:replay` from every registration: `foundation/editing/core.clj:6180,6272,6296,6341,6746,6966`; `foundation/language_surface.clj:1081,1111,1135,1178,1208`; `foundation/harness/core.clj:180`; `foundation/mcp/core.clj:1114`; `vis-foundation-search/.../core.clj:1848,1873,1898,1924,1948`. `:description` and `:result` REMAIN — they are the `doc(name)` body.
-13. DONE — Tests: delete `native_tool_provider_contract_test.clj` (whole file); delete the four `extension_test` items; delete the seven `loop_test` items; delete `language_surface_test:442,591`, `shell_test:1469,1604`, `python_extensions_test:1672`; rewrite the six loop/shell/search entries listed in the REWRITE table.
-14. DONE — ADD `surface_contract_test/every-function-is-a-python-name-test` — walk the live registry: no schema key survives, every symbol resolves to a bound sandbox name. Run `…extension-test`, `…loop-test`, `…python-extensions-test`, `…foundation.surface-contract-test`, `…foundation.shell-test`, `…foundation.language-surface-test`, the search extension test. Commit.
-
-**Phase 3 — one card.**
-
-15. DONE — `form.clj` 300 → 188 lines. The display field `[:vis/tool-name "tool_name"]` is REPLACED by `[:op "op"]`; `card-label` uppercases `:op` and falls back to `block-label` `"RESULT"`; `result-card` answers `{:label :summary :body :collapsible?}` only when a summary or a body exists; `native-tool-form?` and the wire-name → label table are gone. `core.clj` re-exports follow.
-16. DONE — `channel_tui/render.clj` (203 lines out): the identity half is deleted and the two locals that survive are renamed for what they now are — `tool-label` → `card-badge` (result card) and → `activity-label` (spinner). The extension tree greps ZERO for `native-tool|native_tool|tool-label|vis/tool-name`.
-17. DONE — `channel_tui/chat.clj` — the pre-rendered native-tool card path and the `:vis/tool-name` read-back are gone; `block.preview` carries `"op"` → `:op`.
-18. DONE — `loop.clj` — `printed-result-op`, `printed-result-tally` (`tally-keys`: `results files matches hits entries edits nodes rows items`), `printed-result-card` and `clip-to-wire`. A card is built from the VALUE: its own `"op"` titles it, the rows it already carries size it, the value pretty-printed is the body. `gateway/state.clj` and `foundation/transcript.clj` project the same fields (the card IR gate is `(or result-summary result-render)`), and the `!cmd` bang block stamps `:op "shell"`.
-19. DONE — Tests. TUI: `render_test.clj` lost `coalesce-forms`, the `native-form` helper, `native-card-flush-spacing-test`, `coalesce-forms-test`, the two native items of `native-tool-error-compact-test` (renamed `python-failure-compact-test`) and the failed-native-tool error row; it gained a `result-form` helper and `card-titles-itself-from-its-op-test` (GREP / TOTALLY_UNKNOWN_OP / RESULT). `chat_test.clj` rewritten to `:op`. `virtual_test.clj` — declared untouched in §K and WRONG: three real failures, all of them the test asserting a shape production never had (a huge streaming result now folds behind its RESULT card; the clipped-top-message case searches scroll offsets instead of a magic one). `virtual.clj` itself is unchanged — an estimator tweak was tried and REVERTED. Host: `loop_test/printed-result-card-headline-test` ADDED (5 items, including an op no extension ever registered); `progress_test` and `gateway/state_test`'s preview items rewritten — the preview names no tool, and `(:tool_name payload)` is nil.
-
-**Phase 4 — `apropos` searches, `doc` retrieves.**
-
-20. DONE — the `clojure.spec.alpha` block lives in the NEW `src/com/blockether/vis/internal/doc_corpus.clj` (`:vis.doc/entry` = `name` + `text` + optional `call`; `:vis.apropos/hit` = entry + `score`), written before the implementation because the record crosses into GraalPy.
-21. DONE — `doc_corpus.clj` is the corpus builder and a SOURCE REGISTRY (`register-source!`, replace-by-id): `:documentation-pages` (`internal.docs/collect`) and `:skills` (`harness.discovery/skills`, text = description + whole `:body`, call = `await skill("name")`) register in the namespace itself, `:mcp-tools` registers from `foundation/mcp/core.clj` off the CACHED `(:tools conn)` so discovery starts no server, and the sandbox globals (`__vis_docs__` / `__vis_calls__`) are read LIVE per call by `env_python/sandbox-corpus`. `entries` dedupes by name, first source wins.
-22. DONE — `env_python.clj` `apropos` is ranked full text (AND-ed terms; name 100 / name-substring 50 / gist 10 / body 1; ties by name; blank query lists all), answering a guest dict `{name: gist}` in rank order and hiding `_`-prefixed names. `__vis_groups__`, `sym->group` and `resources/vis-python/apropos_table.py` are DELETED, and with them `extension.clj`'s `ext-group-overrides` / `ext-group-label` / `sandbox-symbol-groups`.
-23. DONE — `doc(target)` resolves the exact name, then the normalized one (trim / `.md` / lowercase), and prints the WHOLE text plus a `callable` line when the entry has a `call`; bare `doc()` prints the curated index (19 names, first lines, 140-char cap); a miss says the handle is unknown and points at `apropos(text)`. `doc('shell')` with the toggle off is a synthetic entry carrying both `PROCESS_SURFACE` sentences.
-24. DONE — group assembly is gone from `extension.clj`; an entry's FIRST LINE is its gist (`doc_corpus/gist`, 240 chars, 140 in the index), pinned by `doc_corpus_test/every-entry-has-a-usable-first-line-test`.
-25. DONE — `foundation/self_docs.clj` DELETED with its `vis_docs` symbol in `foundation/core.clj`; pages are seeded through `internal.docs/collect` instead. `ctx_renderer.clj`, `build.clj`, `resources/vis-docs/{index,extending,token-optimization}.md` follow.
-26. DONE — `foundation/self_docs_test.clj` deleted; `doc_corpus_test.clj` ADDED (8 describes, incl. `reading-a-skill-does-not-activate-it`); `env_python_test` rewritten (+`discovery-is-two-verbs-test`, +`a-page-never-shadows-a-function-test`, `apropos-groups-and-bare-verb-docs-test` → `bare-verb-docs-test`); `shim_attach_test:313,329` reads the first N of the RANKED answer; `posix_refusal_shim_test` moved from `__vis_apropos_table__` to `doc('shell')`. Green: `doc-corpus-test` 8/8, `env-python-test` 58/58, `prompt-test`, `posix-refusal-shim-test`, `shim-attach-test`; whole suite 4131/4137 with only pre-existing failures.
-
-**Phase 5 — retire `ntr`.**
-
-27. DONE — `resources/vis-python/async_runtime.py`: the whole `__VisNativeResults__` class, the `ntr` / `native_tools_results` globals, the AST literal-id scanner `__vis_native_result_scan__`, the pre-scan/prime block inside `__vis_run_async__` and the `repr` blurb are deleted (454 lines); `__vis_as_result__`, `__vis_settle__`, `__VisResultList__` and `__VisResultStr__` keep their normalization and lost only their `ntr` sentences. The direct-kwargs list is KEPT — `session_fold(target, gist="…")` still needs it. File greps zero for `ntr[` / `native_tools_results` / `# saved:`.
-
-28. DONE — `loop.clj`: the five `__vis_native_result_*` host callbacks (prime / fetch / ids / index / scope) are deleted from `env-bindings` with their comment block; `compaction` and `__vis_par__` are untouched.
-
-29. DONE — `env_python.clj`: `ntr` / `native_tools_results` left `protected-baseline-names`; the non-tool filter is now `#{"asyncio"}` alone; the defer-exclusion set is `#{"session_fold" "__vis_par__" "__vis_par_isolated__"}`; the context-cancelled hint no longer tells the model to re-read stored results.
-
-30. DONE — `persistance.clj`: the five `defdelegate`s and their section comment deleted. `vis-persistance-sqlite/.../core.clj`: the whole `ntr[tool_id]` branch-index section (`:4487-4763`, 278 lines — cache atoms, `ntr-entries-of-forms`, `ntr-branch-index`, all five `db-native-result-*` fns) deleted; the usage-tally comment no longer cites it. No compatibility layer, no registrar change (the backend never named these fns).
-
-31. DONE — **fold surgery in `loop.clj`**, in order, each step leaving the file compiling: `ntr-entries-of` deleted with its docstring claim in `stamp-iter-universe!`; the scope→entries accumulation and the `"engine_iter_ntr"` ctx key deleted (universe, weights and skill activations untouched); `(declare ntr-recover-hint)` deleted (AGENTS.md `declare` ban) together with `ntr-recover-hint` and the `recover-hint` closure it backed, so the receipt is now `folded <label><note><kept-note> → <gist>`; `rec-ntr-ids` / `:ntr-ids` / `:summary-ntr-ids` deleted so a breadcrumb carries no accessor index; the breadcrumb is `# ⋯ folded t1/i1-i2 · <gist>`; and the `# saved: ntr[…]` STAMP EMITTER (`result-handle`, with the whole comment explaining coordinate-vs-id) is gone — no result line carries a coordinate again.
-
-32. DONE — descriptions and docs: `python_execution` lost the `# saved:`/`ntr` clause and gained the rule that replaces it (*a value you never printed is gone from the transcript once the block ends*); `env_python.clj` `session_fold` docstring already says folding changes rendering, not storage, and the gist is what survives; `prompt.clj` §2's three `ntr` lines became one value-and-print rule; `resources/vis-docs/token-optimization.md` lost the coordinate bullet and now says a folded step is not recoverable with introspection OFF; the companion comment at `ChatContent.tsx` no longer names `ntr`.
-
-33. DONE — tests: DELETED `loop_test/native-tools-results-e2e-test` (91 lines, 4 `it`s) and the four sqlite describes (`core_test.clj`, 366 lines); REWRITTEN `compaction_verbs_test`'s two receipt describes into `a fold breadcrumb carries no recovery coordinate` / `a fold receipt carries no recovery pointer`, `loop_test`'s three handle `it`s into one `no tool_result carries a result-recovery handle`, `loop_test/only-python-execution-is-advertised-test`'s fact list (`bare snake_case` → `plain Python` + the block-ends rule), `stamp-iter-universe!`'s pricing test (now asserts `engine_iter_ntr` is ABSENT), `env_python_test`'s store-normalization describe (now drives `__vis_deferred__`, not `ntr.__vis_store__`), `env_python_form_eval_test`'s cancelled-context assertion, and `prompt_test`'s required/surplus vectors (`ntr[`, `# saved:`, `ntr.describe()` are now SURPLUS — `ntr` bare cannot be, it is a substring of *control*/*contract*/*introspection*). ADDED `env_python_test/ntr-is-gone-test`: every retired name (`ntr`, `native_tools_results`, `ntr.describe`, `ntr.at`, all five `__vis_native_result_*`, `__vis_entries_at__`, `__vis_native_result_scan__`) raises `NameError`, and no sandbox doc still advertises a coordinate. Clean JVM: `clojure -M:test` = 6433 cases, **6 failures, all pre-existing** (audit-inventory rift pin, gateway fcm ×2, gateway relay, native-image env capture, `providers-router-rebuild-hook-wiring-test`).
-
-
-**Phase 6 — remove `cat` and `patch`.**
-
-34. DONE — `foundation/editing/core.clj` — the `cat` and `patch` registrations, both tool fns, `read-file`/`read-file-ranges`/`read-file-by-anchor`/`tail-file`, `patch-safe`/`patch-analysis`/`coerce-patch-edits` and the anchor plumbing (`fresh-anchor-max-lines`, `changed-region-anchors`) are gone; the file went 6135 → ~4870 lines.
-35. DONE — `prompt.clj` — the `cat`/`patch` sentences now read "read with `grep`/`struct_*` or plain Python; write with `struct_patch` or plain Python"; `doc_corpus.clj`, `env_python.clj` and `foundation/shim_ls.clj` lost the same names from their prose.
-36. DONE — `AGENTS.md` names neither verb (checked by grep, no rule needed changing).
-37. DONE — `editing/core_test.clj` rewritten: the `cat`/`patch` describes and `native-tools-flat-spec-guard` are gone, `anchored-verbs-are-gone-test` pins that every retired name fails to resolve. `…foundation.editing.core-test` green.
-37a. DONE — **the `lineno:hash` ANCHOR itself is retired**: `struct_index`, `struct_nodes`, `struct_patch` and `grep` now speak plain 1-based LINE numbers. `index.clj` emits `:line`/`:end-line` and prints `@<start>..<end>`; `structural.clj` occurrences carry `line`/`end_line`; `core.clj` wires `"line"`/`"end_line"`, the `use` rows key became `"lines"`, and the `struct_patch` locator key `"anchor"` became `"line"` (`:struct-anchor-error` → `:struct-line-error`). `anchor` survives only as the `move_before`/`move_after` target NAME.
-37b. DONE — `editing/zipper.clj` — `path-at-anchor` → `path-at-line [lang source line]`, refusing with `:unknown-language` / `:invalid-line` / `:parse-failed` / `:line-no-node`.
-37c. DONE — `editing/patch.clj` DELETED. Only its escape decoder was still reachable, so `decode-unicode-escapes` and its four helpers moved verbatim to the new `editing/escapes.clj`; `introspection.clj` lost `:patch-stale-anchor` and renamed `:patch-invalid-program` → `:struct-patch-invalid-code`.
-37d. DONE — tests: `patch_test.clj` and `hashline_bench_test.clj` deleted; `zipper-anchor-path-test` → `zipper-line-path-test`; `structural_test.clj`, `tree_sitter_langs_test.clj`, `introspection_test.clj`, `loop_test.clj` and `env_python_test.clj` re-pinned on line numbers; `anchored-verbs-are-gone-test` also pins that the `…editing.patch` namespace no longer loads. Docs (`token-optimization.md`, `index.md`, `extending.md`, `graalpython.md`) re-written off anchors. Commit.
-
-**Phase 7 — prompt and measurement.**
-
-38. DONE — **CORE prompt** rewritten at `prompt.clj:209-269`: §1 lost the JSON-Schema clause and gained the discovery contract (`apropos(text)` full-text searches every function, skill and Vis doc page; `doc(name)` returns one whole document and IS the authoritative contract — obey its stated preconditions; bare `doc()` is the index; read a skill with `doc`, work under it with `skill`); §2 lost the native-vs-Python routing fork and opens with "ONE call exists: `python_execution` — every action (search, read, edit, test, shell, browse) is Python in that sandbox, so there is no tool to choose", then "Batch independent work in ONE block"; §3 says "**Filesystem work is Python**" and "BATCH inside one block"; §6 dropped "recovery IDs" and states the folding truth ("a folded step is NOT re-readable, so the gist is what survives"). §4, §5, §7 untouched.
-39. DONE — **Engine descriptions.** `python_execution`'s description opens "Run Python in the session sandbox — the only call. Batch, filter and chain work here, then print only what the answer needs"; the shell-handle and file-descriptor paragraphs and the `caps` line are verbatim. Two stale sentences the plan had missed went with it: the capability line still told the model to "prefer native file tools" (now "prefer `ls`/`grep` over shell", and a sandbox with no FS says only "FS: unavailable"), and the `;; ── Native tool surface (maki-style HYBRID) ──` banner still described a hybrid that no longer exists. `session_fold` needed no edit: its doc text already carries `session_fold(target, gist=None) -> str` plus the targets paragraph.
-40. DONE — **The four small blocks.** `language_surface.clj:109` docstring dropped "call via the facade"; the skills listing is now "Harness SKILLS available — `doc(\"name\")` reads a skill, `await skill(\"name\")` activates it (session effect: sets its project root, cwd and resources)", `[project]` clause and 180-char clip kept; `introspection.clj` says "Folded content is readable ONLY here"; the shims block was verified unchanged.
-41. DONE — **The anti-regrowth rule** is written on `extension.clj/render-prompt`, the docstring an author reads while writing a fragment: a fragment states ROUTING and POLICY only and never restates a signature, an argument name, a return shape or an example call, because a fragment is PUSHED into every request while a docstring is PULLED once. `extending.md` already carried it (the owner table at `:1108-1112` and "The prompt fragment" at `:1167-1175`), and `symbol-doc-text` was already the single renderer with no native split left.
-42. DONE — **Docs in the tree.** `token-optimization.md` lost "Use a native call for one operation" and gained the print-discipline paragraph (printing is the whole cost model, and an unprinted value is gone once the block ends), "Recovery is lossless" became "Folding changes rendering, not storage", and the net-effect list no longer says "when they are not already advertised". `index.md` already read "One gear: the Python sandbox". `AGENTS.md` needed exactly one edit, and only the new test found it: the PLAN.md catchy-phrase EXAMPLE still read "a native tool survives only if it is a jail", and `AGENTS.md` rides into every request as `;; -- PROJECT-INSTRUCTIONS --`.
-42a. DONE — **Tests.** `prompt_test.clj`: "keeps live native contracts authoritative" became "points authority at the document a capability carries"; the required vector swapped the JSON-Schema terms for the discovery/one-call ones and the folding sentence; the surplus vector gained `native tool`, `JSON Schema`, `vis_docs`, `advertised` and `Direct native tools`. ADDED `prompt-names-one-tool-test` (the ASSEMBLED prompt — core + project instructions + extension fragments — carries `python_execution` and none of the eighteen-door vocabulary; this is what caught `AGENTS.md`) and `extension-fragments-do-not-restate-doc-text-test` (no fragment line duplicates any symbol's `doc` first line, no fragment carries `Raw result:` or a `name(args) -> shape` signature). Green: `prompt-test` 22/22; `loop-test`, `env-python-test`, `harness.core-test`, `language-surface-test`, `introspection-test`, `foundation.core-test` 461/461.
-42b. DONE — **Measured** on a clean JVM in both trees: `ffeaa9db0` (the commit this plan was written on, in a detached worktree) versus this commit, same repo, default extensions, `introspection` OFF.
-
-| metric | before (`ffeaa9db0`) | after | delta |
-| --- | --- | --- | --- |
-| CORE prompt chars | 4 747 | 4 729 | −18 |
-| assembled system prompt chars | 4 747 | 4 729 | −18 |
-| EXTENSIONS block chars | 1 428 | 2 298 | +870 |
-| shims block chars | 10 409 | 10 420 | +11 |
-| provider `:tools` payload chars | 18 607 (16 tools) | 1 342 (1 tool) | **−17 265** |
-| total first-request overhead | 35 191 | 18 789 | **−46.6 %** |
-| approximate tokens (chars ÷ 3.6) | ~9 775 | ~5 219 | ~−4 556 |
-
-The EXTENSIONS block GREW, and that is the win moving rather than reversing: the `LANGUAGE TOOLS` matrix (~870 chars, the only statement of which packs are active) was absent from the before block because those verbs were carried as five JSON tool schemas inside the 18 607-char payload instead. The CORE prompt did NOT shrink — phase 4 had already spent that room — so the ratchet at `prompt_test.clj` stays at 4 750 and the comment records that the rewrite had to fit UNDER the existing budget rather than raise it. The plan's own 7.4 prediction that the EXTENSIONS block would be the largest win is therefore WRONG and recorded as wrong: the payload is where the tokens were.
-
-43. **A. DONE.** `:ext.symbol/render-start-call-fn` was DEAD ON ARRIVAL — one declaration (`language_surface.clj` `render-test-call`) and no reader anywhere; it was stored into the symbol entry and never projected out. `:ext.symbol/render-finish-call-fn` had exactly one live consumer left, `loop.clj`'s `!cmd` bang path, and only the 5 shell renderers could ever reach it. Both spec keys, both `:opt-un` entries, both builder passthroughs, `finish-call-renderers-by-name`, `printed-result-renderers-by-op` (zero callers) and all 21 renderer defns are gone from `extension.clj`, `foundation/{editing/core,language_surface,shell,mcp/core,harness/core}.clj` and `vis-foundation-search/.../core.clj`. `python_extensions.clj` held NO render adapters — the plan line was stale. `tool-result-display` is now `[result* & [input]]`: no renderers, no `tool-name`, no `::native-tool-render-failed`, and no `rf` timeout branch (dead since phase 1, because `tool-name` is always `python_execution` and nothing registers under it). `!cmd` KEEPS its shell card by calling the now-public `shell/render-shell-run-result` DIRECTLY. Riding along: the `:pending-summary` / `:pending-render` wire fields, whose only author was the start renderer — out of `form.clj`, the TUI `form-fingerprint`, `types.ts`, `SessionScreen.tsx` and `ChatContent.tsx`. `:ticker-fn` and `progress.clj:340-352` stay: an in-flight sentence is the only presentation a running process has.
-44. **A. DONE — VERDICT: `:on-error-fn` STAYS, it is semantics and not display.** `shell-on-error`, `mcp-on-error` and `tool-failure-on-error` turn a THROWN exception into the canonical `extension/failure` envelope and classify `InterruptedException` as `:interrupted` with a human sentence; without the key `run-on-error` rethrows and `assert-symbol-envelope!` means a throwing verb yields no envelope at all, so turn cancellation would read as a crash. It carries `:op`, timing and `:target` — data. The only display half was `tool-failure-on-error`'s third parameter `_render-fn`, already ignored and `nil` at all six call sites; it is deleted with the renderer sweep.
-45. **B.** Delete every `:schema {…}` literal in the seven files of the table (371 lines) in the same commit as the `:ext.symbol/schema` spec key.
-46. **C.** Reduce `form.clj` to `display-fields` (python-block keys), `display-keys`, `with-display-code`, `->display`, `<-wire` — and `result-card`/`result-cards`, which §K keeps for PRINTED results, minus their `:vis/tool-name` lookup; drop the 14 identity/coalescing defs, the `core.clj` re-exports of `coalesce-forms`/`hide-tool-code?`, and the TUI call sites. DELETE `form_test.clj`'s `hide-tool-code?` describes and the coalescing describes in TUI `render_test.clj`; keep the card-geometry ones, rewritten against printed results.
-47. **D.** Cut `extension_bootstrap.py` to `symbol(fn, name=None, tag='observation', is_hidden=False)` — docstring is the doc; delete the ~40 lines of native validation and every `Raw result:` rule (`extension.clj`, `loop.clj`, `extending.md`, the 9 test sites). Run `…python-extensions-test`.
-48. **E. DONE — and RESCOPED against the tree, because most of the step was already stale or wrong.** Already gone before this step ran: `tool_name`/`result_render` in the gateway payload (`gateway/state.clj` emits neither, `state_test` asserts `(:tool_name payload)` nil) and the sqlite columns (`V1__schema.sql` has neither; the per-tool tally reads the nippy `tool_calls` blob). VERDICT on the two names: **`result_render` STAYS** — it is no longer a per-tool identity but the BODY of a printed result's card (`form.clj:34` wire field, `form/result-card:82`, TUI `virtual.clj:440,566` height estimation, `transcript.clj:139-143`, companion `ChatContent.tsx:980,1059`), which §K keeps; deleting it would blank every card body. **`:vis/tool-name` STAYS as engine-only telemetry** — stamped in `loop.clj` (×9) from the provider call, restored by `ctx_engine.clj:1030`, exposed as `:tool` by `introspection.clj:129,377,780` (with a `tool-name-from-code` fallback) and tallied by the sqlite blob reader; it never reaches the wire, so it is not the per-tool identity the phase removes. The ONE real defect was the companion still READING a wire key nobody sends: `lib/artifacts.ts:239` asked `iteration.tool_name` — always `""` — so `ArtifactsSheet.tsx`'s `describeArtifact` caption degraded from "produced in turn N by X" to "produced in turn N" and no test caught it, because `artifacts.test.ts` fed `tool_name` in by hand. DELETED, not re-pointed at the iteration's `op`: with one door, naming the producer on every row is noise, and turn + iteration is the provenance that is real. Files: `lib/artifacts.ts` (the `SessionArtifact.tool` field, `toArtifact`'s `where.tool`, the dead read, `artifactsFromIndex`'s `tool: ""`, two docstrings), `components/ArtifactsSheet.tsx` (the caption branch), `lib/artifacts.test.ts` + `components/ArtifactsSheet.test.tsx` (the hand-fed fixtures and the `by python_execution` aria assertion). Exit check: zero grep for `tool_name` over `apps/vis-companion/src` and `scripts/`. `npm run test` 1003 pass, `npm run lint` 154 files clean, `npm run build` green.
-49. **F.** Delete `runtime_settings.clj:17-53` and all 6 `:vis/outside-tool-wall` sites plus the language-clojure `test_runner.clj` declarations; the Python eval watchdog is the only wall. Run `…language-surface-test`, `…loop-test`.
-50. **G.** Delete the replay-policy path end to end — it has **no production producer**, so this removes behaviour that never ran. In order: `extension.clj:479-493` (spec), `:503` (`:opt` key), `:997,1021` (projection), `:1027-1034` (`native-tool-replay-policies`), `:1456-1457` (builder passthrough); then `loop.clj:4296-4376` (`successful-tool-call?`, `oversized-arg-receipts`, `compactable-native-call`, `plain-tool-results`, `compacted-native-replay`), `:4565` (drop the `& [replay-policies]` tail arg), `:4598-4599,4631` (binding + `cond` branch), `:7430,7459,7494,7556,7576` (emergency-fold parameter lists), `:8257,8270,8422-8423` (call site + request key). Keep `replay-target` — it decides thinking preservation and vision image replay. Delete `loop_test/large-arg-replay-compaction-test:1799-1846`; drop the `oversized-arg-receipts` assertion at `loop_test:5897`. Run `…loop-test`, `…extension-test`, `…ctx-engine-test`.
-51. **H.** Remove `ntr`/`native_tools_results` from `env_python.clj:886` and `:1001-1002`, and delete `set-advertised-native-tools!`, `__vis_advertised_native_tools__` and the `apropos` suppression branch in `install-introspection!`.
-52. **I.** Trace `:tag`'s consumers; delete it or record why it stays.
-53. **J.** Rewrite `resources/vis-docs/extending.md` to the post-change authoring surface and fix `index.md:55` — before Phase 4 seeds pages into the `apropos` corpus.
-
-**Presentation (K) — after step 15, before the rest of Phase 3.**
-
-54. DONE — **K, the decision first.** In `loop.clj:5600-5620` replace `extension/native-tool-finish-call-renderers-by-op` with ONE data renderer: headline = the printed result's own `:op` plus a size the value already carries (`(count …)` of the dominant collection, else nothing), body = the pretty-printed value. It reads the RESULT, never a symbol table, so §A's 21 renderer defns can go in the same commit without a printed `grep` result degrading to raw stdout. ADD `loop_test/printed-result-card-headline-test` — a printed `{:op "grep" :matches {…}}` yields a headline naming `grep` and a body, with no extension registered.
-
-55. DONE — **K, TUI source.** `channel_tui/render.clj`: KEEP `compact-tool-card-body-entries` (`:4769-4831`) and `tool-card-entries` (`:4833-4946`) — they paint printed results, which survive; DELETE the tool-identity half around them (`:2570` headline band branch, `:3611-3632` the `:vis/tool-name` component of the render cache key, `:5201`+`:5205-5208`+`:5265-5267` `native-tool-error?`, `:5298`, `:5331`, `:5381-5409` the "prefer `:result-render` for NATIVE TOOL forms only" gate, `:5483`+`:5513` `tool-label`, `:5599-5604` the running-native headline-first branch, `:5625-5652` the code-less op-card and its adjacent-card stacking, `:5859`+`:5929` the progress label's tool name). `virtual.clj:440,566` keep `:result-render` (it is now stdout) and keep `(map :body (:cards f))`. `chat.clj:214,918` as already written. Comment-only: `screen.clj:995`, `theme.clj:128`. After the edit the whole extension tree must answer ZERO for `native-tool|native_tool|tool-label|:vis/tool-name` — that grep is the step's own exit check.
-
-55b. DONE — **K, TUI tests.** Three namespaces, three different verdicts, so nobody deletes by keyword: `render_test.clj` (50 display/card sites) SPLITS — the ~33 tool-identity sites die, the card-geometry ones are rewritten against printed results; `chat_test.clj:548,553,619,637-657` REWRITES (nine sites; `:619` keeps its claim, loses the per-tool matrix); `virtual_test.clj:150,333,370,673,1140` is UNTOUCHED — those five fixtures set `:result-render` as *stdout of a python block*, which is exactly what survives, and deleting them by prefix match would drop the height-estimation and huge-output regressions. `block_fixtures_test.clj` and `parity_test.clj` carry no tool-identity vocabulary and need no edit; confirm with the same zero-grep before claiming the step.
-
-56. DONE — **K, companion source.** `ChatContent.tsx`: DELETE `toolLabelOverrides` (`:118-122`), `toolLabel` (`:970-973`), `compactToolSummary` (`:1010-1020`), `RUNNING_CODE_TOOLS` (`:1229`, one member left), the `ntr[…]` comment (`:534`, Phase 5) and every `form.tool_name` branch (`:1007, 1099, 1122, 1195, 1233, 1245, 1348, 1374-1376, 2039, 2195`); KEEP `toolCards`/`ToolCard`/`CardGrid`/`FormTrace` — a card is now "a printed result", keyed by `card.scope` and titled from the card's own `op`. `toolCards` (`:999-1008`) stops gating on `form.tool_name` and returns `form.cards ?? []`. `lib/types.ts` drops `result_render` (`:708`) and `tool_name` (`:728`) and rewrites the `sections` docstring at `:719`, which currently defines that field by contrast with `result_render`; `cards`, `tool_call_id` and the phase fields stay. `SessionScreen.tsx:507,516,561,686-688` — the form kind is always `"code"`, the merge key loses `tool_name`. `lib/artifacts.ts:239` was MISSED by this step and is settled in step 48 — the dead `tool_name` read is DELETED, not re-pointed at `op`. No other file in `apps/vis-companion/src` or `scripts/` names the vocabulary; the exit check is a zero-grep for `tool_name|toolLabel|result_render|RUNNING_CODE_TOOLS|compactToolSummary` over both trees.
-
-56b. DONE for the tests (re-fixtured, `a-card-titles-itself-from-its-op` added, `npm run lint`/`tsc`/`vitest`/`build` green); REMAINING: the shipped-UI numbers with `npm run dev` + `spel` at 390 and 1440 — **K, companion tests and proof.** Re-fixture `artifacts.test.ts:163-189` and `ChatContent.test.tsx:228-231` against a card that carries only `op`/`scope`. ADD one companion test — `ChatContent.test.tsx/a-card-titles-itself-from-its-op` — so the app's title path is pinned to the result rather than to a label table. Then `npm run lint && npm run build`, and the SHIPPED-UI proof per AGENTS.md: `npm run dev`, `spel open`, `spel snapshot -i -c` on a session with a multi-result python block, and `getBoundingClientRect()` figures for the card band **at 390 and 1440**, reported in the answer — the band must not change height when the badge text goes, and `spel errors` must be empty. `ui.tsx` is NOT touched by this plan (no control is added or removed); if an edit here reaches for one, that is the signal to stop and design it.
-
-57. DONE for the assertions (1658/1658 in the `vis-channel-tui` suite, `card-titles-itself-from-its-op-test` added); REMAINING: the `cap/shot!` PNG — **K, evidence for the TUI.** Run the TUI namespaces in the `vis-channel-tui` REPL against Lanterna `DefaultVirtualTerminal`, ADD `render_test/one-card-shape-test` and `render_test/python-block-error-row-test`, keep every surviving grid assertion, and attach one `cap/shot!` PNG of an iteration with three printed results (the screenshot is the eyeball, the grid assertions are the gate). That `render_test.clj` splits is why the test map counts it in both DELETE and REWRITE.
-
-58. **L, delete the language-pack renderers too.** No exception list: step 43's sweep takes
-    `render-lint-result` + `findings->table` (`language_surface.clj:498-567`), `render-test-result` +
-    `failures->table` (`:569-700`), `render-test-call` (`:797-836`), `render-repl-start-result` (`:750-786`),
-    `render-repl-eval-result` + `sect` (`:788-950`) and `render-format-result` (`:1093`), together with the `:render-finish-call-fn` /
-    `:render-start-call-fn` entries at `:1093, 1121, 1150` and the `repl_eval` one. `dispatch!`
-    (`:172-280`) is left returning the pack's raw result map, unwrapped and unmerged. Reviewer's check:
-    `language_surface.clj` greps ZERO for `render-`, `->table` and `sect` afterwards, and the namespace
-    shrinks by ~413 lines.
-
-58b. **L, keep exactly two survivors, and prove each.** `test-target` (`:662-673`) survives only as the
-    `:ticker-fn` label source — ADD `language_surface_test/running-tests-ticker-names-the-selection-test`.
-    `:on-error-fn` keeps its error→DATA half and loses its display half — ADD
-    `language_surface_test/a-pack-failure-is-data-not-a-python-exception-test`: a failing
-    `repl_eval("clojure", …)` returns a map the block can print (`ex`/`root_ex`/`err` present), never raises
-    a Python traceback around a Java stack trace. The SIX existing render describes in that namespace are
-    DELETED, not rewritten — `render-test-result-test` (`:323`), `render-test-call-test` (`:439`),
-    `render-repl-start-result-test` (`:462`), `render-repl-eval-result-test` (`:482`),
-    `render-lint-result-names-target-test` (`:604`), `render-lint-snippet-test` (`:746`) — because the
-    behaviour they pinned is gone by decision, and `format-schema-advertises-recursion-test` (`:552`) goes
-    with phase 2's schemas: +7 describes, ~415 lines in the test map's DELETE column.
-
-58c. **L, check the raw result is still legible.** With Phase 3's card in place, run one failing
-    `run_tests({"language": "clojure"})`, one `lint_code` with findings and one
-    `repl_eval({"language": "clojure", "code": …})` that throws, from a
-    python block, and record the printed card in the commit message. The bar is NOT prettiness — it is that
-    `file`, `row`, `level`, `message`, `expected`, `actual`, `ex` and `root_ex` are all present and
-    addressable in the value. If a key is only reachable from a deleted renderer, that key was never in the
-    result map and the pack must put it there.
+**ACCEPTED** — nothing has landed. Every open question is settled and written into the phases above
+rather than kept as a list: no batch and no atomic multi-file edit (Context, *What we explicitly do not
+solve*); a refusal RAISES (Phase 3); `grep` groups its hits under a path header instead of repeating the
+path on every line (Context, *Alternatives considered*) and its counts stay prose on line 1 with no
+structured field surviving (Phase 5); and `struct_index` / `struct_nodes` do get anchors, so Phase 6 is
+in the first cut.
+
+**Supersedes** *"Collapse the model-facing tool surface to `python_execution` alone"*, which held this
+file through `e51669e06` and whose Phase 6 (`e51669e06:PLAN.md:526-557`) is the decision this plan
+overturns. Its phases 1-12 landed and are recorded there; its unfinished cross-cutting cleanup — steps
+45-47, 49-53, 56b, 57, 58, 58b, 58c (the `:schema` literals, `form.clj`'s reduction,
+`extension_bootstrap.py`, the tool wall, the replay policy, `:tag`, `extending.md`, the language-pack
+renderers, and the two shipped-UI evidence steps) — is preserved verbatim at `git show
+e51669e06:PLAN.md` and is NOT carried into the TODO below: it is separate work that takes the root again
+when it is picked up.
+
+TODO, in order:
+
+1. Phase 1 — `editing/hashline.clj` restored from `7fda0cee2^` + `hashline_test.clj`; `anchored-verbs-are-gone-test` inverted.
+2. Phase 2 — `cat`: one file, positional, one anchored string.
+3. Phase 3 — `patch`: positional span replace, tree-sitter gate, Clojure delimiter repair hook, raising refusals.
+4. Phase 4 — prompt, `doc` contracts, `vis-docs`, then re-measure the journals against the table in Context.
+5. Phase 5 — `grep` returns one anchored text block; retarget its tests onto `content-result`.
+6. Phase 6 — `struct_index` / `struct_nodes` rows carry `anchor`/`end_anchor` beside `line`/`end_line`.
