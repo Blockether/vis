@@ -20,8 +20,7 @@
    run on every format/lint result before handing it back through the surface.
    `capability->spec` is the single source of truth mapping a capability keyword
    to its result spec."
-  (:require [clojure.spec.alpha :as s]
-            [clojure.string :as str]))
+  (:require [clojure.spec.alpha :as s]))
 
 ;; =============================================================================
 ;; Shared: the directory-nested grouping BOTH format and lint expose
@@ -156,9 +155,9 @@
    "command" nil
    "cwd" nil
    "ns" nil
-   ;; WHAT THE CALL SELECTED (`only`/`namespaces`/`paths`/`filter`, else the whole
-   ;; suite) — a runner reports what it RAN, never what was ASKED FOR, so without
-   ;; this two different selections render the same headline.
+   ;; WHAT THE CALL SELECTED (`only`/`paths`/`filter`, else the whole suite) — a
+   ;; runner reports what it RAN, never what was ASKED FOR, so without this two
+   ;; different selections render the same headline.
    "target" nil
    "port" nil
    "exit" nil
@@ -207,18 +206,21 @@
   "One pack's raw run_tests `result` onto `test-result-base` — the SINGLE place
    the uniform shape is made true.
 
-   Per-pack key VOCABULARY is folded onto the canonical names, so the caller
-   reads `pass`/`fail` whatever ran: pytest/bun `passed`/`failed` -> `pass`/
-   `fail` (an errored test is a failed one), an argv `cmd` -> a `command`
-   string, `ok` -> `is_pass`. The folded alias is then DROPPED: a completed
-   result names each fact ONCE, never `passed` beside `pass`. `total`,
-   `errored`, `is_pass` and `language` are DERIVED only when the pack reported
-   none — nothing a pack said is ever overwritten.
+   NOTHING is translated here: every pack speaks the contract's OWN words.
+   A runner that counts in other ones — pytest's `passed`/`failed`/`errored`,
+   bun's `N pass` / `N fail` lines — is folded onto `pass`/`fail`/`errored`
+   INSIDE its pack, where what those words mean is known (pytest's `failed`
+   and `errors` are DISJOINT; lazytest's are not). A completed result
+   therefore names each fact once because it only ever carried one name.
 
-   `errored` is the one count kept BESIDE `fail` rather than folded into it,
-   because it names a different fact (how many threw), stays a SUBSET of
-   `fail`, and survives where the typed fault list cannot: a runner that
-   reported counts and no per-test detail lists no faults to type.
+   What is filled in here is what a pack could not know: `total`, `errored`,
+   `is_pass` and `language` are DERIVED only when the pack reported none —
+   nothing a pack said is ever overwritten.
+
+   `errored` is a count BESIDE `fail`, not inside a second list, because it
+   names a different fact (how many threw), stays a SUBSET of `fail`, and
+   survives where the typed fault list cannot: a runner that reported counts
+   and no per-test detail lists no faults to type.
 
    Non-map results (a pack that returned something else) pass through."
   [language result]
@@ -226,7 +228,7 @@
     result
     (let
       [pass
-       (or (->count (get result "pass")) (->count (get result "passed")))
+       (->count (get result "pass"))
 
        faults
        (->faults (get result "failures"))
@@ -235,10 +237,7 @@
        (->count (get result "errored"))
 
        fail
-       (or (->count (get result "fail"))
-           (when-let [f (->count (get result "failed"))]
-             (+ (long f) (long (or reported-errored 0))))
-           reported-errored)
+       (->count (get result "fail"))
 
        ;; Unreported: every listed fault carries its "type", but only a fault
        ;; list that accounts for EVERY failure may be counted — pytest's summary
@@ -261,19 +260,10 @@
 
        is-pass
        (cond (some? (get result "is_pass")) (boolean (get result "is_pass"))
-             (some? (get result "ok")) (boolean (get result "ok"))
              (seq (str (get result "error"))) false
              (some? fail) (zero? (long fail))
              (some? exit) (zero? (long exit))
-             :else nil)
-
-       cmd
-       (get result "cmd")
-
-       command
-       (or (get result "command")
-           (cond (coll? cmd) (str/join " " (map str cmd))
-                 (some? cmd) (str cmd)))]
+             :else nil)]
 
       (-> (merge test-result-base result)
           (assoc "language" (or (get result "language") language)
@@ -283,10 +273,8 @@
                  "total" total
                  "skipped" skipped
                  "is_pass" is-pass
-                 "command" command
                  "failures" faults
-                 "by-cwd" (or (get result "by-cwd") {}))
-          (dissoc "passed" "failed" "ok" "cmd")))))
+                 "by-cwd" (or (get result "by-cwd") {}))))))
 
 ;; =============================================================================
 ;; Capability -> spec + the check the packs run

@@ -243,6 +243,32 @@
 
 (defn- tail-str [^String s ^long n] (if (<= (count s) n) s (subs s (- (count s) n))))
 
+(defn- bun-counts
+  "`bun test`'s own summary lines (`N pass`, `N fail`) in the run_tests CONTRACT's
+   words: `{\"pass\" n \"fail\" n}`. A key bun did not print is ABSENT, not zero —
+   a crashed run reports UNKNOWN counts instead of a green-looking zero. Bun has
+   no separate erroring outcome, so a test that threw is one of its `fail`s and
+   the result carries no `errored`."
+  [^String s]
+  (let
+    [n
+     (fn [re]
+       (some-> (second (re-find re (str s)))
+               parse-long))
+
+     pass
+     (n #"(?m)^\s*(\d+) pass")
+
+     fail
+     (n #"(?m)^\s*(\d+) fail")]
+
+    (cond-> {}
+      pass
+      (assoc "pass" pass)
+
+      fail
+      (assoc "fail" fail))))
+
 (defn ts-test-fn
   "run_tests handler: `bun test` in the workspace (or `{dir}`), optionally
    narrowed to `{paths [...]}` / a `{filter \"name\"}` (-t). Returns the parsed
@@ -293,28 +319,16 @@
      (.waitFor p 300 java.util.concurrent.TimeUnit/SECONDS)]
 
     (when-not done? (.destroyForcibly p))
-    (let
-      [s
-       (str @out)
-
-       [_ pass]
-       (re-find #"(?m)^\s*(\d+) pass" s)
-
-       [_ fail]
-       (re-find #"(?m)^\s*(\d+) fail" s)]
-
-      (extension/success {:result {"mode" "cli"
-                                   "framework" "bun:test"
-                                   "tool" "bun"
-                                   "cmd" (vec cmd)
-                                   "cwd" dir
-                                   "exit" (if done? (.exitValue p) nil)
-                                   "timed_out" (not done?)
-                                   "passed" (some-> pass
-                                                    parse-long)
-                                   "failed" (some-> fail
-                                                    parse-long)
-                                   "output" (tail-str s 8000)}}))))
+    (let [s (str @out)]
+      (extension/success {:result (merge {"mode" "cli"
+                                          "framework" "bun:test"
+                                          "tool" "bun"
+                                          "command" (str/join " " cmd)
+                                          "cwd" dir
+                                          "exit" (if done? (.exitValue p) nil)
+                                          "timed_out" (not done?)
+                                          "output" (tail-str s 8000)}
+                                         (bun-counts s))}))))
 
 ;; =============================================================================
 ;; Manifest

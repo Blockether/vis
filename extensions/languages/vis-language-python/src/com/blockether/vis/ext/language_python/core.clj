@@ -331,9 +331,12 @@
          skipped
          (long (attr-sum :skipped))]
 
+        ;; pytest's own words are DISJOINT (`failures` beside `errors`); the
+        ;; contract's `fail` holds every fault and `errored` is its erroring
+        ;; SUBSET, so the sum happens HERE, where the two are known apart.
         {:failures (into (faults :failure "fail") (faults :error "error"))
-         :counts {"passed" (max 0 (- tests failed errored skipped))
-                  "failed" failed
+         :counts {"pass" (max 0 (- tests failed errored skipped))
+                  "fail" (+ failed errored)
                   "errored" errored
                   "skipped" skipped}})
       ;; A malformed or half-written report is not a reason to lose the run.
@@ -410,9 +413,11 @@
        "framework" "pytest"
        "tool" "graalpy"
        "files" (:files res)
-       "ok" (boolean (:ok? res))
-       "passed" (or (:passed res) 0)
-       "failed" (or (:failed res) 0)
+       "is_pass" (boolean (:ok? res))
+       "pass" (or (:passed res) 0)
+       ;; Outcomes are disjoint here too: `fail` is every fault, `errored` the
+       ;; subset of it that THREW — never a count added on top.
+       "fail" (+ (long (or (:failed res) 0)) (long (or (:errored res) 0)))
        "errored" (or (:errored res) 0)
        "skipped" (or (:skipped res) 0)
        "failures" (graalpy-faults (:tests res) #{:failed :errored})
@@ -425,7 +430,7 @@
 
       ;; Nothing was discovered: a run that executed no test is NOT a pass.
       (zero? (long (or (:files res) 0)))
-      (assoc "ok"
+      (assoc "is_pass"
         false "error"
         (str "No test file discovered under " (str/join ", " paths)
              " — looked for test_*.py / *_test.py (a directly named *.py file "
@@ -438,9 +443,11 @@
              "interpreter and installed dependencies.")))))
 
 (defn- pytest-counts
-  "Outcome counts read off pytest's own summary line, as `{\"passed\" n \"failed\" n
-   \"errored\" n \"skipped\" n}` — nil when that run printed no summary at all (a
-   usage error, a crash), where the exit status is the only verdict there is.
+  "Outcome counts read off pytest's own summary line, in the CONTRACT's words:
+   `{\"pass\" n \"fail\" n \"errored\" n \"skipped\" n}`, where `fail` is every
+   fault (pytest's `failed` PLUS its `error`s) and `errored` is the erroring
+   subset of it. nil when that run printed no summary at all (a usage error, a
+   crash), where the exit status is the only verdict there is.
 
    pytest NAMES only the outcomes that HAPPENED: an all-green run says `12 passed`
    and nothing else. Reading each absent word as UNKNOWN left an ordinary green
@@ -467,8 +474,8 @@
      (n #"(?m)(\d+) skipped")]
 
     (when (or passed failed errored skipped)
-      {"passed" (or passed 0)
-       "failed" (or failed 0)
+      {"pass" (or passed 0)
+       "fail" (+ (long (or failed 0)) (long (or errored 0)))
        "errored" (or errored 0)
        "skipped" (or skipped 0)})))
 
@@ -531,7 +538,7 @@
                      "mode" "cli"
                      "framework" "pytest"
                      "tool" "pytest"
-                     "cmd" (vec cmd)
+                     "command" (str/join " " cmd)
                      "cwd" dir
                      "exit" (when done? (.exitValue p))
                      "timed_out" (not done?)
@@ -543,25 +550,23 @@
 
 (defn- select-runner
   "Which backend a `run_tests` call uses, in precedence order: an explicit
-   `environment` (`project`, else the sandbox), then the private compatibility
-   aliases `runner` / `interpreter`, then `python.runner` from merged config,
-   else the hermetic GraalPy sandbox."
+   `environment` (`project`, else the sandbox), then `python.runner` from merged
+   config, else the hermetic GraalPy sandbox. ONE word chooses it — the call says
+   `environment`, config says `runner`, and neither spelling is accepted in the
+   other's place."
   [opts]
   (let
     [environment
      (str/lower-case (str (or (get opts "environment") "")))
 
-     r
-     (str/lower-case (str (or (get opts "runner")
-                              (when (get opts "interpreter") "project")
-                              (interpreter/configured-runner)
-                              "graalpy")))]
+     configured
+     (str/lower-case (str (or (interpreter/configured-runner) "graalpy")))]
 
     (cond (= "project" environment) "project"
           ;; An explicit environment that is not `project` is the sandbox,
-          ;; whatever config or the compatibility aliases say.
+          ;; whatever config says.
           (seq environment) "graalpy"
-          (contains? #{"project" "interpreter" "real" "system"} r) "project"
+          (= "project" configured) "project"
           :else "graalpy")))
 
 (defn py-test-fn
@@ -584,8 +589,7 @@
    reads pytest's own `--junitxml` report), and `output` carries the transcript
    capped in the middle behind a marker that says how much it dropped.
    `python.runner` in merged config chooses the DEFAULT backend; an explicit
-   `environment` / `runner` argument still wins.
-   `runner` and `interpreter` remain private compatibility aliases."
+   `environment` argument still wins."
   [env arg]
   (let
     [root

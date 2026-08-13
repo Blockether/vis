@@ -72,22 +72,24 @@
                    (str "def test_ok():\n" "    assert 1 + 1 == 2\n\n"
                         "def test_bad():\n" "    assert 1 == 2\n"))
              (let
-               [r (core/py-test-fn {:workspace/root (.getPath root)} {"runner" "graalpy"})
+               [r (core/py-test-fn {:workspace/root (.getPath root)} {"environment" "graalpy"})
                 res (:result r)]
 
                (expect (:success? r))
                (expect (= "graalpy" (get res "runner")))
                (expect (= 1 (get res "files")))
-               (expect (= 1 (get res "passed")))
-               (expect (= 1 (get res "failed")))
-               (expect (false? (get res "ok"))))
+               (expect (= 1 (get res "pass")))
+               (expect (= 1 (get res "fail")))
+               (expect (false? (get res "is_pass")))
+               ;; the removed pytest vocabulary — the pack folds its own words
+               (expect (every? #(not (contains? res %)) ["passed" "failed" "ok" "cmd"])))
              (finally (cleanup root)))))
   (it "reports zero files (not a crash) when no tests are present"
       (let [root (tmp-dir)]
         (try (spit (io/file root "notes.txt") "no tests here\n")
              (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)} {}))]
                (expect (= 0 (get res "files")))
-               (expect (= 0 (get res "passed"))))
+               (expect (= 0 (get res "pass"))))
              (finally (cleanup root)))))
   ;; The `environment` option is documented in the tool's description, not in a
   ;; JSON Schema enum: the model reaches `run_tests` from Python, where the option
@@ -112,8 +114,10 @@
                                                  :session-id session-id}
                                                 {"environment" "project"}))]
                  (expect (= "project" (get res "runner")))
-                 (expect (vector? (get res "cmd")))
-                 (expect (some #{"-m" "pytest"} (get res "cmd"))))
+                 ;; ONE spelling of the argv: a `command` STRING, never a `cmd` vec
+                 (expect (string? (get res "command")))
+                 (expect (str/includes? (get res "command") "-m pytest"))
+                 (expect (not (contains? res "cmd"))))
                (finally (process-jail/unregister-session-jail! session-id) (cleanup root)))))))
 
 (defdescribe
@@ -132,9 +136,9 @@
                [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
                                               {"paths" ["tests/test_one.py"]}))]
                (expect (= 1 (get res "files")))
-               (expect (= 1 (get res "passed")))
-               (expect (= 0 (get res "failed")))
-               (expect (true? (get res "ok"))))
+               (expect (= 1 (get res "pass")))
+               (expect (= 0 (get res "fail")))
+               (expect (true? (get res "is_pass"))))
              (finally (cleanup root)))))
   (it "resolves relative paths against {cwd}, not the workspace root"
       (let [root (tmp-dir)]
@@ -145,8 +149,8 @@
                [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
                                               {"cwd" "proj" "paths" ["tests"]}))]
                (expect (= 1 (get res "files")))
-               (expect (= 1 (get res "passed")))
-               (expect (true? (get res "ok"))))
+               (expect (= 1 (get res "pass")))
+               (expect (true? (get res "is_pass"))))
              (finally (cleanup root)))))
   (it "rejects a target that does not exist instead of running nothing"
       (let [root (tmp-dir)]
@@ -164,7 +168,7 @@
                [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
                                               {"paths" ["tests"]}))]
                (expect (= 0 (get res "files")))
-               (expect (false? (get res "ok")))
+               (expect (false? (get res "is_pass")))
                (expect (string? (get res "error"))))
              (finally (cleanup root))))))
 
@@ -195,10 +199,10 @@
                         "    assert (here / 'fixture.txt').read_text().strip() == '42'\n"))
              (let [res (:result (core/py-test-fn {:workspace/root (.getPath root)} {}))]
                (expect (= 1 (get res "files")))
-               (expect (= 2 (get res "passed")))
-               (expect (= 0 (get res "failed")))
+               (expect (= 2 (get res "pass")))
+               (expect (= 0 (get res "fail")))
                (expect (= 0 (get res "errored")))
-               (expect (true? (get res "ok")))
+               (expect (true? (get res "is_pass")))
                (expect (some #{(.getCanonicalPath (io/file root "src"))} (get res "sys_path"))))
              (finally (cleanup root)))))
   (it "an explicit {paths} still wins over declared testpaths"
@@ -221,7 +225,8 @@
 (defdescribe
   runner-selection-test
   "`python.runner` in merged config picks the default backend; an explicit
-   `environment` / `runner` argument still wins."
+   `environment` argument still wins. ONE word per side — the CALL says
+   `environment`, CONFIG says `runner`, and neither is read in the other's place."
   (it "defaults to the hermetic sandbox"
       (with-redefs [interp/configured-runner (constantly nil)]
         (expect (= "graalpy" (select-runner {})))))
@@ -231,13 +236,15 @@
   (it "lets an explicit environment beat the configured default"
       (with-redefs [interp/configured-runner (constantly "project")]
         (expect (= "graalpy" (select-runner {"environment" "graalpy"})))))
-  (it "lets an explicit runner beat the configured default"
-      (with-redefs [interp/configured-runner (constantly "project")]
-        (expect (= "graalpy" (select-runner {"runner" "graalpy"})))))
-  (it "keeps environment/project and the private compatibility aliases"
-      (expect (= "project" (select-runner {"environment" "project"})))
-      (expect (= "project" (select-runner {"runner" "project"})))
-      (expect (= "project" (select-runner {"interpreter" "python3"})))))
+  (it "routes environment/project to the project interpreter"
+      (expect (= "project" (select-runner {"environment" "project"}))))
+  (it "reads no compatibility alias in place of environment"
+      ;; `runner` and `interpreter` used to choose the backend from a CALL as
+      ;; well, so three spellings picked one thing while the failure hint named
+      ;; only one of them. On a call they now select nothing.
+      (with-redefs [interp/configured-runner (constantly nil)]
+        (expect (= "graalpy" (select-runner {"runner" "project"})))
+        (expect (= "graalpy" (select-runner {"interpreter" "python3"}))))))
 
 (defdescribe
   layout-warning-test
@@ -253,9 +260,9 @@
                                                    :warning "project layout not read: boom"})]
                (let
                  [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
-                                                {"runner" "graalpy"}))]
+                                                {"environment" "graalpy"}))]
                  (expect (= "project layout not read: boom" (get res "warning")))
-                 (expect (= 1 (get res "passed")))))
+                 (expect (= 1 (get res "pass")))))
              (finally (cleanup root)))))
   (it "adds no warning key when the layout reads cleanly"
       (let [root (tmp-dir)]
@@ -263,7 +270,7 @@
              (spit (io/file root "tests" "test_sample.py") "def test_ok():\n    assert True\n")
              (let
                [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
-                                              {"runner" "graalpy"}))]
+                                              {"environment" "graalpy"}))]
                (expect (nil? (get res "warning"))))
              (finally (cleanup root))))))
 
@@ -274,9 +281,12 @@
 ;; headline shrank to a bare " (16484ms)".
 (defdescribe pytest-counts-test
              (it "zero-fills the outcomes pytest left out of its summary"
-                 (expect (= {"passed" 12 "failed" 0 "errored" 0 "skipped" 0}
+                 (expect (= {"pass" 12 "fail" 0 "errored" 0 "skipped" 0}
                             (pytest-counts "==== 12 passed in 3.21s ====")))
-                 (expect (= {"passed" 10 "failed" 2 "errored" 1 "skipped" 3}
+                 ;; pytest's `failed` and `error` are DISJOINT; the contract's
+                 ;; `fail` is every fault and `errored` its erroring subset, so
+                 ;; the sum happens here, in the pack that knows the words.
+                 (expect (= {"pass" 10 "fail" 3 "errored" 1 "skipped" 3}
                             (pytest-counts "= 2 failed, 10 passed, 3 skipped, 1 error in 4.5s ="))))
              (it "reports nothing when the run printed no summary at all"
                  (expect (nil? (pytest-counts "")))
@@ -360,7 +370,7 @@
           (expect (= 6 (get f "line")))
           (expect (= "test_err" (get e "test")))
           (expect (str/includes? (get e "message") "ValueError: boom"))
-          (expect (= {"passed" 1 "failed" 1 "errored" 1 "skipped" 1} (:counts r))))
+          (expect (= {"pass" 1 "fail" 2 "errored" 1 "skipped" 1} (:counts r))))
         (finally (cleanup root)))))
   (it "returns nothing (not a crash) for a report that was never written"
       (let [root (tmp-dir)]
@@ -380,7 +390,7 @@
                         "def test_bad():\n" "    assert 1 == 2\n"))
              (let
                [res (:result (core/py-test-fn {:workspace/root (.getPath root)}
-                                              {"runner" "graalpy"}))
+                                              {"environment" "graalpy"}))
                 f (first (get res "failures"))]
 
                (expect (= 1 (count (get res "failures"))))

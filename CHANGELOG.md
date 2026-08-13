@@ -28,6 +28,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   back.
 
 ### Changed
+- `run_tests` selects by `paths` and nothing else, in every language. The `ns` / `namespace` /
+  `namespaces` selector is gone: name a test file, a directory, or the SOURCE file whose `*-test`
+  namespace should run, and the clojure pack does that translation itself (a `*_test.clj` file is
+  read for the namespace it declares, a source file maps to its `*-test` namespace, a directory is
+  walked for both). Two vocabularies for one selection meant the same run could be named two ways
+  and only one of them reached a pack; the old spellings are refused by name rather than silently
+  running the WHOLE suite.
+- Every language pack now emits the `run_tests` result vocabulary ITSELF — `pass`, `fail`,
+  `errored`, `command`, `is_pass`. The surface's translation table (`passed`/`failed` -> `pass`/
+  `fail`, `ok` -> `is_pass`, an argv `cmd` -> `command`) is deleted: it guessed each runner's
+  arithmetic from outside the pack that knew it (pytest's `failed` and `errors` are DISJOINT,
+  lazytest's are not), and a fact reached a result under two spellings. Python's `runner` /
+  `interpreter` call aliases are gone too: a CALL says `environment`, config says `python.runner`.
 - The session introspection surface reads as VERBS instead of storage nouns: `session_state` is
   now `read_session`, `sessions` is `list_sessions`, `session_fold` is `fold_session`, and the
   read that was missing between them is `get_session(target)` — ONE descriptor row (identity,

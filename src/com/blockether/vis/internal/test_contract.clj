@@ -13,10 +13,14 @@
    never drifts out of sync with its documentation.
 
    SELECTOR keys (all optional; the Python dict the tool receives):
-     :ns       string OR vector of namespace strings - which namespace(s) to
-               run. One string = a single ns; a vector = many. (lazytest -n)
+     :paths    vector of file / directory PATHS - WHERE the tests are. The ONE
+               way a call names what to run, in every language: a pack resolves
+               a path the way its own runner discovers tests under it (clojure
+               reads each *_test.clj for its ns and maps a SOURCE file to its
+               *-test ns; python/bun hand the paths to pytest / bun test). No
+               namespace, module or package key rides beside it.
      :only     vector of test-name strings - run ONLY these tests/vars within
-               the selected namespace(s). (lazytest -v / source :focus)
+               the selected paths. (lazytest -v / source :focus)
      :include  vector of metadata-tag strings - run only tests carrying one of
                these tags, e.g. \"integration\". (lazytest -i)
      :exclude  vector of metadata-tag strings - skip tests carrying one of
@@ -31,7 +35,8 @@
      :mode      \"repl\" | \"cli\"        - which execution path ran
      :framework \"clojure.test\" | \"lazytest\" | ... (repl path)
      :tool      \"clj\" | \"lein\" | \"bb\" | ... (cli path)
-     :ns        the namespace(s) run
+     :ns        the namespace(s) that RAN - what a pack reports back, never
+                what the call selected (that is :paths)
      :total     test count actually run
      :pass      passing count
      :fail      count that did NOT pass - assertion failures AND errors
@@ -52,9 +57,8 @@
 ;; Selector specs
 ;; =============================================================================
 
-(s/def ::ns
-  (s/or :one string?
-        :many (s/coll-of string?)))
+;; WHERE the tests are - files or directories. The only way in.
+(s/def ::paths (s/coll-of string?))
 
 (s/def ::only (s/coll-of string?))
 
@@ -63,13 +67,17 @@
 (s/def ::exclude (s/coll-of string?))
 
 ;; The selector map a runner tool accepts on its opts dict (all keys optional).
-(s/def ::selectors (s/keys :opt-un [::ns ::only ::include ::exclude]))
+(s/def ::selectors (s/keys :opt-un [::paths ::only ::include ::exclude]))
 
 ;; =============================================================================
 ;; Result specs
 ;; =============================================================================
 
 (s/def ::language string?)
+
+;; RESULT side only: the namespace(s) a pack RAN (and a fault's own namespace).
+;; What the call ASKED FOR is ::paths, and the two are never the same fact.
+(s/def ::ns string?)
 
 (s/def ::mode #{"repl" "cli"})
 
@@ -162,11 +170,14 @@
 
 (defn normalize-selectors
   "Normalize a raw selector map (the Python dict the tool received) into the
-   canonical shape `{:nses [str] :only [str] :include [str] :exclude [str]}`.
-   :ns accepts a string OR a vector; :namespace / :namespaces are aliases for :ns."
+   canonical shape `{:paths [str] :only [str] :include [str] :exclude [str]}`.
+   ONE selection vocabulary - paths in, whatever the pack's runner discovers
+   under them out. A pack that runs namespaces (clojure) resolves :paths to
+   them itself and carries the result in its OWN key, so no second selector
+   spelling ever reaches this map."
   [m]
   (let [m (or m {})]
-    {:nses (->str-vec (or (:ns m) (:namespace m) (:namespaces m)))
+    {:paths (->str-vec (:paths m))
      :only (->str-vec (:only m))
      :include (->str-vec (:include m))
      :exclude (->str-vec (:exclude m))}))

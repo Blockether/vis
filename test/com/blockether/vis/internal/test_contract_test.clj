@@ -3,9 +3,9 @@
 
    Exercises the clojure.spec definitions (`::selectors`, `::result`), the
    spec-derived key vectors (`selector-keys` / `result-keys`), and the shared
-   runtime helpers (`normalize-selectors`, `selected?`). The same specs the
-   `clj_test` runner builds its result THROUGH are validated here, so a drift in
-   the contract shape is caught by this ns."
+   runtime helpers (`normalize-selectors`, `selected?`). The same specs a pack's
+   `run_tests` handler builds its result THROUGH are validated here, so a drift
+   in the contract shape is caught by this ns."
   (:require [clojure.spec.alpha :as s]
             [com.blockether.vis.internal.test-contract :as contract]
             [lazytest.core :refer [defdescribe describe expect it]]))
@@ -13,7 +13,7 @@
 (defdescribe selector-keys-test
              (describe "selector-keys - derived from the ::selectors spec"
                        (it "lists the four optional selector keys in order"
-                           (expect (= [:ns :only :include :exclude] contract/selector-keys)))
+                           (expect (= [:paths :only :include :exclude] contract/selector-keys)))
                        (it "stays in sync with the ::selectors spec :opt-un keys"
                            (let [opts (apply hash-map (rest (s/form ::contract/selectors)))]
                              (expect (= (mapv (comp keyword name) (:opt-un opts))
@@ -31,19 +31,26 @@
                                         contract/result-keys))))))
 
 (defdescribe selectors-spec-test
-             (describe "::selectors - the selector map clj_test accepts"
-                       (it "accepts a single-ns string selector"
-                           (expect (s/valid? ::contract/selectors
-                                             {:ns "my.app.core-test" :only ["adds"]})))
-                       (it "accepts a many-ns vector selector"
-                           (expect (s/valid? ::contract/selectors
-                                             {:ns ["a-test" "b-test"] :exclude ["slow"]})))
-                       (it "accepts the empty selector map (all keys optional)"
-                           (expect (s/valid? ::contract/selectors {})))
-                       (it "rejects :only that is not a coll of strings"
-                           (expect (not (s/valid? ::contract/selectors {:only "not-a-vec"}))))
-                       (it "rejects :ns that is neither string nor coll-of-string"
-                           (expect (not (s/valid? ::contract/selectors {:ns 42}))))))
+             (describe
+               "::selectors - the selector map a runner accepts"
+               (it "accepts paths narrowed by a test name"
+                   (expect (s/valid? ::contract/selectors {:paths ["test"] :only ["adds"]})))
+               (it "accepts many paths - files and directories alike"
+                   (expect (s/valid? ::contract/selectors
+                                     {:paths ["test/a/core_test.clj" "extensions/b/test"]
+                                      :exclude ["slow"]})))
+               (it "accepts the empty selector map (all keys optional)"
+                   (expect (s/valid? ::contract/selectors {})))
+               (it "rejects :only that is not a coll of strings"
+                   (expect (not (s/valid? ::contract/selectors {:only "not-a-vec"}))))
+               (it "rejects :paths that is not a coll of strings"
+                   (expect (not (s/valid? ::contract/selectors {:paths 42})))
+                   (expect (not (s/valid? ::contract/selectors {:paths [42]}))))
+               ;; The namespace selector is GONE - paths are the one way to name what runs,
+               ;; and `s/keys` ignores unknown keys, so this pins the DERIVED key vector
+               ;; rather than the map's validity.
+               (it "no longer publishes a namespace selector"
+                   (expect (not (some #{:ns :namespace :namespaces} contract/selector-keys))))))
 
 (defdescribe
   result-spec-test
@@ -76,7 +83,7 @@
                    :failures
                    [{:ns "x" :test "adds" :type "fail" :message "boom" :file "x.clj" :line 12}
                     {:ns "x" :test "boom" :type "error" :message "threw"}]})))
-    (it "validates a cli result (no selectors apply)"
+    (it "validates a cli result (the ns it RAN, not what was selected)"
         (expect (s/valid? ::contract/result
                           {:language "clojure" :mode "cli" :tool "clj" :ns "my.app.core-test"})))
     (it "rejects a fault whose :type is outside the closed fail/error vocabulary"
@@ -88,33 +95,30 @@
 
 (defdescribe
   normalize-selectors-test
-  (describe
-    "normalize-selectors - raw dict -> canonical {:nses :only :include :exclude}"
-    (it "wraps a single-ns string into a one-element :nses vec"
-        (expect (= {:nses ["a-test"] :only [] :include [] :exclude []}
-                   (contract/normalize-selectors {:ns "a-test"}))))
-    (it "keeps a many-ns vector and normalizes selectors"
-        (expect (= {:nses ["a-test" "b-test"] :only ["foo"] :include [] :exclude ["slow"]}
-                   (contract/normalize-selectors
-                     {:ns ["a-test" "b-test"] :only ["foo"] :exclude ["slow"]}))))
-    (it "treats :namespace as an alias for :ns"
-        (expect (= ["a-test"] (:nses (contract/normalize-selectors {:namespace "a-test"})))))
-    (it "treats :namespaces (plural) as an alias for :ns, string or vector"
-        (expect (= ["a-test"] (:nses (contract/normalize-selectors {:namespaces "a-test"}))))
-        (expect (= ["a-test" "b-test"]
-                   (:nses (contract/normalize-selectors {:namespaces ["a-test" "b-test"]})))))
-    (it "drops blank / nil entries and trims"
-        (expect (= {:nses [] :only [] :include [] :exclude []}
-                   (contract/normalize-selectors {:ns ["  " ""] :only nil}))))
-    (it "keeps string tags verbatim (strings-only boundary)"
-        (expect (= ["slow"] (:exclude (contract/normalize-selectors {:exclude ["slow"]})))))
-    (it "produces selector keys that round-trip through the ::selectors spec"
-        (let [norm (contract/normalize-selectors {:ns "a-test" :only ["x"]})]
-          (expect (s/valid? ::contract/selectors
-                            {:ns (:nses norm)
-                             :only (:only norm)
-                             :include (:include norm)
-                             :exclude (:exclude norm)}))))))
+  (describe "normalize-selectors - raw dict -> canonical {:paths :only :include :exclude}"
+            (it "wraps a single path string into a one-element :paths vec"
+                (expect (= {:paths ["test"] :only [] :include [] :exclude []}
+                           (contract/normalize-selectors {:paths "test"}))))
+            (it "keeps many paths and normalizes the rest"
+                (expect (= {:paths ["test/a" "test/b"] :only ["foo"] :include [] :exclude ["slow"]}
+                           (contract/normalize-selectors
+                             {:paths ["test/a" "test/b"] :only ["foo"] :exclude ["slow"]}))))
+            ;; The removed namespace vocabulary: no key rides beside :paths any more, so
+            ;; a stale :ns / :namespaces selects NOTHING here instead of quietly
+            ;; competing with it. The pack that owns the arg refuses it out loud.
+            (it "reads no namespace key at all"
+                (expect (= [] (:paths (contract/normalize-selectors {:ns "a-test"}))))
+                (expect (= [] (:paths (contract/normalize-selectors {:namespace "a-test"}))))
+                (expect
+                  (= [] (:paths (contract/normalize-selectors {:namespaces ["a-test" "b-test"]})))))
+            (it "drops blank / nil entries and trims"
+                (expect (= {:paths [] :only [] :include [] :exclude []}
+                           (contract/normalize-selectors {:paths ["  " ""] :only nil}))))
+            (it "keeps string tags verbatim (strings-only boundary)"
+                (expect (= ["slow"] (:exclude (contract/normalize-selectors {:exclude ["slow"]})))))
+            (it "produces selector keys that round-trip through the ::selectors spec"
+                (expect (s/valid? ::contract/selectors
+                                  (contract/normalize-selectors {:paths "test" :only ["x"]}))))))
 
 (defdescribe selected?-test
              (describe

@@ -241,6 +241,44 @@
         (expect (= 12 (get-in normalized ["failures" 0 "line"])))
         (expect (contract/valid? :test-fn normalized)))))
 
+(defn- with-project
+  "Build a throwaway project tree from `files` ({relpath contents}) and hand its
+   root PATH to `f`, deleting the tree afterwards. Every clj-test-fn case needs
+   one: PATHS are the only selector, so nothing can be chosen without files on
+   disk to walk."
+  [files f]
+  (let
+    [root (.toFile (java.nio.file.Files/createTempDirectory
+                     "vis-clj-test"
+                     (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (try (doseq [[rel content] files]
+           (let [^java.io.File file (io/file root rel)]
+             (.mkdirs (.getParentFile file))
+             (spit file content)))
+         (f (.getPath root))
+         (finally (doseq [x (reverse (file-seq root))]
+                    (io/delete-file x true))))))
+
+(defn- run-capturing
+  "Run `clj-test-fn` for workspace `ws` with the nREPL and the repl runner
+   stubbed, answering `{:root <where the nREPL booted> :nses <what the runner was
+   handed>}` — the two facts every selector case is about."
+  [ws arg]
+  (let [seen (atom {})]
+    (with-redefs
+      [repl-manager/ensure-repl-for-dir! (fn [_sid root]
+                                           (swap! seen assoc :root root)
+                                           {:port 12345})
+       com.blockether.vis.ext.language-clojure.test-runner/run-via-repl
+       (fn [_root nses _sel _port]
+         (swap! seen assoc :nses nses)
+         {"mode" "repl" "ns" (first nses)})]
+
+      (tr/clj-test-fn {:workspace/root ws :session-id "sid"} arg)
+      @seen)))
+
+(def ^:private thing-test-file {"test/com/example/thing_test.clj" "(ns com.example.thing-test)\n"})
+
 (defdescribe
   clj-test-fn-cwd-root-test
   "An explicit `cwd` arg roots the run — and thus nREPL selection — at THAT
@@ -248,73 +286,64 @@
    nREPL classpath instead of booting the workspace-root REPL (regression:
    run_tests silently dropped `cwd`, FileNotFoundException on the wrong REPL)."
   (it "boots/selects the nREPL at the cwd arg, not the workspace root"
-      (let [seen-root (atom nil)]
-        (with-redefs
-          [repl-manager/ensure-repl-for-dir! (fn [_sid root]
-                                               (reset! seen-root root)
-                                               {:port 12345})
-           com.blockether.vis.ext.language-clojure.test-runner/run-via-repl
-           (fn [root _nses _sel _port]
-             {"mode" "repl" "ns" "x.y-test" "root" root})]
-
-          (let
-            [r (:result (tr/clj-test-fn {:workspace/root "/ws" :session-id "sid"}
-                                        {"cwd" "/some/proj" "namespaces" ["x.y-test"]}))]
-            (expect (= "/some/proj" @seen-root))
-            (expect (= "/some/proj" (get r "root")))))))
+      (with-project thing-test-file
+                    (fn [root]
+                      (let [seen (run-capturing "/ws" {"cwd" root "paths" ["test"]})]
+                        (expect (= root (:root seen)))
+                        (expect (= ["com.example.thing-test"] (:nses seen)))))))
   (it "falls back to the workspace root when no cwd arg is given"
-      (let [seen-root (atom nil)]
-        (with-redefs
-          [repl-manager/ensure-repl-for-dir! (fn [_sid root]
-                                               (reset! seen-root root)
-                                               {:port 12345})
-           com.blockether.vis.ext.language-clojure.test-runner/run-via-repl
-           (fn [root _nses _sel _port]
-             {"mode" "repl" "ns" "x.y-test" "root" root})]
+      (with-project thing-test-file
+                    (fn [root]
+                      (expect (= root (:root (run-capturing root {"paths" ["test"]}))))))))
 
-          (let
-            [r (:result (tr/clj-test-fn {:workspace/root "/ws" :session-id "sid"}
-                                        {"namespaces" ["x.y-test"]}))]
-            (expect (= "/ws" @seen-root))
-            (expect (= "/ws" (get r "root"))))))))
-
+;; PATHS are the whole selector vocabulary: clj-test-fn is WHERE a file becomes a
+;; namespace, and nothing else may name what runs.
 (defdescribe
   clj-test-fn-path-discovery-test
-  (it
-    "treats empty namespaces from the facade as absent when paths are present"
-    (let
-      [root-file
-       (.toFile (java.nio.file.Files/createTempDirectory
-                  "vis-clj-test"
-                  (make-array java.nio.file.attribute.FileAttribute 0)))
-
-       test-dir
-       (io/file root-file "test/com/example")
-
-       test-file
-       (io/file test-dir "thing_test.clj")
-
-       seen-nses
-       (atom nil)]
-
-      (try (.mkdirs test-dir)
-           (spit test-file "(ns com.example.thing-test)\n")
-           (with-redefs
-             [repl-manager/ensure-repl-for-dir!
-              (fn [_sid _root]
-                {:port 12345})
-
-              com.blockether.vis.ext.language-clojure.test-runner/run-via-repl
-              (fn [_root nses _sel _port]
-                (reset! seen-nses nses)
-                {"mode" "repl" "ns" (first nses)})]
-
-             (tr/clj-test-fn
-               {:workspace/root (.getPath root-file) :session-id "sid"}
-               {"paths" ["test/com/example"] "namespaces" [] "only" [] "include" [] "exclude" []})
-             (expect (= ["com.example.thing-test"] @seen-nses)))
-           (finally (doseq [f (reverse (file-seq root-file))]
-                      (io/delete-file f true)))))))
+  (it "resolves a test FILE to the namespace it declares"
+      (with-project
+        thing-test-file
+        (fn [root]
+          (expect (= ["com.example.thing-test"]
+                     (:nses (run-capturing root {"paths" ["test/com/example/thing_test.clj"]})))))))
+  (it "resolves a SOURCE file to its *-test namespace"
+      ;; The translation the paths-only contract rests on: name the code you
+      ;; changed, run the tests that cover it.
+      (with-project (assoc thing-test-file "src/com/example/thing.clj" "(ns com.example.thing)\n")
+                    (fn [root]
+                      (expect
+                        (= ["com.example.thing-test"]
+                           (:nses (run-capturing root {"paths" ["src/com/example/thing.clj"]})))))))
+  (it "walks a directory for every test namespace under it"
+      (with-project (assoc thing-test-file
+                      "test/com/example/other_test.clj" "(ns com.example.other-test)\n")
+                    (fn [root]
+                      (expect (= ["com.example.other-test" "com.example.thing-test"]
+                                 (:nses (run-capturing root {"paths" ["test"]})))))))
+  (it "runs every test namespace in the workspace when no path is named"
+      (with-project thing-test-file
+                    (fn [root]
+                      (expect (= ["com.example.thing-test"] (:nses (run-capturing root {})))))))
+  (it "errors on paths that hold no tests instead of falling back to everything"
+      (with-project thing-test-file
+                    (fn [root]
+                      (let
+                        [e (try (run-capturing root {"paths" ["src"]})
+                                (catch clojure.lang.ExceptionInfo e e))]
+                        (expect (= :clj/bad-args (:type (ex-data e))))
+                        (expect (re-find #"no \*_test\.clj namespaces under" (ex-message e)))))))
+  (it "refuses the REMOVED namespace selector instead of running the whole suite"
+      ;; `ns` / `namespace` / `namespaces` / `path` used to select. Ignoring the
+      ;; old spelling would turn one namespace's run into the whole workspace's,
+      ;; so it is an ERROR that names what replaced it.
+      (with-project thing-test-file
+                    (fn [root]
+                      (doseq [k ["ns" "namespace" "namespaces" "path"]]
+                        (let
+                          [e (try (run-capturing root {k "com.example.thing-test"})
+                                  (catch clojure.lang.ExceptionInfo e e))]
+                          (expect (= :clj/bad-args (:type (ex-data e))))
+                          (expect (re-find #"paths" (ex-message e)))))))))
 
 (defdescribe
   only-miss-output-test

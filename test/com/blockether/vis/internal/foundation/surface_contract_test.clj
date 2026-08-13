@@ -158,26 +158,38 @@
         (expect (= "clojure" (get r "language")))
         (expect (true? (get r "is_pass")))
         (expect (contract/valid? :test-fn r))))
-  (it "folds pytest/bun key vocabulary onto the canonical count names"
+  (it "completes a pack that speaks the contract's own words, translating nothing"
       (let
         [r (contract/complete-test-result "python"
                                           {"mode" "cli"
                                            "runner" "project"
-                                           "cmd" ["pytest" "tests"]
+                                           "command" "pytest tests"
                                            "exit" 1
-                                           "passed" 7
-                                           "failed" 2
+                                           "pass" 7
+                                           "fail" 3
                                            "errored" 1
                                            "skipped" 3})]
         (expect (= 7 (get r "pass")))
-        (expect (= 3 (get r "fail"))) ; failed + errored
-        (expect (= 1 (get r "errored"))) ; the erroring SUBSET of fail, kept
+        (expect (= 3 (get r "fail")))
+        (expect (= 1 (get r "errored"))) ; the erroring SUBSET of fail
         (expect (= 13 (get r "total"))) ; derived: pass + fail + skipped
         (expect (= "pytest tests" (get r "command")))
         (expect (= "python" (get r "language")))
-        (expect (false? (get r "is_pass")))
-        ;; FOLDED, not carried alongside — a completed result names each fact once
-        (expect (every? #(not (contains? r %)) ["passed" "failed" "ok" "cmd"]))))
+        (expect (false? (get r "is_pass")))))
+  (it "reads no per-pack alias vocabulary — a pack's own words never count here"
+      ;; The removed translation layer: `passed`/`failed`/`ok`/`cmd` used to be
+      ;; folded onto the canonical names HERE, so the same fact reached a result
+      ;; under two spellings and each pack's arithmetic was guessed at from
+      ;; outside. Every pack now emits `pass`/`fail`/`errored`/`command` itself.
+      (let
+        [r (contract/complete-test-result
+             "python"
+             {"mode" "cli" "passed" 7 "failed" 2 "ok" true "cmd" ["pytest" "tests"]})]
+        (expect (nil? (get r "pass")))
+        (expect (nil? (get r "fail")))
+        (expect (nil? (get r "total")))
+        (expect (nil? (get r "command")))
+        (expect (nil? (get r "is_pass")))))
   (it "keeps errored as the erroring SUBSET of fail — never a count to add on top"
       ;; Reported by the pack: fail already contains it, so total stays
       ;; pass + fail + skipped and errored is never added a second time.
@@ -202,10 +214,7 @@
       ;; Nothing failed, so nothing threw.
       (let [r (contract/complete-test-result "python" {"mode" "cli" "pass" 4 "fail" 0})]
         (expect (= 0 (get r "errored")))))
-  (it "derives is_pass from ok / exit when the pack reports no counts"
-      (expect (nil? (get (contract/complete-test-result "python" {"ok" true}) "ok")))
-      (expect (true? (get (contract/complete-test-result "python" {"ok" true}) "is_pass")))
-      (expect (false? (get (contract/complete-test-result "python" {"ok" false}) "is_pass")))
+  (it "derives is_pass from the exit status when the pack reports no counts"
       (expect (true? (get (contract/complete-test-result "typescript" {"exit" 0}) "is_pass")))
       (expect (false? (get (contract/complete-test-result "typescript" {"exit" 2}) "is_pass")))
       (expect (nil? (get (contract/complete-test-result "typescript" {}) "is_pass"))))

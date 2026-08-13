@@ -115,8 +115,8 @@ the renderer.
   "type": "tool",
   "tool": "run_tests",
   "status": "completed",
-  "input": {"namespaces":["example.test"]},
-  "output": {"passed":6,"failed":0},
+  "input": {"paths":["test/example_test.clj"]},
+  "output": {"pass":6,"fail":0},
   "started_at": 1740000000100,
   "completed_at": 1740000001100
 }

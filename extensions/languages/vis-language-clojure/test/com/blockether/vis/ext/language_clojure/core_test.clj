@@ -435,6 +435,17 @@
              (it "defaults run_tests to just under the 5 minute native tool budget"
                  (expect (= 290000 @#'test-runner/default-test-timeout-ms))))
 
+(defn- with-example-project
+  "Run `f` with the PATH of a throwaway workspace holding one test namespace
+   (`example.core-test`). PATHS are the only run_tests selector, so every
+   fallback case needs a real test file on disk to resolve one from."
+  [f]
+  (let [root (tmp-dir)]
+    (try (.mkdirs (io/file root "test"))
+         (spit (io/file root "test" "example_core_test.clj") "(ns example.core-test)\n")
+         (f (.getPath root))
+         (finally (cleanup root)))))
+
 (defdescribe test-runner-fallback-test
              (it "falls back to the project test CLI when the live nREPL lacks lazytest"
                  (let
@@ -442,15 +453,18 @@
                     (atom false)
 
                     result
-                    (with-redefs-fn {#'repl-manager/ensure-repl-for-dir! (constantly {:port 54321})
-                                     #'test-runner/run-via-repl
-                                     (fn [& _]
-                                       {"error" "Could not locate lazytest/core"})
-                                     #'test-runner/run-via-cli
-                                     (fn [_root norm]
-                                       (reset! called true)
-                                       {"mode" "cli" "ns" (first (:nses norm)) "is_pass" true})}
-                      #(test-runner/clj-test-fn {:workspace/root "."} "example.core-test"))]
+                    (with-example-project
+                      (fn [root]
+                        (with-redefs-fn {#'repl-manager/ensure-repl-for-dir! (constantly {:port
+                                                                                          54321})
+                                         #'test-runner/run-via-repl
+                                         (fn [& _]
+                                           {"error" "Could not locate lazytest/core"})
+                                         #'test-runner/run-via-cli
+                                         (fn [_root norm]
+                                           (reset! called true)
+                                           {"mode" "cli" "ns" (first (:nses norm)) "is_pass" true})}
+                          #(test-runner/clj-test-fn {:workspace/root root} {"paths" ["test"]}))))]
 
                    (expect @called)
                    (expect (= "cli" (get-in result [:result "mode"])))
@@ -463,13 +477,15 @@
                     (atom false)
 
                     result
-                    (with-redefs-fn {#'repl-manager/ensure-repl-for-dir!
-                                     (constantly {"result" "no-launcher" "status" "down"})
-                                     #'test-runner/run-via-cli
-                                     (fn [_root norm]
-                                       (reset! called true)
-                                       {"mode" "cli" "ns" (first (:nses norm)) "is_pass" true})}
-                      #(test-runner/clj-test-fn {:workspace/root "."} "example.core-test"))]
+                    (with-example-project
+                      (fn [root]
+                        (with-redefs-fn {#'repl-manager/ensure-repl-for-dir!
+                                         (constantly {"result" "no-launcher" "status" "down"})
+                                         #'test-runner/run-via-cli
+                                         (fn [_root norm]
+                                           (reset! called true)
+                                           {"mode" "cli" "ns" (first (:nses norm)) "is_pass" true})}
+                          #(test-runner/clj-test-fn {:workspace/root root} {"paths" ["test"]}))))]
 
                    (expect @called)
                    (expect (= "cli" (get-in result [:result "mode"])))))
@@ -479,17 +495,20 @@
                     (atom false)
 
                     result
-                    (with-redefs-fn
-                      {#'repl-manager/ensure-repl-for-dir!
-                       (constantly {"result" "failed"
-                                    "status" "failed"
-                                    "message"
-                                    "nREPL launcher exited before accepting connections (exit 1)"
-                                    "log_tail" "Syntax error compiling."})
-                       #'test-runner/run-via-cli (fn [& _]
-                                                   (reset! cli-called true)
-                                                   {"mode" "cli"})}
-                      #(test-runner/clj-test-fn {:workspace/root "."} "example.core-test"))
+                    (with-example-project
+                      (fn [root]
+                        (with-redefs-fn
+                          {#'repl-manager/ensure-repl-for-dir!
+                           (constantly
+                             {"result" "failed"
+                              "status" "failed"
+                              "message"
+                              "nREPL launcher exited before accepting connections (exit 1)"
+                              "log_tail" "Syntax error compiling."})
+                           #'test-runner/run-via-cli (fn [& _]
+                                                       (reset! cli-called true)
+                                                       {"mode" "cli"})}
+                          #(test-runner/clj-test-fn {:workspace/root root} {"paths" ["test"]}))))
 
                     r
                     (:result result)]

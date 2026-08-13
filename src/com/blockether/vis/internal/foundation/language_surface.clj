@@ -447,13 +447,12 @@
           not-empty))
 
 (defn- test-target
-  "WHAT a run_tests call selected, as one line: `only` > `namespaces` > `paths` >
-   `filter: <q>`, else the whole suite. The pending card and the finished headline
-   read the SAME string off the call, because a runner reports only what it RAN —
-   two runs that selected different tests must never render the same summary."
+  "WHAT a run_tests call selected, as one line: `only` > `paths` > `filter: <q>`,
+   else the whole suite. The pending card and the finished headline read the SAME
+   string off the call, because a runner reports only what it RAN — two runs that
+   selected different tests must never render the same summary."
   [input]
   (or (input-list input "only")
-      (input-list input "namespaces")
       (input-list input "paths")
       (some->> (input-str input "filter")
                (str "filter: "))
@@ -470,7 +469,7 @@
   (dispatch! env :lint-fn args))
 
 (defn run-tests
-  "Run through a pack: `run_tests(language,arg)`. `arg` is a module string or map: `namespaces`/`paths` choose loading/discovery; `only`, `include`, `exclude`, and `filter` narrow tests; `cwd` chooses the project; `runner` picks a pack backend (python: `graalpy` default, or `project` for the project interpreter's own pytest). List selectors stay lists, even one. Omit `arg` for all tests."
+  "Run through a pack: `run_tests(language,arg)`. `arg` is a path string or map: `paths` (files or directories — the ONE way to choose what runs, in every language) selects; `only`, `include`, `exclude` and `filter` narrow; `cwd` chooses the project; `environment` picks the python backend (`project` for the project interpreter's own pytest, else the hermetic sandbox). List selectors stay lists, even one. Omit `arg` for all tests."
   [env & args]
   (let
     [started-at
