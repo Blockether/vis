@@ -1351,6 +1351,71 @@
                                      "print(survivor(21))\n")]
         (expect (= 1 restored))
         (expect (str/includes? stdout "42"))))
+  ;; Regression: a helper defined inside `if:`/`try:` or inside another `def` read
+  ;; back INDENTED, and one indented line made the whole snapshot unparseable —
+  ;; the restore then lost EVERY helper the session had, not just that one.
+  (it "restores the whole toolbox when a helper is nested, or bound under another name"
+      (let
+        [{:keys [restored stdout snapshot]}
+         (restore-into-fresh-sandbox
+           (str "def outer():\n    def inner(a):\n        return a * 2\n\n    return inner\n"
+                "twice = outer()\n"
+                "if True:\n\n    def gated(x):\n        return x + 1\n"
+                "def plain(x):\n    return x - 1\n")
+           "print(twice(4), gated(1), plain(3))\n")]
+        (expect (= 4 restored))
+        (expect (str/includes? stdout "8 2 2"))
+        ;; The closure is stored under a name its own source never binds, and the
+        ;; private name that rebinding needs is dropped again afterwards.
+        (expect (str/includes? snapshot "twice = inner"))
+        (expect (str/includes? snapshot "del inner"))))
+  ;; Regression: only functions and scalars were snapshotted, so the class and the
+  ;; config dict a helper closes over never came back — the restored helper raised
+  ;; NameError on its first call, callable and useless.
+  (it "brings back the class, the dataclass and the config its helpers need"
+      (let
+        [{:keys [restored stdout]}
+         (restore-into-fresh-sandbox
+           (str "from dataclasses import dataclass\n"
+                "CFG = {\"depth\": 2}\n"
+                "@dataclass\nclass Point:\n    x: int = 0\n    y: int = 0\n\n"
+                "class Node:\n    def __init__(self, v):\n        self.v = v\n\n"
+                "def origin():\n    return Point(1, 2)\n"
+                "def node(v):\n    return Node(v).v\n"
+                "def depth(p, cfg=CFG):\n    return cfg[\"depth\"] + p\n")
+           "print(origin(), node(7), depth(1))\n")]
+        (expect (= 3 restored))
+        (expect (str/includes? stdout "Point(x=1, y=2) 7 3"))))
+  ;; Regression: the snapshot `repr`ed every global before checking its size, so a
+  ;; single multi-megabyte string cost ~130ms per block to render text the cap
+  ;; then threw away.
+  (it "never spends the snapshot on a value too big to store"
+      (let
+        [{:keys [snapshot stdout]} (restore-into-fresh-sandbox
+                                     (str "blob = \"x\" * 400000\n" "def small(x):\n    return x\n")
+                                     "print(\"blob\" in globals(), small(1))\n")]
+        (expect (> 2000 (count snapshot)))
+        (expect (str/includes? stdout "False 1"))))
+  ;; Regression: `functools.lru_cache` answers a wrapper with no `__code__` of its
+  ;; own, so a helper vanished from `defs()` and from the snapshot the moment it
+  ;; was decorated.
+  (it "keeps a decorated helper listed, and restores it"
+      (let
+        [{:keys [restored stdout]}
+         (restore-into-fresh-sandbox
+           (str "import functools\n" "@functools.lru_cache\ndef squared(n):\n    return n * n\n")
+           "print(squared(5))\nprint(\"squared\" in defs())\n")]
+        (expect (= 1 restored))
+        (expect (str/includes? stdout "25"))
+        (expect (str/includes? stdout "True"))))
+  ;; Regression: an unparseable snapshot raised out of the statement-by-statement
+  ;; fallback, so the safety net could not run on the one file it existed for.
+  (it "answers zero, and leaves the sandbox usable, for a snapshot that will not parse"
+      (let
+        [{:keys [restored stdout]} (restore-into-fresh-sandbox [:file "def broken(:\n    ???\n"]
+                                                               "print(1 + 1)\n")]
+        (expect (= 0 restored))
+        (expect (str/includes? stdout "2"))))
   (it "writes nothing, and drops a stale file, for a session with no definitions"
       (let
         [sid

@@ -1966,16 +1966,22 @@ def __vis_source_is_live__(name):
     # persists for the WHOLE SESSION, across turns — so dropping its source made a
     # helper unreadable while it was still callable: `inspect.getsource(helper)`
     # raised OSError and the only way to change it was to re-paste it from memory.
-    # Best effort, and deliberately cheap: a function bound to a global NAME.
+    # Best effort, and deliberately cheap: a function bound to a global NAME, or a
+    # CLASS whose body that block holds — a `@dataclass` has no method the session
+    # wrote, so a class is pinned by its own `class <Name>` line instead.
     # Engine names are skipped — `__vis_main__` is THIS runtime's wrapper for the
     # block that ran last, so counting it would pin one dead block forever.
     for __n__, __v__ in list(globals().items()):
         if __n__.startswith("__vis_") or __n__.startswith("__Vis"):
             continue
         try:
-            __c__ = getattr(__v__, "__code__", None)
+            __c__ = __vis_def_code__(__v__)
             if __c__ is not None and __c__.co_filename == name:
                 return True
+            if isinstance(__v__, type):
+                __e__ = __vis_linecache__.cache.get(name)
+                if __e__ and ("class " + __v__.__name__) in "".join(__e__[2]):
+                    return True
         except Exception:
             pass
     return False
@@ -2014,6 +2020,12 @@ def __vis_register_source__(src):
     # Only the newest `__vis_blocks_kept__` sources stay resident, EXCEPT the
     # ones that still back a live definition — see `__vis_evict_sources__`.
     g = globals()
+    # The namespace as the HOST handed it over — everything auto-imported or bound
+    # before the session's first block. Captured here because this runs before that
+    # block (and before a restore), and it is what keeps `__vis_defs_snapshot__`
+    # from re-emitting shims and tools as if the session had defined them.
+    if "__vis_boot_names__" not in g:
+        g["__vis_boot_names__"] = set(g.keys())
     n = int(g.get("__vis_block_no__") or 0) + 1
     g["__vis_block_no__"] = n
     name = "<prog:" + str(n) + ">"
@@ -2032,6 +2044,19 @@ def __vis_register_source__(src):
     return name
 
 
+def __vis_def_code__(v):
+    # The code object behind a callable, THROUGH a decorator: `functools.wraps` and
+    # `lru_cache` hand back a wrapper with no `__code__` of its own, and a helper
+    # that vanished from `defs()` the moment it was cached is a helper the session
+    # cannot read back or restore.
+    code = getattr(v, "__code__", None)
+    if code is None:
+        wrapped = getattr(v, "__wrapped__", None)
+        if wrapped is not None:
+            code = getattr(wrapped, "__code__", None)
+    return code
+
+
 def __vis_user_defs__():
     # Every FUNCTION this session's own blocks defined, sorted by name. A `def`
     # is recognized by its code object's SYNTHETIC filename — the `<prog:N>`
@@ -2042,7 +2067,7 @@ def __vis_user_defs__():
     for __n__, __v__ in list(globals().items()):
         if __n__.startswith("_") or __n__ in __vis_prot__:
             continue
-        __c__ = getattr(__v__, "__code__", None)
+        __c__ = __vis_def_code__(__v__)
         __f__ = getattr(__c__, "co_filename", "") if __c__ is not None else ""
         if isinstance(__f__, str) and __f__.startswith("<prog:"):
             __vis_out__.append((__n__, __v__))
@@ -2092,7 +2117,7 @@ def defs(name=None):
             sig = str(inspect.signature(fn))
         except Exception:
             sig = "(...)"
-        where = getattr(getattr(fn, "__code__", None), "co_filename", "?")
+        where = getattr(__vis_def_code__(fn), "co_filename", "?")
         if where == restored:
             where += " (restored)"
         try:
@@ -2110,6 +2135,104 @@ def defs(name=None):
     return head + "\n" + body + "\n" + 'defs("name") returns one\'s source.'
 
 
+def __vis_bound_name__(src):
+    # The module-level NAME a chunk actually binds — which is NOT always the global
+    # it is stored under. `twice = outer()` reads back as the INNER `def inner`,
+    # and `alias = public` reads back as `public`'s own source; emitting either
+    # under its own name silently lost the name the session calls it by.
+    try:
+        mod = __vis_ast__.parse(src)
+    except Exception:
+        return None
+    if not mod.body:
+        return None
+    st = mod.body[-1]
+    if isinstance(
+        st,
+        (__vis_ast__.FunctionDef, __vis_ast__.AsyncFunctionDef, __vis_ast__.ClassDef),
+    ):
+        return st.name
+    if (
+        isinstance(st, __vis_ast__.Assign)
+        and len(st.targets) == 1
+        and isinstance(st.targets[0], __vis_ast__.Name)
+    ):
+        return st.targets[0].id
+    return None
+
+
+def __vis_chunk__(text, name):
+    # ONE independently valid statement group for the snapshot. Every chunk is
+    # DEDENTED and PARSE-CHECKED before it is written, because a helper defined
+    # inside `if:`/`try:`/another `def` reads back INDENTED: one such line made the
+    # whole file unparseable, and an unparseable file cost the session EVERY
+    # helper, not just that one. A chunk that still will not parse is dropped here,
+    # where dropping it is free.
+    import textwrap
+
+    try:
+        src = textwrap.dedent(text).rstrip()
+    except Exception:
+        return None
+    bound = __vis_bound_name__(src)
+    if bound is None:
+        return None
+    if bound != name:
+        src += "\n" + name + " = " + bound
+    return (src + "\n", bound)
+
+
+def __vis_class_source__(cls):
+    # `inspect.getsource` cannot read a SANDBOX class: it resolves the file through
+    # `cls.__module__`, and a block is not a module. The class body is in linecache
+    # under the block that defined it, so find it THERE — a helper that returns a
+    # session class is a NameError after a restart if the class does not come back
+    # with it. Searched newest block first (a redefinition wins) and by NAME, not
+    # through a method: a `@dataclass` has no method the session wrote, and reading
+    # it through one dropped the whole class. The decorator lines are part of the
+    # class — `@dataclass` is what gives it its `__init__`.
+    name = getattr(cls, "__name__", "")
+    if not name:
+        return None
+    for block_name in reversed(list(globals().get("__vis_block_names__") or [])):
+        entry = __vis_linecache__.cache.get(block_name)
+        if not entry:
+            continue
+        block = "".join(entry[2])
+        if ("class " + name) not in block:
+            continue
+        try:
+            tree = __vis_ast__.parse(block)
+        except Exception:
+            continue
+        for node in __vis_ast__.walk(tree):
+            if isinstance(node, __vis_ast__.ClassDef) and node.name == name:
+                lines = block.splitlines()
+                start = min([node.lineno] + [d.lineno for d in node.decorator_list])
+                return "\n".join(lines[start - 1 : node.end_lineno])
+    return None
+
+
+def __vis_literal_ok__(rep):
+    # Does this repr read back as a LITERAL? `float('nan')` reprs as bare `nan`,
+    # which is a NameError at restore — and before the chunk check that single
+    # statement failed the whole file.
+    try:
+        __vis_ast__.literal_eval(rep)
+        return True
+    except Exception:
+        return False
+
+
+def __vis_block_order__(filename, code):
+    # Definition order: block number, then line. A decorator that is itself a
+    # session helper has to be defined before the helper it decorates.
+    try:
+        return (int(filename[6:-1]), int(getattr(code, "co_firstlineno", 0)))
+    except Exception:
+        return (0, 0)
+
+
 def __vis_defs_snapshot__():
     # Source text that RE-CREATES this session's helpers in a FRESH process.
     # The sandbox dies with the process, so a gateway restart used to lose every
@@ -2117,21 +2240,26 @@ def __vis_defs_snapshot__():
     # the next call was a NameError. The host writes this snapshot beside the
     # session and feeds it back through `__vis_restore_defs__`.
     #
-    # Emitted in dependency order for IMPORT-time, not call-time, needs: module
-    # aliases (`np`), then plain scalar constants (`root` as a string is the
-    # usual closed-over path), then the definitions themselves.
-    live = __vis_user_defs__()
-    if not live:
-        return ""
+    # Only names the SESSION created are considered: `__vis_boot_names__` is the
+    # global namespace as the host handed it over, so auto-imported shims and
+    # bound tools are never re-emitted. Every chunk is validated on its own, so a
+    # helper that cannot be re-created costs ONLY itself.
     import inspect
+    import sys
 
     g = globals()
     prot = set(g.get("__vis_protected_names__") or [])
+    boot = set(g.get("__vis_boot_names__") or [])
     module_type = type(inspect)
     imports = []
     consts = []
+    classes = []
+    funcs = []
+    aliases = []
+    seen = {}
+    bound_names = set()
     for n, v in sorted(g.items()):
-        if n.startswith("_") or n in prot:
+        if n.startswith("__") or n in prot or n in boot:
             continue
         if isinstance(v, module_type):
             mod = getattr(v, "__name__", "")
@@ -2139,26 +2267,87 @@ def __vis_defs_snapshot__():
                 imports.append(
                     "import " + mod if mod == n else "import " + mod + " as " + n
                 )
-        elif v is None or isinstance(v, (str, int, float, bool)):
+            continue
+        code = __vis_def_code__(v)
+        f = getattr(code, "co_filename", "") if code is not None else ""
+        if isinstance(f, str) and f.startswith("<prog:"):
+            key = id(code)
+            if key in seen:
+                # Two names, ONE function: emit the source once. A name the chunk
+                # already binds needs no alias line at all.
+                if n not in bound_names:
+                    aliases.append(n + " = " + seen[key] + "\n")
+                continue
+            try:
+                raw = inspect.getsource(v)
+            except Exception:
+                continue
+            chunk = __vis_chunk__(raw, n)
+            if chunk:
+                seen[key] = n
+                bound_names.add(chunk[1])
+                funcs.append((__vis_block_order__(f, code), chunk[0]))
+            continue
+        if isinstance(v, type):
+            body = __vis_class_source__(v)
+            chunk = __vis_chunk__(body, n) if body else None
+            if chunk:
+                classes.append(chunk[0])
+                bound_names.add(chunk[1])
+                continue
+        if callable(v):
+            # A callable this session IMPORTED from a real module — `from pathlib
+            # import Path`. The helper that calls it needs the NAME at call time.
+            mod = getattr(v, "__module__", "") or ""
+            qual = getattr(v, "__qualname__", "") or ""
+            owner = sys.modules.get(mod)
+            if (
+                owner is not None
+                and qual
+                and "." not in qual
+                and getattr(owner, "__file__", None)
+                and getattr(owner, qual, None) is v
+            ):
+                imports.append(
+                    "from " + mod + " import " + qual
+                    if qual == n
+                    else "from " + mod + " import " + qual + " as " + n
+                )
+            continue
+        # A plain constant — `root` as a string is the usual closed-over path, and
+        # a small dict is the usual config a helper takes as a DEFAULT ARGUMENT
+        # (`def run(p, cfg=CFG)`), which resolves at def time: without `CFG` that
+        # helper does not come back at all. SIZE FIRST: `repr` of a multi-megabyte
+        # blob costs more than the whole snapshot, every block, only to be thrown
+        # away by the cap. Only a repr that reads back as a LITERAL is kept.
+        if (
+            v is None
+            or isinstance(v, (int, float, bool))
+            or (isinstance(v, str) and len(v) <= 500)
+            or (isinstance(v, (dict, list, tuple, set, frozenset)) and len(v) <= 100)
+        ):
             rep = repr(v)
-            if len(rep) <= 500:
+            if len(rep) <= 500 and __vis_literal_ok__(rep):
                 consts.append(n + " = " + rep)
-    bodies = []
-    for _n, fn in live:
-        try:
-            bodies.append(inspect.getsource(fn).rstrip() + "\n")
-        except Exception:
-            pass
-    if not bodies:
+    if not classes and not funcs:
         return ""
     parts = [
         "# Session helper definitions, re-created automatically in a fresh sandbox.\n"
     ]
     if imports:
-        parts.append("\n".join(imports) + "\n")
+        parts.append("\n".join(sorted(set(imports))) + "\n")
     if consts:
         parts.append("\n".join(consts) + "\n")
-    parts.extend(bodies)
+    parts.extend(classes)
+    parts.extend(chunk for _key, chunk in sorted(funcs, key=lambda t: t[0]))
+    parts.extend(aliases)
+    # A closure is stored under a name its own source never binds (`twice =
+    # outer()` reads back as `def inner`), so the chunk had to define that name to
+    # rebind it. Drop it again unless the session has one too: a restored sandbox
+    # should list the helpers the session HAS, not the private names inside them.
+    strays = sorted(b for b in bound_names if b and b not in g)
+    if strays:
+        parts.append("\n".join("del " + s for s in strays) + "\n")
     return "\n".join(parts)
 
 
@@ -2175,7 +2364,13 @@ def __vis_restore_defs__(src):
         # no longer ships, a helper whose default argument no longer resolves.
         # Replay the file statement by statement and keep every definition that
         # still loads; each keeps its own line numbers, so its source reads back.
-        for stmt in __vis_ast__.parse(src).body:
+        try:
+            body = __vis_ast__.parse(src).body
+        except Exception:
+            # A file that will not PARSE cannot be replayed at all — never let
+            # that escape as a failure of the whole restore.
+            body = []
+        for stmt in body:
             try:
                 exec(
                     compile(
