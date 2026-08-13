@@ -176,10 +176,10 @@
       (let
         [[type store? payload]
          (#'state/chunk->event
-          {:phase :iteration-final :done? true :thinking " alpha\n\n\n beta  \n\t\n gamma "})]
+          {:phase :iteration-final :done? true :thinking " alpha.\n\n\n beta.  \n\t\n gamma. "})]
         (expect (= "iteration.completed" type))
         (expect store?)
-        (expect (= "alpha\n beta\n gamma" (:thinking payload)))))
+        (expect (= "alpha.\n beta.\n gamma." (:thinking payload)))))
   (it "normalizes persisted transcript thinking the same way as live events"
       (with-redefs
         [persistance/db-list-session-turns
@@ -188,9 +188,9 @@
 
          persistance/db-list-session-turn-iterations
          (fn [_ _]
-           [{:thinking " alpha\n\n beta  \n"}])]
+           [{:thinking " alpha.\n\n beta.  \n"}])]
 
-        (expect (= "alpha\n beta"
+        (expect (= "alpha.\n beta."
                    (-> (state/transcript :session-1)
                        first
                        (get "iterations")
@@ -3768,7 +3768,7 @@
 ;; iteration's thinking, so every surface painted a two-word stub — `So the
 ;; issue…` on an iteration where the model had spent 24.5s and 2056 tokens.
 (defdescribe cut-summary-thinking-test
-             (it "keeps a settled summary that closed a sentence"
+             (it "clips a settled summary at the last sentence it closed"
                  (let
                    [[type _ payload] (#'state/chunk->event
                                       {:phase :iteration-final
@@ -3776,7 +3776,7 @@
                                        :iteration 1
                                        :thinking "Checked the parser. I need…"})]
                    (expect (= "iteration.completed" type))
-                   (expect (= "Checked the parser. I need" (:thinking payload)))))
+                   (expect (= "Checked the parser." (:thinking payload)))))
              (it "ships no thinking when the provider cut the summary mid-clause"
                  (let
                    [[_ _ payload]

@@ -81,16 +81,25 @@
 
 ;; Regression: the provider's CUT summary was rendered as the iteration's whole
 ;; thought — `I found…`, `So the issue…`, `The diff…` — reading as if Vis had
-;; truncated the model, on iterations that had really thought for 10-25s.
+;; truncated the model, on iterations that had really thought for 10-25s. Then
+;; the same cut, one sentence later, still reached the screen as a dangling
+;; `… needed for Pocket models. The real bl` tail.
 (defdescribe
   settled-thinking-text-test
-  (it "keeps a summary that closed at least one sentence"
-      (expect (= "The tests pass. I need" (su/settled-thinking-text "The tests pass. I need…")))
+  (it "clips a summary at the last sentence the model closed"
+      (expect (= "The tests pass." (su/settled-thinking-text "The tests pass. I need…")))
       (expect (= "Checked the parser." (su/settled-thinking-text "Checked the parser.…")))
-      (expect (= "first\nsecond" (su/settled-thinking-text "first\n\nsecond…"))))
+      (expect (= "No sentencepiece dependency is needed for Pocket models."
+                 (su/settled-thinking-text
+                   "No sentencepiece dependency is needed for Pocket models. The real bl…")))
+      (expect (= "first" (su/settled-thinking-text "first\n\nsecond…"))))
+  (it "keeps a summary that ends ON a closed sentence untouched"
+      (expect (= "One. Two. Three!" (su/settled-thinking-text "One. Two. Three!…")))
+      (expect (= "Done?" (su/settled-thinking-text "Done?"))))
   (it "drops a summary the provider cut before its first sentence"
       (expect (nil? (su/settled-thinking-text "So the issue…")))
       (expect (nil? (su/settled-thinking-text "I found…")))
+      (expect (nil? (su/settled-thinking-text "I should…")))
       (expect (nil? (su/settled-thinking-text
                       "The condition looks right for `.txt` files, so I need…")))
       (expect (nil? (su/settled-thinking-text "The diff"))))

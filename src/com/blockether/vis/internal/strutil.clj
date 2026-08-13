@@ -96,27 +96,36 @@
    Owned here because two rules need the same notion of \"the model finished a
    thought\": the gateway flushes the live stream one sentence at a time
    (`gateway.state/sentence-closed-in-suffix?`), and `settled-thinking-text`
-   refuses a summary that never closed one."
+   clips a settled summary to the last one it closed."
   #"[.!?…][\"')\]]*(?:\s|$)|\n")
+
+(defn- last-closed-sentence-end
+  "Index just past the LAST closed sentence/line in `s`, or nil when it closed
+   none."
+  ^Long [^String s]
+  (let [m (re-matcher sentence-boundary-pattern s)]
+    (loop [end nil]
+      (if (.find m) (recur (.end m)) end))))
 
 (defn settled-thinking-text
   "Canonical thinking text for a SETTLED iteration — what a transcript, a
    timeline entry or a replayed row keeps — or nil when the provider showed
    nothing usable.
 
-   `normalize-thinking-text`, plus: a summary that never closes a single
-   sentence is a CUT summary, not a thought. Anthropic writes the thinking
-   summary with a SECOND model that streams alongside the thinking block; when
-   the block closes first the summary stops wherever it stood, and the wire
-   terminates it with the `…` marker. Over 4000 iterations of one week's
-   sessions (`session_turn_iteration`) 32 landed as `I found…`, `So the
-   issue…`, `The diff…` — one of them after the model had spent 24.5s and 2056
-   output tokens — and each reads on screen as if Vis had truncated the model.
-   A long summary keeps its cut tail: whole sentences already stand in front
-   of it.
+   `normalize-thinking-text`, CLIPPED to the last sentence the model closed;
+   nil when it closed none. Anthropic writes the thinking summary with a SECOND
+   model that streams alongside the thinking block; when the block closes first
+   the summary stops wherever it stood — mid-word — and the wire terminates it
+   with the `…` marker. So the run AFTER the last closed sentence is never a
+   thought: it is exactly the text the summarizer was mid-way through when it
+   was cut. One turn of one session showed both shapes: `I should…`, dropped whole, and
+   `…no sentencepiece dependency needed for Pocket models. The real bl…`, which
+   read on screen as if Vis had truncated the model and now keeps only its
+   closed sentence.
 
    LIVE ticks keep `normalize-thinking-text`: mid-stream every summary is still
    a fragment, and the stream must paint as it arrives."
   [text]
   (when-let [s (normalize-thinking-text text)]
-    (when (re-find sentence-boundary-pattern s) s)))
+    (when-let [end (last-closed-sentence-end s)]
+      (not-empty (str/trimr (subs s 0 end))))))

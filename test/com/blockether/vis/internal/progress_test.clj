@@ -202,13 +202,13 @@
 ;; Regression: a timeline entry kept the provider's CUT summary as the settled
 ;; iteration's thinking, so the bubble read `I need…` after the iteration ended.
 (defdescribe cut-summary-thinking-entry-test
-             (it "keeps a settled summary that closed a sentence"
+             (it "clips a settled summary at the last sentence it closed"
                  (let
                    [entry
                     (#'progress/update-entry
                      {}
                      {:phase :iteration-final :done? true :thinking "Checked the parser. I need…"})]
-                   (expect (= "Checked the parser. I need" (:thinking entry)))))
+                   (expect (= "Checked the parser." (:thinking entry)))))
              (it "drops a cut summary instead of settling the stub on the entry"
                  (let
                    [entry (#'progress/update-entry
