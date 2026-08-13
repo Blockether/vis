@@ -409,3 +409,42 @@ describe("a turn that has not answered yet", () => {
     expect(text(html)).not.toMatch(/\d/);
   });
 });
+
+
+// Regression, session 0ec1e9f3-23d5-4070-a17e-46f8e7f514e8: the moment a long
+// streamed answer became the finished one, the transcript flickered — it jumped
+// up, went blank, and dropped back to the bottom a few frames later. The live
+// bubble's trace was unmounted and the persisted row mounted a BRAND NEW trace,
+// which started the opening ramp over: only the last `SEGMENT_FIRST_PAINT`
+// segments painted, and the rest came back a chunk per frame. Measured on the
+// handover of a short turn, the scroller lost 102 nodes and 378 px and got them
+// back 8 ms later; on a long answer that is most of the transcript.
+describe("the trace a settled row inherits from the live bubble", () => {
+  const iterations = Array.from({ length: 20 }, (_, index) => ({
+    id: `i${index}`,
+    assistant_prose: `step ${index}`,
+  })) as unknown as TranscriptTurn["iterations"];
+  const finished = {
+    id: "t1",
+    request: "do the long thing",
+    status: "completed",
+    iterations,
+    content: [],
+  } as unknown as TranscriptTurn;
+
+  it("mounts every segment in the first paint", () => {
+    const html = renderToStaticMarkup(<AssistantMessage turn={finished} whole />);
+
+    for (let step = 0; step < 20; step += 1)
+      expect(text(html)).toContain(`step ${step}`);
+  });
+
+  it("still ramps a trace nobody has seen yet", () => {
+    const html = renderToStaticMarkup(<AssistantMessage turn={finished} />);
+
+    // The tail is what the reader can see when a session OPENS pinned to the
+    // bottom, and mounting only that is what keeps the opening frame short.
+    expect(text(html)).toContain("step 19");
+    expect(text(html)).not.toContain("step 0");
+  });
+});

@@ -349,7 +349,7 @@ function inFlightRow(
 }
 
 /**
- * Has the streamed live turn actually been REPLACED by a settled transcript row?
+ * WHICH settled transcript row has REPLACED the streamed live turn, if any?
  *
  * Identity alone cannot answer this. The terminal SSE frame carries the GATEWAY
  * turn id (`turn-terminal-payload` is the lean `{turn_id, status}`), while the
@@ -366,19 +366,23 @@ function inFlightRow(
  * from passing as this turn's answer. Same invariant the TUI holds in
  * `:message-received`: never drop the live trace unless something at least as
  * complete replaces it.
+ *
+ * The ROW, not a yes/no: the screen has to hand that row the trace the bubble
+ * was painting (`whole` in `ChatContent`), so it must know which one took over.
+ * An exact id match wins outright; otherwise the NEWEST accepted row is the
+ * answer, because a page of recent history can put several inside the slack
+ * window and only the last of them can be this turn's.
  */
-function liveTurnSettledInto(
+function liveTurnSettledRow(
   turns: TranscriptTurn[] | null,
   before: Set<string>,
   finishedId: string,
   startedAt?: number,
-): boolean {
-  if (!turns?.length) return false;
-  return turns.some((turn) => {
+): TranscriptTurn | null {
+  if (!turns?.length) return null;
+  const accepts = (turn: TranscriptTurn): boolean => {
     if (!isSettledRow(turn)) return false;
-    const id = rowId(turn);
-    if (finishedId && id === finishedId) return true;
-    if (before.has(id)) return false;
+    if (before.has(rowId(turn))) return false;
     const created = turn.created_at;
     if (startedAt && typeof created === "number" && Number.isFinite(created)) {
       // One minute of slack: clock skew between the engine's row stamp and the
@@ -386,7 +390,17 @@ function liveTurnSettledInto(
       return created >= startedAt - 60_000;
     }
     return true;
-  });
+  };
+  if (finishedId) {
+    const named = turns.find(
+      (turn) => isSettledRow(turn) && rowId(turn) === finishedId,
+    );
+    if (named) return named;
+  }
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    if (accepts(turns[index])) return turns[index];
+  }
+  return null;
 }
 
 function stringField(event: SseEvent, key: string): string {
@@ -1134,6 +1148,10 @@ export function SessionScreen({
   // because we asked. This only disables the button while the request is out.
   const [resumingQueue, setResumingQueue] = useState(false);
   const [showJump, setShowJump] = useState(false);
+  // The transcript row that TOOK OVER from the live bubble this visit. It mounts
+  // holding pixels the reader is already looking at, so it mounts WHOLE — see
+  // `IterationTrace`'s `whole` in `ChatContent`.
+  const [handedOverRowId, setHandedOverRowId] = useState("");
   const [visibleTurnCount, setVisibleTurnCount] = useState(
     INITIAL_VISIBLE_TURNS,
   );
@@ -1423,7 +1441,7 @@ export function SessionScreen({
   const runningRef = useRef(false);
   const turnsRef = useRef<TranscriptTurn[]>([]);
   // Ids of every transcript row that existed BEFORE the current live turn — the
-  // baseline `liveTurnSettledInto` measures "a new settled row landed" against.
+  // baseline `liveTurnSettledRow` measures "a new settled row landed" against.
   // Frozen for as long as a live bubble is on screen (see the mirror effect).
   //
   // Seeded here rather than left empty: when the screen re-enters a streaming
@@ -1455,7 +1473,7 @@ export function SessionScreen({
     // STILL-RUNNING rows are excluded on purpose. The gateway persists a
     // `running` placeholder for a turn the moment it is accepted, so a refetch
     // that lands between the POST and `turn.started` puts THIS turn's row into
-    // the baseline. `liveTurnSettledInto` then rejects that very row as "already
+    // the baseline. `liveTurnSettledRow` then rejects that very row as "already
     // there" once it settles, the live bubble is never retired, and the answer
     // renders twice — settled row plus bubble — until the screen is remounted.
     if (!liveTurnRef.current) {
@@ -1534,6 +1552,7 @@ export function SessionScreen({
     initialScrollPendingRef.current = !fresh;
     showJumpRef.current = false;
     setShowJump(false);
+    setHandedOverRowId("");
     setRouterOpen(false);
     // Switching sessions swaps the pin, so paint the NEW session's last known
     // one rather than blanking the chip back to the placeholder word.
@@ -2158,12 +2177,13 @@ export function SessionScreen({
       // Decided and applied BEFORE the queue round-trip below: with the clear
       // sitting after another await, the settled transcript row and the live
       // bubble both painted for that window (the same turn twice).
-      const covered = liveTurnSettledInto(
+      const landedRow = liveTurnSettledRow(
         nextTurns,
         preLiveTurnIdsRef.current,
         liveId,
         liveStartedAt,
       );
+      const covered = landedRow !== null;
       if (nextTurns) {
         setTurns(nextTurns);
         setTurnsFresh(true);
@@ -2182,11 +2202,14 @@ export function SessionScreen({
           ((gatewayLive && (next.current_turn_id ?? "") === liveId) ||
             (persistedRunning !== null && rowId(persistedRunning) === liveId));
         if (
-          covered &&
+          landedRow &&
           !stillRunningThis &&
           (liveTurnRef.current?.id ?? "") === liveId
         ) {
           setRunning(false);
+          // Same batch as the rows themselves: the row that takes the bubble's
+          // place must MOUNT knowing it inherits a painted trace.
+          setHandedOverRowId(rowId(landedRow));
           setLiveTurn(null);
           liveTurnRef.current = null;
         }
@@ -2754,8 +2777,8 @@ export function SessionScreen({
       } catch {
         next = null;
       }
-      const covers = (turns: TranscriptTurn[] | null) =>
-        liveTurnSettledInto(
+      const coveringRow = (turns: TranscriptTurn[] | null) =>
+        liveTurnSettledRow(
           turns,
           preLiveTurnIdsRef.current,
           finishedId,
@@ -2774,7 +2797,7 @@ export function SessionScreen({
       // leave the finished turn missing from the transcript until a reconcile
       // tick. Only an answer that actually covers this turn stops the polling.
       for (const wait of SETTLE_RETRY_MS) {
-        if (next && covers(next)) break;
+        if (next && coveringRow(next)) break;
         await new Promise((resolve) => window.setTimeout(resolve, wait));
         try {
           next = await client.transcript(sid, undefined, settleLimit());
@@ -2796,16 +2819,22 @@ export function SessionScreen({
         // matches) this deleted the finished turn outright.
         // …and only while the bubble on screen is still THIS turn's: a queued row
         // that drained during the fetch owns the rail now.
-        if (covers(next) && ownsTerminal(liveTurnRef.current)) {
+        const landed = coveringRow(next);
+        if (landed && ownsTerminal(liveTurnRef.current)) {
+          // In the SAME batched update as `setTurns` above: the row that takes
+          // the bubble's place has to MOUNT already knowing it inherits a trace
+          // the reader is looking at, or its own mount ramp empties the
+          // transcript for a frame and grows it back (see `IterationTrace`).
+          setHandedOverRowId(rowId(landed));
           setLiveTurn(null);
           liveTurnRef.current = null;
-        } else if (covers(next)) {
+        } else if (landed) {
           // A queued row drained into the rail while we were fetching. THIS turn's
           // answer is now persisted, so it is old news for the bubble that is
           // streaming — fold it into the baseline. The baseline is frozen for as
           // long as ANY bubble is up (see the mirror effect), so without this the
           // reconcile tick reads "the live turn has landed" off the PREVIOUS turn's
-          // row (`liveTurnSettledInto`'s 60 s created_at slack accepts it) and
+          // row (`liveTurnSettledRow`'s 60 s created_at slack accepts it) and
           // deletes a bubble that is still streaming — the same blank "Vis", one
           // tick later.
           preLiveTurnIdsRef.current = new Set([
@@ -4399,13 +4428,17 @@ export function SessionScreen({
               settled={
                 turnsSettled || hasLiveBubble || index < visibleTurns.length - 1
               }
+              // The row that just replaced the live bubble inherits a trace the
+              // reader is looking at: it mounts whole instead of ramping the
+              // transcript back down to a screenful and up again.
+              whole={handedOverRowId !== "" && rowId(turn) === handedOverRowId}
               client={client}
               sid={sid}
             />
           </div>
         );
       }),
-    [visibleTurns, turnsSettled, hasLiveBubble, client, sid],
+    [visibleTurns, turnsSettled, hasLiveBubble, handedOverRowId, client, sid],
   );
   // The sender's own copy of the pictures dies with the process. Ask the gateway
   // for the bytes of a live turn that has none in hand — a restarted app, or a

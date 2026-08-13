@@ -1608,8 +1608,8 @@ const AttachmentTile = memo(function AttachmentTile({
   );
 });
 
-// Non-image artifacts (a scratch .py, a csv, a pdf) are RECORDED, not painted:
-// the capture tap writes them to the session DB and they NEVER enter the
+// Non-image artifacts (a csv, a zip, a report a tool attached) are RECORDED,
+// not painted: `attach` writes them to the session DB and they NEVER enter the
 // provider conversation — only images replay, see `loop.clj`'s
 // `attachment->image-block`. One naked line per file buried the transcript, so
 // they collapse to a single disclosure row ("↗ name +N more") that opens into
@@ -2027,11 +2027,27 @@ const TraceSegment = memo(function TraceSegment({
 export const IterationTrace = memo(function IterationTrace({
   iterations,
   live = false,
+  whole = false,
   client,
   sid,
 }: {
   iterations: TranscriptIteration[];
   live?: boolean;
+  /**
+   * Mount every segment in the FIRST paint and ramp nothing.
+   *
+   * The ramp below buys a short frame when a trace arrives on a screen that has
+   * none of it yet. A trace that REPLACES one already painted has no such frame
+   * to protect — the live bubble drew these very segments a moment ago — and
+   * ramping again is pure subtraction: the transcript drops back to
+   * `SEGMENT_FIRST_PAINT` segments for a frame and grows the rest back over the
+   * next few. Measured on the live-to-settled handover of a short turn, 102 DOM
+   * nodes and 378 px left the scroller and returned 8 ms later, which the
+   * reader sees as the whole conversation jerking down and back; on a long
+   * answer the collapse is most of the transcript, so the screen empties, the
+   * answer leaves the fold, and the corrector chases it back to the bottom.
+   */
+  whole?: boolean;
   client?: GatewayClient;
   sid?: string;
 }) {
@@ -2042,9 +2058,12 @@ export const IterationTrace = memo(function IterationTrace({
   // Adaptive ramp step: how many segments the next frame mounts, when the
   // current one started (0 = none in flight), and what the last one cost.
   const stepRef = useRef({ size: SEGMENT_RAMP_START, startedAt: 0, work: 0 });
-  const [mountedSegments, setMountedSegments] = useState(SEGMENT_FIRST_PAINT);
 
   const segments = useMemo(() => buildSegments(iterations), [iterations]);
+
+  const [mountedSegments, setMountedSegments] = useState(() =>
+    whole ? segments.length : SEGMENT_FIRST_PAINT,
+  );
 
   const rampDone = mountedSegments >= segments.length;
 
@@ -2243,6 +2262,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   activity,
   startedAt,
   settled = false,
+  whole = false,
   client,
   sid,
 }: {
@@ -2250,6 +2270,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   streaming?: boolean;
   activity?: string;
   startedAt?: number;
+  /** This row's trace is already on screen — see `IterationTrace`'s `whole`. */
+  whole?: boolean;
   /**
    * The caller KNOWS this row's turn is over (the gateway is not running this
    * session, or its terminal frame already landed) even though the persisted
@@ -2294,6 +2316,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         <IterationTrace
           iterations={turn.iterations ?? []}
           live={streaming}
+          whole={whole}
           client={client}
           sid={sid}
         />
