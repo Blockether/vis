@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.35 (4075) — 2026-08-13
+<!-- commit: 303d39e0132803b54e94db9293b6828bfbde6901 -->
+
+- Retire the automatic outbox capture; `attach` is how an artifact is kept
+- Hand the finished answer the trace the live bubble already painted
+- Fix #141: an unverified HTTPS request was impossible from the sandbox, and the escape hatch was deleted
+- Hand-written config keeps the provider and model pair; the committed file still cannot
+- Make the provider/model pair a remembered selection, not configuration
+- Fix #140: a committed vis.yml forced one developer's provider on every clone
+- Companion: the result band gets its name back, in caps and bold
+- Companion: a machine retry answers in five seconds, in red, then goes quiet
+- Name every collapsible band in caps and bold
+- Fix Android gateway and optional push support
+- Update Bridge extension for 0.3
+- Migrate verification governance to Bridge 0.3
+- Keep a focused field's accent ring inside the frame's rails
+- Fix #139: concurrent shells shared one auto-derived handle id
+- Sandbox: pin that a cancel reaches a host park of any length
+- Sandbox: cancel a parked block through the guest safepoint
+- Companion: a turn that is running always says it is running
+- Release: macOS arm64 builds on GitHub's hosted runner, never a laptop
+- Native: lanterna's TTY control decides in the BINARY, not the builder
+- Native: an extension declares what the IMAGE needs, not only discovery
+
 ## 0.1.35 (4047) — 2026-08-12
 <!-- commit: 3605627d4c480ff9816ae24f17724b8ca6e107a1 -->
 
