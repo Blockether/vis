@@ -314,9 +314,14 @@ export const KebabButton = forwardRef<
  * hover at all. Three sizes of the same control, on two screens a tap apart.
  *
  * Selection is the app's amber, exactly as `MachineTab` spells it, and OFF is
- * the quiet frame every other resting control wears. A chip that leads nowhere
- * (a filter with nothing behind it) is `disabled` and says so by fading, never
- * by inventing a fourth face.
+ * the quiet frame every other resting control wears — `border-edge-strong`, the
+ * same hairline `Button`'s `secondary` and `Switch`'s OFF draw. It is NOT
+ * `border-edge`: that is the FIELD hairline, which always has `bg-input` under it
+ * to separate the box, and on its own it measures 1.18:1 against the page. An
+ * enum toggle's choices and the boolean toggle's switch stand one row apart in
+ * the same settings list, so they carry one frame or they read as two ranks of
+ * control. A chip that leads nowhere (a filter with nothing behind it) is
+ * `disabled` and says so by fading, never by inventing a fourth face.
  */
 export const Chip = forwardRef<
   HTMLButtonElement,
@@ -330,7 +335,7 @@ export const Chip = forwardRef<
       className={`inline-flex min-h-7 shrink-0 items-center justify-center gap-1.5 border px-2 font-mono text-meta font-bold transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none mouse:min-h-6 ${
         isOn
           ? 'border-accent bg-accent text-accent-foreground'
-          : 'border-edge bg-transparent text-dialog-hint hover:bg-hover'
+          : 'border-edge-strong bg-transparent text-dialog-hint hover:bg-hover'
       } ${className}`}
       {...props}
     />
@@ -868,6 +873,23 @@ export function ChoiceCell({
  * (`isBusy` → `··`, `aria-busy`) because a setting is a round trip to a gateway
  * and a control that snaps back a second later without saying why is a bug
  * report. `role="switch"` and `aria-checked` are the control's, not the caller's.
+ *
+ * OFF WEARS THE RESTING FRAME, because a switched-off toggle had NO BOX AT ALL.
+ * It drew `border-transparent` over `bg-panel-2`, and `--panel2` is the same value
+ * as `--surface` in both bundled palettes (#faf3eb light, #161820 dark): the fill
+ * that was supposed to be the control's own paper measures 1.00:1 against the row
+ * it sits in, and the border was transparent by name — so a settings row ended in
+ * a grey word floating on the page, reported as "these off buttons are not visible
+ * at all: why no border?". The frame is `border-edge-strong` (1.38:1 light,
+ * 1.40:1 dark), the hairline `Button`'s `secondary` already draws — the button
+ * this one stands beside on an MCP server row — and the fill is dropped, so the
+ * switch reads on whatever paper it is put on rather than carrying a step that
+ * has never once rendered. ON keeps the amber slab and names its own frame, so
+ * the two faces differ in colour and never in box.
+ *
+ * The hover moves the SURFACE and not the ink, exactly as `Button` spells it: the
+ * ink used to jump from `text-dialog-hint` to `text-white` under the pointer,
+ * which is the app's one hover system saying two things at once.
  */
 export function Switch({
   label,
@@ -890,8 +912,8 @@ export function Switch({
       aria-busy={isBusy}
       className={`mt-0.5 inline-flex h-8 w-[3.25rem] shrink-0 items-center justify-center border font-mono text-chip font-black tracking-[0.08em] transition-colors duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 active:scale-[0.97] disabled:opacity-45 motion-reduce:transition-none motion-reduce:active:scale-100 mouse:h-6 ${
         isOn
-          ? 'border-transparent bg-accent text-accent-foreground'
-          : 'border-transparent bg-panel-2 text-dialog-hint hover:bg-hover hover:text-white'
+          ? 'border-accent bg-accent text-accent-foreground'
+          : 'border-edge-strong bg-transparent text-dialog-hint hover:bg-hover'
       } ${className}`}
       {...props}
     >

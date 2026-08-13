@@ -1920,6 +1920,16 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
       expect(first(html(false))).toContain("min-h-7");
       expect(first(html(false))).toContain("mouse:min-h-6");
     });
+
+    // `border-edge` is the FIELD hairline and always has `bg-input` under it to
+    // separate the box; alone on the page it measures 1.18:1. An enum toggle's
+    // choices stand one row from the boolean toggle's `Switch` in the same settings
+    // list, so both wear the frame every other resting control wears.
+    it("draws the resting frame the rest of the vocabulary draws", () => {
+      expect(first(html(false))).toContain("border-edge-strong");
+      expect(first(html(false))).not.toContain("border-edge");
+      expect(first(html(true))).toContain("border-accent");
+    });
   });
 
   describe("LoadMore", () => {
@@ -2368,6 +2378,29 @@ describe("a setting is picked and switched by one control each", () => {
     expect(
       renderToStaticMarkup(<Switch label="Web search" isOn isBusy />),
     ).toContain("\u00b7\u00b7");
+  });
+
+  // Regression, user report ("these off buttons are not visible at all: why no
+  // border?"): OFF drew `border-transparent` over `bg-panel-2`, and `--panel2` is
+  // the same value as `--surface` in both bundled palettes — a transparent frame
+  // over the very paper the control stands on, so a settings row ended in a grey
+  // word with no box at all.
+  it("wears the resting frame when it is off, over no paper of its own", () => {
+    const off = classes(
+      renderToStaticMarkup(<Switch label="Web search" isOn={false} />),
+    );
+    expect(off).toContain("border-edge-strong");
+    expect(off).toContain("bg-transparent");
+    expect(off).not.toContain("border-transparent");
+    expect(off).not.toContain("bg-panel-2");
+    // One hover system, and it only ever moves the surface.
+    expect(off).toContain("hover:bg-hover");
+    expect(off).not.toContain("hover:text-white");
+    // ON is the amber slab, framed in its own colour, so the box never changes.
+    const on = classes(renderToStaticMarkup(<Switch label="Web search" isOn />));
+    expect(on).toContain("border-accent");
+    expect(on).toContain("bg-accent");
+    expect(on).not.toContain("border-transparent");
   });
 });
 
