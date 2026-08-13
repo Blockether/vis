@@ -2445,7 +2445,7 @@ export const UserMessage = memo(function UserMessage({
     (part) => part.type === "text" && !/\S{24,}/u.test(part.text),
   );
   return (
-    <article className="mt-4 w-full [contain:layout_style]">
+    <article className="mt-4 w-full">
       <div className="mb-1 font-mono text-meta font-bold text-you-role">
         You
       </div>
