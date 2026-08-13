@@ -125,15 +125,13 @@ def hits(needles, *paths, ctx=0):
     return [l for l in text.splitlines() if "│ " in l]
 ```
 
-A definition lives as long as the **session**, not the block and not the turn: a helper written in turn 2 is still callable in turn 9. Read it back before you change it, and list what is already bound instead of guessing:
+A definition lives as long as the **session**, and now longer than the **process**: a helper written in turn 2 is still callable in turn 9, and a gateway restart re-creates it in the fresh sandbox from a snapshot the host writes after every block (module aliases, scalar constants and the definitions themselves — never a previous block's side effects). `defs()` is the whole inventory; `defs(name)` hands the source back so a helper is refined instead of re-typed:
 
 ```python
-import inspect
-
-print(inspect.getsource(hits))  # refine the definition; never re-paste it from memory
-print(sorted(n for n, v in globals().items()
-             if not n.startswith("_")
-             and getattr(getattr(v, "__code__", None), "co_filename", "").startswith("<prog")))
+print(defs())            # 2 definitions in this sandbox
+                         #   hits(needles, *paths, ctx=0)  <prog:7>  4 lines
+                         #   deploy_ok(env)                <prog:9> (restored)  6 lines
+print(defs("hits"))      # its source — edit THAT, never re-paste from memory
 ```
 
 What does **not** persist is anything written into `session`. That map is host-owned and rebuilt from the engine snapshot before every block, so `session["helpers"] = …` succeeds and is gone by the next one — a silent loss, not an error. Keep state in ordinary names.

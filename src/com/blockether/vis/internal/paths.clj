@@ -91,6 +91,21 @@
     (try (.mkdirs (java.io.File. d)) (catch Throwable _ nil))
     d))
 
+(defn sandbox-defs-dir
+  "Directory for persisted Python sandbox helper definitions — `~/.vis/sandbox`.
+   Its own subdir (not `~/.vis`) for the same reason as `logs-dir`: nothing here
+   needs to sit beside the session DB or the gateway token."
+  ^String []
+  (str (System/getProperty "user.home") "/.vis/sandbox"))
+
+(defn sandbox-defs-file
+  "File holding ONE session's persisted sandbox helper definitions —
+   `~/.vis/sandbox/<session-id>.py`. The sandbox dies with the process, so this
+   is what re-creates a session's own `def`s in a fresh one. The id is reduced
+   to a safe file name; every other character becomes `_`."
+  ^String [session-id]
+  (str (sandbox-defs-dir) "/" (.replaceAll (str session-id) "[^A-Za-z0-9_.-]" "_") ".py"))
+
 (defn process-id
   "This JVM's OS process id. Its only job is to make `log-file` unique per
    process, so it is read fresh (never a load-time `def`): `native-image`

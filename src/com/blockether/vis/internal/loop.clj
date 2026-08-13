@@ -154,9 +154,10 @@
 
 ;; ---------------------------------------------------------------------------
 ;; Per-iteration `(def ...)` discovery / dependency tracking was retired
-;; together with the `definition_*` sidecar tables and `restore-sandbox!`.
-;; Python defs are intra-turn scratch; cross-turn evidence is read from
-;; persisted `session_turn_iteration.forms` rows.
+;; together with the `definition_*` sidecar tables. Python defs are NOT scratch:
+;; they persist for the whole session and, via `env/persist-session-defs!`, into
+;; the next PROCESS; cross-turn evidence is read from persisted
+;; `session_turn_iteration.forms` rows.
 ;; ---------------------------------------------------------------------------
 
 (def ^:private MINI_STACK_DEPTH 12)
@@ -873,6 +874,11 @@
                  :duration-ms (- (System/currentTimeMillis) start-time)
                  :timeout? false}))]
 
+      ;; Helper definitions outlive the PROCESS. The sandbox dies with the
+      ;; gateway, so this session's own `def`s are snapshotted after every block
+      ;; and re-created by `restore-session-defs!` in the next process's fresh
+      ;; sandbox. Best effort, after the outcome is in hand — never in its way.
+      (env/persist-session-defs! python-context (:session-id environment))
       exec)))
 
 ;; Print-cap defaults for `fmt/bounded-value-str` - chosen so a wide flat
@@ -10259,6 +10265,13 @@
                                 nil
                                 nil
                                 sandbox-gate-fn)
+
+     ;; A gateway restart or a `/resume` in a new process builds a FRESH sandbox
+     ;; while the transcript still shows the helpers this session refined, so the
+     ;; next call would be a NameError against code the model can read. Re-create
+     ;; them from the snapshot `execute-code` wrote after every block.
+     _restored-defs
+     (env/restore-session-defs! python-context session-id)
 
      env
      (cond->

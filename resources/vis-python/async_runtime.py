@@ -2032,6 +2032,162 @@ def __vis_register_source__(src):
     return name
 
 
+def __vis_user_defs__():
+    # Every FUNCTION this session's own blocks defined, sorted by name. A `def`
+    # is recognized by its code object's SYNTHETIC filename — the `<prog:N>`
+    # `__vis_register_source__` minted for the block — so an imported function
+    # (backed by a real file) and every engine internal are out.
+    __vis_out__ = []
+    __vis_prot__ = set(globals().get("__vis_protected_names__") or [])
+    for __n__, __v__ in list(globals().items()):
+        if __n__.startswith("_") or __n__ in __vis_prot__:
+            continue
+        __c__ = getattr(__v__, "__code__", None)
+        __f__ = getattr(__c__, "co_filename", "") if __c__ is not None else ""
+        if isinstance(__f__, str) and __f__.startswith("<prog:"):
+            __vis_out__.append((__n__, __v__))
+    __vis_out__.sort()
+    return __vis_out__
+
+
+def defs(name=None):
+    """The helpers THIS session defined, and their source — plain text.
+
+    `defs()` lists every function your blocks defined: name, signature, the
+    block it came from and its length. `defs("name")` returns that one's
+    source, so a helper is REFINED by reading back what it already says
+    instead of being re-pasted from memory.
+
+    A `def` persists for the whole session across turns, and its definitions
+    are re-created automatically in a fresh sandbox after a restart — a
+    restored one is marked `(restored)`.
+    """
+    import inspect
+
+    live = __vis_user_defs__()
+    if name is not None:
+        fn = dict(live).get(name)
+        if fn is None:
+            known = ", ".join(n for n, _ in live) or "none"
+            raise NameError(
+                "defs: this session defined no function named "
+                + repr(name)
+                + " — defined here: "
+                + known
+            )
+        try:
+            return inspect.getsource(fn)
+        except Exception as exc:
+            return "# source unavailable for " + name + ": " + str(exc)
+    if not live:
+        return (
+            "no functions defined by this session yet — a `def` in any block joins this "
+            "list, persists across turns, and is restored into a fresh sandbox after a "
+            "gateway restart"
+        )
+    restored = globals().get("__vis_restored_block__")
+    rows = []
+    for n, fn in live:
+        try:
+            sig = str(inspect.signature(fn))
+        except Exception:
+            sig = "(...)"
+        where = getattr(getattr(fn, "__code__", None), "co_filename", "?")
+        if where == restored:
+            where += " (restored)"
+        try:
+            size = str(len(inspect.getsourcelines(fn)[0])) + " lines"
+        except Exception:
+            size = "source unavailable"
+        rows.append((n + sig, where, size))
+    width = max(len(r[0]) for r in rows)
+    body = "\n".join("  " + r[0].ljust(width) + "  " + r[1] + "  " + r[2] for r in rows)
+    head = (
+        str(len(rows))
+        + (" definition" if len(rows) == 1 else " definitions")
+        + " in this sandbox"
+    )
+    return head + "\n" + body + "\n" + 'defs("name") returns one\'s source.'
+
+
+def __vis_defs_snapshot__():
+    # Source text that RE-CREATES this session's helpers in a FRESH process.
+    # The sandbox dies with the process, so a gateway restart used to lose every
+    # helper the session had refined while its TRANSCRIPT still showed them —
+    # the next call was a NameError. The host writes this snapshot beside the
+    # session and feeds it back through `__vis_restore_defs__`.
+    #
+    # Emitted in dependency order for IMPORT-time, not call-time, needs: module
+    # aliases (`np`), then plain scalar constants (`root` as a string is the
+    # usual closed-over path), then the definitions themselves.
+    live = __vis_user_defs__()
+    if not live:
+        return ""
+    import inspect
+
+    g = globals()
+    prot = set(g.get("__vis_protected_names__") or [])
+    module_type = type(inspect)
+    imports = []
+    consts = []
+    for n, v in sorted(g.items()):
+        if n.startswith("_") or n in prot:
+            continue
+        if isinstance(v, module_type):
+            mod = getattr(v, "__name__", "")
+            if mod:
+                imports.append(
+                    "import " + mod if mod == n else "import " + mod + " as " + n
+                )
+        elif v is None or isinstance(v, (str, int, float, bool)):
+            rep = repr(v)
+            if len(rep) <= 500:
+                consts.append(n + " = " + rep)
+    bodies = []
+    for _n, fn in live:
+        try:
+            bodies.append(inspect.getsource(fn).rstrip() + "\n")
+        except Exception:
+            pass
+    if not bodies:
+        return ""
+    parts = [
+        "# Session helper definitions, re-created automatically in a fresh sandbox.\n"
+    ]
+    if imports:
+        parts.append("\n".join(imports) + "\n")
+    if consts:
+        parts.append("\n".join(consts) + "\n")
+    parts.extend(bodies)
+    return "\n".join(parts)
+
+
+def __vis_restore_defs__(src):
+    # Re-create a previous process's helpers. Registering the source FIRST gives
+    # them a real `<prog:N>` entry, so `defs("name")` and `inspect.getsource`
+    # read a restored helper back exactly like one defined in this process.
+    name = __vis_register_source__(src)
+    globals()["__vis_restored_block__"] = name
+    try:
+        exec(compile(src, name, "exec"), globals())
+    except Exception:
+        # One bad statement must not cost the whole toolbox — a shim this build
+        # no longer ships, a helper whose default argument no longer resolves.
+        # Replay the file statement by statement and keep every definition that
+        # still loads; each keeps its own line numbers, so its source reads back.
+        for stmt in __vis_ast__.parse(src).body:
+            try:
+                exec(
+                    compile(
+                        __vis_ast__.Module(body=[stmt], type_ignores=[]), name, "exec"
+                    ),
+                    globals(),
+                )
+            except Exception:
+                pass
+    return len(__vis_user_defs__())
+
+
 def __vis_run_async__(src):
     g = globals()
     __vis_pin_runtime__(g)

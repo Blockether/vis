@@ -718,8 +718,13 @@
              (it "scopes a definition to the whole session and refuses `session` as storage"
                  (let [text (prompt/build-system-prompt {})]
                    (expect (str/includes? text "CALL the one an earlier block defined"))
-                   (expect (str/includes? text "persists for the whole session, across turns"))
-                   (expect (str/includes? text "`inspect.getsource(f)` reads it back"))
+                   (expect (str/includes? text "`defs()`"))
+                   (expect (str/includes? text "`defs(name)` reads one back to refine"))
+                   ;; Regression: the prompt promised a `def` only "persists for the whole
+                   ;; session" — true of the interpreter, false of the PROCESS, so a restart
+                   ;; silently emptied the sandbox the transcript still described.
+                   (expect (str/includes? text "outlives the block, the turn, and"))
+                   (expect (str/includes? text "a gateway restart"))
                    (expect (str/includes? text "REBUILT before every block"))
                    (expect (str/includes? text "never store in it"))
                    (expect (not (str/includes? text "definitions persist between blocks")))

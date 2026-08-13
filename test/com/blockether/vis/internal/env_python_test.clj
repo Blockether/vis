@@ -1,10 +1,12 @@
 (ns com.blockether.vis.internal.env-python-test
   "GraalPy sandbox behaviour that needs a REAL context: the proxy→dict boundary
    fix and the print-capture of tool results. Boots ONE context for the ns."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.internal.doc-corpus :as doc-corpus]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.extension :as ext]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.runtime-settings :as rt]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]])
@@ -1289,3 +1291,114 @@
                  ;; Non-destructive by contract: no rebuilt interpreter, no lost globals.
                  (expect (= 2
                             (ep/->clj (.eval (tpc/context ::indefinite-park) "python" "1 + 1"))))))
+
+
+;; -----------------------------------------------------------------------------
+;; Helper definitions that outlive the PROCESS
+;; -----------------------------------------------------------------------------
+
+(defn- restore-into-fresh-sandbox
+  "Persist one sandbox's definitions and restore them into a FRESH one, exactly
+   as a gateway restart does. `setup` is either code to run in the first sandbox
+   or `[:file src]` to plant a snapshot directly. Answers the probe's stdout, the
+   restored count and the snapshot file; always removes the session's file."
+  [setup probe-code]
+  (let [sid (str "vis-test-defs-" (System/nanoTime))]
+    (try (let
+           [planted (when (vector? setup) (second setup))
+            _ (when planted
+                (let [f (io/file (paths/sandbox-defs-file sid))]
+                  (io/make-parents f)
+                  (spit f planted)))
+            first-ctx (when-not planted (:python-context (ep/create-python-context {})))
+            _ (when first-ctx (ep/run-python-block first-ctx setup))
+            file (when first-ctx (ep/persist-session-defs! first-ctx sid))
+            fresh (:python-context (ep/create-python-context {}))
+            restored (ep/restore-session-defs! fresh sid)]
+
+           {:file file
+            :snapshot (or planted (when file (slurp file)))
+            :restored restored
+            :stdout (:stdout (ep/run-python-block fresh probe-code))})
+         (finally (.delete (io/file (paths/sandbox-defs-file sid)))))))
+
+(defdescribe
+  session-defs-across-processes-test
+  ;; The sandbox died with the PROCESS: kill the gateway, resume, and every helper
+  ;; the session had refined was gone while the transcript still showed it — the
+  ;; next call raised NameError against code the model could read but not run.
+  (it "re-creates a helper, its module alias and its constant in a fresh sandbox"
+      (let
+        [{:keys [restored stdout snapshot]}
+         (restore-into-fresh-sandbox
+           "ROOT = \"/tmp/vis-defs-probe\"\nimport json as J\ndef shout(s):\n    return s.upper()\n"
+           (str "print(shout(\"ok\"))\n" "print(ROOT, J.dumps([1]))\n"
+                "import inspect\n" "print(inspect.getsource(shout).splitlines()[0])\n"))]
+        (expect (= 1 restored))
+        (expect (str/includes? snapshot "def shout(s):"))
+        (expect (str/includes? stdout "OK"))
+        (expect (str/includes? stdout "/tmp/vis-defs-probe [1]"))
+        ;; Restored source reads back like a local one — that is what makes a
+        ;; helper refinable instead of re-pasted.
+        (expect (str/includes? stdout "def shout(s):"))))
+  (it "keeps every definition that still loads when one statement no longer does"
+      (let
+        [{:keys [restored stdout]} (restore-into-fresh-sandbox
+                                     [:file
+                                      (str "import totally_missing_module as tm\n"
+                                           "BROKEN = undefined_name\n"
+                                           "def survivor(x):\n    return x * 2\n")]
+                                     "print(survivor(21))\n")]
+        (expect (= 1 restored))
+        (expect (str/includes? stdout "42"))))
+  (it "writes nothing, and drops a stale file, for a session with no definitions"
+      (let
+        [sid
+         (str "vis-test-defs-" (System/nanoTime))
+
+         f
+         (io/file (paths/sandbox-defs-file sid))
+
+         ctx
+         (:python-context (ep/create-python-context {}))]
+
+        (try (io/make-parents f)
+             (spit f "def gone():\n    return 1\n")
+             (ep/run-python-block ctx "x = 1")
+             (expect (nil? (ep/persist-session-defs! ctx sid)))
+             (expect (not (.exists f)))
+             (finally (.delete f))))))
+
+(defdescribe
+  defs-verb-test
+  ;; Listing your own helpers meant writing a globals()/co_filename comprehension
+  ;; by hand every time, and reading one back meant remembering `inspect`.
+  (it "lists the session's own functions, and refuses a name it never defined"
+      (let
+        [ctx
+         (:python-context (ep/create-python-context {}))
+
+         empty-out
+         (:stdout (ep/run-python-block ctx "print(defs())"))
+
+         _
+         (ep/run-python-block ctx "from json import dumps\ndef widen(a, b=2):\n    return a * b\n")
+
+         listed
+         (:stdout (ep/run-python-block ctx "print(defs())"))
+
+         source
+         (:stdout (ep/run-python-block ctx "print(defs(\"widen\"))"))
+
+         missing
+         (:stdout (ep/run-python-block ctx
+                                       (str "try:\n" "    defs(\"nope\")\n"
+                                            "except NameError as exc:\n"
+                                            "    print(\"refused:\", exc)\n")))]
+
+        (expect (str/includes? empty-out "no functions defined by this session yet"))
+        (expect (str/includes? listed "widen(a, b=2)"))
+        ;; An IMPORTED function is not this session's definition.
+        (expect (not (str/includes? listed "dumps")))
+        (expect (str/includes? source "def widen(a, b=2):"))
+        (expect (str/includes? missing "refused:")))))

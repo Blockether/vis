@@ -10,7 +10,8 @@
 
      create-python-context / set-python-binding! / bind-and-bump! /
      bind-and-bump-with-doc! / count-top-level-forms / validate-non-empty-block! /
-     validate-no-banned-defs! / restore-sandbox! / SYSTEM_VAR_NAMES /
+     validate-no-banned-defs! / persist-session-defs! / restore-session-defs! /
+     SYSTEM_VAR_NAMES /
      system-var-sym? / *lru-atom* / *current-turn-position* / fresh-lru-atom /
      run-python-block / map-polyglot-error / bind-ctx! / ctx->python-str
 
@@ -909,7 +910,7 @@
 (def ^:private protected-baseline-names
   "Python globals the agent may CALL but must not rebind. Rebinding a tool or
    parser-helper name would shadow the persistent session substrate."
-  #{"apropos" "doc" "gather" "__vis_count_forms__" "__vis_banned_name__"})
+  #{"apropos" "doc" "defs" "gather" "__vis_count_forms__" "__vis_banned_name__"})
 
 (defn- protected-names-for-bindings
   [custom-bindings]
@@ -1158,6 +1159,10 @@
       ctx
       'gather
       "gather(*awaitables) -> list. Concurrently run independent deferred tool calls/awaitables on a bounded host pool; results preserve input order. One list/tuple works. Use `await gather(...)`; keep dependent calls sequential. All settle before failure reports every failing slot index.")
+    (set-python-binding-doc!
+      ctx
+      'defs
+      "defs(name=None) -> str. The FUNCTIONS this session defined, as text: `defs()` lists each one's name, signature, block and length; `defs(name)` returns that one's source, so a helper is refined by editing what it already says instead of being re-pasted from memory. A `def` outlives the block and the turn, and is re-created in a fresh sandbox after a gateway restart — a restored one is marked `(restored)`. Imported functions and engine internals are never listed. When the same helper recurs across sessions it has outgrown the sandbox: propose a Python extension (`doc(\"extending\")`).")
     (set-python-binding-doc!
       ctx
       'fold-session
@@ -3289,15 +3294,83 @@
       (run-async-program ctx g code))))
 
 ;; =============================================================================
-;; Engine-owned sandbox names + restore (NOOP)
+;; Engine-owned sandbox names + persisted session helper definitions
 ;; =============================================================================
 
 (def SYSTEM_VAR_NAMES "Engine-owned symbols hidden from user live-var listings." '#{session})
 
 (defn system-var-sym? [sym] (contains? SYSTEM_VAR_NAMES sym))
 
-(defn restore-sandbox!
-  "NOOP. The session has ONE persistent interpreter; globals (defs/imports/vars)
-   persist NATURALLY across turns, so there is nothing to restore."
-  [_python-context _db-info _session-id]
-  [])
+(def ^:private session-defs-max-bytes
+  "Cap on ONE session's persisted helper source. Helpers are small; anything past
+   this is a runaway generator, not a toolbox, and is neither written nor read."
+  262144)
+
+(def ^:private last-session-defs
+  "session-id -> the snapshot last written, so an unchanged toolbox re-writes nothing."
+  (atom {}))
+
+(defn persist-session-defs!
+  "Write this session's own `def`s beside the session, for a LATER process.
+
+   Globals persist naturally across turns because the interpreter does — but the
+   interpreter dies with the PROCESS. Restart the gateway and every helper the
+   session refined is gone while the transcript still shows it, so the next call
+   is a NameError against code the model can still read. `__vis_defs_snapshot__`
+   renders the module aliases, scalar constants and function sources that
+   re-create them; this stores that text at `paths/sandbox-defs-file`.
+
+   Best effort and never in a block's way: any failure is dropped. Returns the
+   file when it wrote one, nil otherwise."
+  [python-context session-id]
+  (when (and python-context session-id)
+    (try
+      (let
+        [v
+         (.eval ^Context python-context "python" "__vis_defs_snapshot__()")
+
+         src
+         (when (and v (.isString ^Value v)) (.asString ^Value v))
+
+         f
+         (io/file (paths/sandbox-defs-file (str session-id)))]
+
+        (cond
+          ;; Nothing defined (or every helper deleted): drop the stale file so a
+          ;; restart restores exactly what the session has now, not what it had.
+          (str/blank? src)
+          (do (swap! last-session-defs dissoc session-id) (when (.exists f) (.delete f)) nil)
+          (> (count src) (long session-defs-max-bytes)) nil
+          (= src (get @last-session-defs session-id)) nil
+          :else
+          (do (io/make-parents f) (spit f src) (swap! last-session-defs assoc session-id src) f)))
+      (catch Throwable _ nil))))
+
+(defn restore-session-defs!
+  "Re-create the helper definitions an EARLIER process persisted for `session-id`.
+
+   Runs once, on a FRESH context, before the session's first block. The restored
+   source is registered as a real block, so `defs(\"name\")` and
+   `inspect.getsource` read a restored helper back exactly like a local one.
+   Only `def`s and their imports/constants are stored, so nothing re-executes a
+   previous block's side effects.
+
+   Returns the number of session-defined functions live afterwards, or nil when
+   there was nothing to restore."
+  [python-context session-id]
+  (when (and python-context session-id)
+    (try
+      (let [f (io/file (paths/sandbox-defs-file (str session-id)))]
+        (when (and (.isFile f) (<= (.length f) (long session-defs-max-bytes)))
+          (let
+            [src (slurp f)
+             ^Value g (python-globals python-context)
+             _ (.putMember g "__vis_restore_src__" src)
+             n (.eval ^Context python-context "python" "__vis_restore_defs__(__vis_restore_src__)")]
+
+            (.removeMember g "__vis_restore_src__")
+            (swap! last-session-defs assoc session-id src)
+            (when (and n (.fitsInLong ^Value n)) (.asLong ^Value n)))))
+      (catch Throwable e
+        (tel/log! {:level :debug :id ::restore-session-defs-failed :error e})
+        nil))))
