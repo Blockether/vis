@@ -144,9 +144,25 @@ const SEARCH_HYDRATE_MAX = 40;
 // this pause is what stops the network being asked until typing rests.
 const SEARCH_DEBOUNCE_MS = 200;
 
-// ONE machine's answer to the live query: the ranked hits it found, and the
-// sessions those hits named that this page had not paged in yet.
-type SearchAnswer = { matches: SessionMatch[]; rows: Session[] };
+// A SEARCH IS A GESTURE, and a fleet is only ever as quiet as its quietest machine. The
+// transport gives every request 30s (`REQUEST_TIMEOUT_MS`) — the right budget for a list
+// read that pages, the wrong one for a question somebody is watching: a paired laptop
+// that is asleep TAKES the socket without refusing it, so one dark machine held
+// `searching 1 of 3 machines...` on screen for half a minute and then filed itself as
+// having found nothing. A ranked FTS query over a 2.2 GB store answers in ~230ms, so
+// silence this long is not slowness, it is absence — and absence is reported, not waited
+// out.
+const SEARCH_REACH_MS = 8_000;
+
+// ONE machine's answer to the live query: the ranked hits it found, the sessions those
+// hits named that this page had not paged in yet, and whether the machine ANSWERED AT
+// ALL. `reached: false` is not an empty result — it is the absence of one, and the
+// screen prints it as such.
+type SearchAnswer = { matches: SessionMatch[]; rows: Session[]; reached: boolean };
+
+// A machine that was asked and did not speak: dark before the question, or silent past
+// `SEARCH_REACH_MS`.
+const UNREACHED: SearchAnswer = { matches: [], rows: [], reached: false };
 
 // The fleet's answer to ONE needle. `asked` is who the question went to, so
 // `asked.length - byMachine.size` is exactly how much of the search is still
@@ -630,8 +646,25 @@ export function SessionsScreen({
     const needle = deferredQuery.trim();
     if (!needle) return;
     const targets = scopedConns(connsRef.current, scope);
-    setSearchAnswers({ needle, asked: targets.map(machineKey), byMachine: new Map() });
-    if (targets.length === 0) return;
+    // A MACHINE THE FLEET ALREADY KNOWS IS DARK IS ASKED NOTHING. Its list read failed,
+    // it is drained out of `All` (see `scopedMachines`) and its tile carries the retry —
+    // asking it anyway put a machine that is not even on screen in front of the progress
+    // the reader is watching, for as long as the transport was willing to wait. It still
+    // counts as ASKED and answers at once as unreached: dropping it silently would make
+    // the search look complete when part of the fleet was never read.
+    const dark = new Set(
+      machinesRef.current
+        .filter((machine) => machine.error !== null)
+        .map((machine) => machineKey(machine.conn)),
+    );
+    const asked = targets.map(machineKey);
+    setSearchAnswers({
+      needle,
+      asked,
+      byMachine: new Map(asked.filter((key) => dark.has(key)).map((key) => [key, UNREACHED])),
+    });
+    const reachable = targets.filter((conn) => !dark.has(machineKey(conn)));
+    if (reachable.length === 0) return;
     const controller = new AbortController();
     const answer = (key: string, entry: SearchAnswer) =>
       setSearchAnswers((prev) =>
@@ -640,16 +673,32 @@ export function SessionsScreen({
           : prev,
       );
     const timer = window.setTimeout(() => {
-      for (const conn of targets) {
+      for (const conn of reachable) {
         const key = machineKey(conn);
         const api = clientFor(conn);
         void (async () => {
-          // One machine failing to search (asleep, older gateway) must not blank
-          // the matches the others found: it answers with nothing, and stops
-          // being counted as outstanding.
-          const found = await api.searchSessionMatches(needle, controller.signal).catch(() => []);
+          // The search's own deadline (`SEARCH_REACH_MS`), not the transport's: a
+          // blackholed socket ends only when someone cancels it, and the whole fleet's
+          // progress was hostage to the machine that never spoke.
+          const reach = new AbortController();
+          const giveUp = () => reach.abort();
+          controller.signal.addEventListener('abort', giveUp, { once: true });
+          const expiry = window.setTimeout(giveUp, SEARCH_REACH_MS);
+          // One machine failing to search (asleep, refused, older gateway, out of time)
+          // must not blank the matches the others found — and must not be filed as an
+          // answer it never gave, which is how a dead gateway used to report "no
+          // matches on this machine".
+          const found = await api.searchSessionMatches(needle, reach.signal).catch(() => null);
+          // The deadline is spent; the read is the reader's again. The effect's own
+          // cancellation stays wired to this reach for as long as the effect lives, so a
+          // query the user has replaced still aborts the flight it started.
+          window.clearTimeout(expiry);
           if (controller.signal.aborted) return;
-          answer(key, { matches: found, rows: [] });
+          if (found === null) {
+            answer(key, UNREACHED);
+            return;
+          }
+          answer(key, { matches: found, rows: [], reached: true });
           // The list is PAGED. Intersecting the hits with the rows already loaded
           // meant search could only find what was on screen; a hit in a session
           // further down the fleet's ordering vanished. Fetch those rows by id —
@@ -668,7 +717,11 @@ export function SessionsScreen({
             ),
           );
           if (controller.signal.aborted) return;
-          answer(key, { matches: found, rows: rows.filter((row): row is Session => row !== null) });
+          answer(key, {
+            matches: found,
+            rows: rows.filter((row): row is Session => row !== null),
+            reached: true,
+          });
         })();
       }
     }, SEARCH_DEBOUNCE_MS);
@@ -691,6 +744,25 @@ export function SessionsScreen({
   // machine that was asked has yet to come back. This is the one fact the screen
   // owed the reader and did not have.
   const searchPending = searching && (live === null || searchAnswered.size < searchAsked.length);
+  // The machines that were ASKED and never answered — dark before the question was put,
+  // or silent past `SEARCH_REACH_MS`. Kept apart from the ones that answered with
+  // nothing, because "I looked and found nothing" and "you never heard from me" are
+  // different facts and only the first one is a result.
+  const searchUnreached = useMemo(
+    () => new Set(searchAsked.filter((key) => live?.byMachine.get(key)?.reached === false)),
+    [live, searchAsked],
+  );
+  // What an empty list is ALLOWED to say once the search has settled. A fleet that did
+  // not answer has not looked, so "nothing matches that" would be a verdict nobody
+  // reached — the same lie the in-flight case used to tell, one round trip later.
+  const searchVerdict =
+    searchUnreached.size === 0
+      ? 'Nothing on any paired machine matches that.'
+      : searchUnreached.size < searchAsked.length
+        ? `Nothing on the machines that answered; ${searchUnreached.size} could not be reached.`
+        : searchAsked.length > 1
+          ? 'No machine answered.'
+          : 'This machine did not answer.';
   const matches = useMemo(() => {
     if (!live) return null;
     const byId = new Map<string, SessionMatch>();
@@ -1428,14 +1500,28 @@ export function SessionsScreen({
                       : 'searching...'}
                   </span>
                 ) : (
-                  /* WHERE the query went, and only a fleet has an answer worth
-                     printing: "across 2 of 3 machines" is the proof it left this
-                     gateway. A solo user is told nothing they can act on. */
-                  inScope.length > 1 && (
-                    <span className="whitespace-nowrap font-mono text-chip text-dialog-hint">
-                      across {searchCounts.machines} of {inScope.length} machines
-                    </span>
-                  )
+                  <>
+                    {/* WHERE the query went, and only a fleet has an answer worth
+                        printing: "across 2 of 3 machines" is the proof it left this
+                        gateway. A solo user is told nothing they can act on. */}
+                    {inScope.length > 1 && (
+                      <span className="whitespace-nowrap font-mono text-chip text-dialog-hint">
+                        across {searchCounts.machines} of {inScope.length} machines
+                      </span>
+                    )}
+                    {/* A MACHINE THAT NEVER ANSWERED IS NOT A MACHINE THAT FOUND
+                        NOTHING, and only this row can tell the reader which one it
+                        was: the search covered less of the fleet than it was asked
+                        to, and every count beside this is short by that much. In
+                        failure ink, because it is the one part of the answer that
+                        did not arrive. */}
+                    {searchUnreached.size > 0 && (
+                      <span className="whitespace-nowrap font-mono text-chip text-err">
+                        {searchUnreached.size}{' '}
+                        {searchUnreached.size === 1 ? 'machine' : 'machines'} did not answer
+                      </span>
+                    )}
+                  </>
                 )}
               </>
             )}
@@ -1499,7 +1585,7 @@ export function SessionsScreen({
                   ? `Read ${searchAnswered.size} of ${searchAsked.length} machines so far.`
                   : 'Reading this machine’s transcripts.'
                 : query
-                  ? 'Nothing on any paired machine matches that.'
+                  ? searchVerdict
                   : 'Open the ⋯ menu to start one.'}
             </p>
             {/* The field is in the app bar now, a screen away from this sentence, so the
@@ -1581,9 +1667,11 @@ export function SessionsScreen({
                             {machine.sessions === null
                               ? 'Reading sessions...'
                               : searching
-                                ? searchAnswered.has(key)
-                                  ? 'No matches on this machine.'
-                                  : 'Searching this machine...'
+                                ? searchUnreached.has(key)
+                                  ? 'Could not reach this machine.'
+                                  : searchAnswered.has(key)
+                                    ? 'No matches on this machine.'
+                                    : 'Searching this machine...'
                                 : 'No sessions on this machine yet.'}
                           </p>
                           {/* A MARK CANNOT TEACH ITSELF ON AN EMPTY MACHINE: the band
