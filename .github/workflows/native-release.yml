@@ -112,6 +112,17 @@ jobs:
           # CLOUD Apple-silicon runner named by a repository variable, or by hand
           # with `bin/release-native --tag vX.Y.Z --upload` on any 32 GB+ Mac.
     steps:
+      # A dispatch from a BRANCH has no release to attach to: `tag_name` would
+      # fall back to `main` and softprops would CREATE a release called main.
+      # (Walked into exactly this while proving the runner gate.)
+      - name: Refuse a build with no v* tag to attach to
+        shell: bash
+        run: |
+          tag='${{ inputs.tag || github.ref_name }}'
+          case "$tag" in
+            v*) echo "attaching to $tag" ;;
+            *) echo "::error::dispatch this workflow with an existing v* tag (input 'tag'); got '$tag'"; exit 1 ;;
+          esac
       # A dispatch may name an ALREADY-PUSHED tag: build that tag's source with
       # THIS (fixed) workflow file, and attach the asset to that tag's release —
       # otherwise a CI-only fix could never be applied to a release already cut.
@@ -250,6 +261,17 @@ jobs:
     env:
       VIS_ASSET: vis-agent-macos-arm64-community.tar.gz
     steps:
+      # A dispatch from a BRANCH has no release to attach to: `tag_name` would
+      # fall back to `main` and softprops would CREATE a release called main.
+      # (Walked into exactly this while proving the runner gate.)
+      - name: Refuse a build with no v* tag to attach to
+        shell: bash
+        run: |
+          tag='${{ inputs.tag || github.ref_name }}'
+          case "$tag" in
+            v*) echo "attaching to $tag" ;;
+            *) echo "::error::dispatch this workflow with an existing v* tag (input 'tag'); got '$tag'"; exit 1 ;;
+          esac
       # Fail in SECONDS instead of thrashing for hours: the points-to analysis
       # live set is ~13.7 GiB and peak RSS 14.1-14.9 GiB — numbers the builder
       # prints itself (see the matrix comment). A misconfigured variable pointing

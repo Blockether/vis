@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   in seconds, with the measured numbers in the message, instead of thrashing for hours — every
   GitHub-hosted macOS class, free or paid, is under that floor. The job also caches dependencies
   and smoke-tests the gateway now, because a cloud runner is ephemeral.
+  A dispatch that names no `v*` tag is refused up front too: `tag_name` used to fall back to
+  `main`, which would have published a release called `main`.
 - A shell result has NO `stderr` field (issue #137). Every command runs under a real pty, where
   stdout and stderr are physically ONE stream, so `stderr` could only ever answer `nil` — a
   caller reading it to diagnose a failure got nothing while the message sat in `stdout`. The
