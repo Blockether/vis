@@ -1,4 +1,4 @@
-import { Fragment, memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Banner,
   Button,
@@ -140,8 +140,9 @@ const SEARCH_HYDRATE_MAX = 40;
 // Searching is a FLEET round trip — one ranked FTS query per paired machine, and on a
 // large store the gateway spends ~130ms in SQLite before it answers. Firing that per
 // keystroke would queue a search behind every letter of a word and leave the last one
-// racing its own predecessors. `useDeferredValue` keeps the field itself immediate;
-// this pause is what stops the network being asked until typing rests.
+// racing its own predecessors. This pause is what typing RESTING means: it gates the
+// needle itself (`searchNeedle`), so it holds back the network AND every re-filter,
+// re-rank and re-count the screen does — a keystroke costs the field alone.
 const SEARCH_DEBOUNCE_MS = 200;
 
 // A SEARCH IS A GESTURE, and a fleet is only ever as quiet as its quietest machine. The
@@ -302,8 +303,28 @@ export function SessionsScreen({
   // to an empty screen (see `resolveScope`).
   const [scopePick, setScopePick] = useState<string | null>(SCOPE_ALL);
   const scope = resolveScope(machines, scopePick);
-  // Keep keystrokes immediate even when a large session fleet is regrouped.
-  const deferredQuery = useDeferredValue(query);
+  // THE FIELD IS IMMEDIATE; THE SEARCH IS A GESTURE THAT ENDS. `query` is what the
+  // reader is typing, `searchNeedle` is what typing RESTED on — and every answer, every
+  // count and every filtered row on this screen belongs to the second one. The pause
+  // used to live inside the network effect alone, so while it slept the screen still
+  // re-filtered, re-ranked, threw away the transcript hits it had and re-drew the
+  // header ON EVERY CHARACTER: the list jumped under the thumb a letter at a time and
+  // the count flickered between an answer and nothing. Downstream of one settled
+  // needle, a keystroke costs the field and nothing else, and what is on screen is
+  // always a whole answer to a whole word.
+  const [searchNeedle, setSearchNeedle] = useState(() => query.trim());
+  useEffect(() => {
+    const next = query.trim();
+    if (next === searchNeedle) return;
+    // CLEARING IS NOT A SEARCH. An empty field asks no gateway anything, so the list
+    // comes back on the same frame as the empty box instead of a pause later.
+    if (!next) {
+      setSearchNeedle('');
+      return;
+    }
+    const timer = window.setTimeout(() => setSearchNeedle(next), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [query, searchNeedle]);
   // Every machine's answer to ONE query, filed under the needle it answered — a
   // fleet search is several round trips that land at different times, and the
   // screen has to be able to say which of them are still out. `matches` (ranked
@@ -640,9 +661,10 @@ export function SessionsScreen({
 
   // Transcript + title search runs server-side and RANKED (see `rank` below), and
   // it is a fleet ROUND TRIP per machine over a whole transcript store — hundreds
-  // of milliseconds, not a keystroke. This effect only asks, and only after typing
-  // rests. A superseded query is cancelled twice over: the sleeping timer is
-  // cleared before it ever calls out, and a request already in flight is aborted.
+  // of milliseconds, not a keystroke. This effect only asks, and it is handed the
+  // needle typing already RESTED on (`searchNeedle`), so it asks once per pause. A
+  // superseded query is cancelled twice over: the pause upstream never files a needle
+  // nobody stopped on, and a request already in flight is aborted here.
   // What decides what is on SCREEN is neither: an answer is filed under the needle
   // it was asked for, so a late reply to an abandoned query is ignored by
   // construction rather than by luck.
@@ -654,7 +676,7 @@ export function SessionsScreen({
   // trip hiding matches the gateway had already found — a long silent wait, which
   // is exactly what the search was reported for.
   useEffect(() => {
-    const needle = deferredQuery.trim();
+    const needle = searchNeedle;
     if (!needle) return;
     // WHICH MACHINES ARE EVEN ASKED. A gateway that is not answering is not asked a
     // question: neither the one whose list read failed nor the one that already ate a
@@ -681,82 +703,91 @@ export function SessionsScreen({
           ? { ...prev, byMachine: new Map(prev.byMachine).set(key, entry) }
           : prev,
       );
-    const timer = window.setTimeout(() => {
-      for (const conn of reachable) {
-        const key = machineKey(conn);
-        const api = clientFor(conn);
-        void (async () => {
-          // The search's own deadline (`SEARCH_REACH_MS`), not the transport's: a
-          // blackholed socket ends only when someone cancels it, and the whole fleet's
-          // progress was hostage to the machine that never spoke.
-          const reach = new AbortController();
-          const giveUp = () => reach.abort();
-          controller.signal.addEventListener('abort', giveUp, { once: true });
-          const expiry = window.setTimeout(giveUp, SEARCH_REACH_MS);
-          // One machine failing to search (asleep, refused, older gateway, out of time)
-          // must not blank the matches the others found — and must not be filed as an
-          // answer it never gave, which is how a dead gateway used to report "no
-          // matches on this machine".
-          const found = await api.searchSessionMatches(needle, reach.signal).catch(() => null);
-          // The deadline is spent; the read is the reader's again. The effect's own
-          // cancellation stays wired to this reach for as long as the effect lives, so a
-          // query the user has replaced still aborts the flight it started.
-          window.clearTimeout(expiry);
-          if (controller.signal.aborted) return;
-          if (found === null) {
-            // NOW KNOWN DARK. The next query skips this machine outright instead of
-            // spending another `SEARCH_REACH_MS` rediscovering the same silence; its
-            // next answered list read takes the mark off again (see `loadMachine`).
-            searchSilentRef.current.add(key);
-            answer(key, UNREACHED);
-            return;
-          }
-          answer(key, { matches: found, rows: [], reached: true });
-          // The list is PAGED. Intersecting the hits with the rows already loaded
-          // meant search could only find what was on screen; a hit in a session
-          // further down the fleet's ordering vanished. Fetch those rows by id —
-          // AFTER the matches above are already on screen.
-          const loaded = new Set(
-            (machinesRef.current.find((machine) => machineKey(machine.conn) === key)
-              ?.sessions ?? []).map((session) => session.id),
-          );
-          const missing = found
-            .filter((match) => !loaded.has(match.sessionId))
-            .slice(0, SEARCH_HYDRATE_MAX);
-          if (missing.length === 0) return;
-          const rows = await Promise.all(
-            missing.map((match) =>
-              api.session(match.sessionId, controller.signal).catch(() => null),
-            ),
-          );
-          if (controller.signal.aborted) return;
-          answer(key, {
-            matches: found,
-            rows: rows.filter((row): row is Session => row !== null),
-            reached: true,
-          });
-        })();
-      }
-    }, SEARCH_DEBOUNCE_MS);
+    for (const conn of reachable) {
+      const key = machineKey(conn);
+      const api = clientFor(conn);
+      void (async () => {
+        // The search's own deadline (`SEARCH_REACH_MS`), not the transport's: a
+        // blackholed socket ends only when someone cancels it, and the whole fleet's
+        // progress was hostage to the machine that never spoke.
+        const reach = new AbortController();
+        const giveUp = () => reach.abort();
+        controller.signal.addEventListener('abort', giveUp, { once: true });
+        const expiry = window.setTimeout(giveUp, SEARCH_REACH_MS);
+        // One machine failing to search (asleep, refused, older gateway, out of time)
+        // must not blank the matches the others found — and must not be filed as an
+        // answer it never gave, which is how a dead gateway used to report "no
+        // matches on this machine".
+        const found = await api.searchSessionMatches(needle, reach.signal).catch(() => null);
+        // The deadline is spent; the read is the reader's again. The effect's own
+        // cancellation stays wired to this reach for as long as the effect lives, so a
+        // query the user has replaced still aborts the flight it started.
+        window.clearTimeout(expiry);
+        if (controller.signal.aborted) return;
+        if (found === null) {
+          // NOW KNOWN DARK. The next query skips this machine outright instead of
+          // spending another `SEARCH_REACH_MS` rediscovering the same silence; its
+          // next answered list read takes the mark off again (see `loadMachine`).
+          searchSilentRef.current.add(key);
+          answer(key, UNREACHED);
+          return;
+        }
+        answer(key, { matches: found, rows: [], reached: true });
+        // The list is PAGED. Intersecting the hits with the rows already loaded
+        // meant search could only find what was on screen; a hit in a session
+        // further down the fleet's ordering vanished. Fetch those rows by id —
+        // AFTER the matches above are already on screen.
+        const loaded = new Set(
+          (machinesRef.current.find((machine) => machineKey(machine.conn) === key)
+            ?.sessions ?? []).map((session) => session.id),
+        );
+        const missing = found
+          .filter((match) => !loaded.has(match.sessionId))
+          .slice(0, SEARCH_HYDRATE_MAX);
+        if (missing.length === 0) return;
+        const rows = await Promise.all(
+          missing.map((match) =>
+            api.session(match.sessionId, controller.signal).catch(() => null),
+          ),
+        );
+        if (controller.signal.aborted) return;
+        answer(key, {
+          matches: found,
+          rows: rows.filter((row): row is Session => row !== null),
+          reached: true,
+        });
+      })();
+    }
     return () => {
       controller.abort();
-      window.clearTimeout(timer);
     };
-  }, [deferredQuery, fleetKey, scope]);
+  }, [searchNeedle, fleetKey, scope]);
 
-  const searching = deferredQuery.trim().length > 0;
-  // ONLY the answers to the query on screen count. Anything filed under an older
+  // WHAT IS TYPED VS WHAT WAS ASKED. `typed` is the field this frame; `searchNeedle` is
+  // the needle every row, count and answer below belongs to. They differ only inside a
+  // pause, and that difference is exactly what the row spends saying "searching..." —
+  // the alternative was to re-filter, re-rank and re-count on every character, which is
+  // the list jumping under the thumb a letter at a time.
+  const typed = query.trim();
+  const searching = typed.length > 0;
+  // A NEEDLE HAS ACTUALLY BEEN ASKED, so the tally below counts a filtered list. Before
+  // the first pause settles there is a query in the field and no question on the wire,
+  // and a count then would be counting every session on the machine.
+  const searched = searchNeedle.length > 0;
+  // ONLY the answers to the needle on screen count. Anything filed under an older
   // needle is a superseded round trip, not a result.
-  const live = searchAnswers.needle === deferredQuery.trim() ? searchAnswers : null;
+  const live = searchAnswers.needle === searchNeedle ? searchAnswers : null;
   const searchAsked = live?.asked ?? NO_MACHINES;
   const searchAnswered = useMemo(
     () => new Set(searchAsked.filter((key) => live?.byMachine.has(key) === true)),
     [live, searchAsked],
   );
-  // Still asking — before the debounce has even filed a needle, and while any
-  // machine that was asked has yet to come back. This is the one fact the screen
-  // owed the reader and did not have.
-  const searchPending = searching && (live === null || searchAnswered.size < searchAsked.length);
+  // STILL ASKING — the field is ahead of the needle the list answers (inside the pause),
+  // no needle has been filed yet, or a machine that was asked has yet to come back. This
+  // is the one fact the screen owed the reader and did not have.
+  const searchPending =
+    searching &&
+    (typed !== searchNeedle || live === null || searchAnswered.size < searchAsked.length);
   // The machines that were ASKED and never answered — dark before the question was put,
   // or silent past `SEARCH_REACH_MS`. Kept apart from the ones that answered with
   // nothing, because "I looked and found nothing" and "you never heard from me" are
@@ -807,7 +838,7 @@ export function SessionsScreen({
   // Filtering happens INSIDE each machine: two checkouts of the same repo on two
   // machines are two projects, and a folder name never merges them.
   const filtered = useMemo(() => {
-    const needle = deferredQuery.trim().toLowerCase();
+    const needle = searchNeedle.toLowerCase();
     return inScope.map((machine) => {
       const base = clientFor(machine.conn).base;
       const draftFor = (session: Session) => draftMessages[draftMessageKey(base, session.id)];
@@ -855,7 +886,7 @@ export function SessionsScreen({
         }),
       };
     });
-  }, [inScope, deferredQuery, matches, searchHits, draftMessages, favorites]);
+  }, [inScope, searchNeedle, matches, searchHits, draftMessages, favorites]);
 
   // A filter is a FLEET question: it runs on every machine in scope, so the header
   // reports what came back and from how many of them.
@@ -1424,8 +1455,12 @@ export function SessionsScreen({
           distance from the paper: 12 and 12 of a 390 phone (strip at 12, the projects
           mark ending at 378), and 984 inside a card that ends at 1000 on a 1024 desk. */}
       {machines.length > 0 && (
-        <div className="relative z-10 flex items-center gap-1.5 px-3 pb-3 pt-6 sm:pb-4 sm:pl-0 sm:pr-4 sm:pt-8">
-          <div role="group" aria-label="Machines" className="flex min-w-0 shrink">
+        <div className="relative z-10 flex flex-wrap items-center gap-x-1.5 gap-y-2 px-3 pb-3 pt-6 sm:flex-nowrap sm:pb-4 sm:pl-0 sm:pr-4 sm:pt-8">
+          {/* The switch owns the leading space of this row: it GROWS, so the machine's
+              verb stands at the trailing inset without an auto margin that would fight
+              the search report for the same free space. The track inside it keeps its
+              own compact width and scrolls a fleet that outgrows the row. */}
+          <div role="group" aria-label="Machines" className="flex min-w-0 flex-1">
             <MachineSwitcher>
               {/* `All` LEADS THE STRIP, above a fleet only: it is where the machines
                   are actually distinguishable — one section, one hue and one rail per
@@ -1477,7 +1512,72 @@ export function SessionsScreen({
               })}
             </MachineSwitcher>
           </div>
-          <div className="ml-auto flex shrink-0 items-center gap-2">
+          {/* THE SEARCH REPORT IS A LINE OF ITS OWN ON A PHONE. It used to ride the
+              trailing cluster beside the switch on a row that could not shrink, so on a
+              390px glass "271 matches / 1 machine did not answer" pushed the strip until
+              the machine's own address was cut mid-token (`100.109.18.77:78`) and the
+              report itself ran past the 12px inset to the edge of the screen. The row
+              WRAPS instead: the switch keeps the whole first line, the report takes the
+              second one whole, and from `sm` up — where there is room for both — it goes
+              back inline at the trailing end. */}
+          {searching && sessions !== null && (
+            <div className="order-last flex w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1 sm:order-none sm:w-auto sm:flex-nowrap">
+              {/* A filter is a FLEET question, and the count it came back with is the
+                  only proof it left this gateway. It is the one fact this row reports:
+                  totals were the same numbers the project headers below already carry.
+                  It counts the ROWS ON SCREEN, so it is spoken only once a needle has
+                  actually been asked: inside a pause the list is still the last answer,
+                  and before the first one there is nothing filtered to count. */}
+              {searched && (
+                <span className="whitespace-nowrap font-mono text-chip font-bold text-accent-ink">
+                  {searchCounts.matches} {searchCounts.matches === 1 ? 'match' : 'matches'}
+                </span>
+              )}
+              {/* A search is a fleet ROUND TRIP over a transcript store, not a filter
+                  over rows already here, so it has a DURATION and the row has to spend
+                  it saying so — the report was waiting with nothing on screen but a
+                  count that was really just "nothing yet". The same slot therefore
+                  reports PROGRESS while machines are still reading ("searching 1 of 3
+                  machines...") and the shipped tally the moment they have all answered;
+                  the count beside it grows as each one lands, because every machine
+                  paints the moment IT answers instead of behind the slowest. It is also
+                  what a PAUSE says: the field is ahead of the needle the list answers,
+                  and the honest word for that is the same one. */}
+              {searchPending ? (
+                <span
+                  aria-live="polite"
+                  className="whitespace-nowrap font-mono text-chip text-dialog-hint"
+                >
+                  {searchAsked.length > 1
+                    ? `searching ${searchAnswered.size} of ${searchAsked.length} machines...`
+                    : 'searching...'}
+                </span>
+              ) : (
+                <>
+                  {/* WHERE the query went, and only a fleet has an answer worth
+                      printing: "across 2 of 3 machines" is the proof it left this
+                      gateway. A solo user is told nothing they can act on. */}
+                  {inScope.length > 1 && (
+                    <span className="whitespace-nowrap font-mono text-chip text-dialog-hint">
+                      across {searchCounts.machines} of {inScope.length} machines
+                    </span>
+                  )}
+                  {/* A MACHINE THAT NEVER ANSWERED IS NOT A MACHINE THAT FOUND NOTHING,
+                      and only this row can tell the reader which one it was: the search
+                      covered less of the fleet than it was asked to, and every count
+                      beside this is short by that much. In failure ink, because it is
+                      the one part of the answer that did not arrive. */}
+                  {searchUnreached.size > 0 && (
+                    <span className="whitespace-nowrap font-mono text-chip text-err">
+                      {searchUnreached.size}{' '}
+                      {searchUnreached.size === 1 ? 'machine' : 'machines'} did not answer
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+          <div className="flex shrink-0 items-center gap-2">
             {/* Only when no button can speak for it: a create started from this row's
                 own menu belongs to no project header. Every header-started create
                 wears its word INSIDE the button that was pressed. */}
@@ -1485,58 +1585,6 @@ export function SessionsScreen({
               <span aria-live="polite" className="font-mono text-chip text-dialog-hint">
                 {creating.label}
               </span>
-            )}
-            {/* A filter is a FLEET question, and the count it came back with is the
-                only proof it left this gateway. It is the one fact this row reports:
-                totals were the same numbers the project headers below already carry. */}
-            {searching && sessions !== null && (
-              <>
-                <span className="whitespace-nowrap font-mono text-chip font-bold text-accent-ink">
-                  {searchCounts.matches} {searchCounts.matches === 1 ? 'match' : 'matches'}
-                </span>
-                {/* A search is a fleet ROUND TRIP over a transcript store, not a
-                    filter over rows already here, so it has a DURATION and the row
-                    has to spend it saying so — the report was waiting with nothing
-                    on screen but a count that was really just "nothing yet". The
-                    same slot therefore reports PROGRESS while machines are still
-                    reading ("searching 1 of 3 machines...") and the shipped tally
-                    the moment they have all answered; the count beside it grows as
-                    each one lands, because every machine paints the moment IT
-                    answers instead of behind the slowest. */}
-                {searchPending ? (
-                  <span
-                    aria-live="polite"
-                    className="whitespace-nowrap font-mono text-chip text-dialog-hint"
-                  >
-                    {searchAsked.length > 1
-                      ? `searching ${searchAnswered.size} of ${searchAsked.length} machines...`
-                      : 'searching...'}
-                  </span>
-                ) : (
-                  <>
-                    {/* WHERE the query went, and only a fleet has an answer worth
-                        printing: "across 2 of 3 machines" is the proof it left this
-                        gateway. A solo user is told nothing they can act on. */}
-                    {inScope.length > 1 && (
-                      <span className="whitespace-nowrap font-mono text-chip text-dialog-hint">
-                        across {searchCounts.machines} of {inScope.length} machines
-                      </span>
-                    )}
-                    {/* A MACHINE THAT NEVER ANSWERED IS NOT A MACHINE THAT FOUND
-                        NOTHING, and only this row can tell the reader which one it
-                        was: the search covered less of the fleet than it was asked
-                        to, and every count beside this is short by that much. In
-                        failure ink, because it is the one part of the answer that
-                        did not arrive. */}
-                    {searchUnreached.size > 0 && (
-                      <span className="whitespace-nowrap font-mono text-chip text-err">
-                        {searchUnreached.size}{' '}
-                        {searchUnreached.size === 1 ? 'machine' : 'machines'} did not answer
-                      </span>
-                    )}
-                  </>
-                )}
-              </>
             )}
             {/* The machine's own control, on the row that names that machine: its
                 PROJECTS — choose the current one, add one, remove one.
@@ -1715,7 +1763,7 @@ export function SessionsScreen({
                           sessions={projectSessions}
                           conn={machine.conn}
                           matches={matches}
-                          needle={deferredQuery.trim()}
+                          needle={searchNeedle}
                           onOpen={onOpen}
                           onRename={startRename}
                           onDelete={startDelete}

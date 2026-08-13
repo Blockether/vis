@@ -229,7 +229,10 @@ describe("a search gives up on a silent machine on its own clock", () => {
     await settle(50);
 
     view.setQuery("needle");
-    await settle(9_000);
+    // The query lands one PAUSE after the last keystroke (`SEARCH_DEBOUNCE_MS`), and the
+    // search's own deadline starts from there.
+    await settle(300);
+    await settle(8_700);
     expect(screen.getByText("This machine did not answer.")).toBeTruthy();
     expect(document.body.textContent).not.toContain("Nothing on any paired machine");
   });
@@ -272,7 +275,10 @@ describe("a machine already known to be dark is not asked again", () => {
     view.requests.length = 0;
 
     view.setQuery("needle");
-    await settle(9_000);
+    // The query lands one PAUSE after the last keystroke (`SEARCH_DEBOUNCE_MS`), and the
+    // search's own deadline starts from there.
+    await settle(300);
+    await settle(8_700);
     // Both were asked the first time — nothing yet said beta was dark.
     expect(searches(view.requests)).toEqual(["needle", "needle"]);
     expect(screen.getByText("1 machine did not answer")).toBeTruthy();
@@ -293,7 +299,10 @@ describe("a machine already known to be dark is not asked again", () => {
     await settle(50);
 
     view.setQuery("needle");
-    await settle(9_000);
+    // The query lands one PAUSE after the last keystroke (`SEARCH_DEBOUNCE_MS`), and the
+    // search's own deadline starts from there.
+    await settle(300);
+    await settle(8_700);
     expect(screen.getByText("1 machine did not answer")).toBeTruthy();
 
     // The blackout is a memory of one failure, not a verdict on the machine: the 10s
@@ -303,5 +312,112 @@ describe("a machine already known to be dark is not asked again", () => {
     view.setQuery("third");
     await settle(300);
     expect(searches(view.requests)).toEqual(["third", "third"]);
+  });
+});
+
+// Regression, user report (paraphrased: "now it makes everything jump on every character —
+// it is not natural and most likely not debounced"): the pause held back only the NETWORK.
+// Every keystroke still re-filed the answers under the half-typed needle, so the transcript
+// hits on screen were discarded and the rows they had put in the list vanished and came
+// back a pause later — the list rearranging itself under the thumb one letter at a time.
+describe("typing does not redraw the list under the thumb", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Let every request, timer and repaint that fits inside `ms` happen. */
+  const settle = async (ms = 0) => {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  };
+
+  /** One machine, two sessions, and a transcript hit in exactly one of them. */
+  const machine = () => [
+    {
+      label: "alpha",
+      sessions: [
+        listSession({ id: "a1", title: "First" }),
+        listSession({ id: "a2", title: "Later" }),
+      ],
+      routes: { "/v1/sessions/actions/search": { matches: [hit] } },
+    },
+  ];
+
+  it("holds the rows and the tally of the settled needle through the whole pause", async () => {
+    const view = renderSessionsScreen({ machines: machine() });
+    restore = view.restore;
+    await settle(50);
+    view.requests.length = 0;
+
+    view.setQuery("need");
+    await settle(300);
+    // A transcript hit, not a title match: this row is on screen only because the answer
+    // to "need" put it there, which is exactly what a keystroke used to throw away.
+    expect(screen.getByText("First")).toBeTruthy();
+    expect(screen.getByText("1 match")).toBeTruthy();
+    expect(searches(view.requests)).toEqual(["need"]);
+
+    view.setQuery("needl");
+    await settle(50);
+    expect(screen.getByText("First")).toBeTruthy();
+    expect(screen.getByText("1 match")).toBeTruthy();
+
+    view.setQuery("needle");
+    await settle(150);
+    expect(screen.getByText("First")).toBeTruthy();
+    expect(screen.getByText("1 match")).toBeTruthy();
+
+    // One question for the word the typing rested on, not one per letter.
+    await settle(300);
+    expect(searches(view.requests)).toEqual(["need", "needle"]);
+  });
+
+  // A count is an ANSWER. Before a needle has been asked there is nothing filtered to
+  // count, and printing the unfiltered list's size would be the screen answering a
+  // question nobody has finished typing.
+  it("publishes no tally for a needle nobody has rested on", async () => {
+    const view = renderSessionsScreen({ machines: machine() });
+    restore = view.restore;
+    await settle(50);
+
+    view.setQuery("n");
+    await settle(50);
+    expect(screen.getByText("searching...")).toBeTruthy();
+    expect(screen.queryByText("2 matches")).toBeNull();
+    expect(screen.queryByText("1 match")).toBeNull();
+
+    await settle(300);
+    expect(screen.getByText("1 match")).toBeTruthy();
+  });
+
+  // Regression, user report (paraphrased: "this looks awful on iPhone", with a screenshot
+  // of the switch strip cut mid-address and "271 matches / 1 machine did not answer"
+  // running to the very edge of the glass): the report stood in the trailing cluster of a
+  // row that could not shrink, so on a 390px screen it ate the switch and then overran the
+  // row's own 12px inset.
+  it("gives the search report a line of its own instead of the switch's row", async () => {
+    const view = renderSessionsScreen({ machines: machine() });
+    restore = view.restore;
+    await settle(50);
+
+    view.setQuery("needle");
+    await settle(300);
+    const report = screen.getByText("1 match").closest("div");
+    expect(report).toBeTruthy();
+    const row = report!.parentElement!;
+    // The row wraps on a phone and stops wrapping where there is room for both.
+    expect(row.className).toContain("flex-wrap");
+    expect(row.className).toContain("sm:flex-nowrap");
+    // A whole line of its own below the switch, inline again from `sm` up.
+    expect(report!.className).toContain("w-full");
+    expect(report!.className).toContain("order-last");
+    expect(report!.className).toContain("sm:w-auto");
+    expect(report!.className).toContain("sm:order-none");
+    // And it is not sharing a box with the machine's own verb any more.
+    expect(report!.querySelector('[aria-label^="Projects on"]')).toBeNull();
   });
 });
