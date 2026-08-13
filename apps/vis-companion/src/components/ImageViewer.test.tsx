@@ -90,6 +90,23 @@ describe("ImageViewer", () => {
     expect(close.className).toContain("text-current");
   });
 
+  // Regression, same phone report ("the headline has wrong height"): the title band is
+  // the safe-area inset TALLER under a notch (48px + inset), while the picture's top pad
+  // and its own cap were a fixed 5rem/10rem — so the top of a tall image sat under the
+  // title bar it was supposed to clear.
+  it("keeps the picture clear of the band that clears the notch", () => {
+    const header = document.querySelector('[role="dialog"] header');
+    expect(header?.className).toContain("box-content");
+
+    const picture = document.querySelector('[role="dialog"] img');
+    expect(picture?.closest(".place-items-center")?.className).toContain(
+      "pt-[calc(5rem+env(safe-area-inset-top))]",
+    );
+    expect(picture?.className).toContain(
+      "max-h-[calc(100dvh-10rem-env(safe-area-inset-top))]",
+    );
+  });
+
   // Regression, reported attachment filename click: an image edit could only be opened
   // by striking its thumbnail; the adjacent filename looked like part of the same chip
   // but was not a trigger.

@@ -2712,6 +2712,11 @@ describe("a call site positions, and the component paints", () => {
     expect(
       renderToStaticMarkup(<DialogHeader title="Pasted #1" isUnderNotch />),
     ).toContain("pt-[env(safe-area-inset-top)]");
+    // ...as a strip STANDING ON the band, never taken out of its `min-h-12` row —
+    // `DialogHeader.test.tsx` holds the numbers that reported it.
+    expect(
+      renderToStaticMarkup(<DialogHeader title="Pasted #1" isUnderNotch />),
+    ).toContain("box-content");
     expect(
       renderToStaticMarkup(<DialogHeader title="report.png" isStacked />),
     ).toContain("border-dialog-title-foreground/20");

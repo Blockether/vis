@@ -569,7 +569,16 @@ export function ImageViewer({
         className="absolute inset-x-0 top-0 z-20"
       />
 
-      {/* HANDWRITING IS NOT A SELECTION.
+      {/* THE PICTURE CLEARS THE BAND THAT CLEARS THE NOTCH.
+
+          The title bar floats over the image, so the top pad and the picture's
+          own cap are what keep it off the glass — and under a notch that band
+          is the safe-area inset TALLER (48px + inset). Both therefore carry the
+          same inset the band does, and drop it again at `sm:` exactly where the
+          band's `sm:pt-0` does, so picture and title never disagree about where
+          the top of the screen is.
+
+          HANDWRITING IS NOT A SELECTION.
 
           Reported from an iPad: circles drew fine, but writing letters selected
           the picture instead of marking it. Letters are many short, quick
@@ -579,7 +588,7 @@ export function ImageViewer({
           viewport declares itself unselectable too, not only the sheet over the
           picture. */}
       <div
-        className={`absolute inset-0 grid cursor-grab select-none place-items-center overflow-hidden overscroll-none px-4 pt-20 active:cursor-grabbing [touch-action:none] ${drawing ? "pb-36" : "pb-24"}`}
+        className={`absolute inset-0 grid cursor-grab select-none place-items-center overflow-hidden overscroll-none px-4 pt-[calc(5rem+env(safe-area-inset-top))] active:cursor-grabbing sm:pt-20 [touch-action:none] ${drawing ? "pb-36" : "pb-24"}`}
         onPointerDownCapture={beginGesture}
         onPointerMove={moveGesture}
         onPointerUp={endGesture}
@@ -597,7 +606,7 @@ export function ImageViewer({
             alt={shown.name}
             draggable={false}
             onLoad={fitAnnotations}
-            className={`block max-w-[calc(100vw-2rem)] select-none object-contain ${drawing ? "max-h-[calc(100dvh-13rem)]" : "max-h-[calc(100dvh-10rem)]"}`}
+            className={`block max-w-[calc(100vw-2rem)] select-none object-contain ${drawing ? "max-h-[calc(100dvh-13rem-env(safe-area-inset-top))] sm:max-h-[calc(100dvh-13rem)]" : "max-h-[calc(100dvh-10rem-env(safe-area-inset-top))] sm:max-h-[calc(100dvh-10rem)]"}`}
           />
           <AnnotationLayer
             ref={annotationRef}

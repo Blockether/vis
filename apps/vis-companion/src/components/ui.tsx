@@ -1260,6 +1260,15 @@ export function DialogHeader({
   /**
    * This band is the TOP of the screen, so it clears the notch itself. The desktop
    * has no inset to clear and drops the padding again.
+   *
+   * THE INSET STANDS ABOVE THE BAND'S OWN ROW, NEVER INSIDE IT (`box-content`).
+   * `min-h-12` is a BORDER-BOX minimum, so the safe-area padding was SUBTRACTED from
+   * the band: measured on the image viewer at 390px with a 47px top inset, the band
+   * came out 77px instead of 47+48, its row collapsed to the 30px the title happened
+   * to need, and `CloseButton isBand` — which stretches to that row — shipped 48x30
+   * instead of the 48x48 square it is on every other header, under the app's own
+   * 44px minimum for the one gesture that leaves a screen. Reported as the heading
+   * having the wrong height and the close being a different box from everywhere else.
    */
   isUnderNotch?: boolean;
   /**
@@ -1285,7 +1294,7 @@ export function DialogHeader({
   return (
     <header
       className={`flex min-h-12 shrink-0 items-stretch bg-dialog-title text-dialog-title-foreground mouse:min-h-9 ${
-        isUnderNotch ? 'pt-[env(safe-area-inset-top)] sm:pt-0' : ''
+        isUnderNotch ? 'box-content pt-[env(safe-area-inset-top)] sm:pt-0' : ''
       } ${isStacked ? 'border-t border-dialog-title-foreground/20' : ''} ${className}`}
     >
       <div className={`min-w-0 flex-1 self-center py-1.5 ${LIST_EDGE}`}>

@@ -61,6 +61,37 @@ describe("every dialog header is the one dialog header", () => {
     expect(title.className).not.toContain("truncate");
   });
 
+  // Regression, user report from a phone ("the headline has wrong height and the …
+  // height and width of the x button is not consistent with other … places", about the
+  // image viewer): the band cleared the notch with padding on the SAME box that spells
+  // `min-h-12`, and a min-height is a BORDER-BOX minimum — so the inset was subtracted
+  // from the band instead of standing over it. Measured at 390px with a 47px inset, the
+  // band stood 77px instead of 47+48, its row collapsed to the 30px the title happened
+  // to need, and `CloseButton isBand`, which stretches to that row, shipped 48x30 rather
+  // than the 48x48 square it is on every other band — under the app's own 44px minimum
+  // for the one gesture that leaves a screen.
+  it("stands the notch strip ABOVE its own row, never out of it", () => {
+    const worn = () => band().className.split(/\s+/).filter(Boolean);
+    const view = render(
+      <DialogHeader title="report.png" closeLabel="Close report.png" onClose={() => {}} />,
+    );
+    const plain = worn();
+
+    view.rerender(
+      <DialogHeader title="report.png" isUnderNotch closeLabel="Close report.png" onClose={() => {}} />,
+    );
+    const notched = worn();
+
+    // The row is untouched: same height, same paper, same rhythm as a band with no
+    // notch over it — the notch adds a STRIP and nothing else.
+    expect(notched).toEqual(expect.arrayContaining(plain));
+    expect(notched.filter((one) => !plain.includes(one)).sort()).toEqual([
+      "box-content",
+      "pt-[env(safe-area-inset-top)]",
+      "sm:pt-0",
+    ]);
+  });
+
   it("routes every close through the one way out, and makes it say its name", async () => {
     const onClose = vi.fn();
     const view = render(
