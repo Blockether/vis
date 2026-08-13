@@ -4438,7 +4438,9 @@
    EITHER a line number or a `<line>:<hash>` anchor, and the two mix freely
    across `start`/`end` — the read is the forgiving side, so a stale anchor
    resolves through `resolve-anchor-range-read` (which falls back to the
-   anchor's line number) and only a genuinely unlocatable one refuses."
+   anchor's line number) and only a genuinely unlocatable one refuses. A numeric
+   `end` past the last line CLAMPS to it — asking for the tail is not an error —
+   while a `start` past the end still refuses."
   ^long [^String content endpoint which ^long line-count]
   (if (hashline/anchor-string? endpoint)
     (let [r (hashline/resolve-anchor-range-read content endpoint endpoint)]
@@ -4462,25 +4464,29 @@
                   :anchor (str endpoint)}))
         (long (:from-line r))))
     (let
-      [n (cond (integer? endpoint) (long endpoint)
-               (number? endpoint) (long endpoint)
-               (and (string? endpoint) (parse-long (str/trim (str endpoint))))
-               (long (parse-long (str/trim (str endpoint))))
-               :else (throw (ex-info (str "cat: the "
-                                          which
-                                          " endpoint must be a line number or a "
-                                          "`<line>:<hash>` anchor, got "
-                                          (pr-str endpoint)
-                                          ".")
-                                     {:type :ext.foundation.editing/invalid-range
-                                      :which which
-                                      :endpoint endpoint})))]
-      (when-not (<= 1 n line-count)
+      [n (long (cond (integer? endpoint) (long endpoint)
+                     (number? endpoint) (long endpoint)
+                     (and (string? endpoint) (parse-long (str/trim (str endpoint))))
+                     (long (parse-long (str/trim (str endpoint))))
+                     :else (throw (ex-info (str "cat: the "
+                                                which
+                                                " endpoint must be a line number or a "
+                                                "`<line>:<hash>` anchor, got "
+                                                (pr-str endpoint)
+                                                ".")
+                                           {:type :ext.foundation.editing/invalid-range
+                                            :which which
+                                            :endpoint endpoint}))))]
+      (when (or (< n 1) (and (> n line-count) (not= which "end")))
         (throw
           (ex-info
             (str "cat: " which " line " n " is outside this file's 1.." line-count " lines.")
             {:type :ext.foundation.editing/invalid-range :which which :line n :lines line-count})))
-      n)))
+      ;; An END past EOF CLAMPS instead of refusing: `cat(path, 2172, 2212)` on a
+      ;; 2210-line file is a reader asking for the tail, and a refusal throws away
+      ;; everything the block printed before the call. A START past EOF still
+      ;; refuses — nothing is there to show and the address is genuinely wrong.
+      (if (> n line-count) line-count n))))
 
 (defn- cat-one
   "`cat`'s whole implementation: ONE file, a closed line window, ONE string.

@@ -413,21 +413,26 @@
    of running. You drive them three ways:
      • `await grep(spec)`                         — canonical, anywhere nested
      • `a, b = await gather(grep(x), grep(y))`    — CONCURRENT on bounded host workers
-     • bare top-level `grep(spec)` / `x = grep(y)` — auto-SETTLED in place
-   (via inline `__vis_settle__(...)` wrapping of every top-level assign/expr)
+     • a bare `grep(spec)` / `x = grep(y)` STATEMENT  — auto-SETTLED in place, at
+   EVERY depth: `__vis_settle__` wraps each top-level assign/expr and
+   `__vis_settle_stmt__` each nested one, so a call inside `try:` / `for:` / a
+   `def` body runs where it is written instead of leaving an unrun thunk. An
+   `async def` body is the ONE exception: a coroutine is where HOLDING an
+   awaitable (`t = asyncio.to_thread(f, x)` then `await gather(t, u)`) is the idiom
 
    `await` works because run-python-block AST-wraps an await-bearing program in
    an `async def` (GraalPy rejects top-level await), declares its assigned names
    `global` so REPL vars still persist, and drives the coroutine with the
    trampoline `__vis_drive__`. `gather` dispatches its awaitables to the
    host bounded platform pool `__vis_par__` (bound from Clojure) — real overlap on
-   blocking tool I/O, no event loop. A NESTED `__vis_Call__` that leaks into
-   output because you forgot `await` on a call you USE still repr's a loud hint
-   rather than running silently — EXCEPT `print(...)`, which auto-settles a
-   deferred call/gather handed straight to it (so `print(rg(x))` shows the real
-   result), and EXCEPT inline subscript / `len` / `in` on a deferred call (so
-   `git(x)['stdout']` settles that ONE call in place — no concurrency to lose);
-   only TOP-LEVEL bare calls otherwise auto-settle."
+   blocking tool I/O, no event loop. A call in EXPRESSION position — an argument,
+   a comprehension element, a `return` value — stays DEFERRED, and that is the
+   seam `gather` batches through; it repr's a loud hint if it leaks into output.
+   `print(...)` settles a deferred call/gather handed straight to it (so
+   `print(rg(x))` shows the real result), and inline subscript / `len` / `in`
+   settle that ONE call in place. Every settle path raises the SAME catchable
+   `__vis_ToolError__`, so a tool refusal is caught by the `except Exception:`
+   the block wrote around it instead of escaping that handler."
   (runtime-python-src "vis-python/async_runtime.py"))
 
 
@@ -3252,7 +3257,8 @@
      {:error  <op-error>}  ; FAILURE — the raised error IS the result
 
    `__vis_run_async__` AST-wraps the block in an `async def`, AUTO-SETTLES every
-   bare top-level tool call (so `grep(x)` without `await` still runs), drives it
+   bare tool-call STATEMENT at every depth (so `grep(x)` without `await` runs even
+   inside `try:` or a `def` body), drives it
    as a single coroutine, and maps any raised exception against the WHOLE source.
    The program runs exactly as the model wrote it — Python's own
    halt-on-exception decides what ran. Assigning a bound tool name is allowed:
@@ -3275,8 +3281,9 @@
     (if-let [err (empty-block-error ctx code)]
       {:result nil :forms [{:source code :error err}] :error err}
       ;; ONE whole-block path. `__vis_run_async__` AST-wraps the program in an
-      ;; `async def`, AUTO-SETTLES every bare top-level tool call (so `grep(x)`
-      ;; without `await` still RUNS), drives it as a single coroutine, and reports
+      ;; `async def`, AUTO-SETTLES every bare tool-call STATEMENT at every depth (so
+      ;; `grep(x)` without `await` RUNS even inside `try:` or a `def`), drives it as
+      ;; a single coroutine, and reports
       ;; any error against the WHOLE source. The block runs as the model wrote it,
       ;; so its outcome is the flat `{:stdout}` | `{:result}` | `{:error}` sum.
       (run-async-program ctx g code))))

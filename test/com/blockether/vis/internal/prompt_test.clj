@@ -660,13 +660,14 @@
              (it "names both anchored verbs and the address they speak"
                  (let [text (prompt/build-system-prompt {})]
                    (expect (str/includes? text "cat(path, start, end)"))
-                   (expect (str/includes? text "patch(path, from, to, new)"))
+                   (expect (str/includes? text "patch(path, anchor, new)"))
+                   (expect (str/includes? text "patch(path, from_anchor, to_anchor, new)"))
                    (expect (str/includes? text "line:hash"))))
              (it "never tells the model to write a text EDIT in plain Python"
                  (let [text (prompt/build-system-prompt {})]
                    (expect (not (str/includes? text "CHANGING the tree is plain Python")))
                    (expect (not (str/includes? text "are edited in plain Python")))
-                   (expect (str/includes? text "never restate the text you"))))
+                   (expect (str/includes? text "restate the text you replace: quote the anchor"))))
              (it "says a grep hit is already an address, and how to spend several at once"
                  (let [text (prompt/build-system-prompt {})]
                    (expect (str/includes? text "hits arrive ANCHORED"))

@@ -1303,7 +1303,26 @@
                  (let [cat-tool (comp :result (private-fn "cat-tool"))]
                    (expect (throws? clojure.lang.ExceptionInfo #(cat-tool "does/not/exist.txt")))
                    (expect (throws? clojure.lang.ExceptionInfo
-                                    #(cat-tool (write-temp! "cat/inv.txt" "a\nb\nc\n") 3 1))))))
+                                    #(cat-tool (write-temp! "cat/inv.txt" "a\nb\nc\n") 3 1)))))
+             ;; Regression: an `end` past the last line REFUSED, so `cat(path, 2172, 2212)`
+             ;; on a 2210-line file threw the whole block away — every line it had already
+             ;; printed included — instead of handing back the tail it asked for.
+             (it "an `end` past the last line CLAMPS to it; a `start` past it still refuses"
+                 (let
+                   [cat-tool
+                    (comp :result (private-fn "cat-tool"))
+
+                    rel
+                    (write-temp! "cat/clamp.txt" "a\nb\nc\n")
+
+                    out
+                    (cat-tool rel 2 99)]
+
+                   (expect (= 2 (count (string/split-lines out))))
+                   (expect (string/includes? out "│ b"))
+                   (expect (string/includes? out "│ c"))
+                   (expect (= out (cat-tool rel 2 3)))
+                   (expect (throws? clojure.lang.ExceptionInfo #(cat-tool rel 9 99))))))
 
 
 (defdescribe

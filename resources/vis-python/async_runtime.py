@@ -496,12 +496,22 @@ def __vis_exec_call__(c):
         __vis_reclaim_fds__()
         c.res = c.fn(*c.a, dict(c.k)) if c.k else c.fn(*c.a)
         return c.res
-    except BaseException:
+    except BaseException as __vis_exc__:
         # A failed thunk is one-shot too. Do not cache the exception here: a Python
         # traceback points back through this frame to `c`, which would make a retained
         # failed call retain itself plus the callable and payload graph.
         c.failed = True
-        raise
+        # CATCHABILITY is uniform across EVERY settle path. A host tool refusal
+        # arrives as a foreign `ExceptionInfo`: a BaseException that is NOT an
+        # Exception, so `except Exception:` could not catch it and a refusal blew
+        # past the handler written for it and killed the whole block. `__vis_drive__`
+        # already wrapped it for the `await` path; wrapping HERE covers the inline
+        # ones too (statement settle, `r[k]`, `len(r)`, `print(r)`). It is a no-op
+        # for a native Python exception, which keeps its own type and message.
+        __vis_wrapped__ = __vis_wrap_tool_exc__(__vis_exc__)
+        if __vis_wrapped__ is __vis_exc__:
+            raise
+        raise __vis_wrapped__ from None
     finally:
         c.ran = True
         # Success, failure, and cancellation all release host callable + arguments.
@@ -859,6 +869,17 @@ def __vis_settle__(v):
     if __vis_is_awaitable__(v):
         return __vis_pyify__(__vis_drive__(v))
     return __vis_pyify__(v)
+
+
+def __vis_settle_stmt__(v):
+    # NESTED-statement settle: run OUR OWN deferred thunk right where the model
+    # wrote the statement, and hand every other value straight back. Two identity
+    # checks and no `__vis_pyify__` walk — a `for`/`while` body is hot code, and a
+    # value that is not a thunk cannot become one. TOP-LEVEL statements keep the
+    # full `__vis_settle__`, which also rebuilds foreign proxies into real dicts.
+    if type(v) is __vis_Call__ or type(v) is __vis_Gather__:
+        return __vis_settle__(v)
+    return v
 
 
 def __vis_settle_binding__(name):
@@ -2010,26 +2031,64 @@ def __vis_run_async__(src):
     body = list(tree.body)
 
     # AUTO-SETTLE inline, exactly like the sync per-form path: wrap the value of
-    # every TOP-LEVEL assignment / bare expression in `__vis_settle__(...)` so a
-    # bare deferred tool call (`res = grep(...)`, or a lone `grep(...)`) RUNS
-    # in place — later statements (and `print(res)`) then see the real value,
-    # not a `__vis_Call__` thunk. settle is identity for plain values and
-    # idempotent for thunks already consumed by `await`/`gather`, so wrapping is
-    # always safe. Nested calls still need an explicit `await` (we only touch
-    # top-level statements, matching the sync contract).
-    def __vis_wrap__(v):
+    # every assignment / bare expression in `__vis_settle__(...)` so a bare
+    # deferred tool call (`res = grep(...)`, or a lone `grep(...)`) RUNS in place
+    # — later statements (and `print(res)`) then see the real value, not a
+    # `__vis_Call__` thunk. settle is identity for plain values and idempotent for
+    # thunks already consumed by `await`/`gather`, so wrapping is always safe.
+    #
+    # EVERY statement, at EVERY depth — not only `tree.body`. A statement nested
+    # in `try:` / `if:` / `for:` / `with:` or inside a `def` used to keep its
+    # thunk instead: `for p in paths: patch(p, a, new)` built N thunks and ran
+    # NONE of them, and `try: r = cat(p)` bound a thunk whose refusal then
+    # surfaced OUTSIDE the very handler written for it. A tool call now runs
+    # where it is written. Nested statements use the cheap `__vis_settle_stmt__`
+    # (thunks only, no `__vis_pyify__` walk) because a loop body is hot code;
+    # TOP-LEVEL keeps full `__vis_settle__`, which also rebuilds foreign proxies.
+    # A call in EXPRESSION position still defers — that is the seam `gather`
+    # needs, so `hs = [shell(c) for c in cmds]` still batches — and so does every
+    # statement inside an `async def`: a coroutine is where HOLDING an awaitable
+    # (`t = asyncio.to_thread(f, x)` ... `await gather(t, u)`) is the idiom, and
+    # `await` is right there to spend it.
+    def __vis_wrap__(v, __vis_fn__="__vis_settle__"):
         return __vis_ast__.Call(
-            func=__vis_ast__.Name(id="__vis_settle__", ctx=__vis_ast__.Load()),
+            func=__vis_ast__.Name(id=__vis_fn__, ctx=__vis_ast__.Load()),
             args=[v],
             keywords=[],
         )
 
-    for __vis_node__ in body:
-        if isinstance(__vis_node__, (__vis_ast__.Assign, __vis_ast__.AnnAssign)):
-            if __vis_node__.value is not None:
-                __vis_node__.value = __vis_wrap__(__vis_node__.value)
-        elif isinstance(__vis_node__, __vis_ast__.Expr):
-            __vis_node__.value = __vis_wrap__(__vis_node__.value)
+    __vis_nodes__ = list(__vis_ast__.walk(tree))
+    __vis_top__ = {id(__vis_node__) for __vis_node__ in body}
+    __vis_coro__ = set()
+    for __vis_node__ in __vis_nodes__:
+        if isinstance(__vis_node__, __vis_ast__.AsyncFunctionDef):
+            for __vis_sub__ in __vis_ast__.walk(__vis_node__):
+                __vis_coro__.add(id(__vis_sub__))
+    for __vis_node__ in __vis_nodes__:
+        if not isinstance(
+            __vis_node__,
+            (
+                __vis_ast__.Assign,
+                __vis_ast__.AnnAssign,
+                __vis_ast__.Expr,
+                # `return cat(p)` in a helper is a STATEMENT too: without this the
+                # caller got a thunk back and `'x' + helper(...)` died with a
+                # TypeError naming `__vis_Call__` instead of doing the read.
+                __vis_ast__.Return,
+            ),
+        ):
+            continue
+        __vis_v__ = __vis_node__.value
+        if __vis_v__ is None:  # a bare `x: int` annotation has no value
+            continue
+        if id(__vis_node__) in __vis_top__:
+            __vis_node__.value = __vis_wrap__(__vis_v__)
+        elif id(__vis_node__) in __vis_coro__:
+            continue
+        elif not isinstance(__vis_v__, __vis_ast__.Constant):
+            # A bare string statement is a DOCSTRING: wrapping it in a call would
+            # strip `__doc__` off the def or class it opens.
+            __vis_node__.value = __vis_wrap__(__vis_v__, "__vis_settle_stmt__")
 
     if body and isinstance(body[-1], __vis_ast__.Expr):
         body[-1] = __vis_ast__.Return(value=body[-1].value)

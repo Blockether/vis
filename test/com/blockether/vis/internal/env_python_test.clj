@@ -615,9 +615,9 @@
    when USED INLINE via subscript / `len` / `in` — killing the classic
    `git(x)['stdout']` \"'__vis_Call__' object is not subscriptable\" papercut —
    WITHOUT weakening the loud unawaited repr, and without ever settling on the
-   names internal plumbing probes with `hasattr`. The call is built INSIDE a
-   function body so the top-level assignment auto-settle doesn't resolve it
-   first."
+   names internal plumbing probes with `hasattr`. The thunk is held INSIDE A LIST:
+   a STATEMENT now settles its own tool call at every depth, while a call in
+   EXPRESSION position — a list element, an argument, a `gather` batch — defers."
   (let
     [ctx
      (tpc/shared)
@@ -626,38 +626,43 @@
      (fn [code]
        (str (:stdout (ep/run-python-block ctx code))))]
 
-    (it "subscript / len / in on an un-awaited call settle it in place"
-        (let
-          [out
-           (run (str "def _t():\n"
-                     "    c = __vis_deferred__(lambda: {'stdout': 'hi', 'exit': 0}, 'faketool')()\n"
-                     "    kind = type(c).__name__\n"
-                     "    return [kind, c['stdout'], len(c), 'exit' in c, 'zzz' in c]\n"
-                     "print(_t())"))]
-          (expect (re-find #"\['__vis_Call__', 'hi', 2, True, False\]" out))))
-    (it "attribute use settles too, but the engine's own hasattr probes never run it"
-        ;; Issue #97: after a host-phase failure an unresolved `__vis_Call__` escaped
-        ;; into user space and every attribute touch died with a bare AttributeError
-        ;; naming an object the caller never made. Attribute access is the same
-        ;; single-expression use as subscript, so it settles — EXCEPT on the names
-        ;; internal plumbing probes with `hasattr` (`send`/`throw`/`close`/`keys`),
-        ;; which must stay absent so a probe can never silently run the tool.
-        (let
-          [out
-           (run
-             (str
-               "def _t():\n" "    ran = []\n"
-               "    c = __vis_deferred__(lambda: ran.append(1) or {'stdout': 'hi'}, 'faketool')()\n"
-               "    probes = [hasattr(c, n) for n in ('send', 'throw', 'close', 'keys')]\n"
-               "    return [probes, len(ran), c.get('stdout'), len(ran)]\n" "print(_t())"))]
-          (expect (re-find #"\[\[False, False, False, False\], 0, 'hi', 1\]" out))))
+    (it
+      "subscript / len / in on an un-awaited call settle it in place"
+      (let
+        [out
+         (run
+           (str
+             "def _t():\n"
+             "    box = [__vis_deferred__(lambda: {'stdout': 'hi', 'exit': 0}, 'faketool')()]\n"
+             "    kind = type(box[0]).__name__\n"
+             "    return [kind, box[0]['stdout'], len(box[0]), 'exit' in box[0], 'zzz' in box[0]]\n"
+             "print(_t())"))]
+        (expect (re-find #"\['__vis_Call__', 'hi', 2, True, False\]" out))))
+    (it
+      "attribute use settles too, but the engine's own hasattr probes never run it"
+      ;; Issue #97: after a host-phase failure an unresolved `__vis_Call__` escaped
+      ;; into user space and every attribute touch died with a bare AttributeError
+      ;; naming an object the caller never made. Attribute access is the same
+      ;; single-expression use as subscript, so it settles — EXCEPT on the names
+      ;; internal plumbing probes with `hasattr` (`send`/`throw`/`close`/`keys`),
+      ;; which must stay absent so a probe can never silently run the tool.
+      (let
+        [out
+         (run
+           (str
+             "def _t():\n" "    ran = []\n"
+             "    box = [__vis_deferred__(lambda: ran.append(1) or {'stdout': 'hi'}, 'faketool')()]\n"
+             "    probes = [hasattr(box[0], n) for n in ('send', 'throw', 'close', 'keys')]\n"
+             "    return [probes, len(ran), box[0].get('stdout'), len(ran)]\n" "print(_t())"))]
+        (expect (re-find #"\[\[False, False, False, False\], 0, 'hi', 1\]" out))))
     (it "an un-awaited call still repr's a LOUD hint and never silently ran"
         (let
-          [out (run (str
-                      "def _t():\n" "    ran = []\n"
-                      "    c = __vis_deferred__(lambda: ran.append(1) or {'k': 1}, 'faketool')()\n"
-                      "    r = repr(c)\n"
-                      "    return [r, ran]\n" "print(_t())"))]
+          [out (run
+                 (str
+                   "def _t():\n" "    ran = []\n"
+                   "    box = [__vis_deferred__(lambda: ran.append(1) or {'k': 1}, 'faketool')()]\n"
+                   "    r = repr(box[0])\n"
+                   "    return [r, ran]\n" "print(_t())"))]
           (expect (re-find #"unawaited async tool call" out))
           (expect (re-find #"faketool" out))
           ;; repr must NOT have executed the tool — `ran` stays empty
@@ -665,11 +670,90 @@
     (it "no __getattr__ auto-run: a non-slot attribute raises, it does not settle"
         (let
           [out (run (str "def _t():\n"
-                         "    c = __vis_deferred__(lambda: {'stdout': 'hi'}, 'faketool')()\n"
-                         "    try:\n" "        c.stdout\n"
+                         "    box = [__vis_deferred__(lambda: {'stdout': 'hi'}, 'faketool')()]\n"
+                         "    try:\n" "        box[0].stdout\n"
                          "        return 'leaked'\n" "    except AttributeError:\n"
                          "        return 'safe'\n" "print(_t())"))]
           (expect (re-find #"safe" out))))))
+
+(defdescribe
+  nested-statement-settle-test
+  "A deferred tool call runs WHERE IT IS WRITTEN: `__vis_run_async__` settle-wraps
+   every assign/expr STATEMENT at EVERY depth, not only `tree.body`. A call in
+   EXPRESSION position still defers — that is the seam `gather` batches through —
+   and so does a statement inside an `async def`, where holding an awaitable is
+   the idiom. Every settle path raises the same catchable `__vis_ToolError__`."
+  (let
+    [calls
+     (atom [])
+
+     ctx
+     (tpc/shared-with! {'nested_ok (fn [& args]
+                                     (swap! calls conj (vec args))
+                                     {"op" "nested_ok"})
+                        'nested_boom (fn [& _]
+                                       (throw (ex-info "nested_boom refused - nothing was written."
+                                                       {})))})
+
+     run
+     (fn [code]
+       (reset! calls [])
+       (str (:stdout (ep/run-python-block ctx code))))]
+
+    ;; Regression: only TOP-LEVEL statements were settle-wrapped, so a bare tool call
+    ;; inside a loop built one `__vis_Call__` thunk per iteration and ran NONE of them:
+    ;; `for p in paths: patch(p, a, new)` reported nothing and edited nothing.
+    (it "a bare call statement in a loop RUNS, once per iteration"
+        (let [out (run (str "for ns_i in (1, 2, 3):\n" "    nested_ok(ns_i)\n" "print('ns done')"))]
+          (expect (re-find #"ns done" out))
+          (expect (= 3 (count @calls)))))
+    ;; Regression: a nested assignment bound the THUNK itself, so `r` held a
+    ;; `__vis_Call__` and every later use of it read as a broken tool.
+    (it "a nested assignment in a loop / `try:` / a `def` body binds the RESULT"
+        (let
+          [out (run (str "ns_seen = []\n" "def ns_helper(i):\n"
+                         "    r = nested_ok(i)\n" "    ns_seen.append(isinstance(r, dict))\n"
+                         "for ns_i in (1, 2):\n" "    ns_x = nested_ok(ns_i)\n"
+                         "    ns_seen.append(isinstance(ns_x, dict))\n" "try:\n"
+                         "    ns_y = nested_ok(3)\n" "    ns_seen.append(isinstance(ns_y, dict))\n"
+                         "except Exception:\n" "    ns_seen.append('refused')\n"
+                         "ns_helper(4)\n" "print(ns_seen)"))]
+          (expect (re-find #"\[True, True, True, True\]" out))
+          (expect (= 4 (count @calls)))))
+    ;; Regression: a host refusal reached the guest as a foreign ExceptionInfo — a
+    ;; BaseException that is NOT an Exception — so `except Exception:` could not catch
+    ;; it, and the refusal escaped the very handler written for it and killed the block.
+    (it "a refusal inside `try:` is caught by `except Exception:`, message intact"
+        (let
+          [out (run (str "try:\n" "    ns_r = nested_boom(1)\n"
+                         "    ns_out = 'LEAKED ' + type(ns_r).__name__\n" "except Exception as e:\n"
+                         "    ns_out = 'caught ' + type(e).__name__ + ' :: ' + str(e)\n"
+                         "print(ns_out)"))]
+          (expect (re-find #"caught __vis_ToolError__ :: nested_boom refused" out))))
+    (it "a call in EXPRESSION position still defers, so `gather` keeps its batch"
+        (let
+          [out (run (str "ns_box = [nested_ok(9)]\n" "ns_kind = type(ns_box[0]).__name__\n"
+                         "ns_val = await ns_box[0]\n" "print([ns_kind, ns_val['op']])"))]
+          (expect (re-find #"\['__vis_Call__', 'nested_ok'\]" out))))
+    ;; Regression: a `return` was not settle-wrapped either, so `def edit(p, a, n):
+    ;; return patch(p, a, n)` handed the CALLER a thunk, and `"x" + edit(...)` died
+    ;; with a TypeError naming `__vis_Call__` instead of making the edit.
+    (it "a `def` that RETURNS a tool call hands back the result, not the thunk"
+        (let
+          [out (run (str "def ns_read(i):\n"
+                         "    return nested_ok(i)\n"
+                         "print([isinstance(ns_read(5), dict), len(ns_read(6))])"))]
+          (expect (re-find #"\[True, 1\]" out))))
+    ;; An `async def` body is the ONE place a statement keeps its thunk: holding an
+    ;; awaitable (`t = asyncio.to_thread(f, x)` then `await gather(t, u)`) is the
+    ;; whole idiom there, and `await` is right beside it.
+    (it "inside an `async def` a statement still defers, so a coroutine can hold it"
+        (let
+          [out (run (str "ns_seen2 = []\n" "async def ns_coro():\n"
+                         "    t = nested_ok(7)\n" "    ns_seen2.append(type(t).__name__)\n"
+                         "    v = await t\n" "    ns_seen2.append(v['op'])\n"
+                         "await ns_coro()\n" "print(ns_seen2)"))]
+          (expect (re-find #"\['__vis_Call__', 'nested_ok'\]" out))))))
 
 (defdescribe collect-garbage-gil-budget-test
              ;; Regression: `collect-garbage!` runs in `loop/send!`'s `finally`, i.e. between
