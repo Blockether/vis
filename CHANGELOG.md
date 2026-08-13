@@ -26,16 +26,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   test and the native suite, and attaches nothing; only a `v*` ref publishes. It used to refuse
   a non-tag dispatch outright, so the only way to learn whether a release would build was to cut
   the tag and watch.
-- The macOS arm64 release build no longer runs on anyone's laptop. This repository registers no
-  self-hosted runner: the `macos` job of `.github/workflows/native-release.yml` takes its builder
-  from the repository variable `VIS_MACOS_ARM64_RUNNER`, which now holds a CLOUD Apple-silicon
-  runner LABEL (unset = the job is skipped and the asset is built by hand with
-  `bin/release-native --tag vX.Y.Z --upload`). A preflight step refuses any builder under 16 GiB
-  in seconds, with the measured numbers in the message, instead of thrashing for hours — every
-  GitHub-hosted macOS class, free or paid, is under that floor. The job also caches dependencies
-  and smoke-tests the gateway now, because a cloud runner is ephemeral.
-  A dispatch that names no `v*` tag is refused up front too: `tag_name` used to fall back to
-  `main`, which would have published a release called `main`.
+- The macOS arm64 release build runs on GITHUB's hosted runner and on nobody's laptop. The
+  self-hosted Apple-silicon runner is deregistered, its launchd service uninstalled and its
+  working directory deleted; the `macos` job of `.github/workflows/native-release.yml` now
+  defaults to the free hosted `macos-26` — free and unlimited on public repositories, because
+  only LARGER runners are billed and this workflow uses none. That builder is 3 cores / 7 GiB
+  against a ~13.7 GiB points-to live set, so every heap that fits in RAM is a known OOM: the job
+  pins `-J-Xmx14g -J-Xms2g -J-XX:+UseParallelGC` and lets macOS dynamic swap back it, and its
+  first step prints cores, RAM, free disk and swap so a failure is a NUMBER on the log. The
+  repository variable `VIS_MACOS_ARM64_RUNNER` survives only as an OPTIONAL override naming a
+  bigger CLOUD Apple-silicon label; by hand it is still `bin/release-native --tag vX.Y.Z
+  --upload` on any 32 GB+ Mac. The job also caches dependencies and smoke-tests the gateway,
+  because a hosted runner is ephemeral.
 - A shell result has NO `stderr` field (issue #137). Every command runs under a real pty, where
   stdout and stderr are physically ONE stream, so `stderr` could only ever answer `nil` — a
   caller reading it to diagnose a failure got nothing while the message sat in `stdout`. The

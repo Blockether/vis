@@ -96,23 +96,22 @@ jobs:
           # self-hosted 32 GB box), or less reachable code — not more tuning.
           - { os: ubuntu-latest, bin: target/vis, asset: vis-agent-linux-x64-community.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
           - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-agent-linux-arm64-community.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
-          # NO GitHub-hosted macOS job, and that is a hard constraint, not an
-          # oversight — every hosted macOS class GitHub sells is below the
-          # ~13.7 GiB live set (specs re-checked 2026-08):
-          #   * free arm64 macOS (macos-latest/14/15/26) is 3 cores / 7 GB, less
-          #     than half of it (v0.1.6/v0.1.8 each burned 4 h there);
+          # macOS arm64 is NOT in this matrix: it needs its own heap sizing and
+          # its own swap story, so it is the SEPARATE `macos` job below, on
+          # GitHub's free hosted `macos-26`. Every hosted macOS class GitHub
+          # sells is under the ~13.7 GiB live set (specs re-checked 2026-08):
+          #   * free arm64 macOS (macos-latest/14/15/26) is 3 cores / 7 GB, so
+          #     the builder heap has to live in macOS DYNAMIC SWAP;
           #   * free macos-15-intel / macos-26-intel is 4 cores / 14 GB — still
           #     short once the OS is accounted for — and graalvm-ce-builds
           #     publishes NO macos-x64 asset for 25.1.3 (setup-graalvm-25 maps
           #     only linux-x64, linux-aarch64, macos-aarch64), so v0.1.9's Intel
-          #     job died in setup for that;
+          #     job died in setup for that, and an x64 binary is the wrong asset
+          #     for Apple silicon anyway;
           #   * the PAID macos-*-xlarge (M2, 5 cores) has 14 GB, and
           #     macos-*-large is the same dead Intel end;
           #   * larger runners are billed even on public repositories, so paying
-          #     GitHub buys a machine that still cannot finish this build.
-          # macOS arm64 therefore builds in the SEPARATE `macos` job below, on a
-          # CLOUD Apple-silicon runner named by a repository variable, or by hand
-          # with `bin/release-native --tag vX.Y.Z --upload` on any 32 GB+ Mac.
+          #     GitHub buys a machine that still cannot hold the analysis.
     steps:
       # WHERE this build lands, decided once and read by the attach step.
       # A v* ref (a tag push, or a dispatch naming an existing tag) PUBLISHES:
@@ -232,40 +231,47 @@ jobs:
           fail_on_unmatched_files: true
 
   # ── macOS arm64 ────────────────────────────────────────────────────────────
-  # Separate job, because NO GitHub-hosted macOS runner can hold this build (see
-  # the matrix comment), and because it must NEVER land on a person's laptop: the
-  # analysis pins ~15 GiB and every core for 15-90 minutes, so the machine it
-  # runs on is unusable (and, on a fanless Mac, thermally throttled) throughout.
-  # This repository therefore registers NO self-hosted runner of its own.
+  # GITHUB'S OWN HOSTED RUNNER BUILDS THIS. NOBODY'S LAPTOP DOES.
+  # A self-hosted Apple-silicon runner carried this job until 2026-08 and is
+  # retired for good — deregistered, service uninstalled, machine gone: the
+  # analysis pins every core and ~15 GiB for the whole build, so the box it runs
+  # on is unusable and, on a fanless Mac, thermally throttled throughout. This
+  # repository registers NO self-hosted runner, and this workflow must never
+  # grow one back. `runs-on: [self-hosted, …]` here is a bug, not an option.
   #
-  # The builder is named by the repository variable VIS_MACOS_ARM64_RUNNER
-  # (Settings → Secrets and variables → Actions → Variables), which holds a
-  # CLOUD Apple-silicon runner LABEL. Unset (the default) = this job is skipped
-  # and the release simply ships without the macOS asset — no queue against a
-  # runner that never appears. The identical bundle is then produced by hand:
-  #   bin/release-native --tag vX.Y.Z --upload      (on any 32 GB+ Mac)
+  # `macos-26` is FREE and unlimited on public repositories (only LARGER runners
+  # are billed, and this workflow uses none). Its spec is the whole difficulty:
+  # 3 cores / 7 GiB against a ~13.7 GiB points-to live set. Every heap that fits
+  # in RAM is a known OOM (the matrix table: 5g dies at 7 min, 8g at 9 min), so
+  # the ONLY configuration with a chance is a heap ABOVE physical RAM backed by
+  # macOS DYNAMIC SWAP — the exception to the matrix comment's "never raise
+  # -J-Xmx above runner RAM", made deliberately because here there is no
+  # in-RAM option to prefer. It is a real constraint, not a comfortable one:
+  # v0.1.6 and v0.1.8 each burned 4 h on this class and shipped nothing. The
+  # first step therefore prints cores, RAM, free disk and swap, so a failure is
+  # a NUMBER on the log and not a guess.
   #
-  # Vetted labels, specs and list prices checked 2026-08. The floor is 16 GiB;
-  # more RAM is not luxury here, it is fewer GC minutes (the matrix comment shows
-  # 70-80% of wall clock going to GC once the live set approaches the cap):
-  #   warp-macos-26-arm64-12x           WarpBuild  M4 Pro 12 vCPU / 44 GB  $0.16/min
-  #   warp-macos-26-arm64-6x            WarpBuild  M4 Pro  6 vCPU / 22 GB  $0.08/min
-  #   depot-macos-26                    Depot      M4      8 vCPU / 24 GB  $0.08/min
-  #   nscloud-macos-tahoe-arm64-6x28    Namespace  M4 Pro  6 vCPU / 28 GB  $0.075/min
-  #   ghcr.io/cirruslabs/macos-runner:tahoe-xl
-  #                                     Cirrus     M4 Pro  8 vCPU / 24 GB  $150/month flat
-  # A ~15 min build on the 12x costs ~$2.40 per release; Cirrus is flat-rate and
-  # halves for non-revenue projects. Every one of these registers as a
-  # SELF-HOSTED runner in the organization's default runner group, so that group
-  # must "Allow public repositories" before the label resolves — safe here
-  # because this workflow runs only on `v*` tags and manual dispatch, never on a
-  # pull request from a fork.
+  # Two escape hatches when the free runner cannot finish, in order:
+  #   1. set the repository variable VIS_MACOS_ARM64_RUNNER to a CLOUD
+  #      Apple-silicon runner LABEL — it overrides `runs-on` and nothing else.
+  #      Those register as self-hosted in the ORGANIZATION's default runner
+  #      group (never on a laptop), which must "Allow public repositories"
+  #      first — safe here because this workflow runs only on `v*` tags and
+  #      manual dispatch, never on a pull request from a fork. Vetted labels,
+  #      specs and list prices checked 2026-08; all are BILLED per minute by
+  #      their vendor, none are free for public repos:
+  #        warp-macos-26-arm64-12x         WarpBuild M4 Pro 12 vCPU / 44 GB $0.16/min
+  #        warp-macos-26-arm64-6x          WarpBuild M4 Pro  6 vCPU / 22 GB $0.08/min
+  #        depot-macos-26                  Depot     M4      8 vCPU / 24 GB $0.08/min
+  #        nscloud-macos-tahoe-arm64-6x28  Namespace M4 Pro  6 vCPU / 28 GB $0.075/min
+  #        ghcr.io/cirruslabs/macos-runner:tahoe-xl
+  #                                        Cirrus    M4 Pro  8 vCPU / 24 GB $150/month
+  #      A ~15 min build on the 12x costs ~$2.40 per release.
+  #   2. `bin/release-native --tag vX.Y.Z --upload` by hand on any 32 GB+ Mac.
   macos:
     name: native / vis-agent-macos-arm64-community.tar.gz
-    if: ${{ vars.VIS_MACOS_ARM64_RUNNER != '' }}
-    # The fallback is never used (the job is skipped without the variable); it
-    # only keeps `runs-on` valid, and the RAM preflight below would refuse it in
-    # seconds anyway.
+    # The variable is an OPTIONAL override for a bigger cloud builder. Unset —
+    # the default — means GitHub's free hosted macOS runner, never a laptop.
     runs-on: ${{ vars.VIS_MACOS_ARM64_RUNNER || 'macos-26' }}
     timeout-minutes: 350
     env:
@@ -289,19 +295,25 @@ jobs:
             v*) echo 'publish=true' >> "$GITHUB_OUTPUT"; echo "attaching to $ref" ;;
             *) echo 'publish=false' >> "$GITHUB_OUTPUT"; echo "dry run on $ref: building and testing, publishing nothing" ;;
           esac
-      # Fail in SECONDS instead of thrashing for hours: the points-to analysis
-      # live set is ~13.7 GiB and peak RSS 14.1-14.9 GiB — numbers the builder
-      # prints itself (see the matrix comment). A misconfigured variable pointing
-      # at any GitHub-hosted macOS class dies right here with the size named.
-      - name: Refuse a builder that cannot hold the analysis
+      # The builder's own numbers, and the heap sized FROM them — printed before
+      # anything is downloaded so a failed run is diagnosable from its first
+      # step. Under 16 GiB (i.e. the free hosted runner) the heap is pinned to
+      # the known-green Linux ceiling and macOS grows swap on the system volume
+      # to back it; free disk is printed because swap cannot exceed it. On a
+      # 16 GiB+ cloud builder nothing is set and build.clj sizes the heap from
+      # the machine's own RAM (0.6x, capped at 18g), which is the right answer
+      # there.
+      - name: Size the builder heap from the builder
         shell: bash
         run: |
           set -euo pipefail
           gib=$(( $(sysctl -n hw.memsize) / 1024 / 1024 / 1024 ))
           echo "builder: $(sysctl -n hw.ncpu) cores / ${gib} GiB / $(uname -m)"
+          sysctl -n vm.swapusage || true
+          df -h / /System/Volumes/Data 2>/dev/null || df -h /
           if [ "$gib" -lt 16 ]; then
-            echo "::error::this runner has ${gib} GiB RAM; the native-image analysis needs >= 16 GiB (peak RSS 14.1-14.9 GiB). Point VIS_MACOS_ARM64_RUNNER at a bigger cloud runner."
-            exit 1
+            echo "under the ~13.7 GiB live set: pinning the heap and leaning on macOS dynamic swap"
+            echo 'VIS_NATIVE_EXTRA_ARGS=-J-Xmx14g -J-Xms2g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' >> "$GITHUB_ENV"
           fi
       - uses: actions/checkout@v7
         with:
@@ -310,7 +322,7 @@ jobs:
       - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest
-      # A cloud runner is EPHEMERAL — unlike the retired self-hosted box it does
+      # A hosted runner is EPHEMERAL — unlike the retired self-hosted box it does
       # not keep ~/.m2 between runs, so the dependency cache is what keeps the
       # release from re-downloading the whole tree on every tag.
       - uses: actions/cache@v6
@@ -322,9 +334,6 @@ jobs:
             ~/.vis/build-cache
           key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
-      # No swapfile and no VIS_NATIVE_EXTRA_ARGS on purpose: build.clj sizes the
-      # builder heap from the machine's own RAM (0.6×, capped at 18g), which is
-      # the right answer on a box that actually has enough of it.
       - name: Build native image
         env:
           VIS_AUTO_INSTALL_GRAALVM: "0"
