@@ -227,7 +227,7 @@ The named provider is promoted to the router root for that run only, and it does
 
 ### The default selection is ONE pair
 
-Picking a model in the TUI provider manager, the gateway, or the companion app writes exactly two top-level keys:
+Picking a model in the TUI provider manager, the gateway, or the companion app writes exactly two top-level keys — into the machine store `~/.vis/state.yml`, and nowhere else:
 
 ```yaml
 default_provider: zai-coding-plan   # provider id
@@ -244,11 +244,11 @@ There is one default in the whole config — one provider and one model — not 
   ```
 - Vis does **not** remember a model per provider. Change `default_provider` alone and you get that provider's first model until you set `default_model` too.
 - Choosing a default never reorders `providers:` — order stays yours (above), the pair is just a pointer into it.
-- **The pair is per user, never per repository.** Which provider you are entitled to and which model you pay for is your own decision, so the committed `<project>/vis.yml` may not carry it: that tier is loaded with `default_provider`, `default_model`, `fallback_provider` and `fallback_model` **dropped**, and one warning naming the file. Their homes are `~/.vis/config.yml` (hand-written), `~/.vis/state.yml` (what the TUI, gateway and companion write when you pick a model), and the gitignored `<project>/.vis/config.yml` overlay when a pin really is per-checkout. `--model provider/model` (above) still overrides both for one run without persisting anything.
+- **You never hand-write the pair.** It is a remembered SELECTION, not configuration: which provider you are entitled to and which model you pay for is your own live choice, and the committed `<project>/vis.yml` merges LAST, so one author's pair silently replaced every teammate's own on the first clone. So every hand-written tier — `~/.vis/config.yml`, `<project>/vis.yml`, the `<project>/.vis/config.yml` overlay — is loaded with `default_provider`, `default_model`, `fallback_provider` and `fallback_model` **dropped**, and one warning naming the file. Only `~/.vis/state.yml` carries them, and only a picker writes it: the TUI provider manager, the gateway, the companion app. `--model provider/model` (above) still overrides the pair for one run without persisting anything.
 
 ### The fallback selection is a SECOND pair
 
-Two more top-level keys name where Vis goes when the default provider cannot serve the turn — rate-limited, circuit-open, erroring:
+Two more keys in that same machine store name where Vis goes when the default provider cannot serve the turn — rate-limited, circuit-open, erroring. A picker writes them too:
 
 ```yaml
 fallback_provider: anthropic-coding-plan   # must be a DIFFERENT provider than default_provider
@@ -257,7 +257,7 @@ fallback_model: claude-sonnet-5            # accepts the same `provider/model` f
 
 Same shape and the same resolution rules as the default pair: the model is looked up inside that provider's catalog, a name it does not offer degrades to that provider's first model, and a slash-qualified `fallback_model` carries its own provider.
 
-- **It must be a different provider.** A fallback on the default's own provider is not a fallback at all: the TUI and the companion app both disable the action on the current default's card, the daemon answers `400`, and a config file that tags it anyway is ignored when the router is built.
+- **It must be a different provider.** A fallback on the default's own provider is not a fallback at all: the TUI and the companion app both disable the action on the current default's card, the daemon answers `400`, and a store that names it anyway is ignored when the router is built.
 - The tagged provider is seated **immediately behind the default** in router priority, so it is the first provider Vis moves to; every other provider keeps its configured order behind the two.
 - The tag lives and dies with its provider: logging that provider out clears the pair, and clearing the fallback from any client drops both keys.
 - Per user, exactly like the default pair: a committed `<project>/vis.yml` cannot tag a fallback — both keys are dropped from that tier with a warning.
