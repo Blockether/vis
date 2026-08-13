@@ -22,6 +22,13 @@ export interface MachineFixture {
    * watch a retry wake a machine instead of only watching it fail.
    */
   heals?: boolean;
+  /**
+   * A `down` gateway that BLACKHOLES the reads after the first one: they are
+   * accepted and never answered, the way a closed laptop takes a socket without
+   * refusing it. The read ends only when the caller cancels it, so a test can watch
+   * a press give up on its own deadline instead of on a transport error.
+   */
+  hangs?: boolean;
   /** Extra routes, by pathname: whatever they return is the JSON body. */
   routes?: Record<string, unknown>;
 }
@@ -38,6 +45,16 @@ export interface FleetRequest {
 
 let origins = 0;
 let created = 0;
+
+/** A read nobody answers: it ends when — and only when — the caller aborts it. */
+const blackhole = (signal?: AbortSignal | null) =>
+  new Promise<Response>((_resolve, reject) => {
+    signal?.addEventListener(
+      "abort",
+      () => reject(new DOMException("Aborted", "AbortError")),
+      { once: true },
+    );
+  });
 
 /** A session row, filled in enough for the list to group and sort it. */
 export function listSession(overrides: Partial<Session> = {}): Session {
@@ -110,6 +127,7 @@ export function renderSessionsScreen({
     if (!machine) return answer({});
     const seen = (reads.get(url.origin) ?? 0) + 1;
     reads.set(url.origin, seen);
+    if (machine.hangs && seen > 1) return blackhole(init?.signal);
     if (machine.down && !(machine.heals && seen > 1)) throw new TypeError("Failed to fetch");
     if (machine.routes && url.pathname in machine.routes)
       return answer(machine.routes[url.pathname]);

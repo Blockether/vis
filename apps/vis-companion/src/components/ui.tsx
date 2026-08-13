@@ -2266,14 +2266,20 @@ export function MachineSwitcher({ children }: { children: ReactNode }) {
  * reason in `title`, which is where a 6px block cannot speak.
  *
  * `note` is what that press is doing, spoken in the tile that was pressed —
- * "reconnecting...", then "no answer" if it came back dead. It exists only after a
- * press: a fleet's dead machines say nothing until they are asked.
+ * "reconnecting...", then the failure if it came back dead. It exists only after a
+ * press: a fleet's dead machines say nothing until they are asked, and the failure
+ * is a word rather than a state, so the caller takes it back off the tile.
+ *
+ * A FAILURE IS THE ONE WORD HERE THAT IS NOT A NAME, so `isNoteError` prints it in
+ * error ink. In the tile's own hint ink it read as more chrome on a strip made of
+ * chrome, and the press that went nowhere looked like a press that did nothing.
  */
 export function MachineTab({
   isOn,
   hasUnread,
   isDown,
   note,
+  isNoteError,
   label,
   title,
   onClick,
@@ -2285,6 +2291,8 @@ export function MachineTab({
   isDown?: boolean;
   /** The word this tile earned by being pressed, and only then. */
   note?: string | null;
+  /** That word is a FAILURE: error ink, because a quiet failure reads as chrome. */
+  isNoteError?: boolean;
   /** The verb's accessible name, when the press is no longer "show me this machine". */
   label?: string;
   title?: string;
@@ -2312,7 +2320,9 @@ export function MachineTab({
       }`}
     >
       {children}
-      {note && <span className="opacity-80">{note}</span>}
+      {note && (
+        <span className={isNoteError ? 'text-err' : 'opacity-80'}>{note}</span>
+      )}
       {hasUnread && !isDown && (
         <span className="inline-block size-1.5 shrink-0 bg-accent">
           <span className="sr-only">unread</span>

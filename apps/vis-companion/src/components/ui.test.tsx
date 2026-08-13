@@ -1660,6 +1660,10 @@ describe("MachineSwitcher", () => {
     expect(down).not.toContain(MACHINE_COLORS[0]!.dot);
   });
 
+  // Regression, user report (paraphrased: "the error should be RED and say something
+  // like 'Unable to connect'"): a retry that came back dead printed "no answer" in the
+  // tile's own hint ink, so the one word on this strip that is not a name looked like
+  // more chrome, and a press that went nowhere read as a press that did nothing.
   it("answers the press in the tile that was pressed", () => {
     const busy = renderToStaticMarkup(
       <MachineTab isOn={false} isDown note="reconnecting..." onClick={() => {}}>
@@ -1667,13 +1671,16 @@ describe("MachineSwitcher", () => {
       </MachineTab>,
     );
     const failed = renderToStaticMarkup(
-      <MachineTab isOn={false} isDown note="no answer" onClick={() => {}}>
+      <MachineTab isOn={false} isDown note="Unable to connect" isNoteError onClick={() => {}}>
         tower
       </MachineTab>,
     );
     expect(busy).toContain("reconnecting...");
     expect(busy).toContain('aria-live="polite"');
-    expect(failed).toContain("no answer");
+    expect(busy).not.toContain("text-err");
+    expect(failed).toContain("Unable to connect");
+    // The failure is the one thing here worth an ink of its own.
+    expect(failed).toContain("text-err");
     // A down tile carries no news mark: its badge would be a stale count.
     expect(
       renderToStaticMarkup(

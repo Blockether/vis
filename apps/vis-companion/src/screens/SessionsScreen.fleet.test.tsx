@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { listSession, renderSessionsScreen } from "./sessions-screen-harness";
+import type { MachineFixture } from "./sessions-screen-harness";
 
 let restore = () => {};
 afterEach(() => restore());
@@ -197,7 +198,7 @@ describe("the All view is a fleet of separate machines", () => {
         "false",
       ),
     );
-    expect(document.body.textContent).not.toContain("no answer");
+    expect(document.body.textContent).not.toContain("Unable to connect");
   });
 
   it("says so in the tile when the retry comes back dead", async () => {
@@ -211,7 +212,7 @@ describe("the All view is a fleet of separate machines", () => {
     await userEvent.click(await strip.findByRole("button", { name: /^Reconnect to beta/ }));
     await waitFor(() =>
       expect(strip.getByRole("button", { name: /^Reconnect to beta/ }).textContent).toContain(
-        "no answer",
+        "Unable to connect",
       ),
     );
     // Still not a door: the failure did not put a section back in the list.
@@ -234,5 +235,69 @@ describe("the All view is a fleet of separate machines", () => {
     await waitFor(() => expect(unreachable.filter(Boolean)).not.toHaveLength(0));
     expect(screen.queryByLabelText("Machines")).toBeNull();
     expect(screen.queryByLabelText("alpha projects")).toBeNull();
+  });
+});
+
+// Regression, user report (paraphrased: "this reconnecting should have a 5 second
+// timeout, and the error should then be RED, say something like 'Unable to connect',
+// and be shown for at most 3 seconds"): the press inherited the transport's own 30s
+// budget — and a list read can page, so a machine that was blackholed rather than
+// refused wore `reconnecting...` for longer still — then printed "no answer" in the
+// strip's own hint ink and kept it there for as long as the screen stayed open.
+describe("a retry answers on its own clock", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Let every press, probe and repaint that fits inside `ms` happen. */
+  const settle = async (ms = 0) => {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  };
+
+  /** Mount a fleet whose second machine is down and press that machine's tile. */
+  const pressRetry = async (beta: MachineFixture) => {
+    const view = renderSessionsScreen({ machines: [fleet()[0], beta] });
+    restore = view.restore;
+    await settle(50);
+    const strip = within(screen.getByLabelText("Machines"));
+    const tile = () => strip.getByRole("button", { name: /^Reconnect to beta/ });
+    await act(async () => {
+      fireEvent.click(tile());
+    });
+    return tile;
+  };
+
+  /** What the pressed tile is saying, beside the machine's own name. */
+  const note = (tile: HTMLElement) => tile.textContent?.replace(/^beta/, "") ?? "";
+
+  it("gives up on a machine that never answers, five seconds in", async () => {
+    const tile = await pressRetry({ label: "beta", down: true, hangs: true });
+    expect(note(tile())).toBe("reconnecting...");
+
+    // Four seconds of silence is still a retry in flight, not a verdict.
+    await settle(4_000);
+    expect(note(tile())).toBe("reconnecting...");
+
+    await settle(1_500);
+    expect(note(tile())).toBe("Unable to connect");
+    // Red: a failure in the strip's own hint ink reads as more chrome.
+    expect(tile().querySelector(".text-err")).toBeTruthy();
+  });
+
+  it("takes the failure back off the tile three seconds later", async () => {
+    const tile = await pressRetry({ label: "beta", down: true });
+    await settle(50);
+    expect(note(tile())).toBe("Unable to connect");
+
+    await settle(2_000);
+    expect(note(tile())).toBe("Unable to connect");
+
+    await settle(1_500);
+    expect(note(tile())).toBe("");
   });
 });

@@ -144,6 +144,18 @@ const SEARCH_HYDRATE_MAX = 40;
 // this pause is what stops the network being asked until typing rests.
 const SEARCH_DEBOUNCE_MS = 200;
 
+// A RETRY IS A GESTURE, so it answers on a gesture's clock. The transport gives every
+// request 30s (`REQUEST_TIMEOUT_MS`) and a list read can page, so a tile pressed on a
+// machine that is blackholed rather than refused — a closed laptop does not refuse a
+// socket — wore `reconnecting...` for half a minute or more. Five seconds of silence IS
+// the answer: the probe is cancelled and the tile says so.
+const RETRY_TIMEOUT_MS = 5_000;
+
+// The failure is a WORD, not a state: long enough to read, then gone. A verdict left
+// standing turns into the strip's own furniture, and the next reader cannot tell it from
+// something this machine is still saying.
+const RETRY_NOTE_MS = 3_000;
+
 // Each project PAGES its own history, a gateway-cut window at a time — so the DOM is
 // bounded without a global window over the fleet.
 
@@ -409,23 +421,66 @@ export function SessionsScreen({
   // A machine that is not answering is drained out of the switch and dropped from
   // `All`, and the one thing it can still do is come back — so its tile IS the retry
   // (see `MachineTab`). The press has to answer: `reconnecting...` while the probe is
-  // in flight, `no answer` when it came back dead, and nothing at all before the first
-  // press, because a fleet's dead machines are quiet until they are asked. A machine
-  // that answers loses its note along with its drained face.
+  // in flight, `Unable to connect` in error ink when it came back dead, and nothing at
+  // all before the first press, because a fleet's dead machines are quiet until they
+  // are asked. A machine that answers loses its note along with its drained face.
   const [retries, setRetries] = useState<ReadonlyMap<string, 'busy' | 'failed'>>(
     () => new Map(),
+  );
+  // Each tile's pending expiry, so a second press cancels the first press's word
+  // instead of inheriting the moment it vanishes — and an unmount takes them all.
+  const noteExpiry = useRef(new Map<string, number>());
+  useEffect(
+    () => () => {
+      for (const timer of noteExpiry.current.values()) window.clearTimeout(timer);
+      noteExpiry.current.clear();
+    },
+    [],
   );
   const retryMachine = useCallback(
     async (conn: GatewayConn) => {
       const key = machineKey(conn);
+      const pending = noteExpiry.current.get(key);
+      if (pending !== undefined) {
+        window.clearTimeout(pending);
+        noteExpiry.current.delete(key);
+      }
       setRetries((current) => new Map(current).set(key, 'busy'));
-      const failure = await loadMachine(conn);
+      // The deadline CANCELS the probe and answers the press by itself: a blackholed
+      // socket only ends when someone aborts it, and a transport that ignores the
+      // cancellation must not be able to hold the word inside the tile.
+      const deadline = new AbortController();
+      let giveUp: number | undefined;
+      const expired = new Promise<true>((resolve) => {
+        giveUp = window.setTimeout(() => resolve(true), RETRY_TIMEOUT_MS);
+      });
+      const failed = await Promise.race([
+        loadMachine(conn, deadline.signal).then((failure) => failure !== null),
+        expired,
+      ]);
+      if (giveUp !== undefined) window.clearTimeout(giveUp);
+      // A probe that lost the race is over: its late answer must not repaint a tile
+      // the reader has already been told about.
+      deadline.abort();
       setRetries((current) => {
         const next = new Map(current);
-        if (failure) next.set(key, 'failed');
+        if (failed) next.set(key, 'failed');
         else next.delete(key);
         return next;
       });
+      if (!failed) return;
+      noteExpiry.current.set(
+        key,
+        window.setTimeout(() => {
+          noteExpiry.current.delete(key);
+          setRetries((current) => {
+            if (current.get(key) !== 'failed') return current;
+            const next = new Map(current);
+            next.delete(key);
+            return next;
+          });
+        }, RETRY_NOTE_MS),
+      );
     },
     [loadMachine],
   );
@@ -1223,8 +1278,13 @@ export function SessionsScreen({
                     hasUnread={!isDown && (tally?.unread ?? 0) > 0}
                     isDown={isDown}
                     note={
-                      retry === 'busy' ? 'reconnecting...' : retry === 'failed' ? 'no answer' : null
+                      retry === 'busy'
+                        ? 'reconnecting...'
+                        : retry === 'failed'
+                          ? 'Unable to connect'
+                          : null
                     }
+                    isNoteError={retry === 'failed'}
                     label={isDown ? `Reconnect to ${name}` : undefined}
                     title={isDown ? `${name} is not answering — ${machine.error}` : undefined}
                     onClick={() => (isDown ? void retryMachine(machine.conn) : selectScope(key))}
