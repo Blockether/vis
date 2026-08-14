@@ -225,10 +225,10 @@ describe('the app bar', () => {
     expect(headings.indexOf('Machines')).toBeLessThan(headings.indexOf('Application'));
 
     // A machine is a ROW — its name, its address, its verdict — not a bare tab,
-    // and everything it can be TOLD is behind the `⋯` that ends that row.
+    // and the row this dialog is READING carries the machine's own verbs in words.
     const [row] = within(dialog).getAllByRole('button', { name: /laptop/ });
     expect(row.textContent).toContain('app-gateway');
-    expect(within(dialog).getByRole('button', { name: 'Actions for laptop' })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Forget laptop' })).toBeTruthy();
 
     // Pairing is one icon in the band, and what it opens stands OVER this dialog
     // rather than inside it: nothing navigates away to reach either way in.
@@ -251,13 +251,13 @@ describe('the app bar', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Open preferences' }));
     const close = await screen.findByRole('button', { name: 'Close Settings' });
     // One box: this application's appearance AND the machines it talks to — a
-    // machine's own verbs are inside it, behind the row's own `⋯`, and Escape
-    // closes THAT before it closes the dialog under it.
-    await userEvent.click(screen.getByRole('button', { name: 'Actions for laptop' }));
-    expect(await screen.findByRole('menuitem', { name: /Forget this machine/ })).toBeTruthy();
+    // machine's own verbs are inside it, in the row the dialog is reading, and
+    // Escape closes what THEY opened before it closes the dialog under it.
+    await userEvent.click(screen.getByRole('button', { name: 'Forget laptop' }));
+    expect(await screen.findByRole('group', { name: 'Forget laptop?' })).toBeTruthy();
     await userEvent.keyboard('{Escape}');
     await waitFor(() =>
-      expect(screen.queryByRole('menuitem', { name: /Forget this machine/ })).toBeNull(),
+      expect(screen.queryByRole('group', { name: 'Forget laptop?' })).toBeNull(),
     );
     expect(screen.getAllByRole('button', { name: 'Close Settings' })).toHaveLength(1);
     await userEvent.click(close);

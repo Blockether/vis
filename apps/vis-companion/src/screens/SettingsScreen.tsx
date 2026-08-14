@@ -970,7 +970,7 @@ function SettingsColumn({
   children,
 }: {
   title: string;
-  description: string;
+  description?: string;
   meta?: ReactNode;
   /** The column's ONE verb, at the end of its band: `Add a machine` is the ＋. */
   action?: ReactNode;
@@ -978,29 +978,41 @@ function SettingsColumn({
 }) {
   return (
     <section className="flex min-w-0 flex-col sm:min-h-0">
-      {/* Same wrap rule as a `SettingsPanel` band: a machine label is as long as
-          the host it names, and it may not eat the column's own title. */}
-      <header className="flex min-w-0 shrink-0 flex-wrap content-center items-baseline gap-x-3 gap-y-1 border-b border-dialog-edge bg-level-machine px-3 py-2 sm:px-4">
-        <h3 className="min-w-0 flex-auto truncate font-mono text-ui font-black uppercase tracking-[0.12em] text-white">
-          {title}
-        </h3>
-        {meta && (
-          <span className="ms-auto min-w-0 max-w-full break-words text-right font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
-            {meta}
-          </span>
+      {/* A BAND'S VERB CENTRES ITSELF ON THE BAND, and the name keeps its own
+          line. The title, its meta and the ＋ used to share ONE wrapping flex
+          line whose height was the button's: the two words sat at the top of it
+          on their baseline while the ＋ centred itself in the rest, 8px lower
+          than the title it stands beside — the one amber thing in the band was
+          the one thing off its line. The name and its meta wrap inside their own
+          cell now (the same wrap rule a `SettingsPanel` band has: a machine label
+          is as long as the host it names, and it may not eat the column's own
+          title), and the verb is the band's trailing cell, centred against
+          whatever that cell grows to. The band never pads around it: the row is
+          `min-h-12` because a finger lands there. */}
+      <header className="min-w-0 shrink-0 border-b border-dialog-edge bg-level-machine">
+        <div className="flex min-h-12 min-w-0 items-center gap-3 px-3 py-1 sm:px-4 mouse:min-h-9">
+          <div className="flex min-w-0 flex-auto flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h3 className="min-w-0 flex-auto truncate font-mono text-ui font-black uppercase tracking-[0.12em] text-white">
+              {title}
+            </h3>
+            {meta && (
+              <span className="ms-auto min-w-0 max-w-full break-words text-right font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
+                {meta}
+              </span>
+            )}
+          </div>
+          {action && <span className="flex shrink-0 items-center">{action}</span>}
+        </div>
+        {/* One LINE, not a paragraph. This column's own said what a machine stores,
+            how to swipe a row and what it shares with the TUI — 310 characters, six
+            lines on a 320px phone, a band 137px tall introducing a 48px row. */}
+        {description && (
+          <p
+            className={`px-3 pb-2 sm:px-4 ${PROSE} font-mono text-chip text-dialog-hint`}
+          >
+            {description}
+          </p>
         )}
-        {/* A BAND'S VERB CENTRES ITSELF. Everything else on this line is set on a
-            baseline, and a control aligned to the ink of the word beside it sits
-            low in its own box; it also brings its own touch reach, so the band
-            never pads around a target that is already whole. */}
-        {action && (
-          <span className={`flex shrink-0 self-center ${meta ? "" : "ms-auto"}`}>
-            {action}
-          </span>
-        )}
-        <p className={`w-full ${PROSE} font-mono text-chip text-dialog-hint`}>
-          {description}
-        </p>
       </header>
       <div className="min-w-0 divide-y divide-dialog-edge sm:min-h-0 sm:flex-1 sm:overflow-y-auto sm:overscroll-contain">
         {children}
@@ -1152,7 +1164,7 @@ export function SettingsDialog({
         <div className="grid min-w-0 grid-cols-1 divide-y divide-dialog-edge sm:min-h-0 sm:flex-1 sm:grid-cols-2 sm:divide-x sm:divide-y-0 sm:overflow-hidden">
           <SettingsColumn
             title="Machines"
-            description="Every machine this device is paired with, and what this device remembers of each one: its address, its access token, and a name only your own machine list ever shows. Swipe a row — or press its ⋯ — to make it primary, rename it or forget it. What a machine STORES is shared with its TUI and every other client."
+            description="Tap a machine to read its settings."
             meta={
               gateway
                 ? (gateway.label ?? gatewayHost(gateway.url))

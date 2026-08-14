@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- A machine's verbs are words in the row the settings column is reading, not a swipe and a `⋯`
+
 ## [v0.1.37] - 2026-08-14
 
 ### Changed

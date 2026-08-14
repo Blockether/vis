@@ -10,11 +10,8 @@ import {
   reachOf,
 } from '../lib/endpoints';
 import { onWake } from '../lib/wake';
-import { Banner, Button, ConfirmRow, HeaderActions, Input, KebabButton, ListRow, Spinner } from './ui';
-import { ChevronIcon, PencilIcon, StarIcon, TrashIcon } from './icons';
-import { MENU_WIDTH, Menu, MenuHeading, MenuItem } from './Menu';
-import { SwipeActions, type SwipeAction } from './SwipeActions';
-import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
+import { Banner, Button, ConfirmRow, Input, ListRow, Spinner } from './ui';
+import { ChevronIcon } from './icons';
 
 /**
  * THE MACHINES THIS DEVICE IS PAIRED WITH, AND THE WAY TO ADD ONE — two pieces,
@@ -266,17 +263,17 @@ function healthView(h?: GwHealth): GwHealthView {
  * and different exactly when you are reading another machine's settings, so they
  * are two marks rather than one.
  *
- * A MACHINE'S OWN VERBS ARE HIDDEN BEHIND ITS ROW, exactly as a session's are.
- * They used to be a panel called `Saved connection` standing permanently open
- * under this list — a name field, `Make primary` and `Forget this machine` —
- * so three controls for ONE machine were always on screen, below the list that
- * was the thing being read, and they acted on whichever row happened to be
- * selected rather than on the row under the thumb. Now the row hides them: the
- * same left swipe a session row hides `Star` / `Rename` / `Delete` behind (the
- * same `SwipeActions`, the same amber slab for the rank verb and the same red
- * one for the destructive one), and the same `⋯` beside it for a pointer and a
- * keyboard, which have no swipe to make. Rename edits IN the row and Forget
- * asks IN the row, so neither verb opens a surface over the list it acts on.
+ * A MACHINE'S OWN VERBS STAND IN THE ROW THIS COLUMN IS READING, and nowhere
+ * else. They were a `Saved connection` panel under the list first — a name field,
+ * `Make primary` and `Forget this machine` standing permanently open, three
+ * controls for ONE machine, acting on whichever row the column happened to be
+ * reading rather than on the row under the thumb. Then they hid behind a left
+ * swipe and a `⋯`, and that is what the reader reported next: a gesture nobody
+ * can see and a mark that says nothing are not verbs. So the row the column is
+ * READING — the machine whose settings fill the rest of the column, the row the
+ * thumb just pressed — opens its own strip of WORDS under the name they act on:
+ * `Primary`, `Rename`, `Forget`. Rename edits IN the row and Forget asks IN the
+ * row, so neither verb opens a surface over the list it acts on.
  *
  * A verb exists here only when its handler does, so `ConnectScreen`'s list —
  * where a row is a place to GO, not a thing to manage — stays exactly as it was.
@@ -308,29 +305,25 @@ export function MachineRows({
   /** Deletes this machine's address and token from this device. */
   onForget?: (conn: GatewayConn) => void | Promise<void>;
 }) {
-  const [menuFor, setMenuFor] = useState<{ url: string; at: MenuPosition } | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [forgetting, setForgetting] = useState<string | null>(null);
-  const menuConn = conns.find((conn) => conn.url === menuFor?.url);
-  const menuName = menuConn ? (menuConn.label ?? hostOf(menuConn.url)) : '';
 
   // Escape unwinds THIS row's own surface first. Settings closes itself on an
-  // Escape it hears on the window, so a menu opened inside it used to leave with
+  // Escape it hears on the window, so a rename opened inside it used to leave with
   // the whole dialog on one keystroke; a capture listener always runs before
   // that one, whatever order the two mounted in.
   useEffect(() => {
-    if (!menuFor && renaming === null && forgetting === null) return;
+    if (renaming === null && forgetting === null) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       event.stopPropagation();
-      setMenuFor(null);
       setRenaming(null);
       setForgetting(null);
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [menuFor, renaming, forgetting]);
+  }, [renaming, forgetting]);
 
   function startRename(conn: GatewayConn) {
     setDraft(conn.label ?? '');
@@ -394,41 +387,50 @@ export function MachineRows({
             </div>
           );
 
-        const actions: SwipeAction[] = [];
+        // THE VERBS OF THE MACHINE THIS COLUMN IS READING, in words. A verb exists
+        // only when its handler does, and the rank verb is missing from the machine
+        // that already holds the rank.
+        const isReading = conn.url === selectedUrl;
+        const verbs: {
+          key: string;
+          label: string;
+          /** The whole sentence, for a reader who cannot see the name above it. */
+          name: string;
+          variant: 'secondary' | 'danger';
+          onSelect: () => void;
+        }[] = [];
         if (onMakePrimary && conn.url !== primaryUrl)
-          actions.push({
+          verbs.push({
             key: 'primary',
             label: 'Primary',
-            icon: <StarIcon className="size-4" />,
-            // The one verb on the strip that is a RANK rather than an edit, so it
-            // wears the amber the rank marks wear — the same slab `Star` has.
-            tone: 'accent',
+            name: `Make ${name} primary`,
+            variant: 'secondary',
             onSelect: () => void onMakePrimary(conn),
           });
         if (onRename)
-          actions.push({
+          verbs.push({
             key: 'rename',
             label: 'Rename',
-            icon: <PencilIcon className="size-4" />,
+            name: `Rename ${name}`,
+            variant: 'secondary',
             onSelect: () => startRename(conn),
           });
         if (onForget)
-          actions.push({
+          verbs.push({
             key: 'forget',
             label: 'Forget',
-            icon: <TrashIcon className="size-4" />,
-            tone: 'danger',
+            name: `Forget ${name}`,
+            variant: 'danger',
             onSelect: () => setForgetting(conn.url),
           });
 
         return (
-          <SwipeActions key={conn.url} label={name} actions={actions}>
-            <div className="flex items-stretch">
-              <ListRow
-                isSelected={conn.url === selectedUrl}
-                onClick={() => onPick(conn)}
-                className="min-w-0 flex-1 gap-3"
-              >
+          <div key={conn.url} className={isReading ? 'bg-panel-2' : ''}>
+            <ListRow
+              isSelected={isReading}
+              onClick={() => onPick(conn)}
+              className="min-w-0 gap-3"
+            >
                 <span
                   className={`shrink-0 font-mono text-title ${hv.dotClass} ${hv.state === 'checking' ? 'animate-pulse' : ''}`}
                   aria-hidden="true"
@@ -477,71 +479,32 @@ export function MachineRows({
                   </span>
                 )}
                 {actionLabel && <ChevronIcon className="size-3 text-dialog-hint" aria-hidden />}
-              </ListRow>
-              {/* The row's TRAILING EDGE belongs to `HeaderActions`, here as
-                  everywhere: the `⋯` reclaims that gutter with its own negative
-                  margin, so without the wrapper 12px of a 40px target hung past
-                  the paper and the glyph ended flush against the screen. */}
-              {actions.length > 0 && (
-                <HeaderActions>
-                  <KebabButton
-                    label={`Actions for ${name}`}
-                    isOpen={menuFor?.url === conn.url}
-                    onClick={(event) => {
-                      const at = menuPosition(event.currentTarget.getBoundingClientRect(), MENU_WIDTH);
-                      if (at) setMenuFor({ url: conn.url, at });
-                    }}
-                  />
-                </HeaderActions>
-              )}
-            </div>
-          </SwipeActions>
+            </ListRow>
+            {isReading && verbs.length > 0 && (
+              // THE STRIP STANDS INSIDE THE MACHINE'S OWN PAPER, on the row's own
+              // inset, so the words belong to the name above them rather than to
+              // the panels below — and only ONE row can carry them, the one this
+              // column is reading, which is also the row the thumb just pressed.
+              <div className="flex items-stretch gap-2 px-3 pb-2">
+                {verbs.map((verb) => (
+                  <Button
+                    key={verb.key}
+                    type="button"
+                    variant={verb.variant}
+                    density="panel"
+                    aria-label={verb.name}
+                    title={verb.name}
+                    className="min-w-0 flex-1"
+                    onClick={verb.onSelect}
+                  >
+                    {verb.label}
+                  </Button>
+                ))}
+              </div>
+            )}
+          </div>
         );
       })}
-
-      {menuFor && menuConn && (
-        <Menu
-          label={`Actions for ${menuName}`}
-          at={menuFor.at}
-          onDismiss={() => setMenuFor(null)}
-        >
-          <MenuHeading>{menuName}</MenuHeading>
-          {onMakePrimary && menuConn.url !== primaryUrl && (
-            <MenuItem
-              title="Make primary"
-              hint="The machine this app opens on"
-              icon={<StarIcon className="size-4" />}
-              onSelect={() => {
-                setMenuFor(null);
-                void onMakePrimary(menuConn);
-              }}
-            />
-          )}
-          {onRename && (
-            <MenuItem
-              title="Rename"
-              hint="The name this device shows for it"
-              icon={<PencilIcon className="size-4" />}
-              onSelect={() => {
-                setMenuFor(null);
-                startRename(menuConn);
-              }}
-            />
-          )}
-          {onForget && (
-            <MenuItem
-              title="Forget this machine"
-              hint="Deletes its address and token from this device"
-              tone="danger"
-              icon={<TrashIcon className="size-4" />}
-              onSelect={() => {
-                setMenuFor(null);
-                setForgetting(menuConn.url);
-              }}
-            />
-          )}
-        </Menu>
-      )}
     </div>
   );
 }

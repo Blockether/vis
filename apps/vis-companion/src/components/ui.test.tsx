@@ -2689,6 +2689,35 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(connectSource).not.toContain("<button");
   });
 
+  // Regression, user report on the machines column ("I don't need the ⋯ and
+  // swiping, also this long description is shit and the + alignment IS SHIT"):
+  // the column's band spelled a 310-character paragraph — five lines on a 390px
+  // phone, six on a 320px one, a 123px band introducing a 48px row — a machine's
+  // verbs hid behind a swipe strip and a `⋯`, and the ＋ centred itself in a flex
+  // line whose other two items sat on their baseline, so the one amber thing in
+  // the band was 8px lower than the title it stands beside.
+  it("says a machine's verbs out loud and lets the band centre its own", () => {
+    // Nothing on a machine row is reached by a gesture or by a mark.
+    expect(machinesSource).not.toContain("SwipeActions");
+    expect(machinesSource).not.toContain("KebabButton");
+    expect(machinesSource).not.toContain("Actions for");
+
+    // The verb is the band's trailing CELL, centred against the title's own cell,
+    // and that cell is what wraps — never the line the verb stands on.
+    const band =
+      /bg-level-machine">\s*<div className="([^"]*)"/.exec(settingsSource)?.[1] ?? "";
+    expect(band).toContain("items-center");
+    expect(band).toContain("min-h-12");
+    expect(band).not.toContain("items-baseline");
+
+    // A band REPORTS in one line. It is a description, not a manual.
+    const description =
+      /title="Machines"\s+description="([^"]*)"/.exec(settingsSource)?.[1] ?? "";
+    expect(description.length).toBeGreaterThan(0);
+    expect(description.length).toBeLessThan(60);
+    expect(settingsSource).not.toContain("Swipe a row");
+  });
+
   it("keeps no control nobody uses", () => {
     // `Card` and `Section` had no call site left anywhere in the app.
     expect(uiSource).not.toContain("export function Card(");
