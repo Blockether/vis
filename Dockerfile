@@ -455,8 +455,7 @@ RUN test "${WITH_BROWSERS}" != "true" \
 
 # ── Vis Agent: the native runtime this source builds ──
 # The gateway process IS `vis-agent-native` — the same binary a release
-# publishes — installed in exactly the layout `vis-agent update --native`
-# unpacks a bundle into:
+# publishes — installed in exactly the layout a release bundle unpacks into:
 #
 #   /opt/vis/agent/vis-agent             the public Bash wrapper
 #   /opt/vis/agent/vis-agent-native      the runtime it execs
@@ -485,13 +484,11 @@ WORKDIR /work
 # every `compose up` recreate, taking user.name/user.email with it. Point git at
 # the persisted .config volume instead; `git config --global` then writes there
 # too, so the identity survives a rebuild.
-# VIS_RUNTIME=native: the wrapper execs /opt/vis/agent/vis-agent-native. It is
-# also what `find_native` would decide on its own here, said out loud so
-# `docker exec … vis-agent` can never drift.
+# The wrapper finds /opt/vis/agent/vis-agent-native beside itself and runs it:
+# an installed native runtime is the runtime, and there is nothing to select.
 ENV HOME=/home/vis \
     VIS_HOME=/home/vis/.vis \
-    GIT_CONFIG_GLOBAL=/home/vis/.config/git/config \
-    VIS_RUNTIME=native
+    GIT_CONFIG_GLOBAL=/home/vis/.config/git/config
 
 # Prove, at build time, that the assembled image is what it claims to be: the
 # toolchain resolves, the runtime that will serve is the native one, its Python

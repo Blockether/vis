@@ -2269,7 +2269,7 @@
                               "graalvm-community-jdk-25i1 / graal-"
                               pinned
                               " build), "
-                              "OR run --jvm on a stock (non-GraalVM) JDK 25 "
+                              "OR run the source runtime on a stock (non-GraalVM) JDK 25 "
                               "(e.g. `sdk install java 25.0.3-tem`).")
                          {:vis/error :graalvm-version-mismatch
                           :pinned pinned

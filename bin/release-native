@@ -114,19 +114,19 @@ build_macos_arm64() {
   clojure -T:build native
   bin/stage-release-bundle target/vis "$asset"
   say "smoke: help + gateway boot"
-  target/release-bundle/vis-agent --native help >/dev/null
+  target/release-bundle/vis-agent help >/dev/null
   local out
-  out="$(target/release-bundle/vis-agent --native providers status anthropic 2>&1 || true)"
+  out="$(target/release-bundle/vis-agent providers status anthropic 2>&1 || true)"
   if printf '%s\n' "$out" | grep -q 'did not become ready'; then
     printf '%s\n' "$out" >&2
     die "the gateway daemon failed to boot — not shipping this binary"
   fi
-  target/release-bundle/vis-agent --native gateway stop >/dev/null 2>&1 || true
+  target/release-bundle/vis-agent gateway stop >/dev/null 2>&1 || true
   # The sidecar is the whole point of this bundle: prove the runtime imports the
   # Python stdlib THROUGH the staged directory, not through a build leftover.
   say "smoke: GraalPy stdlib from the staged language resources"
   VIS_NATIVE_RESOURCES="$repo_root/target/release-bundle/vis-agent-resources" \
-    target/release-bundle/vis-agent --native python -c "import ast, json, os; print('py-ok')" \
+    target/release-bundle/vis-agent python -c "import ast, json, os; print('py-ok')" \
     | grep -qx 'py-ok' || die "the staged language resources do not load: no Python stdlib"
   built_asset="$asset"
 }
@@ -347,11 +347,11 @@ build_linux() {
   say "smoke: help inside a $platform container"
   eng run --rm --platform "$platform" \
     -v "$repo_root/target/release-bundle:/bundle:ro" \
-    "$probe_image" /bundle/vis-agent --native help >/dev/null
+    "$probe_image" /bundle/vis-agent help >/dev/null
   say "smoke: GraalPy stdlib inside that container"
   eng run --rm --platform "$platform" \
     -v "$repo_root/target/release-bundle:/bundle:ro" \
-    "$probe_image" /bundle/vis-agent --native python -c "import ast; print('py-ok')" \
+    "$probe_image" /bundle/vis-agent python -c "import ast; print('py-ok')" \
     | grep -qx 'py-ok' || die "the $target bundle cannot import the Python stdlib"
   built_asset="$asset"
 }

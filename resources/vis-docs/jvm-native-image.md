@@ -1,6 +1,6 @@
 # JVM & native-image
 
-Vis's core is Clojure on the JVM. `clojure -T:build native` compiles that core into a fast GraalVM native runtime, but the native executable is never the public distribution by itself: releases always place it beside the `vis-agent` Bash wrapper as `vis-agent-native`, and `vis-agent update --jvm --rebuild` is how you build one locally.
+Vis's core is Clojure on the JVM. `clojure -T:build native` compiles that core into a fast GraalVM native runtime, but the native executable is never the public distribution by itself: releases always place it beside the `vis-agent` Bash wrapper as `vis-agent-native`, and `vis-agent update --rebuild` is how you build one locally from an installed source runtime.
 
 ## Config travels inside the image
 

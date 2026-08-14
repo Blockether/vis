@@ -28,7 +28,7 @@ vis-agent help
 ```
 
 ```bash
-vis-agent runtime show      # what is installed and selected
+vis-agent runtime           # what runs, and where it lives
 vis-agent update            # move the command and its runtime to the newest commit
 ```
 
@@ -50,25 +50,21 @@ Vis Companion is the phone client for a Vis gateway you run yourself — it driv
 
 The app is useless on its own: it needs a gateway. Start one with `vis-agent gateway`, then pair by scanning the QR it prints. Feedback goes to `karol@blockether.com` (or the TestFlight feedback button).
 
-## Choose the runtime
+## The runtime
 
-`vis-agent` follows the releases by default, and everything it installs lives under `~/.vis`.
+There is nothing to choose: how Vis was installed decides what runs, and everything it installs lives under `~/.vis`.
 
-| Runtime | Runs |
-|---|---|
-| `native` | the private sidecar downloaded by `vis-agent update` |
-| `jvm` | source pinned to the newest `vX.Y.Z` tag |
-| `auto` | no choice at all: native if installed, else tagged source |
+| Runtime | Runs | Comes from |
+|---|---|---|
+| `native` | the private `vis-agent-native` sidecar beside the command | a release bundle or the container image |
+| `jvm` | `clojure -M:vis` from the source Vis owns, pinned to main's newest commit | `install-vis-agent` |
 
 ```bash
-vis-agent update native|jvm                 # acquire it, update it, select it
-vis-agent runtime show
-vis-agent runtime use native|jvm|auto       # switch only (auto = forget the choice)
-vis-agent --native|--jvm help               # one launch only
-VIS_RUNTIME=jvm vis-agent help              # one process only
+vis-agent runtime           # what runs, where it lives, what the source is pinned to
+vis-agent update            # move the command and its runtime to the newest
 ```
 
-A one-launch flag beats `VIS_RUNTIME`, which beats the persisted default in `~/.vis/runtime`. `vis-agent update` updates the runtime in effect; naming one (`vis-agent update jvm`) also makes it the default. A selected runtime that is not installed is an error, never a silent substitution. Full matrix: [Runtime distributions](resources/vis-docs/distributions.md).
+`vis-agent update` takes the installed runtime forward and carries the command with it; it never swaps one runtime for the other. A native build wins whenever one is installed. Full detail: [Runtime distributions](resources/vis-docs/distributions.md).
 
 ## License
 

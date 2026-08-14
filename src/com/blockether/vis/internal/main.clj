@@ -2198,12 +2198,13 @@
 
 (defn- resolve-out-path
   "Resolve a user-supplied output path against the invocation directory.
-   `bin/vis-agent` runs the dev JVM from the repo root (so `clojure -M:vis` finds
-   deps.edn) but passes the real invocation cwd as `-Duser.dir`. Java resolves
-   relative `File` paths against the OS cwd, so a bare `out.html` would silently
-   land in the repo root while the printed path (from `user.dir`) said
-   otherwise. Anchor relatives to `user.dir` (same convention as
-   `vis-agent extension scaffold`); absolute paths pass through untouched."
+   `bin/vis-agent` runs the JVM source runtime from its source root (so
+   `clojure -M:vis` finds deps.edn) but passes the real invocation cwd as
+   `-Duser.dir`. Java resolves relative `File` paths against the OS cwd, so a
+   bare `out.html` would silently land in the source root while the printed
+   path (from `user.dir`) said otherwise. Anchor relatives to `user.dir` (same
+   convention as `vis-agent extension scaffold`); absolute paths pass through
+   untouched."
   [path]
   (let [f (io/file path)]
     (.getPath (if (.isAbsolute f) f (io/file (System/getProperty "user.dir") path)))))
@@ -4480,14 +4481,10 @@
      (help-row "--persist" "Persist as a :cli session.")
      (help-row "--debug, --verbose, -v" "Enable verbose debug logging.")
      (help-row "--" "End flags: every later word is prompt text.")
-     (help-row "--help, -h" "Show help.") "" "RUNTIME (WHICH DISTRIBUTION RUNS)"
-     (help-row "--native" "Run the released native build, else your own.")
-     (help-row "--jvm" "Run the release-tagged source Vis owns.")
-     (help-row "VIS_RUNTIME=native|jvm" "The same choice, for one process.")
-     (help-row "vis-agent runtime show" "Name the runtime in effect and who chose it.")
-     (help-row "vis-agent runtime use NAME" "Switch to native|jvm|auto without updating.")
-     (help-row "vis-agent update [RUNTIME]" "Update vis-agent + that runtime, and select it.") ""
-     "CONFIGURATION" (help-row "~/.vis/config.yml" "Global settings: providers, models, tools.")
+     (help-row "--help, -h" "Show help.") "" "RUNTIME (WHAT RUNS)"
+     (help-row "vis-agent runtime" "Name the runtime installed, and where it lives.")
+     (help-row "vis-agent update" "Update vis-agent and that runtime together.") "" "CONFIGURATION"
+     (help-row "~/.vis/config.yml" "Global settings: providers, models, tools.")
      (help-row "<project>/vis.yml" "Project settings; .vis/config.yml overrides it.")
      (help-row "vis-agent providers status" "Show provider auth and model catalogs.")
      (help-row "vis-agent doctor" "Diagnose config, extensions, stale state.") "" "EXAMPLES"
@@ -4715,13 +4712,13 @@
 
 (defn- measure-arg? [arg] (= "--measure" arg))
 
-(def ^:private launcher-selector-args
+(def ^:private launcher-owned-args
   ;; `bin/vis-agent` normally consumes these before invoking Clojure, but keep
-  ;; the JVM entry point tolerant too (e.g. `clojure -M:vis-agent channels --jvm --help`).
-  ;; There is intentionally no --jar runtime: jars are build artifacts only.
-  #{"--native" "--jvm" "--jfr" "--stream-trace"})
+  ;; the JVM entry point tolerant too (e.g. `clojure -M:vis-agent channels --jfr --help`).
+  ;; No runtime selector belongs here: what runs is decided by what is installed.
+  #{"--jfr" "--stream-trace"})
 
-(defn- global-arg? [arg] (or (measure-arg? arg) (contains? launcher-selector-args arg)))
+(defn- global-arg? [arg] (or (measure-arg? arg) (contains? launcher-owned-args arg)))
 
 (defn- strip-global-args [args] (vec (remove global-arg? args)))
 

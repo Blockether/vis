@@ -123,8 +123,7 @@
    :cmd/doc (str "One-liner.\n"
                  "\n" "USAGE\n"
                  "vis-agent [FLAGS] \"prompt\"   Run one-shot agent work.\n" "\n"
-                 "RUNTIME (WHICH DISTRIBUTION RUNS)\n"
-                 "--jvm                        Run the source Vis owns.")
+                 "RUNTIME (WHAT RUNS)\n" "vis-agent runtime            Name the runtime installed.")
    :cmd/subcommands [{:cmd/name "doctor" :cmd/doc "Diagnose."}]})
 
 (defdescribe render-tree-root-doc-test
@@ -132,7 +131,7 @@
                  (binding [commandline/*color-enabled?* false]
                    (let [out (commandline/render-tree (sectioned-root))]
                      (expect (str/includes? out "\nUSAGE\n  vis-agent [FLAGS] \"prompt\""))
-                     (expect (str/includes? out "\nRUNTIME (WHICH DISTRIBUTION RUNS)\n  --jvm"))
+                     (expect (str/includes? out "\nRUNTIME (WHAT RUNS)\n  vis-agent runtime"))
                      (expect (str/includes? out "\nCOMMANDS\n  doctor"))
                      (expect (str/includes? out "  One-liner."))
                      ;; No line is indented twice, and blank lines carry no padding.

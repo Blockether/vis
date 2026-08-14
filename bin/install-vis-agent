@@ -2,13 +2,13 @@
 # Install the `vis-agent` command.
 #
 # Step 1 installs the public Bash wrapper — the only command a user ever runs.
-# Step 2 hands off to it: `vis-agent update --jvm` checks the source Vis owns
-# out at the newest commit of the development branch and selects that runtime.
+# Step 2 hands off to it: `vis-agent update` checks the source Vis owns out at
+# the newest commit of main and runs from there.
 #
-# There is one runtime here: the JVM source runtime. No native binary is
-# downloaded and no release tag is checked out — every install and every
-# `vis-agent update` lands on the newest commit of the branch, because that is
-# where fixes land first.
+# There is one runtime here and nothing to select: the JVM source runtime. No
+# native binary is downloaded and no release tag is checked out — every install
+# and every `vis-agent update` lands on the newest commit of main, because that
+# is where fixes land first.
 #
 # The two SCRIPTS are a different question: they are downloaded as GitHub
 # RELEASE ASSETS (github.com/OWNER/REPO/releases/download/installer/...), never
@@ -27,7 +27,6 @@ set -euo pipefail
 repo_slug="${VIS_REPO_SLUG:-Blockether/vis}"
 install_dir="${VIS_INSTALL_DIR:-$HOME/.local/bin}"
 vis_home="${VIS_HOME:-$HOME/.vis}"
-branch="${VIS_BRANCH:-main}"
 
 usage() {
   cat <<EOF
@@ -37,13 +36,12 @@ Installs the public command first:
   $install_dir/vis-agent          the command you run
 
 then lets it acquire its own runtime:
-  $vis_home/install/src           source at the newest commit on $branch
+  $vis_home/install/src           source at the newest commit on main
                                   (needs Java 25+, the Clojure CLI, git)
 
 Environment overrides:
   VIS_INSTALL_DIR    command directory (default: ~/.local/bin)
   VIS_HOME           state directory (default: ~/.vis)
-  VIS_BRANCH         branch to follow (default: main)
   VIS_REPO_SLUG      GitHub OWNER/REPO (default: Blockether/vis)
 EOF
 }
@@ -162,12 +160,9 @@ if (( ! path_configured )); then
 fi
 
 # ── 2. vis-agent acquires its own runtime ───────────────────────────────────
-# Naming the runtime on `update` also persists it, so there is nothing left to
-# select.
-if ! ( VIS_HOME="$vis_home" VIS_RUNTIME=jvm VIS_BRANCH="$branch" \
-       "$install_dir/vis-agent" update --jvm && \
-       VIS_HOME="$vis_home" VIS_RUNTIME=jvm VIS_BRANCH="$branch" \
-       "$install_dir/vis-agent" runtime use jvm ); then
+# The command owns runtime acquisition, so `update` is the whole of step 2:
+# nothing is selected, because nothing else is installed.
+if ! ( VIS_HOME="$vis_home" "$install_dir/vis-agent" update ); then
   if (( ! path_configured )); then
     cat >&2 <<EOF
 
@@ -181,10 +176,10 @@ cat <<EOF
 
 Vis Agent is installed for this user:
   $install_dir/vis-agent          the command
-  $vis_home/install/src           source runtime, at the newest commit on $branch
+  $vis_home/install/src           source runtime, at the newest commit on main
 
   vis-agent help
-  vis-agent runtime show          what is installed and selected
+  vis-agent runtime               what is installed, and where
   vis-agent update                moves both onto the newest commit
 EOF
 

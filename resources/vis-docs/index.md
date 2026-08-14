@@ -103,14 +103,14 @@ vis-agent help
 ```
 
 The installer puts `vis-agent` in `~/.local/bin`, adds that directory to your
-shell profile when PATH lacks it, and then runs `vis-agent update --jvm` so the
-wrapper checks the source it owns out at the newest commit and selects it. That
+shell profile when PATH lacks it, and then runs `vis-agent update` so the
+wrapper checks the source it owns out at the newest commit. That
 runtime needs git. A JVM launch reuses a matching GraalVM CE 25.1.3 already installed (including through SDKMAN), or installs the pinned JDK automatically when no Java is available. Vis also installs the Clojure CLI automatically when the JVM runtime first needs it; set `VIS_NO_AUTO_INSTALL=1` to disable automatic tool installation.
 
 Afterwards every runtime action belongs to vis-agent:
 
 ```bash
-vis-agent runtime show      # configured default, effective runtime, paths
+vis-agent runtime           # what runs, where it lives, what it is pinned to
 vis-agent update            # command + runtime, moved to the newest commit
 ```
 
@@ -118,9 +118,10 @@ The installer only ever installs the wrapper; `vis-agent update` then acquires
 the runtime — source checked out at the newest commit — so the wrapper and its
 runtime cannot drift apart.
 
-A native runtime still exists for Linux x64 and arm64 (`vis-agent update
---native`), or is built locally with `vis-agent update --jvm --rebuild` (GraalVM
-CE 25.1.3, ≥16 GB RAM). The installer never downloads one.
+A native runtime still exists — release bundles for Linux x64/arm64 and macOS
+arm64 carry it beside the command, and `vis-agent update --rebuild` builds one
+from an installed source runtime (GraalVM CE 25.1.3, ≥16 GB RAM). The installer
+never downloads one.
 
 ### Clojars packages
 
@@ -138,35 +139,31 @@ coordinate gives the full agent. Depend on one package
 (`com.blockether/vis-channel-tui`, `com.blockether/vis-provider-anthropic`,
 `com.blockether/vis-language-python`, …) only when you embed a part of it.
 
-## Choose native or the source Vis owns
+## What runs: native, or the source Vis owns
 
-The wrapper owns runtime selection, and it follows releases unless told
-otherwise: the installed native runtime, else JVM source pinned to the newest
-`vX.Y.Z` tag.
+There is nothing to select. How Vis was installed decides: the native sidecar
+when one sits beside the command (a release bundle or the container image),
+otherwise the JVM source Vis owns, pinned to main's newest commit.
 
 ```bash
-vis-agent update native|jvm                 # acquire it, update it, select it
-vis-agent runtime show
-vis-agent runtime use native|jvm|auto       # switch only (auto = follow releases)
-vis-agent --native|--jvm help               # one launch only
-VIS_RUNTIME=jvm vis-agent help              # one process only
+vis-agent runtime           # what runs, where it lives, what the source is pinned to
+vis-agent update            # move that runtime — and the command — to the newest
 ```
 
-A one-launch flag beats `VIS_RUNTIME`, which beats the persisted default in
-`~/.vis/runtime`. A selected runtime that is not installed stops the wrapper
-with the command that fixes it — it never silently picks another.
+A launch with nothing installed stops with the command that fixes it — it never
+silently picks another runtime.
 
-`vis-agent update` updates whichever runtime is in effect: the newest release
-bundle, or the checkout Vis owns (`~/.vis/install/src`) moved onto the newest
-`vX.Y.Z` tag, and any target that is not a release tag pins the owned source to
-that git ref. Full matrix: [Runtime distributions](distributions.md).
+`vis-agent update` updates the runtime that is installed: the newest release
+bundle, or the checkout Vis owns (`~/.vis/install/src`) moved onto main's newest
+commit. Naming a released `vX.Y.Z` takes that version instead of the newest;
+anything else is refused. Full matrix:
+[Runtime distributions](distributions.md).
 
-There is no jar runtime and no `--jar` selector; `target/vis.jar` exists only as
-an intermediate build artifact. The JVM runtime means source plus Java 25 and
-the Clojure CLI; the native runtime stays private behind the wrapper. GraalVM
-builds require Community Edition 25.1.3 exactly and at least 16 GB RAM; 25.2.x
-is unsupported because its native-image analysis does not converge within
-memory.
+There is no jar runtime; `target/vis.jar` exists only as an intermediate build
+artifact. The JVM runtime means source plus Java 25 and the Clojure CLI; the
+native runtime stays private behind the wrapper. GraalVM builds require
+Community Edition 25.1.3 exactly and at least 16 GB RAM; 25.2.x is unsupported
+because its native-image analysis does not converge within memory.
 
 ## Features
 

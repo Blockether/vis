@@ -51,20 +51,16 @@
         (expect (nil? (re-find #"(?m)^ {3,}\S" help)))
         (expect (= 1 (count (gutter-columns (subs help 0 commands-at)))))
         (expect (= 1 (count (gutter-columns (subs help commands-at)))))))
-  (it "documents how to change the runtime distribution"
+  (it "documents the runtime, and offers nothing to select"
       (let [^String help (commandline/render-tree (#'main/root-command))]
-        (expect (.contains help "RUNTIME (WHICH DISTRIBUTION RUNS)"))
-        (doseq
-          [row ["--native" "--jvm" "VIS_RUNTIME=native|jvm" "vis-agent runtime show"
-                "vis-agent runtime use NAME" "vis-agent update [RUNTIME]"]]
+        (expect (.contains help "RUNTIME (WHAT RUNS)"))
+        (doseq [row ["vis-agent runtime" "vis-agent update"]]
           (expect (.contains help row)))
-        ;; The distribution question this section answers: --native is the
-        ;; RELEASED native, and only falls back to a build you made yourself.
-        (expect (re-find #"--native\s+Run the released native" help))
-        ;; There is no live-checkout runtime any more: vis-agent installs under
-        ;; ~/.vis and runs native or jvm, so help must not advertise one.
-        (expect (not (str/includes? help "--dev")))
-        (expect (not (str/includes? help "dev|auto")))))
+        ;; There is no runtime SELECTOR any more: vis-agent installs under
+        ;; ~/.vis, what is installed is what runs, and help must not advertise
+        ;; a switch that no longer exists.
+        (doseq [gone ["--native" "--jvm" "--dev" "VIS_RUNTIME" "runtime use" "dev|auto"]]
+          (expect (not (str/includes? help gone)) gone))))
   (it "points at the configuration a run reads"
       (let [^String help (commandline/render-tree (#'main/root-command))]
         (expect (.contains help "CONFIGURATION"))
@@ -104,8 +100,8 @@
                (expect (.contains (str out) "zzz-test"))
                (expect (.contains (str out) "Test channel for help.")))
              (finally (registry/deregister-channel! (:channel/id fake-channel))))))
-  (it "strips launcher selectors when they leak into JVM args"
-      (expect (= ["channels" "--help"] (#'main/strip-global-args ["channels" "--jvm" "--help"]))))
+  (it "strips launcher-owned flags when they leak into JVM args"
+      (expect (= ["channels" "--help"] (#'main/strip-global-args ["channels" "--jfr" "--help"]))))
   (it "strips --stream-trace, which the wrapper consumes as a system property"
       (expect (= ["channels" "tui"]
                  (#'main/strip-global-args ["channels" "--stream-trace" "tui"])))))
@@ -351,9 +347,8 @@
           (expect (nil? (get by-name nm))))))
   (it "still documents them where the launcher owns them: the RUNTIME help section"
       (let [^String help (commandline/render-tree (#'main/root-command))]
-        (expect (str/includes? help "RUNTIME (WHICH DISTRIBUTION RUNS)"))
-        (doseq
-          [row ["vis-agent runtime show" "vis-agent runtime use NAME" "vis-agent update [RUNTIME]"]]
+        (expect (str/includes? help "RUNTIME (WHAT RUNS)"))
+        (doseq [row ["vis-agent runtime" "vis-agent update"]]
           (expect (str/includes? help row))))))
 
 ;;; ── `vis-agent projects` ──────────────────────────────────────────────────────

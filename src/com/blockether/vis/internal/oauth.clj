@@ -121,7 +121,7 @@
 
 (defn call-with-file-lock
   "Run `f` while holding an OS advisory lock on `lock-path`, serializing the
-   critical section ACROSS processes (e.g. two vis JVMs — a `--jvm` client and
+   critical section ACROSS processes (e.g. two vis JVMs — a source-runtime client and
    its gateway daemon — sharing one credential file). The caller must already
    hold the in-process monitor, since a single JVM cannot hold two overlapping
    locks on the same file.

@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
 # vis-agent — the one public Vis command.
 #
-# It does three things and nothing else:
-#   1. run Vis on the selected runtime,
-#   2. show that selection              (`vis-agent runtime`),
-#   3. update — and select — a runtime  (`vis-agent update`).
+# It does two things and nothing else:
+#   1. run Vis,
+#   2. update Vis — and this command with it — (`vis-agent update`).
 #
-# Two runtimes, one word each:
-#   native  the released build, downloaded beside this wrapper; a native you
-#           built yourself (target/vis) is used only when none is installed
-#   jvm     `clojure -M:vis` from source pinned to main's newest commit
+# There is nothing to choose. How Vis was installed decides what runs:
+#   native  the released build, unpacked beside this wrapper (release bundle,
+#           container image), or one you built yourself (target/vis)
+#   jvm     `clojure -M:vis` from the source Vis owns, pinned to main's newest
+#           commit — what `bin/install-vis-agent` puts in place
+#
+# The native build wins whenever one is installed, because it is the published
+# runtime. `vis-agent runtime` reports which one runs; it never switches, and
+# `vis-agent update` keeps that runtime — and this command — current.
 #
 # Vis follows main. Everything Vis owns lives under ~/.vis:
-#   runtime                    persisted selection (absent = automatic)
 #   install/vis-agent-native   the private native runtime
 #   install/src                the checkout Vis owns
 #   install/ref                the commit that checkout is pinned to
@@ -55,13 +58,12 @@ invocation_cwd="$PWD"
 
 vis_home="${VIS_HOME:-$HOME/.vis}"
 vis_install_dir="$vis_home/install"
-vis_runtime_file="$vis_home/runtime"
 vis_repo_slug="${VIS_REPO_SLUG:-Blockether/vis}"
 vis_repo_url="${VIS_REPO_URL:-https://github.com/$vis_repo_slug.git}"
-# The development branch the source runtime follows. Release tags are never
-# consulted: a release is a commit like any other, and this source tracks the
-# newest one.
-vis_branch="${VIS_BRANCH:-main}"
+# The branch the source runtime follows. There is no branch to choose: Vis
+# follows main, and release tags are never consulted either — a release is a
+# commit like any other, and this source tracks the newest one.
+vis_branch="main"
 managed_src="$vis_install_dir/src"
 managed_ref_file="$vis_install_dir/ref"
 
@@ -94,61 +96,23 @@ if [[ -d "$clojure_install_dir/bin" ]]; then
 fi
 
 # ── Arguments the wrapper owns ───────────────────────────────────────────────
-# --native/--jvm name a runtime. On a launch they say which runtime RUNS;
-# on `update` they say which runtime is UPDATED, so `update` keeps them.
-flag_runtime=""
 jfr=0
 args=()
 end_of_flags=0
-update_cmd=0
-if [[ "${1:-}" == "update" ]]; then update_cmd=1; fi
 for arg in "$@"; do
-  # `--` ends the WRAPPER's parsing too, not just the app's. Without this,
-  # `vis-agent -- --jvm` silently switched runtime and handed the app an empty
-  # prompt — the one escape hatch the help promises would eat its own argument.
+  # `--` ends the WRAPPER's parsing too, not just the app's, so every later word
+  # reaches Vis verbatim — the one escape hatch the help promises must never eat
+  # its own argument.
   if (( end_of_flags )); then args+=("$arg"); continue; fi
   case "$arg" in
     --)        end_of_flags=1; args+=("$arg") ;;
     --measure) export VIS_MEASURE=1 ;;
     --jfr)     jfr=1 ;;
     --stream-trace) export VIS_STREAM_TRACE=1 ;;
-    --native|--jvm)
-      if [[ -n "$flag_runtime" && "$flag_runtime" != "${arg#--}" ]]; then
-        die "name one runtime, not --$flag_runtime and $arg"
-      fi
-      flag_runtime="${arg#--}"
-      if (( update_cmd )); then args+=("$arg"); fi
-      ;;
     *) args+=("$arg") ;;
   esac
 done
 if (( ${#args[@]} > 0 )); then set -- "${args[@]}"; else set --; fi
-
-# ── Which runtime, and who chose it ──────────────────────────────────────────
-# A one-launch flag wins over VIS_RUNTIME, which wins over the persisted default
-# in ~/.vis/runtime. No selection at all means automatic: follow the releases.
-persisted_runtime="$(read_state "$vis_runtime_file")"
-case "$persisted_runtime" in
-  native|jvm) ;;
-  "") ;;
-  *) warn "ignoring invalid runtime in $vis_runtime_file: $persisted_runtime"; persisted_runtime="" ;;
-esac
-
-selected_runtime=""
-runtime_origin="automatic"
-if [[ -n "$flag_runtime" ]]; then
-  selected_runtime="$flag_runtime"
-  runtime_origin="--$flag_runtime"
-elif [[ -n "${VIS_RUNTIME:-}" ]]; then
-  case "$VIS_RUNTIME" in
-    native|jvm) selected_runtime="$VIS_RUNTIME"; runtime_origin="VIS_RUNTIME" ;;
-    *) warn "ignoring invalid VIS_RUNTIME '$VIS_RUNTIME' (use native or jvm)" ;;
-  esac
-fi
-if [[ -z "$selected_runtime" && -n "$persisted_runtime" ]]; then
-  selected_runtime="$persisted_runtime"
-  runtime_origin="$vis_runtime_file"
-fi
 
 # ── --jfr: Java Flight Recorder profiling ────────────────────────────────────
 # Export VIS_JFR=1 so the client and detached gateway daemon each create their
@@ -292,130 +256,46 @@ find_native() {
   return 1
 }
 
-# Automatic means "follow the published runtime": the native runtime when it is
-# installed, otherwise source at main's newest commit.
+# What runs: the native build when one is installed, otherwise the source Vis
+# owns. Installing IS the decision — there is no flag, no environment variable
+# and no persisted choice layered on top of it.
 runtime_effective() {
-  if [[ -n "$selected_runtime" ]]; then
-    printf '%s\n' "$selected_runtime"
-  elif find_native >/dev/null 2>&1; then
+  if find_native >/dev/null 2>&1; then
     printf 'native\n'
   else
     printf 'jvm\n'
   fi
 }
 
-# Persisting a choice must never be a claim. A ~/.vis that is a file, a runtime
-# path that is a directory, or a read-only home used to leave `runtime is now X`
-# on screen (or a raw bash error) while the next launch saw nothing at all.
-write_runtime_file() {
-  local value="$1"
-  if [[ -e "$vis_home" && ! -d "$vis_home" ]]; then
-    die "cannot persist the runtime: $vis_home is not a directory" \
-        "Move that file aside, or point VIS_HOME at a directory Vis may own"
-  fi
-  mkdir -p "$vis_home" 2>/dev/null \
-    || die "cannot persist the runtime: $vis_home cannot be created" \
-           "Check its permissions, or set VIS_HOME to a writable directory"
-  if [[ -e "$vis_runtime_file" && ! -f "$vis_runtime_file" ]]; then
-    die "cannot persist the runtime: $vis_runtime_file is not a regular file" \
-        "Remove it: rm -rf '$vis_runtime_file'"
-  fi
-  { printf '%s\n' "$value" > "$vis_runtime_file.tmp" 2>/dev/null \
-      && mv -f "$vis_runtime_file.tmp" "$vis_runtime_file" 2>/dev/null; } \
-    || die "cannot persist the runtime: $vis_runtime_file is not writable" \
-           "Check its permissions, or set VIS_HOME to a writable directory"
-  [[ "$(read_state "$vis_runtime_file")" == "$value" ]] \
-    || die "cannot persist the runtime: $vis_runtime_file did not keep '$value'"
-}
-
-forget_runtime_file() {
-  rm -f "$vis_runtime_file" 2>/dev/null || true
-  [[ ! -e "$vis_runtime_file" ]] \
-    || die "cannot forget the runtime: $vis_runtime_file could not be removed" \
-           "Remove it by hand: rm -rf '$vis_runtime_file'"
-}
-
 vis_runtime() {
-  case "${1:-show}" in
-    show)
-      if [[ -n "${2:-}" ]]; then
-        warn "runtime show takes no arguments (got '$2')"
-        vis_runtime_usage
-        return 2
-      fi
-      local effective native source_root ref
-      effective="$(runtime_effective)"
-      native="$(find_native 2>/dev/null || printf 'not installed')"
-      source_root="$(find_jvm_source 2>/dev/null || printf 'not installed')"
-      ref="$(read_state "$managed_ref_file")"
-      [[ -n "$ref" ]] || ref="unpinned"
-      # A pin is a claim about the source on disk, so check it instead of
-      # repeating it: source that has been walked off its ref is what the jvm
-      # runtime would silently run.
-      if [[ "$source_root" == "$managed_src" && -d "$managed_src/.git" ]] \
-         && command -v git >/dev/null 2>&1; then
-        local head_sha pin_sha
-        head_sha="$(git -C "$managed_src" rev-parse --verify --quiet HEAD 2>/dev/null || true)"
-        pin_sha="$(git -C "$managed_src" rev-parse --verify --quiet "$ref^{commit}" 2>/dev/null || true)"
-        if [[ -n "$head_sha" && -n "$pin_sha" && "$head_sha" != "$pin_sha" ]]; then
-          ref="$ref (DRIFTED: source is at $head_sha — restore it with 'vis-agent update --jvm')"
-        fi
-      fi
-      printf 'Runtime:      %s (%s)\n' "$effective" "$runtime_origin"
-      printf 'Native:       %s\n' "$native"
-      printf 'Source:       %s\n' "$source_root"
-      printf 'Pinned at:    %s\n' "$ref"
-      ;;
-    use)
-      if [[ -n "${3:-}" ]]; then
-        warn "runtime use names one runtime (got '$2' and '$3')"
-        vis_runtime_usage
-        return 2
-      fi
-      # A one-launch flag and a persisted default are different questions.
-      # `vis-agent --native runtime use jvm` used to persist jvm and drop --native
-      # without a word. Answer one question at a time.
-      if [[ -n "$flag_runtime" ]]; then
-        warn "runtime use sets the persisted runtime; --$flag_runtime only overrides one launch"
-        warn "  persist it:  vis-agent runtime use ${2:-native|jvm|auto}"
-        warn "  or override: vis-agent --$flag_runtime <prompt>"
-        return 2
-      fi
-      case "${2:-}" in
-        native|jvm)
-          write_runtime_file "$2"
-          say "runtime is now $2"
-          runtime_readiness "$2"
-          ;;
-        auto)
-          forget_runtime_file
-          say "runtime is now automatic: native if installed, else source at main's newest commit"
-          ;;
-        -h|--help) vis_runtime_usage; return 0 ;;
-        *) vis_runtime_usage; return 2 ;;
-      esac
-      ;;
-    -h|--help|help) vis_runtime_usage; return 0 ;;
-    *) vis_runtime_usage; return 2 ;;
-  esac
-}
-
-# A persisted choice must not become a surprise at the next launch: say now what
-# the chosen runtime still needs, with the command that supplies it.
-runtime_readiness() {
-  case "$1" in
-    native)
-      if ! find_native >/dev/null 2>&1; then
-        say "no native runtime is installed yet — get it: vis-agent update --native"
-      fi
-      ;;
-    jvm)
-      if [[ ! -f "$managed_src/deps.edn" ]] && (( ! launcher_is_checkout )); then
-        say "no source is installed yet — get it: vis-agent update --jvm"
-      fi
-      if ! ensure_clojure_cli; then say_missing_clojure; return 1; fi
-      ;;
-  esac
+  if [[ -n "${1:-}" ]]; then
+    case "$1" in
+      -h|--help) vis_runtime_usage; return 0 ;;
+      *) warn "runtime takes no arguments (got '$1')"; vis_runtime_usage; return 2 ;;
+    esac
+  fi
+  local effective native source_root ref
+  effective="$(runtime_effective)"
+  native="$(find_native 2>/dev/null || printf 'not installed')"
+  source_root="$(find_jvm_source 2>/dev/null || printf 'not installed')"
+  ref="$(read_state "$managed_ref_file")"
+  [[ -n "$ref" ]] || ref="unpinned"
+  # A pin is a claim about the source on disk, so check it instead of repeating
+  # it: source that has been walked off its ref is what a source launch would
+  # silently run.
+  if [[ "$source_root" == "$managed_src" && -d "$managed_src/.git" ]] \
+     && command -v git >/dev/null 2>&1; then
+    local head_sha pin_sha
+    head_sha="$(git -C "$managed_src" rev-parse --verify --quiet HEAD 2>/dev/null || true)"
+    pin_sha="$(git -C "$managed_src" rev-parse --verify --quiet "$ref^{commit}" 2>/dev/null || true)"
+    if [[ -n "$head_sha" && -n "$pin_sha" && "$head_sha" != "$pin_sha" ]]; then
+      ref="$ref (DRIFTED: source is at $head_sha — restore it with 'vis-agent update')"
+    fi
+  fi
+  printf 'Runtime:      %s\n' "$effective"
+  printf 'Native:       %s\n' "$native"
+  printf 'Source:       %s\n' "$source_root"
+  printf 'Pinned at:    %s\n' "$ref"
 }
 
 clojure_cli_ready() {
@@ -506,20 +386,12 @@ ensure_java_runtime() {
   return 1
 }
 
-say_missing_clojure() {
-  if ! clojure_cli_ready; then
-    say "source runtimes need the Clojure CLI; a JVM launch will install it automatically"
-  fi
-}
-
 vis_runtime_usage() {
   cat >&2 <<'EOF'
-Usage: vis-agent runtime [show]
-       vis-agent runtime use native|jvm|auto
-         native  the released build ('vis-agent update --native'), else your own target/vis
-         jvm     source pinned to main's newest commit
-         auto    forget the choice: native if installed, else pinned source
-       This only switches. 'vis-agent update <runtime>' acquires it and selects it.
+Usage: vis-agent runtime
+         Report what runs, where it is installed, and the commit the source
+         Vis owns sits at. There is nothing to switch: how Vis was installed
+         decides the runtime, and 'vis-agent update' keeps it current.
 EOF
 }
 
@@ -680,7 +552,7 @@ update_native() {
     die "update: no native runtime published for '$asset'." \
         "Checked $api" \
         "Releases currently carry Linux x64 and arm64 only." \
-        "Elsewhere, run the source runtime: vis-agent update --jvm && vis-agent runtime use jvm"
+        "Elsewhere Vis runs from the source it owns: install it with bin/install-vis-agent"
   fi
 
   # Where the private runtime belongs: beside an installed launcher, or in Vis
@@ -730,82 +602,51 @@ update_native() {
 
 vis_update_usage() {
   cat >&2 <<'EOF'
-Usage: vis-agent update [native|jvm] [--rebuild] [vX.Y.Z|<sha>]
-         (no runtime)  update the runtime that is in effect
-         native        download the published launcher + native runtime
-         jvm           move the source Vis owns onto main's newest commit, or onto a ref you name
-         --rebuild     after a source update, build the native runtime from that source
-       Every runtime word also has a flag form: --native and --jvm, and naming
-       one also makes it the default — there is no second command to switch.
-       The vis-agent command travels with its runtime: native replaces it from the
-       release bundle, and jvm from the source it just pinned.
+Usage: vis-agent update [vX.Y.Z] [--rebuild]
+         (no target)   the newest published release for a native install, or
+                       main's newest commit for a source install
+         vX.Y.Z        that release instead of the newest
+         --rebuild     after a source update, build the native runtime from
+                       that source
+       Update takes the runtime that is installed forward; it never swaps one
+       runtime for the other. The vis-agent command travels with it: a native
+       update replaces this file from the release bundle, a source update
+       copies it out of the source it just pinned.
 EOF
 }
 
-# `update` updates the runtime that is in effect; a flag updates another one.
+# `update` moves the installed runtime forward — the only runtime there is.
 vis_do_update() {
-  local target="" rebuild=0 want="" want_named=0 arg
+  local target="" rebuild=0 arg
   for arg in "$@"; do
     case "$arg" in
-      --native|--jvm) want="${arg#--}"; want_named=1 ;;
-      # A bare runtime word is its flag: `update jvm` is `update --jvm`. Without
-      # this, `update jvm` fell through to the target case and tried to pin the
-      # source Vis owns to a git ref called 'jvm'. A runtime already named means
-      # the word IS a ref: `update --jvm native` still pins source to branch native.
-      native|jvm)
-        if [[ -z "$want" ]]; then
-          want="$arg"
-          want_named=1
-        else
-          [[ -z "$target" ]] || die "update: one target at a time, not '$target' and '$arg'"
-          target="$arg"
-        fi
-        ;;
       --rebuild) rebuild=1 ;;
       -h|--help) vis_update_usage; exit 0 ;;
-      -*) die "update: unknown option $arg" "Usage: vis-agent update [native|jvm] [--rebuild] [vX.Y.Z|<sha>]" ;;
-      *)
+      -*) die "update: unknown option $arg" "Usage: vis-agent update [vX.Y.Z] [--rebuild]" ;;
+      # A published release, or nothing at all. A git ref would name source
+      # nobody published, and Vis does not install source nobody published.
+      latest|v[0-9]*)
         [[ -z "$target" ]] || die "update: one target at a time, not '$target' and '$arg'"
         target="$arg"
         ;;
+      *) die "update: '$arg' is not a released version" \
+             "Name a release (vX.Y.Z), or nothing at all to take the newest" ;;
     esac
   done
   mkdir -p "$vis_install_dir"
 
-  # A target that is not a release tag is a git ref, and git refs mean source.
-  local target_is_ref=0
-  if [[ -n "$target" && ! "$target" =~ ^(latest|v[0-9].*)$ ]]; then
-    target_is_ref=1
-    [[ "$want" != native ]] || die "update --native: expected a release tag (vX.Y.Z) or 'latest', got '$target'" \
-                                   "Pin source to a commit with: vis-agent update --jvm $target"
-    [[ -z "$want" || "$want" == jvm ]] || die "update --$want: '$target' is a git ref; use 'vis-agent update --jvm $target'"
-    want=jvm
-    want_named=1
-  fi
-  [[ -n "$want" ]] || want="$(runtime_effective)"
-
-  case "$want" in
+  case "$(runtime_effective)" in
     jvm)
-      if (( target_is_ref )); then say "pinning source to $target"; fi
       update_source "$target"
       sync_wrapper_from_source "$managed_src"
       if (( rebuild )); then build_native_runtime "$managed_src"; fi
       ;;
     native)
-      (( ! rebuild )) || die "update --native: --rebuild builds FROM source" \
-                             "Use: vis-agent update --jvm --rebuild"
+      (( ! rebuild )) || die "update: --rebuild builds FROM source, and this Vis runs the native runtime" \
+                             "Install the source runtime with bin/install-vis-agent to build from it"
       update_native "${target:-latest}"
       ;;
   esac
-
-  # Naming a runtime on `update` IS choosing it: one command acquires that
-  # runtime, updates it, and makes it the default — no second `runtime use`
-  # step. An update that names none touches only the runtime already in effect,
-  # so automatic stays automatic.
-  if (( want_named )) && [[ "$(read_state "$vis_runtime_file")" != "$want" ]]; then
-    write_runtime_file "$want"
-    say "runtime is now $want"
-  fi
   exit 0
 }
 
@@ -827,9 +668,8 @@ runtime="$(runtime_effective)"
 case "$runtime" in
   native)
     native_runtime="$(find_native 2>/dev/null || true)"
-    [[ -n "$native_runtime" ]] || die "the native runtime is selected ($runtime_origin), but none is installed" \
-                                      "Download it:  vis-agent update --native" \
-                                      "Or switch:    vis-agent runtime use jvm"
+    [[ -n "$native_runtime" ]] || die "no Vis runtime is installed" \
+                                      "Install it:  vis-agent update"
     measure_log "native → $native_runtime"
     cd "$invocation_cwd"
     # Native-image does not derive Java's user.home from HOME. Pass it through
@@ -856,19 +696,16 @@ case "$runtime" in
   jvm)
     source_root="$(find_jvm_source 2>/dev/null || true)"
     if [[ -z "$source_root" ]]; then
-      die "the jvm runtime is selected ($runtime_origin), but no source is installed" \
-          "Install the source runtime:     vis-agent update --jvm" \
-          "Or use the native runtime:      vis-agent update --native"
+      die "no Vis runtime is installed" \
+          "Install it:  vis-agent update"
     fi
     if ! ensure_clojure_cli; then
-      die "the $runtime runtime needs the Clojure CLI" \
-          "Automatic installation failed; set VIS_NO_AUTO_INSTALL=1 to disable it" \
-          "Or run the published one: vis-agent update --native && vis-agent runtime use native"
+      die "the source runtime needs the Clojure CLI" \
+          "Automatic installation failed; set VIS_NO_AUTO_INSTALL=1 to disable it"
     fi
     if ! ensure_java_runtime; then
-      die "the $runtime runtime needs a Java 25 runtime, and automatic installation failed" \
-          "Install manually with:              $source_root/bin/require-graalvm --install" \
-          "Or run the published one:            vis-agent update --native && vis-agent runtime use native"
+      die "the source runtime needs a Java 25 runtime, and automatic installation failed" \
+          "Install manually with:  $source_root/bin/require-graalvm --install"
     fi
     ;;
 esac

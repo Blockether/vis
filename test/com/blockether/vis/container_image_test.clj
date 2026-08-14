@@ -53,7 +53,9 @@
                 stage)
         (expect (str/includes? stage "ln -sf /opt/vis/agent/vis-agent /usr/local/bin/vis-agent")
                 stage)
-        (expect (str/includes? stage "VIS_RUNTIME=native") stage)))
+        ;; No runtime selector: the wrapper finds `vis-agent-native` beside
+        ;; itself, so the image never has to name a runtime.
+        (expect (not (str/includes? stage "VIS_RUNTIME")) stage)))
   (it "ships no Vis source for the wrapper to run instead"
       ;; Two runtimes in one image is two answers to the question of what is
       (let [stage (runtime-stage)]
@@ -118,11 +120,12 @@
                    (expect (not (str/includes? compose "VIS_BUILD_SHA")) compose))))
 
 (defdescribe
-  wrapper-selects-the-bundled-native-test
+  wrapper-runs-the-bundled-native-test
   (it "runs the runtime beside it when linked from elsewhere"
       ;; Exactly the image's arrangement: /opt/vis/agent holds the wrapper and
       ;; its `vis-agent-native`, /usr/local/bin/vis-agent is a symlink into that
-      ;; directory, and VIS_RUNTIME says which runtime.
+      ;; directory, and nothing at all says which runtime: the one beside the
+      ;; wrapper is the one that runs.
       (let
         [tmp
          (.toFile (Files/createTempDirectory "vis-native-launcher" (make-array FileAttribute 0)))
@@ -139,25 +142,24 @@
          link
          (io/file tmp "vis-agent")]
 
-        (try
-          (.mkdirs bundle)
-          (io/copy (io/file "bin" "vis-agent") wrapper)
-          (.setExecutable wrapper true false)
-          (spit native "#!/bin/sh\nexit 0\n")
-          (.setExecutable native true false)
-          (Files/createSymbolicLink (.toPath link)
-                                    ^Path (.toPath wrapper)
-                                    (make-array FileAttribute 0))
-          (let
-            [{:keys [exit output]}
-             (run-wrapper link {"HOME" (.getAbsolutePath tmp) "VIS_RUNTIME" "native"} ["runtime"])]
-            (expect (zero? exit) output)
-            (expect (re-find #"(?m)^Runtime: +native \(VIS_RUNTIME\)$" output) output)
-            (expect (re-find (re-pattern (str "(?m)^Native: +"
-                                              (java.util.regex.Pattern/quote (.getCanonicalPath
-                                                                               native))
-                                              "$"))
-                             output)
-                    output))
-          (finally (doseq [file (reverse (file-seq tmp))]
-                     (io/delete-file file true)))))))
+        (try (.mkdirs bundle)
+             (io/copy (io/file "bin" "vis-agent") wrapper)
+             (.setExecutable wrapper true false)
+             (spit native "#!/bin/sh\nexit 0\n")
+             (.setExecutable native true false)
+             (Files/createSymbolicLink (.toPath link)
+                                       ^Path (.toPath wrapper)
+                                       (make-array FileAttribute 0))
+             (let
+               [{:keys [exit output]}
+                (run-wrapper link {"HOME" (.getAbsolutePath tmp)} ["runtime"])]
+               (expect (zero? exit) output)
+               (expect (re-find #"(?m)^Runtime: +native$" output) output)
+               (expect (re-find (re-pattern (str "(?m)^Native: +"
+                                                 (java.util.regex.Pattern/quote (.getCanonicalPath
+                                                                                  native))
+                                                 "$"))
+                                output)
+                       output))
+             (finally (doseq [file (reverse (file-seq tmp))]
+                        (io/delete-file file true)))))))

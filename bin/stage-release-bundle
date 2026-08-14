@@ -7,7 +7,7 @@
 #   bin/stage-release-bundle target/vis vis-agent-linux-arm64-community.tar.gz
 #   bin/stage-release-bundle --from-dir out/linux-arm64 vis-agent-linux-arm64-community.tar.gz
 #
-# Bundle layout (exactly what `vis-agent update --native` unpacks):
+# Bundle layout (exactly what `vis-agent update` unpacks):
 #   vis-agent             the public Bash wrapper
 #   vis-agent-native      the private native runtime
 #   vis-agent-resources/  GraalPy/Truffle language resources
