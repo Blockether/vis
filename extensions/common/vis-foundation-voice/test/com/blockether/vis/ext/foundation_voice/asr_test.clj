@@ -2,7 +2,8 @@
   (:require [clojure.java.io :as io]
             [com.blockether.vis.ext.foundation-voice.asr :as asr]
             [lazytest.core :refer [defdescribe it expect]])
-  (:import [java.io ByteArrayInputStream File FileOutputStream]
+  (:import [com.k2fsa.sherpa.onnx VersionInfo WaveReader]
+           [java.io ByteArrayInputStream File FileOutputStream]
            [javax.sound.sampled AudioFileFormat$Type AudioFormat AudioInputStream AudioSystem]
            [org.apache.commons.compress.archivers.tar TarArchiveEntry TarArchiveOutputStream]
            [org.apache.commons.compress.compressors.bzip2 BZip2CompressorOutputStream]))
@@ -143,6 +144,9 @@
         (spit (io/file dir name) "x"))
       (write-silence-wav! wav 0.0)
       (with-redefs [asr/ensure-model! identity]
+        ;; Every platform's native rides in its own jar now, so the WaveReader
+        ;; this check needs always loads: a LinkageError here is a real failure
+        ;; and is no longer swallowed as a skip.
         (try (asr/transcribe-file! (str dir) (str wav))
              (expect false)
              (catch clojure.lang.ExceptionInfo e
@@ -158,12 +162,7 @@
                (expect (= asr/min-audio-seconds
                           (-> e
                               ex-data
-                              :min-duration-seconds))))
-             (catch java.lang.LinkageError _
-               ;; No sherpa-onnx native here (CI lacks libonnxruntime): the length
-               ;; check needs the native WaveReader to read the audio, so it can't
-               ;; run at all. Skip rather than fail on the missing shared object.
-               (expect true)))))))
+                              :min-duration-seconds)))))))))
 
 (defn- fake-model-archive!
   "A tiny tar.bz2 shaped like the release archive — a top-level directory holding
@@ -232,66 +231,27 @@
                (expect (true? (boolean (#'asr/model-installed? target)))))
              (finally (.delete archive) (#'asr/delete-dir! (io/file target)))))))
 
-(defdescribe
-  onnxruntime-native-test
-  (it "materialises the VERSIONED onnxruntime dylib sherpa's JNI links against"
-      ;; Regression: sherpa's libsherpa-onnx-jni links @rpath/libonnxruntime.<ver>
-      ;; from ~/lib/<platform>. The onnxruntime jar only carries the UNversioned
-      ;; name, so without this copy the first sherpa class touched dies with
-      ;; UnsatisfiedLinkError "Library not loaded: @rpath/libonnxruntime.1.17.1.dylib".
-      (let
-        [home
-         (io/file (System/getProperty "java.io.tmpdir") (str "vis-voice-home-" (System/nanoTime)))
-
-         previous
-         (System/getProperty "user.home")]
-
-        (try (.mkdirs home)
-             (System/setProperty "user.home" (str home))
-             (let
-               [platform
-                (#'asr/native-platform)
-
-                dir
-                (io/file home "lib" platform)]
-
-               (#'asr/ensure-onnxruntime-native!)
-               (doseq [name (#'asr/onnxruntime-target-names platform)]
-                 (expect (.isFile (io/file dir name)))))
-             (finally (System/setProperty "user.home" previous) (#'asr/delete-dir! home))))))
-
-(defn- elf-version-nodes
-  "Every `VERS_x.y.z` ELF symbol-version token inside a classpath native library.
-   Both jars are fat, so this reads the same bytes on every build host — the
-   Linux libraries are inspectable from macOS."
-  [resource]
-  (with-open
-    [in (io/input-stream (or (io/resource resource)
-                             (throw (ex-info "Native library resource not found"
-                                             {:resource resource}))))]
-    (let [text (String. ^bytes (.readAllBytes in) java.nio.charset.StandardCharsets/ISO_8859_1)]
-      (set (re-seq #"VERS_\d+(?:\.\d+)+" text)))))
-
-;; Regression, issue #onnx-vers: every transcription on the Linux gateway died with
-;; "libonnxruntime.so: version `VERS_1.17.1' not found (required by
-;; libsherpa-onnx-jni.so)" — voice was dead in the container. The ONNX Runtime
-;; jar was pinned two years ahead (1.28.0, symbol node VERS_1.28.0) of the
-;; runtime sherpa's JNI is linked against (1.17.1). macOS never showed it:
-;; Mach-O has no symbol versioning, so copying the dylib under the versioned
-;; FILENAME was enough there, and the mismatch only bit ELF.
-(defdescribe onnxruntime-abi-test
-             (it "pins the exact ONNX Runtime ELF symbol version sherpa's JNI requires"
-                 (doseq [platform ["linux-x64" "linux-aarch64"]]
-                   (let
-                     [expected (str "VERS_" @#'asr/onnxruntime-version)
-                      required (elf-version-nodes (str "native/" platform "/libsherpa-onnx-jni.so"))
-                      provided (elf-version-nodes
-                                 (str "ai/onnxruntime/native/" platform "/libonnxruntime.so"))]
-
-                     ;; the constant is the contract: it names both the versioned filename
-                     ;; written into ~/lib/<platform> and the ABI sherpa was built against.
-                     (expect (= #{expected} required) platform)
-                     (expect (contains? provided expected) platform)))))
+;; Regression, issue #143: the repackaged 1.12.7 fork shipped only sherpa's JNI,
+;; so the first sherpa class touched died with UnsatisfiedLinkError "Library not
+;; loaded: @rpath/libonnxruntime.1.17.1.dylib" unless a hand-written copy step had
+;; first materialised a versioned dylib in ~/lib/<platform> from a separately
+;; pinned ONNX Runtime — and on Linux one minor off that pin killed every
+;; transcription with "version `VERS_1.17.1' not found".
+(defdescribe sherpa-native-test
+             (it "runs the version the deps.edn pins, with the ONNX Runtime that jar carries"
+                 ;; Both are NATIVE methods: an answer at all means the JNI loaded, and the
+                 ;; runtime it reports is the one shipped beside it — not a coordinate we
+                 ;; pin, and no longer ours to keep in step.
+                 (expect (= "1.13.5" (VersionInfo/getVersion)))
+                 (expect (re-matches #"\d+\.\d+\.\d+" (VersionInfo/getOnnxruntimeVersion))))
+             (it "reads a WAV through the native stack with nothing but the upstream jars"
+                 ;; WaveReader's constructor is what triggers sherpa's LibraryLoader, and it
+                 ;; is the first native call every transcription makes.
+                 (let [wav (write-silence-wav! (File/createTempFile "vis-voice-native" ".wav") 1)]
+                   (try (let [reader (WaveReader. (str wav))]
+                          (expect (= 16000 (.getSampleRate reader)))
+                          (expect (= 16000 (alength ^floats (.getSamples reader)))))
+                        (finally (.delete wav))))))
 
 (defdescribe chunk-plan-test
              ;; Progress used to be impossible to report at all: the whole recording went

@@ -121,6 +121,11 @@
                    ;; -XX:+UseG1GC.
                    "-XX:+UseStringDeduplication"]
         :main-opts ["-m" "com.blockether.vis.core"]}}
+ ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never
+ ;; from a :local/root dep's deps.edn, so the JitPack repo the voice extension
+ ;; declares has to be repeated here for the aggregate build to resolve
+ ;; com.github.k2-fsa.sherpa-onnx.
+ :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
  :deps
  {com.blockether/vis-persistance-sqlite {:local/root
                                          "extensions/persistance/vis-persistance-sqlite"}

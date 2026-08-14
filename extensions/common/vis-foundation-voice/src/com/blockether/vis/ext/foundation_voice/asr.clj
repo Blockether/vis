@@ -14,7 +14,7 @@
 
 ;; Reflective interop is FATAL in the native image (needs metadata per call
 ;; site) — keep this ns reflection-free at compile time. An untyped
-;; `(or (resource-stream …))` inside with-open already shipped one such failure
+;; `(or …)` binding inside `with-open` already shipped one such failure
 ;; ("Cannot reflectively invoke ByteArrayInputStream.close").
 (set! *warn-on-reflection* true)
 
@@ -58,101 +58,6 @@
 (defn model-installed?
   ([] (model-installed? (model-dir)))
   ([dir] (every? #(.isFile (io/file %)) (vals (model-files dir)))))
-
-(def ^:private onnxruntime-version
-  "The ONNX Runtime sherpa's JNI is BUILT AGAINST, and therefore the exact
-   `com.microsoft.onnxruntime/onnxruntime` pin in deps.edn. It is two things at
-   once: the versioned filename macOS resolves through @rpath, and the ELF
-   symbol version node (`VERS_1.17.1`) Linux's dynamic linker demands. A newer
-   runtime keeps loading on macOS and dies on Linux with \"version `VERS_1.17.1'
-   not found\", so it is not a free upgrade; `onnxruntime-abi-test` guards it."
-  "1.17.1")
-
-(defn- native-platform
-  []
-  (let
-    [os
-     (str/lower-case (System/getProperty "os.name" "generic"))
-
-     arch
-     (str/lower-case (System/getProperty "os.arch" "generic"))
-
-     os'
-     (cond (or (str/includes? os "mac") (str/includes? os "darwin")) "osx"
-           (str/includes? os "win") "win"
-           (str/includes? os "nux") "linux"
-           :else (throw (ex-info "Unsupported OS for sherpa-onnx"
-                                 {:type :voice-asr/unsupported-native-platform :os os :arch arch})))
-
-     arch'
-     (cond (or (str/starts-with? arch "amd64") (str/starts-with? arch "x86_64")) "x64"
-           (str/starts-with? arch "aarch64") "aarch64"
-           :else (throw (ex-info
-                          "Unsupported architecture for sherpa-onnx"
-                          {:type :voice-asr/unsupported-native-platform :os os :arch arch})))]
-
-    (str os' "-" arch')))
-
-(defn- onnxruntime-resource-name
-  [platform]
-  (str "ai/onnxruntime/native/" platform
-       "/" (cond (str/starts-with? platform "win-") "onnxruntime.dll"
-                 (str/starts-with? platform "osx-") "libonnxruntime.dylib"
-                 :else "libonnxruntime.so")))
-
-(defn- onnxruntime-target-names
-  [platform]
-  (cond (str/starts-with? platform "win-") ["onnxruntime.dll"]
-        (str/starts-with? platform "osx-") [(str "libonnxruntime." onnxruntime-version ".dylib")
-                                            "libonnxruntime.dylib"]
-        :else [(str "libonnxruntime.so." onnxruntime-version) "libonnxruntime.so"]))
-
-(defn- native-lib-dir [platform] (io/file (System/getProperty "user.home") "lib" platform))
-
-(defn- resource-stream
-  [path]
-  (or (some-> (Thread/currentThread)
-              .getContextClassLoader
-              (.getResourceAsStream path))
-      (some-> (ClassLoader/getSystemClassLoader)
-              (.getResourceAsStream path))))
-
-(defn- ensure-onnxruntime-native!
-  "sherpa-onnx's JNI dylib links against libonnxruntime by filename in the same
-   ~/lib/<platform> directory. The Microsoft ONNX Runtime jar carries that native
-   library as a resource, but it does not place the versioned filename sherpa
-   expects. Copy it there before sherpa's LibraryLoader calls System/load."
-  []
-  (let
-    [platform
-     (native-platform)
-
-     ^File dir
-     (native-lib-dir platform)
-
-     resource
-     (onnxruntime-resource-name platform)
-
-     targets
-     (mapv #(io/file dir %) (onnxruntime-target-names platform))]
-
-    (.mkdirs dir)
-    (doseq [^File target targets]
-      (when-not (.isFile target)
-        ;; ^InputStream: `(or …)` erases the type and with-open's `.close`
-        ;; goes REFLECTIVE — works on the JVM, but in a native image it
-        ;; needs reflection metadata and fails without it.
-        (with-open
-          [^java.io.InputStream in (or (resource-stream resource)
-                                       (throw (ex-info
-                                                "ONNX Runtime native library resource not found"
-                                                {:type :voice-asr/missing-onnxruntime-native
-                                                 :resource resource
-                                                 :platform platform})))
-           out (FileOutputStream. target)]
-
-          (io/copy in out))))
-    (first targets)))
 
 (defn- safe-entry-name
   [entry-name]
@@ -382,7 +287,6 @@
 
 (defn- recognizer
   [{:keys [encoder decoder joiner tokens]}]
-  (ensure-onnxruntime-native!)
   (let
     [transducer
      (.. (OfflineTransducerModelConfig/builder)
@@ -601,14 +505,6 @@
        (throw (ex-info (str "Missing audio file: " audio-path)
                        {:type :voice-asr/missing-audio-file :path (str audio-path)})))
      (validate-wav-file! audio-path)
-     ;; MUST run before the FIRST sherpa class is touched. `WaveReader` below is
-     ;; loaded before `recognizer`, and its static init is what System/loads
-     ;; libsherpa-onnx-jni.dylib — which links @rpath/libonnxruntime.<ver>.dylib
-     ;; from the same ~/lib/<platform> dir. Ensuring it only inside `recognizer`
-     ;; was too late: on a machine that never had the versioned dylib, the very
-     ;; first transcription died with UnsatisfiedLinkError "Library not loaded:
-     ;; @rpath/libonnxruntime.1.17.1.dylib" and voice never worked at all.
-     (ensure-onnxruntime-native!)
      ;; every interop call below is TYPE-HINTED: reflective calls in a native
      ;; image only work when reflection metadata happens to cover them — the
      ;; hot path must not depend on that.

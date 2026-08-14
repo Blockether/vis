@@ -370,9 +370,33 @@ shapes.
 
 ## State of the plan
 
-**ACCEPTED** — nothing has landed yet.
+**ACCEPTED** — Phase 1 has landed.
 
-**Resolved since acceptance** — no file outside this plan changed:
+**Phase 1 — DONE**, in the commit that carries this line. `vis-foundation-voice` now resolves
+`com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm v1.13.5` plus all five
+`sherpa-onnx-native-lib-<platform>` jars from JitPack; `com.microsoft.onnxruntime/onnxruntime` and
+`com.litongjava/sherpa-onnx-java-api` are gone, and with them `onnxruntime-version`,
+`onnxruntime-resource-name`, `onnxruntime-target-names`, `ensure-onnxruntime-native!`,
+`native-platform`, `native-lib-dir`, `resource-stream`, both call sites, and the
+`onnxruntime-native-test` / `onnxruntime-abi-test` pair that guarded the pin — 104 lines out of
+`asr.clj`. `build.clj` includes `sherpa-onnx/native/<tok>/.*` instead of `native/<tok>/.*` plus an
+`ai/onnxruntime` pattern, and the uberjar's dSYM/pdb excludes went with the dependency that needed
+them. `audit/README.md` is regenerated: the six JitPack coordinates carry a hand-vetted Apache-2.0
+override, because JitPack serves an `install:install-file` POM with no `<licenses>` block, and §4.2
+now states the espeak-ng (GPL-3.0) code inside sherpa's published native, which Phase 5 removes.
+Proven by `sherpa-native-test`: the loaded JNI answers `1.13.5` with ONNX Runtime `1.27.1` from
+`VersionInfo`'s native methods, and a WAV reads through `WaveReader` — 31 tests green in the
+extension.
+
+**Both Phase 1 unknowns are answered.** JitPack resolves every coordinate on first fetch (the whole
+set is 51 MB against the 95.6 MB the fork plus ONNX Runtime cost, so a warm `~/.m2` step is not
+needed, and `clojure -Spath` is green from the extension directory and from the root). Every one of
+the five platform jars carries its ONNX Runtime beside the JNI — `libonnxruntime.dylib` 28.3/31.6
+MB, `libonnxruntime.so` 26.4/34.0 MB, `onnxruntime.dll` 17.4 MB — so no platform needs a copy step.
+One correction the migration earned: tools.deps reads `:mvn/repos` only from the project it is
+invoked on, never from a `:local/root` dependency, so the root `deps.edn` repeats the JitPack repo.
+
+**Settled before Phase 1**, from public sources and with no code involved:
 
 - The `kyutai/pocket-tts` gate is `auto` and its only condition is a prohibited-use statement, so
   CC BY 4.0 stands, commercial use is not restricted, and re-hosting our own conversion is open with
@@ -395,13 +419,12 @@ Three decisions the plan takes, so they are not re-litigated in review:
 
 TODO, in order:
 
-1. **Phase 1** — JitPack v1.13.5, ONNX Runtime dependency and loader hack deleted.
-2. **Phase 2** — `internal/speech.clj`, the registry and job store.
-3. **Phase 3** — the HTTP surface and `features.speech`.
-4. **Phase 4** — `vis-foundation-speech` with pocket-tts.
-5. **Phase 5** — our own release, manifest and license test; the espeak-free native build.
-6. **Phase 6** — engine and voice pickers in the companion, Android voice enumeration.
-7. **Phase 7** — Piper and Kokoro, opt-in, never redistributed.
+1. **Phase 2** — `internal/speech.clj`, the registry and job store.
+2. **Phase 3** — the HTTP surface and `features.speech`.
+3. **Phase 4** — `vis-foundation-speech` with pocket-tts.
+4. **Phase 5** — our own release, manifest and license test; the espeak-free native build.
+5. **Phase 6** — engine and voice pickers in the companion, Android voice enumeration.
+6. **Phase 7** — Piper and Kokoro, opt-in, never redistributed.
 
 **Lineage.** This plan supersedes *"Let a session speak to the other sessions in its tree"*, which
 was **ACCEPTED** and unstarted; it is preserved verbatim at `git show b3130f92a:PLAN.md` and nothing

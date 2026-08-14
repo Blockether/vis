@@ -32,7 +32,7 @@
    "vis-persistance-sqlite"  "_Durable session store (SQLite + Flyway migrations)._"
    "vis-language-clojure"    "_Clojure language pack (format/lint/structural edits)._"
    "vis-language-python"     "_Python language pack._"
-   "vis-foundation-voice"    "_Local speech (sherpa-onnx / ONNX Runtime)._"
+   "vis-foundation-voice"    "_Local speech (upstream sherpa-onnx; ONNX Runtime rides inside its native jar)._"
    "vis-foundation-bridge"   "_Bridge verification tool surface._"
    "vis-foundation-search"   "_Web/code/paper search tool surface._"
    "vis-channel-tui"         "_Terminal UI (Lanterna)._"})
@@ -42,7 +42,17 @@
 (def license-overrides
   {"org.graalvm.python/python-language"  "UPL-1.0 + MIT + PSF"
    "org.graalvm.python/python-resources" "UPL-1.0 + MIT + PSF"
-   "parinferish/parinferish"             "Public-Domain"})
+   "parinferish/parinferish"             "Public-Domain"
+   ;; k2-fsa publishes sherpa-onnx through JitPack, which serves an
+   ;; install:install-file POM with no <licenses> block. Apache-2.0 is the
+   ;; license of the k2-fsa/sherpa-onnx repository these artifacts are built
+   ;; from, vetted by hand at v1.13.5.
+   "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm"                    "Apache-2.0"
+   "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-osx-aarch64"  "Apache-2.0"
+   "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-osx-x64"      "Apache-2.0"
+   "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-linux-x64"    "Apache-2.0"
+   "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-linux-aarch64" "Apache-2.0"
+   "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-win-x64"      "Apache-2.0"})
 
 ;; ---------------------------------------------------------------- deps parsing
 
@@ -434,9 +444,13 @@ are **UPL-1.0**; the bundled CPython standard library adds **MIT + PSF**. All
 are permissive and cleared for commercial redistribution.
 
 The optional **`vis-foundation-voice`** extension bundles local speech
-**models via ONNX Runtime** (`onnxruntime`, MIT) and `sherpa-onnx`
-(Apache-2.0). These run **fully on-device** — no cloud speech service — and
-ship only when that extension is included. No proprietary model weights are
+**models via upstream `sherpa-onnx`** (Apache-2.0), whose per-platform native jar
+carries the **ONNX Runtime** (MIT) it is linked against beside its JNI library.
+That native library also carries **espeak-ng** (**GPL-3.0**), which serves only
+sherpa's text-to-speech path — never reached by this extension, which calls the
+ASR path alone; a native built with `SHERPA_ONNX_ENABLE_TTS=OFF` drops it
+outright. Speech runs **fully on-device** — no cloud speech service — and
+ships only when that extension is included. No proprietary model weights are
 redistributed by vis; LLM inference is delegated to a provider chosen by the
 operator (§9). Every embedded/optional model component is under a permissive
 license (see §5–§6).
@@ -598,8 +612,9 @@ Heaviest direct artifacts (>= 1 MB):
 Notes:
 - The **GraalPy** runtime (`python-language` + `python-resources`, ~105 MB) is
   the agent's sandboxed Python substrate — mandatory for the core binary (§4.2).
-- The **voice** stack (`onnxruntime` + `sherpa-onnx`) ships only with the
-  optional `vis-foundation-voice` extension; excluding it drops both ONNX jars.
+- The **voice** stack (`sherpa-onnx` plus the ONNX Runtime inside its
+  per-platform native jar) ships only with the optional `vis-foundation-voice`
+  extension; excluding it drops both.
 - `sqlite-jdbc` is bundled by the optional `vis-persistance-sqlite` extension.
 - The final GraalVM **native binary** is larger than any single jar because it
   statically links the JDK + Truffle/GraalPy; track its size in the

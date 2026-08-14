@@ -309,11 +309,13 @@
 
 (def ^:private uber-exclusions
   "Entry patterns dropped from the build-only uberjar. The jar DELIBERATELY keeps
-   every platform's JNI libs (sherpa-onnx, onnxruntime, sqlite-jdbc), but the
-   onnxruntime macOS libs drag ~16.5 MB of nested *.dSYM DWARF debug bundles
-   along and its win-x64 entry drags a 286 MB *.pdb; no runtime reads either."
-  ["ai/onnxruntime/native/.*\\.dSYM/.*" "ai/onnxruntime/native/.*\\.pdb"
-   ;; dep-jar warts: babashka/http-client ships scratch.clj and sci ships
+   every platform's JNI libs — sherpa-onnx with the ONNX Runtime its native jars
+   carry beside it, sqlite-jdbc — and upstream publishes those stripped, so the
+   only entries dropped here are dep-jar warts.
+   Historic note: the separately pinned Microsoft ONNX Runtime jar used to drag
+   ~16.5 MB of macOS *.dSYM DWARF bundles and a 286 MB win-x64 *.pdb along; that
+   dependency is gone, and with it the excludes that carried it."
+  [;; dep-jar warts: babashka/http-client ships scratch.clj and sci ships
    ;; scratch.cljs at the classpath ROOT of their published jars
    "scratch\\.cljs?"
    ;; oh-my-claudecode agent session state — recreated whenever an agent
@@ -1038,8 +1040,9 @@
          (str/join java.io.File/pathSeparator))))
 
 (defn- native-platform-token
-  "sherpa-onnx / onnxruntime native-lib dir token for the BUILD host
-   (e.g. `osx-aarch64`, `linux-x64`). Both jars use this layout."
+  "sherpa-onnx native-lib dir token for the BUILD host (e.g. `osx-aarch64`,
+   `linux-x64`) — the directory name inside `sherpa-onnx-native-lib-<platform>`
+   that sherpa's own LibraryUtils resolves its two dylibs from."
   []
   (let
     [os
@@ -1088,7 +1091,7 @@
   "native-image CLI args. Config travels INSIDE the classpath jars
    (META-INF/native-image/…); here we add only classpath/main/output, the
    vis-extension/edn/db resource includes, and the build-host voice native libs
-   (sherpa-onnx + onnxruntime JNI dylibs) so voice ASR works in the binary.
+   (sherpa-onnx's JNI plus the ONNX Runtime it links) so voice ASR works in the binary.
    The ~465 MB parakeet model is NEVER embedded — it ships separately."
   [basis jit?]
   (let
@@ -1266,13 +1269,12 @@
       jit?
       (conj "-H:+AuxiliaryEngineCache" "-H:ReservedAuxiliaryImageBytes=2145482548")
 
-      ;; voice JNI native libs for THIS platform (sherpa + onnxruntime).
-      ;; Per-host `tok` keeps foreign-OS libs OUT of each binary; the
-      ;; onnxruntime pattern stops at the dir level ([^/]*$) so the macOS
-      ;; jar's nested *.dSYM DWARF debug bundles (~8 MB) don't ride in.
+      ;; voice JNI native libs for THIS platform: sherpa's JNI and the ONNX
+      ;; Runtime beside it, both under sherpa-onnx/native/<tok>/ in the host's
+      ;; native-lib jar, which is exactly where sherpa's LibraryUtils looks them
+      ;; up. Per-host `tok` keeps foreign-OS libs OUT of each binary.
       :always
-      (conj (str "-H:IncludeResources=native/" tok "/.*")
-            (str "-H:IncludeResources=ai/onnxruntime/native/" tok "/[^/]*$"))
+      (conj (str "-H:IncludeResources=sherpa-onnx/native/" tok "/.*"))
 
       ;; Builder heap ceiling (see total-ram above); VIS_NATIVE_EXTRA_ARGS,
       ;; spliced right after, can still override both -J flags.
