@@ -28,6 +28,7 @@ import {
   BandLabel,
   BandTally,
   EditableName,
+  BandButton,
   Button,
   Chip,
   ChoiceCell,
@@ -621,6 +622,36 @@ describe("CloseButton", () => {
 
   it("is named for what it closes", () => {
     expect(html()).toContain('aria-label="Close artifacts"');
+  });
+});
+
+// Regression, user report ("these two buttons should be up and then this dialog can be
+// smaller"): a dialog's verbs lived in a docked footer, and the model picker's two stood
+// a screenful of empty panel below the providers they act on. A band's trailing end is a
+// run of CELLS — the ✕ already was one — so a verb that belongs to the band stands in the
+// same box rather than as a bordered button parked on a title.
+describe("BandButton", () => {
+  const html = (props: Partial<Parameters<typeof BandButton>[0]> = {}) =>
+    renderToStaticMarkup(<BandButton {...props}>Refresh</BandButton>);
+
+  it("is the ✕'s cell with a word in it", () => {
+    // Welded by the band's own hairline, and as tall as the band is, so a finger gets
+    // the whole 48px height the way out beside it gets.
+    expect(html()).toContain("border-l");
+    expect(html()).toContain("border-current/20");
+    expect(html()).toContain("self-stretch");
+    expect(html()).not.toContain("self-center");
+    // No height of its own, and no frame of its own: the band spells both.
+    expect(/\bh-\d/.test(html()), "a height of its own").toBe(false);
+    expect(html()).not.toMatch(/class="[^"]*\bborder\s/);
+  });
+
+  it("takes only the ink of the band it stands in", () => {
+    expect(html()).toContain("text-current");
+    expect(html()).not.toContain("bg-dialog-title");
+    expect(html()).not.toContain("text-dialog-title-foreground");
+    // A busy verb says so in its own word (`Refreshing…`), so the cell only fades.
+    expect(html({ disabled: true })).toContain("disabled:opacity-60");
   });
 });
 
@@ -1924,6 +1955,31 @@ describe("Modal, fit", () => {
     expect(humanInputSource).toContain('<Modal');
     expect(humanInputSource).toContain('size="fit"');
     expect(humanInputSource).not.toContain("fixed inset-0 z-50");
+  });
+
+  // Regression, user report ("these two buttons should be up and then this dialog can
+  // be smaller"): the model picker was the last surface hand-rolling a scrim, and it
+  // pinned its panel at 92% of the glass whatever it held — so six provider rows ended
+  // half a phone above `Refresh` and `Manage providers`, which were welded to the foot
+  // of all that empty paper. The verbs are cells of the band now and there is no footer
+  // left, so the sheet is the band plus its rows.
+  it("is what the model picker opens in, with its verbs in the band", () => {
+    expect(routerSource).toContain('<Modal size="fit" onDismiss={onClose}>');
+    expect(routerSource).toContain("<DialogFrame");
+    expect(routerSource).not.toContain("fixed inset-0 z-50");
+    expect(routerSource).not.toContain('aria-modal="true"');
+    expect(routerSource).not.toContain("h-[92%]");
+    expect(routerSource).not.toContain("<footer");
+
+    const band = routerSource.slice(
+      routerSource.indexOf("actions={"),
+      routerSource.indexOf('<div className="space-y-3'),
+    );
+    expect(band).toContain("'Refreshing…' : 'Refresh'");
+    // The band's second cell is the door to where the accounts live, and it is named
+    // in full for a screen reader while the band reads the pinned model.
+    expect(band).toContain('aria-label="Manage providers"');
+    expect(band).toContain("Providers");
   });
 });
 

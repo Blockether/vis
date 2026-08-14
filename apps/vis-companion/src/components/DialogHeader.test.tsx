@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { DialogFrame, DialogHeader } from "./ui";
+import { BandButton, DialogFrame, DialogHeader } from "./ui";
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -122,5 +122,39 @@ describe("every dialog header is the one dialog header", () => {
       </DialogFrame>,
     );
     expect(band().querySelectorAll("button")).toHaveLength(0);
+  });
+
+  // Regression, user report ("these two buttons should be up and then this dialog can
+  // be smaller"): a dialog's own verbs stood in a footer docked under the body, so the
+  // model picker's `Refresh` and `Manage providers` were half a phone below the rows
+  // they act on — and the sheet was pinned at 92% of the glass to hold the gap between
+  // them. A band can carry a verb, in the same cell its ✕ already stands in.
+  it("carries a band's own verbs between the name and the way out", async () => {
+    const onRefresh = vi.fn();
+    render(
+      <DialogFrame
+        title="Model"
+        onClose={() => {}}
+        actions={<BandButton onClick={onRefresh}>Refresh</BandButton>}
+      >
+        <p>body</p>
+      </DialogFrame>,
+    );
+
+    const cells = [...band().children];
+    const refresh = screen.getByRole("button", { name: "Refresh" });
+    const close = screen.getByRole("button", { name: "Close Model" });
+
+    // A verb is a CELL of the band, and the way out is still the last one.
+    expect(cells).toContain(refresh);
+    expect(cells.indexOf(refresh)).toBeLessThan(cells.indexOf(close));
+    // It stretches to the band's height exactly like the ✕ one hairline away from it,
+    // rather than floating a 32px box in a 48px row.
+    expect(refresh.className).toContain("self-stretch");
+    expect(refresh.className).toContain("border-l");
+    expect(refresh.className).not.toContain("self-center");
+
+    await userEvent.click(refresh);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 });

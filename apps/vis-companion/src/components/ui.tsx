@@ -1174,6 +1174,35 @@ export function CloseButton({
   );
 }
 
+/**
+ * A VERB IN A BAND, and there is only one of it.
+ *
+ * `CloseButton isBand` is the cell that ENDS a band; this is that same cell with a
+ * WORD in it, for a band that also offers something — re-poll this fleet, go where
+ * the accounts live. It fills the band's height, is welded by the band's own
+ * hairline, and takes the band's ink, so the trailing end of a title bar reads as
+ * one run of cells rather than as buttons parked on a heading.
+ *
+ * It is not `Button`: a bordered box on a title band claims a rank chrome has not
+ * earned, and a 32px face centred in a 48px band is a smaller target than the ✕ one
+ * hairline away from it — two boxes for the two things a band can do.
+ */
+export function BandButton({
+  className = '',
+  children,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type="button"
+      className={`grid shrink-0 place-items-center self-stretch whitespace-nowrap border-l border-current/20 px-3 font-mono text-meta font-bold text-current transition-colors duration-150 hover:bg-current/10 focus-visible:bg-current/10 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent motion-reduce:transition-none sm:px-4 sm:text-ui mouse:px-3 mouse:text-meta ${className}`}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
+
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
   function Input({ className = '', ...props }, ref) {
     return (
@@ -1418,6 +1447,7 @@ export function DialogHeader({
   title,
   titleId,
   subtitle,
+  actions,
   closeLabel,
   onClose,
   isUnderNotch = false,
@@ -1428,6 +1458,15 @@ export function DialogHeader({
   /** For a surface labelled by `aria-labelledby` rather than `aria-label`. */
   titleId?: string;
   subtitle?: ReactNode;
+  /**
+   * What this band OFFERS, standing between the name and the way out: `BandButton`
+   * cells, and nothing else. A dialog's own verbs used to be a docked footer under
+   * the body — the model picker's `Refresh` and `Manage providers` sat a screenful
+   * of empty panel below the last row they act on. In the band they are cells of
+   * the same run the ✕ ends, so all three are the band's height and one hairline
+   * apart.
+   */
+  actions?: ReactNode;
   /** The way out. Both halves travel together — see the union below. */
   /**
    * This band is the TOP of the screen, so it clears the notch itself. The desktop
@@ -1487,6 +1526,9 @@ export function DialogHeader({
           </p>
         )}
       </div>
+      {/* What the band OFFERS, before the way out and in cells of the band's own:
+          welded by the same hairline, standing the band's full height. */}
+      {actions}
       {/* The two travel together by type; the second test is what TypeScript needs
           to see it, because a destructured union does not narrow on its own. */}
       {onClose && closeLabel && (
@@ -1499,6 +1541,7 @@ export function DialogHeader({
 export function DialogFrame({
   title,
   subtitle,
+  actions,
   children,
   footer,
   onClose,
@@ -1508,6 +1551,15 @@ export function DialogFrame({
   title: string;
   /** The line under the title — which machine, which model, which paste. */
   subtitle?: ReactNode;
+  /**
+   * What this band OFFERS, standing between the name and the way out: `BandButton`
+   * cells, and nothing else. A dialog's own verbs used to be a docked footer under
+   * the body — the model picker's `Refresh` and `Manage providers` sat a screenful
+   * of empty panel below the last row they act on. In the band they are cells of
+   * the same run the ✕ ends, so all three are the band's height and one hairline
+   * apart.
+   */
+  actions?: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
   onClose?: () => void;
@@ -1535,6 +1587,7 @@ export function DialogFrame({
       <DialogHeader
         title={title}
         subtitle={subtitle}
+        actions={actions}
         {...closeWith(onClose, closeLabel ?? `Close ${title}`)}
       />
       {/* A COLUMN, so a dialog that lays out its own regions gets a scrolling body and
