@@ -35,6 +35,7 @@ import {
   ComposerButton,
   CopyChip,
   CloseButton,
+  ConfirmRow,
   DialogFrame,
   DialogHeader,
   HeaderActions,
@@ -1284,13 +1285,32 @@ describe("settings is ONE dialog with two columns", () => {
     expect(settings).toContain("sm:divide-y-0");
   });
 
-  it("pairs a machine from the column the machines live in", () => {
+  it("pairs a machine from the band's own +, over the column rather than inside it", () => {
     // The verb used to be a button that CLOSED this dialog and navigated to the
-    // machines screen. Pairing happens here now, on the same shared controls that
-    // screen is built from.
-    expect(settings).toContain("<AddMachine");
+    // machines screen. Then it was two pairing cards standing permanently open
+    // under the list, so the column opened on forms for a machine that does not
+    // exist yet, and the fleet the cog was pressed FOR started below them. It is
+    // one icon in the band now, and what it opens is the app's own `fit` sheet.
+    expect(settings).toContain('label="Add a machine"');
+    expect(settings).toContain('<PlusIcon className="size-4" />');
+    const sheet = settings.slice(settings.indexOf('<Modal size="fit"'));
+    expect(sheet).toContain('title="Add a machine"');
+    expect(sheet).toContain("<AddMachine");
     expect(settings).not.toContain(">Pair machine</Button>");
     expect(settings).not.toContain("onPair");
+  });
+
+  it("hides a machine's own verbs behind its row, and keeps no panel of them", () => {
+    // `Saved connection` stood open under the list holding a name field, `Make
+    // primary` and `Forget this machine`: three controls for ONE machine, always
+    // on screen, aimed at whichever row the column happened to be READING.
+    expect(settings).not.toContain('title="Saved connection"');
+    expect(settings).not.toContain("Forget this machine");
+    expect(settings).toContain("onMakePrimary={onMakePrimary}");
+    expect(settings).toContain("onForget={onRemove}");
+    // And every verb names the machine it acts on, rather than the read one.
+    expect(settings).toContain("onMakePrimary?: (conn: GatewayConn)");
+    expect(settings).toContain("onRemove?: (conn: GatewayConn)");
   });
 
   it("switches machine inside the dialog instead of closing it", () => {
@@ -1304,6 +1324,44 @@ describe("settings is ONE dialog with two columns", () => {
     expect(settings).toContain("sm:overflow-hidden");
     expect(settings).toContain("sm:overflow-y-auto");
     expect(settings).toContain("sm:min-h-0");
+  });
+});
+
+// The user's ask for the machines column ("more hidden, triggered by some action,
+// button, icon like maybe with the slide like the star in the session") gave a
+// machine the session row's verbs — and the destructive one has to ask. The
+// session list had been asking IN the row for a while, hand-built at the call
+// site; two copies of one question is how two answers end up different sizes.
+describe("the confirm that IS the row", () => {
+  it("is one control, and both lists ask through it", () => {
+    expect(sessionsListSource).toContain("<ConfirmRow");
+    expect(machinesSource).toContain("<ConfirmRow");
+    // Neither screen paints the red wash of the committing half any more.
+    expect(sessionsListSource).not.toContain("bg-err-surface");
+    expect(machinesSource).not.toContain("bg-err-surface");
+  });
+
+  it("puts the refusal first and spends the red on the commitment alone", () => {
+    const html = renderToStaticMarkup(
+      <ConfirmRow
+        question="Delete alpha?"
+        confirmLabel="Yes, delete"
+        onKeep={() => {}}
+        onConfirm={() => {}}
+      />,
+    );
+    const [keep, commit] = html.split("<button").slice(1);
+    expect(keep).toContain("No, keep");
+    expect(keep).not.toContain("bg-err-surface");
+    expect(commit).toContain("Yes, delete");
+    expect(commit).toContain("bg-err-surface");
+    expect(commit).toContain("text-err-ink");
+    // The question is the group's own label: the row it stands in for is still
+    // on screen, so only a reader who cannot see it needs it spelled out.
+    expect(html).toContain('aria-label="Delete alpha?"');
+    // Both answers stand a row tall — 48px under a finger, 32px under a cursor.
+    expect(html).toContain("min-h-12");
+    expect(html).toContain("mouse:min-h-8");
   });
 });
 

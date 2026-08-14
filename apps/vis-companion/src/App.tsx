@@ -1001,33 +1001,29 @@ export function App() {
           gateway={settingsTarget}
           gatewayKey={settingsKey}
           client={settingsClient}
-          isPrimary={settingsTarget?.url === primary?.url}
           activeUrl={active?.url}
           primaryUrl={primary?.url}
           onSelectGateway={openSettings}
           onAddMachine={addConnection}
-          onMakePrimary={async () => {
-            if (!settingsTarget) return;
-            await Promise.all([
-              setPrimaryUrl(settingsTarget.url),
-              setActiveUrl(settingsTarget.url),
-            ]);
-            setPrimary(settingsTarget);
-            setActive(settingsTarget);
+          onMakePrimary={async (conn) => {
+            await Promise.all([setPrimaryUrl(conn.url), setActiveUrl(conn.url)]);
+            setPrimary(conn);
+            setActive(conn);
             setOpenTarget(null);
             setOffline(null);
             setTab("sessions");
           }}
-          onRename={async (label) => {
-            if (!settingsTarget) return;
-            const updated = { ...settingsTarget, label };
+          onRename={async (conn, label) => {
+            const updated = { ...conn, label };
             await upsertConnection(updated);
-            setSettingsTarget(updated);
+            // The column keeps reading the machine it was reading, under its new
+            // name — the row that was renamed is not always the one being read.
+            if (settingsTarget?.url === conn.url) setSettingsTarget(updated);
             await refresh();
           }}
-          onRemove={async () => {
-            if (!settingsTarget) return;
-            await removeConnection(settingsTarget.url);
+          onRemove={async (conn) => {
+            await removeConnection(conn.url);
+            if (settingsTarget?.url === conn.url) setSettingsTarget(null);
             await refresh();
           }}
           onSelectAddress={async (url, pinned) => {

@@ -485,6 +485,68 @@ export const ListRow = forwardRef<
 });
 
 /**
+ * THE ANSWER TO A DESTRUCTIVE QUESTION, ASKED IN THE ROW ITSELF, and there is
+ * only one of it.
+ *
+ * Deleting one session and forgetting one machine are the same moment: the row
+ * is already under the thumb, the question has two answers, and hiding the list
+ * behind a scrim to ask it makes a confirmation look like a destination. So the
+ * confirm IS the row — the two answers split its own width and stand its full
+ * height, and neither of them is a 28px target inside a dialog.
+ *
+ * The refusal comes FIRST and takes the focus, because the safe answer is the
+ * one a mistaken thumb should land on; the committing half wears the red wash
+ * `MenuItem`'s danger row and the swipe strip's `Delete` wear, so the ink that
+ * means "this does not come back" is the same ink wherever it is asked.
+ *
+ * The question itself is the group's LABEL: the row it stands in for is still
+ * on screen, so a sighted reader has already read what is being asked.
+ */
+export function ConfirmRow({
+  question,
+  keepLabel = 'No, keep',
+  confirmLabel,
+  isBusy = false,
+  onKeep,
+  onConfirm,
+}: {
+  /** What is being asked, for a reader who cannot see the row: `Delete alpha?`. */
+  question: string;
+  /** The refusal, when keeping is not called "No, keep". */
+  keepLabel?: string;
+  /** The commitment, carrying its own progress while it runs: `Deleting...`. */
+  confirmLabel: string;
+  isBusy?: boolean;
+  onKeep: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label={question}
+      className="flex min-h-12 items-stretch mouse:min-h-8"
+    >
+      <button
+        type="button"
+        autoFocus
+        className="flex flex-1 items-center justify-center bg-panel-2 font-mono text-meta font-bold uppercase tracking-[0.08em] text-white/70 transition-colors duration-150 hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none"
+        onClick={onKeep}
+      >
+        {keepLabel}
+      </button>
+      <button
+        type="button"
+        disabled={isBusy}
+        className="flex flex-1 items-center justify-center border-l border-err-edge bg-err-surface font-mono text-meta font-bold uppercase tracking-[0.08em] text-err-ink transition-colors duration-150 hover:bg-err hover:text-white active:bg-err active:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-err/70 disabled:opacity-60 motion-reduce:transition-none"
+        onClick={onConfirm}
+      >
+        {confirmLabel}
+      </button>
+    </div>
+  );
+}
+
+/**
  * THE WEIGHT A BAND'S NAME WEARS, pressable or not.
  *
  * `PYTHON` over a program, `RESULT` over what it printed, `THINKING` over the

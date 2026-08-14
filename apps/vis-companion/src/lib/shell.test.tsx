@@ -196,7 +196,8 @@ describe('the app bar', () => {
     expect(list).toBeTruthy();
 
     await userEvent.click(screen.getByRole('button', { name: 'Open preferences' }));
-    await screen.findByRole('heading', { name: 'Add a machine' });
+    // The way in is the band's own + now, so the dialog is what to wait for.
+    await screen.findByRole('button', { name: 'Add a machine' });
 
     // The very same node, still carrying the fleet — never rebuilt, never hidden.
     expect(main.contains(list)).toBe(true);
@@ -223,14 +224,19 @@ describe('the app bar', () => {
     expect(headings).toContain('Machines');
     expect(headings.indexOf('Machines')).toBeLessThan(headings.indexOf('Application'));
 
-    // A machine is a ROW — its name, its address, its verdict — not a bare tab.
-    const row = within(dialog).getByRole('button', { name: /laptop/ });
+    // A machine is a ROW — its name, its address, its verdict — not a bare tab,
+    // and everything it can be TOLD is behind the `⋯` that ends that row.
+    const [row] = within(dialog).getAllByRole('button', { name: /laptop/ });
     expect(row.textContent).toContain('app-gateway');
+    expect(within(dialog).getByRole('button', { name: 'Actions for laptop' })).toBeTruthy();
 
-    // Both ways in are on the same surface, and nothing navigates away to reach them.
-    expect(within(dialog).getByRole('heading', { name: 'Add a machine' })).toBeTruthy();
-    expect(within(dialog).getByPlaceholderText(/vis:\/\/gateway/)).toBeTruthy();
-    expect(within(dialog).getByRole('button', { name: 'Scan QR' })).toBeTruthy();
+    // Pairing is one icon in the band, and what it opens stands OVER this dialog
+    // rather than inside it: nothing navigates away to reach either way in.
+    expect(within(dialog).queryByPlaceholderText(/vis:\/\/gateway/)).toBeNull();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add a machine' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Add a machine' });
+    expect(within(sheet).getByPlaceholderText(/vis:\/\/gateway/)).toBeTruthy();
+    expect(within(sheet).getByRole('button', { name: 'Scan QR' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Pair a machine' })).toBeNull();
     view.unmount();
     view.restore();
@@ -244,8 +250,15 @@ describe('the app bar', () => {
     const view = await mount();
     await userEvent.click(screen.getByRole('button', { name: 'Open preferences' }));
     const close = await screen.findByRole('button', { name: 'Close Settings' });
-    // One box: this application's appearance AND the machine it is talking to.
-    expect(screen.getByRole('button', { name: /Forget this machine/ })).toBeTruthy();
+    // One box: this application's appearance AND the machines it talks to — a
+    // machine's own verbs are inside it, behind the row's own `⋯`, and Escape
+    // closes THAT before it closes the dialog under it.
+    await userEvent.click(screen.getByRole('button', { name: 'Actions for laptop' }));
+    expect(await screen.findByRole('menuitem', { name: /Forget this machine/ })).toBeTruthy();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() =>
+      expect(screen.queryByRole('menuitem', { name: /Forget this machine/ })).toBeNull(),
+    );
     expect(screen.getAllByRole('button', { name: 'Close Settings' })).toHaveLength(1);
     await userEvent.click(close);
     await waitFor(() =>

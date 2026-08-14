@@ -9,7 +9,7 @@ import {
   GatewayClient,
   GatewayError,
 } from "../lib/gateway";
-import { ChevronIcon } from "../components/icons";
+import { ChevronIcon, PlusIcon } from "../components/icons";
 import type {
   GatewayConn,
   PushDevice,
@@ -73,6 +73,7 @@ import {
   ChoiceCell,
   Chip,
   DialogFrame,
+  IconButton,
   Input,
   ListRow,
   Modal,
@@ -120,22 +121,11 @@ import {
 function GatewayPanels({
   client,
   gateway,
-  isPrimary,
-  onMakePrimary,
-  onRename,
-  onRemove,
   onSelectAddress,
-  onClose,
 }: {
   client: GatewayClient;
   gateway: GatewayConn;
-  isPrimary: boolean;
-  onMakePrimary?: () => void | Promise<void>;
-  onRename?: (label: string | undefined) => void | Promise<void>;
-  onRemove?: () => void | Promise<void>;
   onSelectAddress?: (url: string, pinned: boolean) => void | Promise<void>;
-  /** Closes the whole dialog: making a machine primary leaves settings for it. */
-  onClose: () => void;
 }) {
   // Reopening the dialog paints the gateway's last known toggles immediately;
   // `load` below refreshes them (and `setSetting` patches the cache in place).
@@ -146,8 +136,6 @@ function GatewayPanels({
   const [pending, setPending] = useState<string | null>(null);
   const [unreachable, setUnreachable] = useState(false);
   const [unauthorized, setUnauthorized] = useState(false);
-  const [labelDraft, setLabelDraft] = useState(gateway.label ?? "");
-  const [confirmRemove, setConfirmRemove] = useState(false);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -226,14 +214,6 @@ function GatewayPanels({
     }
   }
 
-  const status = unreachable
-    ? { dot: "○", label: "Offline", tone: "text-err" }
-    : unauthorized
-      ? { dot: "●", label: "Unauthorized", tone: "text-warn-strong" }
-      : isPrimary
-        ? { dot: "●", label: "Primary", tone: "text-ok" }
-        : { dot: "○", label: "Saved", tone: "text-dialog-hint" };
-
   return (
     // Groups run FULL BLEED and are divided by one rule, so the dialog's own frame is
     // the only box on the screen. A banner still needs air, so it brings its own
@@ -244,95 +224,6 @@ function GatewayPanels({
               <Banner kind="err">{err}</Banner>
             </div>
           )}
-
-          <SettingsPanel
-            title="Saved connection"
-            description="Reconnect to this machine without re-scanning its QR code."
-            meta={
-              <span className={`font-black ${status.tone}`}>
-                {status.dot} {status.label}
-              </span>
-            }
-          >
-            <div className="space-y-2 p-2.5">
-              <Input
-                value={labelDraft}
-                placeholder="Name this machine"
-                aria-label="Name this machine"
-                autoCapitalize="none"
-                autoCorrect="off"
-                className="w-full"
-                onChange={(event) => setLabelDraft(event.target.value)}
-                onBlur={() => {
-                  if (
-                    (labelDraft.trim() || undefined) !==
-                    (gateway.label ?? undefined)
-                  )
-                    void onRename?.(labelDraft.trim() || undefined);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") event.currentTarget.blur();
-                  if (event.key === "Escape") {
-                    setLabelDraft(gateway.label ?? "");
-                    event.currentTarget.blur();
-                  }
-                }}
-              />
-
-              <p className="font-mono text-meta text-dialog-hint">
-                This device remembers{" "}
-                <span className="text-white">{gatewayHost(gateway.url)}</span>{" "}
-                and its access token. The name is only shown in your machine
-                list — the machine never sees it.
-              </p>
-
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-dialog-edge pt-2">
-                {!isPrimary && (
-                  <Button
-                    onClick={() => {
-                      void onMakePrimary?.();
-                      onClose();
-                    }}
-                  >
-                    Make primary
-                  </Button>
-                )}
-
-                {!confirmRemove && <span className="flex-1" />}
-
-                {confirmRemove ? (
-                  <>
-                    <span className="min-w-0 flex-1 font-mono text-meta text-dialog-hint">
-                      Deletes the address and token from this device.
-                      You&apos;ll need the QR code again.
-                    </span>
-                    <Button
-                      variant="secondary"
-                      onClick={() => setConfirmRemove(false)}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      variant="danger"
-                      onClick={async () => {
-                        await onRemove?.();
-                        onClose();
-                      }}
-                    >
-                      Forget
-                    </Button>
-                  </>
-                ) : (
-                  <Button
-                    variant="danger"
-                    onClick={() => setConfirmRemove(true)}
-                  >
-                    Forget this machine
-                  </Button>
-                )}
-              </div>
-            </div>
-          </SettingsPanel>
 
           {onSelectAddress && (
             <AddressPanel gateway={gateway} onSelect={onSelectAddress} />
@@ -1075,11 +966,14 @@ function SettingsColumn({
   title,
   description,
   meta,
+  action,
   children,
 }: {
   title: string;
   description: string;
   meta?: ReactNode;
+  /** The column's ONE verb, at the end of its band: `Add a machine` is the ＋. */
+  action?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -1093,6 +987,15 @@ function SettingsColumn({
         {meta && (
           <span className="ms-auto min-w-0 max-w-full break-words text-right font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
             {meta}
+          </span>
+        )}
+        {/* A BAND'S VERB CENTRES ITSELF. Everything else on this line is set on a
+            baseline, and a control aligned to the ink of the word beside it sits
+            low in its own box; it also brings its own touch reach, so the band
+            never pads around a target that is already whole. */}
+        {action && (
+          <span className={`flex shrink-0 self-center ${meta ? "" : "ms-auto"}`}>
+            {action}
           </span>
         )}
         <p className={`w-full ${PROSE} font-mono text-chip text-dialog-hint`}>
@@ -1126,7 +1029,6 @@ export function SettingsDialog({
   gateway,
   gatewayKey,
   client,
-  isPrimary,
   activeUrl,
   primaryUrl,
   onSelectGateway,
@@ -1146,16 +1048,21 @@ export function SettingsDialog({
    */
   gatewayKey: string;
   client: GatewayClient | null;
-  isPrimary: boolean;
   /** The machine the APP is talking to, which is not always the one being read. */
   activeUrl?: string | null;
   primaryUrl?: string | null;
   onSelectGateway: (conn: GatewayConn) => void;
   /** Pairing is setup, and setup happens HERE — never by leaving this dialog. */
   onAddMachine: (conn: GatewayConn, makeActive?: boolean) => Promise<void>;
-  onMakePrimary?: () => void | Promise<void>;
-  onRename?: (label: string | undefined) => void | Promise<void>;
-  onRemove?: () => void | Promise<void>;
+  /**
+   * A machine's own verbs act on the ROW they came out of, and every one of them
+   * names its machine. They used to act on whichever machine the column happened
+   * to be READING, because they were controls in that machine's own panel — so a
+   * fleet's verbs all pointed at one row, and the row under the thumb was not it.
+   */
+  onMakePrimary?: (conn: GatewayConn) => void | Promise<void>;
+  onRename?: (conn: GatewayConn, label: string | undefined) => void | Promise<void>;
+  onRemove?: (conn: GatewayConn) => void | Promise<void>;
   onSelectAddress?: (url: string, pinned: boolean) => void | Promise<void>;
   onClose: () => void;
 }) {
@@ -1163,6 +1070,9 @@ export function SettingsDialog({
   const [pageSize, setPageSize] = useState(DEFAULT_SESSION_PAGE_SIZE);
   const [pending, setPending] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Pairing opens over this dialog rather than inside it: see the sheet at the
+  // foot of the return, and the band’s + that is its only door.
+  const [isAdding, setIsAdding] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -1182,11 +1092,19 @@ export function SettingsDialog({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key !== "Escape") return;
+      // One Escape, one surface: the pairing sheet standing over this dialog
+      // leaves first, or adding a machine and reading its settings ended on the
+      // same keystroke.
+      if (isAdding) {
+        setIsAdding(false);
+        return;
+      }
+      onClose();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  }, [isAdding, onClose]);
 
   async function chooseTheme(next: ThemeChoice) {
     setPending(`theme:${next.id}`);
@@ -1234,11 +1152,20 @@ export function SettingsDialog({
         <div className="grid min-w-0 grid-cols-1 divide-y divide-dialog-edge sm:min-h-0 sm:flex-1 sm:grid-cols-2 sm:divide-x sm:divide-y-0 sm:overflow-hidden">
           <SettingsColumn
             title="Machines"
-            description="Every machine this device is paired with, and the way to add another. What a machine stores is shared with its TUI and every other client."
+            description="Every machine this device is paired with, and what this device remembers of each one: its address, its access token, and a name only your own machine list ever shows. Swipe a row — or press its ⋯ — to make it primary, rename it or forget it. What a machine STORES is shared with its TUI and every other client."
             meta={
               gateway
                 ? (gateway.label ?? gatewayHost(gateway.url))
                 : "none paired"
+            }
+            action={
+              <IconButton
+                label="Add a machine"
+                variant="primary"
+                onClick={() => setIsAdding(true)}
+              >
+                <PlusIcon className="size-4" />
+              </IconButton>
             }
           >
             {/* THE COG'S FIRST ANSWER IS THE FLEET. Reported over the machines screen:
@@ -1258,34 +1185,23 @@ export function SettingsDialog({
                 primaryUrl={primaryUrl}
                 health={health}
                 onPick={onSelectGateway}
+                onMakePrimary={onMakePrimary}
+                onRename={onRename}
+                onForget={onRemove}
               />
             )}
-
-            <SettingsPanel
-              title="Add a machine"
-              description="Paste the pairing link printed by ‘vis gateway pair’, scan its QR, or type the address."
-            >
-              <div className="p-3 sm:p-4">
-                <AddMachine onAdd={onAddMachine} isStacked />
-              </div>
-            </SettingsPanel>
 
             {gateway && client ? (
               <GatewayPanels
                 key={gatewayKey}
                 client={client}
                 gateway={gateway}
-                isPrimary={isPrimary}
-                onMakePrimary={onMakePrimary}
-                onRename={onRename}
-                onRemove={onRemove}
                 onSelectAddress={onSelectAddress}
-                onClose={onClose}
               />
             ) : (
               <SettingsPanel title="No machine yet">
                 <p className="px-4 py-6 text-center font-mono text-body text-dialog-hint">
-                  Pair one above and its own settings appear here.
+                  Add one with the + above and its own settings appear here.
                 </p>
               </SettingsPanel>
             )}
@@ -1347,6 +1263,32 @@ export function SettingsDialog({
 
         </div>
       </DialogFrame>
+
+      {/* PAIRING IS A SHEET OVER SETTINGS, not a panel standing open inside it.
+          Both ways in — the link (or its QR) and a typed address — used to sit
+          permanently expanded under the machine list, so the column opened on
+          two forms for a machine that does not exist yet and the fleet the cog
+          was pressed FOR started below them. The band's ＋ is the door now, and
+          `fit` means the sheet is as tall as the two cards and no taller. */}
+      {isAdding && (
+        <Modal size="fit" onDismiss={() => setIsAdding(false)}>
+          <DialogFrame
+            title="Add a machine"
+            subtitle="Paste the pairing link printed by ‘vis gateway pair’, scan its QR, or type the address."
+            onClose={() => setIsAdding(false)}
+          >
+            <div className="p-3 sm:p-4">
+              <AddMachine
+                onAdd={async (conn, makeActive) => {
+                  await onAddMachine(conn, makeActive);
+                  setIsAdding(false);
+                }}
+                isStacked
+              />
+            </div>
+          </DialogFrame>
+        </Modal>
+      )}
     </Modal>
   );
 }
