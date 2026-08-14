@@ -1,346 +1,270 @@
-# PLAN — Let a session speak to the other sessions in its tree
+# PLAN — Make `patch` take one file's whole batch of anchored edits and write once
 
-*The daemon already delivers the message; nobody ever told the agent the others exist.*
+*One read, one write: a file's edits arrive together or not at all.*
 
 ## Context
 
 ### State before
 
-**The fleet is real, and it is in this checkout.** Measured through the canonical client
-(`gateway-client/request! :get "/v1/sessions?root=/Users/fierycod/vis"`) while this plan was
-written: **1109 sessions total, 1097 in this root, 3 live at the same instant** —
-`5364020d` *"Plan for Reintroducing Touch and Cut Tools"* (mid-request: asking whether the
-`cat`/`patch` work was pushed), `cc031f22` *"Invisible Off Button Visibility Issue"*, and
-`0dfe722b` (this one). Two of the three were editing the same working tree.
+Measured against `fbca3dd3a` (v0.1.37).
 
-**Blindness has already cost a commit in this session.** While the session-surface rename was
-being verified, `foundation/language_surface.clj`, `foundation/surface_contract.clj` and
-`internal/test_contract.clj` went dirty underneath the test run — another live session rewriting
-the `run_tests` selector. Neither agent was told the other existed; the collision was found by
-reading `git status`, after the fact.
+- **`patch` is one span per call.** `patch-tool`
+  (`src/com/blockether/vis/internal/foundation/editing/core.clj:4972`) has four arities: 3-arity is one
+  line, 4-arity a span, and both funnel into `patch-one` (`core.clj:4816`), which resolves ONE anchor
+  span, splices ONE replacement, runs ONE parse gate and performs ONE `write-safe` write.
+- **The caller carries the ordering rule.** `patch-tool`'s docstring (`core.clj:4981-4983`), the system
+  prompt (`src/com/blockether/vis/internal/prompt.clj:249-262`) and
+  `resources/vis-docs/token-optimization.md:89` all say "several patches in one block go bottom-up,
+  highest line first" — the arithmetic the caller must do because each write shifts the anchors of the
+  next one.
+- **N edits on one file cost N of everything.** N `slurp`s, N tree-sitter re-parses
+  (`patch-parse-gate`, `core.clj:4749`), N writes through the dirty-guard, N answers to read — and N
+  windows in which another writer can interleave.
+- **A mid-batch refusal leaves the file half-edited.** `patch-one` is atomic for its own span
+  (`core.clj:4817-4820`); nothing is atomic for the FILE. A stale anchor on the third of five calls
+  leaves two edits written and no record that three were intended. `struct_patch` states the same
+  weakness in the opposite direction: "A batch of `edits` applies in order and is never rolled back"
+  (`core.clj:5451-5452`).
+- **The answer is a limited echo.** `patch-one:4901-4921` renders a window of
+  `patch-diff-context-lines` = 3 (`core.clj:3622`) lines around the FIRST edit only — up to 7 rows of
+  text the caller mostly already has — and `patch-symbol`'s `:result` promises exactly that
+  (`core.clj:5017-5019`). With several edits in one call that window cannot describe what happened; the
+  one part of it a next edit actually spends is the fresh `line:hash` anchor.
+- **The batch argument shape already exists and is proven.** `normalize-edits-arg` (`core.clj:819`)
+  turns a stringified batch, a `{"edits": [...]}` kwargs map, ONE bare edit map, or a vector holding
+  stringified entries into a real vector of edit maps; `struct_patch`'s path guards already read it
+  (`core.clj:843-852`).
+- **The anchor primitive is already batch-ready.** `hashline/resolve-anchor-edit-span`
+  (`src/com/blockether/vis/internal/foundation/editing/hashline.clj:471`) answers a CHAR SPAN
+  `{:start :end :replacement :from-line :to-line}` "WITHOUT building new content", with deletion and
+  CRLF semantics settled.
+- **The HEAD/TAIL cap exists and is the right bound for a long report.** `head-tail-cap`
+  (`core.clj:3657`) keeps a head AND a tail window instead of a head-cut, and already bounds rendered
+  diffs to `patch-diff-max-render-lines` = 240 (`core.clj:3624`, used at `core.clj:3751`).
+- **Another layer mirrors the positional shape.** `clj-patch-no-fail-around`
+  (`extensions/languages/vis-language-clojure/src/com/blockether/vis/ext/language_clojure/core.clj:964-1013`)
+  reads the replacement as "the LAST argument" — `(when (>= idx 2) (nth argv idx))` — to parinfer-repair
+  it and retry once. A 2-argument `patch` makes that guard fall through silently, so Clojure delimiter
+  repair dies without a failing test unless it changes in the same phase.
 
-**The transport already runs — end to end, with no code change.** A probe through the same client,
-this session, no client attached to the target and no window open:
+### Root problem
 
-| Step | Result |
-| --- | --- |
-| `POST /v1/sessions` | new session `beb1a4ac…` |
-| `POST /v1/sessions/:sid/turns` | accepted in **7 ms**, `status "streaming"` |
-| the daemon's own worker | ran a full agent turn with **nobody attached** |
-| ~6.2 s later | `status idle`, `turn_count 1` |
-| `GET /v1/sessions/:sid/transcript` | one prose block, `"PONG"` — 1.8 s engine, 12.4k→5 tokens, ≈ $0.073 |
-| `DELETE /v1/sessions/:sid` | `204` |
-
-The machinery it used already exists and is already public:
-
-- `state/submit-turn!` — `src/com/blockether/vis/internal/gateway/state.clj:3472` — starts
-  immediately when idle, queues when busy; queued record `:3560-3581`, running record
-  `:3596-3622`, `turn.queued` event `:3633-3647`, worker launch `:3652`.
-- `state/submit-turn-sync!` — `state.clj:3742` — subscribes BEFORE submitting and buffers the race
-  (`:3760-3765`), so no sibling turn's terminal is ever handed to the caller.
-- `client/terminal-event->result` — `src/com/blockether/vis/internal/gateway/client.clj:1528` —
-  content blocks plus `status` ∈ `done | failed | cancelled | needs_input` (`:1561`).
-- Both are exported already: `vis/gateway-submit-turn!` and `vis/gateway-submit-turn-sync!` —
-  `src/com/blockether/vis/core.clj:119` and `:121`.
-
-**What does not exist is the introduction.** The agent-facing surface is single-session and
-read-only: `read_session` / `get_session` / `list_sessions`, all `:tag :observation`
-(`src/com/blockether/vis/internal/foundation/introspection.clj:1412`, `:1415`, `:1418`), all behind
-the `introspection` toggle whose default is `false` (`:1432-1441`). And nothing in the model's world
-mentions another session at all: the entire model-facing view is nine keys —
-`ctx-engine/model-facing-keys`, `src/com/blockether/vis/internal/ctx_engine.clj:323-327` — and the
-per-turn boundary emits exactly `session["turn"]` and `session["utilization"]`
-(`src/com/blockether/vis/internal/ctx_renderer.clj:154-172`).
-
-**A submitted turn carries no provenance.** `submit-turn!` destructures its opts explicitly
-(`state.clj:3479-3480`); neither the record nor `turn.queued` / `turn.started` says who asked. The
-seam for it is already cut: `display_request` (`state.clj:3581`, `:3622`, `:3646`, worker
-`:3072-3073`) already separates *what the UI shows* from *what the engine reads*.
-
-**Three constraints the design does not get to choose.**
-
-1. **Concurrency is finite and shared.** `MAX_CONCURRENT_TURNS` (`state.clj:245-257`) backs a
-   process-wide semaphore (`:261`) that every worker acquires before it runs (`:3104`) and releases
-   at `:3128`. A turn that BLOCKS on another session's answer holds its permit the whole time, so a
-   chain of blocking asks consumes execution slots for the whole daemon. (The docstring says the
-   default is 2 while the code says 50 — `:249` vs `:257`; the guard must not depend on either.)
-2. **The dependency direction is already fixed.** `gateway.state` requires `loop` (`:as lp` in its
-   `ns`), so `loop.clj` can never require the gateway, and this repo does not permit `declare`.
-   Peers must be PUSHED into the engine call the way `:turn-features` / `:workspace` /
-   `:engine-opts` already are (`state.clj:3114-3127`).
-3. **The index is too slow to ask per turn.** The two root-filtered `/v1/sessions` reads above cost
-   ~2.0 s of wall clock. Liveness must come from the in-memory registry instead —
-   `state.clj:141` (`registry` atom), the `:current-turn` mirror (`:650-659`), `resolve-workspace`
-   (`:770`) — which is O(live sessions) and touches neither SQLite nor HTTP.
-
-### The root problem
-
-The daemon is a fleet manager; the agent's world model is a single session. Every fact needed to
-cooperate — who is live, in which root, on which request — exists in the gateway and stops at the
-HTTP boundary. So coordination is performed by the human, by hand, by copy-paste — and when the
-human is not looking, two agents edit the same file and find out afterwards.
-
-The second half of the same problem: a message that arrives with no provenance is indistinguishable
-from the operator's own. An agent that cannot tell *the human asked* from *another agent asked*
-cannot weigh the request, cannot refuse it, and cannot answer "who wants this?".
+The unit of the tool is the SPAN; the unit of a correct edit is the FILE. Every cost above is that
+mismatch: an ordering rule pushed onto the caller, a partial write when one anchor of many is stale, a
+parse gate per span instead of per file, and an answer that can only describe the span it happened to
+touch.
 
 ### What we solve
 
-- The agent sees the live peers in its own tree at every turn start, with the address needed to
-  reach one.
-- One verb sends a request into a named peer, and optionally blocks for its settled answer.
-- The receiving side can tell a peer's request from its human's, and the surfaces a human watches
-  say so.
-- Cycles and pile-ups are bounded *before* the verb that can cause them exists.
+One call carries every edit for one file. All anchors resolve against ONE read, so the order the caller
+writes them in is irrelevant and overlapping spans are refused instead of silently mis-applied. One
+parse gate, one write, one answer. A refusal writes NOTHING and names the offending edit. The answer
+drops the window and states, per edit, the anchors that are live AFTER the write.
 
 ### What we explicitly do not solve
 
-- **No broadcast, no room, no group.** One target per call.
-- **No shared lock, merge or ownership protocol.** Two agents in one checkout can still collide;
-  after this they can NOTICE and negotiate, which is all this plan claims.
-- **No new transport.** Nothing here opens a socket or hand-builds an HTTP call; every
-  agent-initiated gateway call goes through the canonical Clojure client.
-- **No cross-machine fleet.** `root=` is local to this daemon.
-- **Not a scheduler.** `ask_session` never re-orders the target's queue; a busy peer queues exactly
-  like a human's message and stays cancellable from the strip.
-- **Not human-input plumbing.** A peer suspended on its own human returns `needs_input` and that is
-  the end of it; answering another session's question is separate work.
+Cross-file batches — `patch` stays one file per call, and a block calls it once per file. `struct_patch`
+(name/`at`-addressed, supported grammars only) is untouched. The anchor format, the drift tolerance and
+the read side (`cat`, `grep`) are untouched. No compatibility path for the positional arities is kept:
+the old shape is refused with the new one, never silently accepted.
 
 ### Alternatives considered
 
-- **Reuse `agent("name", "task")`** (`src/com/blockether/vis/internal/foundation/harness/core.clj:197-224`,
-  `:tag :mutation`, *"EXPENSIVE full LLM turn"* at `:210`). Lost: that is a child loop running in
-  MY context and MY workspace whose edits merge back to me — delegation downward. A peer is a
-  sibling with its own workspace, model, transcript and human. Reusing it would silently hand a
-  peer's workspace to the caller.
-- **Keep the human as the relay** (today). Lost: measured above — the collision happened while the
-  human was in the loop, and the human is not present at 03:00.
-- **A file in the tree (`.vis/inbox/<sid>.md`)**. Lost: no delivery and no turn. It requires the
-  peer to poll, and a peer has no reason to poll.
-- **MCP between sessions.** Lost: a second transport for a fleet we already own end to end; auth,
-  lifecycle and replay would be reinvented next to `submit-turn!`.
-- **The verb without the context line** (let the model call `list_sessions()` when curious). Lost:
-  a model does not call a verb it has no reason to believe applies. The trigger IS the feature.
-- **Sandbox-side `httpx` POST to the gateway.** Lost: forbidden — agent-initiated gateway calls go
-  through the canonical client — and it would bypass provenance entirely.
-- **Hang it on the existing `introspection` toggle.** Lost: that toggle means *let the agent read
-  its own history*, is off by default for good reason, and is an observation. Peer messaging is a
-  different policy and a mutation; sharing one switch makes both undecidable in the settings dialog.
+1. **Keep the positional arities, add a batch arity.** Lost: two shapes for one verb is precisely the
+   legacy this removes, and the shape a model reaches for first would still be the one that writes N
+   times.
+2. **Keep the window, render one per edit.** Lost: cost is O(edits x 7) lines of text the caller already
+   holds; for three edits the echo is longer than the region it describes. The fresh anchor is the only
+   part a next call spends.
+3. **Point multi-edit work at `struct_patch`.** Lost: it is name-addressed, needs a grammar, has no
+   answer for prose or config, and is explicitly not rolled back.
+4. **Sort the spans for the caller and apply bottom-up, refusing nothing.** Lost: overlapping spans have
+   no defined result, and quietly picking one is a wrong-line write — the refusal IS the feature.
+5. **Answer with the unified diff instead of the window.** Lost: an anchored edit applies the exact text
+   the caller supplied, so the diff is echo-bloat — the model wire already strips it for `struct_patch`
+   (`src/com/blockether/vis/internal/loop.clj:3140-3145`). The human card keeps rendering it from
+   `:metadata`.
 
 ---
 
-## Phase 1 — Put the live peers in the turn context
+## Phase 1 — Take the whole file's batch: `patch(path, edits)`, resolved on one read, written once
 
-**Rationale.** Without this line every other phase is dead weight: the model never calls a verb it
-has no reason to believe applies, and today the only way to learn a peer exists is a toggle-gated
-`list_sessions()` nothing prompts it to run. This phase ships alone as a working product — with the
-peers visible, the EXISTING reads (`get_session`, `read_session`) already answer "what is that one
-doing", and the collision measured above becomes noticeable before the edit instead of after.
+**Rationale.** Without it, multi-edit work stays N writes with a partial-write failure mode, N parse
+gates, and an ordering rule the caller must compute. This phase is the whole point: the verb becomes
+`patch(path, edits)` and nothing else.
 
-**Data.**
+The shape, in full:
 
-```clojure
-;; One live peer as the model reads it. Engine side is kebab keywords; the ctx stamp and every wire
-;; echo are the mechanical snake_case of these keys (`wire/->wire`), so the Python the model sees is
-;; `session["peers"][0]["running_request"]`.
-(s/def :ext.peer/id string?)                            ; full session id — the target `ask_session` takes
-(s/def :ext.peer/title (s/nilable string?))
-(s/def :ext.peer/status #{"running" "idle"})            ; a peer is LIVE or it is not listed at all
-(s/def :ext.peer/running-request (s/nilable string?))   ; ONE line, truncated at the source
-(s/def :ext.peer/root string?)                          ; its workspace root, so "same tree" is checkable
-(s/def :ext.peer/is-draft boolean?)                     ; a draft clone under ~/.vis/drafts, not this checkout
-(s/def :ext.peer/peer
-  (s/keys :req-un [:ext.peer/id :ext.peer/status :ext.peer/root :ext.peer/is-draft]
-          :opt-un [:ext.peer/title :ext.peer/running-request]))
-(s/def :ext.peer/peers (s/coll-of :ext.peer/peer :kind vector?))
+```python
+patch("src/app.clj", [
+    {"from": "41:9c2", "replace": "  (defn start [] :ok)"},   # one line
+    {"from": "88:0af", "to": "90:7ab", "replace": "…"},        # a span
+    {"from": "120:31d", "to": "120:31d", "replace": ""},       # from == to, delete
+])
 ```
 
-It is specced because it crosses two boundaries: the Python `session` dict, and
-`session_turn_state.ctx` (persisted Nippy).
+`to` is optional and defaults to `from`; `from` and `to` may name the same anchor. `replace` is
+required — `""` deletes, and an ABSENT `replace` is refused, never treated as `""`. Edits may be given
+in any order: every span is resolved against the single `slurp`, so no anchor from the caller's read is
+ever stale mid-batch.
+
+**Data.** None. `edits` is an argument shape consumed inside
+`foundation.editing.core`: it is not persisted, it is not a gateway wire payload (the model's call is
+Python source inside `python_execution`), and no other language mirrors it. The metadata that DOES
+cross to a channel is specified in Phase 3.
 
 **Acceptance criteria.**
-- `src/com/blockether/vis/internal/gateway/state.clj` — `live-peers` answers from the in-memory
-  `registry` (`:141`): entries with a `:current-turn` whose `resolve-workspace` root equals this
-  session's, minus self. No SQL, no HTTP.
-- `src/com/blockether/vis/internal/gateway/state.clj` — the worker passes `:peers` in the same opts
-  map that already carries `:turn-features` / `:workspace` (`:3114-3127`), computed once the permit
-  is in hand so the list is the fleet at EXECUTION time, not at submit time.
-- `src/com/blockether/vis/internal/loop.clj` — beside `_initial-utilization` (`:6641`), stamp
-  `"session_peers"` into ctx, and DISSOC it when the fleet is empty, so a resumed session never
-  shows a peer that has gone.
-- `src/com/blockether/vis/internal/ctx_engine.clj` — `"session_peers"` joins `model-facing-keys`
-  (`:323-327`).
-- `src/com/blockether/vis/internal/ctx_renderer.clj` — `render-turn-boundary` (`:154`) emits
-  `session["peers"] = […]` beneath the utilization line, and emits nothing when there are none.
-- `src/com/blockether/vis/internal/foundation/peer.clj` (new) — registers the `session_peers`
-  toggle (`toggles.clj:214`, snake_case id, `:group :sandbox`, `:persist? true`, hydrated from
-  merged config at `toggles.clj:495` so `/reload` honours a project override) and owns the pure
-  peer-row projection. The stamp is gated on it.
-- Test that proves it done: `test/com/blockether/vis/internal/foundation/peer_test.clj` —
-  `live-peers` excludes self and other roots; `render-turn-boundary` prints the peers line with a
-  peer and omits it with none; the ctx key is absent, not empty, when alone.
+- `src/com/blockether/vis/internal/foundation/editing/core.clj` — `patch-one` (`:4816`) becomes
+  `patch-file!`: normalize with `normalize-edits-arg` (`:819`), resolve every entry with
+  `hashline/resolve-anchor-edit-span` against one `slurp`, splice the spans in DESCENDING `:start`
+  order, then one `patch-parse-gate` and one `write-safe`.
+- Same file — a new `patch-edits-shape!` replaces `patch-call-shape!` (`:4934`): refuse an empty batch,
+  an entry that is not a map, a missing `from`, a missing `replace` (the `(str nil)` silent-deletion
+  regression stays covered), and an entry key that is not `from`/`to`/`replace` (a `replacement` typo is
+  named, not guessed).
+- Same file — a new `:edits-overlap` refusal: two spans that share a character are refused with both
+  edit indices and their line ranges, nothing written.
+- Same file — every anchor refusal from `anchor-refusal!` (`:4667`) gains the batch coordinate
+  (`edit 2 of 5`), because atomicity means one bad anchor refuses the whole call.
+- Same file — `patch-tool` (`:4972`) keeps ONE arity, `[path edits]`; `patch-symbol`'s `:call`
+  (`:5028`) becomes `{:pos ["path" "edits"]}`; the 1- and 2-argument legacy arities and the
+  `:replacement-is-anchor` guard (`:4959-4970`) are deleted — with a named `replace` key there is no
+  positional ambiguity left for an anchor-looking string to be mistaken for.
+- Same file — `positional-only!` (`:4416`) keeps guarding `path` and stops guarding the edits slot (a
+  map there is ONE edit); its `patch` message names the batch shape.
+- Same file — the namespace docstring (`:20`) states the batch verb.
+- Test that proves it done: `patch-batch-test` in
+  `test/com/blockether/vis/internal/foundation/editing/core_test.clj` — three edits in one call land
+  together; the same three given in ascending order produce a byte-identical file; a batch whose second
+  anchor is stale writes NOTHING and the message names edit 2; two overlapping spans are refused;
+  `from` == `to` and `replace: ""` behave as one-line replace and delete.
 
 **Unknowns.**
-- Is a DRAFT peer (its own clone under `~/.vis/drafts/<repo>/<label>`) listed at all — it cannot
-  collide with my files, but it is the same work?
-- How wide is `running_request` before it is truncated, and is the title alone enough?
-- Does any channel already render unknown `session_*` keys (the companion context viewer) — does an
-  added key break a client that mirrors the shape?
+- Should a batch in which every edit is a no-op (replacement equals current text) be a refusal rather
+  than a `changed: false` success, given a no-op batch is usually a stale plan?
+- Is 200 edits per call worth a hard ceiling, or does the overlap gate plus the answer cap make a limit
+  arbitrary?
 
 ---
 
-## Phase 2 — Stamp provenance on the turn record and cap the chain
+## Phase 2 — Answer with fresh anchors per edit, not with a window
 
-**Rationale.** A peer request that looks exactly like the operator's is worse than no message: the
-receiving agent cannot weigh or refuse it, and the human watching that terminal sees a request they
-never typed. The guard must exist BEFORE any verb can loop — every running turn holds one of
-`MAX_CONCURRENT_TURNS` permits (`state.clj:3104`), so a chain of blocking asks holds a permit per
-hop and a cycle drains the daemon's execution slots. This phase lands as a working product on its
-own: every HTTP client (companion, CLI, tests) gains a provenance-carrying submit and the refusals
-that bound it.
+**Rationale.** Without it the verb still pays for an echo that cannot describe a batch: one window
+around one edit, mute about the rest. The caller needs exactly one thing back — where each edit now
+lives — and this is the phase the user asked for when they said the limited information has to go.
 
-**Data.**
+The answer becomes a status line plus one row per edit, computed AFTER the splice:
 
-```clojure
-;; Provenance rides the turn record and every event that carries a turn id. Engine kebab → wire
-;; snake through `wire/->wire`: :origin-session-id → "origin_session_id".
-(s/def :ext.peer.turn/origin-session-id string?)        ; the ASKING session
-(s/def :ext.peer.turn/origin-chain                      ; oldest first, including the asker
-  (s/coll-of :ext.peer.turn/origin-session-id
-             :kind vector? :min-count 1 :max-count 3 :distinct true))
-(s/def :ext.peer.turn/origin
-  (s/keys :req-un [:ext.peer.turn/origin-session-id :ext.peer.turn/origin-chain]))
-;; ABSENT on a human turn — that absence is the signal, so it is optional on the record and is never
-;; defaulted to a placeholder. `:distinct true` IS the cycle refusal; `:max-count 3` IS the depth cap.
+```
+patched src/app.clj  3 edits  126 → 131 lines (+5)  parse: clean
+  1  41..41   → 2 lines   41:9c2 .. 42:7ab
+  2  88..90   → 1 line    89:0af
+  3  120..120 → deleted
 ```
 
+**Data.** None — the result is the plain string the tool already answers with; only its content changes.
+
 **Acceptance criteria.**
-- `src/com/blockether/vis/internal/gateway/state.clj` — `submit-turn!` accepts `:origin`
-  (`:3479-3480`) and stores it on both the queued (`:3560-3581`) and running (`:3596-3622`) records.
-- `src/com/blockether/vis/internal/gateway/state.clj` — `turn.queued` (`:3633`) and `turn.started`
-  echo `origin_session_id` / `origin_chain`.
-- `src/com/blockether/vis/internal/gateway/state.clj` — the DAEMON, never the caller, prefixes the
-  engine `request` with the single provenance line and keeps the clean text in `display_request`
-  (`:3072-3073`), so UI rows stay readable and a caller cannot forge the sentence.
-- `src/com/blockether/vis/internal/gateway/state.clj` — refusal before any work is done: target
-  already in `origin-chain`, or chain already 3 deep → `{:error :peer-cycle | :peer-depth}`; no
-  record, no event, no permit taken.
-- `src/com/blockether/vis/internal/gateway/server.clj` — `POST /v1/sessions/:sid/turns` accepts
-  `origin_session_id` and derives the chain from the CALLER's own turn, never from the body alone.
-- Test that proves it done: gateway state test — a cycle and an over-deep chain are refused with no
-  event appended; a human turn carries no origin key at all; `wire/->wire` round-trips both fields.
+- `src/com/blockether/vis/internal/foundation/editing/core.clj` — delete the window computation
+  (`:4901-4913`) and its append (`:4921`); `patch-diff-context-lines` stays in use for the METADATA diff
+  only.
+- Same file — `patch-status-line` (`:4792`) becomes file-level: path, edit count, line count before →
+  after with the delta, then the parse and gutter clauses it already earns.
+- Same file — a new `patch-edit-rows` renders one row per edit in the caller's own order, each carrying
+  the post-write anchors (`from` .. `to`, or one anchor when the edit is one line, or `deleted`, or
+  `unchanged` for a no-op), bounded by `head-tail-cap` (`:3657`) at a new
+  `patch-edit-rows-max`, so a 300-edit batch reports a head, a tail and how many rows were omitted.
+- Same file — `patch-symbol`'s `:result` (`:5017-5019`) states the new answer; `doc("patch")` mirrors it
+  with no second edit.
+- Test that proves it done: `patch-spends-the-anchor-test`
+  (`test/.../editing/core_test.clj:1370`) is rewritten — it currently asserts the window — to assert
+  that the answer carries NO `line:hash│` window, and that every anchor it reports resolves on the very
+  next `patch` with no `cat` in between.
 
 **Unknowns.**
-- Is depth 3 right, or is 2 (ask, answer back) all anyone needs?
-- Queued work is deliberately memory-only across restarts (`state.clj:3667-3672`): must a blocked
-  asker see an explicit failure rather than silence when the daemon restarts under it?
-- Should the provenance reach the receiving agent as ctx (like peers) instead of inside the request
-  text — is a sentence in the request the right channel for a machine-readable fact?
+- Does the row need the replacement's first line as a label, or is the anchor pair enough for a human
+  reading the transcript?
 
 ---
 
-## Phase 3 — `ask_session`: one verb that spends another session's turn
+## Phase 3 — Keep the other layers proven: Clojure repair, the human card, and every contract that quotes `patch`
 
-**Rationale.** The verb is the only part the model can call; everything before it is visibility and
-safety. It lands after the guard on purpose — the phase that can loop arrives when looping is
-already refused.
+**Rationale.** Without it, Clojure delimiter repair silently stops firing (`(>= idx 2)` never holds for
+a 2-argument call), the TUI card shows one file row with nothing under it, and the prompt keeps teaching
+a call shape the engine now refuses.
 
-**Data.**
+**Data.** The per-edit rows on the tool's `:metadata` DO cross a boundary — the engine hands metadata to
+channel extensions and the companion renders the same card — so the shape is fixed here before the code:
 
 ```clojure
-;; What `ask_session` hands back into Python. It crosses the Clojure→GraalPy boundary, so it is ONE
-;; closed shape, never "whatever the terminal event happened to carry".
-(s/def :ext.peer.ask/turn-id string?)
-(s/def :ext.peer.ask/status #{"queued" "running" "done" "failed" "cancelled" "needs_input"})
-(s/def :ext.peer.ask/content (s/coll-of map? :kind vector?))  ; the peer's blocks, only once settled
-(s/def :ext.peer.ask/usage (s/nilable map?))                  ; model, tokens, cost as the peer reports them
-(s/def :ext.peer.ask/result
-  (s/keys :req-un [:ext.peer.ask/turn-id :ext.peer.ask/status]
-          :opt-un [:ext.peer.ask/content :ext.peer.ask/usage]))
-;; Refusals RAISE, following `patch`: unknown or ambiguous target, cycle, depth, toggle off, `wait`
-;; elapsed — each with the recovery in the message. A refusal is never a status value.
+(s/def :vis.patch.region/from_anchor (s/and string? #(re-matches #"\d+:[0-9a-f]{3}" %)))
+(s/def :vis.patch.region/to_anchor   :vis.patch.region/from_anchor)
+(s/def :vis.patch.region/note        (s/nilable string?))
+(s/def :vis.patch/region  (s/keys :req-un [:vis.patch.region/from_anchor]
+                                  :opt-un [:vis.patch.region/to_anchor :vis.patch.region/note]))
+(s/def :vis.patch/regions (s/coll-of :vis.patch/region :kind vector? :min-count 1))
 ```
 
-**Acceptance criteria.**
-- `src/com/blockether/vis/internal/foundation/peer.clj` — `ask_session(target, request, wait=180)`,
-  `:tag :mutation`, `:inject-env? true`; `target` resolves by the same ONE-argument rule as
-  `get_session` (exact id or unambiguous prefix), keyword and positional calls bind identically.
-- `src/com/blockether/vis/internal/foundation/peer.clj` — `wait=0` → `vis/gateway-submit-turn!`
-  returning `{turn_id, status}`; `wait>0` → `vis/gateway-submit-turn-sync!` (`core.clj:119`, `:121`)
-  with `wait` as a hard ceiling. The docstring states EXPENSIVE in the same voice as `agent`
-  (`harness/core.clj:210`), with the measured floor: a full peer turn, ~12.4k prompt tokens and
-  ≈ $0.07 for a one-word answer.
-- `src/com/blockether/vis/internal/foundation/peer.clj` — the extension's `:ext/activation-fn` is
-  `vis/toggle-enabled?` on `session_peers`, so the ctx line and the verb hang off ONE switch, and
-  `:ext/prompt-fn` contributes its guidance only when the toggle is on.
-- `src/com/blockether/vis/internal/doc_corpus.clj` — `ask_session` is listed where the curated
-  surface is enumerated, so `doc("ask_session")` answers.
-- Test that proves it done: `test/com/blockether/vis/internal/foundation/peer_test.clj` — target
-  resolution (exact, prefix, ambiguous → raises), `wait=0` returns a queued row, the probe above
-  becomes a real round trip through the daemon, and the symbol is absent when the toggle is off.
-
-**Unknowns.**
-- Is `wait=180` the honest default? It parks a whole turn of mine on another agent's model. The
-  alternative default is `wait=0` plus a read for the answer later. **This is the one open call.**
-- Does an ask into a session whose human is actively typing deserve a refusal instead of a queue?
-- Does `ask_session` need an `idempotency_key` passthrough for a retried block, or is the existing
-  dedupe on the HTTP path enough?
-
----
-
-## Phase 4 — Show the peer where the human is watching
-
-**Rationale.** The moment an agent can send, a human can see a request in their own session that
-they never typed. Unlabelled, that is indistinguishable from the agent going rogue; labelled, the
-strip reads "from <peer title>" and the whole feature becomes auditable after the fact. It lands
-last because Phases 1-3 are already a working product without it — this is the phase that makes it
-trustworthy.
-
-**Data.** None. It renders `origin_session_id` / `origin_chain` from Phase 2 and adds no field; the
-change is rendering only.
+The key names stay the `from_anchor`/`to_anchor` the TUI already reads
+(`extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/components.clj:1451-1471`).
 
 **Acceptance criteria.**
-- `src/com/blockether/vis/internal/loop.clj` — the TUI queue-strip row for a peer-origin turn
-  carries the asking session's short id and title; paint contract per `doc("tui-rendering")`.
-- `apps/vis-companion` — the tray / turn row shows the same label from the same wire keys; pull
-  `doc("companion-ui")` first, verify with `npm run lint` and `npm run build`, never edit generated
-  `ios/` or `android/`.
-- The transcript needs no second mechanism: the provenance line is part of the request the engine
-  read, and the test asserts exactly that rather than adding another path.
-- Test that proves it done: a TUI paint test for the labelled strip row, and the companion build
-  green with the row rendered against live DOM numbers.
+- `extensions/languages/vis-language-clojure/src/com/blockether/vis/ext/language_clojure/core.clj:964-1013`
+  — `clj-patch-no-fail-around` maps `repair/fix-delimiters` over each entry's `replace` in the 2-argument
+  call, retries ONCE when any repair changed something, keeps the `(delimiters repaired)` suffix on the
+  first line of the answer, and surfaces the original error otherwise; the repair stays syntax-only.
+- `extensions/languages/vis-language-clojure/test/com/blockether/vis/ext/language_clojure/core_test.clj:611`
+  — the boundary test moves to the batch shape and proves an unbalanced `replace` inside a MULTI-edit
+  batch is repaired and the whole batch still lands atomically.
+- `src/com/blockether/vis/internal/foundation/editing/core.clj` — `patch`'s `:metadata` gains
+  `:regions`, one entry per edit, so the card lists the edits instead of one bare path row.
+- `src/com/blockether/vis/internal/prompt.clj:249-262` and
+  `test/com/blockether/vis/internal/prompt_test.clj:674-675` — the §3/§4 lines teach
+  `patch(path, edits)` and drop the bottom-up rule for one file (it survives only for several files in
+  one block).
+- `resources/vis-docs/token-optimization.md:80,89` — the worked example and the paragraph use the batch.
+- `dev/benches/w6_forced.sh:19` and `resources/vis-python/async_runtime.py:2490` — the forced-tool
+  description and the comment quote the new shape.
+- Test that proves it done: `run_tests` over `src/com/blockether/vis/internal/foundation/editing/core.clj`,
+  `src/com/blockether/vis/internal/prompt.clj` and the language-clojure pack is green, and the
+  private-deployment-hygiene and prompt tests still pass unchanged.
 
 **Unknowns.**
-- Is the companion tray the right surface, or does an incoming peer request deserve its own
-  notification?
-- Does the label belong on the transcript row as well once the session is read back days later?
+- Does the companion's tool card need its own change to show the region rows, or does it already render
+  whatever `:regions` the TUI does?
 
 ---
 
 ## State of the plan
 
-**ACCEPTED** — nothing has landed yet.
+**DONE** — all three phases landed; the smallest relevant `run_tests` namespaces are green.
 
-Two decisions the plan takes, so they are not re-litigated in review:
+Decisions taken here so they are not re-litigated in review:
 
-1. **One toggle, `session_peers`, default ON.** It costs nothing when a tree has a single session:
-   the context line is silent and the verb is never called. OFF makes the feature undiscoverable,
-   which is how a capability with no advertisement dies. Overturning this is one keyword.
-2. **Refusals raise; statuses describe the peer.** `queued | running | done | failed | cancelled |
-   needs_input` are what the PEER did; a cycle, a bad target or a lapsed `wait` are the CALLER's
-   error and raise with the recovery in the message.
+1. **One call shape, no legacy.** `patch(path, edits)` and nothing else; a 3- or 4-argument call is
+   refused with the batch shape in the message. `normalize-edits-arg` still accepts a single bare edit
+   map or a stringified batch — that is coercion of the SAME argument, not a second shape.
+2. **Atomic per FILE.** Every anchor resolves against one read; any refusal writes nothing; overlapping
+   spans are refused rather than ordered.
+3. **The answer is anchors, not text.** No window, no diff — a status line and one row per edit, capped
+   by `head-tail-cap`. The human card keeps the full diff from `:metadata`.
 
-TODO, in order:
+Landed, in order:
 
-1. **Phase 1** — `live-peers` from the in-memory registry, pushed through the worker opts, stamped
-   beside `_initial-utilization`, projected by `model-facing-keys`, rendered by
-   `render-turn-boundary`; `session_peers` toggle registered in the new `foundation/peer.clj`.
-2. **Phase 2** — `:origin` on `submit-turn!`, both records, both events, daemon-side request
-   framing, cycle and depth refusals, `origin_session_id` on the HTTP route.
-3. **Phase 3** — `ask_session` in `foundation/peer.clj` behind the same toggle, `wait=0` async and
-   `wait>0` blocking, doc corpus entry, peer tests.
-4. **Phase 4** — the TUI strip label and the companion row label.
+1. **Phase 1** — `patch-file!`, `patch-edits-shape!`, the `:edits-overlap` refusal, `edit N of M` on every
+   anchor refusal, one `[path edits]` arity and `:call {:pos ["path" "edits"]}`.
+2. **Phase 2** — file-level status line, one anchor row per edit bounded by `head-tail-cap` at
+   `patch-edit-rows-max` (60), the window deleted, `:result` rewritten.
+3. **Phase 3** — `clj-patch-no-fail-around` repairs `edits[*].replace` and retries the WHOLE batch, prompt
+   §3/§4 (the prompt still fits its 5900-character budget), `token-optimization.md`, the stale-anchor
+   advice in `introspection.clj`, the bench and the two comments that quoted the old shape.
 
-**Supersedes** *"Bring back `cat` and `patch` as positional verbs over one anchored line, and make
-`grep` speak the same text"*, which is **DONE** — all six phases landed and are recorded there. It
-is preserved verbatim at `git show 906b091be:PLAN.md`, and nothing in it is carried here.
+One deviation from the accepted plan: **`:metadata :regions` was NOT added.** The plan assumed the TUI
+already read it; `grep` found its only reader is the FACTS panel
+(`extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/components.clj:1471`) and the
+companion has none, so the key would have been a contract with no consumer. `:metadata` carries
+`:edit-count` instead, beside the diff the human card already renders.
+
+**Supersedes** *"Let a session speak to the other sessions in its tree"*, which was **ACCEPTED** and never
+started; it is preserved verbatim in git at `fbca3dd3a` and can be restored unchanged now that this one is
+**DONE**.

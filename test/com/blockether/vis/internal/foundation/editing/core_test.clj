@@ -1200,11 +1200,12 @@
             "channel-render-bash" "journal-render-bash"]]
         (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" v))))))
   (it "the anchored read/write verbs are in the namespace"
-      (doseq [v ["cat-tool" "cat-symbol" "cat-one" "patch-tool" "patch-symbol" "patch-one"]]
+      (doseq [v ["cat-tool" "cat-symbol" "cat-one" "patch-tool" "patch-symbol" "patch-file!"]]
         (expect (some? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core"
                                         v))))))
-  ;; The multi-edit batch and its serializer-damage coercion layer stay dead: one
-  ;; call is one file is one span, and several calls in one block are the batch.
+  ;; The OLD multi-edit batch and its serializer-damage coercion layer stay dead: one
+  ;; call is one FILE — every edit for it, resolved against one read — and the only
+  ;; coercion left is `normalize-edits-arg`, shared with `struct_patch`.
   (it "no batch coercion layer came back with them"
       (doseq [v ["coerce-patch-edits" "patch-analysis" "patch-safe" "read-file-by-anchor"]]
         (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" v))))))
@@ -1367,9 +1368,22 @@
         ;; Zero is still no line at all.
         (expect (throws? clojure.lang.ExceptionInfo #(cat-tool rel 0))))))
 
+
+;; `patch` is ONE call per FILE — `(patch-file! path edits)`. These tests drive one
+;; span at a time, so the helper wraps a single edit in the batch the verb takes;
+;; `patch-batch-test` covers what only a batch can prove.
+(defn- patch-span
+  [rel from to replacement]
+  ((private-fn "patch-file!")
+    rel
+    [(cond-> {"from" from "replace" replacement}
+       to
+       (assoc "to" to))]))
+
+
 (defdescribe
   patch-spends-the-anchor-test
-  (it "returns a re-anchored window whose anchors resolve on the very next patch"
+  (it "answers with fresh anchors instead of a window, and the anchor it reports is live"
       (let
         [rel
          (write-temp! "patch/window.txt" "one\ntwo\nthree\nfour\nfive\nsix\nseven\n")
@@ -1377,28 +1391,27 @@
          cat-tool
          (comp :result (private-fn "cat-tool"))
 
-         patch-one
-         (private-fn "patch-one")
-
          a4
          (anchor-at (cat-tool rel) 4)
 
          first-out
-         (:result (patch-one rel a4 a4 "FOUR"))
+         (:result (patch-span rel a4 a4 "FOUR"))
 
-         ;; No `cat` between the two edits: the window patch just answered with
-         ;; is the address the next edit spends.
-         a5
-         (anchor-at first-out 5)
+         ;; No `cat` between the two edits: the anchor the row just reported IS the
+         ;; address the next edit spends.
+         reported
+         (last (string/split (string/trim first-out) #"\s+"))
 
          second-out
-         (:result (patch-one rel a5 a5 "FIVE"))]
+         (:result (patch-span rel reported reported "FOUR AGAIN"))]
 
         (expect (string/starts-with? first-out "patched "))
-        (expect (string/includes? first-out "4..4 → 1 line"))
-        (expect (string/includes? first-out "4:"))
-        (expect (string/includes? second-out "5..5 → 1 line"))
-        (expect (= "one\ntwo\nthree\nFOUR\nFIVE\nsix\nseven\n" (slurp rel)))))
+        (expect (string/includes? first-out "1 edit"))
+        ;; The re-anchored WINDOW is gone: the answer carries addresses, not text.
+        (expect (not (string/includes? first-out "\u2502 ")))
+        (expect (= (hashline/line-anchor 4 "FOUR") reported))
+        (expect (string/starts-with? second-out "patched "))
+        (expect (= "one\ntwo\nthree\nFOUR AGAIN\nfive\nsix\nseven\n" (slurp rel)))))
   (it "a span replace and an empty replacement both report the size they moved"
       (let
         [rel
@@ -1407,20 +1420,19 @@
          cat-tool
          (comp :result (private-fn "cat-tool"))
 
-         patch-one
-         (private-fn "patch-one")
-
          text
          (cat-tool rel)
 
          shrunk
-         (:result (patch-one rel (anchor-at text 2) (anchor-at text 4) "B"))
+         (:result (patch-span rel (anchor-at text 2) (anchor-at text 4) "B"))
 
          deleted
-         (:result (patch-one rel (anchor-at (cat-tool rel) 1) nil ""))]
+         (:result (patch-span rel (anchor-at (cat-tool rel) 1) nil ""))]
 
-        (expect (string/includes? shrunk "2..4 → 1 line (-2)"))
-        (expect (string/includes? deleted "→ 0 lines (-1)"))
+        (expect (string/includes? shrunk "1 edit  5 \u2192 3 lines (-2)"))
+        (expect (string/includes? shrunk "2..4  \u2192 1 line"))
+        (expect (string/includes? deleted "3 \u2192 2 lines (-1)"))
+        (expect (string/includes? deleted "1..1  \u2192 deleted"))
         (expect (= "B\ne\n" (slurp rel)))))
   (it "a stale anchor is refused with the fresh one attached and nothing is written"
       (let
@@ -1430,24 +1442,22 @@
          cat-tool
          (comp :result (private-fn "cat-tool"))
 
-         patch-one
-         (private-fn "patch-one")
-
          stale
          (anchor-at (cat-tool rel) 2)
 
          _
-         (patch-one rel stale stale "BETA")
+         (patch-span rel stale stale "BETA")
 
          before
          (slurp rel)
 
          thrown
-         (try (patch-one rel stale stale "again") nil (catch clojure.lang.ExceptionInfo e e))]
+         (try (patch-span rel stale stale "again") nil (catch clojure.lang.ExceptionInfo e e))]
 
         (expect (some? thrown))
         (expect (= :anchor-not-found (:reason (ex-data thrown))))
-        (expect (string/starts-with? (ex-message thrown) "patch refused — nothing was written."))
+        (expect (string/starts-with? (ex-message thrown)
+                                     "patch refused at edit 1 of 1 — nothing was written."))
         ;; The recovery is IN the refusal: one retry, not a re-read.
         (expect (string/includes? (ex-message thrown) "current anchor at 2 →"))
         (expect (string/includes? (ex-message thrown) (hashline/line-anchor 2 "BETA")))
@@ -1458,14 +1468,11 @@
          (write-temp! "patch/misplaced.txt"
                       (string/join "\n" (concat ["needle"] (map #(str "filler " %) (range 1 200)))))
 
-         patch-one
-         (private-fn "patch-one")
-
          moved
          (str "160:" (hashline/line-hash "needle"))
 
          thrown
-         (try (patch-one rel moved moved "x") nil (catch clojure.lang.ExceptionInfo e e))]
+         (try (patch-span rel moved moved "x") nil (catch clojure.lang.ExceptionInfo e e))]
 
         (expect (some? thrown))
         (expect (= :anchor-misplaced (:reason (ex-data thrown))))
@@ -1475,11 +1482,8 @@
         [rel
          (write-temp! "patch/bare.txt" "alpha\nbeta\n")
 
-         patch-one
-         (private-fn "patch-one")
-
          thrown
-         (try (patch-one rel "2" "2" "BETA") nil (catch clojure.lang.ExceptionInfo e e))]
+         (try (patch-span rel "2" "2" "BETA") nil (catch clojure.lang.ExceptionInfo e e))]
 
         (expect (some? thrown))
         (expect (= :anchor-malformed (:reason (ex-data thrown))))
@@ -1496,14 +1500,11 @@
          cat-tool
          (comp :result (private-fn "cat-tool"))
 
-         patch-one
-         (private-fn "patch-one")
-
          a3
          (anchor-at (cat-tool rel) 3)
 
          thrown
-         (try (patch-one rel a3 a3 "(defn ok [] 1") nil (catch clojure.lang.ExceptionInfo e e))]
+         (try (patch-span rel a3 a3 "(defn ok [] 1") nil (catch clojure.lang.ExceptionInfo e e))]
 
         (expect (some? thrown))
         (expect (= :parse-broken (:reason (ex-data thrown))))
@@ -1518,14 +1519,11 @@
          cat-tool
          (comp :result (private-fn "cat-tool"))
 
-         patch-one
-         (private-fn "patch-one")
-
          a3
          (anchor-at (cat-tool rel) 3)
 
          out
-         (:result (patch-one rel a3 a3 "(defn oops [] 1)"))]
+         (:result (patch-span rel a3 a3 "(defn oops [] 1)"))]
 
         (expect (string/starts-with? out "patched "))
         (expect (= "(ns broken)\n\n(defn oops [] 1)\n" (slurp rel)))))
@@ -1539,11 +1537,8 @@
          cat-tool
          (comp :result (private-fn "cat-tool"))
 
-         patch-one
-         (private-fn "patch-one")
-
          out
-         (:result (patch-one rel (anchor-at (cat-tool rel) 2) nil "there"))]
+         (:result (patch-span rel (anchor-at (cat-tool rel) 2) nil "there"))]
 
         (expect (not (string/includes? out "parse:")))
         (expect (= "hello\nthere\n" (slurp rel)))))
@@ -1556,13 +1551,10 @@
         [cat-tool
          (comp :result (private-fn "cat-tool"))
 
-         patch-one
-         (private-fn "patch-one")
-
          edit
          (fn [rel content replacement]
            (let [rel (write-temp! rel content)]
-             (:result (patch-one rel (anchor-at (cat-tool rel) 2) nil replacement))))]
+             (:result (patch-span rel (anchor-at (cat-tool rel) 2) nil replacement))))]
 
         (expect (not (string/includes? (edit "patch/prose.txt" "alpha\nbeta\n" "BETA") "parse:")))
         (expect (not (string/includes? (edit "patch/notes.md" "# One\n\ntwo\n" "TWO") "parse:")))
@@ -1570,68 +1562,207 @@
                                   "parse: clean")))))
 
 
-(defdescribe patch-call-shape-test
-             ;; Regression: `patch(path, anchor)` reported success and DELETED the line —
-             ;; a missing replacement reached the splice as `(str nil)`, the empty string.
-             (it "a patch with no replacement is refused, not treated as a deletion"
-                 (let
-                   [rel
-                    (write-temp! "patch/shape-missing.txt" "alpha\nbeta\n")
+(defdescribe
+  patch-batch-shape-test
+  ;; Regression: `patch(path, anchor)` reported success and DELETED the line —
+  ;; a missing replacement reached the splice as `(str nil)`, the empty string.
+  (it "an edit with no replacement is refused, not treated as a deletion"
+      (let
+        [rel
+         (write-temp! "patch/shape-missing.txt" "alpha\nbeta\n")
 
-                    patch-tool
-                    (private-fn "patch-tool")
+         patch-tool
+         (private-fn "patch-tool")
 
-                    thrown
-                    (try (patch-tool rel (hashline/line-anchor 2 "beta"))
-                         nil
-                         (catch clojure.lang.ExceptionInfo e e))]
+         thrown
+         (try (patch-tool rel [{"from" (hashline/line-anchor 2 "beta")}])
+              nil
+              (catch clojure.lang.ExceptionInfo e e))]
 
-                   (expect (some? thrown))
-                   (expect (= :replacement-missing (:reason (ex-data thrown))))
-                   (expect (string/includes? (ex-message thrown) "patch(path, anchor, \"\")"))
-                   (expect (= "alpha\nbeta\n" (slurp rel)))))
-             ;; Regression: `patch(path, from, to)` — the model naming a SPAN and forgetting
-             ;; the text — wrote the string `6:70a` over line 3 and reported success.
-             (it "an anchor passed as the replacement is refused, and names the 4-argument call"
-                 (let
-                   [rel
-                    (write-temp! "patch/shape-anchor.txt" "alpha\nbeta\ngamma\n")
+        (expect (some? thrown))
+        (expect (= :replacement-missing (:reason (ex-data thrown))))
+        (expect (string/includes? (ex-message thrown) "\"replace\": \"\""))
+        (expect (= "alpha\nbeta\n" (slurp rel)))))
+  ;; Regression: `patch(path, from, to)` — the model naming a SPAN and forgetting
+  ;; the text — wrote the string `6:70a` over line 3 and reported success. The
+  ;; named `replace` key retires that ambiguity, and a MISSPELLED key is all that
+  ;; is left of it: unnamed, it would read as an edit with no replacement at all.
+  (it "an unrecognised edit key is named, not guessed at"
+      (let
+        [rel
+         (write-temp! "patch/shape-key.txt" "alpha\nbeta\ngamma\n")
 
-                    patch-tool
-                    (private-fn "patch-tool")
+         patch-tool
+         (private-fn "patch-tool")
 
-                    a1
-                    (hashline/line-anchor 1 "alpha")
+         a1
+         (hashline/line-anchor 1 "alpha")
 
-                    a3
-                    (hashline/line-anchor 3 "gamma")
+         a3
+         (hashline/line-anchor 3 "gamma")
 
-                    thrown
-                    (try (patch-tool rel a1 a3) nil (catch clojure.lang.ExceptionInfo e e))]
+         thrown
+         (try (patch-tool rel [{"from" a1 "replacement" "ONE"}])
+              nil
+              (catch clojure.lang.ExceptionInfo e e))]
 
-                   (expect (some? thrown))
-                   (expect (= :replacement-is-anchor (:reason (ex-data thrown))))
-                   (expect (string/includes? (ex-message thrown) (str a1 ".." a3)))
-                   (expect (= "alpha\nbeta\ngamma\n" (slurp rel)))
-                   ;; The span it named, and the escape hatch for writing that text literally.
-                   (expect (string/starts-with? (:result (patch-tool rel a1 a3 "ONE")) "patched "))
-                   (expect (= "ONE\n" (slurp rel)))))
-             ;; Regression: a replacement copied straight out of `cat` kept its `line:hash│ `
-             ;; gutter and landed in the file verbatim, silently — the gutter is an ADDRESS.
-             (it "a replacement carrying the gutter is written, and the status line says so"
-                 (let
-                   [rel
-                    (write-temp! "patch/shape-gutter.txt" "alpha\nbeta\n")
+        (expect (some? thrown))
+        (expect (= :edit-unknown-key (:reason (ex-data thrown))))
+        (expect (string/includes? (ex-message thrown) "\"replacement\""))
+        (expect (= "alpha\nbeta\ngamma\n" (slurp rel)))
+        ;; The same call, spelled right, still lands.
+        (expect (string/starts-with? (:result (patch-tool rel
+                                                          [{"from" a1 "to" a3 "replace" "ONE"}]))
+                                     "patched "))
+        (expect (= "ONE\n" (slurp rel)))))
+  (it "an empty batch is refused with the shape it should have had"
+      (let
+        [rel
+         (write-temp! "patch/shape-empty.txt" "alpha\nbeta\n")
 
-                    patch-tool
-                    (private-fn "patch-tool")
+         patch-tool
+         (private-fn "patch-tool")
 
-                    out
-                    (:result (patch-tool rel (hashline/line-anchor 2 "beta") "2:5f0│ BETA"))]
+         thrown
+         (try (patch-tool rel []) nil (catch clojure.lang.ExceptionInfo e e))]
 
-                   (expect
-                     (string/includes? out "note: the replacement carries a `line:hash│ ` gutter"))
-                   (expect (= "alpha\n2:5f0│ BETA\n" (slurp rel))))))
+        (expect (= :edits-missing (:reason (ex-data thrown))))
+        (expect (string/includes? (ex-message thrown) "patch(path, edits)"))
+        (expect (= "alpha\nbeta\n" (slurp rel)))))
+  ;; Regression: a replacement copied straight out of `cat` kept its `line:hash│ `
+  ;; gutter and landed in the file verbatim, silently — the gutter is an ADDRESS.
+  (it "a replacement carrying the gutter is written, and the status line says so"
+      (let
+        [rel
+         (write-temp! "patch/shape-gutter.txt" "alpha\nbeta\n")
+
+         patch-tool
+         (private-fn "patch-tool")
+
+         out
+         (:result (patch-tool rel
+                              [{"from" (hashline/line-anchor 2 "beta") "replace" "2:5f0│ BETA"}]))]
+
+        (expect (string/includes? out "note: a replacement carries a `line:hash│ ` gutter"))
+        (expect (= "alpha\n2:5f0│ BETA\n" (slurp rel))))))
+
+
+(defdescribe
+  patch-batch-test
+  (it
+    "every edit for one file lands in ONE write, in whatever order they arrive"
+    (let
+      [content
+       "one\ntwo\nthree\nfour\nfive\nsix\n"
+
+       cat-tool
+       (comp :result (private-fn "cat-tool"))
+
+       patch-tool
+       (private-fn "patch-tool")
+
+       edits
+       (fn [text]
+         [{"from" (anchor-at text 1) "replace" "ONE"}
+          {"from" (anchor-at text 2) "to" (anchor-at text 3) "replace" "TWO+THREE"}
+          {"from" (anchor-at text 5) "replace" "FIVE"}])
+
+       ascending
+       (write-temp! "patch/batch-asc.txt" content)
+
+       descending
+       (write-temp! "patch/batch-desc.txt" content)
+
+       out
+       (:result (patch-tool ascending (edits (cat-tool ascending))))
+
+       _
+       (patch-tool descending (vec (reverse (edits (cat-tool descending)))))]
+
+      (expect (= "ONE\nTWO+THREE\nfour\nFIVE\nsix\n" (slurp ascending)))
+      ;; One read, one write: the caller's order cannot matter, because no anchor is
+      ;; ever resolved against a file an earlier edit already moved.
+      (expect (= (slurp ascending) (slurp descending)))
+      (expect (string/includes? out "3 edits  6 → 5 lines (-1)"))
+      ;; One row per edit, each carrying the anchor that is LIVE after the write.
+      (expect (string/includes? out (hashline/line-anchor 1 "ONE")))
+      (expect (string/includes? out (hashline/line-anchor 2 "TWO+THREE")))
+      (expect (string/includes? out (hashline/line-anchor 4 "FIVE")))))
+  (it "one stale anchor refuses the WHOLE batch and names which edit it was"
+      (let
+        [rel
+         (write-temp! "patch/batch-stale.txt" "alpha\nbeta\ngamma\n")
+
+         cat-tool
+         (comp :result (private-fn "cat-tool"))
+
+         patch-tool
+         (private-fn "patch-tool")
+
+         text
+         (cat-tool rel)
+
+         thrown
+         (try (patch-tool rel
+                          [{"from" (anchor-at text 1) "replace" "ALPHA"}
+                           {"from" (str "2:" (hashline/line-hash "never in this file"))
+                            "replace" "BETA"} {"from" (anchor-at text 3) "replace" "GAMMA"}])
+              nil
+              (catch clojure.lang.ExceptionInfo e e))]
+
+        (expect (some? thrown))
+        (expect (= :anchor-not-found (:reason (ex-data thrown))))
+        (expect (= 1 (:edit-index (ex-data thrown))))
+        (expect (string/starts-with? (ex-message thrown) "patch refused at edit 2 of 3"))
+        ;; Atomic for the FILE: the two GOOD edits are not written either.
+        (expect (= "alpha\nbeta\ngamma\n" (slurp rel)))))
+  (it "two edits over the same line are refused with both of them, and nothing is written"
+      (let
+        [rel
+         (write-temp! "patch/batch-overlap.txt" "alpha\nbeta\ngamma\n")
+
+         cat-tool
+         (comp :result (private-fn "cat-tool"))
+
+         patch-tool
+         (private-fn "patch-tool")
+
+         text
+         (cat-tool rel)
+
+         thrown
+         (try (patch-tool rel
+                          [{"from" (anchor-at text 1) "to" (anchor-at text 2) "replace" "A+B"}
+                           {"from" (anchor-at text 2) "replace" "BETA"}])
+              nil
+              (catch clojure.lang.ExceptionInfo e e))]
+
+        (expect (some? thrown))
+        (expect (= :edits-overlap (:reason (ex-data thrown))))
+        (expect (string/includes? (ex-message thrown) "edits 1 and 2 overlap"))
+        (expect (= "alpha\nbeta\ngamma\n" (slurp rel)))))
+  (it "from == to replaces the one line, and an empty replacement deletes it"
+      (let
+        [rel
+         (write-temp! "patch/batch-delete.txt" "alpha\nbeta\ngamma\ndelta\n")
+
+         cat-tool
+         (comp :result (private-fn "cat-tool"))
+
+         patch-tool
+         (private-fn "patch-tool")
+
+         text
+         (cat-tool rel)
+
+         out
+         (:result (patch-tool rel
+                              [{"from" (anchor-at text 1) "to" (anchor-at text 1) "replace" "ALPHA"}
+                               {"from" (anchor-at text 3) "replace" ""}]))]
+
+        (expect (= "ALPHA\nbeta\ndelta\n" (slurp rel)))
+        (expect (string/includes? out "2 edits  4 → 3 lines (-1)"))
+        (expect (string/includes? out "→ deleted")))))
 
 
 (defdescribe
@@ -1728,9 +1859,6 @@
                     grep-tool
                     (private-fn "grep-tool")
 
-                    patch-one
-                    (private-fn "patch-one")
-
                     hit-row
                     (->> (:result (grep-tool {"query" "ZZHITZZ" "paths" [d]}))
                          string/split-lines
@@ -1743,7 +1871,7 @@
                     (string/trim (first (string/split hit-row #"│ ")))
 
                     out
-                    (:result (patch-one rel anchor anchor "replaced"))]
+                    (:result (patch-span rel anchor anchor "replaced"))]
 
                    (expect (re-matches #"\d+:[0-9a-f]{3}" anchor))
                    (expect (string/starts-with? out "patched "))
@@ -1763,9 +1891,6 @@
                     grep-tool
                     (private-fn "grep-tool")
 
-                    patch-one
-                    (private-fn "patch-one")
-
                     hit-row
                     (->> (:result (grep-tool {"query" "ZZWHOLEZZ" "paths" [d]}))
                          string/split-lines
@@ -1773,7 +1898,7 @@
                          first)
 
                     out
-                    (:result (patch-one rel hit-row hit-row "replaced"))]
+                    (:result (patch-span rel hit-row hit-row "replaced"))]
 
                    (expect (string/includes? hit-row "│ ZZWHOLEZZ LINE"))
                    (expect (string/starts-with? out "patched "))
@@ -1791,16 +1916,13 @@
          index-tool
          (private-fn "index-tool")
 
-         patch-one
-         (private-fn "patch-one")
-
          row
          (->> (get-in (index-tool {"paths" [rel]}) [:result "results" 0 "definitions"])
               (filter #(= "alpha" (get % "name")))
               first)
 
          out
-         (:result (patch-one rel (get row "anchor") (get row "end_anchor") "(defn alpha [] 42)"))]
+         (:result (patch-span rel (get row "anchor") (get row "end_anchor") "(defn alpha [] 42)"))]
 
         ;; The anchor rides BESIDE the line, never instead of it: struct_nodes
         ;; still consumes the row's `line` as data.
@@ -4788,11 +4910,14 @@
          result
          (ep/run-python-block ctx
                               (str "import inspect\n"
-                                   "p = " (pr-str rel)
-                                   "\n" "print(inspect.signature(cat))\n"
-                                   "print(inspect.signature(patch))\n" "text = cat(p)\n"
-                                   "print(text)\n"
-                                   "print(patch(p, text.splitlines()[1].split('│ ')[0], 'BETA'))\n")
+                                   "p = "
+                                   (pr-str rel)
+                                   "\n"
+                                   "print(inspect.signature(cat))\n"
+                                   "print(inspect.signature(patch))\n"
+                                   "text = cat(p)\n" "print(text)\n"
+                                   "print(patch(p, [{'from': text.splitlines()[1].split('│ ')[0], "
+                                   "'replace': 'BETA'}]))\n")
                               "t1/i2")
 
          out
@@ -4800,7 +4925,7 @@
 
         (expect (nil? (:error result)))
         (expect (string/includes? out "(path, start=None, end=None)"))
-        (expect (string/includes? out "(path, from_anchor, to_anchor=None, replacement=None)"))
+        (expect (string/includes? out "(path, edits)"))
         (expect (re-find #"(?m)^1:[0-9a-f]{3}│ alpha$" out))
         (expect (string/includes? out "→ 1 line"))
         (expect (= "alpha\nBETA\ngamma\n" (slurp rel))))))

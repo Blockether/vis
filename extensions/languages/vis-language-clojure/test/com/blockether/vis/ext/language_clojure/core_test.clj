@@ -608,38 +608,50 @@
 
 (defdescribe
   clj-patch-repairs-delimiters-test
-  ;; `patch` is POSITIONAL — (path from_anchor [to_anchor] replacement) — so the
-  ;; text to repair is the LAST argument, not a `:code` key.
-  (it "repairs the trailing replacement and retries once, saying so on the status line"
-      (let
-        [seen
-         (atom [])
+  ;; `patch` is `(path edits)` — every replacement the call carries lives in an
+  ;; entry's `replace` key, not in a trailing positional argument.
+  (it
+    "repairs the unbalanced replacement in a MULTI-edit batch and retries the whole batch once"
+    (let
+      [seen
+       (atom [])
 
-         balanced?
-         (fn [s]
-           (= (count (re-seq #"\(" (str s))) (count (re-seq #"\)" (str s)))))
+       balanced?
+       (fn [s]
+         (= (count (re-seq #"\(" (str s))) (count (re-seq #"\)" (str s)))))
 
-         next-fn
-         (fn [args]
-           (let [replacement (last args)]
-             (swap! seen conj replacement)
-             (if (balanced? replacement)
-               {:success? true
-                :result (str "patched x.clj  3..3 → 1 line  parse: clean\n3:abc│ " replacement)}
-               (throw (ex-info "syntax broken" {:type :ext.foundation.editing/patch-refused})))))
+       replacements
+       (fn [args]
+         (mapv #(get % "replace") (second args)))
 
-         out
-         (core/clj-patch-no-fail-around {}
-                                        :patch
-                                        ["x.clj" "3:abc" "3:abc" "(defn f [] (+ 1 2)"]
-                                        next-fn)]
+       next-fn
+       (fn [args]
+         (let [texts (replacements args)]
+           (swap! seen conj texts)
+           (if (every? balanced? texts)
+             {:success? true
+              :result (str "patched x.clj  2 edits  9 → 9 lines  parse: clean\n"
+                           "  1  3..3  → 1 line  3:abc\n"
+                           "  2  9..9  → 1 line  9:def")}
+             (throw (ex-info "syntax broken" {:type :ext.foundation.editing/patch-refused})))))
 
-        (expect (:success? out))
-        (expect (= 2 (count @seen)))
-        (expect (balanced? (last @seen)))
-        ;; The repair is REPORTED, on the status line and nowhere else.
-        (expect (str/includes? (first (str/split-lines (:result out))) "(delimiters repaired)"))
-        (expect (not (str/includes? (second (str/split-lines (:result out))) "repaired")))))
+       out
+       (core/clj-patch-no-fail-around {}
+                                      :patch
+                                      ["x.clj"
+                                       [{"from" "3:abc" "replace" "(defn f [] (+ 1 2)"}
+                                        {"from" "9:def" "replace" "(defn g [] 3)"}]]
+                                      next-fn)]
+
+      (expect (:success? out))
+      (expect (= 2 (count @seen)))
+      (expect (every? balanced? (last @seen)))
+      ;; The batch is atomic in the editor, so the ALREADY balanced entry is retried
+      ;; unchanged beside the repaired one — never re-applied on its own.
+      (expect (= "(defn g [] 3)" (second (last @seen))))
+      ;; The repair is REPORTED, on the status line and nowhere else.
+      (expect (str/includes? (first (str/split-lines (:result out))) "(delimiters repaired)"))
+      (expect (not (str/includes? (second (str/split-lines (:result out))) "repaired")))))
   (it "passes a NON-clj refusal straight through"
       (let
         [calls
@@ -650,19 +662,23 @@
            (swap! calls inc)
            (throw (ex-info "boom" {})))]
 
-        (expect (true?
-                  (try (core/clj-patch-no-fail-around {} :patch ["x.txt" "3:abc" "oops ("] next-fn)
-                       false
-                       (catch clojure.lang.ExceptionInfo _ true))))
+        (expect (true? (try (core/clj-patch-no-fail-around {}
+                                                           :patch
+                                                           ["x.txt"
+                                                            [{"from" "3:abc" "replace" "oops ("}]]
+                                                           next-fn)
+                            false
+                            (catch clojure.lang.ExceptionInfo _ true))))
         (expect (= 1 @calls))))
   (it "surfaces the ORIGINAL refusal when the repair cannot make the edit land"
       (let
         [next-fn (fn [_]
                    (throw (ex-info "stale anchor" {:reason :anchor-not-found})))]
         (expect (= :anchor-not-found
-                   (try (core/clj-patch-no-fail-around {}
-                                                       :patch
-                                                       ["x.clj" "3:abc" "(defn f [] (+ 1 2)"]
-                                                       next-fn)
+                   (try (core/clj-patch-no-fail-around
+                          {}
+                          :patch
+                          ["x.clj" [{"from" "3:abc" "replace" "(defn f [] (+ 1 2)"}]]
+                          next-fn)
                         nil
                         (catch clojure.lang.ExceptionInfo e (:reason (ex-data e)))))))))

@@ -95,8 +95,8 @@
       ;; 5k → 5.5k exactly once more, for the two verbs that give an edit a COORDINATE:
       ;; `cat` mints `line:hash` and `patch` spends it. §3 previously ordered the opposite —
       ;; "CHANGING the tree is plain Python" — and that sentence is gone, but naming both
-      ;; verbs, the anchor format the model has to recognize, and the bottom-up rule for
-      ;; several edits in one block does not fit in what it freed. Measured against 40 real
+      ;; verbs, the anchor format the model has to recognize, and the batch shape ONE
+      ;; call takes does not fit in what it freed. Measured against 40 real
       ;; sessions, the instruction it replaces cost 48% of ALL block characters in blocks
       ;; that write a file, 80% of it the old text quoted back; this is the cheaper order.
       ;; 5.5k → 5.9k exactly once more, for §2's shape rule. The sandbox is a PROGRAM the
@@ -671,8 +671,8 @@
              (it "names both anchored verbs and the address they speak"
                  (let [text (prompt/build-system-prompt {})]
                    (expect (str/includes? text "cat(path, start, end)"))
-                   (expect (str/includes? text "patch(path, anchor, new)"))
-                   (expect (str/includes? text "patch(path, from_anchor, to_anchor, new)"))
+                   (expect (str/includes? text "patch(path, edits)"))
+                   (expect (str/includes? text "\"replace\""))
                    (expect (str/includes? text "line:hash"))))
              (it "never tells the model to write a text EDIT in plain Python"
                  (let [text (prompt/build-system-prompt {})]
@@ -692,8 +692,11 @@
                  (let [text (prompt/build-system-prompt {})]
                    (expect (str/includes? text "answers anchored TEXT, never a map"))
                    (expect (not (str/includes? text "returns a MAP")))
-                   (expect (str/includes? text "bottom-up (highest line first)"))
-                   (expect (str/includes? text "RE-ANCHORED window"))))
+                   ;; Several hits in ONE file are ONE patch call now, so there is no
+                   ;; order left for the caller to compute.
+                   (expect (not (str/includes? text "bottom-up")))
+                   (expect (str/includes? text "every `patch` edit for a file"))
+                   (expect (str/includes? text "FRESH ANCHOR"))))
              ;; Regression: `sh.logs` grew the same negative tail `cat` has, and the
              ;; prompt named the method with no arguments at all, so a watcher still
              ;; paged bytes to answer "what did it just print".

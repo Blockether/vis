@@ -2487,7 +2487,7 @@ def __vis_run_async__(src):
     #
     # EVERY statement, at EVERY depth — not only `tree.body`. A statement nested
     # in `try:` / `if:` / `for:` / `with:` or inside a `def` used to keep its
-    # thunk instead: `for p in paths: patch(p, a, new)` built N thunks and ran
+    # thunk instead: `for p in paths: patch(p, edits)` built N thunks and ran
     # NONE of them, and `try: r = cat(p)` bound a thunk whose refusal then
     # surfaced OUTSIDE the very handler written for it. A tool call now runs
     # where it is written. Nested statements use the cheap `__vis_settle_stmt__`

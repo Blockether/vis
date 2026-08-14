@@ -77,16 +77,12 @@ The same editor supports named-definition moves, docs, nested child insertion, a
 For prose, unsupported code, or one known region, spend the anchor instead of restating the text you are replacing:
 
 ```python
-print(patch(path, "4439:a80", '     :result "One row/edit: `path`, `op`, `changed`."'))
-patched src/…/editing/core.clj  4439..4439 → 1 line  parse: clean
-4436:88f│   (vis/symbol
-4437:111│     #'struct-patch-tool
-4438:21c│     {:symbol 'struct_patch
-4439:b16│      :result "One row/edit: `path`, `op`, `changed`."
-4440:056│      :active-fn structural-supported?
+print(patch(path, [{"from": "4439:a80", "replace": '     :result "One row/edit: `path`, `op`, `changed`."'}]))
+patched src/…/editing/core.clj  1 edit  5182 → 5182 lines  parse: clean
+  1  4439..4439  → 1 line  4439:b16
 ```
 
-`patch(path, from_anchor, to_anchor, new)` replaces a span, `new=""` deletes it, and the returned window is RE-ANCHORED — a follow-up edit needs no second `cat`. Several patches in one block go bottom-up, highest line first. Only a new file or a genuine wholesale replacement is a `python_execution` write (`Path.write_text`) — the same filesystem gate applies.
+`patch(path, edits)` carries EVERY edit for that file in ONE atomic write — `[{"from": a, "to": b, "replace": text}]`, `to` defaults to `from`, `replace: ""` deletes — and the answer is one FRESH anchor per edit, so a follow-up edit needs no second `cat`. The edits may be listed in any order (they all resolve against the one read) and two edits over the same line are refused. Only a new file or a genuine wholesale replacement is a `python_execution` write (`Path.write_text`) — the same filesystem gate applies.
 
 ## Keep intermediate data in Python
 

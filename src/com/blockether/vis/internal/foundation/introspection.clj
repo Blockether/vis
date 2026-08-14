@@ -363,7 +363,7 @@
     "The struct_patch `code` likely lost the closing quote or a delimiter. Re-emit it with a Python triple-quoted string for multi-line content."
 
     :patch-stale-anchor
-    "The anchor no longer matches the line it names. The refusal already carries the CURRENT anchor — retry with that one instead of re-reading the file, and apply several patches in one block bottom-up (highest line first) so earlier edits cannot drift later anchors."
+    "The anchor no longer matches the line it names. The refusal already carries the CURRENT anchor — retry with that one instead of re-reading the file, and put every edit for that file in ONE patch(path, edits) call so earlier edits cannot drift later anchors."
 
     :turn-cancelled
     "Not a code defect: the turn was cancelled and the interrupt surfaced on the frame that was running. Re-run the interrupted step if you still need it."
@@ -792,7 +792,7 @@
 
         (contains? classes :patch-stale-anchor)
         (conj
-          "Spend the anchor the refusal handed back instead of re-reading; order several patches in one block bottom-up, highest line first.")))))
+          "Spend the anchor the refusal handed back instead of re-reading; put every edit for one file in ONE patch(path, edits) call, so no earlier edit can drift a later anchor.")))))
 
 (defn- foundation-diagnose
   "Compact current-turn diagnosis built from failure data. Returns a

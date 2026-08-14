@@ -16,7 +16,7 @@ TURN_TIMEOUT="${W6_TURN_TIMEOUT:-360}"
 MODE="${W6_MODE:-free}"
 
 case "$MODE" in
-  patch) D=' Use ONLY the positional `patch` tool — patch(path, anchor, new) / patch(path, from_anchor, to_anchor, new), anchors from cat/grep — for every file edit; do NOT use clj/edit.' ;;
+  patch) D=' Use ONLY the `patch` tool — patch(path, edits) with {"from", "to", "replace"} entries, anchors from cat/grep — for every file edit; do NOT use clj/edit.' ;;
   clj)   D=' Use ONLY `clj/edit` for every file edit; do NOT use patch.' ;;
   free)  D='' ;;
   *) echo "bad W6_MODE: $MODE" >&2; exit 2 ;;

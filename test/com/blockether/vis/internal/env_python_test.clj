@@ -704,7 +704,7 @@
 
     ;; Regression: only TOP-LEVEL statements were settle-wrapped, so a bare tool call
     ;; inside a loop built one `__vis_Call__` thunk per iteration and ran NONE of them:
-    ;; `for p in paths: patch(p, a, new)` reported nothing and edited nothing.
+    ;; `for p in paths: patch(p, edits)` reported nothing and edited nothing.
     (it "a bare call statement in a loop RUNS, once per iteration"
         (let [out (run (str "for ns_i in (1, 2, 3):\n" "    nested_ok(ns_i)\n" "print('ns done')"))]
           (expect (re-find #"ns done" out))
@@ -738,7 +738,7 @@
                          "ns_val = await ns_box[0]\n" "print([ns_kind, ns_val['op']])"))]
           (expect (re-find #"\['__vis_Call__', 'nested_ok'\]" out))))
     ;; Regression: a `return` was not settle-wrapped either, so `def edit(p, a, n):
-    ;; return patch(p, a, n)` handed the CALLER a thunk, and `"x" + edit(...)` died
+    ;; return patch(p, edits)` handed the CALLER a thunk, and `"x" + edit(...)` died
     ;; with a TypeError naming `__vis_Call__` instead of making the edit.
     (it "a `def` that RETURNS a tool call hands back the result, not the thunk"
         (let

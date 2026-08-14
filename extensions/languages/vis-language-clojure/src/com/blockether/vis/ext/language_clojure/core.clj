@@ -961,15 +961,28 @@
               (throw e))) ; repaired retry failed → original
           (throw e))))))
 
+(defn- repair-edit-replacement
+  "One `edits` entry with its `replace` parinfer-repaired, whichever key form it
+   arrived in: string keys off the Python call, keyword keys when Clojure code
+   builds the batch. Anything else rides through untouched — the repair is
+   SYNTAX-ONLY and never invents a key the caller did not pass."
+  [edit]
+  (cond (not (map? edit)) edit
+        (string? (get edit "replace")) (update edit "replace" repair/fix-delimiters)
+        (string? (get edit :replace)) (update edit :replace repair/fix-delimiters)
+        :else edit))
+
 (defn clj-patch-no-fail-around
   "MIDDLEWARE (:around) on `patch` so an anchored Clojure edit does NOT fail on
-   unbalanced delimiters. `patch` is POSITIONAL — `(path from_anchor [to_anchor]
-   replacement)` — so the replacement is always the LAST argument. If the call
-   throws against a `.clj` file, parinfer-repair that replacement and retry
-   ONCE, and say so on the status line the model reads. If the repair changes
-   nothing, or the retried edit still fails, the ORIGINAL error is surfaced: a
-   real refusal (a stale anchor, a broken parse) is never buried. Non-clj calls
-   pass straight through to `next`.
+   unbalanced delimiters. `patch` is `(path edits)`, so every replacement the call
+   carries sits in an entry's `replace` key and the repair maps over the WHOLE
+   batch: if the call throws against a `.clj` file, parinfer-repair each
+   replacement, retry ONCE when any of them changed, and say so on the status line
+   the model reads. The batch is atomic in the editor, so the retry is the whole
+   batch again — never a partial re-application. If nothing repaired, or the
+   retried batch still fails, the ORIGINAL error is surfaced: a real refusal (a
+   stale anchor, an overlap, a broken parse) is never buried. Non-clj calls pass
+   straight through to `next`.
 
    Per repo doctrine the repair stays SYNTAX-ONLY: the smallest mechanical
    change that restores parseable source, never a semantic rewrite."
@@ -984,18 +997,21 @@
          path
          (first argv)
 
-         idx
-         (dec (count argv))
+         edits
+         (second argv)
 
-         replacement
-         (when (>= idx 2) (nth argv idx))
+         ;; ONE bare edit map is the same argument, coerced: `normalize-edits-arg`
+         ;; accepts it on the editor side, so the repair must see it too.
+         entries
+         (cond (sequential? edits) (vec edits)
+               (map? edits) [edits]
+               :else nil)
 
          fixed
-         (when (and (clj-source-file? path) (string? replacement))
-           (repair/fix-delimiters replacement))]
+         (when (and (clj-source-file? path) (seq entries)) (mapv repair-edit-replacement entries))]
 
-        (if (and fixed (not= fixed replacement))
-          (try (let [res (next (assoc argv idx fixed))]
+        (if (and fixed (not= fixed entries))
+          (try (let [res (next (assoc argv 1 fixed))]
                  (if (string? (:result res))
                    (update res
                            :result
