@@ -31,6 +31,7 @@ import {
   mergeAddresses,
 } from "./lib/endpoints";
 import { onWake } from "./lib/wake";
+import { warm } from "./lib/warm";
 import { SessionSubscriptionHub } from "./lib/subscriptions";
 import { parsePairing } from "./lib/pairing";
 import { onPairingLink } from "./lib/deeplink";
@@ -137,8 +138,8 @@ function SettingsDialog(props: ComponentProps<typeof SettingsDialogLazy>) {
 }
 
 function prefetchScreens() {
-  void import("./screens/SessionScreen");
-  void import("./screens/SettingsScreen");
+  warm(import("./screens/SessionScreen"));
+  warm(import("./screens/SettingsScreen"));
 }
 
 export function App() {

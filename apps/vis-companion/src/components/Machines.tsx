@@ -10,6 +10,7 @@ import {
   reachOf,
 } from '../lib/endpoints';
 import { onWake } from '../lib/wake';
+import { warm } from '../lib/warm';
 import { Banner, Button, ConfirmRow, Input, ListRow, Spinner } from './ui';
 import { ChevronIcon, PencilIcon, StarIcon, TrashIcon } from './icons';
 import { SwipeActions, type SwipeAction } from './SwipeActions';
@@ -39,7 +40,7 @@ const QrScanner = lazy(() =>
 );
 
 function prefetchScanner() {
-  void import('./QrScanner');
+  warm(import('./QrScanner'));
 }
 
 /**
