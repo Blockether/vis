@@ -13,6 +13,7 @@
    translation is offered by backend adapters. Same for store-staleness
    checks used by the process-wide shared connection."
   (:require [charred.api :as json]
+            [clojure.walk :as walk]
             [com.blockether.vis.internal.manifest :as manifest])
   (:import (java.time Instant)
            (java.util Date UUID)))
@@ -405,6 +406,86 @@
     (throw (ex-info "db-store-iteration! requires :session-turn-id" {:opts (keys opts)})))
   ((deref (resolve-impl db-info 'db-store-iteration!)) db-info opts))
 
+;; --- Turn outcome ---
+
+(def ^:const max-persisted-error-chars
+  "Hard cap on ONE persisted DIAGNOSTIC string (256K chars).
+
+   SQLite refuses any bound value over `SQLITE_MAX_LENGTH` (1e9 bytes) with
+   `[SQLITE_TOOBIG]`, and the value carrying a turn's terminal error is the one
+   most likely to be unbounded: a runtime message can quote the entire document
+   that broke it. An error is a DIAGNOSTIC, so a truncated head is worth
+   strictly more than the lost turn an oversized one costs. An answer's own
+   content and the CTX snapshot are DATA and are never truncated here -- an
+   oversized one degrades through the caller's outcome guard instead."
+  (* 256 1024))
+
+(defn bounded-error-text
+  "Truncate ONE diagnostic string so the result NEVER exceeds `max-chars`,
+   naming what was cut. A string already within the cap comes back identical, so
+   a normal error is persisted byte for byte."
+  ([s] (bounded-error-text s max-persisted-error-chars))
+  ([s max-chars]
+   (let
+     [s
+      (str s)
+
+      n
+      (count s)
+
+      max-chars
+      (long max-chars)]
+
+     (if (<= n max-chars)
+       s
+       ;; Reserve room for the marker the cut itself produces, sized by the
+       ;; WIDEST it can be, so the bounded string counts its own tail in.
+       (let
+         [marker
+          (fn [keep]
+            (str " ...<+" (- n (long keep)) " chars truncated>"))
+
+          keep
+          (max 0 (- max-chars (count (marker 0))))]
+
+         (str (subs s 0 keep) (marker keep)))))))
+
+(defn bound-error-data
+  "Bound every string inside a structured terminal error, at any depth. Pure;
+   nil in, nil out."
+  [error]
+  (when (some? error)
+    (walk/postwalk (fn [x]
+                     (if (string? x) (bounded-error-text x) x))
+                   error)))
+
+(defn- bound-content-errors
+  "Bound the diagnostic text of ERROR blocks in a turn's canonical content, and
+   ONLY those: prose, images and every other block are the answer itself and are
+   persisted verbatim."
+  [content]
+  (if (sequential? content)
+    (mapv (fn [block]
+            (if (and (map? block) (= "error" (get block "type"))) (bound-error-data block) block))
+          content)
+    content))
+
+(defn db-update-session-turn!
+  "Write a turn's terminal outcome. Same delegating shape as the macro-defined
+   fns, with the DIAGNOSTIC text bound here so every backend gets the same
+   guarantee for free: the write that records HOW a turn ended can never be lost
+   to an unbounded error message (see [[max-persisted-error-chars]])."
+  [db-info session-turn-id opts]
+  ((deref (resolve-impl db-info 'db-update-session-turn!))
+    db-info
+    session-turn-id
+    (cond-> opts
+      (some? (:error opts))
+      (update :error bound-error-data)
+
+      (some? (:content opts))
+      (update :content bound-content-errors))))
+
 ;; --- Logging ---
 (defdelegate db-log! [db-info opts])
 
@@ -494,7 +575,7 @@
 ;; --- Turn lifecycle ---
 (defdelegate db-store-session-turn! [db-info opts])
 
-(defdelegate db-update-session-turn! [db-info session-turn-id opts])
+;; db-update-session-turn! is an explicit defn above: it bounds diagnostics.
 
 (defdelegate db-list-session-turns-by-status [db-info status])
 

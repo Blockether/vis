@@ -2660,7 +2660,11 @@
    `:bytes` nil) when the map carries a `:storage-uri` (the storage-offload rail
    already wrote the bytes to a backend), else INLINE (`:bytes` = decoded
    base64, `:storage_uri` nil). Returns nil for an inline entry whose base64
-   fails to decode - the caller skips it (never aborts the enclosing insert).
+   fails to decode, and for one whose decoded payload is past
+   `attachments/max-stored-attachment-bytes` - the caller skips it (never aborts
+   the enclosing insert), because a pathological artifact must cost its own row
+   and nothing more: SQLite refuses a bound value over `SQLITE_MAX_LENGTH` with
+   `[SQLITE_TOOBIG]`, which would take the whole iteration down with it.
    Satisfies the table's exactly-one(bytes, storage_uri) CHECK either way."
   [att]
   (if-let [uri (:storage-uri att)]
@@ -2668,7 +2672,8 @@
     (when-let
       [^bytes data (try (.decode (java.util.Base64/getDecoder) (str (:base64 att)))
                         (catch Throwable _ nil))]
-      {:bytes data :storage_uri nil :size_bytes (long (or (:size att) (alength data)))})))
+      (when (<= (alength data) (long attachments/max-stored-attachment-bytes))
+        {:bytes data :storage_uri nil :size_bytes (long (or (:size att) (alength data)))}))))
 
 (defn- turn-session-soul-id
   "The SESSION soul a turn belongs to, resolved `session_turn_soul -> session_state

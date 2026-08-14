@@ -513,6 +513,53 @@
   (let [v (:result answer answer)]
     (when (vector? v) (some #(when (= "error" (get % "type")) %) v))))
 
+(defn- persist-turn-outcome!
+  "THE terminal write for one turn: the row that says HOW the turn ended.
+
+   Never let the write that RECORDS an outcome be the write that LOSES it. A
+   turn's own payload is the least trustworthy value in the process -- a runtime
+   error can quote the whole document that broke it, and SQLite refuses any
+   bound value over `SQLITE_MAX_LENGTH` with `[SQLITE_TOOBIG]`. An unguarded
+   throw here leaves the turn `:running` for good, with no status, no error and
+   no iteration count, inside a session that has long since finished it.
+
+   On a throw the outcome is re-written from a MINIMAL payload: the same status
+   and counters, plus a bounded error naming the persistence failure, carrying
+   neither `:ctx` nor the answer content that could not be stored. Returns true
+   when either write landed, false when the outcome could not be recorded at
+   all."
+  [db-info session-turn-id opts]
+  (try (persistance/db-update-session-turn! db-info session-turn-id opts)
+       true
+       (catch Throwable t
+         (tel/log! {:level :warn
+                    :id ::turn-outcome-persist-failed
+                    :data {:session-turn-id (str session-turn-id)
+                           :status (:status opts)
+                           :error (ex-message t)}})
+         (let
+           [block (content/error
+                    "turn_outcome_persist_failed"
+                    (str
+                      "Warning: this turn finished, but its answer could not be stored ("
+                      (ex-message t)
+                      "). The outcome is recorded; the answer and working memory for it are lost.")
+                    true)]
+           (try (persistance/db-update-session-turn!
+                  db-info
+                  session-turn-id
+                  (assoc (select-keys opts
+                                      [:iteration-count :duration-ms :tokens :cost :prior-outcome])
+                    :status (or (:status opts) :error)
+                    :content [block]
+                    :error block))
+                true
+                (catch Throwable t2
+                  (tel/log! {:level :error
+                             :id ::turn-outcome-lost
+                             :data {:session-turn-id (str session-turn-id) :error (ex-message t2)}})
+                  false))))))
+
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
 
 (def ^:private MARKDOWN_FENCE_RE #"^\s*`{3,}[A-Za-z0-9_-]*\s*$")
@@ -8025,14 +8072,14 @@
            (catch Throwable t
              (tel/log!
                {:level :warn :id ::slash-iter-persist-failed :data {:error (ex-message t)}})))
-      (persistance/db-update-session-turn! db-info
-                                           turn-id
-                                           {:content [(content/prose answer-md)]
-                                            :iteration-count 1
-                                            :duration-ms 0
-                                            :status :success
-                                            :prior-outcome :complete
-                                            :ctx ctx-snapshot})
+      (persist-turn-outcome! db-info
+                             turn-id
+                             {:content [(content/prose answer-md)]
+                              :iteration-count 1
+                              :duration-ms 0
+                              :status :success
+                              :prior-outcome :complete
+                              :ctx ctx-snapshot})
       {:session-turn-id turn-id
        :answer answer-md
        :iteration-count 1
@@ -8142,16 +8189,16 @@
      (try (content/answer-content (:answer result)) (catch Throwable _ []))
 
      _
-     (persistance/db-update-session-turn! (:db-info env)
-                                          session-turn-id
-                                          {:content turn-content
-                                           :iteration-count (:iteration-count result)
-                                           :duration-ms (:duration-ms result)
-                                           :status (or (:status result) :success)
-                                           :tokens (:tokens result)
-                                           :cost (:cost result)
-                                           :prior-outcome prior-outcome
-                                           :ctx ctx-snapshot})]
+     (persist-turn-outcome! (:db-info env)
+                            session-turn-id
+                            {:content turn-content
+                             :iteration-count (:iteration-count result)
+                             :duration-ms (:duration-ms result)
+                             :status (or (:status result) :success)
+                             :tokens (:tokens result)
+                             :cost (:cost result)
+                             :prior-outcome prior-outcome
+                             :ctx ctx-snapshot})]
 
     (assoc result
       :session-turn-id session-turn-id
@@ -8398,14 +8445,14 @@
                                            :llm-returned-empty-code? false})
          (catch Throwable t
            (tel/log! {:level :warn :id ::bang-iter-persist-failed :data {:error (ex-message t)}})))
-    (persistance/db-update-session-turn! db-info
-                                         turn-id
-                                         {:content [(content/prose answer-md)]
-                                          :iteration-count 1
-                                          :duration-ms (- t1 t0)
-                                          :status :success
-                                          :prior-outcome :complete
-                                          :ctx ctx-snapshot})
+    (persist-turn-outcome! db-info
+                           turn-id
+                           {:content [(content/prose answer-md)]
+                            :iteration-count 1
+                            :duration-ms (- t1 t0)
+                            :status :success
+                            :prior-outcome :complete
+                            :ctx ctx-snapshot})
     {:session-turn-id turn-id
      :answer answer-md
      :iteration-count 1
@@ -8983,58 +9030,48 @@
       ;; :error) to the caller. Leaving
       ;; :answer nil here meant the web bubble rendered blank even though
       ;; we had diagnostic text ready.
-      (do
-        (log-stage! :turn/complete
-                    0
-                    {:duration-ms duration-ms :iteration-count iteration-count :status status})
-        (let [fallback-answer (:result answer answer)]
-          (try (persistance/db-update-session-turn! db-info
-                                                    session-turn-id
-                                                    {:content (content/answer-content
-                                                                fallback-answer)
-                                                     ;; First-class structured error for a failed turn.
-                                                     :error (turn-error-data fallback-answer)
-                                                     :iteration-count iteration-count
-                                                     :duration-ms duration-ms
-                                                     :status status
-                                                     :tokens @total-tokens-atom
-                                                     :cost cost-with-model})
-               (catch Exception e
-                 (tel/log! {:level :warn
-                            :data (format-exception-short e)
-                            :msg "Failed to update turn (max iterations)"})))
-          (cond->
-            {:answer fallback-answer
-             :status status
-             :status-id status-id
-             :trace trace
-             :iteration-count iteration-count
-             :duration-ms duration-ms
-             :tokens @total-tokens-atom
-             :cost cost-with-model}
-            eval-evidence
-            (assoc :eval eval-evidence)
+      (do (log-stage! :turn/complete
+                      0
+                      {:duration-ms duration-ms :iteration-count iteration-count :status status})
+          (let [fallback-answer (:result answer answer)]
+            (persist-turn-outcome! db-info
+                                   session-turn-id
+                                   {:content (content/answer-content fallback-answer)
+                                    ;; First-class structured error for a failed turn.
+                                    :error (turn-error-data fallback-answer)
+                                    :iteration-count iteration-count
+                                    :duration-ms duration-ms
+                                    :status status
+                                    :tokens @total-tokens-atom
+                                    :cost cost-with-model})
+            (cond->
+              {:answer fallback-answer
+               :status status
+               :status-id status-id
+               :trace trace
+               :iteration-count iteration-count
+               :duration-ms duration-ms
+               :tokens @total-tokens-atom
+               :cost cost-with-model}
+              eval-evidence
+              (assoc :eval eval-evidence)
 
-            (some? locals)
-            (assoc :locals locals))))
+              (some? locals)
+              (assoc :locals locals))))
       ;; success path
       (do (log-stage! :turn/complete
                       0
                       {:duration-ms duration-ms
                        :iteration-count iteration-count
                        :cost (str (get cost-with-model "total_cost"))})
-          (try (persistance/db-update-session-turn! db-info
-                                                    session-turn-id
-                                                    {:content (content/answer-content answer)
-                                                     :iteration-count iteration-count
-                                                     :duration-ms duration-ms
-                                                     :status :success
-                                                     :tokens @total-tokens-atom
-                                                     :cost cost-with-model})
-               (catch Exception e
-                 (tel/log! {:level :warn
-                            :data (format-exception-short e)
-                            :msg "Failed to update turn (success)"})))
+          (persist-turn-outcome! db-info
+                                 session-turn-id
+                                 {:content (content/answer-content answer)
+                                  :iteration-count iteration-count
+                                  :duration-ms duration-ms
+                                  :status :success
+                                  :tokens @total-tokens-atom
+                                  :cost cost-with-model})
           (cond->
             {:answer answer
              :trace trace
@@ -11432,15 +11469,14 @@
      [orphans (try (persistance/db-list-session-turns-by-status db :running)
                    (catch Exception _ []))]
      (doseq [{:keys [id iteration-count duration-ms]} orphans]
-       (try (persistance/db-update-session-turn!
-              db
-              id
-              {:content [(content/error "turn_interrupted" ORPHAN_INTERRUPTED_ANSWER true)]
-               :iteration-count (or iteration-count 0)
-               :duration-ms (or duration-ms 0)
-               :status :interrupted
-               :prior-outcome :cancelled})
-            (catch Exception _ nil)))
+       (persist-turn-outcome! db
+                              id
+                              {:content
+                               [(content/error "turn_interrupted" ORPHAN_INTERRUPTED_ANSWER true)]
+                               :iteration-count (or iteration-count 0)
+                               :duration-ms (or duration-ms 0)
+                               :status :interrupted
+                               :prior-outcome :cancelled}))
      (count orphans))))
 
 (defn close-all!

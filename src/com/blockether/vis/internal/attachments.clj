@@ -84,6 +84,18 @@
    applied to the bytes that actually go on the wire."
   (* (long upload-rescue-factor) (long max-image-bytes)))
 
+(def max-stored-attachment-bytes
+  "Last-resort cap on ONE STORED artifact, in DECODED bytes (64MB).
+
+   Distinct from [[max-image-bytes]] (what a PROVIDER accepts on the wire) and
+   [[max-upload-image-bytes]] (what the gateway accepts as a still): this bounds
+   what ANY writer -- a tool's `attach()`, a companion revision, an extension --
+   can put in a single session row, whatever the media type. SQLite refuses a
+   bound value over `SQLITE_MAX_LENGTH` (1e9 bytes) with `[SQLITE_TOOBIG]` and
+   takes the whole enclosing write down with it, so an unbounded payload is a
+   way to LOSE an iteration, not merely a way to grow the store."
+  (* 64 1024 1024))
+
 (def ^:private sniff-bytes
   "Bytes read from the file head for MIME sniffing (pi parity: enough for
    the PNG chunk walk that rejects animated PNGs)."

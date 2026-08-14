@@ -5338,3 +5338,70 @@
         (expect (str/includes? projected "do not mention voice mode")))
       (expect (= "base" (#'lp/voice-system-prompt "base" {})))
       (expect (= "base" (#'lp/voice-system-prompt "base" {:voice_projection true})))))
+
+(def ^:private failed-turn-outcome
+  "A finished turn's terminal payload: content, structured error, counters, CTX."
+  {:content [(content/error "python_runtime" "boom" true)]
+   :error {"type" "error" "message" "boom"}
+   :iteration-count 33
+   :duration-ms 1234
+   :status :error
+   :prior-outcome :error
+   :ctx {"fact" "value"}})
+
+(defn- outcome-writes
+  "Every payload `persist-turn-outcome!` hands the store, plus what it returned.
+   `reject?` decides which payloads the store refuses."
+  [reject? opts]
+  (let [calls (atom [])
+        result (atom nil)]
+    (with-redefs-fn {#'persistance/db-update-session-turn!
+                     (fn [_db _id o]
+                       (swap! calls conj o)
+                       (when (reject? o)
+                         (throw (ex-info "[SQLITE_TOOBIG] String or BLOB exceeds size limit" {})))
+                       :written)}
+      #(reset! result (#'lp/persist-turn-outcome! {} "turn-1" opts)))
+    {:calls @calls :result @result}))
+
+;; Regression (session 4b6897d4): the write that RECORDS a turn's outcome was
+;; itself unguarded, so a payload the store refused (`[SQLITE_TOOBIG]` on an
+;; error message quoting the whole document that broke the turn) left the turn
+;; `running` for good -- no status, no error, no iteration count -- inside a
+;; session that had already finished it.
+(defdescribe
+  turn-outcome-guard-test
+  "The write that records HOW a turn ended must never be the write that loses
+   it: on refusal the outcome is re-written from a minimal payload that carries
+   neither CTX nor the content the store would not take."
+  (it "writes once and reports success when the store accepts the payload"
+      (let [{:keys [calls result]} (outcome-writes (constantly false) failed-turn-outcome)]
+        (expect (true? result))
+        (expect (= [failed-turn-outcome] calls))))
+  (it "degrades to a recorded outcome when the full payload is refused"
+      (let [{:keys [calls result]} (outcome-writes #(some? (:ctx %)) failed-turn-outcome)
+            degraded (second calls)]
+        (expect (true? result))
+        (expect (= 2 (count calls)))
+        ;; The turn ENDS: same status and counters, no CTX, no unstorable answer.
+        (expect (= :error (:status degraded)))
+        (expect (= 33 (:iteration-count degraded)))
+        (expect (= 1234 (:duration-ms degraded)))
+        (expect (= :error (:prior-outcome degraded)))
+        (expect (nil? (:ctx degraded)))
+        (expect (= 1 (count (:content degraded))))
+        (expect (= "turn_outcome_persist_failed" (get (:error degraded) "code")))
+        (expect (str/includes? (get (:error degraded) "message") "SQLITE_TOOBIG"))))
+  (it "keeps a successful turn's own status when only its answer is refused"
+      (let [{:keys [calls result]} (outcome-writes #(some? (:ctx %))
+                                                  (assoc failed-turn-outcome
+                                                    :status :success
+                                                    :error nil
+                                                    :prior-outcome :complete))]
+        (expect (true? result))
+        (expect (= :success (:status (second calls))))
+        (expect (= "turn_outcome_persist_failed" (get (:error (second calls)) "code")))))
+  (it "reports failure instead of throwing when even the minimal outcome is refused"
+      (let [{:keys [calls result]} (outcome-writes (constantly true) failed-turn-outcome)]
+        (expect (false? result))
+        (expect (= 2 (count calls))))))

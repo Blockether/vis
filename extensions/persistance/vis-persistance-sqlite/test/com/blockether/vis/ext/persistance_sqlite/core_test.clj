@@ -23,6 +23,7 @@
             [com.blockether.vis.ext.persistance-sqlite.registrar]
             [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h :refer
              [raw-count raw-query]]
+            [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.internal.persistance :as persistance]
             [honey.sql :as sql]
             [lazytest.core :refer [defdescribe it expect]]
@@ -3395,3 +3396,44 @@
         (expect (= "# Note\n\n> a comment\n"
                    (String. (.decode (java.util.Base64/getDecoder) ^String (:base64 revision))
                             "UTF-8")))))))
+
+;; Regression (session 4b6897d4): nothing bounded a STORED artifact -- neither a
+;; tool's `attach()` nor the companion revision path had a cap at all -- so one
+;; pathological payload could bind a value past SQLITE_MAX_LENGTH and take the
+;; whole iteration insert down with `[SQLITE_TOOBIG]` instead of costing its own
+;; row.
+(defdescribe
+  attachment-storage-cap-test
+  "`attachment-payload-cols` is the one choke point every attachment write goes
+   through, tool-produced or human-revised: an artifact past the stored cap is
+   skipped exactly like one whose base64 does not decode."
+  (it "skips an artifact past the stored cap and stores one within it"
+      (let
+        [payload-cols
+         (private-core-fn "attachment-payload-cols")
+
+         b64
+         (fn [n]
+           (.encodeToString (java.util.Base64/getEncoder) (byte-array (long n))))]
+
+        (with-redefs [attachments/max-stored-attachment-bytes 8]
+          (expect (nil? (payload-cols {:media-type "application/octet-stream" :base64 (b64 9)})))
+          (let [cols (payload-cols {:media-type "application/octet-stream" :base64 (b64 8)})]
+            (expect (= 8 (alength ^bytes (:bytes cols))))
+            (expect (= 8 (:size_bytes cols)))
+            (expect (nil? (:storage_uri cols)))))
+        ;; The real ceiling sits far above any ordinary artifact.
+        (expect (some? (payload-cols {:media-type "image/png" :base64 (b64 4096)})))))
+  (it "never caps an artifact the offload rail already parked outside the row"
+      (let
+        [payload-cols
+         (private-core-fn "attachment-payload-cols")
+
+         cols
+         (with-redefs [attachments/max-stored-attachment-bytes 8]
+           (payload-cols
+             {:media-type "video/mp4" :storage-uri "vis-store://bucket/key" :size 999999}))]
+
+        (expect (= "vis-store://bucket/key" (:storage_uri cols)))
+        (expect (nil? (:bytes cols)))
+        (expect (= 999999 (:size_bytes cols))))))
