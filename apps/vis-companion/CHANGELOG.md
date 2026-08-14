@@ -2,6 +2,14 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.37 (4159) — 2026-08-14
+<!-- commit: 09ad53d9c488577f2f1e512550b11108c4a63cdb -->
+
+- Star, Rename and Delete come back to a slide on a session row, and Make primary, Rename and Forget to a slide on a machine row — always on the right, with no menu mark beside them
+- Sliding a second row closes the first, and a row sliding shut no longer closes the row you just opened
+- A starred session wears its star beside its own title again
+- Notifications are per machine, and Disconnect always lands
+
 ## 0.1.37 (4154) — 2026-08-14
 <!-- commit: a80a5a898559b37fdd0925aa4b202dfb0ef9bdc5 -->
 
