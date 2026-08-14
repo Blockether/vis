@@ -545,6 +545,153 @@
                        [refs (git/run-git (io/file remote) ["for-each-ref" "--format=%(refname)"])]
                        (expect (str/includes? (str (:out refs)) "refs/for/main")))))))
 
+;;; ── push targets & the P transient ──────────────────────────────────────────
+
+(defn- bare-repo!
+  "A bare repo on `main`, ready to be wired as a remote under any name."
+  []
+  (let [dir (temp-dir!)]
+    (git-run! dir "init" "--bare" "-b" "main")
+    dir))
+
+(defn- remote-refs
+  "Every ref that actually landed in the bare repo at `bare`."
+  [bare]
+  (str (:out (git/run-git (io/file bare) ["for-each-ref" "--format=%(refname)"]))))
+
+(defn- push-transient-spec
+  "The spec the push transient PAINTS for `dir`: the flow runs against a `mini`
+   that captures the spec and then chooses nothing."
+  [dir]
+  (let [captured (atom nil)]
+    ((var-get #'dialogs/magit-push-flow!)
+      (fn [_])
+      {:transient! (fn [spec]
+                     (reset! captured spec)
+                     nil)
+       :read! (fn [_ _]
+                nil)}
+      dir)
+    @captured))
+
+(defn- run-push-transient!
+  "Run the push transient over `dir`, choosing `action` with `switches` armed."
+  [dir action switches]
+  ((var-get #'dialogs/magit-push-flow!)
+    (fn [_])
+    {:transient! (fn [_spec]
+                   {:action action :switches switches :options {}})
+     :read! (fn [_ _]
+              nil)}
+    dir))
+
+(defdescribe push-remote-test
+             (it "is nil without remotes and prefers origin among several"
+                 (let [dir (init-repo!)]
+                   (expect (nil? (magit/push-remote dir)))
+                   (git-run! dir "remote" "add" "gerrit" "ssh://u@review.acme.com:29418/repo")
+                   (expect (= "gerrit" (magit/push-remote dir)))
+                   (git-run! dir "remote" "add" "origin" "https://github.com/acme/repo.git")
+                   (expect (= "origin" (magit/push-remote dir)))))
+             (it "prefers the branch's own upstream remote once it is set"
+                 (let
+                   [dir
+                    (init-repo!)
+
+                    mirror
+                    (bare-repo!)]
+
+                   (git-run! dir "remote" "add" "origin" "https://github.com/acme/repo.git")
+                   (git-run! dir "remote" "add" "mirror" mirror)
+                   (magit/push! dir {:set-upstream? true :remote "mirror"})
+                   (expect (= "mirror" (magit/push-remote dir))))))
+
+;; Regression, issue #144: an explicit :remote was dropped when it was "origin",
+;; so the transient's "Push to origin" row ran a bare `git push` and followed the
+;; upstream to a DIFFERENT remote — and a named remote was pushed to without a
+;; branch, which git refuses outright while the branch has no upstream.
+(defdescribe push-explicit-remote-test
+             (it "pushes to the named remote even when the upstream is another one"
+                 (let
+                   [dir
+                    (init-repo!)
+
+                    origin
+                    (bare-repo!)
+
+                    mirror
+                    (bare-repo!)]
+
+                   (git-run! dir "remote" "add" "origin" origin)
+                   (git-run! dir "remote" "add" "mirror" mirror)
+                   (magit/push! dir {:set-upstream? true :remote "mirror"})
+                   (expect (not (str/includes? (remote-refs origin) "refs/heads/main")))
+                   (expect (:ok? (magit/push! dir {:remote "origin"})))
+                   (expect (str/includes? (remote-refs origin) "refs/heads/main"))))
+             (it "pushes the current branch to a remote the branch does not track"
+                 (let
+                   [dir
+                    (init-repo!)
+
+                    remote
+                    (bare-repo!)]
+
+                   (git-run! dir "remote" "add" "gerrit" remote)
+                   (expect (:ok? (magit/push! dir {:remote "gerrit"})))
+                   (expect (str/includes? (remote-refs remote) "refs/heads/main")))))
+
+;; Regression, issue #144: in a Gerrit repo the review push REPLACED `p`, so a
+;; clone whose only remote was the Gerrit one offered no action running
+;; `git push <remote> <branch>` at all, and the armed Force with lease / Set
+;; upstream switches were dropped from the review push without a word.
+(defdescribe
+  gerrit-push-transient-test
+  (it "offers the direct push on p AND the review push on r"
+      (let [dir (init-repo!)]
+        (git-run! dir "remote" "add" "origin" "ssh://u@gerrit.example.com:29418/repo")
+        (let [spec (push-transient-spec dir)]
+          (expect (= :push (:id (tr/item-by-key spec \p))))
+          (expect (= "Push to origin" (:label (tr/item-by-key spec \p))))
+          (expect (= :review (:id (tr/item-by-key spec \r))))
+          (expect (= "Push for review → refs/for/main" (:label (tr/item-by-key spec \r))))
+          (expect (= :topic (:id (tr/item-by-key spec \t)))))))
+  (it "keeps p pushing refs/heads when the only remote is the Gerrit one"
+      (let
+        [dir
+         (init-repo!)
+
+         remote
+         (bare-repo!)]
+
+        (git-run! dir "remote" "add" "gerrit" remote)
+        (expect (= "Push to gerrit" (:label (tr/item-by-key (push-transient-spec dir) \p))))
+        (expect (:ok? (run-push-transient! dir :push #{})))
+        (expect (str/includes? (remote-refs remote) "refs/heads/main"))))
+  (it "lists every remote the direct push does not already target"
+      (let [dir (init-repo!)]
+        (git-run! dir "remote" "add" "origin" "https://github.com/acme/repo.git")
+        (git-run! dir "remote" "add" "gerrit" "ssh://u@review.acme.com:29418/repo")
+        (let [spec (push-transient-spec dir)]
+          (expect (= "Push to origin" (:label (tr/item-by-key spec \p))))
+          (expect (= :remote/gerrit (:id (tr/item-by-key spec \1))))
+          (expect (nil? (tr/item-by-key spec \2))))))
+  (it "refuses a review push carrying switches a refs/for ref cannot honour"
+      (let
+        [dir
+         (init-repo!)
+
+         remote
+         (bare-repo!)]
+
+        (git-run! dir "remote" "add" "gerrit" remote)
+        (let [r (run-push-transient! dir :review #{:force :set-upstream})]
+          (expect (false? (:ok? r)))
+          (expect (str/includes? (:msg r) "Force with lease"))
+          (expect (str/includes? (:msg r) "Set upstream")))
+        (expect (not (str/includes? (remote-refs remote) "refs/for/main")))
+        (expect (:ok? (run-push-transient! dir :review #{:no-verify})))
+        (expect (str/includes? (remote-refs remote) "refs/for/main")))))
+
 ;;; ── diffs ───────────────────────────────────────────────────────────────────
 
 (defdescribe diff-test

@@ -2767,11 +2767,14 @@
 
 (defn- magit-push-flow!
   "Magit-style push transient (`tr/run!`). SWITCHES (all optional):
-   force-with-lease, dry-run, disable hooks (--no-verify), set-upstream. When the
-   repo targets Gerrit a `t Topic` OPTION appears and the primary `p` push lands
-   on `refs/for/<branch>` carrying that topic. Every OTHER configured remote is
-   listed INLINE as its own `Push to <remote>` action in the SAME overlay (magit
-   lists push targets in the transient — no second dialog)."
+   force-with-lease, dry-run, disable hooks (--no-verify), set-upstream. `p` is
+   ALWAYS the direct push — to the branch's upstream, or to the repo's push
+   remote when it has none. A Gerrit repo ADDS `r Push for review →
+   refs/for/<branch>` and a `t Topic` OPTION BESIDE it instead of replacing it:
+   magit binds the review push as an EXTRA key, and a repo whose refs/heads are
+   pushable directly keeps both paths. Every remote `p` does not already target
+   is listed INLINE as its own `Push to <remote>` action in the SAME overlay
+   (magit lists push targets in the transient — no second dialog)."
   [busy! mini root]
   (let
     [upstream
@@ -2779,6 +2782,9 @@
 
      remotes
      (magit/remotes root)
+
+     push-target
+     (magit/push-remote root)
 
      g-remote
      (magit/gerrit-remote root)
@@ -2792,10 +2798,12 @@
      gerrit?
      (some? g-remote)
 
+     ;; `p` already lands on the push remote — every OTHER remote, the Gerrit one
+     ;; included (a refs/heads push to it is a legitimate target), gets its own row.
      other-remotes
      (->> remotes
           (map :name)
-          (remove #(or (= "origin" %) (= g-remote %)))
+          (remove #(= push-target %))
           (take 9)
           vec)
 
@@ -2809,9 +2817,17 @@
        (conj {:key "t" :type :option :id :topic :label "Topic" :arg "%topic="}))
 
      primary
+     {:key "p"
+      :type :action
+      :id :push
+      :label (str "Push"
+                  (when-let [target (or upstream push-target)]
+                    (str " to " target)))}
+
+     review-rows
      (if gerrit?
-       {:key "p" :type :action :id :review :label (str "Push for review → refs/for/" g-branch)}
-       {:key "p" :type :action :id :push :label (str "Push" (when upstream (str " to " upstream)))})
+       [{:key "r" :type :action :id :review :label (str "Push for review → refs/for/" g-branch)}]
+       [])
 
      ;; Each remaining remote becomes its own inline action row keyed by a
      ;; digit — magit lists push targets in the SAME transient, never a
@@ -2831,7 +2847,7 @@
            other-remotes)
 
      push-items
-     (vec (cons primary remote-rows))
+     (vec (concat [primary] review-rows remote-rows))
 
      spec
      {:title "Push"
@@ -2849,16 +2865,22 @@
                :force? (contains? switches :force)
                :dry-run? (contains? switches :dry-run)
                :no-verify? (contains? switches :no-verify)}
-         topic (:topic options)]
+         topic (:topic options)
+         ;; With an upstream a bare `git push` follows it (magit's `p`); without one
+         ;; the target is spelled out, or git would fall back to an absent `origin`.
+         push-opts (cond-> base
+                     (and (nil? upstream) push-target)
+                     (assoc :remote push-target))]
 
-        (cond (= action :review) (run-network! busy!
-                                               "Pushing for review"
-                                               #(magit/gerrit-push!
-                                                  root
-                                                  (merge
-                                                    {:remote g-remote :branch g-branch :topic topic}
-                                                    (select-keys base [:dry-run? :no-verify?]))))
-              (= action :push) (run-network! busy! "Pushing" #(magit/push! root base))
+        ;; The review push gets every armed switch — `gerrit-push!` refuses the ones
+        ;; a refs/for ref cannot carry instead of dropping them without a word.
+        (cond (= action :review)
+              (run-network! busy!
+                            "Pushing for review"
+                            #(magit/gerrit-push!
+                               root
+                               (merge base {:remote g-remote :branch g-branch :topic topic})))
+              (= action :push) (run-network! busy! "Pushing" #(magit/push! root push-opts))
               (contains? remote-action->name action)
               (let [rname (get remote-action->name action)]
                 (run-network! busy!

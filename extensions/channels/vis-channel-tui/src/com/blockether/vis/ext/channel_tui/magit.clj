@@ -473,15 +473,22 @@
                                           nil))))
 
 (defn push!
-  "`opts`: :remote (default \"origin\"), :set-upstream? adds `-u <remote> <branch>`,
-   :force? uses `--force-with-lease` (never bare --force), :dry-run? adds
-   `--dry-run`, :no-verify? adds `--no-verify` to skip pre-push hooks."
+  "`opts`: :remote is an EXPLICIT target and the push then SPELLS THE BRANCH OUT
+   (`git push <remote> <branch>`), so the row that says \"Push to origin\" lands
+   there whatever `push.default` says and even when the branch has no upstream
+   yet; omit :remote to let git follow the branch's own upstream. :set-upstream?
+   adds `-u <remote> <branch>`, :force? uses `--force-with-lease` (never bare
+   --force), :dry-run? adds `--dry-run`, :no-verify? adds `--no-verify` to skip
+   pre-push hooks."
   [root {:keys [set-upstream? force? remote dry-run? no-verify?]}]
   (let
     [branch
      (ok-out root ["rev-parse" "--abbrev-ref" "HEAD"])
 
-     remote
+     on-branch?
+     (not (or (str/blank? (str branch)) (= "HEAD" branch)))
+
+     target
      (or remote "origin")
 
      args
@@ -496,10 +503,12 @@
        (conj "--no-verify")
 
        set-upstream?
-       (into ["-u" remote (str branch)])
+       (into ["-u" target (str branch)])
 
-       (and (not set-upstream?) (not= "origin" remote))
-       (conj remote))]
+       (and (not set-upstream?) (some? remote))
+       (into (cond-> [target]
+               on-branch?
+               (conj (str branch)))))]
 
     (action-result "Pushed" (git! root args {:timeout-secs network-timeout-secs}))))
 
@@ -519,6 +528,20 @@
                  (when (and name url (= "(push)" kind)) {:name name :url url}))))
        distinct
        vec))
+
+(defn push-remote
+  "Remote a plain `git push` lands on: the remote half of the branch's upstream,
+   else `origin` when it is configured, else the first configured remote, else
+   nil in a repo without remotes. The push transient names this remote on its
+   direct-push row, so that row stays truthful in a repo whose only remote is
+   called something other than `origin`."
+  [root]
+  (let [names (mapv :name (remotes root))]
+    (or (some-> (upstream-name root)
+                (str/replace #"/.*$" "")
+                not-empty)
+        (some #(when (= "origin" %) %) names)
+        (first names))))
 
 (defn- gerrit-url?
   "Heuristic: does a remote URL point at a Gerrit server? Gerrit's SSH port is
@@ -566,34 +589,40 @@
   "Push HEAD to Gerrit for review (`refs/for/<branch>`) — a regular push, just
    carrying an optional Gerrit topic. `opts`: :remote :branch :topic :dry-run?
    :no-verify?. `remote`/`branch` default to the detected Gerrit remote and
-   upstream branch."
-  [root {:keys [remote branch topic dry-run? no-verify?]}]
+   upstream branch. :force? and :set-upstream? are REFUSED rather than dropped:
+   a review ref has no history to lease-check, and `-u` would retarget the
+   branch's upstream at `refs/for/<branch>` — push directly to use them."
+  [root {:keys [remote branch topic dry-run? no-verify? force? set-upstream?]}]
   (let
-    [remote
-     (or remote (gerrit-remote root) "origin")
+    [rejected (cond-> []
+                force?
+                (conj "Force with lease")
 
-     branch
-     (or branch (gerrit-target-branch root))
+                set-upstream?
+                (conj "Set upstream"))]
+    (if (seq rejected)
+      {:ok? false
+       :msg
+       (str "A review push cannot carry " (str/join " or " rejected) " — push directly instead")}
+      (let
+        [remote (or remote (gerrit-remote root) "origin")
+         branch (or branch (gerrit-target-branch root))
+         spec (refs-for-spec branch topic)
+         args (cond-> ["push"]
+                dry-run?
+                (conj "--dry-run")
 
-     spec
-     (refs-for-spec branch topic)
+                no-verify?
+                (conj "--no-verify")
 
-     args
-     (cond-> ["push"]
-       dry-run?
-       (conj "--dry-run")
+                :always
+                (into [remote spec]))]
 
-       no-verify?
-       (conj "--no-verify")
-
-       :always
-       (into [remote spec]))]
-
-    (action-result (str "Pushed for review → refs/for/"
-                        branch
-                        (when-not (str/blank? (str topic))
-                          (str " (topic " (str/trim (str topic)) ")")))
-                   (git! root args {:timeout-secs network-timeout-secs}))))
+        (action-result (str "Pushed for review → refs/for/"
+                            branch
+                            (when-not (str/blank? (str topic))
+                              (str " (topic " (str/trim (str topic)) ")")))
+                       (git! root args {:timeout-secs network-timeout-secs}))))))
 
 (defn pull!
   [root]
