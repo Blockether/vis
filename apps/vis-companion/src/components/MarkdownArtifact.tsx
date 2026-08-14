@@ -28,8 +28,8 @@ const TAP_SLOP = 10;
  * follow, instead of ten identical grey boxes under a page of untouched prose.
  *
  * The palette is spelled as THEME VARIABLES, never as hard-coded hex: the app's
- * paper is whatever `/v1/theme` sent, so an ink chosen for a cream light theme
- * is unreadable the moment the gateway ships a dark one. Every token below is
+ * paper is whichever palette this device selected, so an ink chosen for a cream
+ * light theme is unreadable the moment a dark one is picked. Every token below is
  * part of the shared Blockether palette (`index.css`) and is re-published by
  * every theme, so the marks move with it.
  */

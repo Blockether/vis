@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "sync:version": "node scripts/version.mjs",
+    "gen:themes": "cd ../.. && clojure -X:companion-themes",
     "dev": "vite",
     "predev": "node scripts/version.mjs",
     "build": "tsc -b && vite build",

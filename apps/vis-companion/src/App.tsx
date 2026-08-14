@@ -39,8 +39,8 @@ import {
   parseShareLink,
   receiveSharedText,
 } from "./lib/share-intake";
-import { applyTheme, resolveLocalTheme } from "./lib/theme";
-import { getThemePalette, getThemePref } from "./lib/storage";
+import { applyTheme, resolveTheme } from "./lib/theme";
+import { getThemePref } from "./lib/storage";
 import { BackButton, IconButton, SearchField } from "./components/ui";
 import { SearchIcon, SettingsIcon } from "./components/icons";
 import { ConnectScreen } from "./screens/ConnectScreen";
@@ -509,14 +509,12 @@ export function App() {
     return () => window.clearTimeout(timer);
   }, [refresh]);
 
-  // Paint the locally cached palette immediately. The settings dialog refreshes its
-  // catalog from every paired gateway later; startup must never wait on the network.
+  // The palette is STATIC CSS shipped with the app, so the first frame paints from
+  // one stored id — no gateway is asked, and none can repaint this device.
   useEffect(() => {
-    void Promise.all([getThemePref(), getThemePalette()]).then(
-      ([pref, palette]) => {
-        applyTheme(resolveLocalTheme(pref, palette));
-      },
-    );
+    void getThemePref().then((pref) => {
+      applyTheme(resolveTheme(pref));
+    });
   }, []);
 
   // Deep-linked pairing: vis://gateway?url=…&token=…

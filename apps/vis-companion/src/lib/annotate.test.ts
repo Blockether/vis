@@ -35,9 +35,8 @@ function stroke(points: Stroke['points']): Stroke {
 }
 
 describe('pen ink', () => {
-  // The ink is theme ink: the gateway repaints the whole app from `/v1/theme`,
-  // so a stroke frozen as hex is the one mark on the picture from another
-  // product.
+  // The ink is theme ink: picking a palette repaints the whole app, so a stroke
+  // frozen as hex is the one mark on the picture from another product.
   it('names its colours by palette variable, never as hex', () => {
     expect(PEN_COLORS).toHaveLength(5);
     for (const pen of PEN_COLORS) {

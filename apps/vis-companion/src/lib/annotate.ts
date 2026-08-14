@@ -15,8 +15,9 @@ export type Stroke = { color: string; width: number; points: Point[] };
 
 /**
  * Pen colours are THEME colours, named by palette variable rather than frozen
- * as hex: `/v1/theme` repaints the whole app from the gateway, and an ink that
- * ignores it is the one mark on the picture that belongs to another product.
+ * as hex: switching palette repaints the whole app from the shipped stylesheet,
+ * and an ink that ignores it is the one mark on the picture that belongs to
+ * another product.
  * The canvas needs a real colour string, so the value is read from the live
  * palette at the moment a stroke starts.
  */

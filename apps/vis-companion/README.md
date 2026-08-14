@@ -19,9 +19,9 @@ other channels drive — no separate backend.
 - **Settings** — renders the gateway's cross-channel feature-toggle registry
   (`GET /v1/settings?channel=all`). Flipping a toggle persists in the daemon, so
   the **TUI and the app share one settings state**.
-- **Shared theme** — loads the TUI's selected palette from `GET /v1/theme`, applies
-  the returned CSS variables immediately, and persists changes through
-  `POST /v1/theme`, so the next TUI and every companion use the same theme.
+- **Themes** — every palette Vis ships is static CSS generated from the Clojure
+  themes (`clojure -X:companion-themes` → `src/lib/themes.generated.{css,ts}`);
+  the choice is app-local and no gateway is asked for colours.
 - **Multiple gateways** — save several (home LAN, Tailscale, cloudflared) and
   switch between them.
 

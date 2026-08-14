@@ -372,22 +372,8 @@ export interface AuthVerdict {
   message?: string;
 }
 
-export interface ThemeSummary {
-  id: string;
-  display_name: string;
-  mode: "light" | "dark";
-  /** Browser-ready CSS custom properties for THIS theme (present in the themes list). */
-  css_vars?: Record<string, string>;
-}
-
-/** App-local appearance choice. It is never read from or written to a gateway. */
-/** Id of the app-local palette selected from the paired gateways' theme catalogs. */
+/** App-local appearance choice: the id of one shipped palette (`themes.generated.ts`). */
 export type ThemePref = string;
-
-export interface GatewayTheme extends ThemeSummary {
-  css_vars: Record<string, string>;
-  themes: ThemeSummary[];
-}
 
 export interface VoiceModelState {
   status: "ready" | "downloading" | "failed" | "absent" | "unavailable";

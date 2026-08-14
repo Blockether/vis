@@ -8,7 +8,6 @@ import {
 import {
   GatewayClient,
   GatewayError,
-  cachedThemeCatalogs,
 } from "../lib/gateway";
 import { ChevronIcon } from "../components/icons";
 import type {
@@ -16,7 +15,6 @@ import type {
   PushDevice,
   PushStatus,
   ThemePref,
-  ThemeSummary,
   Toggle,
   ToggleGroup,
   McpAuthFlow,
@@ -45,7 +43,7 @@ import {
   webPushApplicationServerKey,
   webPushPermission,
 } from "../lib/web-push";
-import { applyTheme, dedupeThemes, resolveLocalTheme } from "../lib/theme";
+import { applyTheme } from "../lib/theme";
 import { applyGatewayNotify, applyWebGatewayNotify } from "../lib/notify";
 import {
   registerForPush,
@@ -59,14 +57,15 @@ import {
   DEFAULT_SESSION_PAGE_SIZE,
   getGatewayNotify,
   getSessionsPerPage,
-  getThemePalette,
   getThemePref,
-  loadConnections,
   setSessionsPerPage,
-  setThemePalette,
   setThemePref,
 } from "../lib/storage";
-import { BUNDLED_THEMES } from "../lib/palettes";
+import {
+  DEFAULT_THEME,
+  THEMES,
+  type ThemeChoice,
+} from "../lib/themes.generated";
 import {
   Banner,
   Button,
@@ -1158,13 +1157,7 @@ export function SettingsDialog({
   onSelectAddress?: (url: string, pinned: boolean) => void | Promise<void>;
   onClose: () => void;
 }) {
-  const [pref, setPref] = useState<ThemePref>("blockether-light");
-  // Seeded from the catalogs already cached for the paired gateways (persisted
-  // across a cold start), so the FIRST frame is the finished list. Anything
-  // fetched below lands on top of the same rows instead of replacing them.
-  const [themes, setThemes] = useState<ThemeSummary[]>(() =>
-    dedupeThemes(...cachedThemeCatalogs(), BUNDLED_THEMES),
-  );
+  const [pref, setPref] = useState<ThemePref>(DEFAULT_THEME.id);
   const [pageSize, setPageSize] = useState(DEFAULT_SESSION_PAGE_SIZE);
   const [pending, setPending] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -1172,39 +1165,13 @@ export function SettingsDialog({
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [theme, sessions, cachedPalette, connections] = await Promise.all([
+      const [theme, sessions] = await Promise.all([
         getThemePref(),
         getSessionsPerPage(),
-        getThemePalette(),
-        loadConnections(),
       ]);
       if (cancelled) return;
       setPref(theme);
       setPageSize(sessions);
-      const paint = () =>
-        setThemes(
-          dedupeThemes(
-            ...cachedThemeCatalogs(),
-            cachedPalette ? [cachedPalette] : [],
-            BUNDLED_THEMES,
-          ),
-        );
-      paint();
-
-      // Each gateway advertises its complete catalog, and that catalog only moves
-      // when someone installs a theme — so this is a CACHED read (THEME_TTL_MS).
-      // Reopening settings inside the window touches the network zero times and
-      // repaints the identical list; a cold-but-cached machine paints instantly
-      // and revalidates underneath.
-      const clients = connections.map(
-        (connection) => new GatewayClient(connection),
-      );
-      if (clients.every((each) => each.isThemeFresh())) return;
-      await Promise.allSettled(clients.map((each) => each.themeCatalog()));
-      if (cancelled) return;
-      // Unreachable gateways keep contributing their last known catalog, so a
-      // machine that is merely asleep never makes palettes vanish from the list.
-      paint();
     })();
     return () => {
       cancelled = true;
@@ -1219,12 +1186,12 @@ export function SettingsDialog({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
-  async function chooseTheme(next: ThemeSummary) {
+  async function chooseTheme(next: ThemeChoice) {
     setPending(`theme:${next.id}`);
     try {
-      await Promise.all([setThemePref(next.id), setThemePalette(next)]);
+      await setThemePref(next.id);
       setPref(next.id);
-      applyTheme(resolveLocalTheme(next.id, next));
+      applyTheme(next);
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -1335,14 +1302,14 @@ export function SettingsDialog({
 
             <SettingsPanel
               title="Theme"
-              description="All themes advertised by your paired gateways. Duplicate theme ids appear once; the choice is saved on this device."
-              meta={`${themes.length} available`}
+              description="Every palette Vis ships, rendered from the same theme definitions the TUI paints with. The choice is saved on this device."
+              meta={`${THEMES.length} available`}
             >
               <div className="grid grid-cols-1 gap-px bg-dialog-edge">
-                {themes.map((choice) => (
+                {THEMES.map((choice) => (
                   <ChoiceCell
                     key={choice.id}
-                    title={choice.display_name}
+                    title={choice.label}
                     sub={choice.mode}
                     isSelected={pref === choice.id}
                     disabled={pending?.startsWith("theme:") ?? false}

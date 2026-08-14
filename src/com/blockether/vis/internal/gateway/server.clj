@@ -18,7 +18,6 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.theme :as theme]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.docs :as docs]
             [com.blockether.vis.internal.extension :as extension]
@@ -1627,63 +1626,6 @@
             'com.blockether.vis.internal.foundation.mcp.core/logout-gateway-server-auth!)
            (get-in request [:path-params :name])))
        (catch clojure.lang.ExceptionInfo e (mcp-error-response e))))
-
-(defn- configured-theme-id
-  "Theme selected by the TUI's persisted settings, normalized to a theme that
-   this gateway process can actually render."
-  []
-  (let
-    [saved
-     (get-in (or (config/load-config-raw) {}) ["tui_settings" "theme_name"])
-
-     id
-     (cond (keyword? saved) (name saved)
-           (string? saved) (str/trim saved)
-           :else nil)]
-
-    (if (contains? (theme/theme-registry) id) id theme/default-theme-id)))
-
-(defn- theme-json
-  "Cross-channel theme contract. CSS vars come from the same palette token map
-   used by the TUI adapter and HTML transcript renderer."
-  [id]
-  (let [theme-map (theme/theme id)]
-    {:id (:name theme-map)
-     :display-name (:display-name theme-map)
-     :mode (name (:mode theme-map))
-     :css-vars (theme/theme->web-css-vars theme-map)
-     :themes (mapv (fn [theme-id]
-                     (let [candidate (theme/theme theme-id)]
-                       {:id (:name candidate)
-                        :display-name (:display-name candidate)
-                        :mode (name (:mode candidate))
-                        :css-vars (theme/theme->web-css-vars candidate)}))
-                   (theme/available-theme-ids))}))
-
-(defn- get-theme-handler
-  "GET /v1/theme — selected TUI theme plus browser-ready CSS custom properties."
-  [_]
-  (json-response (theme-json (configured-theme-id))))
-
-(defn- set-theme-handler
-  "POST /v1/theme {id} — persist the shared TUI/companion theme and return its
-   browser-ready palette. The next TUI start reads the same value."
-  [request]
-  (let
-    [body
-     (try (body-json request) (catch Throwable _ nil))
-
-     id
-     (some-> (get body "id")
-             str
-             str/trim)]
-
-    (cond (str/blank? id) (error-response 400 :invalid-theme "theme id must be a non-blank string")
-          (not (contains? (theme/theme-registry) id))
-          (error-response 404 :unknown-theme "no such theme" :id id)
-          :else (let [raw (or (config/load-config-raw) {})]
-                  (config/save-config! (assoc-in raw ["tui_settings" "theme_name"] id))
-                  (json-response (theme-json id))))))
 
 (defn- create-session-handler
   [request]
@@ -3418,9 +3360,7 @@
         ["/mcp/servers/:name/auth/poll" {:post mcp-auth-poll-handler}]
         ["/mcp/servers/:name/auth/cancel" {:post mcp-auth-cancel-handler}]
         ["/mcp/servers/:name/auth/logout" {:post mcp-auth-logout-handler}]
-        ["/settings/:id" {:get get-setting-handler}]
-        ["/theme" {:get get-theme-handler :post set-theme-handler}]
-        ["/providers" {:post add-provider-handler}]
+        ["/settings/:id" {:get get-setting-handler}] ["/providers" {:post add-provider-handler}]
         ["/provider-presets" {:get provider-presets-handler}]
         ["/providers/:provider-id" {:delete remove-provider-handler}]
         ["/providers/:provider-id/status" {:get provider-status-handler}]

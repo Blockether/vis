@@ -13,6 +13,10 @@
                :replace-deps {io.github.clj-holmes/clj-watson
                               {:git/sha "be98e4db74fb8927db4825cc73bbe2606e44e5e3"
                                :git/tag "v6.1.0"}}}
+  ;; Regenerate the companion's STATIC theme assets from `theme.clj`. Themes are
+  ;; data, not a gateway service: `apps/vis-companion` ships the rendered CSS.
+  :companion-themes {:extra-paths ["dev"]
+                     :exec-fn com.blockether.vis.dev.companion-themes/write!}
   :format {:deps {io.github.enajski/codestyle {:git/sha "158c94789dd284946c20148a527e655a3e97ec95"
                                                :git/url "https://github.com/enajski/codestyle.git"}}
            :main-opts ["-m" "codestyle.advanced-format"]}
@@ -24,7 +28,7 @@
   {:extra-deps {criterium/criterium {:mvn/version "0.4.6"}
                 io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
    :extra-paths
-   ["test" "extensions/persistance/vis-persistance-sqlite/test"
+   ["test" "dev" "extensions/persistance/vis-persistance-sqlite/test"
     "extensions/providers/vis-provider-github-copilot/test"
     "extensions/providers/vis-provider-openai-codex/test"
     "extensions/providers/vis-provider-anthropic/test" "extensions/providers/vis-provider-zai/test"

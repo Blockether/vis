@@ -15,7 +15,6 @@
             [com.blockether.vis.internal.resources :as resources]
             [com.blockether.vis.internal.slash :as slash]
             [com.blockether.vis.internal.workspace :as workspace]
-            [com.blockether.vis.internal.theme :as theme]
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.voice :as voice]
             [com.blockether.vis.internal.loop :as lp]
@@ -456,10 +455,6 @@
                                                (Thread/sleep 80)
                                                (is (zero? @stops)))))))))
 
-(defn- body-stream
-  [m]
-  (java.io.ByteArrayInputStream. (.getBytes ^String (wire/json-str m) "UTF-8")))
-
 (defn- with-only-engine!
   "Run `f` with EXACTLY `engine` registered (nil = a gateway with no voice engine
    at all), then put the registry back."
@@ -758,57 +753,6 @@
                                  (is (= 425 (:status response)))
                                  (is (= "downloading" (get body "status")))
                                  (is (= 42 (get body "progress")))))))))))
-
-(deftest theme-handler-shares-the-tui-palette-and-persistence
-  (let [saved (atom nil)]
-    (with-redefs
-      [config/load-config-raw (constantly {"providers" [{"id" "demo"}]
-                                           "tui_settings" {"theme_name" "solarized-dark"}})
-       config/save-config! #(reset! saved %)]
-
-      (let
-        [get-response ((rv 'get-theme-handler) {})
-         current (wire/parse-json (:body get-response))]
-
-        (is (= 200 (:status get-response)))
-        (is (= "solarized-dark" (get current "id")))
-        (is (= (get (theme/theme->web-css-vars (theme/theme "solarized-dark")) "--bg")
-               (get-in current ["css_vars" "--bg"])))
-        (doseq
-          [css-var ["--dialog-title-bg" "--dialog-title-fg" "--dialog-border" "--dialog-shadow"
-                    "--dialog-hint" "--input-field-bg" "--button-bg" "--button-fg"
-                    "--user-bubble-bg" "--user-bubble-fg" "--user-role-fg" "--ai-bubble-bg"
-                    "--ai-bubble-fg" "--ai-role-fg" "--iteration-header-fg" "--iteration-header-bg"
-                    "--answer-bg" "--answer-fg" "--md-h1-fg" "--md-h2-fg" "--md-h3-fg" "--code-bg"
-                    "--code-fg" "--code-ok-bg" "--code-err-bg" "--code-success" "--code-error"
-                    "--code-syntax-keyword" "--code-syntax-special" "--code-syntax-string"
-                    "--code-syntax-number" "--code-syntax-comment" "--result-bg" "--code-result"
-                    "--code-duration" "--footer-fg" "--footer-muted" "--footer-spinner"]]
-          (is (string? (get-in current ["css_vars" css-var])) css-var))
-        (is (some #(= "vis-dark" (get % "id")) (get current "themes")))
-        ;; Each theme in the list carries its own browser-ready palette so the
-        ;; companion can pin a local theme (e.g. light) without a POST.
-        (doseq [t (get current "themes")]
-          (is (string? (get-in t ["css_vars" "--bg"])) (get t "id"))))
-      (let
-        [set-response ((rv 'set-theme-handler) {:body (body-stream {:id "vis-dark"})})
-         updated (wire/parse-json (:body set-response))]
-
-        (is (= 200 (:status set-response)))
-        (is (= "vis-dark" (get updated "id")))
-        (is (= "vis-dark" (get-in @saved ["tui_settings" "theme_name"])))
-        (is (= [{"id" "demo"}] (get @saved "providers")))))))
-
-(deftest theme-handler-rejects-unknown-themes
-  (let [saved? (atom false)]
-    (with-redefs
-      [config/load-config-raw (constantly {})
-       config/save-config! (fn [_]
-                             (reset! saved? true))]
-
-      (let [response ((rv 'set-theme-handler) {:body (body-stream {:id "not-a-theme"})})]
-        (is (= 404 (:status response)))
-        (is (false? @saved?))))))
 
 ;; Regression: the global slash endpoint resolved project skills against the gateway
 ;; process cwd, so nested-project sessions neither saw their own skills nor their children.

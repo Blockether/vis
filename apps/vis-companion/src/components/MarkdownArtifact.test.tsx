@@ -189,7 +189,7 @@ describe("marking up the passages a comment is about", () => {
 
 describe("the annotation palette", () => {
   // A mark painted in a hex chosen for the cream light theme is invisible the
-  // moment the gateway ships a dark one: every hue is a shared theme token.
+  // moment a dark palette is picked: every hue is a shared theme token.
   it("is spelled in theme variables, never in hard-coded hex", () => {
     for (const colour of ANNOTATION_COLORS) {
       expect(colour).toMatch(

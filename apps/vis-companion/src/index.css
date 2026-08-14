@@ -1,6 +1,9 @@
 @import '@fontsource-variable/inter';
 @import '@fontsource-variable/jetbrains-mono';
 @import 'tailwindcss';
+/* Every theme, rendered from the Clojure palettes by `clojure -X:companion-themes`.
+   The gateway no longer serves colours; this file IS the app's theme catalog. */
+@import './lib/themes.generated.css';
 
 /* `sm:` answers "is there room"; `mouse:` answers "is there room AND a cursor".
    Only the second one may make a control SMALLER. An iPad is a >=640px screen
@@ -14,90 +17,9 @@
    on `sm:`, because that really is a question about room. */
 @custom-variant mouse (@media (width >= 40rem) and (pointer: fine));
 
-/* Exact blockether-light fallback (app default = light). /v1/theme may replace every variable below. */
-:root {
-  color-scheme: light;
-  --accent: #f0ad00;
-  --ai-bubble-bg: #faf3eb;
-  --ai-bubble-fg: #262626;
-  --ai-role-fg: #16a34a;
-  --answer-bg: #faf3eb;
-  --answer-fg: #262626;
-  --answer-sep-bg: #faf3eb;
-  --answer-sep-fg: #c8bfb0;
-  --bg: #faf3eb;
-  --box-bg: #faf3eb;
-  --box-fg: #262626;
-  --button-bg: #ffc420;
-  --button-fg: #261e00;
-  --cancelled-bg: #f2ebdf;
-  --cancelled-fg: #6f6a63;
-  --code-bg: #f2ebdf;
-  --code-border: #8c857a;
-  --code-duration: #6f6a63;
-  --code-err-bg: #fae2e2;
-  --code-error: #dc2626;
-  --code-error-result: #b42828;
-  --code-fg: #262626;
-  --code-ok-bg: #dff0e0;
-  --code-result: #262626;
-  --code-success: #16a34a;
-  --code-syntax-comment: #787878;
-  --code-syntax-keyword: #196e78;
-  --code-syntax-number: #1e5ab4;
-  --code-syntax-special: #7846aa;
-  --code-syntax-string: #965028;
-  --dialog-border: #3f3f3f;
-  --dialog-fg: #262626;
-  --dialog-hint: #6f6a63;
-  --dialog-hint-key: #3f3f3f;
-  --dialog-shadow: #ffc420;
-  --dialog-title-bg: #3f3f3f;
-  --dialog-title-fg: #faf3eb;
-  --dim: #8c8885;
-  --err: #dc2626;
-  --fg: #262626;
-  --footer-error: #c82828;
-  --footer-fg: #3f3f3f;
-  --footer-muted: #6f6a63;
-  --footer-spinner: #16a34a;
-  --footer-strong: #262626;
-  --footer-warning: #b46e00;
-  --hover: #efe9e1;
-  --input-field-bg: #fffdf8;
-  --iteration-header-bg: #f5eee4;
-  --iteration-header-fg: #b0a798;
-  --line: #e8e1d9;
-  --line2: #d8d1c8;
-  --link-arrow-fg: #6f6a63;
-  --link-fg: #0891b2;
-  --link-hover-bg: #faecc5;
-  --link-hover-fg: #b47800;
-  --link-url-fg: #786e5f;
-  --md-h1-fg: #262626;
-  --md-h2-fg: #3f3f3f;
-  --md-h3-fg: #5a544a;
-  --md-summary-bg: #faecc5;
-  --md-summary-fg: #7a4a00;
-  --ok: #16a34a;
-  --panel2: #faf3eb;
-  --primary: #ffc420;
-  --primary-fg: #261e00;
-  --result-bg: #f2ebdf;
-  --result-highlight-fg: #7c28b4;
-  --result-path-bg: #dbeafe;
-  --result-path-fg: #172d82;
-  --secondary: #262626;
-  --surface: #faf3eb;
-  --turn-separator-bg: #f5eee4;
-  --turn-separator-fg: #b4ac9e;
-  --user-bubble-bg: #faf3eb;
-  --user-bubble-fg: #262626;
-  --user-role-fg: #6f6a63;
-  --warning: #7a4a00;
-  --warning-bg: #f2dda0;
-  --warning-border: #d97706;
-}
+/* Every palette the app ships lives in the generated stylesheet imported above:
+   `[data-theme='<id>']` blocks rendered from `theme.clj`, with the default theme
+   doubling as `:root`. Painting one is setting that attribute — nothing is fetched. */
 
 /* Canonical type scale — the ONLY font sizes AND line-heights in the app.
    Tailwind's default text-xs / text-sm / text-base scale is cleared so an
@@ -130,7 +52,7 @@
   --text-display--line-height: 30px;
 }
 
-/* Tailwind utilities resolve directly to the gateway's shared TUI palette. */
+/* Tailwind utilities resolve directly to the shared TUI palette generated above. */
 @theme inline {
   --color-ink: var(--bg);
   --color-white: var(--fg);
@@ -162,7 +84,7 @@
   --color-ok-surface: color-mix(in oklab, var(--ok) 58%, white);
   /* Ink for a FILLED green block (the live badge): the SAME ink the amber badge
      next to it uses, so the pair reads as one component in two colours. Every
-     gateway theme ships it (light #261e00, dark #0f1117). */
+     shipped theme carries it (light #261e00, dark #0f1117). */
   --color-ok-foreground: var(--primary-fg);
   --color-warn: var(--warning);
   --color-warn-strong: var(--warning-border);
@@ -259,7 +181,7 @@
    weight whichever hue it drew, and a single hex works in BOTH palettes: every
    entry clears 3:1 on the light page (#faf3eb) and 4.7:1 on the dark one
    (#0f1117). These are the only colours in the app that do NOT come from the
-   gateway theme — a machine's identity must not change when the palette does.
+   shipped themes — a machine's identity must not change when the palette does.
    Hues 130-168 are missing on purpose: green is LIVE on this screen. */
 @theme {
   --color-machine-teal: #019d7e;
@@ -376,6 +298,9 @@
   body {
     @apply m-0 overflow-hidden bg-ink font-sans text-body text-white antialiased;
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    /* No faked weight and no faked slant: every bold and every italic on screen
+       is a REAL face. Which is why both families import their italic axis at
+       the top of this file — without it an `italic` utility paints upright. */
     font-synthesis: none;
     text-rendering: optimizeLegibility;
     -moz-osx-font-smoothing: grayscale;
