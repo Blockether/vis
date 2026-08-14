@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -241,6 +241,32 @@ describe('the slide', () => {
     // A thumb resting on the slid row closes it and goes nowhere.
     expect(onOpen).not.toHaveBeenCalled();
     expect(closed).toContain(track(0));
+  });
+
+  // Regression, user report about the star on iOS, second round (paraphrased: from the
+  // fifth row down the star did not arrive on the first tap, only after sliding the row a
+  // second time, and the row's state disagreed with what was on the screen): the rows
+  // above it are LIVE, every poll re-sorts the list, and a re-sort MOVES this row's node
+  // to its new place. WebKit returns a moved scroller home in the same task and fires NO
+  // scroll event for it — measured on iOS 26.5, Safari: 216 -> 0 synchronously, zero
+  // scroll events — so the strip left the screen while `open` went on saying it was
+  // standing there, and the row, which is a dismiss target while open, ate the tap that
+  // was meant for the star. Only a second slide, which does fire events, put them back
+  // in step.
+  it('gives the row back the frame the platform shuts its drawer without an event', async () => {
+    const onOpen = vi.fn();
+    render(row('first', onOpen));
+    slide(track(0));
+
+    // The re-sort: the node is moved, the offset is gone with it, and nothing said so.
+    Object.defineProperty(track(0), 'scrollLeft', { value: 0, configurable: true });
+    await act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+
+    fireEvent.click(screen.getByRole('button', { name: 'first' }));
+    // The tap the star was waiting for reaches the row, first time.
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    // And nothing was asked to travel: the platform had already taken it home.
+    expect(closed).not.toContain(track(0));
   });
 
   // A row whose owner wired no verb has no drawer at all: `ConnectScreen` lists

@@ -42,6 +42,13 @@ export interface SwipeAction {
 let openDrawer: (() => void) | null = null;
 
 /**
+ * How far the track has to have travelled before the drawer counts as OPEN —
+ * clear of the rubber band and of a stray pixel left by a snap, and the SAME
+ * number in every reader of that offset: two thresholds would disagree at 4px.
+ */
+const OPEN_PAST_PX = 8;
+
+/**
  * A LIST ROW'S OWN VERBS, WAITING UNDER ITS RIGHT EDGE UNTIL THE ROW IS SLID —
  * the app's one row-verb surface, and there is only one of it.
  *
@@ -100,6 +107,32 @@ export function SwipeActions({
     scrollerRef.current?.scrollTo({ left: 0, behavior: 'auto' });
   }, []);
 
+  // OPEN IS WHAT THE TRACK SAYS, RE-READ — not what a scroll event last said.
+  //
+  // Regression, user report (paraphrased: from the fifth row down the star did
+  // not arrive on the first tap, only after sliding the row a second time, and
+  // the row's state disagreed with what was on the screen): the rows above it
+  // are LIVE, every poll re-sorts the list, and a re-sort MOVES this row's node
+  // to its new place. WebKit returns a moved scroller home in the same task and
+  // fires NO scroll event for it — measured on iOS 26.5, Safari: 216 -> 0
+  // synchronously, zero scroll events — so the strip left the screen while
+  // `open` went on saying it was standing there, and the row, which is a
+  // dismiss target while open, ate the tap that was meant for the star. Only
+  // the second slide, which does fire scroll events, put the two back in step.
+  //
+  // The offset is the platform's to change, with or without an event, so the
+  // state RE-READS it every frame it claims to be open.
+  useEffect(() => {
+    if (!open) return;
+    let frame = 0;
+    const reread = () => {
+      frame = requestAnimationFrame(reread);
+      if ((scrollerRef.current?.scrollLeft ?? 0) <= OPEN_PAST_PX) setOpen(false);
+    };
+    frame = requestAnimationFrame(reread);
+    return () => cancelAnimationFrame(frame);
+  }, [open]);
+
   // An open drawer is a modal-ish state: Escape closes it, scrolling the list
   // away from it closes it, and opening another row closes it — otherwise a
   // forgotten row keeps a delete button armed under the user's thumb.
@@ -142,7 +175,7 @@ export function SwipeActions({
         isClosing.current = false;
       }}
       onScroll={(event) => {
-        const next = event.currentTarget.scrollLeft > 8;
+        const next = event.currentTarget.scrollLeft > OPEN_PAST_PX;
         // A drawer animating home still reports itself OPEN for every frame of the
         // slide. Taken at face value those frames re-opened the row that was
         // closing — and re-opening it closed the row that had just replaced it, so
