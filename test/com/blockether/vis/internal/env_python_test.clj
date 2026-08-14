@@ -904,7 +904,7 @@
           ;; and `stop` answers the same keys — never a stage-scoped subset.
           (expect (str/includes? out "The same shell result shape as every other stage"))
           (expect (str/includes? out "`stdout` is the window this read returned"))
-          (expect (str/includes? out "(`stage` \"stop\"): `stopped`, `status`, `exit`."))))))
+          (expect (str/includes? out "(`stage` \"stop\"): `status` \"stopped\", `exit`."))))))
 
 ;; ONE corpus, two verbs. `apropos` SEARCHES every document the session can
 ;; reach — function contracts, Vis' own documentation pages, whole `SKILL.md`
@@ -1417,6 +1417,21 @@
                                                                "print(1 + 1)\n")]
         (expect (= 0 restored))
         (expect (str/includes? stdout "2"))))
+  ;; Regression: a restored helper was exec'd from RAW source, so it MISSED the block
+  ;; rewrite every locally-defined helper gets. `await` on an already-settled value
+  ;; raised "object ... can't be used in 'await' expression" inside a helper that had
+  ;; worked all session, and a plain `def` whose body awaits was dropped from the
+  ;; toolbox outright (SyntaxError) instead of being promoted to `async def`.
+  (it "restores an awaiting helper with the same rewrite a local one gets"
+      (let
+        [{:keys [restored stdout]}
+         (restore-into-fresh-sandbox
+           (str "async def unwrap(v):\n    r = await v\n    return r\n"
+                "def twice_unwrapped(v):\n    return await unwrap(v) * 2\n")
+           (str "print(await unwrap(41))\n" "print(await twice_unwrapped(21))\n"))]
+        (expect (= 2 restored))
+        (expect (str/includes? stdout "41"))
+        (expect (str/includes? stdout "42"))))
   (it "writes nothing, and drops a stale file, for a session with no definitions"
       (let
         [sid

@@ -3351,7 +3351,9 @@
 
    Runs once, on a FRESH context, before the session's first block. The restored
    source is registered as a real block, so `defs(\"name\")` and
-   `inspect.getsource` read a restored helper back exactly like a local one.
+   `inspect.getsource` read a restored helper back exactly like a local one, and it
+   goes through the SAME rewrite (`__vis_normalize_module__`) so it RUNS like one:
+   a stray `await`, a plain `def` whose body awaits, a tool call in its body.
    Only `def`s and their imports/constants are stored, so nothing re-executes a
    previous block's side effects, and a statement that BINDS a name which is a
    bound tool in THIS process is dropped: a snapshot written before the tool
