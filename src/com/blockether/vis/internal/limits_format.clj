@@ -242,21 +242,95 @@
   [rows]
   (vec (sort-by limit-window-order rows)))
 
-(defn label+usage
-  "Compose `\"<label> <usage>\"` for a single row, or `\"<label>\"`
-   when the row has no usage signal. Returns nil when both are
-   blank/absent."
+(def ^:private short-label-rewrites
+  "Label shortenings applied to every compact cell. A group prints its plan
+   name ONCE (`compact-limit-cells`), so what a cell still spells out is only
+   what the user could not infer from the provider already on screen."
+  [[#"(?i)^premium interactions$" "Premium"] [#"(?i)^z\.ai coding plan " "Z.ai "]])
+
+(defn short-limit-label
+  "`generic-limit-label` trimmed for a one-line summary: \"Premium\",
+   \"Z.ai 5h\", \"Codex 7d\", \"OpenCode Go 30d\"."
+  [row]
+  (reduce (fn [label [pattern replacement]]
+            (str/replace label pattern replacement))
+          (generic-limit-label row)
+          short-label-rewrites))
+
+(defn compact-limit-usage
+  "`format-limit-usage` with the English words dropped: \"47% left\" -> \"47%\",
+   \"3/5 used (2 left)\" -> \"3/5 (2)\", \"2 left\" -> \"2\". The words cost one
+   repetition per window, and a plan with three windows spends the whole line
+   on them."
+  [row]
+  (some-> (format-limit-usage row)
+          (str/replace #"% left$" "%")
+          (str/replace #" used \(([^)]+) left\)$" " ($1)")
+          (str/replace #" used$" "")
+          (str/replace #" left$" "")))
+
+(defn limit-label-parts
+  "Split a row's short label into `{:label :prefix :window}` when it ends in a
+   window suffix (`5h`, `7d`, `30d`), else `{:label ...}` alone. `:prefix` is
+   the plan name a family of windows shares."
   [row]
   (let
     [label
-     (generic-limit-label row)
+     (short-limit-label row)
 
-     usage
-     (format-limit-usage row)]
+     parts
+     (str/split label #"\s+")
 
-    (cond (and (seq label) usage) (str label " " usage)
-          (seq label) label
-          :else nil)))
+     window
+     (last parts)]
+
+    (if (and (< 1 (count parts)) (re-matches #"[0-9]+[hdwm]" window))
+      {:label label :prefix (str/join " " (butlast parts)) :window window}
+      {:label label})))
+
+(defn compact-limit-cells
+  "Compact a group of rows into
+   `{:prefix <shared plan name or nil> :cells [{:row <row> :text \"5h 100%\"}]}`.
+
+   When every row's label ends in a window suffix and they all carry the SAME
+   plan name, that name is hoisted OUT of the cells into `:prefix`, so a
+   three-window plan reads \"OpenCode Go 5h 100% · 7d 100% · 30d 99%\" instead
+   of spelling \"OpenCode Go\" three times and \"left\" three times. Otherwise
+   `:prefix` is nil and each cell keeps its own label.
+
+   Channels render the pieces themselves (the TUI footer joins with ` / ` and
+   stamps a reset on one cell) but never re-derive them."
+  [rows]
+  (let
+    [rows
+     (vec rows)
+
+     parts
+     (mapv limit-label-parts rows)
+
+     prefix
+     (when (and (< 1 (count rows)) (every? :prefix parts) (apply = (map :prefix parts)))
+       (:prefix (first parts)))]
+
+    {:prefix prefix
+     :cells (mapv (fn [row {:keys [label window]}]
+                    (let
+                      [head
+                       (if prefix window label)
+
+                       usage
+                       (compact-limit-usage row)]
+
+                      {:row row :text (if usage (str head " " usage) head)}))
+                  rows
+                  parts)}))
+
+(defn label+usage
+  "Compact cell for a SINGLE row — its own short label plus its compact usage
+   (\"Codex 5h 47%\"), or the label alone when the row carries no usage signal.
+   `generic-limit-label` bottoms out at \"Limit\", so a row always renders."
+  [row]
+  (:text (first (:cells (compact-limit-cells [row])))))
 
 (defn dynamic-summary
   "Compact one-line summary of the most informative `:dynamic :limits`
@@ -264,11 +338,15 @@
 
    Picks rows with signal first, falls back to all rows when nothing
    has signal yet (so a fresh, all-zero report still surfaces SOMETHING
-   rather than collapsing to empty). Takes up to `max-rows` (default 2)
-   and joins them with ` · `.
+   rather than collapsing to empty). Takes up to `max-rows` (default 3 — the
+   widest plan family shipped is 5h + 7d + 30d), compacts them through
+   `compact-limit-cells` so the plan name is written once, and joins the cells
+   with ` · `:
+
+     OpenCode Go 5h 100% · 7d 100% · 30d 99%
 
    Returns nil when there's nothing to render."
-  ([limits] (dynamic-summary limits 2))
+  ([limits] (dynamic-summary limits 3))
   ([limits max-rows]
    (let
      [rows
@@ -278,10 +356,10 @@
       (or (seq (filter #(or (generic-limit-has-signal? %) (account-plan-window-row? %)) rows))
           (seq rows))
 
-      lines
-      (->> pick
-           prioritize-limit-rows
-           (keep label+usage)
-           (take max-rows))]
+      {:keys [prefix cells]}
+      (compact-limit-cells (take max-rows (prioritize-limit-rows pick)))
 
-     (when (seq lines) (str/join " · " lines)))))
+      body
+      (str/join " · " (keep :text cells))]
+
+     (when (seq body) (if prefix (str prefix " " body) body)))))

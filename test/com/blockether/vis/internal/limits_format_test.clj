@@ -113,28 +113,96 @@
                    (expect (= (set rows) (set (lf/prioritize-limit-rows rows)))))))
 
 (defdescribe label+usage-test
-             (it "joins label and usage, or renders the label alone"
-                 (expect (= "Codex 5h 47% left" (lf/label+usage {:id :codex-5h :remaining 46.7})))
+             (it "joins the short label and the compact usage, or renders the label alone"
+                 (expect (= "Codex 5h 47%" (lf/label+usage {:id :codex-5h :remaining 46.7})))
                  (expect (= "Chat" (lf/label+usage {:label "Chat"}))))
              (it "never returns nil while a fallback label exists"
                  ;; `generic-limit-label` bottoms out at "Limit", so a row always renders.
                  (expect (= "Limit" (lf/label+usage {})))))
 
 (defdescribe
+  compact-limit-cells-test
+  (it "hoists the plan name shared by a window family out of the cells"
+      (let
+        [{:keys [prefix cells]} (lf/compact-limit-cells [{:id :opencode-go-5h
+                                                          :label "OpenCode Go 5h quota (%)"
+                                                          :kind :rate
+                                                          :limit 100.0
+                                                          :remaining 100.0}
+                                                         {:id :opencode-go-30d
+                                                          :label "OpenCode Go 30d quota (%)"
+                                                          :kind :rate
+                                                          :limit 100.0
+                                                          :remaining 99.0}])]
+        (expect (= "OpenCode Go" prefix))
+        (expect (= ["5h 100%" "30d 99%"] (mapv :text cells)))))
+  (it "keeps every label when the rows do not share a plan name"
+      (let
+        [{:keys [prefix cells]} (lf/compact-limit-cells
+                                  [{:id :codex-5h :remaining 46.7}
+                                   {:id :premium_interactions :used 3 :limit 5 :remaining 2}])]
+        (expect (nil? prefix))
+        (expect (= ["Codex 5h 47%" "Premium 3/5 (2)"] (mapv :text cells)))))
+  (it "never hoists a lone row's name and hands the row back with its cell"
+      (let
+        [rows
+         [{:id :codex-5h :remaining 46.7}]
+
+         {:keys [prefix cells]}
+         (lf/compact-limit-cells rows)]
+
+        (expect (nil? prefix))
+        (expect (= ["Codex 5h 47%"] (mapv :text cells)))
+        (expect (= rows (mapv :row cells)))))
+  (it "drops the English words a window would otherwise repeat"
+      (expect (= "47%" (lf/compact-limit-usage {:id :codex-5h :remaining 46.7})))
+      (expect (= "3/5 (2)" (lf/compact-limit-usage {:used 3 :limit 5 :remaining 2})))
+      (expect (= "3/5" (lf/compact-limit-usage {:used 3 :limit 5})))
+      (expect (= "2/5" (lf/compact-limit-usage {:remaining 2 :limit 5})))
+      (expect (= "2" (lf/compact-limit-usage {:remaining 2})))
+      (expect (= "unlimited" (lf/compact-limit-usage {:is-unlimited true})))
+      (expect (nil? (lf/compact-limit-usage {}))))
+  (it "splits a label into the plan name and the window suffix"
+      (expect (= {:label "Codex 7d" :prefix "Codex" :window "7d"}
+                 (lf/limit-label-parts {:id :codex-7d})))
+      (expect (= {:label "Premium"} (lf/limit-label-parts {:id :premium_interactions})))))
+
+(defdescribe
   dynamic-summary-test
   (it "summarises the rows with signal, pressure first, joined by a middot"
-      (expect (= "Premium interactions 3/5 used (2 left) · Chat unlimited"
+      (expect (= "Premium 3/5 (2) · Chat unlimited"
                  (lf/dynamic-summary
                    {:dynamic {:limits
                               [{:id :chat :is-unlimited true}
                                {:id :premium_interactions :used 3 :limit 5 :remaining 2}]}}))))
-  (it "honours max-rows and defaults to two"
+  (it "honours max-rows and defaults to three"
+      ;; Three is the widest plan family shipped (5h + 7d + 30d) and the cells
+      ;; are short now, so capping at two would hide a whole window for nothing.
       (let
         [limits {:dynamic {:limits [{:id :a :remaining 1 :limit 10} {:id :b :remaining 2 :limit 10}
                                     {:id :c :remaining 3 :limit 10}]}}]
-        (expect (= 2 (count (str/split (lf/dynamic-summary limits) #" · "))))
+        (expect (= 3 (count (str/split (lf/dynamic-summary limits) #" · "))))
         (expect (= 1 (count (str/split (lf/dynamic-summary limits 1) #" · "))))
-        (expect (= 3 (count (str/split (lf/dynamic-summary limits 3) #" · "))))))
+        (expect (= 2 (count (str/split (lf/dynamic-summary limits 2) #" · "))))))
+  (it "writes a plan's name once and drops the English words from every window"
+      ;; This used to read "OpenCode Go 5h 100% left · OpenCode Go 7d 100% left ·
+      ;; OpenCode Go 30d 99% left": 78 columns, 44 of them the same words again.
+      (expect (= "OpenCode Go 5h 100% · 7d 100% · 30d 99%"
+                 (lf/dynamic-summary {:dynamic {:limits [{:id :opencode-go-5h
+                                                          :label "OpenCode Go 5h quota (%)"
+                                                          :kind :rate
+                                                          :limit 100.0
+                                                          :remaining 100.0}
+                                                         {:id :opencode-go-7d
+                                                          :label "OpenCode Go 7d quota (%)"
+                                                          :kind :rate
+                                                          :limit 100.0
+                                                          :remaining 100.0}
+                                                         {:id :opencode-go-30d
+                                                          :label "OpenCode Go 30d quota (%)"
+                                                          :kind :rate
+                                                          :limit 100.0
+                                                          :remaining 99.0}]}}))))
   (it "still surfaces SOMETHING when a fresh report has no signal yet"
       (expect (some? (lf/dynamic-summary {:dynamic {:limits
                                                     [{:id :x :limit 0 :remaining 0 :used 0}]}}))))

@@ -491,6 +491,7 @@
 ;; cards) renders identically.
 (import-vars [limits-dynamic-summary limits-format/dynamic-summary]
              [limits-label+usage limits-format/label+usage]
+             [limits-compact-cells limits-format/compact-limit-cells]
              [limits-format-usage limits-format/format-limit-usage]
              [limits-format-number limits-format/format-limit-number]
              [limits-generic-label limits-format/generic-limit-label]

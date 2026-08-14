@@ -1385,10 +1385,10 @@
          (card-rows-text 78 {:id :alpha :models ["m1" "m2"]} limits)]
 
         (expect (str/includes? line2 "2 models available"))
-        (expect (not (str/includes? line2 "Premium interactions"))
+        (expect (not (str/includes? line2 "Premium"))
                 "limits must no longer ride behind the model summary")
-        (expect (str/includes? line3 "Premium interactions"))
-        (expect (str/includes? line3 "(92992 left)"))
+        (expect (str/includes? line3 "Premium"))
+        (expect (str/includes? line3 "(92992)"))
         (expect (str/includes? line3 "Chat unlimited")
                 "the whole account line fits once it owns a row")))
   (it "ellipsizes the account line on a narrow dialog instead of amputating it mid-word"

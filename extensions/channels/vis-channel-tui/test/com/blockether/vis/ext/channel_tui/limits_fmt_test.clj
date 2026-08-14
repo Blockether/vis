@@ -95,10 +95,9 @@
          out
          (lfmt/dynamic-summary limits)]
 
-        (expect (str/includes? out "47% left"))
-        (expect (str/includes? out "80% left"))
-        (expect (str/includes? out " · "))))
-  (it "caps to `max-rows` (default 2)"
+        ;; The plan name is written ONCE and each window carries only its number.
+        (expect (= "Z.ai 5h 47% · 7d 80%" out))))
+  (it "caps to `max-rows` (default 3)"
       (let
         [limits
          {:dynamic {:limits [{:id :a :label "a" :remaining 10} {:id :b :label "b" :remaining 20}
@@ -107,7 +106,7 @@
          out
          (lfmt/dynamic-summary limits)]
 
-        (expect (= 1 (count (re-seq #" · " out))))))
+        (expect (= 2 (count (re-seq #" · " out))))))
   (it "prefers rows with signal; falls back to all when none have signal"
       (let
         [limits
@@ -129,8 +128,8 @@
          out
          (lfmt/dynamic-summary limits)]
 
-        (expect (str/includes? out "Codex 5h"))
-        (expect (str/includes? out "Codex 7d"))))
+        ;; The pair still renders whole; the plan name is written once.
+        (expect (= "Codex 5h · 7d 81%" out))))
   (it "is nil when `[:dynamic :limits]` is empty"
       (expect (nil? (lfmt/dynamic-summary {:dynamic {:limits []}})))
       (expect (nil? (lfmt/dynamic-summary {})))))
@@ -161,5 +160,5 @@
                     out
                     (lfmt/dynamic-summary limits)]
 
-                   (expect (str/starts-with? out "Premium interactions"))
-                   (expect (str/includes? out "(0 left)")))))
+                   (expect (str/starts-with? out "Premium"))
+                   (expect (str/includes? out "(0)")))))

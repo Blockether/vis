@@ -161,10 +161,13 @@
                        (filter #(= :left (:region %)))
                        first
                        :text)]
-            (expect (re-find #"Codex 5h 76% ↺1h55m@.* / 7d 85% ↺3d18h@" text))
+            (expect (re-find #"Codex 5h 76% ↺1h55m@.* / 7d 85%" text))
             (expect (not (str/includes? text "Codex 7d")))
-            (expect (str/includes? text " AM"))
-            (expect (str/includes? text " PM"))
+            ;; ONE reset stamp, on the leading window: a stamp per cell is what
+            ;; pushed a three-window plan past the footer width.
+            (expect (= 1 (count (re-seq #"↺" text))))
+            ;; the absolute half keeps its "EEE h:mm a" shape
+            (expect (re-find #"↺1h55m@[A-Z][a-z]{2} [0-9]{1,2}:[0-9]{2} [AP]M" text))
             (expect (not (re-find #"[0-9]:[0-5][0-9][ap]" text))))))))
   (it
     "keeps a visible Codex 5h window even when the provider omits its data"
@@ -239,7 +242,9 @@
                        (filter #(= :left (:region %)))
                        first
                        :text)]
-            (expect (re-find #"Claude 5h 0% ↺5h0m@.* / 7d 75% ↺6d0h@" text))
+            (expect (re-find #"Claude 5h 0% ↺5h0m@.* / 7d 75%" text))
+            ;; the 7d window's own stamp is noise beside the window being spent
+            (expect (not (str/includes? text "↺6d0h")))
             (expect (not (str/includes? text "Claude 7d"))))))))
   ;; Regression, reported by a user against Claude: the footer sorted limit rows
   ;; by pressure alone, so a nearly-spent 7d window jumped in front of a fresh 5h
@@ -281,7 +286,7 @@
                        (filter #(= :left (:region %)))
                        first
                        :text)]
-            (expect (re-find #"Claude 5h 90% .* / 7d 12% " text)))))))
+            (expect (re-find #"Claude 5h 90% .* / 7d 12%" text)))))))
   (it
     "shows Z.ai coding plan quota windows as percentages on the second footer line"
     (let
@@ -322,7 +327,7 @@
                        (filter #(= :left (:region %)))
                        first
                        :text)]
-            (expect (re-find #"Z\.ai 5h 75% ↺1h30m.* / 7d 50% ↺3d0h" text))
+            (expect (re-find #"Z\.ai 5h 75% ↺1h30m.* / 7d 50%" text))
             (expect (not (str/includes? text "Z.ai 7d"))))))))
   (it
     "shows GitHub Copilot premium interaction utilization on the second footer line"

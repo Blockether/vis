@@ -433,76 +433,56 @@
   (some-> s
           (str/replace " @ " "@")))
 
-(defn- compact-limit-label
-  [row]
-  (-> (lfmt/generic-limit-label row)
-      (str/replace #"(?i)^premium interactions$" "Premium")
-      (str/replace #"(?i)^z\.ai coding plan " "Z.ai ")))
-
-(defn- compact-limit-usage
-  [row]
-  (some-> (lfmt/format-limit-usage row)
-          (str/replace #"% left$" "%")
-          (str/replace #" used \(([^)]+) left\)$" " ($1)")
-          (str/replace #" left\)$" ")")
-          (str/replace #" used$" "")
-          (str/replace #" left$" "")))
-
-(defn- compact-limit-label-parts
-  [row]
-  (let
-    [label
-     (compact-limit-label row)
-
-     parts
-     (str/split label #"\s+")
-
-     window
-     (last parts)]
-
-    (if (and (< 1 (count parts)) (re-matches #"[0-9]+[hd]" window))
-      {:label label :prefix (str/join " " (butlast parts)) :window window}
-      {:label label})))
-
-(defn- format-generic-limit-row-with-label
-  [now-ms row label]
-  (let
-    [usage
-     (compact-limit-usage row)
-
-     reset
-     (some->> (get-in row [:window :resets-at-ms])
-              (format-reset now-ms)
-              compact-reset-text)]
-
-    (str label (when usage (str " " usage)) (when reset (str " " reset)))))
-
-(defn- format-generic-limit-row
+(defn- limit-reset-text
   [now-ms row]
-  (format-generic-limit-row-with-label now-ms row (compact-limit-label row)))
+  (some->> (get-in row [:window :resets-at-ms])
+           (format-reset now-ms)
+           compact-reset-text))
+
+(def ^:private max-grouped-limit-cells
+  "Window cells shown when they share a plan name: the whole family fits
+   because the name is printed once (5h + 7d + 30d)."
+  3)
+
+(def ^:private max-standalone-limit-cells
+  "Cells shown when each carries its own label — two is all a footer line
+   affords."
+  2)
 
 (defn- format-generic-limit-rows
+  "Footer text for a provider's limit rows: the shared plan name once, a
+   `<window> <usage>` cell per window, and ONE reset stamp, on the first cell
+   that has one.
+
+   A plan name and a reset stamp per cell is what made a three-window plan
+   (OpenCode Go 5h / 7d / 30d) unreadable — and pushed the segment past the
+   footer width, where it is dropped whole."
   [now-ms rows]
   (let
-    [rows
-     (take 2 rows)
+    [grouped
+     (lfmt/compact-limit-cells (take max-grouped-limit-cells rows))
 
-     label-parts
-     (map compact-limit-label-parts rows)
+     {:keys [prefix cells]}
+     (if (:prefix grouped)
+       grouped
+       (lfmt/compact-limit-cells (take max-standalone-limit-cells rows)))
 
-     shared-prefix
-     (when (and (< 1 (count rows)) (every? :prefix label-parts) (apply = (map :prefix label-parts)))
-       (:prefix (first label-parts)))]
+     resets
+     (mapv (fn [{:keys [row]}]
+             (limit-reset-text now-ms row))
+           cells)
 
-    (if shared-prefix
-      (str shared-prefix
-           " "
-           (str/join " / "
-                     (map (fn [row {:keys [window]}]
-                            (format-generic-limit-row-with-label now-ms row window))
-                          rows
-                          label-parts)))
-      (str/join "  " (map #(format-generic-limit-row now-ms %) rows)))))
+     stamp-index
+     (first (keep-indexed (fn [index reset]
+                            (when reset index))
+                          resets))
+
+     texts
+     (map-indexed (fn [index {:keys [text]}]
+                    (if (= index stamp-index) (str text " " (nth resets index)) text))
+                  cells)]
+
+    (str (when prefix (str prefix " ")) (str/join " / " texts))))
 
 (defn- generic-limit-sort-key
   "Premium interactions first, then the rolling plan windows shortest-first

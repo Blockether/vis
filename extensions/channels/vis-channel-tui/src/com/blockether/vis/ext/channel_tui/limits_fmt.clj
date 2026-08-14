@@ -18,6 +18,14 @@
 
 (def format-limit-usage limits-format/format-limit-usage)
 
+(def short-limit-label limits-format/short-limit-label)
+
+(def compact-limit-usage limits-format/compact-limit-usage)
+
+(def limit-label-parts limits-format/limit-label-parts)
+
+(def compact-limit-cells limits-format/compact-limit-cells)
+
 (def generic-limit-has-signal? limits-format/generic-limit-has-signal?)
 
 (def label+usage limits-format/label+usage)
