@@ -1,14 +1,14 @@
 (ns com.blockether.vis.ext.foundation-voice.asr
   "Direct Java sherpa-onnx integration for Parakeet TDT ASR."
-  (:require [babashka.http-client :as http]
-            [clojure.java.io :as io]
+  (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.foundation-voice.files :as files]
+            [com.blockether.vis.ext.foundation-voice.sherpa :as sherpa]
             [com.blockether.vis.internal.paths :as paths])
   (:import [com.k2fsa.sherpa.onnx OfflineModelConfig OfflineRecognizer OfflineRecognizerConfig
             OfflineStream OfflineTransducerModelConfig WaveReader]
            [java.io File FileInputStream FileOutputStream]
-           [java.net URI]
            [org.apache.commons.compress.archivers.tar TarArchiveInputStream]
            [org.apache.commons.compress.compressors.bzip2 BZip2CompressorInputStream]))
 
@@ -124,60 +124,6 @@
              (recur))))))
    target-dir))
 
-(defonce ^:private download-http-client (delay (http/client {:connect-timeout 20000})))
-
-(defn- download-with-progress!
-  "Stream `url` to `path`, calling `(on-progress pct)` (0..99) as bytes land
-   when the server reports a content length. nil `on-progress` is fine.
-   Both timeouts are set: a silently stalled socket must FAIL (so the state
-   machine can report :failed and the user can retry) rather than pin the
-   download atom on :downloading forever, which leaves the UI's mic dead."
-  [url path on-progress]
-  (.mkdirs (.getParentFile (io/file path)))
-  (let
-    [uri
-     (URI/create url)
-
-     response
-     (if (= "file" (.getScheme uri))
-       (let [file (io/file uri)]
-         {:body (io/input-stream file) :headers {"content-length" (str (.length file))}})
-       (http/get url {:client @download-http-client :as :stream :timeout 120000 :throw true}))
-
-     raw-total
-     (get-in response [:headers "content-length"])
-
-     raw-total
-     (if (sequential? raw-total) (first raw-total) raw-total)
-
-     ^long total
-     (try (Long/parseLong (str raw-total)) (catch Throwable _ -1))]
-
-    (with-open
-      [^java.io.InputStream in
-       (:body response)
-
-       ^FileOutputStream out
-       (FileOutputStream. (io/file path))]
-
-      (let [buf (byte-array 1048576)]
-        (loop [done 0]
-          (let [n (.read in buf)]
-            (when-not (neg? n)
-              (.write out buf 0 n)
-              (let [done' (+ done n)]
-                (when (and on-progress (pos? total))
-                  (on-progress (min 99 (long (* 100 (/ (double done') (double total)))))))
-                (recur done'))))))))
-  path)
-
-(defn- delete-dir!
-  [^File f]
-  (when (.isDirectory f)
-    (doseq [c (.listFiles f)]
-      (delete-dir! c)))
-  (.delete f))
-
 (defn- install-model!
   "Download + extract into a STAGING dir, verify all files, then ATOMICALLY
    move it into place. The final `dir` never holds partial files — an
@@ -200,10 +146,11 @@
      (fn [phase pct]
        (when on-progress (on-progress {:phase phase :progress pct})))]
 
-    (try (download-with-progress! model-url
-                                  (str archive)
-                                  (fn [pct]
-                                    (report :downloading (long (* 0.9 (long pct))))))
+    (try (sherpa/ensure-native!)
+         (files/download! model-url
+                          (str archive)
+                          (fn [pct]
+                            (report :downloading (long (* 0.9 (long pct))))))
          (extract-tar-bz2! (str archive)
                            (str staging)
                            (fn [pct]
@@ -213,14 +160,14 @@
                            {:type :voice-asr/download-incomplete :model-dir dir})))
          (report :extracting 99)
          (let [final (io/file dir)]
-           (when (.exists final) (delete-dir! final))
+           (when (.exists final) (files/delete-dir! final))
            (.mkdirs (.getParentFile final))
            (when-not (.renameTo staging final)
              (throw (ex-info "Could not move the downloaded model into place"
                              {:type :voice-asr/install-failed :model-dir dir}))))
          dir
          (finally (try (.delete archive) (catch Throwable _))
-                  (try (when (.exists staging) (delete-dir! staging)) (catch Throwable _))))))
+                  (try (when (.exists staging) (files/delete-dir! staging)) (catch Throwable _))))))
 
 (defn ensure-model!
   "Download + atomically install the Parakeet int8 model if missing (blocking).
@@ -491,6 +438,9 @@
 
       _
       (report {:phase :preparing :progress 0})
+
+      _
+      (sherpa/ensure-native!)
 
       dir
       (ensure-model! dir)

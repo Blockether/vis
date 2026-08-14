@@ -1,6 +1,8 @@
 (ns com.blockether.vis.ext.foundation-voice.asr-test
   (:require [clojure.java.io :as io]
             [com.blockether.vis.ext.foundation-voice.asr :as asr]
+            [com.blockether.vis.ext.foundation-voice.files :as files]
+            [com.blockether.vis.ext.foundation-voice.sherpa :as sherpa]
             [lazytest.core :refer [defdescribe it expect]])
   (:import [com.k2fsa.sherpa.onnx VersionInfo WaveReader]
            [java.io ByteArrayInputStream File FileOutputStream]
@@ -229,7 +231,7 @@
                (expect (every? #(<= 0 (:progress %) 89) downloading))
                (expect (every? #(<= 90 (:progress %) 99) extracting))
                (expect (true? (boolean (#'asr/model-installed? target)))))
-             (finally (.delete archive) (#'asr/delete-dir! (io/file target)))))))
+             (finally (.delete archive) (files/delete-dir! (io/file target)))))))
 
 ;; Regression, issue #143: the repackaged 1.12.7 fork shipped only sherpa's JNI,
 ;; so the first sherpa class touched died with UnsatisfiedLinkError "Library not
@@ -239,6 +241,9 @@
 ;; transcription with "version `VERS_1.17.1' not found".
 (defdescribe sherpa-native-test
              (it "runs the version the deps.edn pins, with the ONNX Runtime that jar carries"
+                 ;; The classpath no longer carries any native library: `ensure-native!`
+                 ;; is what puts THIS platform's pair where sherpa's loader finds it.
+                 (sherpa/ensure-native!)
                  ;; Both are NATIVE methods: an answer at all means the JNI loaded, and the
                  ;; runtime it reports is the one shipped beside it — not a coordinate we
                  ;; pin, and no longer ours to keep in step.
@@ -247,6 +252,7 @@
              (it "reads a WAV through the native stack with nothing but the upstream jars"
                  ;; WaveReader's constructor is what triggers sherpa's LibraryLoader, and it
                  ;; is the first native call every transcription makes.
+                 (sherpa/ensure-native!)
                  (let [wav (write-silence-wav! (File/createTempFile "vis-voice-native" ".wav") 1)]
                    (try (let [reader (WaveReader. (str wav))]
                           (expect (= 16000 (.getSampleRate reader)))

@@ -46,7 +46,11 @@
    ;; k2-fsa publishes sherpa-onnx through JitPack, which serves an
    ;; install:install-file POM with no <licenses> block. Apache-2.0 is the
    ;; license of the k2-fsa/sherpa-onnx repository these artifacts are built
-   ;; from, vetted by hand at v1.13.5.
+   ;; from, vetted by hand at v1.13.5. The five native-lib coordinates are no
+   ;; longer declared in any deps.edn — build.clj resolves the BUILD host's for
+   ;; the image and the extension fetches the RUNNING host's on demand — so they
+   ;; no longer reach the inventory below. They stay named here because they are
+   ;; still shipped, and a license vetted by hand must not silently go UNKNOWN.
    "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm"                    "Apache-2.0"
    "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-osx-aarch64"  "Apache-2.0"
    "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-osx-x64"      "Apache-2.0"
@@ -443,13 +447,16 @@ substrate; it is mandatory for the core binary. GraalPy and Truffle/Polyglot
 are **UPL-1.0**; the bundled CPython standard library adds **MIT + PSF**. All
 are permissive and cleared for commercial redistribution.
 
-The optional **`vis-foundation-voice`** extension bundles local speech
-**models via upstream `sherpa-onnx`** (Apache-2.0), whose per-platform native jar
-carries the **ONNX Runtime** (MIT) it is linked against beside its JNI library.
-That native library also carries **espeak-ng** (**GPL-3.0**), which serves only
-sherpa's text-to-speech path — never reached by this extension, which calls the
-ASR path alone; a native built with `SHERPA_ONNX_ENABLE_TTS=OFF` drops it
-outright. Speech runs **fully on-device** — no cloud speech service — and
+The optional **`vis-foundation-voice`** extension runs local speech through
+upstream **`sherpa-onnx`** (Apache-2.0). Only its 187 KB API jar is a declared
+dependency: sherpa's JNI library and the **ONNX Runtime** (MIT) it is linked
+against travel together in one native jar PER PLATFORM, and exactly one of them
+is ever present — fetched on demand into `~/.vis` on a plain JVM, or embedded
+for the BUILD HOST alone in the native image. That native library also carries
+**espeak-ng** (**GPL-3.0**), which serves only sherpa's text-to-speech path —
+never reached by this extension, which calls the ASR path alone; a native built
+with `SHERPA_ONNX_ENABLE_TTS=OFF` drops it outright. Speech runs **fully
+on-device** — no cloud speech service — and
 ships only when that extension is included. No proprietary model weights are
 redistributed by vis; LLM inference is delegated to a provider chosen by the
 operator (§9). Every embedded/optional model component is under a permissive
@@ -612,9 +619,11 @@ Heaviest direct artifacts (>= 1 MB):
 Notes:
 - The **GraalPy** runtime (`python-language` + `python-resources`, ~105 MB) is
   the agent's sandboxed Python substrate — mandatory for the core binary (§4.2).
-- The **voice** stack (`sherpa-onnx` plus the ONNX Runtime inside its
-  per-platform native jar) ships only with the optional `vis-foundation-voice`
-  extension; excluding it drops both.
+- The **voice** stack (`sherpa-onnx`) ships only with the optional
+  `vis-foundation-voice` extension. Its per-platform native jar — the JNI plus
+  the ONNX Runtime inside it — is not a declared dependency at all, so it is
+  absent from the table above: one platform's copy is fetched at runtime or
+  embedded for the build host (§4.2).
 - `sqlite-jdbc` is bundled by the optional `vis-persistance-sqlite` extension.
 - The final GraalVM **native binary** is larger than any single jar because it
   statically links the JDK + Truffle/GraalPy; track its size in the

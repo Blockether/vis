@@ -44,8 +44,8 @@ vulnerable, and what does it do with data.*
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 74 unique, across 15 `deps.edn` modules (root + extensions).
-- **Declared jar footprint (direct coords):** ~194 MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
+- **Direct dependency coordinates:** 69 unique, across 15 `deps.edn` modules (root + extensions).
+- **Declared jar footprint (direct coords):** ~146 MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
 - **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — **copyleft exception(s) flagged in §6.**
 - **Vulnerability posture:** continuous [clj-watson](https://github.com/clj-holmes/clj-watson) SCA on every dependency change, weekly, and on demand — findings publish to the GitHub **Security** tab (§7).
 
@@ -126,13 +126,16 @@ substrate; it is mandatory for the core binary. GraalPy and Truffle/Polyglot
 are **UPL-1.0**; the bundled CPython standard library adds **MIT + PSF**. All
 are permissive and cleared for commercial redistribution.
 
-The optional **`vis-foundation-voice`** extension bundles local speech
-**models via upstream `sherpa-onnx`** (Apache-2.0), whose per-platform native jar
-carries the **ONNX Runtime** (MIT) it is linked against beside its JNI library.
-That native library also carries **espeak-ng** (**GPL-3.0**), which serves only
-sherpa's text-to-speech path — never reached by this extension, which calls the
-ASR path alone; a native built with `SHERPA_ONNX_ENABLE_TTS=OFF` drops it
-outright. Speech runs **fully on-device** — no cloud speech service — and
+The optional **`vis-foundation-voice`** extension runs local speech through
+upstream **`sherpa-onnx`** (Apache-2.0). Only its 187 KB API jar is a declared
+dependency: sherpa's JNI library and the **ONNX Runtime** (MIT) it is linked
+against travel together in one native jar PER PLATFORM, and exactly one of them
+is ever present — fetched on demand into `~/.vis` on a plain JVM, or embedded
+for the BUILD HOST alone in the native image. That native library also carries
+**espeak-ng** (**GPL-3.0**), which serves only sherpa's text-to-speech path —
+never reached by this extension, which calls the ASR path alone; a native built
+with `SHERPA_ONNX_ENABLE_TTS=OFF` drops it outright. Speech runs **fully
+on-device** — no cloud speech service — and
 ships only when that extension is included. No proprietary model weights are
 redistributed by vis; LLM inference is delegated to a provider chosen by the
 operator (§9). Every embedded/optional model component is under a permissive
@@ -257,11 +260,6 @@ _Local speech (upstream sherpa-onnx; ONNX Runtime rides inside its native jar)._
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
 | `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm` | `v1.13.5` | Apache-2.0 | 183 KB | 3rd-party |
-| `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-linux-aarch64` | `v1.13.5` | Apache-2.0 | 12.3 MB | 3rd-party |
-| `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-linux-x64` | `v1.13.5` | Apache-2.0 | 9.8 MB | 3rd-party |
-| `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-osx-aarch64` | `v1.13.5` | Apache-2.0 | 8.8 MB | 3rd-party |
-| `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-osx-x64` | `v1.13.5` | Apache-2.0 | 10.0 MB | 3rd-party |
-| `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-win-x64` | `v1.13.5` | Apache-2.0 | 7.7 MB | 3rd-party |
 
 ### `vis-language-clojure` extension
 
@@ -302,7 +300,7 @@ _Durable session store (SQLite + Flyway migrations)._
 | License | Count |
 |---|---|
 | EPL-1.0 | 21 |
-| Apache-2.0 | 20 |
+| Apache-2.0 | 15 |
 | MIT | 13 |
 | EPL-2.0 | 5 |
 | BSD-2-Clause | 3 |
@@ -402,13 +400,8 @@ Heaviest direct artifacts (>= 1 MB):
 |---|---|---|
 | `org.graalvm.python/python-language` | `25.1.3` | 90.7 MB |
 | `org.graalvm.python/python-resources` | `25.1.3` | 13.8 MB |
-| `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-linux-aarch64` | `v1.13.5` | 12.3 MB |
 | `org.xerial/sqlite-jdbc` | `3.53.2.1` | 11.4 MB |
-| `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-osx-x64` | `v1.13.5` | 10.0 MB |
 | `org.bouncycastle/bcprov-jdk18on` | `1.85` | 9.8 MB |
-| `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-linux-x64` | `v1.13.5` | 9.8 MB |
-| `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-osx-aarch64` | `v1.13.5` | 8.8 MB |
-| `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-win-x64` | `v1.13.5` | 7.7 MB |
 | `org.clojure/clojure` | `1.12.5` | 4.0 MB |
 | `org.jcodec/jcodec` | `0.2.5` | 2.0 MB |
 | `tools.jackson.core/jackson-databind` | `3.2.1` | 1.9 MB |
@@ -418,9 +411,11 @@ Heaviest direct artifacts (>= 1 MB):
 Notes:
 - The **GraalPy** runtime (`python-language` + `python-resources`, ~105 MB) is
   the agent's sandboxed Python substrate — mandatory for the core binary (§4.2).
-- The **voice** stack (`sherpa-onnx` plus the ONNX Runtime inside its
-  per-platform native jar) ships only with the optional `vis-foundation-voice`
-  extension; excluding it drops both.
+- The **voice** stack (`sherpa-onnx`) ships only with the optional
+  `vis-foundation-voice` extension. Its per-platform native jar — the JNI plus
+  the ONNX Runtime inside it — is not a declared dependency at all, so it is
+  absent from the table above: one platform's copy is fetched at runtime or
+  embedded for the build host (§4.2).
 - `sqlite-jdbc` is bundled by the optional `vis-persistance-sqlite` extension.
 - The final GraalVM **native binary** is larger than any single jar because it
   statically links the JDK + Truffle/GraalPy; track its size in the

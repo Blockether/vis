@@ -141,30 +141,37 @@ payload already sits inside the artifact we are about to fetch.
 
 ---
 
-## Phase 2 — Cut `internal/speech.clj`, the synthesis registry
+## Phase 2 — Widen `internal/voice.clj` to carry BOTH directions
 
-**Rationale.** Without it every surface that wants a spoken reply has to know which engine exists,
-whether its model is downloaded and where the WAV came from — the exact knowledge `voice.clj`
-already refuses to leak for transcription. One registry is also what makes "choose your engine" a
-configuration question instead of a code change.
+**Rationale.** Voice is one subject with two directions, and a second namespace would fork every
+answer to the same question: which engines exist, which is default, is its model downloaded, where
+did that job go. `voice.clj` already answers all four for transcription behind an engine registry —
+one `register-engine!`, one job store, one readiness machine, one feature toggle — so synthesis
+belongs in it, keyed by direction, not in a twin that drifts. Without it every surface that wants a
+spoken reply has to know which engine exists and whether its model is downloaded, and "choose your
+engine" stays a code change instead of a configuration question.
 
 **Data.** None. Every function here is in-process; the shapes it hands out cross the wire in
 Phase 3 and are specified there.
 
 **Acceptance criteria.**
-- `src/com/blockether/vis/internal/speech.clj` — `phases` (`:preparing :synthesizing :done
-  :failed`), `register-engine!` / `unregister-engine!` / `set-default-engine!`, `VIS_SPEECH_ENGINE`,
-  `engines` / `engine` / `default-engine` / `resolve-engine`, `readiness` / `prepare!` / `ready?`,
-  `voices`, `engines-info`, `synthesize!`, and a TTL/capped job store with `watch!` — each the twin
-  of the named `voice.clj` function, definitions ordered so nothing is forward-declared.
+- `src/com/blockether/vis/internal/voice.clj` — the registry keyed by DIRECTION, `:transcribe` and
+  `:synthesize`: `register-engine!` / `unregister-engine!` / `set-default-engine!` / `engines` /
+  `engine` / `default-engine` / `resolve-engine` take a direction and neither side can resolve the
+  other's default; `VIS_VOICE_ENGINE` is joined by `VIS_SPEECH_ENGINE`; `readiness` / `prepare!` /
+  `ready?` and the TTL-capped job store with `watch!` serve both. New for synthesis: `voices`,
+  `synthesize!`, and `phases` growing `:synthesizing`. Definitions ordered so nothing is
+  forward-declared.
 - The `speech` feature toggle registered from merged config so `/reload` respects a project override.
-- Test that proves it done: `test/com/blockether/vis/internal/speech_test.clj` registers a fake
-  engine, resolves the default by pin and by environment variable, drives one job to `done` and one
-  to `failed`, and proves the TTL sweep drops a finished job.
+- Test that proves it done: `test/com/blockether/vis/internal/voice_test.clj` registers a fake
+  synthesis engine beside a transcription one, proves each direction resolves only its own default
+  by pin and by environment variable, drives one synthesis job to `done` and one to `failed`, and
+  proves the TTL sweep drops a finished job.
 
 **Unknowns.**
 - Does a synthesis job need a `:queued` phase when two turns finish at once, or is one job per
   request with a bounded pool enough?
+- Can one engine serve both directions, or is a registry entry always exactly one direction?
 
 ---
 
@@ -224,7 +231,7 @@ strings and booleans are `is_<foo>`, rendered by `wire/->wire`.
 
 ---
 
-## Phase 4 — `vis-foundation-speech`: pocket-tts on sherpa, with voices we own
+## Phase 4 — `tts.clj` in `vis-foundation-voice`: pocket-tts on sherpa, with voices we own
 
 **Rationale.** Pocket is the only family in 1.13.5 whose config carries no lexicon and no data
 directory, so it is the only one that speaks without a phonemizer; and because its voice is an
@@ -236,11 +243,12 @@ the gateway still cannot speak.
 the extension.
 
 **Acceptance criteria.**
-- `extensions/common/vis-foundation-speech/` — laid out like `vis-foundation-voice`, depending on
-  the same JitPack coordinates, registering one engine through `speech/register-engine!`.
-- `speech.clj` — `OfflineTts` + `OfflineTtsPocketModelConfig`; download, verify and atomically
-  install into `~/.vis/models/...` in the shape of `asr.clj:279-330`, with the same notification
-  and readiness phases the app already renders for ASR.
+- `extensions/common/vis-foundation-voice/src/com/blockether/vis/ext/foundation_voice/tts.clj` —
+  beside `asr.clj`, on the native `sherpa.clj` already provisions, registering one `:synthesize`
+  engine through `voice/register-engine!`. `OfflineTts` + `OfflineTtsPocketModelConfig`; download,
+  verify and atomically install into `~/.vis/models/...` through `files.clj` in the shape
+  `install-model!` already proves, with the same notification and readiness phases the app renders
+  for ASR.
 - `voices.edn` — one entry per shipped voice: id, label, language, source URL, SPDX id,
   `is-commercial-ok`. It ships the catalogue voices that are CC0 or CC BY 4.0; **`cosette`
   (Expresso) and `jean` (EARS) are CC BY-NC and are never converted**, and `rafael`/`juergen` wait
@@ -372,29 +380,40 @@ shapes.
 
 **ACCEPTED** — Phase 1 has landed.
 
-**Phase 1 — DONE**, in the commit that carries this line. `vis-foundation-voice` now resolves
-`com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm v1.13.5` plus all five
-`sherpa-onnx-native-lib-<platform>` jars from JitPack; `com.microsoft.onnxruntime/onnxruntime` and
+**Phase 1 — DONE**, `f99eaee39`, refined by the commit that carries this line.
+`vis-foundation-voice` resolves `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm v1.13.5` from
+JitPack and nothing else. `com.microsoft.onnxruntime/onnxruntime` and
 `com.litongjava/sherpa-onnx-java-api` are gone, and with them `onnxruntime-version`,
 `onnxruntime-resource-name`, `onnxruntime-target-names`, `ensure-onnxruntime-native!`,
 `native-platform`, `native-lib-dir`, `resource-stream`, both call sites, and the
 `onnxruntime-native-test` / `onnxruntime-abi-test` pair that guarded the pin — 104 lines out of
-`asr.clj`. `build.clj` includes `sherpa-onnx/native/<tok>/.*` instead of `native/<tok>/.*` plus an
-`ai/onnxruntime` pattern, and the uberjar's dSYM/pdb excludes went with the dependency that needed
-them. `audit/README.md` is regenerated: the six JitPack coordinates carry a hand-vetted Apache-2.0
-override, because JitPack serves an `install:install-file` POM with no `<licenses>` block, and §4.2
-now states the espeak-ng (GPL-3.0) code inside sherpa's published native, which Phase 5 removes.
-Proven by `sherpa-native-test`: the loaded JNI answers `1.13.5` with ONNX Runtime `1.27.1` from
-`VersionInfo`'s native methods, and a WAV reads through `WaveReader` — 31 tests green in the
-extension.
+`asr.clj`. The five `sherpa-onnx-native-lib-<platform>` jars are no longer dependencies either:
+that was 51 MB of libraries to load 10 MB of them, four platforms of which no machine can run.
+`extensions/common/vis-foundation-voice/src/com/blockether/vis/ext/foundation_voice/sherpa.clj`
+provisions THIS platform's pair instead — `sherpa_onnx.native.path` when the user set it (the seam
+for a self-built native), the classpath resource when it is embedded, else one 9.2 MB jar from the
+same JitPack coordinate, unpacked atomically into `~/.vis/native/sherpa-onnx-1.13.5/<platform>/` and
+handed to sherpa through the first of the three loading methods its own `LibraryUtils` documents.
+`build.clj`'s `sherpa-native-jars` puts the BUILD HOST's jar on the image classpath, so
+`-H:IncludeResources=sherpa-onnx/native/<tok>/.*` still bakes exactly one platform into each binary,
+and `files.clj` holds the streaming download both fetchers share — length-checked, so a truncated
+`.dylib` or `.onnx` can never be installed. `audit/README.md` is regenerated and §4.2 states the
+espeak-ng (GPL-3.0) code inside sherpa's published native, which Phase 5 removes. Proven with ZERO
+native jars on the classpath: `ensure-native!` answers `{:source :downloaded :platform
+"osx-aarch64"}`, 32.5 MB of libraries land, the loaded JNI answers `1.13.5` with ONNX Runtime
+`1.27.1` from `VersionInfo`'s native methods, a WAV reads through `WaveReader`, no foreign platform
+resolves as a resource, and `platform-token` mirrors `LibraryUtils.getOsArch()` including the order
+of its tests — 23 tests green in the extension, 38 across the build, release, audit, pin and
+hygiene set.
 
-**Both Phase 1 unknowns are answered.** JitPack resolves every coordinate on first fetch (the whole
-set is 51 MB against the 95.6 MB the fork plus ONNX Runtime cost, so a warm `~/.m2` step is not
-needed, and `clojure -Spath` is green from the extension directory and from the root). Every one of
-the five platform jars carries its ONNX Runtime beside the JNI — `libonnxruntime.dylib` 28.3/31.6
-MB, `libonnxruntime.so` 26.4/34.0 MB, `onnxruntime.dll` 17.4 MB — so no platform needs a copy step.
-One correction the migration earned: tools.deps reads `:mvn/repos` only from the project it is
-invoked on, never from a `:local/root` dependency, so the root `deps.edn` repeats the JitPack repo.
+**Both Phase 1 unknowns are answered.** JitPack resolves every coordinate on first fetch, so no
+warm-`~/.m2` step is needed and `clojure -Spath` is green from the extension directory and from the
+root. Every one of the five platform jars carries its ONNX Runtime beside the JNI —
+`libonnxruntime.dylib` 28.3/31.6 MB, `libonnxruntime.so` 26.4/34.0 MB, `onnxruntime.dll` 17.4 MB —
+so no platform needs a copy step, and a machine now fetches exactly one of them. One correction the
+migration earned: tools.deps reads `:mvn/repos` only from the project it is invoked on, never from a
+`:local/root` dependency, so the root `deps.edn` and `build.clj`'s own resolution each repeat the
+JitPack repo.
 
 **Settled before Phase 1**, from public sources and with no code involved:
 
@@ -404,6 +423,10 @@ invoked on, never from a `:local/root` dependency, so the root `deps.edn` repeat
   us imposing it as a condition on anyone downstream.
 - The shipped voice list is decided: every CC0 and CC BY 4.0 voice in the catalogue, minus `cosette`
   and `jean`.
+- The gate is confirmed from an authenticated read, not from the card alone: an anonymous `resolve`
+  of a `kyutai/pocket-tts` weight answers **401**, the same request with the account's read token
+  answers **206**, and the repository is still `gated: auto`. The token belongs in CI secrets as
+  `HF_TOKEN` and in no file in this tree.
 
 Three decisions the plan takes, so they are not re-litigated in review:
 
@@ -419,9 +442,9 @@ Three decisions the plan takes, so they are not re-litigated in review:
 
 TODO, in order:
 
-1. **Phase 2** — `internal/speech.clj`, the registry and job store.
+1. **Phase 2** — synthesis inside `internal/voice.clj`, one registry for both directions.
 2. **Phase 3** — the HTTP surface and `features.speech`.
-3. **Phase 4** — `vis-foundation-speech` with pocket-tts.
+3. **Phase 4** — `tts.clj` in `vis-foundation-voice`, with pocket-tts.
 4. **Phase 5** — our own release, manifest and license test; the espeak-free native build.
 5. **Phase 6** — engine and voice pickers in the companion, Android voice enumeration.
 6. **Phase 7** — Piper and Kokoro, opt-in, never redistributed.

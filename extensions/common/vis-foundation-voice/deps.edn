@@ -4,18 +4,15 @@
  :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
  :deps {org.clojure/clojure {:mvn/version "1.12.5"}
         com.blockether/vis {:local/root "../../.."}
-        ;; Upstream sherpa-onnx: a small API jar plus one native jar per platform
-        ;; we run on. Each native jar carries libsherpa-onnx-jni AND the exact
-        ;; libonnxruntime it was built against side by side under
-        ;; sherpa-onnx/native/<platform>/, and sherpa's own LibraryUtils extracts
-        ;; both and loads the runtime FIRST. So there is no ONNX Runtime
-        ;; coordinate to pin, no ABI to guard and no copy step to run.
+        ;; Upstream sherpa-onnx, API JAR ONLY (187 KB). The JNI and the exact
+        ;; libonnxruntime it was linked against live together in one native jar
+        ;; PER PLATFORM, 8-13 MB each — depending on all five here made every
+        ;; machine download 51 MB to load one of them, and put four foreign
+        ;; platforms' libraries on every classpath. `sherpa.clj` provisions the
+        ;; host pair on demand and `build.clj` embeds the BUILD HOST's into the
+        ;; native image, so there is still no ONNX Runtime coordinate to pin, no
+        ;; ABI to guard and no copy step to run.
         com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm {:mvn/version "v1.13.5"}
-        com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-osx-aarch64 {:mvn/version "v1.13.5"}
-        com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-osx-x64 {:mvn/version "v1.13.5"}
-        com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-linux-x64 {:mvn/version "v1.13.5"}
-        com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-linux-aarch64 {:mvn/version "v1.13.5"}
-        com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-win-x64 {:mvn/version "v1.13.5"}
         org.apache.commons/commons-compress {:mvn/version "1.28.0"}}
  :aliases
  {:test {:extra-paths ["test"]

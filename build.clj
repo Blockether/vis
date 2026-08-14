@@ -56,7 +56,7 @@
   []
   (->> (file-seq (io/file extension-package-root))
        (filter extension-package-deps-file?)
-       (map #(-> %
+       (map #(-> ^java.io.File %
                  .getParentFile
                  .getPath))
        sort))
@@ -935,6 +935,26 @@
     (cond (str/includes? os "mac") (str "macos-" (if arm? "arm64" "x86_64"))
           :else (str "linux-" (if arm? "aarch64" "x86_64")))))
 
+(defn- native-platform-token
+  "sherpa-onnx native-lib dir token for the BUILD host (e.g. `osx-aarch64`,
+   `linux-x64`) — the directory name inside `sherpa-onnx-native-lib-<platform>`
+   that sherpa's own LibraryUtils resolves its two dylibs from."
+  []
+  (let
+    [os
+     (str/lower-case (System/getProperty "os.name"))
+
+     arch
+     (str/lower-case (System/getProperty "os.arch"))
+
+     a
+     (cond (#{"aarch64" "arm64"} arch) "aarch64"
+           (#{"x86_64" "amd64" "x64"} arch) "x64"
+           :else arch)]
+
+    (cond (str/includes? os "mac") (str "osx-" a)
+          :else (str "linux-" a))))
+
 (defn- native-lib-jars
   "Resolve every host-platform FFM artifact at the exact version of its main jar
    in `basis`. Only the host native jar enters the image classpath, so each
@@ -998,6 +1018,46 @@
            (mapcat jars-by-artifact)
            vec))))
 
+(defn- sherpa-native-jars
+  "The BUILD HOST's sherpa-onnx native jar, at the version `basis` pins for the
+   API jar. The voice extension depends on that 187 KB API jar ALONE — its five
+   platform jars are 51 MB and a machine loads exactly one of them, which
+   `sherpa.clj` downloads on demand — so the image build is where the host pair
+   has to come back: `-H:IncludeResources` bakes in this jar's one directory and
+   sherpa's loader then finds the libraries as resources, with nothing to fetch.
+
+   Native images cannot use the runtime tools.deps downloader, so a missing
+   artifact is a hard build failure, never a warning."
+  [basis]
+  (let
+    [version
+     (get-in basis [:libs 'com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm :mvn/version])
+
+     platform
+     (native-platform-token)
+
+     artifact
+     (symbol "com.github.k2-fsa.sherpa-onnx" (str "sherpa-onnx-native-lib-" platform))]
+
+    (when-not version
+      (throw (ex-info "Native build requires the sherpa-onnx API jar."
+                      {:artifact 'com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm})))
+    (let
+      [native-basis
+       (b/create-basis {:project nil
+                        :extra {:mvn/repos {"jitpack" {:url "https://jitpack.io"}}
+                                :deps {artifact {:mvn/version version}}}})
+
+       jars
+       (->> (get-in native-basis [:libs artifact :paths])
+            (filter #(str/ends-with? % ".jar"))
+            vec)]
+
+      (when (empty? jars)
+        (throw (ex-info "Native build requires sherpa-onnx's native jar for its target platform."
+                        {:artifact artifact :platform platform})))
+      jars)))
+
 (defn- native-classpath
   "Classpath for the native build: the AOT classes dir FIRST (so compiled app +
    merged manifest win), then every dependency JAR. We deliberately DROP the
@@ -1035,29 +1095,9 @@
          #(re-find
             #"/org/clojure/tools\.deps/|/org/clojure/tools\.deps\.edn/|/tools\.deps\.maven-s3-transporter/|/com/cognitect/aws/|/org/apache/maven/"
             %)))]
-    (->> (concat jars (native-lib-jars basis))
+    (->> (concat jars (native-lib-jars basis) (sherpa-native-jars basis))
          (into [native-class-dir])
          (str/join java.io.File/pathSeparator))))
-
-(defn- native-platform-token
-  "sherpa-onnx native-lib dir token for the BUILD host (e.g. `osx-aarch64`,
-   `linux-x64`) — the directory name inside `sherpa-onnx-native-lib-<platform>`
-   that sherpa's own LibraryUtils resolves its two dylibs from."
-  []
-  (let
-    [os
-     (str/lower-case (System/getProperty "os.name"))
-
-     arch
-     (str/lower-case (System/getProperty "os.arch"))
-
-     a
-     (cond (#{"aarch64" "arm64"} arch) "aarch64"
-           (#{"x86_64" "amd64" "x64"} arch) "x64"
-           :else arch)]
-
-    (cond (str/includes? os "mac") (str "osx-" a)
-          :else (str "linux-" a))))
 
 (defn- truffle-platform-tokens
   "[os arch] the GraalPy/Truffle internal-resource dirs use under
