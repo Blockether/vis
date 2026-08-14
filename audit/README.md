@@ -1,6 +1,6 @@
 # Vis — Security & Dependency Audit
 
-> Generated 2026-08-12.
+> Generated 2026-08-14.
 
 Vis is a coding agent that writes Python into a sandboxed GraalPy runtime,
 keeps durable state outside the model context window, and inspects and changes
@@ -186,7 +186,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/imaging` | `0.1.9` | MIT | 23 KB | Blockether (in-house) |
 | `com.blockether/rift` | `0.0.10-11` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/ruff` | `0.3.5` | MIT | 10 KB | Blockether (in-house) |
-| `com.blockether/svar` | `0.7.115` | Apache-2.0 | 518 KB | Blockether (in-house) |
+| `com.blockether/svar` | `0.7.117` | Apache-2.0 | 519 KB | Blockether (in-house) |
 | `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.39` | MIT | 175 KB | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.041` | MIT | 49 KB | 3rd-party |
 | `com.github.clj-easy/graal-build-time` | `1.0.6` | MIT | 27 KB | 3rd-party |
@@ -244,7 +244,7 @@ _Bridge verification tool surface._
 
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
-| `com.blockether/bridge` | `0.2.2` | Apache-2.0 | 77 KB | Blockether (in-house) |
+| `com.blockether/bridge` | `0.3.0` | Apache-2.0 | 46 KB | Blockether (in-house) |
 
 ### `vis-foundation-voice` extension
 
