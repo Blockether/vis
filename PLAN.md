@@ -378,7 +378,7 @@ shapes.
 
 ## State of the plan
 
-**ACCEPTED** — Phase 1 has landed.
+**ACCEPTED** — Phases 1 and 2 have landed.
 
 **Phase 1 — DONE**, `f99eaee39`, refined by the commit that carries this line.
 `vis-foundation-voice` resolves `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm v1.13.5` from
@@ -415,6 +415,40 @@ migration earned: tools.deps reads `:mvn/repos` only from the project it is invo
 `:local/root` dependency, so the root `deps.edn` and `build.clj`'s own resolution each repeat the
 JitPack repo.
 
+**Phase 2 — DONE**, the commit that carries this line.
+`src/com/blockether/vis/internal/voice.clj` is one registry for BOTH directions and 681 lines of
+contract: `directions` and `direction?` are the vocabulary, and `register-engine!`,
+`unregister-engine!`, `set-default-engine!`, `engines`, `engine`, `default-engine`,
+`resolve-engine`, `engine-error` and `engines-info` all take the direction FIRST. The direction is
+also the key its work fn lives under, so `:synthesize` can never resolve to something that only
+listens, and the same id in both directions is two independent entries. `VIS_VOICE_ENGINE` is
+joined by `VIS_SPEECH_ENGINE` in `engine-env-vars`, and the precedence — an operator outranks a pin
+outranks registration order — moved into the PURE `choose-engine`, so the order is provable without
+mutating a running process's environment. `phases` grew `:synthesizing`, and `direction-phases`
+hands a surface only the phases its own direction walks (the gateway's `/v1/capabilities` now
+advertises `(direction-phases :transcribe)`, never a phase transcription cannot reach). New for
+speaking: `voices` over the engine's own catalogue, `synthesize!` beside `transcribe!`, and
+`job-audio-path` — the file a finished job wrote, host-side only, because the path is as absent
+from `public-job` as a recording's always was. The TTL-capped job store, `watch!` and `advance!`
+serve both directions unchanged: `submit!` / `submit-sync!` take the direction, a job carries it,
+and a spoken job's answer is `{:audio {:media-type :sample-rate :bytes}}`. The `speech` toggle is
+registered here, at the one door both spoken paths pass through, so a project's `vis.yml` silences
+synthesis without a restart. `test/com/blockether/vis/internal/voice_test.clj` proves it in 19
+tests: a fake speaker beside a fake listener, each direction resolving only its own default by pin
+AND by environment variable, a spoken job driven to `:done` (with the file it wrote and the
+`:synthesizing` frames a watcher saw) and two driven to `:failed` — an engine that throws, and one
+that answers with no file at all — the toggle refusing before a job exists, and the TTL sweep
+dropping a finished job while never touching one still running. 19 + 64 (`server_test`) + 21
+(`toggles_test`) + 38 (the extension) green, lint clean.
+
+**Both Phase 2 unknowns are answered.** A registry entry is exactly ONE direction: the direction is
+the key the work fn lives under, so validation is the same question as capability, and something
+that can do both registers twice — proven by a test that registers one id in both directions and
+unregisters it from one. And synthesis needs no `:queued` phase of its own and no pool: every job
+already starts at `:queued` in the shared vocabulary, `submit!` gives each its own thread, and until
+a surface can ask for a spoken reply (Phase 3) there is no queue to bound. Backpressure is Phase 3's
+question, with a real caller behind it.
+
 **Settled before Phase 1**, from public sources and with no code involved:
 
 - The `kyutai/pocket-tts` gate is `auto` and its only condition is a prohibited-use statement, so
@@ -442,12 +476,11 @@ Three decisions the plan takes, so they are not re-litigated in review:
 
 TODO, in order:
 
-1. **Phase 2** — synthesis inside `internal/voice.clj`, one registry for both directions.
-2. **Phase 3** — the HTTP surface and `features.speech`.
-3. **Phase 4** — `tts.clj` in `vis-foundation-voice`, with pocket-tts.
-4. **Phase 5** — our own release, manifest and license test; the espeak-free native build.
-5. **Phase 6** — engine and voice pickers in the companion, Android voice enumeration.
-6. **Phase 7** — Piper and Kokoro, opt-in, never redistributed.
+1. **Phase 3** — the HTTP surface and `features.speech`.
+2. **Phase 4** — `tts.clj` in `vis-foundation-voice`, with pocket-tts.
+3. **Phase 5** — our own release, manifest and license test; the espeak-free native build.
+4. **Phase 6** — engine and voice pickers in the companion, Android voice enumeration.
+5. **Phase 7** — Piper and Kokoro, opt-in, never redistributed.
 
 **Lineage.** This plan supersedes *"Let a session speak to the other sessions in its tree"*, which
 was **ACCEPTED** and unstarted; it is preserved verbatim at `git show b3130f92a:PLAN.md` and nothing

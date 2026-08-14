@@ -2656,13 +2656,14 @@
 
     (cond (not (and sid (state/soul sid)))
           (json-response 404 {:status "unavailable" :error "unknown session"})
-          :else (if-let [engine (try (voice/resolve-engine id) (catch Throwable _ nil))]
+          :else (if-let [engine (try (voice/resolve-engine :transcribe id) (catch Throwable _ nil))]
                   (f sid engine)
                   (if id
                     (json-response 400
                                    {:status "unavailable"
                                     :error (str "unknown voice engine: " (name id))
-                                    :engines (mapv voice/public-engine (voice/engines))})
+                                    :engines (mapv voice/public-engine
+                                                   (voice/engines :transcribe))})
                     (json-response 501
                                    {:status "unavailable"
                                     :error "no voice transcription engine is registered"}))))))
@@ -2865,7 +2866,7 @@
   [request]
   (let
     [engine
-     (try (voice/default-engine) (catch Throwable _ nil))
+     (try (voice/default-engine :transcribe) (catch Throwable _ nil))
 
      voice-caps
      (merge {:enabled (boolean engine)
@@ -2880,10 +2881,10 @@
              :is-async true
              :progress "sse"
              :progress-event wire/voice-job-event
-             :phases (mapv name voice/phases)
+             :phases (mapv name (voice/direction-phases :transcribe))
              :model
              (if engine (voice-state->json (voice/readiness engine)) {:status "unavailable"})}
-            (voice/engines-info))]
+            (voice/engines-info :transcribe))]
 
     (json-response {:version 1
                     :protocol (protocol/handshake)
@@ -2964,7 +2965,8 @@
                  ;; job's input and is deleted by `:on-done`, whichever way the
                  ;; job ends.
                  (json-response 202
-                                (voice/submit! {:audio-path (str tmp)
+                                (voice/submit! :transcribe
+                                               {:audio-path (str tmp)
                                                 :engine-id (:id engine)
                                                 :on-done (fn [_job]
                                                            (.delete tmp))})))

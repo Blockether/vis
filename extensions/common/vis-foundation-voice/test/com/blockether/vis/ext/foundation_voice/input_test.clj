@@ -109,10 +109,10 @@
          (atom [])
 
          before
-         (vcore/engines)]
+         (vcore/engines :transcribe)]
 
         (doseq [e before]
-          (vcore/unregister-engine! (:id e)))
+          (vcore/unregister-engine! :transcribe (:id e)))
         (reset! voice/state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
         (try (engine/register!)
              (with-redefs
@@ -151,9 +151,9 @@
                          #(= {:op :input/append :text "add this to the prompt" :source :voice/input}
                              %)
                          @events)))
-             (finally (vcore/unregister-engine! engine/engine-id)
+             (finally (vcore/unregister-engine! :transcribe engine/engine-id)
                       (doseq [e before]
-                        (vcore/register-engine! e))))))
+                        (vcore/register-engine! :transcribe e))))))
   (it "starts ticker after recorder is visible in shared state"
       (let [events (atom [])]
         (reset! voice/state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
@@ -361,12 +361,12 @@
                         "from the test engine")}
 
          before
-         (vcore/engines)]
+         (vcore/engines :transcribe)]
 
         (doseq [e before]
-          (vcore/unregister-engine! (:id e)))
+          (vcore/unregister-engine! :transcribe (:id e)))
         (reset! voice/state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
-        (try (vcore/register-engine! engine)
+        (try (vcore/register-engine! :transcribe engine)
              (with-redefs
                [recorder/start!
                 (fn []
@@ -398,6 +398,6 @@
                (expect
                  (some #(= {:op :input/append :text "from the test engine" :source :voice/input} %)
                        @events)))
-             (finally (vcore/unregister-engine! :test-progress)
+             (finally (vcore/unregister-engine! :transcribe :test-progress)
                       (doseq [e before]
-                        (vcore/register-engine! e)))))))
+                        (vcore/register-engine! :transcribe e)))))))

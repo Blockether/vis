@@ -63,7 +63,8 @@
    `:start-download` are what let a surface say \"downloading 42%\" without any
    caller knowing that THIS engine happens to need a 465MB model."
   []
-  (voice/register-engine! {:id engine-id
+  (voice/register-engine! :transcribe
+                          {:id engine-id
                            :label "Parakeet (local)"
                            :transcribe transcribe
                            :model-state asr/model-state

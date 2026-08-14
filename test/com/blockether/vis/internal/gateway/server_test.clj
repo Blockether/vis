@@ -459,15 +459,15 @@
   "Run `f` with EXACTLY `engine` registered (nil = a gateway with no voice engine
    at all), then put the registry back."
   [engine f]
-  (let [before (voice/engines)]
+  (let [before (voice/engines :transcribe)]
     (doseq [e before]
-      (voice/unregister-engine! (:id e)))
-    (try (when engine (voice/register-engine! engine))
+      (voice/unregister-engine! :transcribe (:id e)))
+    (try (when engine (voice/register-engine! :transcribe engine))
          (f)
-         (finally (doseq [e (voice/engines)]
-                    (voice/unregister-engine! (:id e)))
+         (finally (doseq [e (voice/engines :transcribe)]
+                    (voice/unregister-engine! :transcribe (:id e)))
                   (doseq [e before]
-                    (voice/register-engine! e))))))
+                    (voice/register-engine! :transcribe e))))))
 
 (defn- wav-body
   "A RIFF/WAVE header long enough to pass the gateway's cheap pre-filter."
