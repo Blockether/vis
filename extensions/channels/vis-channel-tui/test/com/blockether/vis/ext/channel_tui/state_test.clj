@@ -7,6 +7,7 @@
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.transient :as tr]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
+            [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]))
 
 ;; `"verbosity"` is a BUILTIN toggle (`internal/toggles.clj`), not a provider
@@ -4494,6 +4495,80 @@
                          {:client-turn-id "c1" :status :completed}])
         (expect (= messages (:messages @state/app-db)))
         (expect (= 2 (count (:messages @state/app-db)))))))
+
+;; Regression, issue #145: a turn whose LAST iteration was prose-only painted its
+;; answer TWICE — once inside the iteration bubble (the retained live
+;; `:content-stream`) and once as the settled answer block, the same Markdown at
+;; two different wrap widths.
+(def ^:private answered-prose
+  "The Markdown the model streamed and the gateway then settled as the answer."
+  "The final answer, in prose, with no code form.")
+
+(defn- prose-only-trace
+  "A trace whose LAST iteration returned no code form, so the renderer keeps its
+   live `:content-stream` (it only drops the stream once `:forms` land)."
+  []
+  [{:id :iter-1 :thinking "reasoning" :forms [{:id :form-1 :code "print(1)"}]}
+   {:id :iter-2 :forms [] :content-stream answered-prose}])
+
+(defn- settle-worker-answer!
+  "Settle the pending bubble through the blocking-worker path with `blocks` as the
+   turn's canonical content; hand back the settled assistant message."
+  [trace blocks]
+  (reset! state/app-db (terminal-test-db {:progress {:iterations trace}}))
+  (state/dispatch [:message-received nil blocks {:client-turn-id "c1" :status :completed}])
+  (get-in @state/app-db [:messages 1]))
+
+(defn- answer-rows
+  "How many painted rows of a settled bubble carry `text` — the count the reader
+   sees, trace copy and answer band together."
+  [message text]
+  (->> (:lines (render/format-answer-with-thinking-data*
+                 (:text message)
+                 (:traces message)
+                 80
+                 {:show-thinking true :show-iterations true}
+                 nil
+                 false
+                 {:session-id "s1" :session-turn-id "t1" :detail-expansions {}}))
+       (filter #(str/includes? (str/replace (str %) #"\u001b\[[0-9;]*m" "") text))
+       count))
+
+(defdescribe
+  settled-answer-prose-dedupe-test
+  (it "drops the trace copy of prose the settled answer already carries"
+      (let
+        [message (settle-worker-answer!
+                   (prose-only-trace)
+                   [{"id" "block_b879da55" "type" "prose" "markdown" answered-prose}])]
+        (expect (= answered-prose (get (first (:content message)) "markdown")))
+        (expect (nil? (:content-stream (second (:traces message)))))))
+  (it "paints that answer exactly once"
+      (let
+        [message (settle-worker-answer!
+                   (prose-only-trace)
+                   [{"id" "block_b879da55" "type" "prose" "markdown" answered-prose}])]
+        (expect (= 1 (answer-rows message answered-prose)))))
+  (it "keeps iteration commentary that is not the answer"
+      (let
+        [trace
+         [{:id :iter-1 :assistant-prose "Checking the failing test first."}
+          {:id :iter-2 :forms [] :content-stream answered-prose}]
+
+         message
+         (settle-worker-answer! trace [{"id" "b1" "type" "prose" "markdown" answered-prose}])]
+
+        (expect (= "Checking the failing test first." (:assistant-prose (first (:traces message)))))
+        (expect (= 1 (answer-rows message answered-prose)))))
+  (it "settles the stranded terminal path's promoted prose once"
+      ;; `terminal-content` promotes the last trace prose when the turn carries no
+      ;; content blocks, which left the SAME text on the trace entry it came from.
+      (reset! state/app-db (terminal-test-db {:progress {:iterations (prose-only-trace)}}))
+      (sync-terminal-without-timer! {:turn-id "t1" :client-id "c1" :status "completed"})
+      (settle-marked-terminal!)
+      (let [message (get-in @state/app-db [:messages 1])]
+        (expect (= answered-prose (get (first (:content message)) "markdown")))
+        (expect (= 1 (answer-rows message answered-prose))))))
 
 (defn- liveness-tick!
   "Run the liveness watchdog with the gateway registry stubbed to `turns` and

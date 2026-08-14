@@ -1883,12 +1883,54 @@ function releaseRamp(id: symbol): void {
  * scroller in the same layout pass — the drift it measures is already zero.
  */
 
-function traceEntry(iteration: TranscriptIteration, index: number) {
+/**
+ * Trimmed Markdown of every PROSE block in a settled answer — exactly the strings
+ * the answer band under the trace paints.
+ */
+export function answeredProse(
+  blocks: readonly ContentBlock[] | undefined,
+): ReadonlySet<string> {
+  const answered = new Set<string>();
+  for (const block of blocks ?? []) {
+    if (block.type !== "prose") continue;
+    const markdown = block.markdown?.trim();
+    if (markdown) answered.add(markdown);
+  }
+  return answered;
+}
+
+/** Stable empty answer, for a trace painted with no answer beside it. */
+const NOTHING_ANSWERED: ReadonlySet<string> = new Set<string>();
+
+/**
+ * The commentary this iteration paints INSIDE the trace, minus any copy of the
+ * settled answer.
+ *
+ * Regression, issue #145: the model narrates its answer and then hands the SAME
+ * text to `done(...)`, so the row carries it both as the iteration's
+ * `assistant_prose` (`prose-beyond-code` only strips prose restating the CODE)
+ * and as the turn's answer block — and the reader saw one answer twice, at the
+ * trace's width and again at the answer band's. The match is exact on the
+ * trimmed text, so commentary that merely resembles the answer survives.
+ */
+function traceProse(
+  iteration: TranscriptIteration,
+  answered: ReadonlySet<string>,
+): string {
+  const prose = iteration.assistant_prose?.trim() ?? "";
+  return answered.has(prose) ? "" : prose;
+}
+
+function traceEntry(
+  iteration: TranscriptIteration,
+  index: number,
+  answered: ReadonlySet<string>,
+) {
   return {
     iteration,
     index,
     thinking: iteration.thinking?.trim() ?? "",
-    prose: iteration.assistant_prose?.trim() ?? "",
+    prose: traceProse(iteration, answered),
     forms: iteration.forms ?? [],
     attachments: iteration.attachments ?? [],
   };
@@ -1910,9 +1952,12 @@ type Chunk =
 // (`render/merge-iteration-entries`): a narrated iteration may OPEN a run (its
 // thinking / prose renders above the cards), an interior narrated call closes it,
 // and so does an iteration that produced attachments (those render last).
-function buildSegments(iterations: TranscriptIteration[]): TraceSegmentData[] {
+function buildSegments(
+  iterations: TranscriptIteration[],
+  answered: ReadonlySet<string> = NOTHING_ANSWERED,
+): TraceSegmentData[] {
   const visible = iterations
-    .map((iteration, index) => traceEntry(iteration, index))
+    .map((iteration, index) => traceEntry(iteration, index, answered))
     .filter(
       ({ thinking, prose, forms, attachments }) =>
         thinking ||
@@ -2028,12 +2073,15 @@ const TraceSegment = memo(function TraceSegment({
 
 export const IterationTrace = memo(function IterationTrace({
   iterations,
+  answered = NOTHING_ANSWERED,
   live = false,
   whole = false,
   client,
   sid,
 }: {
   iterations: TranscriptIteration[];
+  /** Prose the ANSWER band already paints — see `answeredProse`. */
+  answered?: ReadonlySet<string>;
   live?: boolean;
   /**
    * Mount every segment in the FIRST paint and ramp nothing.
@@ -2061,7 +2109,10 @@ export const IterationTrace = memo(function IterationTrace({
   // current one started (0 = none in flight), and what the last one cost.
   const stepRef = useRef({ size: SEGMENT_RAMP_START, startedAt: 0, work: 0 });
 
-  const segments = useMemo(() => buildSegments(iterations), [iterations]);
+  const segments = useMemo(
+    () => buildSegments(iterations, answered),
+    [iterations, answered],
+  );
 
   const [mountedSegments, setMountedSegments] = useState(() =>
     whole ? segments.length : SEGMENT_FIRST_PAINT,
@@ -2332,6 +2383,9 @@ export const AssistantMessage = memo(function AssistantMessage({
   sid?: string;
 }) {
   const blocks = turn.content ?? [];
+  // One answer, one copy: the trace never repeats prose the answer band under it
+  // already paints (issue #145).
+  const answered = useMemo(() => answeredProse(turn.content), [turn.content]);
   const fallback = blocks.length ? "" : fallbackAnswer(turn);
   const cancelled =
     turn.status === "cancelled" || turn.prior_outcome === "cancelled";
@@ -2362,6 +2416,7 @@ export const AssistantMessage = memo(function AssistantMessage({
       <div className="min-w-0">
         <IterationTrace
           iterations={turn.iterations ?? []}
+          answered={answered}
           live={streaming}
           whole={whole}
           client={client}
