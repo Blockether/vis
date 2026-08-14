@@ -2,6 +2,20 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.37 (4154) — 2026-08-14
+<!-- commit: a80a5a898559b37fdd0925aa4b202dfb0ef9bdc5 -->
+
+- Every row wears its own verbs: Star, Rename and Delete stand in a session row, Make primary, Rename and Forget in a machine row — always visible, never a swipe or a hidden menu
+- The machines band is one line, and pairing is a labelled "Add a machine" button instead of a bare plus
+- Notifications answer one question — connected or not — with a single switch, instead of listing every push token the machine holds
+- The composer refits its height when its own box narrows, not only when you type
+- A turn settles only itself, keeps the answer it just painted, and refetches a short transcript
+- A staged photo is no longer rewritten into storage on every keystroke
+- A copied session id is marked vis_session_id#<uuid>
+- Search answers freshest first, which is the order the session list is already in
+- The italic font axis is imported, so italics actually slant
+- Every theme ships as static CSS, with no /v1/theme round trip to the gateway
+
 ## 0.1.35 (4124) — 2026-08-14
 <!-- commit: 52f098458a174d9adffa3ed35f99f2aac1224061 -->
 
