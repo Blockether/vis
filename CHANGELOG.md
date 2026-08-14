@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.38] - 2026-08-14
+
+### Changed
+- Release v0.1.38
+- A row verb sends its drawer home instead of asking for an animation
+- Pin svar 0.7.117 so GLM-5.3 is routable and :reasoning speaks GLM's own rungs
+- Restore a session's helpers through the rewrite that defined them
+- Address rows are a list, and each one's verb is in its slide
+- Forgetting a machine takes this device off it
+- Record Companion TestFlight build 4159 in the app changelog
+- The slide is back on both lists, and it stops closing the row it just opened
+- Notifications are per machine, and Disconnect always lands
+- Cross-validate the peer plan against the runtime and fix what it cited wrong
+- Record Companion TestFlight build 4154 in the app changelog
+- The core prompt teaches fold_session(key, gist)
+- Restore the plan for letting a session speak to its peers
+- Stop patch growing a blank line the caller never asked for
+- fold_session takes a string range grammar
+- Every row wears its own verbs, and the machines band is one line
+- TUI: write a plan's name once in the limits summary
+- Pin svar 0.7.116 so a declined retry states its reason
+- Native release: name the precondition the macOS runner override needs
+- OpenCode Go: report live 5h/7d/30d quotas from /zen/go/v1/usage
+- Make patch take one file's whole batch of anchored edits
+- A machine's verbs are words in the row the settings column is reading
+- Carry svar's stream-finalization evidence into the fatal provider log
+- The composer height test declares its observer field instead of a constructor parameter property
+- The composer refits its height when its own box narrows, not only when you type
+- The write that records a turn's outcome survives the payload it was given
+- release: update release notes for v0.1.37
+
+### Package changes
+
+#### com.blockether/vis
+- Release v0.1.38 (e686fb2d3)
+- A row verb sends its drawer home instead of asking for an animation (e56eafbee)
+- Pin svar 0.7.117 so GLM-5.3 is routable and :reasoning speaks GLM's own rungs (11ebcf482)
+- Restore a session's helpers through the rewrite that defined them (92ca7349b)
+- Address rows are a list, and each one's verb is in its slide (0c8997098)
+- Forgetting a machine takes this device off it (c4a37c91c)
+- Record Companion TestFlight build 4159 in the app changelog (91668ea90)
+- The slide is back on both lists, and it stops closing the row it just opened (09ad53d9c)
+- Notifications are per machine, and Disconnect always lands (c5487390d)
+- Cross-validate the peer plan against the runtime and fix what it cited wrong (b3130f92a)
+- Record Companion TestFlight build 4154 in the app changelog (4c32f0ea6)
+- The core prompt teaches fold_session(key, gist) (eefd08947)
+- Restore the plan for letting a session speak to its peers (a80a5a898)
+- Stop patch growing a blank line the caller never asked for (40c9ec904)
+- fold_session takes a string range grammar (57d09f967)
+- Every row wears its own verbs, and the machines band is one line (5a718178b)
+- TUI: write a plan's name once in the limits summary (6be874415)
+- Pin svar 0.7.116 so a declined retry states its reason (125d0e4d0)
+- Native release: name the precondition the macOS runner override needs (28aca9751)
+- Make patch take one file's whole batch of anchored edits (22b36784f)
+- A machine's verbs are words in the row the settings column is reading (02aae91a3)
+- Carry svar's stream-finalization evidence into the fatal provider log (b4a7ae7b6)
+- The composer height test declares its observer field instead of a constructor parameter property (7c43ff0c7)
+- The composer refits its height when its own box narrows, not only when you type (ca6a5aa81)
+- The write that records a turn's outcome survives the payload it was given (b824b706d)
+- release: update release notes for v0.1.37 (92c7b024b)
+
+#### com.blockether/vis-channel-tui
+- TUI: write a plan's name once in the limits summary (6be874415)
+
+#### com.blockether/vis-language-clojure
+- Make patch take one file's whole batch of anchored edits (22b36784f)
+
+#### com.blockether/vis-persistance-sqlite
+- The write that records a turn's outcome survives the payload it was given (b824b706d)
+
+#### com.blockether/vis-provider-opencode-go
+- OpenCode Go: report live 5h/7d/30d quotas from /zen/go/v1/usage (93fe630af)
+
+
+
 ### Changed
 - Every list row wears its own verbs at its trailing edge — no swipe, no `⋯`, no strip of words under the row
 - The machines band is one line: its name and `Add a machine`, with no sentence about tapping and no address it already lists
@@ -4653,7 +4728,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.37...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.38...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -4683,3 +4758,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.34]: https://github.com/Blockether/vis/releases/tag/v0.1.34
 [v0.1.35]: https://github.com/Blockether/vis/releases/tag/v0.1.35
 [v0.1.37]: https://github.com/Blockether/vis/releases/tag/v0.1.37
+[v0.1.38]: https://github.com/Blockether/vis/releases/tag/v0.1.38
