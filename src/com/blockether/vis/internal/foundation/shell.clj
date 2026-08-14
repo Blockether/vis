@@ -689,7 +689,13 @@
    key can KeyError. `stage` NAMES the producer (`run` / `background` / `logs` /
    `send` / `stop`) — it is the only thing that varies, and it varies as DATA, not
    as a different shape. A key a stage has nothing to say about stays
-   present-but-neutral rather than vanishing.
+    present-but-neutral rather than vanishing.
+
+    But a key DERIVABLE from another key is not carried at all — one fact, one
+    field: `pid` already says the child was spawned, `status` \"stopped\" already
+    says a stop landed, `is_eof` false already says the read has more to come,
+    `keys` already shows what was typed, and `attach` is the whole bridge command
+    a caller needs, so its socket path stays the bridge's own business.
 
    ONE call runs ONE command, so there is no `commands` array and no entry to index
    into, and a lifecycle stage carries the same `command` as the shell it acts on.
@@ -704,9 +710,6 @@
    ;; line the shell it acts on is running. nil only when the stage genuinely has
    ;; no command left (a stopped shell whose registry entry is already gone).
    "command" nil
-   ;; True only once the child was spawned, so a command that never started stays
-   ;; distinguishable from one that ran and failed or timed out.
-   "started" false
    "status" nil
    "pid" nil
    "exit" nil
@@ -742,14 +745,10 @@
    "offset" 0
    "next_offset" 0
    "is_eof" true
-   "is_truncated" false
    ;; Attach bridge for an interactive shell, and what `sh.type` wrote.
    "attach" nil
-   "socket" nil
    "already_running" false
-   "sent" 0
    "keys" nil
-   "stopped" false
    "note" nil})
 
 (defn- shell-result
@@ -868,10 +867,10 @@
                                   ;; (`c[\"stdout\"]`, `c[\"timed_out\"]`) died with a bare `KeyError` — read as
                                   ;; "the tool broke", retried with cosmetic variations, and spun.
                                   {"command" cmd
-                                   ;; The child exists: distinct from a command whose launch failed
-                                   ;; before it could run.
-                                   "started" true
-                                   "pid" (:pid p)
+                                   ;; The OS pid of the spawned child — `(:pid p)` here read a
+                                   ;; keyword off a `Process` and answered nil on every run, so the
+                                   ;; one stage that spawns was the one stage with no pid.
+                                   "pid" (.pid p)
                                    ;; The SAME vocabulary every other stage answers with: a run that
                                    ;; finished is "exited", one whose wait expired is still "running"
                                    ;; — never nil, or "did it work" has no answer on the one stage
@@ -1400,7 +1399,7 @@
   "Identity keys shared by EVERY background stage of `shell`, merged onto the
    TOTAL base. `op` names the stage that produced the result, so the card renderer
    — and model Python — reads ONE declared field instead of sniffing which keys
-   happen to exist. `exit` nil while running, `attach`/`socket` nil when no attach
+    happen to exist. `exit` nil while running, `attach` nil when no attach
    bridge was opened, `command`/`cwd`/`pid` nil only once the entry itself is
    gone.
 
@@ -1427,7 +1426,6 @@
          "command" (:command entry)
          "cwd" (:dir entry)
          "pid" (:pid (:proc entry))
-         "started" true
          "status" (if (some? exit) "exited" "running")
          "exit" exit
          ;; A LIVE shell's log is never complete: `is_eof` says "there is
@@ -1455,8 +1453,7 @@
          ;; The log FILE, by absolute path: readable with `cat`/`grep` by a
          ;; human, with no handle and no session in hand.
          "log_path" (:log-path entry)
-         "attach" (when bridge (str "vis-agent extension shell attach " id))
-         "socket" (:path bridge)}))))
+         "attach" (when bridge (str "vis-agent extension shell attach " id))}))))
 
 (defn- shell-bg-spawn!
   "Spawn a NEW background PTY under `id`. Callers guarantee no LIVE entry holds
@@ -1816,7 +1813,6 @@
                 ;; what it had started or that it was running. Only the stage-specific
                 ;; keys are overridden here.
                 "stage" "run"
-                "started" true
                 "duration_ms" 0
                 ;; Nothing WAITED, so nothing timed out: `timed_out` only ever
                 ;; means "the wait expired", and a run has no wait.
@@ -1995,7 +1991,6 @@
              {"id" id
               "command" (get row "command")
               "cwd" (get row "dir")
-              "started" true
               "exit" (get row "exit")
               "started_at" started
               "finished_at" ended
@@ -2063,8 +2058,7 @@
                     "stdout" (normalize-terminal-output (:text chunk))
                     "offset" (:offset chunk)
                     "next_offset" (:next-offset chunk)
-                    "is_eof" (:is-eof chunk)
-                    "is_truncated" (:is-truncated chunk))
+                    "is_eof" (:is-eof chunk))
           :op :_shell-logs
           :metadata {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}})))))
 
@@ -2268,9 +2262,7 @@
           t (now-ms)]
 
          (send-fn (.getBytes payload java.nio.charset.StandardCharsets/UTF_8))
-         (extension/success {:result (assoc (bg-core "send" id entry)
-                                       "sent" (count payload)
-                                       "keys" (keys-label payload))
+         (extension/success {:result (assoc (bg-core "send" id entry) "keys" (keys-label payload))
                              :op :_shell-type
                              :metadata
                              {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}}))))))
@@ -2328,9 +2320,7 @@
     (when (= :error (:result r))
       (throw (ex-info (str "Background shell '" id "' failed to stop: " (:message r))
                       {:type ::stop-failed :id id})))
-    (extension/success {:result (assoc (bg-core "stop" id entry)
-                                  "status" "stopped"
-                                  "stopped" true)
+    (extension/success {:result (assoc (bg-core "stop" id entry) "status" "stopped")
                         ;; Tagged with its OWN tool: each of the five verbs is a
                         ;; registered symbol op carrying its own observation/mutation tag.
                         :op :_shell-stop
@@ -2938,9 +2928,7 @@
    tool error, but it still gets the failed visual treatment."
   [r]
   (let [exit (get r "exit")]
-    (cond (and (contains? r "started") (not (get r "started")))
-          {:icon "⊘" :label "not started" :failed? true}
-          (get r "timed_out") {:icon "⏱"
+    (cond (get r "timed_out") {:icon "⏱"
                                :label (str "timed out"
                                            (when-let [s (get r "timeout_secs")]
                                              (str " after " s "s")))
@@ -2981,8 +2969,7 @@
           (when duration (str " · " duration)))
 
      status
-     (kv-lines [["started" (when (contains? r "started") (if (get r "started") "yes" "no"))]
-                ["status" label] ["duration" duration] ["cwd" (get r "cwd")]
+     (kv-lines [["status" label] ["duration" duration] ["cwd" (get r "cwd")]
                 ;; The timeout budget is TOTAL in the result but only worth a row
                 ;; when it was actually hit.
                 ["timeout" (when (get r "timed_out") (str (get r "timeout_secs") "s"))]
@@ -3191,7 +3178,7 @@
     #'shell-stop
     {:symbol '_shell-stop
      :name "_shell_stop"
-     :result "The same shell result shape (`stage` \"stop\"): `stopped`, `status`, `exit`."
+     :result "The same shell result shape (`stage` \"stop\"): `status` \"stopped\", `exit`."
      :description
      "TRANSPORT for `sh.stop()` — call the handle. Kills a background shell's process tree and drops its retained logs and resource."
      :inject-env? true

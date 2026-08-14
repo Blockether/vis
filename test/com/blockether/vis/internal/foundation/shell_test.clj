@@ -312,34 +312,40 @@
 
 (defdescribe
   shell-run-sync-test
-  (it "returns a TOTAL result: every key present, flags real booleans"
-      (with-shell-on
-        (fn []
-          (binding [workspace/*workspace-root* (workspace/trunk-root)]
-            ;; Regression, issue #137: the result carried a `stderr` key that was
-            ;; ALWAYS nil — every command runs under a pty, so what a command wrote
-            ;; to fd 2 arrived on `stdout` — and a caller reading `stderr` to
-            ;; diagnose a failure silently got nothing.
-            (let [r (shell-run* {} "echo out; echo err 1>&2; exit 3")]
-              (expect (= "out\nerr\n" (get r "stdout")))
-              (expect (not (contains? r "stderr")))
-              (expect (not (contains? r "stderr_omitted_chars")))
-              (expect (= 3 (get r "exit")))
-              (expect (number? (get r "duration_ms")))
-              ;; ONE result shape: every key of `shell-result-base` is present on every
-              ;; result of every stage, so model Python indexes any field directly and
-              ;; never branches on which shape came back.
-              (expect (true? (get r "started")))
-              (expect (false? (get r "timed_out")))
-              (expect (= 0 (get r "stdout_omitted_chars")))
-              ;; Request scope rides the SAME map — one shape, no envelope to unwrap.
-              (expect (contains? r "cwd"))
-              (expect (contains? r "timeout_secs"))
-              (expect (= "run" (get r "stage")))
-              ;; …and no truncation flag beside the counts: 0 already IS "nothing lost".
-              (expect (not (contains? r "stdout_truncated")))
-              (expect (= 120 (:timeout-secs (meta r))))
-              (expect (string? (:dir (meta r)))))))))
+  (it
+    "returns a TOTAL result: every key present, flags real booleans"
+    (with-shell-on
+      (fn []
+        (binding [workspace/*workspace-root* (workspace/trunk-root)]
+          ;; Regression, issue #137: the result carried a `stderr` key that was
+          ;; ALWAYS nil — every command runs under a pty, so what a command wrote
+          ;; to fd 2 arrived on `stdout` — and a caller reading `stderr` to
+          ;; diagnose a failure silently got nothing.
+          (let [r (shell-run* {} "echo out; echo err 1>&2; exit 3")]
+            (expect (= "out\nerr\n" (get r "stdout")))
+            (expect (not (contains? r "stderr")))
+            (expect (not (contains? r "stderr_omitted_chars")))
+            (expect (= 3 (get r "exit")))
+            (expect (number? (get r "duration_ms")))
+            ;; ONE result shape: every key of `shell-result-base` is present on every
+            ;; result of every stage, so model Python indexes any field directly and
+            ;; never branches on which shape came back.
+            (expect (some? (get r "pid")))
+            (expect (false? (get r "timed_out")))
+            (expect (= 0 (get r "stdout_omitted_chars")))
+            ;; Request scope rides the SAME map — one shape, no envelope to unwrap.
+            (expect (contains? r "cwd"))
+            (expect (contains? r "timeout_secs"))
+            (expect (= "run" (get r "stage")))
+            ;; …and no truncation flag beside the counts: 0 already IS "nothing lost".
+            ;; …and NO key that another key already answers: `started` was `pid`,
+            ;; `stopped` was `status`, `is_truncated` was `is_eof`, `sent` was
+            ;; `keys`, and `socket` was the bridge behind `attach`.
+            (expect (not-any? #(contains? r %)
+                              ["started" "stopped" "is_truncated" "sent" "socket"]))
+            (expect (not (contains? r "stdout_truncated")))
+            (expect (= 120 (:timeout-secs (meta r))))
+            (expect (string? (:dir (meta r)))))))))
   (it "always carries a TOTAL stdout/exit (no output is \"\", not a missing key) and a real cwd"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
@@ -360,7 +366,7 @@
                          ;; reading its stdout/exit never branches on shape.
                          (let [r (shell-run* {} "exit 42")]
                            (expect (= 42 (get r "exit")))
-                           (expect (true? (get r "started"))))))))
+                           (expect (some? (get r "pid"))))))))
   (it "kills the process tree on timeout and reports timed_out with nil exit"
       (with-shell-on (fn []
                        (binding [workspace/*workspace-root* (workspace/trunk-root)]
@@ -673,7 +679,6 @@
                    ;; the shared identity core rides EVERY stage
                    (expect (= "background" (get again "stage")))
                    (expect (contains? again "attach"))
-                   (expect (contains? again "socket"))
                    (expect (nil? (get first-run "note")))
                    (expect (true? (get bare "already_running")))
                    (expect (= (get first-run "pid") (get bare "pid")))
@@ -729,7 +734,6 @@
                      ;; ONE shape: a key another stage fills is present-but-neutral here
                      ;; rather than absent, so nothing KeyErrors on a stage boundary.
                      (expect (contains? r "attach"))
-                     (expect (contains? r "socket"))
                      (expect (not (contains? r "shown_count")))
                      ;; …but CORE keys stay TOTAL: a cursor at 0 / nil exit, never absent
                      (expect (contains? r "offset"))
@@ -910,8 +914,6 @@
                          (try (shell-bg* env "echoer" "read x; echo GOT:$x; sleep 60")
                               (let [snt (:result (shell-send* env "echoer" "hi-there"))]
                                 (expect (= "running" (get snt "status")))
-                                ;; "hi-there" (8) + submitting newline = 9 chars written
-                                (expect (= 9 (get snt "sent")))
                                 ;; The card must be able to show WHAT was typed, not
                                 ;; just how many chars it was — and the keystrokes are
                                 ;; the LABEL, never a second spelling of `stdout`.
@@ -957,7 +959,7 @@
                    (let [logs (:result (shell* env {"op" "logs" "id" "ops" "n" 5}))]
                      (expect (= "logs" (get logs "stage"))))
                    (let [sent (:result (shell* env {"op" "send" "id" "ops" "text" "hello"}))]
-                     (expect (= 6 (get sent "sent"))))
+                     (expect (= "\"hello\" ↵" (get sent "keys"))))
                    (let [stop (:result (shell* env {"op" "stop" "id" "ops"}))]
                      (expect (= "stopped" (get stop "status"))))
                    (finally (resources/stop-all! sid)))))))))
@@ -1641,7 +1643,6 @@
                  (expect (str/includes? (get before "stdout") "NESTED_SEALED"))
                  (expect (not (str/includes? (get before "stdout") "ESCAPED")))
                  (expect (string? (get started "attach")))
-                 (expect (string? (get started "socket")))
                  (shell-send* env "pty" "hello")
                  (let
                    [after (poll #(:result (shell-logs* env "pty"))
@@ -2331,7 +2332,6 @@
                       parent (get (:result (shell-logs* env "tree" {:offset 0})) "pid")
                       stopped (:result (shell-stop* env "tree"))]
 
-                     (expect (true? (get stopped "stopped")))
                      (expect (= "stopped" (get stopped "status")))
                      (expect (some? (get stopped "exit")))
                      (expect (nil? (poll #(when (alive-pid? child) :alive) nil? 30)))
