@@ -121,7 +121,7 @@
    map."
   [{:keys [size media-type]}]
   (boolean (and size
-                (> (long size) default-offload-floor-bytes)
+                (> (long size) (long default-offload-floor-bytes))
                 (not (and media-type (str/starts-with? (str media-type) "image/"))))))
 
 (defn offload?

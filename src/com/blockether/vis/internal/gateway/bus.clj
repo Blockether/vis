@@ -339,7 +339,7 @@
          (with-open [raf (RandomAccessFile. f "rw")]
            (let [len (.length raf)]
              (cond truncate? (.setLength raf 0)
-                   (> len MAX_FILE_BYTES)
+                   (> len (long MAX_FILE_BYTES))
                    ;; Size cap MID-turn. Keep the turn's first line: hydrate reads
                    ;; it to learn which turn is in flight (`:current-turn`, and the
                    ;; orphan reap's `turn_id`) and the tailer reads it as the
@@ -347,7 +347,7 @@
                    ;; mirror without duplicating, and impossible to reap at all.
                    (let [head (read-head! raf len)]
                      (.setLength raf 0)
-                     (when (< (count head) HEAD_MAX_BYTES)
+                     (when (< (count head) (long HEAD_MAX_BYTES))
                        (.seek raf 0)
                        (.write raf (.getBytes (str head "\n") StandardCharsets/UTF_8))))))
            (.seek raf (.length raf))
@@ -781,7 +781,7 @@
           (.toFile (events-dir))
 
           cutoff
-          (- (System/currentTimeMillis) RETAIN_MS)]
+          (- (System/currentTimeMillis) (long RETAIN_MS))]
 
          (when (.isDirectory dir)
            (doseq [^File f (.listFiles dir)]
@@ -864,10 +864,11 @@
                  (let
                    [busy? (poll-once!)
                     now (System/currentTimeMillis)
-                    last-sweep (if (>= (- now last-sweep) SWEEP_MS) (do (sweep!) now) last-sweep)
+                    last-sweep
+                    (if (>= (- now last-sweep) (long SWEEP_MS)) (do (sweep!) now) last-sweep)
                     quiet (if busy? 0 (inc quiet))]
 
-                   (try (Thread/sleep (long (if (>= quiet IDLE_AFTER) IDLE_POLL_MS POLL_MS)))
+                   (try (Thread/sleep (long (if (>= quiet (long IDLE_AFTER)) IDLE_POLL_MS POLL_MS)))
                         (catch InterruptedException _ (.interrupt (Thread/currentThread))))
                    (recur quiet last-sweep)))))
            "gateway-bus-tailer")]

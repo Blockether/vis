@@ -95,7 +95,7 @@
         (if (neg? n)
           (String. (.toByteArray out) StandardCharsets/UTF_8)
           (let
-            [room (- max-output-bytes kept)
+            [room (- (long max-output-bytes) kept)
              take-n (min n room)]
 
             (when (pos? take-n) (.write out buf 0 take-n))
@@ -112,8 +112,9 @@
                    (remove str/blank?)
                    first)]
     (let
-      [trimmed
-       (if (> (count line) stderr-excerpt-chars) (str (subs line 0 stderr-excerpt-chars) "…") line)]
+      [trimmed (if (> (count line) (long stderr-excerpt-chars))
+                 (str (subs line 0 stderr-excerpt-chars) "…")
+                 line)]
       (str ": " trimmed))))
 
 (defn- exec-argv
@@ -178,7 +179,7 @@
     (when (and e
                (= av (:argv e))
                (< (- (System/currentTimeMillis) (long at))
-                  (if token success-ttl-ms failure-ttl-ms)))
+                  (long (if token success-ttl-ms failure-ttl-ms))))
       e)))
 
 (defn peek-token

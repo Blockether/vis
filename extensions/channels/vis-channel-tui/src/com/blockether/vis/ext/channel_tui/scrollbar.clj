@@ -60,7 +60,7 @@
             (max 0 (min s max-scroll)))
 
           thumb-h
-          THUMB_H
+          (long THUMB_H)
 
           thumb-top
           (long (* (- track-h thumb-h) (/ (double eff) max-scroll)))]
@@ -195,7 +195,7 @@
      (when (and (pos? inner-h) (pos? track-h) (> total-h inner-h))
        (let
          [thumb-h
-          THUMB_H
+          (long THUMB_H)
 
           max-scroll
           (max 0 (- total-h inner-h))
@@ -207,6 +207,6 @@
           (max 1 (- track-h thumb-h))
 
           frac
-          (max 0.0 (min 1.0 (double (/ rel denom))))]
+          (max 0.0 (min 1.0 (/ (double rel) denom)))]
 
          (long (Math/round (* frac max-scroll))))))))

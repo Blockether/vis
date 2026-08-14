@@ -446,7 +446,7 @@
    early EOF), but only when `n` is in `(0, max-buffered-body]`. nil otherwise ⇒
    caller leaves the body to stream unbuffered."
   ^bytes [^java.io.InputStream in n]
-  (when (and (integer? n) (pos? ^long n) (<= ^long n max-buffered-body))
+  (when (and (integer? n) (pos? ^long n) (<= ^long n (long max-buffered-body)))
     (let
       [n
        (long n)

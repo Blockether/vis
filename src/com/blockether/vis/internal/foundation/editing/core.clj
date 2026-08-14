@@ -3833,14 +3833,14 @@
      n
      (long (count lines))]
 
-    (if (<= n patch-diff-max-render-lines)
+    (if (<= n (long patch-diff-max-render-lines))
       lines
       (let [[preamble hunks] (split-diff-hunks lines)]
         (if (empty? hunks)
           (head-tail-cap lines patch-diff-max-render-lines)
           (let
-            [budget (max patch-diff-min-hunk-lines
-                         (- patch-diff-max-render-lines (count preamble) 1))
+            [budget (max (long patch-diff-min-hunk-lines)
+                         (- (long patch-diff-max-render-lines) (count preamble) 1))
              ;; Fill the budget hunk by hunk: a hunk is shown whole when it
              ;; fits, capped in place when a usable remainder is left, and the
              ;; rest are reported as a count instead of being half-rendered.
@@ -3854,7 +3854,7 @@
                  (let [remaining (- budget used)]
                    (cond (<= (count hunk) remaining)
                          (recur (next pending) (+ used (count hunk)) (into kept hunk))
-                         (>= remaining patch-diff-min-hunk-lines)
+                         (>= remaining (long patch-diff-min-hunk-lines))
                          (let [capped (cap-hunk-lines hunk remaining)]
                            (recur (next pending) (+ used (count capped)) (into kept capped)))
                          :else [kept (count pending)]))
@@ -3896,7 +3896,7 @@
      (long (count lines))
 
      shown-n
-     (min n patch-diff-max-render-lines)
+     (min n (long patch-diff-max-render-lines))
 
      shown
      (subvec lines 0 shown-n)
@@ -3933,10 +3933,10 @@
      (- b-count suffix-count)
 
      pre-start
-     (max 0 (- prefix-count patch-diff-context-lines))
+     (max 0 (- prefix-count (long patch-diff-context-lines)))
 
      post-end
-     (min a-count (+ a-change-end patch-diff-context-lines))
+     (min a-count (+ a-change-end (long patch-diff-context-lines)))
 
      pre-lines
      (subvec a pre-start prefix-count)
@@ -4017,13 +4017,13 @@
      (long (common-suffix-count a b prefix-count))
 
      start
-     (max 0 (- prefix-count patch-diff-context-lines))
+     (max 0 (- prefix-count (long patch-diff-context-lines)))
 
      a-end
-     (min (count a) (+ (- (count a) suffix-count) patch-diff-context-lines))
+     (min (count a) (+ (- (count a) suffix-count) (long patch-diff-context-lines)))
 
      b-end
-     (min (count b) (+ (- (count b) suffix-count) patch-diff-context-lines))]
+     (min (count b) (+ (- (count b) suffix-count) (long patch-diff-context-lines)))]
 
     (when (and (<= start a-end) (<= start b-end))
       (let

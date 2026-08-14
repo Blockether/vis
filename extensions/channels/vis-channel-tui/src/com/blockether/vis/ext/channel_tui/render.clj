@@ -44,7 +44,7 @@
 (defn- make-fmt-cache
   ^LinkedHashMap []
   (proxy [LinkedHashMap] [64 0.75 true] ;; true = access-order (LRU)
-    (removeEldestEntry [_eldest] (> (.size ^LinkedHashMap this) fmt-cache-cap))))
+    (removeEldestEntry [_eldest] (> (.size ^LinkedHashMap this) (long fmt-cache-cap)))))
 
 (defonce ^:private ^LinkedHashMap fmt-cache (make-fmt-cache))
 
@@ -441,7 +441,7 @@
 
      ;; Only widen to approach φ - never heighten
      golden-w
-     (long (* min-h phi))
+     (long (* min-h (double phi)))
 
      box-w
      (max min-w golden-w)
@@ -6806,7 +6806,7 @@
 
 ;; cols right gutter (1 col padding before
 ;; the scrollbar at cols-2, then 1 col edge after).
-(def ^:const MESSAGE_SIDE_PAD (+ MESSAGE_MARGIN_LEFT MESSAGE_MARGIN_RIGHT))
+(def ^:const MESSAGE_SIDE_PAD (+ (long MESSAGE_MARGIN_LEFT) (long MESSAGE_MARGIN_RIGHT)))
 
 ;; ^ Convenience: the total horizontal gutter consumed on each row.
 ;; `bubble-w = cols - MESSAGE_SIDE_PAD`. Both this file's painter and

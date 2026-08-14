@@ -288,7 +288,7 @@
      (if max-length (max 0 (- (long max-length) (count text))) (count s))
 
      s
-     (subs s 0 (min (count s) room))]
+     (subs s 0 (min (count s) (long room)))]
 
     (if (zero? (count s))
       form
@@ -758,7 +758,7 @@
 
                (if (= :multiline type)
                  (let [[line col] (cursor-line-col shown cursor)]
-                   (vec (map-indexed (fn [i l]
+                   (vec (map-indexed (fn [^long i l]
                                        {:kind :input
                                         :field-id id
                                         :text l

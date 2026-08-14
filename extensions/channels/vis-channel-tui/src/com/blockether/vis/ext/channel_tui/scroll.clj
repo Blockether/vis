@@ -183,8 +183,9 @@
   (let [diff (- target cur)]
     (cond (zero? diff) cur
           (= 1 (Math/abs diff)) target
-          :else (let [step (long (Math/max 1 (long (Math/ceil (* step-frac (Math/abs diff))))))]
-                  (if (pos? diff) (Math/min target (+ cur step)) (Math/max target (- cur step)))))))
+          :else
+          (let [step (long (Math/max 1 (long (Math/ceil (* (double step-frac) (Math/abs diff))))))]
+            (if (pos? diff) (Math/min target (+ cur step)) (Math/max target (- cur step)))))))
 
 (defn ease
   "Advance the on-screen `:pos` one step toward `desired`. Called once per
@@ -265,7 +266,7 @@
      t
      (+ base amount)]
 
-    (if (>= t (- max-s slack-rows))
+    (if (>= t (- max-s (long slack-rows)))
       (assoc follow :pos (or (:pos sc) cur))
       {:mode :at :offset t :pos (or (:pos sc) cur)})))
 
@@ -292,7 +293,7 @@
 (defn- cap-momentum
   "Clamp `v` into `[-momentum-cap, momentum-cap]`."
   ^long [^long v]
-  (max (- momentum-cap) (min momentum-cap v)))
+  (max (- (long momentum-cap)) (min (long momentum-cap) v)))
 
 (defn merge-wheel-delta
   "Smooth a single raw wheel `delta` (signed rows, +down / -up) into a running
@@ -353,7 +354,7 @@
      (max 0 (long idle-ms))]
 
     (cond (zero? m) 0
-          (>= idle momentum-hold-ms) 0
+          (>= idle (long momentum-hold-ms)) 0
           :else (let
                   [scaled (long (Math/round
                                   (* m (- 1.0 (/ (double idle) (double momentum-hold-ms))))))]

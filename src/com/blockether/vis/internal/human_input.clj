@@ -83,7 +83,7 @@
 
 (defn- evict-oldest
   [vault]
-  (if (<= (count vault) max-secrets)
+  (if (<= (count vault) (long max-secrets))
     vault
     (dissoc vault (key (apply min-key #(:at (val %)) (seq vault))))))
 

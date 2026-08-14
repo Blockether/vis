@@ -31,7 +31,16 @@
   "Substring of `src` from (sl, sc) to (el, ec) — sl/el 1-based lines, sc/ec
    0-based columns — computed by STRING indexing, independent of byte offsets."
   [src sl sc el ec]
-  (let [lines (vec (str/split src #"\n" -1))]
+  (let
+    [lines
+     (vec (str/split src #"\n" -1))
+
+     sl
+     (long sl)
+
+     el
+     (long el)]
+
     (if (= sl el)
       (subs (lines (dec sl)) sc ec)
       (str/join "\n"

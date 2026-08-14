@@ -1099,7 +1099,7 @@
   (boolean (and prev
                 (= (long (:row cur)) (inc (long (:row prev))))
                 (= (:col prev) (:col cur))
-                (> (+ (p/display-width (:text prev)) 1 (line-first-token-width (:text cur)))
+                (> (+ (p/display-width (:text prev)) 1 (long (line-first-token-width (:text cur))))
                    (long (:wrap-w prev))))))
 
 (defn- assign-selectable-line-ids

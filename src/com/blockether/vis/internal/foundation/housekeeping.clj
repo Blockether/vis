@@ -48,7 +48,7 @@
                              "%.1f GB"
                              (object-array [(/ (double n) (* 1024.0 1024.0 1024.0))]))))
 
-(defn- ms->days ^long [^long ms] (long (quot ms day-ms)))
+(defn- ms->days ^long [^long ms] (long (quot ms (long day-ms))))
 
 (def
   ^:dynamic
@@ -192,7 +192,7 @@
       (long (or now-ms (System/currentTimeMillis)))
 
       cutoff
-      (- now (* days day-ms))
+      (- now (* days (long day-ms)))
 
       dir
       (logs-dir)
@@ -414,7 +414,7 @@
      (long (or now-ms (System/currentTimeMillis)))
 
      cutoff
-     (- now (* days day-ms))
+     (- now (* days (long day-ms)))
 
      drafts
      (try (scan-drafts db-info cutoff now) (catch Throwable _ nil))

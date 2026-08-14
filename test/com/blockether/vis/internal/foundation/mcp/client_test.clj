@@ -20,7 +20,7 @@
 (defn- all-dead-within?
   "Wait at most `timeout-ms` for every ProcessHandle in `handles` to stop."
   [handles timeout-ms]
-  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+  (let [deadline (+ (System/currentTimeMillis) (long timeout-ms))]
     (loop []
 
       (cond (not-any? (fn [^java.lang.ProcessHandle h]

@@ -863,9 +863,11 @@
    cannot exec `ps` itself."
   [pid]
   (let
-    [^Process p
-     (.start (doto (ProcessBuilder. ^java.util.List ["/bin/sh" "-c" (str "ps -o pgid= -p " pid)])
-               (.redirectErrorStream true)))
+    [^java.util.List argv
+     ["/bin/sh" "-c" (str "ps -o pgid= -p " pid)]
+
+     ^Process p
+     (.start (doto (ProcessBuilder. argv) (.redirectErrorStream true)))
 
      out
      (str/trim (slurp (.getInputStream p)))]

@@ -442,7 +442,7 @@
      (long (or (:expires-at-ms cached) 0))
 
      refresh-at
-     (long (or (:refresh-at-ms cached) (- hard REFRESH_MARGIN_MS)))]
+     (long (or (:refresh-at-ms cached) (- hard (long REFRESH_MARGIN_MS))))]
 
     (boolean (and cached
                   (:token cached)
@@ -494,7 +494,7 @@
        ;; the `refresh_in` branch never serves a token right up to the soft
        ;; deadline — matching the margin the anthropic/openai-codex providers keep.
        :refresh-at-ms (- (if refresh-in (min hard-ms (+ now (* (long refresh-in) 1000))) hard-ms)
-                         REFRESH_MARGIN_MS)
+                         (long REFRESH_MARGIN_MS))
        :api-url (copilot-llm-base-url token resp enterprise-domain {:account-type account-type})
        :account-type account-type
        :sku (or (response-field resp :sku) (response-field resp :access_type_sku))

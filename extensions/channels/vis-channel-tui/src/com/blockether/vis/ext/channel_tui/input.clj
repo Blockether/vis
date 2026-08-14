@@ -1259,7 +1259,7 @@
    that the user benefits from the placeholder UX. Single-line
    ASCII pastes shorter than `PASTE_INLINE_MAX_CHARS` go inline."
   [^String text]
-  (boolean (or (.contains text "\n") (> (count text) PASTE_INLINE_MAX_CHARS))))
+  (boolean (or (.contains text "\n") (> (count text) (long PASTE_INLINE_MAX_CHARS)))))
 
 (def ^:private image-path-content-regex
   "A single-line paste whose sole payload is a filesystem path ending in a known
@@ -1336,7 +1336,7 @@
    - keep a generous head plus a short tail so the line stays identifiable."
   [^String line]
   (let [n (count line)]
-    (if (<= n PASTE_PREVIEW_MAX_LINE_CHARS)
+    (if (<= n (long PASTE_PREVIEW_MAX_LINE_CHARS))
       line
       (str (subs line 0 130) " … " (subs line (- n 60))))))
 
@@ -1353,10 +1353,12 @@
      n
      (count lines)]
 
-    (if (<= n (+ PASTE_PREVIEW_HEAD_LINES PASTE_PREVIEW_TAIL_LINES 1))
+    (if (<= n (+ (long PASTE_PREVIEW_HEAD_LINES) (long PASTE_PREVIEW_TAIL_LINES) 1))
       (map clamp-preview-line lines)
       (concat (map clamp-preview-line (take PASTE_PREVIEW_HEAD_LINES lines))
-              [(str "⋯ " (- n PASTE_PREVIEW_HEAD_LINES PASTE_PREVIEW_TAIL_LINES) " more lines ⋯")]
+              [(str "⋯ "
+                    (- n (long PASTE_PREVIEW_HEAD_LINES) (long PASTE_PREVIEW_TAIL_LINES))
+                    " more lines ⋯")]
               (map clamp-preview-line (take-last PASTE_PREVIEW_TAIL_LINES lines))))))
 
 (defn collapse-paste-placeholders

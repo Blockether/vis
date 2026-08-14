@@ -4235,7 +4235,7 @@
    acted, else nil."
   []
   (when-let [[open lim] (fd-usage)]
-    (when (> (/ (double open) (double lim)) FD_RECLAIM_THRESHOLD)
+    (when (> (/ (double open) (double lim)) (double FD_RECLAIM_THRESHOLD))
       (System/gc)
       (System/runFinalization)
       ;; The Cleaner/finalizer threads need a beat to actually release the FDs

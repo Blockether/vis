@@ -1734,7 +1734,7 @@
          root
          (assoc :workspace/root root))]
 
-      (if (>= (count entries) max-tabs)
+      (if (>= (count entries) (long max-tabs))
         db
         (cond->
           (-> db

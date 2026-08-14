@@ -248,11 +248,11 @@
                   tail (take-last 5 iterations)
                   cache-vals (map (fnil identity 0) (map :cached-tokens tail))
                   cache-spread (when (seq cache-vals)
-                                 (- (reduce max cache-vals) (reduce min cache-vals)))
+                                 (- (long (reduce max cache-vals)) (long (reduce min cache-vals))))
                   cache-min (when (seq cache-vals) (reduce min cache-vals))
                   cache-plateau? (and (>= n 5)
-                                      (pos? (or cache-min 0))
-                                      (< (or cache-spread 0) (max 1 (* 0.05 (or cache-min 1)))))
+                                      (pos? (long (or cache-min 0)))
+                                      (< (long (or cache-spread 0)) (max 1.0 (* 0.05 (double (or cache-min 1))))))
                   replay-counts (set (map :replay-msgs iterations))
                   replay-flatlined? (and (>= n 3)
                                          (or (= #{0} replay-counts) (= #{1} replay-counts)))
@@ -262,7 +262,7 @@
                                   :reasoning-tokens
                                   (or 0))
                   reasoning-spiral?
-                  (and (>= n 5) (pos? (or med 0)) (>= (long rt-last) (* 2 (long med))))]
+                  (and (>= n 5) (pos? (long (or med 0))) (>= (long rt-last) (* 2 (long med))))]
 
               {:turn-position turn-position
                :iterations n

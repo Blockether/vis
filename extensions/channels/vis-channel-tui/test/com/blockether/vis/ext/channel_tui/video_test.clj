@@ -82,10 +82,10 @@
               (range w)
 
               :let [v
-                    (bit-and (aget rgba (* 4 (+ x (* y w)))) 0xff)]
+                    (bit-and (aget rgba (* 4 (+ (long x) (* y w)))) 0xff)]
               :when (> v 127)]
 
-             (quot (long x) block-px)))))
+             (quot (long x) (long block-px))))))
 
 (defdescribe mp4-sniffing-test
              (it "accepts an ISO base-media video and rejects still-image containers"

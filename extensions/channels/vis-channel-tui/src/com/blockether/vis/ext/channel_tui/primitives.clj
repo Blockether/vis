@@ -366,7 +366,7 @@
 
     (set-colors! g fg bg)
     (put-str! g col row glyph)
-    (+ col STATUS_WIDTH)))
+    (+ col (long STATUS_WIDTH))))
 
 ;;; ── Composite primitives ──────────────────────────────────────────────────
 
@@ -737,7 +737,7 @@
       (if (>= i len)
         (emit! (subs line run-start i))
         (let [c (int (.charAt line i))]
-          (if (and (>= c INLINE_SENTINEL_LO) (<= c INLINE_SENTINEL_HI))
+          (if (and (>= c (long INLINE_SENTINEL_LO)) (<= c (long INLINE_SENTINEL_HI)))
             (let [gs (subs line i (inc i))]
               (emit! (subs line run-start i))
               (cond (= gs INLINE_BOLD_ON) (.add inline SGR/BOLD)
@@ -821,7 +821,9 @@
         (if (>= i len)
           false
           (let [c (int (.charAt line i))]
-            (if (and (>= c INLINE_SENTINEL_LO) (<= c INLINE_SENTINEL_HI)) true (recur (inc i))))))]
+            (if (and (>= c (long INLINE_SENTINEL_LO)) (<= c (long INLINE_SENTINEL_HI)))
+              true
+              (recur (inc i))))))]
 
      (.setForegroundColor g base-fg)
      (.setBackgroundColor g base-bg)

@@ -808,7 +808,7 @@
 
 (defn- wait-for-files
   [paths children timeout-ms]
-  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+  (let [deadline (+ (System/currentTimeMillis) (long timeout-ms))]
     (loop []
 
       (cond (every? fs/exists? paths) true

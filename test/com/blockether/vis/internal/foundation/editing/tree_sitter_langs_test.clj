@@ -532,20 +532,21 @@
 
 (defn- own-text
   "A row's own source, never reaching into the next same-or-shallower row."
-  [lines rows i]
+  [lines rows ^long i]
   (let
     [row
      (nth rows i)
 
      cap
      (or (some (fn [r]
-                 (when (<= (:depth r) (:depth row)) (dec (:start r))))
+                 (when (<= (long (:depth r)) (long (:depth row))) (dec (long (:start r)))))
                (subvec rows (inc i)))
          (:end row))]
 
-    (str/join
-      "\n"
-      (subvec lines (dec (:start row)) (max (:start row) (min (count lines) (:end row) cap))))))
+    (str/join "\n"
+              (subvec lines
+                      (dec (long (:start row)))
+                      (max (long (:start row)) (min (count lines) (long (:end row)) (long cap)))))))
 
 (defn- span-findings
   "Every way this file's spans could be wrong: a span that runs past EOF, ends on
@@ -574,16 +575,17 @@
       (let [{:keys [name kind start end]} row]
         (if-not (and start end)
           (bad! "missing span" name)
-          (do (when (> start end) (bad! "start>end" name start end))
-              (when (> end n) (bad! "end past EOF" name end n))
-              (when (and (<= end n) (str/blank? (nth lines (dec end) "x")))
+          (do (when (> (long start) (long end)) (bad! "start>end" name start end))
+              (when (> (long end) n) (bad! "end past EOF" name end n))
+              (when (and (<= (long end) n) (str/blank? (nth lines (dec (long end)) "x")))
                 (bad! "end line blank" name start end))
               (when (= "other" (str kind)) (bad! "bare other kind" name))))))
     (doseq [[a b] (partition 2 1 rows)]
-      (if (> (:depth b) (:depth a))
-        (when-not (and (>= (:start b) (:start a)) (<= (:end b) (:end a)))
+      (if (> (long (:depth b)) (long (:depth a)))
+        (when-not (and (>= (long (:start b)) (long (:start a)))
+                       (<= (long (:end b)) (long (:end a))))
           (bad! "child escapes parent" (:name a) (:name b)))
-        (when (>= (:end a) (:start b))
+        (when (>= (long (:end a)) (long (:start b)))
           (bad! "sibling overlap"
                 (:name a)
                 [(:start a) (:end a)]

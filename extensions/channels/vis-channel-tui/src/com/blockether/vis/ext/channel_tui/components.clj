@@ -490,10 +490,10 @@
      (long left)
 
      show-close?
-     (and closable? (>= width (+ close-button-width 3)))
+     (and closable? (>= width (+ (long close-button-width) 3)))
 
      inner-w
-     (if show-close? (max 0 (- width close-button-width)) width)
+     (if show-close? (max 0 (- width (long close-button-width))) width)
 
      ready?
      (= status :ready)

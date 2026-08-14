@@ -457,18 +457,18 @@
 (defn- card-height
   "Total rows for n provider cards including gaps."
   ^long [^long n]
-  (if (pos? n) (+ (* n card-rows) (* (dec n) card-gap)) 0))
+  (if (pos? n) (+ (* n (long card-rows)) (* (dec n) (long card-gap))) 0))
 
 (defn- card-start-row
   "Starting row offset for card at index i."
   ^long [^long i]
-  (* i (+ card-rows card-gap)))
+  (* i (+ (long card-rows) (long card-gap))))
 
 (defn- card-visible-count
   "Number of full two-line cards visible in `content-h`, respecting the
    one-row gap between cards."
   ^long [^long content-h]
-  (max 1 (quot (+ (max 0 content-h) card-gap) (+ card-rows card-gap))))
+  (max 1 (quot (+ (max 0 content-h) (long card-gap)) (+ (long card-rows) (long card-gap)))))
 
 (defn- card-window-start
   [^long selected ^long current-start ^long content-h ^long total]
@@ -1797,10 +1797,10 @@
                   (nth @items @selected)
 
                   body-top
-                  (+ content-top card-rows card-gap)
+                  (+ (long content-top) (long card-rows) (long card-gap))
 
                   body-h
-                  (max 1 (- content-h card-rows card-gap))
+                  (max 1 (- (long content-h) (long card-rows) (long card-gap)))
 
                   raw
                   (str (vis/provider-status-md provider
@@ -1971,7 +1971,9 @@
                                      (< mx (+ left inner-w))
                                      (>= my content-top)
                                      (< my (+ content-top content-h)))
-                            (+ (long @scroll) (quot (- my content-top) (+ card-rows card-gap))))]
+                            (+ (long @scroll)
+                               (quot (- my (long content-top))
+                                     (+ (long card-rows) (long card-gap)))))]
 
                  (cond (= action MouseActionType/SCROLL_UP)
                        (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total)))) (recur))

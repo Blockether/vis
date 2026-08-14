@@ -50,7 +50,7 @@
      (str/lower-case (or (second (re-find #"\.([^.]+)$" name)) ""))]
 
     (and (.isFile file)
-         (< (.length file) max-bytes)
+         (< (.length file) (long max-bytes))
          (or (contains? scanned-names name) (contains? scanned-extensions ext)))))
 
 (defn- text-files

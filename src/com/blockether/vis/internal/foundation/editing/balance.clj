@@ -63,18 +63,58 @@
    delimiter goes back when the edit also wrote new code beside it."
   #{\( \[ \{})
 
+(defn- delimiter-char?
+  "`delimiter?` asked of one PRIMITIVE character. Every scan here runs a whole file
+   through this question, and a set membership test boxes one Character per character to
+   answer what a jump table answers for nothing."
+  [c]
+  (case c
+    (\( \) \[ \] \{ \})
+    true
+
+    false))
+
+(defn- space-char?
+  "The six characters Java's `\\s` matches — space, tab, newline, vertical tab, form feed
+   and carriage return — so `skeleton` drops exactly what the regex it replaced dropped,
+   and no Unicode separator that regex never saw."
+  [c]
+  (case c
+    (\space \tab \newline \u000B \formfeed \return)
+    true
+
+    false))
+
 (defn- skeleton
   "`s` with every delimiter and every whitespace character removed — what the
    caller actually WROTE. Two sources with the same skeleton differ only in
    delimiters and layout, which is the whole licence a repair has."
   ^String [^String s]
-  (str/replace s #"[\s(){}\[\]]" ""))
+  (let
+    [n
+     (.length s)
+
+     sb
+     (StringBuilder. n)]
+
+    (dotimes [i n]
+      (let [c (.charAt s i)]
+        (when-not (or (space-char? c) (delimiter-char? c)) (.append sb c))))
+    (.toString sb)))
 
 (defn- delimiters
   "Every delimiter character of `s`, in order — the SHAPE the caller wrote, with the
    code between them dropped."
   [^String s]
-  (filterv delimiter? s))
+  (let [n (.length s)]
+    (loop
+      [i 0
+       acc (transient [])]
+
+      (if (< i n)
+        (let [c (.charAt s i)]
+          (recur (inc i) (if (delimiter-char? c) (conj! acc c) acc)))
+        (persistent! acc)))))
 
 (defn- unterminated-string
   "The 1-based line where a string literal OPENS and is never closed, or nil when every
@@ -162,7 +202,17 @@
    normalizes a file's CRLF line endings to LF — every line of a file the call asked to
    put ONE delimiter back into."
   ^String [^String s]
-  (str/replace s #"[(){}\[\]]" ""))
+  (let
+    [n
+     (.length s)
+
+     sb
+     (StringBuilder. n)]
+
+    (dotimes [i n]
+      (let [c (.charAt s i)]
+        (when-not (delimiter-char? c) (.append sb c))))
+    (.toString sb)))
 (defn- surplus
   "The delimiters `a` has and `b` does not, as a string in delimiter order: `((a))`
    over `(a)` answers `()`."
@@ -284,37 +334,95 @@
          (excerpt after)
          "`")))
 
+(def ^:private ^:const align-max-cells
+  "The largest table `align` will fill. Past it the two texts are too far apart to be one
+   edited into the other, and the repair falls back to the balancer's own answer."
+  1000000)
+
+(defn- element-keys
+  "One `int` key per element of `xs` — the character itself for a string, the element's
+   hash for a vector of lines. Keys are what makes `align`'s table primitive: a cell
+   compares two ints instead of two boxed characters or two whole lines."
+  ^ints [xs]
+  (if (string? xs)
+    (let
+      [^String s
+       xs
+
+       n
+       (.length s)
+
+       out
+       (int-array n)]
+
+      (dotimes [i n]
+        (aset out i (int (.charAt s i))))
+      out)
+    (let
+      [^objects a
+       (to-array xs)
+
+       n
+       (alength a)
+
+       out
+       (int-array n)]
+
+      (dotimes [i n]
+        (aset out i (int (hash (aget a i)))))
+      out)))
+
 (defn- align
   "A longest-common-subsequence alignment of `a` and `b`: the `[i j]` index pairs of
    the elements they share, in order. Answers nil when the two are too large to align
-   in one table, and the repair falls back to the balancer's own answer."
+   in one table, and the repair falls back to the balancer's own answer.
+
+   Two lines (characters) or two files' lines (strings) — either way the table is filled
+   over `element-keys` and every key match is CONFIRMED against the elements themselves,
+   because two different lines can hash alike and a repair may not pair them."
   [a b]
   (let
     [m
-     (count a)
+     (long (count a))
 
      n
-     (count b)]
+     (long (count b))]
 
-    (when (and (pos? m) (pos? n) (<= (* (long m) (long n)) 1000000))
+    (when (and (pos? m) (pos? n) (<= (* m n) (long align-max-cells)))
       (let
-        [w
-         (inc (long n))
+        [^ints ka
+         (element-keys a)
+
+         ^ints kb
+         (element-keys b)
+
+         ^objects av
+         (when-not (string? a) (to-array a))
+
+         ^objects bv
+         (when-not (string? b) (to-array b))
+
+         same?
+         (fn [^long i ^long j]
+           (and (== (aget ka i) (aget kb j)) (or (nil? av) (= (aget av i) (aget bv j)))))
+
+         w
+         (inc n)
 
          ;; t[i][j] is the length of the longest common subsequence of the suffixes
          ;; a[i..] and b[j..], so the walk below can read it forwards.
          t
-         (int-array (* (inc (long m)) w))]
+         (int-array (* (inc m) w))]
 
         (dotimes [ii m]
-          (let [i (- (long m) 1 (long ii))]
+          (let [i (- m 1 (long ii))]
             (dotimes [jj n]
-              (let [j (- (long n) 1 (long jj))]
-                (aset-int t
-                          (+ (* i w) j)
-                          (if (= (nth a i) (nth b j))
-                            (inc (aget t (+ (* (inc i) w) (inc j))))
-                            (max (aget t (+ (* (inc i) w) j)) (aget t (+ (* i w) (inc j))))))))))
+              (let [j (- n 1 (long jj))]
+                (aset t
+                      (+ (* i w) j)
+                      (if (same? i j)
+                        (inc (aget t (+ (* (inc i) w) (inc j))))
+                        (max (aget t (+ (* (inc i) w) j)) (aget t (+ (* i w) (inc j))))))))))
         (loop
           [i
            0
@@ -325,12 +433,46 @@
            acc
            []]
 
-          (cond (or (= i m) (= j n)) acc
-                (= (nth a i) (nth b j)) (recur (inc i) (inc j) (conj acc [i j]))
+          (cond (or (== i m) (== j n)) acc
+                (same? i j) (recur (inc i) (inc j) (conj acc [i j]))
                 (>= (aget t (+ (* (inc (long i)) w) (long j)))
                     (aget t (+ (* (long i) w) (inc (long j)))))
                 (recur (inc i) j acc)
                 :else (recur i (inc j) acc)))))))
+
+(defn- lcs-length
+  "How many characters `a` and `b` share, in order — the LENGTH of what `align` would
+   answer, without the table it answers from. `similar?` asks this of every candidate pair
+   of lines in an edit and needs the number alone, so one rolling row replaces a table of
+   `a` by `b` cells and the walk back through it. 0 when the two are too large to compare,
+   which is `align` answering nothing."
+  ^long [^String a ^String b]
+  (let
+    [m
+     (long (.length a))
+
+     n
+     (long (.length b))]
+
+    (if (or (zero? m) (zero? n) (> (* m n) (long align-max-cells)))
+      0
+      (let [row (int-array (inc n))]
+        (dotimes [ii m]
+          (let [i (- m 1 (long ii))]
+            (loop
+              [j (dec n)
+               diag 0]
+
+              (when (>= j 0)
+                (let
+                  [prev (aget row j)
+                   v (if (== (int (.charAt a (int i))) (int (.charAt b (int j))))
+                       (inc (long diag))
+                       (max (aget row (inc j)) prev))]
+
+                  (aset row j v)
+                  (recur (dec j) prev))))))
+        (long (aget row 0))))))
 
 (defn- splice
   "`s` with each `[index char]` of `seats` inserted BEFORE that index — the only
@@ -397,7 +539,7 @@
      longer
      (max (count a) (count b))]
 
-    (and (pos? longer) (> (* 2 (count (align a b))) longer))))
+    (and (pos? longer) (> (* 2 (lcs-length a b)) longer))))
 
 (defn- paired-lines
   "Which line of `original` each line of `source` IS, as `{:line :replaced :wrote

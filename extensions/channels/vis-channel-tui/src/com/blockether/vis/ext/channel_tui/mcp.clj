@@ -58,7 +58,7 @@
     (loop
       [cs (seq (str line))
        sb (StringBuilder.)
-       q nil
+       ^Character q nil
        out []]
 
       (if (nil? cs)

@@ -349,7 +349,7 @@
     (cond
       (and (:access-token auth)
            (:expires-at-ms auth)
-           (> (long (:expires-at-ms auth)) (+ now REFRESH_MARGIN_MS)))
+           (> (long (:expires-at-ms auth)) (+ now (long REFRESH_MARGIN_MS))))
       (token-map auth)
       (:refresh-token auth) (refresh-and-persist!)
       :else

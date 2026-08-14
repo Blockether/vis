@@ -165,7 +165,7 @@
     {:access-token access-token
      :refresh-token refresh-token
      :expires-at-ms (- (+ (System/currentTimeMillis) (* (long expires-in) 1000))
-                       refresh-margin-ms)}))
+                       (long refresh-margin-ms))}))
 
 (defn- exchange-authorization-code!
   [code {:keys [verifier state]} returned-state]
@@ -278,7 +278,7 @@
 
     (if (and (:access-token auth)
              (:expires-at-ms auth)
-             (> (long (:expires-at-ms auth)) (+ now refresh-margin-ms)))
+             (> (long (:expires-at-ms auth)) (+ now (long refresh-margin-ms))))
       {:token (:access-token auth)}
       ;; Locally expired (or no token): refresh under the single-flight lock
       ;; so concurrent callers don't each run a rotating exchange.
