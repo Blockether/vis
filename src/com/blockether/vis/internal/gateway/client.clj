@@ -527,9 +527,11 @@
       :hits [{:side :request|:reply|:thinking :snippet str :at ms}]}]`.
    `:in-title?` = the session's own name matched; `:in-request?` = the user's own
    request; `:in-reply?` = the assistant's answer; `:in-thinking?` = only its
-   reasoning aside. The vector arrives in the gateway's RANK order (`:rank`, 0
-   best) and is painted in it — a surface never re-ranks. Blank query → []. Heavy
-   assistant text never crosses the wire."
+   reasoning aside. The vector arrives in the gateway's own order — running
+   sessions first, then FRESHEST first, the same order its session list is in —
+   and is painted in it; `:rank` (0 best) says WHERE the query hit and a surface
+   never re-orders. Blank query → []. Heavy assistant text never crosses the
+   wire."
   [query]
   (let
     [q (some-> query

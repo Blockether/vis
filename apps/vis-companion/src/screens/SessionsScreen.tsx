@@ -94,7 +94,7 @@ import {
   resolveScope,
   SCOPE_ALL,
   scopedMachines,
-  SEARCH_LOCAL_ONLY_RANK,
+  SEARCH_UNPLACED,
   searchFanout,
   searchOrder,
   searchTally,
@@ -814,6 +814,18 @@ export function SessionsScreen({
       for (const match of entry.matches) byId.set(match.sessionId, match);
     return byId;
   }, [live]);
+  // WHERE the gateway put each match: its index in that machine's answer, which
+  // is the gateway's own order — running sessions first, then freshest first.
+  // The place, not the relevance band, is what the list sorts by; a session's
+  // index is only ever compared with others from the SAME machine, since a
+  // machine's rows are filtered and ordered inside its own section.
+  const searchPlaces = useMemo(() => {
+    if (!live) return null;
+    const places = new Map<string, number>();
+    for (const entry of live.byMachine.values())
+      entry.matches.forEach((match, index) => places.set(match.sessionId, index));
+    return places;
+  }, [live]);
   // Sessions a transcript hit named that this machine had not paged in yet, per
   // machine key. Kept beside the list instead of merged into it: the 10s poll
   // rewrites `machine.sessions` from the gateway's own paged answer.
@@ -865,16 +877,16 @@ export function SessionsScreen({
           !needle || titleHit(session) || metaHit(session) || matches?.has(session.id) === true
         );
       });
-      // A query RE-RANKS what it matched, and the GATEWAY decides how: `rank` is
-      // the server's band (title, then the user's own words, then the assistant's
-      // answer, then its thinking), the same order the TUI and every future client
-      // paints. Rows the gateway did not rank — an unsent draft in this device's
-      // composer, local metadata — fall in behind them.
+      // A query RE-ORDERS what it matched and the GATEWAY decides how: the
+      // search answer arrives running-sessions-first, then FRESHEST first — the
+      // very order the gateway lists sessions in — so a query narrows the list
+      // instead of reshuffling it, and the dates down the rows only ever fall.
+      // Painting the band instead (`SessionMatch.rank`: title, then the user's
+      // words, then the assistant's) buried this morning's session under every
+      // year-old title holding the word. Rows the gateway did not place — an
+      // unsent draft in this device's composer, local metadata — fall in behind.
       const ranked = needle
-        ? searchOrder(
-            sessions,
-            (session) => matches?.get(session.id)?.rank ?? SEARCH_LOCAL_ONLY_RANK,
-          )
+        ? searchOrder(sessions, (session) => searchPlaces?.get(session.id) ?? SEARCH_UNPLACED)
         : sessions;
       // Starred rows first, then unsent work, and with them the project group that
       // owns them: see `sessionOrder`.
@@ -886,7 +898,7 @@ export function SessionsScreen({
         }),
       };
     });
-  }, [inScope, searchNeedle, matches, searchHits, draftMessages, favorites]);
+  }, [inScope, searchNeedle, matches, searchPlaces, searchHits, draftMessages, favorites]);
 
   // A filter is a FLEET question: it runs on every machine in scope, so the header
   // reports what came back and from how many of them.

@@ -1734,13 +1734,17 @@
           (update (json-response payload) :headers merge base))))))
 
 (defn- search-sessions-handler
-  "GET /v1/sessions/actions/search?q=&channel= — the ranked answer to `q`.
+  "GET /v1/sessions/actions/search?q=&channel= — the answer to `q`, in the
+   LIST's own order.
 
-   The SERVER decides relevance: `matches` carries every session whose title or
-   transcript matches, each with the `rank` band it earned (title 0, request 1,
-   reply 2, thinking 3) and `is_in_title`, already ordered band-then-newest.
-   Clients PAINT that order; they never re-derive it, so a third client cannot
-   invent a fourth ordering. `session_ids` mirrors the same order."
+   The SERVER decides that order: `matches` carries every session whose title or
+   transcript matches, RUNNING sessions first and then FRESHEST first, each with
+   the `rank` band it earned (title 0, request 1, reply 2, thinking 3) and
+   `is_in_title`. Searching narrows the session list without reshuffling it, so
+   the dates a client paints only ever fall as it scans down; `rank` says WHERE
+   the query hit. Clients PAINT this order and never re-derive one from the
+   flags, so a third client cannot invent a fourth ordering. `session_ids`
+   mirrors it."
   [request]
   (let
     [q

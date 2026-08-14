@@ -1536,22 +1536,55 @@
    them said."
   {:title 0 :request 1 :reply 2 :thinking 3})
 
-(defn- search-rows->sessions
-  "Fold per-row hits into one RANKED entry per session soul.
+(defn- session-activity-at
+  "When each of `sids` LAST MOVED, epoch ms, keyed by soul-id string.
 
-   Ranking happens HERE, on the server, and travels as `:rank` so no client ever
-   invents an order of its own: a session's rank is its BEST hit's band
-   (`transcript-hit-side-rank` — title, then request, then reply, then thinking),
-   and equal bands are broken by the newest hit. Inside a session the same bands
-   order the hits, so the per-session cap (`transcript-hits-per-session`) keeps
-   the user's words before the assistant's and the reasoning aside last.
+   The same instant a list read reports as `modified_at` (`db-session-turn-stats`
+   `:latest-turn-at`): the newest turn across every state of the soul, falling
+   back to the soul's own creation for a session nothing has ever run in. Search
+   ORDERS by this (`search-rows->sessions`), which is why it must come from the
+   same place the row's own date does — an order computed from anything else
+   paints a list whose dates do not descend.
+
+   ONE grouped statement over the matched ids only: ~6ms for 292 sessions on a
+   2.2 GB store, against the ~40ms whole-store stats scan a listing pays."
+  [db-info sids]
+  (if (empty? sids)
+    {}
+    (let
+      [sql (str "SELECT cs.id AS sid, MAX(COALESCE(ts.created_at, cs.created_at)) AS at "
+                "FROM session_soul cs "
+                "LEFT JOIN session_state ss ON ss.session_soul_id = cs.id "
+                "LEFT JOIN session_turn_soul ts ON ts.session_state_id = ss.id "
+                "WHERE cs.id IN (" (str/join "," (repeat (count sids) "?"))
+                ") " "GROUP BY cs.id")]
+      (into {}
+            (map (fn [row]
+                   [(str (:sid row)) (long (or (:at row) 0))]))
+            (raw-query! db-info (into [sql] sids))))))
+
+(defn- search-rows->sessions
+  "Fold per-row hits into one entry per session soul, FRESHEST SESSION FIRST.
+
+   Ordering happens HERE, on the server, and travels as the vector's own order so
+   no client invents one: sessions are sorted by when each LAST MOVED
+   (`activity`, soul-id string -> epoch ms), newest first. A search is someone
+   looking for a conversation they had, and the newest is nearly always the one
+   they mean.
+
+   `transcript-hit-side-rank` still decides `:rank` — title, then the user's
+   request, then the assistant's reply, then its thinking — and it breaks a tie
+   between two sessions that last moved at the same instant. Inside a session the
+   same bands order the hits, so the per-session cap
+   (`transcript-hits-per-session`) keeps the user's words before the assistant's
+   and the reasoning aside last.
 
    `:hits` carries TRANSCRIPT snippets only — a title hit is reported by
    `:in-title?` and by the rank, not as a fake chat line. `:request-snippet` /
    `:reply-snippet` stay as the FIRST hit of each side so single-snippet callers
    keep working, the reply snippet falling back to a thinking hit when that is
    all there was."
-  [rows]
+  [rows activity]
   (->> rows
        (filter :snippet)
        (group-by :sid)
@@ -1581,7 +1614,7 @@
                 (some #(when ((set sides) (:side %)) (:snippet %)) ordered))]
 
              {:id (->uuid sid)
-              :newest (reduce max 0 (map at ordered))
+              :activity (long (get activity (str sid) 0))
               :rank (reduce min 9 (map band ordered))
               :in-title? (side? :title)
               :in-request? (side? :request)
@@ -1592,8 +1625,10 @@
               :hits (mapv (fn [h]
                             {:side (:side h) :snippet (:snippet h) :at (->date (:at h))})
                           kept)})))
-       (sort-by (juxt (comp long :rank) (comp - long :newest)))
-       (mapv #(dissoc % :newest))))
+       ;; Freshest first; the band and then the id keep the order TOTAL, so the
+       ;; same store answers the same query the same way every time.
+       (sort-by (juxt (comp - long :activity) (comp long :rank) (comp str :id)))
+       (mapv #(dissoc % :activity))))
 
 (defn db-search-session-matches
   "Sessions whose TITLE or TRANSCRIPT text matches `query`, RANKED, each carrying
@@ -1611,10 +1646,16 @@
    (`llm_assistant_message`) is deliberately NOT searched: it is wire JSON, not
    what was said. Any of the four can be true together.
 
-   The RESULT ORDER IS THE ANSWER: best band first, newest first inside a band,
-   with `:rank` spelled out so every surface — TUI, companion, CLI, the next
-   client nobody has written — paints one order instead of re-deciding relevance
-   from flags it happens to hold. See `transcript-hit-side-rank`.
+   The RESULT ORDER IS THE ANSWER, and the answer is FRESHNESS: sessions come
+   back newest-first by the instant each one last moved (`session-activity-at`
+   — the same fact a list read prints as `modified_at`), so a result list reads
+   like the session list it filters and the dates only ever fall as you scan
+   down. Someone hunting a conversation looks for the one they were in, not for
+   the strongest lexical band: a title match from a year ago must not sit above
+   this morning's session. `:rank` still travels — it breaks a tie between two
+   sessions that last moved at the same instant, orders the hits INSIDE a
+   session, and tells a surface WHERE the query hit without it re-deciding
+   anything. See `transcript-hit-side-rank`.
 
    Transcript matching is served by the V1 FTS5 indexes (`transcript_request_fts` /
    `transcript_reply_fts`) — single-digit milliseconds instead of the ~400ms full
@@ -1638,14 +1679,16 @@
                     ->kw
                     name)
          ch (when-not (or (nil? ch) (= "all" ch)) ch)
-         match (fts-match-expr q)]
+         match (fts-match-expr q)
+         rows (cond-> (title-hit-rows db-info ch q)
+                match
+                (into (transcript-hit-rows db-info :request ch match))
 
-        (search-rows->sessions (cond-> (title-hit-rows db-info ch q)
-                                 match
-                                 (into (transcript-hit-rows db-info :request ch match))
+                match
+                (into (transcript-hit-rows db-info :reply ch match)))
+         sids (into #{} (map :sid) rows)]
 
-                                 match
-                                 (into (transcript-hit-rows db-info :reply ch match))))))))
+        (search-rows->sessions rows (session-activity-at db-info sids))))))
 
 (defn db-search-session-ids
   "Soul ids whose TRANSCRIPT text matches `query`.

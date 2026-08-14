@@ -1260,36 +1260,48 @@
         ;; side is newest-first inside its own band.
         (expect (= (sort-by (juxt #(if (= :request (:side %)) 0 1) (comp - inst-ms :at)) (:hits m))
                    (:hits m))))))
-  (it "ranks a REQUEST match above a reply-only match, however new the reply is"
-      (let
-        [s
-         (h/store)
-
-         replied
-         (h/store-session! s {:channel :tui :title "Replied"})
-
-         asked
-         (h/store-session! s {:channel :tui :title "Asked"})]
-
-        ;; The request match is written FIRST and the reply-only match LAST, so the
-        ;; reply-only session owns the NEWEST hit in the store. Under a pure
-        ;; newest-first order it led the results.
-        (let
-          [tid (vis/db-store-session-turn!
-                 s
-                 {:parent-session-id asked :user-request "needle in the ask" :status :done})]
-          (h/store-iteration! s
-                              {:session-turn-id tid :assistant-prose "plain" :code "x" :result 1}))
-        (let
-          [tid (vis/db-store-session-turn!
-                 s
-                 {:parent-session-id replied :user-request "plain ask" :status :done})]
-          (h/store-iteration!
-            s
-            {:session-turn-id tid :assistant-prose "needle in the reply" :code "x" :result 1}))
-        (expect (= [asked replied] (vis/db-search-session-ids s :all "needle")))))
+  ;; Regression, user report (paraphrased: "the search results are not sorted by
+  ;; freshness — I care far more about freshness than about which band the hit
+  ;; landed in"): the relevance band led the order, so a session whose REQUEST
+  ;; held the word months ago sat above the one whose ANSWER said it a minute
+  ;; ago, and the dates jumped up and down the result list.
   (it
-    "ranks THINKING last: request, then the answer, then the reasoning aside"
+    "orders by the session's own FRESHNESS, not by the band the hit landed in"
+    (let
+      [s
+       (h/store)
+
+       asked
+       (h/store-session! s {:channel :tui :title "Asked"})
+
+       replied
+       (h/store-session! s {:channel :tui :title "Replied"})]
+
+      ;; The request match is written FIRST and the reply-only match LAST, so
+      ;; the reply-only session is the FRESHER of the two.
+      (let
+        [tid (vis/db-store-session-turn!
+               s
+               {:parent-session-id asked :user-request "needle in the ask" :status :done})]
+        (h/store-iteration! s {:session-turn-id tid :assistant-prose "plain" :code "x" :result 1}))
+      ;; Distinct instants: the order under test is a TIME order.
+      (Thread/sleep 2)
+      (let
+        [tid (vis/db-store-session-turn!
+               s
+               {:parent-session-id replied :user-request "plain ask" :status :done})]
+        (h/store-iteration!
+          s
+          {:session-turn-id tid :assistant-prose "needle in the reply" :code "x" :result 1}))
+      (expect (= [replied asked] (vis/db-search-session-ids s :all "needle")))
+      ;; The band still travels — it says WHERE the query hit and breaks a tie
+      ;; between two sessions that last moved at the same instant.
+      (let
+        [by-id (into {} (map (juxt :id identity)) (vis/db-search-session-matches s :all "needle"))]
+        (expect (= 1 (:rank (get by-id asked))))
+        (expect (= 2 (:rank (get by-id replied)))))))
+  (it
+    "tags the reasoning aside as the weakest band, `:rank` 3"
     (let
       [s
        (h/store)
@@ -1305,20 +1317,24 @@
 
        turn!
        (fn [sid request iteration]
+         ;; Distinct instants: the result order is a TIME order.
+         (Thread/sleep 2)
          (let
            [tid (vis/db-store-session-turn!
                   s
                   {:parent-session-id sid :user-request request :status :done})]
            (h/store-iteration! s (merge {:session-turn-id tid :code "x" :result 1} iteration))))]
 
-      ;; Written weakest-band FIRST, so the thinking-only session owns the NEWEST
-      ;; hit: only the banding can put it last.
+      ;; Written oldest FIRST, so the freshest session leads the answer.
       (turn! mused "plain ask" {:assistant-prose "plain" :thinking "needle while reasoning"})
       (turn! answered "plain ask" {:assistant-prose "needle in the answer"})
       (turn! asked "needle in the ask" {:assistant-prose "plain"})
       (expect (= [asked answered mused] (vis/db-search-session-ids s :all "needle")))
       (let
         [by-id (into {} (map (juxt :id identity)) (vis/db-search-session-matches s :all "needle"))]
+        ;; The bands still travel: request 1, reply 2, the reasoning aside 3 —
+        ;; what neither of them said ranks last, and a surface says WHERE it hit.
+        (expect (= [1 2 3] (mapv #(:rank (get by-id %)) [asked answered mused])))
         (expect (= {:in-request? false :in-reply? false :in-thinking? true}
                    (select-keys (get by-id mused) [:in-request? :in-reply? :in-thinking?])))
         (expect (= {:in-request? false :in-reply? true :in-thinking? false}
@@ -1328,7 +1344,7 @@
         (expect (= [:thinking] (mapv :side (:hits (get by-id mused)))))
         (expect (= [:reply] (mapv :side (:hits (get by-id answered))))))))
   (it
-    "ranks a TITLE match above every transcript match, and says so in `:rank`"
+    "puts a TITLE match where its session's FRESHNESS puts it, and says `:rank` 0"
     (let
       [s
        (h/store)
@@ -1344,6 +1360,8 @@
 
        turn!
        (fn [sid request iteration]
+         ;; Distinct instants: the order under test is a TIME order.
+         (Thread/sleep 2)
          (let
            [tid (vis/db-store-session-turn!
                   s
@@ -1351,19 +1369,20 @@
            (h/store-iteration! s (merge {:session-turn-id tid :code "x" :result 1} iteration))))]
 
       ;; The named session is written FIRST and its transcript never says
-      ;; "needle", so only the band can lift it over two newer body matches.
+      ;; "needle": the band used to lift it over two newer body matches, which is
+      ;; how a year-old name landed on top of this morning's session.
       (turn! named "plain ask" {:assistant-prose "plain"})
       (turn! answered "plain ask" {:assistant-prose "needle in the answer"})
       (turn! asked "needle in the ask" {:assistant-prose "plain"})
-      (expect (= [named asked answered] (vis/db-search-session-ids s :all "needle")))
+      (expect (= [asked answered named] (vis/db-search-session-ids s :all "needle")))
       (let
         [by-id (into {} (map (juxt :id identity)) (vis/db-search-session-matches s :all "needle"))]
         (expect (= {:rank 0 :in-title? true :in-request? false :in-reply? false}
                    (select-keys (get by-id named) [:rank :in-title? :in-request? :in-reply?])))
         (expect (= 1 (:rank (get by-id asked))))
         (expect (= 2 (:rank (get by-id answered))))
-        ;; A title hit is not a chat line: it lifts the session, it does not
-        ;; fake a transcript snippet.
+        ;; A title hit is not a chat line: it tags the session, it does not fake a
+        ;; transcript snippet.
         (expect (= [] (:hits (get by-id named))))
         (expect (= false (:in-title? (get by-id asked)))))))
   (it "matches a title by SUBSTRING, so a query the transcript index cannot tokenize still finds it"

@@ -421,3 +421,66 @@ describe("typing does not redraw the list under the thumb", () => {
     expect(report!.querySelector('[aria-label^="Projects on"]')).toBeNull();
   });
 });
+
+const rowOrder = () =>
+  [...document.querySelectorAll("[data-session-id]")].map((row) =>
+    row.getAttribute("data-session-id"),
+  );
+
+// Regression, user report (paraphrased: "the search results are not sorted by
+// freshness — I care far more about freshness than about which band the hit
+// landed in"). The screen sorted what a query matched by `SessionMatch.rank`,
+// the gateway's relevance band, so every year-old session whose TITLE held the
+// word sat above the one touched this morning and the dates jumped up and down
+// the list. The gateway now answers freshest-first and the screen paints THAT
+// order.
+describe("search results are ordered by freshness", () => {
+  const machines = [
+    {
+      label: "alpha",
+      sessions: [
+        listSession({
+          id: "ancient",
+          title: "star charts",
+          modified_at: "2024-01-02T10:00:00Z",
+        }),
+        listSession({ id: "today", title: "Deploy", modified_at: "2024-06-01T10:00:00Z" }),
+      ],
+      routes: {
+        "/v1/sessions/actions/search": {
+          // The gateway's own order: today's session first, matched in a REPLY
+          // (band 2); the ancient one second, matched in its very TITLE (band 0).
+          matches: [
+            {
+              session_id: "today",
+              rank: 2,
+              is_in_reply: true,
+              reply_snippet: "a star to steer by",
+            },
+            { session_id: "ancient", rank: 0, is_in_title: true },
+          ],
+        },
+      },
+    },
+  ];
+
+  it("paints the freshest match first, whatever band it matched in", async () => {
+    const view = renderSessionsScreen({ machines });
+    restore = view.restore;
+    await screen.findByText("Deploy");
+
+    view.setQuery("star");
+    await waitFor(() => expect(rowOrder()).toEqual(["today", "ancient"]));
+  });
+
+  it("keeps that order while the answer is the one being painted", async () => {
+    const view = renderSessionsScreen({ machines });
+    restore = view.restore;
+    await screen.findByText("Deploy");
+
+    view.setQuery("star");
+    await waitFor(() => expect(rowOrder()).toEqual(["today", "ancient"]));
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(rowOrder()).toEqual(["today", "ancient"]);
+  });
+});

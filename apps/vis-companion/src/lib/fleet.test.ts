@@ -20,7 +20,7 @@ import {
   scopedMachines,
   scopedConns,
   searchFanout,
-  SEARCH_LOCAL_ONLY_RANK,
+  SEARCH_UNPLACED,
   searchOrder,
   searchTally,
   scopedSessions,
@@ -427,28 +427,37 @@ describe('search across the fleet', () => {
     expect(searchTally([])).toEqual({ matches: 0, machines: 0 });
   });
 
-  // Relevance is the GATEWAY's answer: it ranks a hit in the session's NAME above
-  // the user's own words, those above the assistant's answer, and that above what
-  // it merely thought. The app sorts by that number and never recomputes it.
+  // Regression, user report (paraphrased: "the search results are not sorted by
+  // freshness — I care about freshness, not the band a hit landed in"). The app
+  // used to sort matched rows by `SessionMatch.rank`, so every year-old title
+  // holding the word sat above the session touched this morning. It now paints
+  // the PLACE the gateway gave each match: the gateway's own freshest-first
+  // order.
 
-  it('re-orders matched rows by rank, keeping the gateway order inside a band', () => {
+  it('paints the gateway order — the place of a match, never its relevance band', () => {
     const rows = [session('reply'), session('ask'), session('named'), session('other')];
-    const rank: Record<string, number> = { reply: 3, ask: 2, named: 0, other: 2 };
-    expect(searchOrder(rows, (row) => rank[row.id] ?? 9).map((row) => row.id)).toEqual([
-      'named',
+    // The gateway answered freshest first; the BANDS run the other way.
+    const place: Record<string, number> = { reply: 0, ask: 1, other: 2, named: 3 };
+    expect(searchOrder(rows, (row) => place[row.id] ?? 9).map((row) => row.id)).toEqual([
+      'reply',
       'ask',
       'other',
-      'reply',
+      'named',
     ]);
   });
 
-  it('sorts a row the gateway could not rank after every ranked one', () => {
+  it('keeps the incoming order between rows the gateway placed together', () => {
+    const rows = [session('second'), session('first')];
+    expect(searchOrder(rows, () => 0).map((row) => row.id)).toEqual(['second', 'first']);
+  });
+
+  it('sorts a row the gateway did not place after every placed one', () => {
     const rows = [session('draft-only'), session('thinking')];
-    const rank: Record<string, number> = { thinking: 3 };
+    const place: Record<string, number> = { thinking: 7 };
     expect(
-      searchOrder(rows, (row) => rank[row.id] ?? SEARCH_LOCAL_ONLY_RANK).map((row) => row.id),
+      searchOrder(rows, (row) => place[row.id] ?? SEARCH_UNPLACED).map((row) => row.id),
     ).toEqual(['thinking', 'draft-only']);
-    expect(SEARCH_LOCAL_ONLY_RANK).toBeGreaterThan(3);
+    expect(SEARCH_UNPLACED).toBeGreaterThan(1_000_000);
   });
 });
 

@@ -1990,6 +1990,28 @@
            (expect (str/includes? (str @failed) "turn launch failed"))
            (finally (cancellation/cancel! token) (swap! registry dissoc sid))))))
 
+;; Regression, user report (paraphrased: "the search results are not sorted by
+;; freshness"): a search answered in its own relevance order, which had nothing
+;; to do with the order the same sessions are LISTED in, so scanning the results
+;; meant reading dates that jumped up and down. The store now answers
+;; freshest-first and the gateway lifts the running sessions over it — the very
+;; key `order-session-summaries` gives the navigator.
+(defdescribe gateway-search-order-test
+             (it "keeps the store's freshest-first order and lifts the running sessions"
+                 (let
+                   [order (fn [matches live]
+                            (mapv :session_id (#'state/search-matches-live-first matches live)))]
+                   ;; Freshest first is how the store answered; nothing re-sorts it.
+                   (expect (= ["new" "old"] (order [{:session_id "new"} {:session_id "old"}] {})))
+                   ;; A session with a turn in flight is the freshest thing there is.
+                   (expect (= ["run" "new" "old"]
+                              (order [{:session_id "new"} {:session_id "old"} {:session_id "run"}]
+                                     {"run" "turn-1"})))
+                   ;; Running sessions keep the order they arrived in.
+                   (expect (= ["a" "b" "c"]
+                              (order [{:session_id "a"} {:session_id "c"} {:session_id "b"}]
+                                     {"a" "turn-1" "b" "turn-2"}))))))
+
 (defdescribe gateway-session-order-test
              (it "returns live sessions first and orders each state by recency"
                  (let

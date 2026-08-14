@@ -267,33 +267,42 @@ export function searchTally(
 }
 
 /**
- * Where a row the gateway could not rank sits: after every ranked one.
+ * Where a row the gateway could not place sits: after every placed one.
  *
- * Relevance is the SERVER's answer (`SessionMatch.rank` — title, then the user's
- * own words, then the assistant's answer, then its thinking), decided once for
- * every client. What is left over is what no gateway can see: an unsent draft in
- * this device's composer, and the local metadata of a row the search endpoint did
- * not return. Those sort last rather than competing on a relevance this side is
- * in no position to judge.
+ * The ORDER is the SERVER's answer, decided once for every client: running
+ * sessions first, then the freshest first — the same order the gateway lists
+ * sessions in, so a query narrows the list instead of reshuffling it. What is
+ * left over is what no gateway can see: an unsent draft in this device's
+ * composer, and the local metadata of a row the search endpoint did not return.
+ * Those sort last rather than competing on a freshness this side would have to
+ * guess at.
  */
-export const SEARCH_LOCAL_ONLY_RANK = 100;
+export const SEARCH_UNPLACED = Number.MAX_SAFE_INTEGER;
 
 /**
- * Order the rows a query matched by the rank the GATEWAY gave them, keeping the
- * incoming order inside a band so the gateway's own ordering still decides
- * between equally relevant ones. Bands the list paints itself (`sessionOrder`)
- * are applied AFTER this, so a starred row stays on top of its own search.
+ * Order the rows a query matched by the PLACE the gateway gave them — its
+ * position in the search answer, which is the gateway's own freshest-first
+ * order.
+ *
+ * It used to sort by the relevance BAND instead (title hits, then the user's
+ * words, then the assistant's), which buried this morning's session under
+ * every year-old title that happened to contain the word: the dates jumped up
+ * and down the list. Bands still travel on `SessionMatch.rank`, to say WHERE a
+ * query hit; they no longer decide where a row sits.
+ *
+ * Bands the list paints itself (`sessionOrder`) are applied AFTER this, so a
+ * starred row stays on top of its own search.
  */
 export function searchOrder(
   sessions: Session[],
-  rankOf: (session: Session) => number,
+  placeOf: (session: Session) => number,
 ): Session[] {
   const rows = sessions.map((session, index) => ({
     session,
     index,
-    rank: rankOf(session),
+    place: placeOf(session),
   }));
-  rows.sort((a, b) => (a.rank !== b.rank ? a.rank - b.rank : a.index - b.index));
+  rows.sort((a, b) => (a.place !== b.place ? a.place - b.place : a.index - b.index));
   return rows.map((row) => row.session);
 }
 

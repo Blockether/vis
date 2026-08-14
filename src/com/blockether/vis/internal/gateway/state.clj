@@ -4583,6 +4583,25 @@
    (let [db (try (lp/db-info) (catch Throwable _ nil))]
      (if db (mapv str (persistance/db-search-session-ids db channel query)) []))))
 
+(defn- search-matches-live-first
+  "Wire search matches in the LIST's own order.
+
+   `db-search-session-matches` already answers FRESHEST FIRST, which is most of
+   the navigator's key. The one fact only this process holds is which sessions
+   are RUNNING RIGHT NOW, and the list lifts those to the top
+   (`order-session-summaries`): a session whose turn is in flight is the freshest
+   thing there is. Doing the same here keeps a search a FILTER of the list rather
+   than a second ordering of it.
+
+   Total and pure: arrival order (already freshest-first) breaks every tie, so
+   the same answer sorts the same way every time."
+  [matches live]
+  (->> matches
+       (map-indexed vector)
+       (sort-by (fn [[i m]]
+                  [(if (get live (str (:session_id m))) 0 1) (long i)]))
+       (mapv second)))
+
 (defn search-session-matches
   "Soul-id STRINGS whose TITLE or TRANSCRIPT matches `query`, each TAGGED with
    WHERE it hit, RANKED by the server, and carrying up to a handful of MATCH
@@ -4597,33 +4616,39 @@
    `:is_in_request` = the user's own request matched; `:is_in_reply` = the
    assistant's answer; `:is_in_thinking` = only its reasoning aside.
 
-   RELEVANCE IS DECIDED HERE, once, for every client: the vector arrives in rank
-   order and each row spells its band out in `:rank` (0 title, 1 request, 2 reply,
-   3 thinking; newest first within a band). A surface paints this order — it does
-   not re-rank from the flags.
+   THE ORDER IS THE ANSWER, and it is the LIST's own: sessions running right now
+   first, then freshest first — `db-search-session-matches` sorts by the instant
+   each session last moved (the `modified_at` a list read prints) and
+   `search-matches-live-first` lifts the in-flight ones, which is exactly the key
+   `order-session-summaries` gives the navigator. A search therefore FILTERS the
+   list instead of reshuffling it, and the dates only fall as a client scans down.
+   `:rank` travels so a surface can say WHERE the query hit and break a tie; it is
+   not the order and no surface re-derives one from the flags.
    Blank query → []."
   ([query] (search-session-matches :all query))
   ([channel query]
    (let [db (try (lp/db-info) (catch Throwable _ nil))]
      (if db
-       (mapv (fn
-               [{:keys [id rank in-title? in-request? in-reply? in-thinking? request-snippet
-                        reply-snippet hits]}]
-               {:session_id (str id)
-                :rank (long (or rank 0))
-                :is_in_title (boolean in-title?)
-                :is_in_request (boolean in-request?)
-                :is_in_reply (boolean in-reply?)
-                :is_in_thinking (boolean in-thinking?)
-                :request_snippet request-snippet
-                :reply_snippet reply-snippet
-                :hits (mapv (fn [h]
-                              {:side (name (:side h))
-                               :snippet (:snippet h)
-                               :at (some-> (:at h)
-                                           inst-ms)})
-                            (or hits []))})
-             (persistance/db-search-session-matches db channel query))
+       (search-matches-live-first (mapv (fn
+                                          [{:keys [id rank in-title? in-request? in-reply?
+                                                   in-thinking? request-snippet reply-snippet
+                                                   hits]}]
+                                          {:session_id (str id)
+                                           :rank (long (or rank 0))
+                                           :is_in_title (boolean in-title?)
+                                           :is_in_request (boolean in-request?)
+                                           :is_in_reply (boolean in-reply?)
+                                           :is_in_thinking (boolean in-thinking?)
+                                           :request_snippet request-snippet
+                                           :reply_snippet reply-snippet
+                                           :hits (mapv (fn [h]
+                                                         {:side (name (:side h))
+                                                          :snippet (:snippet h)
+                                                          :at (some-> (:at h)
+                                                                      inst-ms)})
+                                                       (or hits []))})
+                                        (persistance/db-search-session-matches db channel query))
+                                  (bus/live-turns))
        []))))
 
 ;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
