@@ -2227,3 +2227,31 @@
              {:sessions [] :total 0 :offset 0 :limit nil :order-digest "x" :has-more false})]
           ((rv 'list-sessions-handler) {:query-params {}})
           (is (nil? (:root (second @seen)))))))))
+
+;; Regression, issue #146: `wrap-errors` answered EVERY throwable with a generic
+;; `engine-error` 500, so a request that failed only because no AI provider was
+;; configured reached the TUI as an ordinary crash — `vis-agent tui` printed a
+;; 50-frame stack trace instead of opening the provider dialog.
+(deftest no-provider-failure-keeps-its-type-on-the-wire
+  (let
+    [answer (fn [t]
+              (let
+                [handler ((rv 'wrap-errors)
+                           (fn [_]
+                             (throw t)))
+                 {:keys [status body]} (handler {:uri "/v1/sessions" :request-method :post})
+                 error (get (wire/parse-json body) "error")]
+
+                [status (get error "type") (get error "message")]))]
+    (testing "nothing configured — the typed verdict AND the original reason survive"
+      (is (= [503 "no-provider" "No AI provider is configured yet."]
+             (answer (ex-info "session create failed"
+                              {}
+                              (ex-info "No AI provider is configured yet."
+                                       {:type :vis/no-provider}))))))
+    (testing "configured but nothing resolved is the same verdict to a client"
+      (is (= [503 "no-provider" "make-router requires at least one provider"]
+             (answer (ex-info "make-router requires at least one provider"
+                              {:type :svar/no-providers})))))
+    (testing "any other failure is still an engine error"
+      (is (= [500 "engine-error" "boom"] (answer (ex-info "boom" {})))))))

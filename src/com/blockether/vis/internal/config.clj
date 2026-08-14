@@ -1510,6 +1510,35 @@
 
      (when (not= raw raw*) (save-config! raw* source) true))))
 
+(def no-provider-error-type
+  "Wire `error.type` the gateway answers when a request failed because no AI
+   provider is usable. A string because it crosses HTTP, and it lives next to the
+   marker `resolve-config` throws so producer and readers share ONE spelling."
+  "no-provider")
+
+(defn no-provider-ex
+  "First throwable in `t`'s cause chain that means \"no AI provider is usable\",
+   or nil. Three shapes say exactly that, and all three must reach the provider
+   manager instead of a stack trace:
+
+     - `:type :vis/no-provider`   — nothing is configured (`resolve-config`).
+     - `:type :svar/no-providers` — a config exists, but nothing resolved at
+       router-build time (rotated credentials, unset `${NAME}`).
+     - ex-data `{\"error\" {\"type\" \"no-provider\"}}` — the same verdict after a
+       round trip through the gateway, whose payload has string keys and no
+       `:type` (`gateway.client/send-json-with-entry!` rethrows it verbatim).
+
+   Walks the whole chain because callers wrap: the gateway wraps while creating
+   a session, the CLI wraps in futures and class initializers."
+  ^Throwable [^Throwable t]
+  (loop [^Throwable c t]
+    (when c
+      (let [d (ex-data c)]
+        (if (or (contains? #{:vis/no-provider :svar/no-providers} (:type d))
+                (= no-provider-error-type (get-in d ["error" "type"])))
+          c
+          (recur (.getCause c)))))))
+
 (defn resolve-config
   "Resolve provider config: explicit -> merged YAML config.
    Throws when nothing is available."

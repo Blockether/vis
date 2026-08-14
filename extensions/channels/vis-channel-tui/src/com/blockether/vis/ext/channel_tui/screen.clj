@@ -26,6 +26,7 @@
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.magit :as magit]
+            [com.blockether.vis.internal.config :as vis-config]
             [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.internal.header :as vis-header]
             [com.blockether.vis.internal.paths :as vis-paths]
@@ -4691,18 +4692,6 @@
     (or (chat/resume-session cid)
         (throw (ex-info (format-session-not-found cid) {:vis/user-error true :id cid})))))
 
-(defn- svar-no-providers-cause?
-  "True when `e` — or any exception in its cause chain — is svar's
-   `make-router requires at least one provider` (`:type :svar/no-providers`).
-   A config EXISTS but every configured provider failed to resolve at router-
-   build time. Walks the cause chain because the gateway may wrap the original
-   `ex-info` while creating the session."
-  [^Throwable e]
-  (loop [t e]
-    (cond (nil? t) false
-          (= :svar/no-providers (:type (ex-data t))) true
-          :else (recur (.getCause t)))))
-
 (def ^:private boot-splash-frames ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"])
 
 (def ^:private boot-splash-grace-ms
@@ -5012,17 +5001,20 @@
                                             chat/resume-session)
                                     (chat/make-session config)))))
                 {:keys [id history] :as startup-session}
-                ;; A config EXISTS but every provider may have failed to
-                ;; resolve at router-build time (rotated/expired creds) → svar
-                ;; throws :svar/no-providers. Onboarding was skipped (config
-                ;; present), so surface the provider manager here, then retry
-                ;; the build ONCE with the freshest config.
+                ;; No provider is usable: either nothing is configured at all,
+                ;; or a config EXISTS and every provider failed to resolve at
+                ;; router-build time (rotated/expired creds). Onboarding is
+                ;; skipped whenever a config is present, and the gateway wraps
+                ;; the verdict on its way back, so classify the whole cause
+                ;; chain AND the wire payload — then surface the provider
+                ;; manager here and retry the build ONCE with the freshest
+                ;; config.
                 (with-boot-splash!
                   screen
                   (fn []
                     (try (make-startup config)
                          (catch Throwable e
-                           (if (svar-no-providers-cause? e)
+                           (if (vis-config/no-provider-ex e)
                              (do (when-let
                                    [c (with-dialog-lock #(provider/show-provider-dialog!
                                                            screen

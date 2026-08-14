@@ -4911,7 +4911,7 @@
                                   ;; and calling `System/exit 0` guarantees termination.
                                   (do (shutdown-agents) (System/exit 0))))))))
       (catch Throwable t
-        (cond (= :vis/no-provider (:type (ex-data t))) (exit-no-provider!)
+        (cond (config/no-provider-ex t) (exit-no-provider!)
               (user-error-ex t) (exit-with-user-error! (user-error-ex t))
               :else (exit-with-fatal-error! t)))
       (finally (when measure?

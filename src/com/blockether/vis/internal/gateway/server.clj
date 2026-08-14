@@ -3278,7 +3278,16 @@
     (try (handler request)
          (catch Throwable t
            (tel/log! :error ["gateway: unhandled request error" (:uri request) (ex-message t)])
-           (error-response 500 :engine-error (or (ex-message t) "internal error"))))))
+           ;; "No AI provider is usable" keeps its TYPE on the wire. Flattened into
+           ;; :engine-error no caller could tell the most likely first-run state
+           ;; from a real crash, so `vis-agent tui` printed a stack trace instead
+           ;; of opening the provider manager. Answer with the ORIGINAL message —
+           ;; whatever wrapped it on the way here says something generic.
+           (if-let [no-provider (config/no-provider-ex t)]
+             (error-response 503
+                             config/no-provider-error-type
+                             (or (ex-message no-provider) "No AI provider is configured yet."))
+             (error-response 500 :engine-error (or (ex-message t) "internal error")))))))
 
 (def ^:private cors-allow-methods "GET, POST, PATCH, DELETE, OPTIONS")
 

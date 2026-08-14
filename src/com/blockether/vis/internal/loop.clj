@@ -5195,7 +5195,7 @@
          ;; provider. One unset var must never cost you a session running on a
          ;; healthy provider. If it was the ONLY provider, svar raises
          ;; `:svar/no-providers`, which already routes to the provider manager
-         ;; (see `screen/svar-no-providers-cause?`), and that dialog now names
+         ;; (see `config/no-provider-ex`), and that dialog now names
          ;; the exact variable.
          (remove (fn [p]
                    (when-let [{:keys [reason env-vars]} (config/provider-credential-gap p)]
@@ -5344,15 +5344,6 @@
                     (providers/reprioritize-providers seated)))))
       router)))
 
-(defn- no-providers-cause?
-  "True when `t`, or anything in its cause chain, is svar's
-   `make-router requires at least one provider`."
-  [^Throwable t]
-  (loop [x t]
-    (cond (nil? x) false
-          (= :svar/no-providers (:type (ex-data x))) true
-          :else (recur (.getCause x)))))
-
 (defn- env-gap-router-error
   "Restate a bare `:svar/no-providers` when the REASON is an unset `${NAME}`:
    `runtime-router-providers` drops every provider whose reference never
@@ -5361,12 +5352,12 @@
    provider\" and has to guess WHICH variable is missing — exactly the debug
    session the `${NAME}` feature exists to prevent.
 
-   Keeps `:type :svar/no-providers` AND the original as the cause, so the TUI's
-   `screen/svar-no-providers-cause?` still routes to the provider manager.
+   Keeps `:type :svar/no-providers` AND the original as the cause, so
+   `config/no-provider-ex` still routes the TUI to the provider manager.
    Returns `t` untouched when the failure has nothing to do with env gaps."
   [config ^Throwable t]
   (let [gaps (config/provider-env-gaps config)]
-    (if (or (empty? gaps) (not (no-providers-cause? t)))
+    (if (or (empty? gaps) (not (config/no-provider-ex t)))
       t
       (ex-info (str "No usable provider — "
                     (str/join "; "

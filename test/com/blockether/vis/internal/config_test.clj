@@ -1048,3 +1048,44 @@
                (expect (= "my-model" (get merged "default_model")))
                (expect (= "Prefer RST." (get merged "system_prompt")))))
            (finally (config/invalidate-config-cache!) (rm-rf! dir))))))
+
+;; Regression, issue #146: only the OUTERMOST `(:type (ex-data t))` was ever
+;; consulted, so a "no AI provider" verdict that had been wrapped — or had come
+;; back from the gateway as `{"error" {"type" ...}}` with string keys — counted as
+;; an ordinary crash and printed a 50-frame stack trace instead of opening the
+;; provider manager.
+(defdescribe
+  no-provider-ex-test
+  "`no-provider-ex` is the ONE classifier for \"no AI provider is usable\". Every
+   caller that must offer the provider manager instead of a stack trace — the
+   gateway's error wrapper, the TUI's startup retry, the CLI's last-resort exit —
+   asks it, so all three spellings of that verdict stay ONE behaviour."
+  (it "matches the marker `resolve-config` throws"
+      (let [t (ex-info "No AI provider is configured yet." {:type :vis/no-provider})]
+        (expect (identical? t (config/no-provider-ex t)))))
+  (it "matches svar's :svar/no-providers — a config exists, nothing resolved"
+      (let [t (ex-info "make-router requires at least one provider" {:type :svar/no-providers})]
+        (expect (identical? t (config/no-provider-ex t)))))
+  (it "matches the gateway payload the client rethrows: string keys, no :type"
+      (let
+        [t (ex-info "No AI provider is configured yet."
+                    {"error" {"type" config/no-provider-error-type
+                              "message" "No AI provider is configured yet."}
+                     :http-status 503})]
+        (expect (identical? t (config/no-provider-ex t)))))
+  (it "walks the cause chain and answers the throwable carrying the verdict"
+      (let
+        [cause
+         (ex-info "No AI provider is configured yet." {:type :vis/no-provider})
+
+         t
+         (ex-info "session create failed" {} (RuntimeException. "wrapped" cause))]
+
+        (expect (identical? cause (config/no-provider-ex t)))))
+  (it "is nil for a failure adding a provider would not fix"
+      (expect (nil? (config/no-provider-ex (ex-info "boom" {:type :engine-error}))))
+      (expect (nil? (config/no-provider-ex (ex-info "gateway HTTP 500"
+                                                    {"error" {"type" "engine-error"}
+                                                     :http-status 500}))))
+      (expect (nil? (config/no-provider-ex (RuntimeException. "boom"))))
+      (expect (nil? (config/no-provider-ex nil)))))
