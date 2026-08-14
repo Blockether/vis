@@ -40,7 +40,8 @@ The machinery it used already exists and is already public:
 - `state/submit-turn-sync!` — `state.clj:3746` — subscribes BEFORE submitting and buffers the race
   (`:3764-3769`), so no sibling turn's terminal is ever handed to the caller.
 - `client/terminal-event->result` — `src/com/blockether/vis/internal/gateway/client.clj:1530` —
-  content blocks plus `status` ∈ `done | failed | cancelled | needs_input` (`:1563`).
+  content blocks plus `status` ∈ `done | failed | cancelled | needs_input` (`:1556-1572`: "done"
+  rides in on the turn row's meta, only the three exceptions are set here).
 - Both are exported already: `vis/gateway-submit-turn!` and `vis/gateway-submit-turn-sync!` —
   `src/com/blockether/vis/core.clj:119` and `:121`.
 
@@ -69,10 +70,17 @@ seam for it is already cut: `display_request` (`state.clj:3585`, `:3626`, `:3650
    `ns`), so `loop.clj` can never require the gateway, and this repo does not permit `declare`.
    Peers must be PUSHED into the engine call the way `:turn-features` / `:workspace` /
    `:engine-opts` already are (`state.clj:3118-3131`).
-3. **The index is too slow to ask per turn.** The two root-filtered `/v1/sessions` reads above cost
-   ~2.0 s of wall clock. Liveness must come from the in-memory registry instead —
-   `state.clj:141` (`registry` atom), the `:current-turn` mirror (`:650-659`), `resolve-workspace`
-   (`:770`) — which is O(live sessions) and touches neither SQLite nor HTTP.
+3. **The fleet page is too slow to ask per turn, and the registry is the wrong index.** ONE
+   root-filtered `/v1/sessions` page costs **653 ms** (measured, 200 rows of 1128 in this root).
+   But the in-memory `registry` (`state.clj:141`) is PROCESS-LOCAL — a sibling vis process's turn is
+   mirrored into it only once somebody subscribes — and answering liveness from it is the bug
+   `state.clj:4315-4321` records: "two apps talking to the SAME gateway reported two different
+   fleets". The machine-wide index is `bus/live-turns` (`bus.clj:101-169`): one cached scan of
+   `~/.vis/gateway/live` markers, `LIVE_CACHE_MS` 200, dead pids reaped — measured **0 ms**, and
+   correct when called from a JVM that is not the daemon. The marker carries `session_id`,
+   `turn_id`, `pid`, `started_at` and nothing else (`bus.clj:182-187`), so a peer's ROOT still costs
+   `resolve-workspace` (`state.clj:770`, two SQLite reads per session — **9 ms for 3 live peers**,
+   measured) and its request TEXT is only readable where the turn runs.
 
 ### The root problem
 
@@ -109,7 +117,7 @@ cannot weigh the request, cannot refuse it, and cannot answer "who wants this?".
 
 ### Alternatives considered
 
-- **Reuse `agent("name", "task")`** (`src/com/blockether/vis/internal/foundation/harness/core.clj:197-224`,
+- **Reuse `agent("name", "task")`** (`src/com/blockether/vis/internal/foundation/harness/core.clj:206-224`,
   `:tag :mutation`, *"EXPENSIVE full LLM turn"* at `:210`). Lost: that is a child loop running in
   MY context and MY workspace whose edits merge back to me — delegation downward. A peer is a
   sibling with its own workspace, model, transcript and human. Reusing it would silently hand a
@@ -146,8 +154,8 @@ doing", and the collision measured above becomes noticeable before the edit inst
 ;; `session["peers"][0]["running_request"]`.
 (s/def :ext.peer/id string?)                            ; full session id — the target `ask_session` takes
 (s/def :ext.peer/title (s/nilable string?))
-(s/def :ext.peer/status #{"running" "idle"})            ; a peer is LIVE or it is not listed at all
-(s/def :ext.peer/running-request (s/nilable string?))   ; ONE line, truncated at the source
+(s/def :ext.peer/status #{"running"})                   ; liveness only — an idle session is not listed
+(s/def :ext.peer/running-request (s/nilable string?))   ; ONE line; absent for a foreign process
 (s/def :ext.peer/root string?)                          ; its workspace root, so "same tree" is checkable
 (s/def :ext.peer/is-draft boolean?)                     ; a draft clone under ~/.vis/drafts, not this checkout
 (s/def :ext.peer/peer
@@ -160,17 +168,23 @@ It is specced because it crosses two boundaries: the Python `session` dict, and
 `session_turn_state.ctx` (persisted Nippy).
 
 **Acceptance criteria.**
-- `src/com/blockether/vis/internal/gateway/state.clj` — `live-peers` answers from the in-memory
-  `registry` (`:141`): entries with a `:current-turn` whose `resolve-workspace` root equals this
-  session's, minus self. No SQL, no HTTP.
+- `src/com/blockether/vis/internal/gateway/state.clj` — `live-peers` answers from `bus/live-turns`
+  (`bus.clj:148-169`): the MACHINE-WIDE index, minus self, keeping the sids whose
+  `resolve-workspace` (`:770`) root equals this session's. O(live turns), never O(fleet). `title`
+  from `lp/by-id`; `running_request` from this process's registry entry when it has one, omitted
+  otherwise — a sibling process's request text is not on the marker.
 - `src/com/blockether/vis/internal/gateway/state.clj` — the worker passes `:peers` in the same opts
   map that already carries `:turn-features` / `:workspace` (`:3118-3131`), computed once the permit
   is in hand so the list is the fleet at EXECUTION time, not at submit time.
-- `src/com/blockether/vis/internal/loop.clj` — beside `_initial-utilization` (`:6749`), stamp
+- `src/com/blockether/vis/internal/loop.clj` — beside `_initial-utilization` (`:6748`), stamp
   `"session_peers"` into ctx, and DISSOC it when the fleet is empty, so a resumed session never
   shows a peer that has gone.
 - `src/com/blockether/vis/internal/ctx_engine.clj` — `"session_peers"` joins `model-facing-keys`
-  (`:323-327`).
+  (`:323-327`), so `session-view` keeps it instead of dropping it as engine bookkeeping.
+- `src/com/blockether/vis/internal/ctx_renderer.clj` — `project-ctx` (`:52-77`) maps
+  `"session_peers"` → `"peers"`. That ORDERED WHITELIST, not `model-facing-keys`, is what makes
+  `session["peers"]` exist in the bound Python dict (`env/bind-ctx!`), and it must stay OUT of
+  `static-context-keys` (`:79-82`): peers change every turn and the cached system prefix must not.
 - `src/com/blockether/vis/internal/ctx_renderer.clj` — `render-turn-boundary` (`:154`) emits
   `session["peers"] = […]` beneath the utilization line, and emits nothing when there are none.
 - `src/com/blockether/vis/internal/foundation/peer.clj` (new) — registers the `session_peers`
@@ -184,7 +198,11 @@ It is specced because it crosses two boundaries: the Python `session` dict, and
 **Unknowns.**
 - Is a DRAFT peer (its own clone under `~/.vis/drafts/<repo>/<label>`) listed at all — it cannot
   collide with my files, but it is the same work?
-- How wide is `running_request` before it is truncated, and is the title alone enough?
+- How wide is `running_request` before it is truncated, and is the title alone enough — given that a
+  peer running in a SIBLING vis process has no request text here at all?
+- Should an IDLE session in this root be listed too? The live index cannot see one; that needs the
+  653 ms fleet page or a second index, and "who has this tree open" may matter more than "who is
+  mid-turn".
 - Does any channel already render unknown `session_*` keys (the companion context viewer) — does an
   added key break a client that mirrors the shape?
 
@@ -206,13 +224,16 @@ that bound it.
 ;; Provenance rides the turn record and every event that carries a turn id. Engine kebab → wire
 ;; snake through `wire/->wire`: :origin-session-id → "origin_session_id".
 (s/def :ext.peer.turn/origin-session-id string?)        ; the ASKING session
-(s/def :ext.peer.turn/origin-chain                      ; oldest first, including the asker
+(s/def :ext.peer.turn/origin-chain                      ; oldest first, target appended before the check
   (s/coll-of :ext.peer.turn/origin-session-id
              :kind vector? :min-count 1 :max-count 3 :distinct true))
 (s/def :ext.peer.turn/origin
   (s/keys :req-un [:ext.peer.turn/origin-session-id :ext.peer.turn/origin-chain]))
 ;; ABSENT on a human turn — that absence is the signal, so it is optional on the record and is never
-;; defaulted to a placeholder. `:distinct true` IS the cycle refusal; `:max-count 3` IS the depth cap.
+;; defaulted to a placeholder. The chain is every session the request has passed THROUGH, the target
+;; appended before the check, so `:distinct true` fails exactly on a cycle and `:max-count 3` exactly
+;; on depth. The spec only DOCUMENTS them: the refusals are explicit `{:error :peer-cycle}` /
+;; `{:error :peer-depth}` values, because a spec failure cannot name which rule it broke.
 ```
 
 **Acceptance criteria.**
@@ -267,15 +288,21 @@ already refused.
   `:tag :mutation`, `:inject-env? true`; `target` resolves by the same ONE-argument rule as
   `get_session` (exact id or unambiguous prefix), keyword and positional calls bind identically.
 - `src/com/blockether/vis/internal/foundation/peer.clj` — `wait=0` → `vis/gateway-submit-turn!`
-  returning `{turn_id, status}`; `wait>0` → `vis/gateway-submit-turn-sync!` (`core.clj:119`, `:121`)
-  with `wait` as a hard ceiling. The docstring states EXPENSIVE in the same voice as `agent`
-  (`harness/core.clj:210`), with the measured floor: a full peer turn, ~12.4k prompt tokens and
-  ≈ $0.07 for a one-word answer.
+  returning `{turn_id, status}`; `wait>0` → `vis/gateway-submit-turn-sync!` (`core.clj:119`, `:121`).
+  The docstring states EXPENSIVE in the same voice as `agent` (`harness/core.clj:210`), with the
+  measured floor: a full peer turn, ~12.4k prompt tokens and ≈ $0.07 for a one-word answer.
+- `src/com/blockether/vis/internal/gateway/state.clj` + `.../gateway/client.clj` — the ceiling does
+  not exist yet and is part of this phase: BOTH sync paths block unbounded today —
+  `state.clj:3841` derefs the terminal promise with no timeout, and `client.clj:2083-2111`
+  reconnects forever with no deadline. `wait` becomes a deadline on that deref (releasing through
+  the `unsubscribe!` the `finally` already runs) and on the SSE read; a lapsed `wait` raises WITH
+  the peer's `turn_id`, so the caller can read the settled answer later instead of losing it.
 - `src/com/blockether/vis/internal/foundation/peer.clj` — the extension's `:ext/activation-fn` is
   `vis/toggle-enabled?` on `session_peers`, so the ctx line and the verb hang off ONE switch, and
   `:ext/prompt-fn` contributes its guidance only when the toggle is on.
-- `src/com/blockether/vis/internal/doc_corpus.clj` — `ask_session` is listed where the curated
-  surface is enumerated, so `doc("ask_session")` answers.
+- `src/com/blockether/vis/internal/doc_corpus.clj` — `doc("ask_session")` already answers from the
+  LIVE extension registry (`:35`), so the only decision here is whether the verb earns a slot in
+  `curated` (`:244-253`), the hand-ordered list `doc()` prints with no argument.
 - Test that proves it done: `test/com/blockether/vis/internal/foundation/peer_test.clj` — target
   resolution (exact, prefix, ambiguous → raises), `wait=0` returns a queued row, the probe above
   becomes a real round trip through the daemon, and the symbol is absent when the toggle is off.
