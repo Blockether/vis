@@ -280,7 +280,7 @@ function ParkedTranscript() {
         <span className="ml-auto shrink-0 font-mono text-chip text-dialog-hint">5ca90155</span>
       </header>
       <div className="min-h-0 flex-1 space-y-3 overflow-hidden p-3">
-        <p className="font-mono text-meta text-dialog-hint">$ vis run release --dry-run</p>
+        <p className="font-mono text-meta text-dialog-hint">$ vis-agent run release --dry-run</p>
         <p className="text-body text-white">
           I staged the version bump and mirrored it into the companion. Before I push the tag I need
           one thing from you.

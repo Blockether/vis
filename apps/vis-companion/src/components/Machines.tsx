@@ -570,7 +570,7 @@ export function MachineRows({
                   answer is worthless without the sentence. */}
               <p className="px-3 pt-2 font-mono text-chip text-dialog-hint">
                 Deletes {hostOf(conn.url)} and its access token from this device. Pairing again
-                needs the link or QR code from &lsquo;vis gateway pair&rsquo;.
+                needs the link or QR code from &lsquo;vis-agent gateway pair&rsquo;.
               </p>
               <ConfirmRow
                 question={`Forget ${name}?`}
@@ -944,7 +944,7 @@ function PairingProgress({
 }
 
 /**
- * THE TWO WAYS IN: the pairing link (or its QR) printed by `vis gateway pair`, and
+ * THE TWO WAYS IN: the pairing link (or its QR) printed by `vis-agent gateway pair`, and
  * an address typed by hand. Both end in the same handshake, so both report the same
  * reason when a machine cannot be reached.
  */
@@ -1056,7 +1056,7 @@ export function AddMachine({
       if (unauthorized) {
         setMsg({
           kind: 'err',
-          text: `${hostOf(conn.url)} is reachable but rejected the token. Check the bearer token from \u2018vis gateway pair\u2019.`,
+          text: `${hostOf(conn.url)} is reachable but rejected the token. Check the bearer token from \u2018vis-agent gateway pair\u2019.`,
         });
         return;
       }
@@ -1125,7 +1125,7 @@ export function AddMachine({
           <header className="border-b border-dialog-edge bg-panel-2 px-3 py-2.5">
             <h3 className="font-mono text-body font-bold text-white">Pairing link</h3>
             <p className="mt-0.5 text-ui text-dialog-hint">
-              Paste the link from <code className="text-accent-ink">vis gateway pair</code> on
+              Paste the link from <code className="text-accent-ink">vis-agent gateway pair</code> on
               that machine.
             </p>
           </header>

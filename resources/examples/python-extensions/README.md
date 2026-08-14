@@ -18,7 +18,7 @@ in a live session):
 | `provider_acme.py` | **LLM provider** (`vis.provider`) — a router-callable provider from a `preset` + `get_token_fn`, credentials via env vars |
 
 The full authoring guide is the `extending` page of Vis's own docs
-(`vis docs` site, or ask Vis: *"how do I write a Python extension?"* — it
+(`vis-agent docs` site, or ask Vis: *"how do I write a Python extension?"* — it
 finds the page with `apropos(text)` and reads it whole with `doc("extending")`).
 
 Python extensions contribute tools, prompts, slash commands, op hooks,

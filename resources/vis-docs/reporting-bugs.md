@@ -106,7 +106,7 @@ screen recording — it replays the real session.
 ## A template
 
 ```markdown
-**Version:** vis 0.42.0 (native, macOS 15.3 arm64)
+**Version:** vis-agent 0.42.0 (native, macOS 15.3 arm64)
 
 **What I did:** ran `/reload` after adding a Python extension.
 **What happened:** the tool disappeared from the session context.
@@ -115,7 +115,7 @@ screen recording — it replays the real session.
 **Repro** (empty dir, no project config):
 1. mkdir /tmp/repro && cd /tmp/repro
 2. mkdir -p .vis/extensions && cp greeter.py .vis/extensions/
-3. vis, then /reload
+3. vis-agent, then /reload
 
 **Extension:** <the 15-line greeter.py from the docs>
 

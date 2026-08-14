@@ -25,7 +25,7 @@ issue's state comes from a tool result you just saw.
      handler with the issue's arguments and show the actual return value.
      After disk edits `(require 'the.ns :reload)` first.
    - `run_tests("clojure", {namespaces […]})` for the narrowest test ns.
-   - `shell` running the real CLI (`clojure -M:test …`, `vis python -m pytest …`)
+   - `shell` running the real CLI (`clojure -M:test …`, `vis-agent python -m pytest …`)
      when clean process state matters.
    Record the observed output as the verdict's evidence. When a live
    reproduction is genuinely impossible (needs a provider, a device, a
@@ -66,7 +66,7 @@ after a close, where the next issue's triage continues in the same reply (see
 - Wire keys are snake_case strings, engine keys kebab-case keywords — check
   `gateway/wire.clj` before calling a wire-shaped repro wrong.
 - Python tooling repros go through the in-process ruff FFI and
-  `run_tests({"language": "python"})` / `vis python -m pytest <paths>`.
+  `run_tests({"language": "python"})` / `vis-agent python -m pytest <paths>`.
 - Stop every REPL and background shell you started before answering.
 
 ## After a verified fix

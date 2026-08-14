@@ -255,7 +255,7 @@ every machine. An id that is in no catalog entry at all is still a hard config
 error.
 
 A root that IS admitted but whose path is missing is reported, never silently
-dropped: `vis doctor` and the startup hint carry one line per root that did not
+dropped: `vis-agent doctor` and the startup hint carry one line per root that did not
 mount as written — `warn` for a missing required root, `info` for one skipped by
 `when` or by `optional: true`.
 

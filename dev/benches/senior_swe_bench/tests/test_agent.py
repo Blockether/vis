@@ -22,7 +22,7 @@ class FakeEnvironment:
         self.execs.append(kwargs)
         command = kwargs["command"]
         if "--version" in command:
-            return {"returncode": 0, "stdout": "vis 0.0-test\n", "stderr": ""}
+            return {"returncode": 0, "stdout": "vis-agent 0.0-test\n", "stderr": ""}
         return {"returncode": 0, "stdout": "", "stderr": ""}
 
     async def download_file(self, source_path, target_path):
@@ -143,7 +143,7 @@ def test_install_uploads_config_to_remote_home(monkeypatch, tmp_path):
 
     version_cmd = environment.execs[2]["command"]
     assert "HOME=/root" in version_cmd
-    assert "/opt/vis/vis" in version_cmd
+    assert "/opt/vis/vis-agent" in version_cmd
     assert "-Duser.home=/root" in version_cmd
 
     install_meta = json.loads(metadata.read_text())
@@ -157,8 +157,8 @@ def test_version_command_and_parser_use_configured_install(monkeypatch):
     monkeypatch.setenv("VIS_BENCH_INSTALL_PREFIX", "/opt/vis")
     installed = agent.VisInstalledAgent()
 
-    assert installed.get_version_command() == "HOME=/root /opt/vis/vis -Duser.home=/root --version"
-    assert installed.parse_version("startup noise\nvis e674131ef\n") == "vis e674131ef"
+    assert installed.get_version_command() == "HOME=/root /opt/vis/vis-agent -Duser.home=/root --version"
+    assert installed.parse_version("startup noise\nvis-agent e674131ef\n") == "vis-agent e674131ef"
 
 
 def test_run_sets_provider_native_effort_and_populates_harbor_context(monkeypatch, tmp_path):

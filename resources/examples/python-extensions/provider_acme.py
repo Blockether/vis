@@ -12,7 +12,7 @@ optional.
     makes the model route to it.
   * `get_token_fn` — returns the credential for each request; raising is the
     "not configured" path the CLI/TUI surfaces.
-  * `status_fn`    — powers `vis providers status acme`.
+  * `status_fn`    — powers `vis-agent providers status acme`.
 
 Dict keys may be snake_case or kebab (`api_url` ≡ `:api-url`); `api_style`
 becomes a keyword host-side. Secrets come from the environment — extension

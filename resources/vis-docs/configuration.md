@@ -104,7 +104,7 @@ with status 2:
   - jail.filesystem.allow_reed: unknown key (config is closed)
   - mcp.servers.docs.transport: value rejected by the transport contract
 
-  Fix the entries above and run vis again.
+  Fix the entries above and run vis-agent again.
 ```
 
 The most common cause is kebab-case: `grep.include-gitignored-paths` must be
@@ -440,7 +440,7 @@ root only on `macos`, `linux`, `wsl` or `windows`, `when.exists` only when that
 path is present, and `optional: true` only when the root's own path is. A root
 that does not apply is dropped before the jail is built and its id may stay in
 `jail.filesystem.allow`; an admitted root whose path is missing is reported by
-`vis doctor` and the startup hint instead of failing silently.
+`vis-agent doctor` and the startup hint instead of failing silently.
 
 ```yaml
 # vis.yml

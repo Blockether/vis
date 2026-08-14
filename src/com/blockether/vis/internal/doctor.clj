@@ -594,8 +594,8 @@
 ;; ---------------------------------------------------------------------------
 
 (defn startup-hint-line
-  "Return a single-line string like `⚠ vis: 2 issues detected - run
-   \\`bin/vis-agent doctor\\` for details.` when warn/error count > 0;
+  "Return a single-line string like `⚠ vis-agent: 2 issues detected - run
+   \\`vis-agent doctor\\` for details.` when warn/error count > 0;
    nil otherwise. Caller decides whether to print (skipped when the
    command being dispatched IS `vis-agent doctor`)."
   ([] (startup-hint-line {}))
@@ -611,8 +611,8 @@
       (count (filter #(#{:warn :error} (:level %)) msgs))]
 
      (when (pos? issues)
-       (str "⚠ vis: "
+       (str "⚠ vis-agent: "
             issues
             " issue"
             (when (> issues 1) "s")
-            " detected - run `bin/vis-agent doctor` for details.")))))
+            " detected - run `vis-agent doctor` for details.")))))

@@ -208,7 +208,7 @@ def solve(instance: dict) -> dict:
             capture_output=True, text=True, check=True,
         ).stdout
 
-        # Best-effort token/cost extraction from vis --json output. The Vis
+        # Best-effort token/cost extraction from vis-agent --json output. The Vis
         # envelope currently exposes top-level :tokens/:cost maps; keep the
         # older :usage shape too so historical runs remain readable.
         tokens = cost = None

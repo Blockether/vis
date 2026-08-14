@@ -12,8 +12,8 @@
    integer went through `yamlstar.numbers/parse-safe-integer`, which calls
    `(bigint value)` on the raw STRING. `clojure.core/bigint` ends in
    `(BigInteger. x)` with an untyped `x`, i.e. a reflective
-   `java.math.BigInteger(java.lang.String)` — unregistered, so `vis doctor`,
-   `vis sessions list`, `vis providers status` and one-shot prompts aborted for
+   `java.math.BigInteger(java.lang.String)` — unregistered, so `vis-agent doctor`,
+   `vis-agent sessions list`, `vis-agent providers status` and one-shot prompts aborted for
    every workspace. `clojure.tools.reader` (SCI/edamame) reaches the same
    constructor with a radix, `(BigInteger. n (int radix))`, for every integer
    literal it reads.

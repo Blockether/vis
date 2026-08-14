@@ -1,4 +1,4 @@
-# Project layout a Python project DECLARES, read for `vis python` and `run_tests`.
+# Project layout a Python project DECLARES, read for `vis-agent python` and `run_tests`.
 #
 # Parsed with Python's own parsers -- `tomllib` for `pyproject.toml`,
 # `configparser` for `setup.cfg` / `pytest.ini` / `tox.ini` -- never a regex

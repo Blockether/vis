@@ -122,7 +122,7 @@ export function compatOf(block?: GatewayProtocol | null): Compat {
         `gateway speaks protocol ${gatewayProtocol}.`,
       remedy: [
         'Update Vis on the machine hosting the gateway.',
-        'Restart it: vis gateway stop && vis gateway start',
+        'Restart it: vis-agent gateway stop && vis-agent gateway start',
       ],
     };
   }
@@ -135,7 +135,7 @@ export function compatOf(block?: GatewayProtocol | null): Compat {
       summary: 'The gateway did not advertise the current Vis wire protocol and is unsupported.',
       remedy: [
         'Update Vis on the machine hosting the gateway.',
-        'Restart it: vis gateway stop && vis gateway start',
+        'Restart it: vis-agent gateway stop && vis-agent gateway start',
       ],
     };
   }

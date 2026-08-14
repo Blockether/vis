@@ -519,7 +519,7 @@ def __vis_install_ruff__():
         return 1 if (changed and not write) else 0
 
     def console_main(argv=None):
-        """`vis python -m ruff ...` entry point. Returns a process exit code."""
+        """`vis-agent python -m ruff ...` entry point. Returns a process exit code."""
         if argv is None:
             argv = sys.argv[1:]
         argv = list(argv)

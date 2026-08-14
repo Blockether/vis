@@ -1,6 +1,6 @@
 # e2e
 
-End-to-end harness that drives the **real `vis` CLI** on a battery of editing
+End-to-end harness that drives the **real `vis-agent` CLI** on a battery of editing
 tasks and checks each one converges, is correct, runs clean, and takes the fast
 (structural) path. Sits alongside the root `test/` dir; see the module docstring
 in `run.py` for the full contract.

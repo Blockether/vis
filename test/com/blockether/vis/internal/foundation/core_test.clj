@@ -64,7 +64,7 @@
         (expect (str/includes? doc "language facade"))
         (expect (str/includes? doc "file and structural editing"))
         (expect (str/includes? doc "session workspace/VCS"))
-        (expect (not (str/includes? doc "vis ext repro")))
+        (expect (not (str/includes? doc "ext repro")))
         (expect (not (str/includes? doc "file-link")))
         (expect (not (str/includes? doc "answer builders")))))
   (it "registers as a BUILT-IN (no META-INF manifest)"

@@ -1218,7 +1218,7 @@
    catalog of `vis.yml` — the sibling checkouts a project binds into the session
    (`- id: spel` / `path: ~/spel`). They live OUTSIDE the project tree, so
    `nested-roots` can never discover them: the catalog is the only place they are
-   named. Each is labelled by its catalog `id`, the same name `vis doctor` and
+   named. Each is labelled by its catalog `id`, the same name `vis-agent doctor` and
    `jail.filesystem.allow` use.
 
    Two declared roots are skipped. A `read-only` one: the status buffer stages,

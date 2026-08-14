@@ -681,7 +681,7 @@
   [fields source]
   (into ["" (str "  Invalid Vis configuration" (when source (str " in " source)) ":") ""]
         (concat (map #(str "  - " %) (or (seq fields) ["config: does not match the Vis contract"]))
-                ["" "  Fix the entries above and run vis again." ""])))
+                ["" "  Fix the entries above and run vis-agent again." ""])))
 
 (defn assert-config!
   "Return a string-keyed YAML config when it satisfies the complete contract.

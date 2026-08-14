@@ -1047,7 +1047,7 @@
   "Inverse of [[request->view]] for a view that CROSSED A PROCESS BOUNDARY — the
    canonical snake_case map a `human_input.request` session event carries.
 
-   A run parked inside `vis serve` publishes on an in-process channel bus that
+   A run parked inside `vis-agent serve` publishes on an in-process channel bus that
    never leaves that JVM, so for every other process the session event IS the
    request. Rebuilding the view goes back through the engine's own parser rather
    than through a second field vocabulary; only the stamps of [[request!]],

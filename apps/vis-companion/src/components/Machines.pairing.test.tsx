@@ -35,7 +35,7 @@ function blackhole(init?: RequestInit): Promise<Response> {
 }
 
 /**
- * What `vis gateway pair` actually prints next to a laptop: the tailnet address
+ * What `vis-agent gateway pair` actually prints next to a laptop: the tailnet address
  * first, then one `alt=` per routable interface — Wi-Fi, and the virtual
  * bridges a developer machine always has. Only the LAN address is live here,
  * which is the normal case for a phone standing in the same room with Tailscale

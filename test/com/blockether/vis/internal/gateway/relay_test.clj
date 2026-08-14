@@ -288,7 +288,7 @@
                     (is (true? (relay/configured?))))))
 
 ;; Zero configuration is the whole product claim: install the app, run
-;; `vis gateway`, tap "notify this device". Which relay can sign for a build is a
+;; `vis-agent gateway`, tap "notify this device". Which relay can sign for a build is a
 ;; property of the BUILD, so the phone — not the laptop — is the one that knows
 ;; the address, and it learns it from the relay that sealed its grant.
 

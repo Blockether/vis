@@ -617,7 +617,7 @@
 ;; A request parked in the SERVE DAEMON (issue #122)
 ;;
 ;; `internal/human-input` publishes on the IN-PROCESS channel bus. That bus does
-;; not cross a JVM, so when the extension parks inside `vis serve` the terminal
+;; not cross a JVM, so when the extension parks inside `vis-agent serve` the terminal
 ;; is a different process entirely and the `:tui` publication reaches nobody.
 ;; The gateway bridge above still turns the request into a `human_input.request`
 ;; SESSION event — which the TUI simply dropped: `chat/gateway-event->chunk`,

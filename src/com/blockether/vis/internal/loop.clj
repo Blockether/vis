@@ -6844,7 +6844,7 @@
 
      ;; Per-iteration token + cost projection. The schema's
      ;; `iteration.llm_*_tokens` / `iteration.llm_cost_usd` columns
-     ;; carry one row per iteration so a future `vis report`
+     ;; carry one row per iteration so a future `vis-agent report`
      ;; caller can sum or break down cost without re-walking
      ;; provider envelopes. Returns nil when the call surfaced no
      ;; usage (e.g. iteration-level error before a response

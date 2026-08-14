@@ -5,7 +5,7 @@
 
 (defn- sample-root
   []
-  {:cmd/name "vis"
+  {:cmd/name "vis-agent"
    :cmd/doc "root"
    :cmd/subcommands [{:cmd/name "providers"
                       :cmd/doc "providers"
@@ -22,11 +22,11 @@
 
                     result
                     (commandline/dispatch! (sample-root)
-                                           ["vis" "providers" "missing" "--help"]
+                                           ["vis-agent" "providers" "missing" "--help"]
                                            {:print-fn #(reset! printed %)})]
 
                    (expect (= :error (:status result)))
-                   (expect (str/includes? @printed "Unknown command: vis providers missing"))
+                   (expect (str/includes? @printed "Unknown command: vis-agent providers missing"))
                    (expect (str/includes? @printed "USAGE"))))
              (it "keeps known leaf help working"
                  (let
@@ -35,11 +35,11 @@
 
                     result
                     (commandline/dispatch! (sample-root)
-                                           ["vis" "providers" "list" "--help"]
+                                           ["vis-agent" "providers" "list" "--help"]
                                            {:print-fn #(reset! printed %)})]
 
                    (expect (= :help (:status result)))
-                   (expect (str/includes? @printed "vis providers list")))))
+                   (expect (str/includes? @printed "vis-agent providers list")))))
 
 ;; =============================================================================
 ;; Help rendering -- split COMMANDS / EXTENSION COMMANDS + extra sections.
@@ -49,7 +49,7 @@
   []
   {:cmd/name "extension"
    :cmd/doc "Inspect, scaffold, or run an extension-contributed CLI command."
-   :cmd/usage "vis extension <subcmd>"
+   :cmd/usage "vis-agent extension <subcmd>"
    :cmd/subcommands
    [{:cmd/name "list" :cmd/doc "List every registered extension." :cmd/internal? true}
     {:cmd/name "scaffold" :cmd/doc "Create a user extension scaffold." :cmd/internal? true}

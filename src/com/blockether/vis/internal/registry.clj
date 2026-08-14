@@ -85,11 +85,11 @@
 
 ;; Sub-command word the CLI matches. `vis-agent channels tui ...` -> :tui channel.
 ;; Two registered channels MUST NOT share the same :channel/cmd.
-;; There is no "default" channel - invoking `vis` with no command
+;; There is no "default" channel - invoking `vis-agent` with no command
 ;; prints help. Every channel is an explicit subcommand.
 (s/def :channel/cmd non-blank-string?)
 
-;; One-line description shown in `vis help`.
+;; One-line description shown in `vis-agent help`.
 (s/def :channel/doc non-blank-string?)
 
 ;; Optional usage line shown in `vis-agent help` (defaults to "vis-agent channels <cmd>").
@@ -227,10 +227,10 @@
 ;; Where in the command tree this command mounts. Vector of parent
 ;; command-names from the root, EXCLUDING the root itself and the
 ;; command's own `:cmd/name`. Examples:
-;;   []                  - top-level (`vis <name>`)
+;;   []                  - top-level (`vis-agent <name>`)
 ;;   ["extension"]       - nested under `vis-agent extension`
 ;;   ["channels"]        - nested under `vis-agent channels`
-;;   ["foo" "bar"]       - nested as `vis foo bar <name>`
+;;   ["foo" "bar"]       - nested as `vis-agent foo bar <name>`
 ;; Used by the CLI dispatcher's auto-mount via `registered-under`.
 (s/def :cmd/parent (s/coll-of string? :kind vector?))
 

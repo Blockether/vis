@@ -29,5 +29,5 @@ def __vis_run_module__(name):
     except SystemExit as _e:
         return 0 if _e.code is None else (_e.code if isinstance(_e.code, int) else 1)
     except ImportError:
-        _sys.stdout.write("vis python: No module named " + str(name) + chr(10))
+        _sys.stdout.write("vis-agent python: No module named " + str(name) + chr(10))
         return 1

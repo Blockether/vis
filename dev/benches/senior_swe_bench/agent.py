@@ -265,7 +265,7 @@ class VisInstalledAgent(BaseInstalledAgent):
         install_prefix = _env_value(self, "VIS_BENCH_INSTALL_PREFIX", DEFAULT_INSTALL) or DEFAULT_INSTALL
         remote_home = _env_value(self, "VIS_BENCH_REMOTE_HOME", DEFAULT_REMOTE_HOME) or DEFAULT_REMOTE_HOME
         return (
-            f"HOME={shlex.quote(remote_home)} {shlex.quote(f'{install_prefix}/vis')} "
+            f"HOME={shlex.quote(remote_home)} {shlex.quote(f'{install_prefix}/vis-agent')} "
             f"-Duser.home={shlex.quote(remote_home)} --version"
         )
 

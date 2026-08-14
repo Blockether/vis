@@ -4405,7 +4405,7 @@
     (when (seq failures)
       (binding [*out* *err*]
         (println)
-        (println "⚠  vis: " (count failures) "extension namespace(s) failed to load.")
+        (println "⚠  vis-agent: " (count failures) "extension namespace(s) failed to load.")
         (println "   The associated alias namespace will be UNBOUND in the sandbox.")
         (println "   The agent will see `Unable to resolve symbol` for every call into it.")
         (println)

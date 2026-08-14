@@ -717,7 +717,7 @@ def __vis_install_pytest_compat__():
         # Real temp dir via tempfile. In the pure-compute model sandbox the FS
         # is locked down and mkdtemp raises — caught by resolve()/the runner so
         # only tests that ASK for tmp_path fail there; under the project test
-        # runner (`vis python <tests>`) the FS is real and this works.
+        # runner (`vis-agent python <tests>`) the FS is real and this works.
         import tempfile as _tf, shutil as _sh, pathlib as _pl
 
         d = _tf.mkdtemp(prefix="vis-pytest-")
@@ -2569,7 +2569,7 @@ def __vis_install_pytest_compat__():
     mod.exit = exit
     mod.importorskip = importorskip
     mod.main = main
-    # `vis python -m pytest ...` entry point. A shim module has no file and no
+    # `vis-agent python -m pytest ...` entry point. A shim module has no file and no
     # loader, so runpy cannot execute it -- the host runner calls console_main
     # (or main) with sys.argv[1:] instead, exactly like pytest's console script.
     mod.console_main = main

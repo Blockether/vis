@@ -5,7 +5,7 @@
 ;; `com.blockether.vis.ext.persistance-sqlite.core` namespace. The
 ;; facade's `resolve-impl` uses `requiring-resolve` so the heavy ns
 ;; auto-loads on the first real DB op - commands that never touch the DB
-;; (e.g. `vis providers list`, `vis --help`) skip the ~480 ms load.
+;; (e.g. `vis-agent providers list`, `vis-agent --help`) skip the ~480 ms load.
 ;;
 ;; Non-LLM-facing.
 ;; `:image-nses` — loaded BY NAME on first use (`requiring-resolve`), never at

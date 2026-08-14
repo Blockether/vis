@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end editing harness — drives the REAL vis CLI on a battery of editing
+"""End-to-end editing harness — drives the REAL vis-agent CLI on a battery of editing
 scenarios and checks, per scenario:
 
   - CONVERGED   the loop reached a final answer (no hang / crash)

@@ -577,7 +577,7 @@
    failure: Vis is a long-lived gateway whose config is re-read live and on
    `/reload`, so aborting would let one unused provider's missing key kill a
    session running on a healthy provider. The reference is left VERBATIM, which
-   makes the resolved map self-describing — the provider verdict, `vis doctor`,
+   makes the resolved map self-describing — the provider verdict, `vis-agent doctor`,
    and the hard error on explicit selection all read it back."
   (it "reads distinct references out of strings only, and never sees bare $NAME"
       (expect (= ["HOME"] (config/env-refs "${HOME}")))

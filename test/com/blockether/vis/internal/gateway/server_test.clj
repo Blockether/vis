@@ -225,7 +225,7 @@
                @sent))))))
 
 (deftest foreground-daemon-does-not-refcount-stop
-  (testing "a manually-run `vis gateway start` is user-owned, not client-refcounted"
+  (testing "a manually-run `vis-agent gateway start` is user-owned, not client-refcounted"
     (let [stops (atom 0)]
       (with-stop-stub! stops
                        {}

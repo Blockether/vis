@@ -242,7 +242,7 @@ function GatewayPanels({
                 </p>
                 <p className="max-w-sm font-mono text-meta text-dialog-hint">
                   The machine is online, but rejected this token. Re-pair from{" "}
-                  <code className="text-accent-ink">vis gateway pair</code> and
+                  <code className="text-accent-ink">vis-agent gateway pair</code> and
                   paste the fresh link to load its settings.
                 </p>
                 <Button variant="secondary" onClick={() => void load()}>
@@ -1273,7 +1273,7 @@ export function SettingsDialog({
         <Modal size="fit" onDismiss={() => setIsAdding(false)}>
           <DialogFrame
             title="Add a machine"
-            subtitle="Paste the pairing link printed by ‘vis gateway pair’, scan its QR, or type the address."
+            subtitle="Paste the pairing link printed by ‘vis-agent gateway pair’, scan its QR, or type the address."
             onClose={() => setIsAdding(false)}
           >
             <div className="p-3 sm:p-4">

@@ -57,7 +57,7 @@ const RENEW_BEFORE_MS = 7 * 24 * 60 * 60 * 1000;
  * it pairs with: APNs binds a topic to the Apple team that owns the bundle id,
  * and an FCM token is minted against the Firebase project compiled in here. Its
  * publisher is therefore the only party whose key this device will accept, and
- * a laptop that just ran `vis gateway` has no way to know that address. So the
+ * a laptop that just ran `vis-agent gateway` has no way to know that address. So the
  * app carries it, mints its own grant there, and hands the gateway both.
  *
  * Ship your own build and you change this line beside the bundle id and

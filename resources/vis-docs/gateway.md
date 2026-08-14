@@ -73,7 +73,7 @@ handed the token — that is what pairing does.
 If you ever see:
 
 ```
-vis: fatal error - gateway HTTP 401
+vis-agent: fatal error - gateway HTTP 401
 {:error {:type "unauthorized", :message "missing or invalid bearer token"}}
 ```
 

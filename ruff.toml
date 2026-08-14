@@ -8,7 +8,7 @@
 #
 # This file is what `format_code` / `lint_code` for Python discover: the packs
 # call ruff IN-PROCESS (com.blockether/ruff) and let ruff resolve the nearest
-# config exactly as the `ruff` CLI would, so `vis python -m ruff check` and the
+# config exactly as the `ruff` CLI would, so `vis-agent python -m ruff check` and the
 # tools agree. Without this file both fall back to ruff's own defaults and say
 # so in a `hint`.
 
