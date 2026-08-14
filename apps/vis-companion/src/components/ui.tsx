@@ -1006,7 +1006,8 @@ export function Switch({
 }
 
 /**
- * IS THIS DEVICE CONNECTED TO THIS MACHINE — the whole answer, in one row.
+ * IS THIS DEVICE CONNECTED TO THIS MACHINE — the answer, and the verb that
+ * changes it.
  *
  * The notifications panel used to answer an OPERATOR's question instead: it
  * listed every push token the gateway holds, so one iPhone reinstalled three
@@ -1014,13 +1015,24 @@ export function Switch({
  * question — am I connected? — survived only as the verb on a button. Reported
  * as: same device, four entries, and no way to just see whether alerts arrive.
  *
- * The state is a SENTENCE and the switch is the verb. Connect and disconnect are
- * the same control in the same place whatever the answer is, so nothing here has
- * to be read twice. The words live in this component rather than at each call
- * site because native APNs/FCM and Web Push are two transports for ONE question
- * and must never become two vocabularies.
+ * THE STATE IS A SENTENCE AND THE CONTROL IS A VERB. The control used to be
+ * `Switch`, whose entire face is the state it is ALREADY in, standing under two
+ * lines that had just said it: `Not connected`, then `<machine> will not alert
+ * this device.`, then a box reading `OFF` — the same no three times over, and
+ * the one thing this row never said was how to say yes. Reported as: I am
+ * disconnected and the button says OFF, it should be the ACTION — CONNECT. So
+ * the left column REPORTS and the button COMMITS — `Connect` while this device
+ * is not registered, `Disconnect` while it is — one control in one place
+ * whatever the answer is, so nothing here has to be read twice. `Switch` still
+ * belongs to a setting this device owns outright (a feature toggle, an MCP
+ * server) where the press IS the new state; this one is a round trip to a
+ * machine that can refuse, and a round trip is a verb.
+ *
+ * The words live in this component rather than at each call site because native
+ * APNs/FCM and Web Push are two transports for ONE question and must never
+ * become two vocabularies.
  */
-export function NotifySwitchRow({
+export function NotifyConnectionRow({
   machine,
   isOn,
   isBusy = false,
@@ -1028,7 +1040,7 @@ export function NotifySwitchRow({
   disabled = false,
   onClick,
 }: {
-  /** The paired machine this switch speaks for; it names itself in the sentence. */
+  /** The paired machine this row speaks for; it names itself in the sentence. */
   machine: string;
   isOn: boolean;
   isBusy?: boolean;
@@ -1051,6 +1063,15 @@ export function NotifySwitchRow({
     : isOn
       ? `${machine} alerts this device when a turn finishes.`
       : `${machine} will not alert this device.`;
+  // Nothing has been answered yet, so there is no direction to offer: the verb
+  // waits with the app's own waiting mark rather than guessing one.
+  const verb = isChecking ? '··' : isOn ? 'Disconnect' : 'Connect';
+  const isWaiting = isBusy || isChecking;
+  const action = isChecking
+    ? `Asking ${machine} whether this device is registered`
+    : isOn
+      ? `Disconnect notifications from ${machine}`
+      : `Connect notifications from ${machine}`;
 
   return (
     <div className="flex min-h-12 items-start gap-3 px-3 py-2">
@@ -1058,13 +1079,19 @@ export function NotifySwitchRow({
         <span className="block break-words font-mono text-ui font-bold text-white">{verdict}</span>
         <span className="block break-words font-mono text-chip text-dialog-hint">{sentence}</span>
       </span>
-      <Switch
-        label={`Notifications from ${machine}`}
-        isOn={isOn}
-        isBusy={isBusy || isChecking}
+      {/* Connecting is the invitation and wears the amber; disconnecting is the
+          way out of something already working and never shouts to be taken. */}
+      <Button
+        variant={isOn ? 'secondary' : 'primary'}
+        density="panel"
+        aria-label={action}
+        aria-busy={isWaiting}
         disabled={disabled}
         onClick={onClick}
-      />
+        className="shrink-0"
+      >
+        <span className={isWaiting ? 'animate-pulse' : ''}>{verb}</span>
+      </Button>
     </div>
   );
 }

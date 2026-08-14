@@ -77,7 +77,7 @@ import {
   Input,
   ListRow,
   Modal,
-  NotifySwitchRow,
+  NotifyConnectionRow,
   PROSE,
   Switch,
 } from "../components/ui";
@@ -1594,7 +1594,6 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState<"enable" | "disable" | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
   const supported = isWebPushSupported();
 
   useEffect(() => {
@@ -1617,7 +1616,6 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
   const enable = useCallback(async () => {
     setBusy("enable");
     setErr(null);
-    setNote(null);
     try {
       if (!supported)
         throw new Error("This browser does not support background Web Push.");
@@ -1637,7 +1635,6 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
       await applyWebGatewayNotify(gateway.url, true);
       setSubscription(next);
       setNotify(true);
-      setNote("Background Web Push is enabled for this machine.");
     } catch (cause) {
       setErr(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -1648,14 +1645,12 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
   const disable = useCallback(async () => {
     setBusy("disable");
     setErr(null);
-    setNote(null);
     try {
       const current =
         subscription ?? (await getExistingWebPushSubscription(gateway.url));
       if (current) await unregisterWebPushForGateway(gateway, current);
       await applyWebGatewayNotify(gateway.url, false);
       setNotify(false);
-      setNote("Background Web Push is disabled for this machine.");
     } catch (cause) {
       setErr(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -1667,14 +1662,13 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
     supported && notify && perm === "granted" && subscription !== null;
   const machine = gateway.label ?? gatewayHost(gateway.url);
   const blocked = supported && perm === "denied";
-  const hasBanner = Boolean(err) || Boolean(note) || !supported || blocked;
+  const hasBanner = Boolean(err) || !supported || blocked;
 
   return (
     <SettingsPanel title="Notifications" meta={machine}>
       {hasBanner && (
         <div className="space-y-2 p-3 pb-0">
           {err && <Banner kind="err">{err}</Banner>}
-          {note && <Banner kind="ok">{note}</Banner>}
 
           {!supported && (
             <Banner kind="warn">
@@ -1685,13 +1679,13 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
           {blocked && (
             <Banner kind="warn">
               Notifications are blocked in this browser — allow them in browser
-              settings and this switch works again.
+              settings and this device can connect again.
             </Banner>
           )}
         </div>
       )}
 
-      <NotifySwitchRow
+      <NotifyConnectionRow
         machine={machine}
         isOn={notifying}
         isBusy={busy !== null}
@@ -1714,15 +1708,14 @@ function NativeNotificationsPanel({
   const [devices, setDevices] = useState<PushDevice[] | null>(null);
   const [perm, setPerm] = useState<PushPermission>("unsupported");
   const [err, setErr] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState<"enable" | "disable" | null>(null);
   // An OLDER gateway simply has no /v1/devices route. That is not an error the
   // user can act on — it is a missing capability upstream — so the whole panel
   // (and every button in it) disappears instead of offering calls that 404.
   const [unsupported, setUnsupported] = useState(false);
-  // The switch itself, remembered per gateway: a machine you silenced stays
-  // silenced across relaunches, and a machine you want stays registered even
-  // while another gateway is the one you have open.
+  // This device's own answer, remembered per gateway: a machine you disconnected
+  // from stays silent across relaunches, and a machine you connected to stays
+  // registered even while another gateway is the one you have open.
   const [notify, setNotify] = useState(true);
 
   const load = useCallback(
@@ -1787,20 +1780,16 @@ function NativeNotificationsPanel({
   const enable = useCallback(async () => {
     setBusy("enable");
     setErr(null);
-    setNote(null);
     try {
       const fresh = await acquirePushToken();
       await applyGatewayNotify(gateway.url, true, () =>
         registerForPush(deviceRegistration(fresh), client.pushTarget()),
       );
       setNotify(true);
-      setNote(
-        "This device will be notified when a turn finishes on this machine.",
-      );
       await load();
     } catch (e) {
-      // The switch may already be stored even though the machine refused the
-      // call, so show what this device WILL do once it can reach it again.
+      // This device's answer may already be stored even though the machine refused
+      // the call, so show what this device WILL do once it can reach it again.
       setNotify(await getGatewayNotify(gateway.url));
       setErr(e instanceof GatewayError ? e.message : (e as Error).message);
     } finally {
@@ -1813,13 +1802,11 @@ function NativeNotificationsPanel({
     if (!current) return;
     setBusy("disable");
     setErr(null);
-    setNote(null);
     try {
       await applyGatewayNotify(gateway.url, false, () =>
         unregisterFromPush(current, client.pushTarget()),
       );
       setNotify(false);
-      setNote("This device will no longer be notified by this machine.");
       await load();
     } catch (e) {
       setNotify(await getGatewayNotify(gateway.url));
@@ -1855,7 +1842,6 @@ function NativeNotificationsPanel({
   const checking = devices === null;
   const hasBanner =
     Boolean(err) ||
-    Boolean(note) ||
     !supported ||
     blocked ||
     Boolean(push && !available);
@@ -1865,7 +1851,6 @@ function NativeNotificationsPanel({
       {hasBanner && (
         <div className="space-y-2 p-3 pb-0">
           {err && <Banner kind="err">{err}</Banner>}
-          {note && <Banner kind="ok">{note}</Banner>}
 
           {push && !available && refusedRelay && (
             <Banner kind="warn">
@@ -1894,13 +1879,13 @@ function NativeNotificationsPanel({
           {blocked && (
             <Banner kind="warn">
               Notifications are turned off for Vis in system Settings — turn them
-              on there and this switch works again.
+              on there and this device can connect again.
             </Banner>
           )}
         </div>
       )}
 
-      <NotifySwitchRow
+      <NotifyConnectionRow
         machine={machine}
         isOn={notifying && !blocked}
         isBusy={busy !== null}

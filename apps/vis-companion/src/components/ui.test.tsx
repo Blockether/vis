@@ -59,7 +59,7 @@ import {
   MachineTab,
   MetaButton,
   NewSessionButton,
-  NotifySwitchRow,
+  NotifyConnectionRow,
   OptionRow,
   Pill,
   Disclosure,
@@ -2501,31 +2501,51 @@ describe("a setting is picked and switched by one control each", () => {
 // panel answered an OPERATOR's question — every push token the gateway holds, one row
 // each, so one reinstalled iPhone stood in it four times — while the reader's own
 // question survived only as the verb printed on a button.
+//
+// Regression, user report ("I am disconnected and the button is OFF? I should have the
+// ACTION BUTTON, like CONNECT, not OFF/ON"): the answer finally arrived, and then the
+// control beside it printed the state it was ALREADY in — `Not connected`, `visgw will
+// not alert this device.`, `OFF` — so the row said no three times over and never once
+// said how to say yes.
 describe("the notifications row answers one question", () => {
-  const row = (props: Partial<ComponentProps<typeof NotifySwitchRow>> = {}) =>
+  const row = (props: Partial<ComponentProps<typeof NotifyConnectionRow>> = {}) =>
     renderToStaticMarkup(
-      <NotifySwitchRow machine="visgw" isOn={false} onClick={() => {}} {...props} />,
+      <NotifyConnectionRow machine="visgw" isOn={false} onClick={() => {}} {...props} />,
     );
 
   it("states whether this device is connected, and names the machine either way", () => {
     const on = row({ isOn: true });
     expect(on).toContain("Connected");
     expect(on).toContain("visgw alerts this device when a turn finishes.");
-    expect(on).toContain('aria-label="Notifications from visgw: on"');
-    expect(on).toContain('aria-checked="true"');
 
     const off = row();
     expect(off).toContain("Not connected");
     expect(off).toContain("visgw will not alert this device.");
-    expect(off).toContain('aria-checked="false"');
+  });
+
+  it("presses the VERB, never the state it is already in", () => {
+    const off = row();
+    expect(off).toContain(">Connect<");
+    expect(off).toContain('aria-label="Connect notifications from visgw"');
+    // The state is the sentence's job; this control's whole job is the way out of it.
+    expect(off).not.toContain(">OFF<");
+    expect(off).not.toContain('role="switch"');
+    expect(off).not.toContain("aria-checked");
+
+    const on = row({ isOn: true });
+    expect(on).toContain(">Disconnect<");
+    expect(on).toContain('aria-label="Disconnect notifications from visgw"');
+    expect(on).not.toContain(">ON<");
+
+    // Connecting is the invitation and wears the amber; leaving never shouts.
+    expect(off).toContain("bg-accent");
+    expect(on).not.toContain("bg-accent");
   });
 
   it("keeps ONE control for both verbs, in the same place in both states", () => {
     const buttons = (markup: string) => (markup.match(/<button/g) ?? []).length;
     expect(buttons(row({ isOn: true }))).toBe(1);
     expect(buttons(row())).toBe(1);
-    expect(row({ isOn: true })).toContain('role="switch"');
-    expect(row()).toContain('role="switch"');
   });
 
   it("says which way it is moving, and asks before it answers", () => {
@@ -2535,8 +2555,10 @@ describe("the notifications row answers one question", () => {
     const checking = row({ isChecking: true });
     expect(checking).toContain("Checking…");
     expect(checking).toContain("Asking visgw whether this device is registered.");
-    // A verdict is never rendered before the machine has answered.
+    // Neither a verdict nor a verb before the machine has answered: there is no
+    // direction to offer yet.
     expect(checking).not.toContain("Not connected");
+    expect(checking).not.toContain(">Connect<");
     expect(checking).toContain('aria-busy="true"');
   });
 
@@ -2645,10 +2667,10 @@ describe("the session screen and the settings dialog spell no control out", () =
   // iPhone reinstalled three times filled it with four masked-token rows of the same
   // phone, and `registered && notify` — the only thing the reader asked for — was
   // left to the verb printed on a button.
-  it("answers the notifications question with one switch, not a token list", () => {
+  it("answers the notifications question with one row, not a token list", () => {
     // Native push and Web Push are two transports for ONE question, so both panels
     // ask it with the same row.
-    expect(settingsSource.match(/<NotifySwitchRow/g)).toHaveLength(2);
+    expect(settingsSource.match(/<NotifyConnectionRow/g)).toHaveLength(2);
     expect(settingsSource).not.toContain("Notify me from this machine");
     expect(settingsSource).not.toContain("Stop notifying me from this machine");
     expect(settingsSource).not.toContain("devices?.map(");
@@ -2912,8 +2934,9 @@ describe("a call site positions, and the component paints", () => {
     expect(panel).toContain("font-mono");
     expect(panel).toContain("min-h-9");
     expect(renderToStaticMarkup(<Button>Save</Button>)).not.toContain("font-mono");
-    // The panel's two verbs became one switch (`NotifySwitchRow`); the one verb
-    // left in this screen is the door to the OS the switch cannot open itself.
+    // The panel's two verbs became one row (`NotifyConnectionRow`), which carries
+    // its own; the one verb left in this screen is the door to the OS that row
+    // cannot open itself.
     expect(settingsSource.match(/density="panel"/g)).toHaveLength(1);
   });
 
