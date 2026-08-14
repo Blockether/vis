@@ -27,13 +27,21 @@ vi.mock('@capacitor/preferences', () => ({
   },
 }));
 
-import { applyGatewayNotify, syncPushRegistrations, type PushRegistrar } from './notify';
+import {
+  applyGatewayNotify,
+  drainPushRevocations,
+  syncPushRegistrations,
+  type PushRegistrar,
+} from './notify';
 import {
   getGatewayNotify,
+  loadConnections,
+  pendingRevocations,
   removeConnection,
   saveConnections,
   setGatewayNotify,
   switchConnectionUrl,
+  upsertConnection,
 } from './storage';
 import type { GatewayConn } from './types';
 
@@ -220,5 +228,60 @@ describe('applyGatewayNotify', () => {
       seen.push(await getGatewayNotify(BUILDBOX));
     });
     expect(seen).toEqual([false]);
+  });
+});
+
+// Regression, user report ("I removed the binding from the iOS phone but it is
+// still notifying me"): forgetting a machine deleted the pairing and nothing
+// else. A device row lives on the MACHINE, so that machine went on pushing —
+// and the forget was the very thing that made it permanent, because the sweep
+// only walks machines that are still paired and nothing was left that could
+// name the one that had been dropped.
+describe('forgetting a machine', () => {
+  it('takes this device off the machine that was forgotten', async () => {
+    await saveConnections(paired);
+    await setGatewayNotify(LAPTOP, true);
+    await setGatewayNotify(BUILDBOX, true);
+    await removeConnection(BUILDBOX);
+    const { calls, registrar } = recorder();
+    // A relaunch: the sweep over what is still paired, then the revocations
+    // this device still owes.
+    await syncPushRegistrations(await loadConnections(), 'tok', registrar);
+    await drainPushRevocations('tok', registrar.unregister);
+    expect(calls.registered).toEqual([LAPTOP]);
+    expect(calls.unregistered).toEqual([BUILDBOX]);
+    expect(await pendingRevocations()).toEqual([]);
+  });
+
+  it('revokes with the credential the machine was paired with', async () => {
+    await saveConnections(paired);
+    await removeConnection(BUILDBOX);
+    const seen: GatewayConn[] = [];
+    await drainPushRevocations('tok', async (conn) => {
+      seen.push(conn);
+    });
+    expect(seen).toEqual([{ url: BUILDBOX, token: 'b' }]);
+  });
+
+  it('keeps owing the revocation until that machine accepts it', async () => {
+    await saveConnections(paired);
+    await removeConnection(BUILDBOX);
+    const unreachable = recorder([BUILDBOX]);
+    await drainPushRevocations('tok', unreachable.registrar.unregister);
+    expect((await pendingRevocations()).map((c) => c.url)).toEqual([BUILDBOX]);
+    const back = recorder();
+    await drainPushRevocations('tok', back.registrar.unregister);
+    expect(back.calls.unregistered).toEqual([BUILDBOX]);
+    expect(await pendingRevocations()).toEqual([]);
+  });
+
+  it('owes nothing for a machine that was paired again', async () => {
+    await saveConnections(paired);
+    await removeConnection(BUILDBOX);
+    await upsertConnection({ url: BUILDBOX, token: 'b' });
+    const { calls, registrar } = recorder();
+    await drainPushRevocations('tok', registrar.unregister);
+    expect(calls.unregistered).toEqual([]);
+    expect(await pendingRevocations()).toEqual([]);
   });
 });

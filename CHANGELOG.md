@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 - A machine you only paired never wakes this device until that machine's own Connect is pressed — an unanswered switch counted as yes, so pairing a second machine handed it this device's push token on the very next sweep and its panel opened already connected
 - Disconnect lands on a machine that knows this device by its relay grant: it no longer gives up when this run holds no OS push token, and one refused revocation no longer strands the other name the machine is holding
+- Forgetting a machine takes this device off it — the machine kept the device row and went on notifying, and the forget itself was what made that permanent, since a machine that is no longer paired is never swept again; the revocation it is owed is now kept and retried until that machine accepts it
 
 ## [v0.1.37] - 2026-08-14
 

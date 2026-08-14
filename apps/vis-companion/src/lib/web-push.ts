@@ -1,5 +1,9 @@
 import { Capacitor } from "@capacitor/core";
-import { getGatewayNotify } from "./storage";
+import {
+  clearRevocation,
+  getGatewayNotify,
+  pendingRevocations,
+} from "./storage";
 import type { PushGateway } from "./relay";
 import { GatewayClient } from "./gateway";
 import { type PushPermission } from "./push";
@@ -168,6 +172,30 @@ export async function syncWebPushRegistrations(
       }
     } catch {
       // An unreachable or older gateway is retried on the next wake or settings visit.
+    }
+  }
+}
+
+/**
+ * Take this browser off every gateway it was FORGOTTEN on.
+ *
+ * The same contract as the native drain (see lib/notify.ts): the subscription
+ * lives on the GATEWAY, and forgetting the pairing is exactly what removes that
+ * gateway from the sweep, so what is owed is stored with the credential and
+ * drained here until it lands.
+ */
+export async function drainWebPushRevocations(
+  isCancelled: () => boolean = () => false,
+): Promise<void> {
+  for (const conn of await pendingRevocations()) {
+    if (isCancelled()) break;
+    try {
+      const subscription = await getExistingWebPushSubscription(conn.url);
+      if (subscription)
+        await gatewayPushTarget(conn).unregister(webPushToken(subscription));
+      await clearRevocation(conn.url);
+    } catch {
+      // That gateway is still holding it; asked again on the next wake.
     }
   }
 }

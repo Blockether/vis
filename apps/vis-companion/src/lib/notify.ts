@@ -13,8 +13,17 @@
 // goes quiet holding a stale one, and a "stop notifying" that was made while the
 // machine was unreachable never landed. Re-asserting both directions is cheap,
 // idempotent, and heals both.
+//
+// Forgetting a machine takes it out of the sweep for good, so the revocation it
+// is owed cannot live in the paired set: it is stored by `removeConnection` and
+// drained here by `drainPushRevocations`.
 
-import { getGatewayNotify, setGatewayNotify } from './storage';
+import {
+  clearRevocation,
+  getGatewayNotify,
+  pendingRevocations,
+  setGatewayNotify,
+} from './storage';
 import type { GatewayConn } from './types';
 
 /** How this device's token is handed to (or taken from) one gateway. */
@@ -64,6 +73,40 @@ export async function syncPushRegistrations(
     }
   }
   return result;
+}
+
+/**
+ * Take this device off every machine it was FORGOTTEN on.
+ *
+ * The sweep above can only reach machines that are still paired, and a machine
+ * that was forgotten is by definition not one of them — while it goes on
+ * holding this device's registration and pushing to it. `removeConnection`
+ * therefore keeps that machine named, with the credential the DELETE needs, and
+ * this drains what is owed.
+ *
+ * An entry is dropped only once that machine has accepted the revocation, so a
+ * machine that was unreachable at the moment it was dropped is stopped on the
+ * next launch or wake instead of buzzing for good. Returns the URLs that
+ * accepted it.
+ */
+export async function drainPushRevocations(
+  token: string,
+  unregister: (conn: GatewayConn, token: string) => Promise<unknown>,
+  isCancelled: () => boolean = () => false,
+): Promise<string[]> {
+  const revoked: string[] = [];
+  for (const conn of await pendingRevocations()) {
+    if (isCancelled()) break;
+    try {
+      await unregister(conn, token);
+    } catch {
+      // Still holding this device. Kept, and asked again next time.
+      continue;
+    }
+    await clearRevocation(conn.url);
+    revoked.push(conn.url);
+  }
+  return revoked;
 }
 
 /**

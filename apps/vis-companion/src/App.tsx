@@ -61,14 +61,16 @@ import {
 import { App as CapacitorApp } from "@capacitor/app";
 import {
   acquirePushToken,
+  cachedPushToken,
   clearDeliveredPushes,
   deviceRegistration,
   isPushSupported,
   onPushTap,
   pushPermission,
 } from "./lib/push";
-import { syncPushRegistrations } from "./lib/notify";
+import { drainPushRevocations, syncPushRegistrations } from "./lib/notify";
 import {
+  drainWebPushRevocations,
   isWebNotificationsPlatform,
   registerWebServiceWorker,
   syncWebPushRegistrations,
@@ -738,32 +740,38 @@ export function App() {
     [pairedKey],
   );
   useEffect(() => {
-    if (notifyTargets.length === 0 || !isPushSupported()) return;
+    if (!isPushSupported()) return;
     let cancelled = false;
+    // Which name this device is filed under is the gateway's answer, not ours:
+    // a machine with no signing key of its own is handed a relay grant instead
+    // of a token (see lib/relay.ts).
+    const revoke = (conn: GatewayConn, tok: string) =>
+      unregisterFromPush(tok, new GatewayClient(conn).pushTarget());
     const sweep = async () => {
       if ((await pushPermission()) !== "granted") return;
-      let token: string;
+      let token = cachedPushToken() ?? "";
       try {
         token = await acquirePushToken();
       } catch {
-        // An OS that withheld the token is not a reason to degrade the session UI.
-        return;
+        // An OS that withheld the token is not a reason to degrade the session
+        // UI — and a machine this device was taken off is still named by the
+        // relay grant it was registered under, which is stored on this device.
       }
       if (cancelled) return;
+      // What is OWED comes first: a machine that was forgotten is no longer in
+      // the swept set, so this is the only thing left that can stop it pushing.
+      await drainPushRevocations(token, revoke, () => cancelled);
+      if (cancelled || !token || notifyTargets.length === 0) return;
       await syncPushRegistrations(
         notifyTargets,
         token,
         {
-          // Which name this device is filed under is the gateway's answer, not
-          // ours: a machine with no signing key of its own is handed a relay
-          // grant instead of a token (see lib/relay.ts).
           register: (conn, tok) =>
             registerForPush(
               deviceRegistration(tok),
               new GatewayClient(conn).pushTarget(),
             ),
-          unregister: (conn, tok) =>
-            unregisterFromPush(tok, new GatewayClient(conn).pushTarget()),
+          unregister: revoke,
         },
         () => cancelled,
       );
@@ -786,13 +794,18 @@ export function App() {
   // Existing permission and subscriptions are enough to restore background delivery;
   // never prompt on launch. The service worker owns the notification, not this tab.
   useEffect(() => {
-    if (!isWebNotificationsPlatform() || notifyTargets.length === 0) return;
+    if (!isWebNotificationsPlatform()) return;
     let cancelled = false;
-    const sweep = () => {
-      void syncWebPushRegistrations(notifyTargets, () => cancelled);
+    const sweep = async () => {
+      // A browser that was taken off a gateway has to be taken off it THERE:
+      // the subscription lives on the machine, and a forgotten machine is not
+      // swept any more.
+      await drainWebPushRevocations(() => cancelled);
+      if (cancelled || notifyTargets.length === 0) return;
+      await syncWebPushRegistrations(notifyTargets, () => cancelled);
     };
-    sweep();
-    const off = onWake(sweep);
+    void sweep();
+    const off = onWake(() => void sweep());
     return () => {
       cancelled = true;
       off();

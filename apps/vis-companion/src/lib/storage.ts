@@ -92,16 +92,29 @@ export async function upsertConnection(
   if (idx >= 0) conns[idx] = { ...conns[idx], ...conn };
   else conns.push(conn);
   await saveConnections(conns);
+  // Paired or owed a revocation, never both: a machine that is paired again is
+  // governed by its own switch from here on.
+  await clearRevocation(conn.url);
   return conns;
 }
 
+/**
+ * Forget one machine — and keep what it takes to stop it notifying this device.
+ *
+ * Deleting the pairing is the local half. The machine still holds this device's
+ * registration, and it is no longer swept, so the revocation it is owed is
+ * recorded here and drained until it lands.
+ */
 export async function removeConnection(url: string): Promise<GatewayConn[]> {
-  const conns = (await loadConnections()).filter((c) => c.url !== url);
+  const paired = await loadConnections();
+  const forgotten = paired.find((c) => c.url === url);
+  const conns = paired.filter((c) => c.url !== url);
   await saveConnections(conns);
   if ((await getActiveUrl()) === url) await setActiveUrl(conns[0]?.url ?? null);
   if ((await getPrimaryUrl()) === url)
     await setPrimaryUrl(conns[0]?.url ?? null);
   await forgetGatewayNotify(url);
+  if (forgotten) await rememberRevocation(forgotten);
   return conns;
 }
 
@@ -348,6 +361,61 @@ async function forgetGatewayNotify(url: string): Promise<void> {
   if (!(url in store)) return;
   delete store[url];
   await saveNotifyStore(store);
+}
+
+// ── Revocations owed to a machine that was forgotten ────────────────
+// A device row lives on the MACHINE: deleting the pairing here does not end it.
+// That machine keeps this device's registration and goes on pushing — and the
+// pairing was the only thing naming it, so the forget is exactly what makes the
+// leak permanent. The per-gateway sweep walks the machines that are still
+// paired; a machine that is gone can never appear in it again.
+//
+// So forgetting KEEPS the credential the revocation needs, on the same rule as
+// a stored "stop" (see lib/notify.ts): the durable half is the intent, not the
+// call. The moment a machine is dropped is often the moment it is unreachable,
+// and `drainPushRevocations` retries on every launch and wake until it accepts.
+const REVOKE_KEY = "vis.notifyRevocations";
+
+/** Machines this device was taken off but has not managed to tell yet. */
+export async function pendingRevocations(): Promise<GatewayConn[]> {
+  const raw = await getRaw(REVOKE_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (entry): entry is GatewayConn =>
+        Boolean(entry) &&
+        typeof entry === "object" &&
+        typeof (entry as GatewayConn).url === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+async function savePendingRevocations(pending: GatewayConn[]): Promise<void> {
+  await setRaw(REVOKE_KEY, JSON.stringify(pending));
+}
+
+/**
+ * Owe one machine a revocation, carrying the token that authorises it.
+ *
+ * The gateway's own credential is stored with it because it is about to be
+ * deleted with the connection, and without it the DELETE cannot be made.
+ */
+async function rememberRevocation(conn: GatewayConn): Promise<void> {
+  const pending = (await pendingRevocations()).filter((c) => c.url !== conn.url);
+  pending.push({ url: conn.url, token: conn.token });
+  await savePendingRevocations(pending);
+}
+
+/** That machine has taken this device off; stop asking it to. */
+export async function clearRevocation(url: string): Promise<void> {
+  const pending = await pendingRevocations();
+  const left = pending.filter((c) => c.url !== url);
+  if (left.length === pending.length) return;
+  await savePendingRevocations(left);
 }
 
 // ── Relay grants, per relay ─────────────────────────────────────────
