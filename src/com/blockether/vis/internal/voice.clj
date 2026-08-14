@@ -329,11 +329,15 @@
 
 (defn public-voice
   "One voice in the shape every surface reports: the id a caller sends back, a human
-   label, and the language it speaks."
+   label, and the language it speaks. A voice a user has to install DELIBERATELY says so,
+   so a picker can mark it instead of discovering the refusal after somebody chose it."
   [voice]
   (cond-> {:id (name (:id voice)) :label (or (not-empty (str (:label voice))) (name (:id voice)))}
     (:language voice)
-    (assoc :language (name (:language voice)))))
+    (assoc :language (name (:language voice)))
+
+    (:is-opt-in voice)
+    (assoc :is-opt-in true)))
 
 (defn voices
   "The voices `engine` can speak in, in the shape every surface reports. An engine with

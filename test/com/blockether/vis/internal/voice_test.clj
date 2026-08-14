@@ -272,6 +272,14 @@
            (voice/voices (speaker-engine :pocket-tts)))))
   (testing "an engine with ONE fixed voice offers no choice at all"
     (is (= [] (voice/voices (dissoc (speaker-engine :fixed) :voices)))))
+  (testing "a voice a user has to install deliberately says so, and no other voice does"
+    ;; A picker that cannot tell offers that voice like any other and finds out on the
+    ;; click, which is the one refusal a client could have shown up front.
+    (is (= [{:id "alba" :label "Alba" :language "en"} {:id "ryan" :label "Ryan" :is-opt-in true}]
+           (voice/voices (assoc (speaker-engine :piper)
+                           :voices (fn []
+                                     [{:id :alba :label "Alba" :language :en}
+                                      {:id :ryan :label "Ryan" :is-opt-in true}]))))))
   (testing "and a catalogue that refuses says why instead of looking empty"
     (is (= "the voice list is gone"
            (refusal #(voice/voices (assoc (speaker-engine :broken)

@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.foundation-voice.sherpa-test
-  (:require [com.blockether.vis.ext.foundation-voice.sherpa :as sherpa]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.ext.foundation-voice.sherpa :as sherpa]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.k2fsa.sherpa.onnx VersionInfo]))
 
@@ -56,3 +57,16 @@
                  ;; must be absent from it, downloaded or not.
                  (doseq [other (disj sherpa/published-platforms (sherpa/platform-token))]
                    (expect (not (sherpa/embedded? other))))))
+
+(defdescribe
+  jar-url-test
+  (it "fetches the native jar from its publisher and never from a Vis host"
+      ;; espeak-ng is GPL-3 and compiled INTO libsherpa-onnx-jni - 10 `espeak_*`
+      ;; symbols and its data paths are in the shipped library - so this jar is
+      ;; the one artifact the voice pack must NOT mirror: the user gets it from
+      ;; the project that published it.
+      (let [url (sherpa/jar-url "osx-aarch64")]
+        (expect (str/starts-with? url "https://jitpack.io/com/github/k2-fsa/sherpa-onnx/"))
+        (expect (str/ends-with? url
+                                (str "sherpa-onnx-native-lib-osx-aarch64-v" sherpa/version ".jar")))
+        (expect (not (str/includes? url "Blockether"))))))

@@ -6,28 +6,43 @@
 
 (defn- ex-data-of [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
 
-(defdescribe catalogue-test
-             (it "publishes the manifest's Piper voices, the default first"
-                 (expect (= ["kristin" "cori" "john"] (mapv #(name (:id %)) (tts/piper-voices))))
-                 (expect (every? :label (tts/piper-voices)))
-                 (expect (every? :language (tts/piper-voices)))
-                 (expect (= "kristin" (name (:id (:voice (first (tts/piper-assets))))))))
-             (it "keeps which file backs a pocket voice to itself"
-                 (expect (= ["bria" "loona" "hibiki"] (mapv #(name (:id %)) (tts/pocket-voices))))
-                 (expect (not-any? :clip (tts/pocket-voices)))
-                 (expect (every? :clip (:voices (tts/pocket-asset)))))
-             (it "answers an unknown voice with the ones that exist"
-                 (let [data (ex-data-of #(#'tts/piper-asset-for "nope"))]
-                   (expect (= :voice-tts/unknown-voice (:type data)))
-                   (expect (= :piper (:family data)))
-                   (expect (= ["kristin" "cori" "john"] (:known data)))))
-             (it "asks for the shared phoneme tables before the voice that reads them"
-                 (expect (= ["espeak-ng-data" "piper-en_US-kristin-medium"]
-                            (mapv :id (#'tts/required-assets :piper nil))))
-                 (expect (= ["espeak-ng-data" "piper-en_GB-cori-medium"]
-                            (mapv :id (#'tts/required-assets :piper "cori"))))
-                 (expect (= ["pocket-tts-int8"]
-                            (mapv :id (#'tts/required-assets :pocket-tts nil))))))
+(defdescribe
+  catalogue-test
+  (it "publishes the manifest's Piper voices, the default first"
+      (expect (= ["kristin" "cori" "john" "ryan"] (mapv #(name (:id %)) (tts/piper-voices))))
+      (expect (every? :label (tts/piper-voices)))
+      (expect (every? :language (tts/piper-voices)))
+      (expect (= "kristin" (name (:id (:voice (first (tts/piper-assets))))))))
+  (it "keeps which file backs a pocket voice to itself"
+      (expect (= ["bria" "loona" "hibiki"] (mapv #(name (:id %)) (tts/pocket-voices))))
+      (expect (not-any? :clip (tts/pocket-voices)))
+      (expect (every? :clip (:voices (tts/pocket-asset)))))
+  (it "answers an unknown voice with the ones that exist"
+      (let [data (ex-data-of #(#'tts/piper-asset-for "nope"))]
+        (expect (= :voice-tts/unknown-voice (:type data)))
+        (expect (= :piper (:family data)))
+        (expect (= ["kristin" "cori" "john" "ryan"] (:known data)))))
+  (it "asks for the shared phoneme tables before the voice that reads them"
+      (expect (= ["espeak-ng-data" "piper-en_US-kristin-medium"]
+                 (mapv :id (#'tts/required-assets :piper nil))))
+      (expect (= ["espeak-ng-data" "piper-en_GB-cori-medium"]
+                 (mapv :id (#'tts/required-assets :piper "cori"))))
+      (expect (= ["pocket-tts-int8"] (mapv :id (#'tts/required-assets :pocket-tts nil)))))
+  (it "marks the voice a user has to install deliberately"
+      ;; Ryan is in the catalogue and ONLY in the catalogue: CC BY-NC-SA, so a
+      ;; picker can show him with his terms while Vis never fetches him.
+      (let
+        [voice
+         (last (tts/piper-voices))
+
+         entry
+         (last (tts/piper-assets))]
+
+        (expect (= "ryan" (name (:id voice))))
+        (expect (true? (:is-opt-in voice)))
+        (expect (true? (:is-opt-in entry)))
+        (expect (= ["espeak-ng-data" "piper-en_US-ryan-high"]
+                   (mapv :id (#'tts/required-assets :piper "ryan")))))))
 
 (defdescribe
   readiness-test
@@ -52,7 +67,13 @@
         (let [state (tts/start-download! :pocket-tts)]
           (expect (= :failed (:state state)))
           (expect (re-find #"pocket-tts-int8" (:error state)))
-          (expect (re-find #"--pocket-tts" (:error state))))))
+          (expect (re-find #"--pocket-tts" (:error state))))
+        (let [state (tts/start-download! :piper "ryan")]
+          (expect (= :failed (:state state)))
+          (expect (re-find #"piper-en_US-ryan-high" (:error state)))
+          ;; the family alone would install the DEFAULT voice, so the refusal names the
+          ;; voice that was actually asked for
+          (expect (re-find #"--piper --voice ryan" (:error state))))))
   (it "starts the download of a family Vis does fetch by itself"
       (let [started (atom [])]
         (with-redefs

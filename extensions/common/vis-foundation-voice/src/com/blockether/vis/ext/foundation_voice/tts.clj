@@ -163,6 +163,8 @@
                     " is not downloaded automatically. Install it with "
                     "`vis-agent extension voice models download --"
                     (name family)
+                    (when-let [voice (:voice opt-in)]
+                      (str " --voice " (name (:id voice))))
                     "`.")}
        (combined-state (mapv start-asset-download! needed))))))
 

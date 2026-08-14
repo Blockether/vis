@@ -206,4 +206,37 @@
     :kind :archive
     :url "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-john-medium.tar.bz2"
     :sha256 "d90362cfa48e429d3096f644785184446145b6e38216f2eaf4c0601b8aad5a36"
-    :bytes 67249181}]}]
+    :bytes 67249181}]}
+
+ ;; The voice a user asked for by NAME, and the reason `:is-opt-in` has to exist
+ ;; for a voice and not only for a model. RyanSpeech is CC BY-NC-SA 4.0:
+ ;; NonCommercial rules out the mirror - a release asset of a commercial product
+ ;; is commercial distribution - and ShareAlike would reach whatever is built
+ ;; from it. The licence binds the USER's own use, so Vis ships the catalogue
+ ;; entry, names the terms, and fetches the bytes from the publisher only when
+ ;; somebody asks for this voice by name.
+ {:id "piper-en_US-ryan-high"
+  :engine :piper
+  :install-dir "vits-piper-en_US-ryan-high"
+  :requires ["en_US-ryan-high.onnx" "tokens.txt"]
+  :needs ["espeak-ng-data"]
+  :voice {:id "ryan"
+          :label "Ryan (en-US, high)"
+          :language "en-US"
+          :gender :male
+          :is-opt-in true}
+  :license "CC-BY-NC-SA-4.0"
+  :attribution
+  "Piper voice en_US-ryan-high by Michael Hansen (rhasspy/piper), trained from scratch on RyanSpeech (https://www.kaggle.com/datasets/roholazandie/ryanspeech), CC BY-NC-SA 4.0. VITS/ONNX export by k2-fsa/sherpa-onnx."
+  :source-url "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/ryan/high"
+  :notice
+  "RyanSpeech is CC BY-NC-SA 4.0: non-commercial use only, with attribution, and anything derived from it carries the same licence. Vis never mirrors this voice and never installs it on its own."
+  :is-commercial-ok false
+  :is-opt-in true
+  :is-redistributed false
+  :sources
+  [{:host :upstream
+    :kind :archive
+    :url "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-ryan-high.tar.bz2"
+    :sha256 "6a71edf4d308b9cb2eaeadc8d1f3c6bf96120ecb7fe52c29a2b6e139c59760ed"
+    :bytes 115630708}]}]

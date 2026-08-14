@@ -105,11 +105,23 @@
                  (expect (= "parakeet-tdt-0.6b-v3-int8"
                             (:id (assets/entry "parakeet-tdt-0.6b-v3-int8"))))
                  (expect (= "espeak-ng-data" (:id (assets/entry "espeak-ng-data"))))
-                 (expect (= [:piper :piper :piper] (mapv :engine (assets/for-engine :piper))))
+                 (expect (= ["piper-en_US-kristin-medium" "piper-en_GB-cori-medium"
+                             "piper-en_US-john-medium" "piper-en_US-ryan-high"]
+                            (mapv :id (assets/for-engine :piper))))
                  (expect (= ["pocket-tts-int8"] (mapv :id (assets/for-engine :pocket-tts))))
                  (let [data (ex-data-of #(assets/entry "no-such-model"))]
                    (expect (= :voice-assets/unknown-asset (:type data)))
-                   (expect (contains? (set (:known data)) "espeak-ng-data")))))
+                   (expect (contains? (set (:known data)) "espeak-ng-data"))))
+             (it "lists Ryan and refuses to host him"
+                 ;; The voice a user asked for by name: CC BY-NC-SA 4.0, so he is in the
+                 ;; catalogue with his terms attached and no source of him is ours.
+                 (let [entry (assets/entry "piper-en_US-ryan-high")]
+                   (expect (= "ryan" (name (get-in entry [:voice :id]))))
+                   (expect (true? (get-in entry [:voice :is-opt-in])))
+                   (expect (= "CC-BY-NC-SA-4.0" (:license entry)))
+                   (expect (false? (:is-commercial-ok entry)))
+                   (expect (not-any? #(= :pack (:host %)) (:sources entry)))
+                   (expect (str/includes? (:notice entry) "non-commercial")))))
 
 (defdescribe
   install-test

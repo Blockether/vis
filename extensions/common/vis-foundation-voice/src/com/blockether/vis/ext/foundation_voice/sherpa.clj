@@ -132,6 +132,11 @@
   ([token] (boolean (io/resource (str "sherpa-onnx/native/" token "/" (second (library-names)))))))
 
 (defn jar-url
+  "Where the platform jar comes from, and the ONE place a Vis release does not
+   mirror. sherpa's VITS path phonemizes through espeak-ng, which is compiled
+   INTO `libsherpa-onnx-jni` — 10 `espeak_*` symbols and its data paths are in
+   the shipped library — so the jar is GPL-3 object code. It is fetched by the
+   user from the project that published it and is never re-hosted by Vis."
   [token]
   (str "https://jitpack.io/com/github/k2-fsa/sherpa-onnx/sherpa-onnx-native-lib-"
        token
