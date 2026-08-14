@@ -267,6 +267,14 @@ jobs:
   #        ghcr.io/cirruslabs/macos-runner:tahoe-xl
   #                                        Cirrus    M4 Pro  8 vCPU / 24 GB $150/month
   #      A ~15 min build on the 12x costs ~$2.40 per release.
+  #      The variable is the LAST step of that hatch, never the first: the
+  #      vendor's GitHub App must already be installed on the ORGANIZATION and
+  #      serving that label, or this job just sits QUEUED (GitHub gives a job
+  #      24 h to find a self-hosted runner) and the release gets no macOS
+  #      asset at all. GitHub's own larger runners are not a substitute: they
+  #      bill on a paid org plan only, and their biggest Apple-silicon size is
+  #      5 cores / 14 GB (macos-26-xlarge, checked 2026-08) — under the live
+  #      set, so it would swap exactly like the free class.
   #   2. `bin/release-native --tag vX.Y.Z --upload` by hand on any 32 GB+ Mac.
   macos:
     name: native / vis-agent-macos-arm64-community.tar.gz
