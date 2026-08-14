@@ -105,6 +105,11 @@ fi
 
 # ── Arguments the wrapper owns ───────────────────────────────────────────────
 jfr=0
+# `--jvm` forces the SOURCE (JVM) runtime, skipping any installed native — the
+# dev override for "run this checkout's live edits, not the packaged build".
+# Also honoured via VIS_JVM=1. The wrapper swallows it; it never reaches Vis.
+force_jvm=0
+case "${VIS_JVM:-0}" in 1|true|TRUE|yes|YES|on|ON) force_jvm=1 ;; esac
 args=()
 end_of_flags=0
 for arg in "$@"; do
@@ -116,6 +121,7 @@ for arg in "$@"; do
     --)        end_of_flags=1; args+=("$arg") ;;
     --measure) export VIS_MEASURE=1 ;;
     --jfr)     jfr=1 ;;
+    --jvm)     force_jvm=1 ;;
     --stream-trace) export VIS_STREAM_TRACE=1 ;;
     *) args+=("$arg") ;;
   esac
@@ -239,8 +245,18 @@ collect_user_extension_sdeps() {
 # newest commit. There is no second source. A checkout of your own is yours —
 # `vis-agent` never runs the tree it was invoked from, whatever directory that is.
 find_jvm_source() {
-  [[ -f "$managed_src/deps.edn" ]] || return 1
-  printf '%s\n' "$managed_src"
+  # The runtime Vis OWNS (installed under ~/.vis) wins when present.
+  if [[ -f "$managed_src/deps.edn" ]]; then printf '%s\n' "$managed_src"; return 0; fi
+  # Otherwise auto-derive: when THIS wrapper is a tracked file inside a real Vis
+  # checkout (deps.edn one level up — `launcher_is_git_owned`), run THAT checkout.
+  # Invoking `bin/vis-agent` from a source tree with nothing installed obviously
+  # means "run this tree", so run its live source through `clojure -M:vis`.
+  # Location still decides nothing for an INSTALLED wrapper (no deps.edn beside
+  # it) — this only fires for a checkout invocation with no owned runtime.
+  if (( launcher_is_git_owned )) && [[ -f "$launcher_parent/deps.edn" ]]; then
+    printf '%s\n' "$launcher_parent"; return 0
+  fi
+  return 1
 }
 
 # The released native wins: an installed one (beside this wrapper, or in Vis
@@ -259,10 +275,12 @@ find_native() {
 }
 
 # What runs: the native build when one is installed, otherwise the source Vis
-# owns. Installing IS the decision — there is no flag, no environment variable
-# and no persisted choice layered on top of it.
+# owns (or, from a checkout with nothing installed, that checkout — see
+# `find_jvm_source`). Installing IS the decision; the ONE override is `--jvm` /
+# `VIS_JVM=1`, which forces the source runtime so a developer can run live edits
+# from a checkout even when a native is installed.
 runtime_effective() {
-  if find_native >/dev/null 2>&1; then
+  if (( ! force_jvm )) && find_native >/dev/null 2>&1; then
     printf 'native\n'
   else
     printf 'jvm\n'
