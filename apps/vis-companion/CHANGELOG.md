@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.35 (4124) — 2026-08-14
+<!-- commit: 52f098458a174d9adffa3ed35f99f2aac1224061 -->
+
+- Keep a reaped child's pid from signalling the child that took its slot
+- A search settles on the word typing rested on, and reports it on its own line
+- One microphone in the Companion composer: tap acts, hold switches the mode
+- Confine the extension child-pid handoff to the spawning thread
+- Keep only the sentences the summarizer finished
+- Give an extension's Popen the child's real OS pid
+- Pin the Vis JVM heap ceiling at an explicit 5 GiB
+- Add half-duplex voice conversations
+- Preserve streamed answers during transcript handover
+- Fix Android Bluetooth voice capture
+- A helper never gets a tool's name: refuse it, and never restore one
+- A restored toolbox is the whole toolbox, not the parseable half
+- A user turn is no paint island either
+- A helper outlives the process: defs() lists them, a restart re-creates them
+- A machine known to be dark is asked no further search questions
+- Anchor ruff's per-file-ignores at the canonical path
+- A dead gateway is an absence, not an answer of "no matches"
+- A helper you defined stays readable, so you refine it instead of re-pasting it
+- Search answers in a quarter of the time, and says where it is while it runs
+- Write a program, not a transcript: teach the core prompt the shape of a good block
+
 ## 0.1.35 (4090) — 2026-08-13
 <!-- commit: 4b67f7bafd8181c495f9397bf5eabfe01242d310 -->
 
