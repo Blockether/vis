@@ -16,12 +16,16 @@
      1. the repaired file parses clean;
      2. it keeps the same number of lines and the same final newline;
      3. every line it changes lies inside an edited span;
-     4. it only ADDED delimiters or only DROPPED them — it never moved or retyped
-        one the caller wrote — and every other character, in order, is still theirs.
+     4. it only ADDED delimiters the caller omitted — one they WROTE is never
+        deleted, moved or retyped — and every other character, in order, is theirs.
 
-   Fail any one and the edit is REFUSED with its parse error intact. A repair that
-   has to reach outside the edit is guessing about code nobody in this call wrote,
-   and guessing is what produced the corruption above.
+    Fail any one and the edit is REFUSED with its parse error intact. A repair that
+    has to reach outside the edit is guessing about code nobody in this call wrote,
+    and guessing is what produced the corruption above. DELETING a delimiter is the
+    same guess from the other side: `(-> s str/trim)` whose opening paren was lost
+    reads as `-> s str/trim)`, and dropping that surplus `)` — character for character
+    the same mistake as an honest `)` too many — writes a body of three loose symbols
+    that parses. The caller is told which of the two to look for instead.
 
    The repair itself belongs to a language pack, not here: an `:ext/language-tools`
    entry registers `:balance-fn`, `String -> String | nil` (nil = unrepairable).
@@ -64,16 +68,61 @@
           (= (first a) (first b)) (recur (next a) (next b))
           :else (recur a (next b)))))
 
-(defn- one-directional?
-  "True when the repair only ADDED delimiters or only DROPPED them. A repair that does
-   both MOVED or RETYPED one the caller wrote, and both rewrite meaning while leaving
-   the skeleton untouched: `(foo [1 2] 3)` mistyped as `(foo (1 2] 3)` comes back as
-   `(foo (1 2 3))` — a vector turned into a call that swallowed the next argument — and
-   a closer deleted from one line and re-added on the next moves the form that follows
-   INSIDE its neighbour. Neither is a repair the caller can see in a `+)` note, so
-   neither is one this decision may take."
+(defn- additions-only?
+  "True when the repair only ADDED delimiters: `before` still appears in `after`, in
+   order, so every character the caller wrote survives and the repair supplied what
+   they omitted. Deleting one they wrote is refused — not because it is always wrong,
+   but because it is never distinguishable. `(f a))` with one `)` too many and `f a))`
+   with its opener lost are the same string to a balancer, and dropping the surplus
+   repairs the first while quietly turning the second into loose symbols that parse.
+   Adding is safe in a way dropping is not: the caller's own indentation says where an
+   omitted closer belongs, and nothing of theirs is overwritten to put it there.
+
+   A repair that is neither — one that MOVED or RETYPED a delimiter — fails this too:
+   `(foo [1 2] 3)` mistyped as `(foo (1 2] 3)` comes back as `(foo (1 2 3))`, a vector
+   turned into a call that swallowed the argument after it, with the skeleton and the
+   line count untouched."
   [before after]
-  (or (subsequence? before after) (subsequence? after before)))
+  (subsequence? before after))
+
+(defn- surplus
+  "The delimiters `a` has and `b` does not, as a string in delimiter order: `((a))`
+   over `(a)` answers `()`."
+  ^String [a b]
+  (let
+    [ta
+     (frequencies a)
+
+     tb
+     (frequencies b)]
+
+    (apply str
+      (for
+        [[ch n]
+         (sort-by key ta)
+
+         :let [d
+               (- (long n) (long (get tb ch 0)))]
+         :when (pos? d)]
+
+        (apply str (repeat d ch))))))
+
+(defn- direction-why
+  "Why a repair that is not additions-only is refused, told apart so the caller knows
+   which mistake of theirs to go and look for."
+  [^String source ^String candidate]
+  (let
+    [s
+     (delimiters source)
+
+     c
+     (delimiters candidate)]
+
+    (if (subsequence? c s)
+      (str "the delimiter repair would delete `"
+           (surplus s c)
+           "` this edit wrote: the replacement closes more than it opens, or dropped an opener")
+      "the delimiter repair would move or retype a delimiter you wrote")))
 (defn changed-span
   "The 1-based, inclusive `[from to]` line range of `after` that differs from
    `before` — shared leading and trailing LINES are dropped, so it is exactly the
@@ -116,45 +165,41 @@
                    (<= (long from) line (long to)))
                  spans)))
 
+(defn- excerpt
+  "One line as the caller should re-read it: indentation dropped, long lines cut,
+   because the note rides on the status line."
+  ^String [^String line]
+  (let [t (str/trim line)]
+    (if (> (count t) 56) (str (subs t 0 55) "…") t)))
+
 (defn- delimiter-note
-  "What the repair did to ONE line, as the caller reads it: ``line 5193 added `]` ``. The
-   note exists so a repair is never a silent footnote — the caller can see the
-   exact character that was added and where, and refuse it with the next edit."
+  "What the repair did to ONE line, as the caller reads it:
+   ``line 5193 added `]` → `(let [{:keys [a b]}]` ``. The note exists so a repair is
+   never a silent footnote, and it carries the RESULTING line and not just the
+   character, because a closer omitted in the middle of a line comes back at its END —
+   `(count names \"at\" stamp` closes as `(count names \"at\" stamp)`, regrouping the
+   arguments between. Reading the line is how the caller catches that in one glance."
   [line-no ^String before ^String after]
   (let
-    [tally
-     (fn [^String s]
-       (frequencies (filter delimiter? s)))
-
-     b
-     (tally before)
+    [b
+     (delimiters before)
 
      a
-     (tally after)
-
-     runs
-     (fn [from to]
-       (apply str
-         (for
-           [[c n]
-            (sort-by key from)
-
-            :let [d
-                  (- (long n) (long (get to c 0)))]
-            :when (pos? d)]
-
-           (apply str (repeat d c)))))
+     (delimiters after)
 
      added
-     (runs a b)
+     (surplus a b)
 
      removed
-     (runs b a)]
+     (surplus b a)]
 
     (str "line "
          line-no
          (when (seq added) (str " added `" added "`"))
-         (when (seq removed) (str " removed `" removed "`")))))
+         (when (seq removed) (str " removed `" removed "`"))
+         " → `"
+         (excerpt after)
+         "`")))
 
 (defn rebalance
   "Try to make `source` — the content an edit WOULD have written, which does not
@@ -177,8 +222,8 @@
             {:ok? false :why "a delimiter repair was found but it still would not parse"}
             (not= (skeleton source) (skeleton candidate))
             {:ok? false :why "the delimiter repair would rewrite code, not delimiters"}
-            (not (one-directional? (delimiters source) (delimiters candidate)))
-            {:ok? false :why "the delimiter repair would move or retype a delimiter you wrote"}
+            (not (additions-only? (delimiters source) (delimiters candidate)))
+            {:ok? false :why (direction-why source candidate)}
             (not= (str/ends-with? source "\n") (str/ends-with? ^String candidate "\n"))
             {:ok? false :why "the delimiter repair would change the file's final newline"}
             :else (let

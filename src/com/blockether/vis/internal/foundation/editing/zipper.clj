@@ -13,8 +13,9 @@
    result that introduces a syntax error the original didn't have — the same
    safety contract as `structural`. A caller that hands `edit` a `:balancer` (a
    language pack's delimiter repair) gets one bounded second chance instead: the
-   repair runs over the WHOLE new source and is kept only if it moves delimiters
-   on the lines that splice wrote (`balance`). Pairs with the name-based ops:
+   repair runs over the WHOLE new source and is kept only when it ADDS delimiters the
+   splice omitted, on the lines that splice wrote (`balance`); one the splice wrote
+   is never deleted. Pairs with the name-based ops:
    locate a def by name, then walk into it by path.
 
    All native handles (Parser/Tree/Node) are opened and closed inside each call;
@@ -563,8 +564,9 @@
 
    `opts` may carry `:balancer` — a language pack's delimiter repair, `String ->
    String|nil`. Given one, a splice that would NEWLY break the parse gets ONE
-   rebalance attempt over the whole new source, kept only when it stays inside the
-   lines this op wrote (`balance/rebalance`) and reported as `:repairs`. Without a
+   rebalance attempt over the whole new source, kept only when it ADDS what the splice
+   omitted inside the lines this op wrote (`balance/rebalance`), reported as
+   `:repairs`. Without a
    balancer a broken splice is refused, which is what every caller gets until its
    tool layer hands one down: the repair is a POLICY of the editing tools, never an
    ambient effect of the zipper."

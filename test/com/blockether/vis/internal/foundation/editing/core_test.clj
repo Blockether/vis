@@ -1607,7 +1607,10 @@
         (let
           [[out written] (patch-line-3 "(ns reb)\n\n(defn ok [] (inc 1))\n\n(defn two [] 2)\n"
                                        "(defn ok [] (inc 1)")]
-          (expect (string/includes? out "parse: clean (delimiters repaired: line 3 added `)`)"))
+          (expect
+            (string/includes?
+              out
+              "parse: clean (delimiters repaired: line 3 added `)` → `(defn ok [] (inc 1))`)"))
           (expect (= "(ns reb)\n\n(defn ok [] (inc 1))\n\n(defn two [] 2)\n" written))))
     (it "refuses a repair that balances by swallowing a form the edit never wrote"
         ;; the candidate parses — it just closes the LAST defn instead of this line,
@@ -1676,6 +1679,17 @@
                                        "(defn ok [] (foo (1 2] 3))")]
           (expect (string/includes? out "would move or retype a delimiter you wrote"))
           (expect (= fixture written))))
+    ;; Regression: a replacement that lost its OPENING paren carries a surplus closer, and
+    ;; dropping that closer wrote `-> s str/trim` as loose symbols — the same silent
+    ;; rewrite as the fragment repair, reached from the other side. The two are one string
+    ;; to a balancer, so the honest `)` too many is refused with them.
+    (it "refuses a repair that would delete a delimiter the replacement wrote"
+        (let
+          [[out written] (patch-line-3 "(ns reb)\n\n(defn ok [] inc 1)\n\n(defn two [] 2)\n"
+                                       "(defn ok [] inc 1))")]
+          (expect (string/includes? out "would delete `)` this edit wrote"))
+          (expect (string/includes? out "closes more than it opens, or dropped an opener"))
+          (expect (= fixture written))))
     ;; Regression: a deletion writes NO line, and the span named the line the deleted text
     ;; used to occupy — a line the new content no longer has — so the repair of a delete
     ;; always landed "outside the lines this call edited" and every such edit was refused.
@@ -1690,7 +1704,7 @@
            out
            (with-balancer "(ns reb)\n\n(defn ok [])\n" #(:result (patch-span rel a4 a4 "")))]
 
-          (expect (string/includes? out "delimiters repaired: line 3 added `)`"))
+          (expect (string/includes? out "delimiters repaired: line 3 added `)` → `(defn ok [])`"))
           (expect (= "(ns reb)\n\n(defn ok [])\n" (slurp rel)))))
     (it "struct_patch by LINE repairs the splice inside the lines it wrote"
         (let
@@ -1709,7 +1723,8 @@
                  "(ns sp)\n\n(defn ok [] (inc 1))\n"
                  #(sp {"path" f "op" "replace_node" "line" 3 "code" "(defn ok [] (inc 1)"}))]
             (expect (:success? r))
-            (expect (= ["line 3 added `)`"] (get (first (:result r)) "delimiters_repaired")))
+            (expect (= ["line 3 added `)` → `(defn ok [] (inc 1))`"]
+                       (get (first (:result r)) "delimiters_repaired")))
             (expect (= "(ns sp)\n\n(defn ok [] (inc 1))\n" (slurp (fs/file f)))))))
     (it "struct_patch refuses a repair that would rewrite the code it was handed"
         (let
@@ -2844,10 +2859,13 @@
 
                ;; The Clojure pack publishes a delimiter repair, and the editors apply it
                ;; when it stays inside the lines the call wrote, so "a syntax break is
-               ;; refused" alone was a lie; the editor says what actually happens.
+               ;; refused" alone was a lie; the editor says what actually happens — and
+               ;; which HALF of it, because only the omitted delimiter comes back.
                (it "describes parse refusal AND delimiter repair"
                    (expect (string/includes? struct-description "will not parse is REFUSED"))
-                   (expect (string/includes? struct-description "a dropped delimiter is repaired"))
+                   (expect (string/includes? struct-description
+                                             "a delimiter you OMITTED is added back"))
+                   (expect (string/includes? struct-description "is never deleted"))
                    ;; The batch's all-or-nothing property is a property of the BATCH,
                    ;; and `doc(name)` is the only place it can be stated now that no
                    ;; schema describes the `edits` parameter.

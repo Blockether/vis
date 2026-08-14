@@ -5358,8 +5358,9 @@
        "defaults to `from`, `replace: \"\"` deletes, and the edits may be listed in ANY order because every "
        "anchor resolves against ONE read. NEVER restate the text you are replacing. Atomic: a stale anchor, "
        "an overlap or a syntax-breaking write refuses the WHOLE batch and writes NOTHING, naming the edit "
-       "and carrying the correct anchor. A dropped delimiter is repaired when the fix stays on the lines "
-       "you wrote, and the repair is named.")
+       "and carrying the correct anchor. A delimiter you OMITTED is added back when the fix stays on the "
+       "lines you wrote, and the line it produced is named; one you WROTE is never deleted, so closing "
+       "one too many is refused instead of guessed at.")
      :call {:pos ["path" "edits"]}
      :before-fn (plan-gated-before-fn :patch :file read-arg-paths)
      :tag :mutation
@@ -5845,8 +5846,9 @@
      (str
        "Structurally edit supported code: definition by NAME (`target`) or node by "
        "`at`/`line`. Renames, docs, moves, `append_child`. Writes re-parse: code that will not parse "
-       "is REFUSED; a dropped delimiter is repaired when the fix stays inside what this call wrote, and "
-       "named in `delimiters_repaired`. A batch of `edits` applies in order "
+       "is REFUSED; a delimiter you OMITTED is added back when the fix stays inside what this call wrote "
+       "and the line it produced is named in `delimiters_repaired`, while one you WROTE is never "
+       "deleted. A batch of `edits` applies in order "
        "and is ATOMIC: an entry that fails rolls the earlier ones back, so every file is left exactly "
        "as the call found it.")
      :before-fn (plan-gated-before-fn :struct_patch :file struct-arg-paths)

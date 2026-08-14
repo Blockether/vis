@@ -40,9 +40,27 @@
         (expect (true? (:ok? r)))
         (expect (= "(ns a)\n(defn f [] (inc 1))\n" (:content r)))
         ;; the note is the whole point: the caller is TOLD which character landed where
-        (expect (= ["line 2 added `)`"] (:notes r)))))
-  (it "names a removed delimiter just as precisely"
-      (expect (= ["line 1 removed `)`"] (:notes (verdict "(a))\n" "(a)\n" [[1 1]])))))
+        (expect (= ["line 2 added `)` → `(defn f [] (inc 1))`"] (:notes r)))))
+  ;; Regression: `(-> s str/trim)` typed with its opening paren lost reads as
+  ;; `-> s str/trim)`, and dropping that surplus `)` — character for character the same
+  ;; mistake as an honest `)` too many — used to be WRITTEN, quietly turning a threaded
+  ;; call into loose symbols that parse.
+  (it "refuses a repair that deletes a delimiter the caller wrote"
+      (let
+        [r (verdict "(defn f [s]\n  -> s str/trim))\n" "(defn f [s]\n  -> s str/trim)\n" [[2 2]])]
+        (expect (false? (:ok? r)))
+        (expect (= (str "the delimiter repair would delete `)` this edit wrote: the replacement "
+                        "closes more than it opens, or dropped an opener")
+                   (:why r)))))
+  ;; A closer omitted in the MIDDLE of a line comes back at that line's END and regroups
+  ;; the arguments between it, so the character alone tells the caller nothing — the note
+  ;; carries the line the repair produced.
+  (it "names the line the repair produced, not only the character"
+      (let
+        [r
+         (verdict "(println \"a\" (count xs \"b\")\n" "(println \"a\" (count xs \"b\"))\n" [[1 1]])]
+        (expect (true? (:ok? r)))
+        (expect (= ["line 1 added `)` → `(println \"a\" (count xs \"b\"))`"] (:notes r)))))
   ;; Regression, session 621ba390: a repair was applied to the caller's replacement FRAGMENT alone,
   ;; so a partial form silently closed itself and the write landed on a line the caller
   ;; never meant to touch. A repair may only move delimiters ON the lines the edit wrote.
@@ -75,7 +93,7 @@
       (let
         [r (verdict "(ns a)\n(defn f []\n  (inc 1)\n" "(ns a)\n(defn f []\n  (inc 1))\n" [[2 3]])]
         (expect (true? (:ok? r)))
-        (expect (= ["line 3 added `)`"] (:notes r)))))
+        (expect (= ["line 3 added `)` → `(inc 1))`"] (:notes r)))))
   ;; Regression: `(foo [1 2] 3)` mistyped as `(foo (1 2] 3)` came back as `(foo (1 2 3))`
   ;; — a vector turned into a call that swallowed the argument after it. Every earlier
   ;; check passed: it parses, it is one line, the skeleton is identical, and the only
@@ -93,4 +111,4 @@
       ;; no other delimiter of theirs changed places — this is the repair's whole job
       (let [r (verdict "(cond\n  a 1)\n  :else 2\n" "(cond\n  a 1\n  :else 2)\n" [[1 3]])]
         (expect (true? (:ok? r)))
-        (expect (= ["line 2 removed `)`" "line 3 added `)`"] (:notes r))))))
+        (expect (= ["line 2 removed `)` → `a 1`" "line 3 added `)` → `:else 2)`"] (:notes r))))))

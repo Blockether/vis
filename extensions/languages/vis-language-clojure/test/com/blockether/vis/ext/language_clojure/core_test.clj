@@ -557,6 +557,50 @@
   (:balance-fn (first (filter #(= "clojure" (:language %))
                               (:ext/language-tools core/vis-extension)))))
 
+(def ^:private shapes-corpus
+  "The shapes a model actually edits, in one file: `ns` with `:require`/`:import`, a
+   `def` map, a threading `defn`, a `let` over interop and `println` inside `if`/`do`,
+   a `loop`/`recur` and a comment tail. Every case below drops closers off ITS lines."
+  (str/join
+    "\n"
+    ["(ns app.scan" "  (:require [clojure.string :as str])" "  (:import (java.io File)))" ""
+     "(def ^:private limit 42)" "" "(def defaults" "  {:retries 3" "   :timeout-ms 500})" ""
+     "(defn- normalize [s]" "  (-> s str/trim str/lower-case))" "" "(defn tally [xs]" "  (->> xs"
+     "       (map normalize)" "       (into (sorted-map))))" "" "(defn scan [^File dir]"
+     "  (let [names (mapv (fn [^File f] (.getName f)) (.listFiles dir))]" "    (if (seq names)"
+     "      (do (println \"scanned\" (count names))" "          {:names names})"
+     "      {:names []})))" "" "(defn crawl [root]" "  (loop [queue [root] acc []]"
+     "    (if-let [d (first queue)]" "      (recur (rest queue) (conj acc (:name d))) ; keep going"
+     "      acc)))" "" "(defn describe [x]" "  (cond" "    (map? x) (str \"map of \" (count x))"
+     "    (vector? x) (str \"vector of \" (count x))" "    :else (str x)))" ""]))
+
+(defn- code-part
+  "`line` up to a trailing comment, right-trimmed, and the comment itself."
+  [^String line]
+  (let [i (str/index-of line ";")]
+    [(str/trimr (if i (subs line 0 i) line)) (if i (str " " (str/triml (subs line i))) "")]))
+
+(defn- drop-closers
+  "`line` with the last `n` closers of its code part gone — the mistake this whole
+   decision exists for. nil when the line has fewer than `n` to drop."
+  [^String line n]
+  (let
+    [[code tail]
+     (code-part line)
+
+     kept
+     (loop
+       [s
+        code
+
+        k
+        0]
+
+       (if (and (< k (long n)) (seq s) (#{\) \] \}} (last s)))
+         (recur (subs s 0 (dec (count s))) (inc k))
+         (when (= k (long n)) s)))]
+
+    (when kept (str kept tail))))
 (defdescribe
   balance-fn-boundary-test
   "The pack's repair reaching the foundation's editors: the SAME `:balance-fn` the
@@ -577,7 +621,7 @@
       (expect (true? (:ok? result)))
       (expect (= "(ns ok)\n\n(defn ok [] (inc 1))\n\n(defn two [] 2)\n" (:new-source result)))
       ;; the repair is NAMED with the character and the line, never a silent footnote
-      (expect (= ["line 3 added `)`"] (:repairs result)))))
+      (expect (= ["line 3 added `)` → `(defn ok [] (inc 1))`"] (:repairs result)))))
   (it "refuses the reported case: the repair balances a line the edit never wrote"
       (let
         [;; the file from the report — the caller's anchor had drifted onto the binding
@@ -599,6 +643,96 @@
         ;; the whole-file repair instead closes line 3, which this edit never touched
         (expect (false? (:ok? verdict)))
         (expect (str/includes? (:why verdict) "line 3"))))
+  ;; Regression: `(defn ok [] (inc 1))` typed with an opening paren lost carries a surplus
+  ;; closer, and parinfer's answer to that is the file with the closer DELETED — which
+  ;; parses, reads as loose symbols, and is character-for-character the same repair as the
+  ;; honest `)` too many. Only the DIRECTION of the change can refuse it.
+  (it "refuses the pack's own repair when it deletes a closer the caller wrote"
+      (let
+        [broken
+         "(ns ok)\n\n(defn ok [] inc 1))\n"
+
+         verdict
+         (balance/rebalance {:balancer (clj-balancer)
+                             :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                             :source broken
+                             :spans [[3 3]]})]
+
+        ;; what parinfer alone would have written
+        (expect (= "(ns ok)\n\n(defn ok [] inc 1)\n" ((clj-balancer) broken)))
+        (expect (false? (:ok? verdict)))
+        (expect (str/includes? (:why verdict) "would delete `)` this edit wrote"))))
+  ;; One, two and three closers off the END of every line that has them, over every shape
+  ;; above: this is the mistake the repair exists for, and each one has to come back
+  ;; byte-identical — a repair that lands anywhere else would be a silent rewrite.
+  (it
+    "restores every closer a model drops off the end of a line, in every shape"
+    (let
+      [lines
+       (str/split-lines shapes-corpus)
+
+       mutate
+       (fn [ln text]
+         (str/join "\n" (concat (take (dec (long ln)) lines) [text] (drop (long ln) lines) [""])))
+
+       verdicts
+       (for
+         [ln
+          (range 1 (inc (count lines)))
+
+          n
+          [1 2 3]
+
+          :let [mut
+                (drop-closers (nth lines (dec ln)) n)]
+          :when mut]
+
+         [ln n
+          (balance/rebalance {:balancer (clj-balancer)
+                              :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                              :source (mutate ln mut)
+                              :spans [[ln ln]]})])]
+
+      ;; the matrix is worth nothing if it silently stopped covering the file
+      (expect (<= 45 (count verdicts)))
+      (expect (= []
+                 (vec (for
+                        [[ln n v]
+                         verdicts
+
+                         :when (not= shapes-corpus (:content v))]
+
+                        [ln n (or (:why v) :wrong-content)]))))))
+  ;; The same lines with one closer TOO MANY. Parinfer answers both that and a lost
+  ;; opener by DELETING the surplus, so accepting it would write `(def x 1)` typed as
+  ;; `def x 1)` as three loose top-level forms that parse. Never accepted, in any shape.
+  (it "never accepts a repair that deletes a closer, in any shape"
+      (let
+        [lines
+         (str/split-lines shapes-corpus)
+
+         mutate
+         (fn [ln text]
+           (str/join "\n" (concat (take (dec (long ln)) lines) [text] (drop (long ln) lines) [""])))
+
+         accepted
+         (for
+           [ln
+            (range 1 (inc (count lines)))
+
+            :let [line
+                  (nth lines (dec ln))]
+            :when (and (seq (str/trim line)) (nil? (str/index-of line ";")))
+            :let [v
+                  (balance/rebalance {:balancer (clj-balancer)
+                                      :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                                      :source (mutate ln (str (str/trimr line) ")"))
+                                      :spans [[ln ln]]})]
+            :when (:ok? v)]
+
+           [ln (:notes v)])]
+
+        (expect (= [] (vec accepted)))))
   ;; Regression: parinfer's own answer to a `[` mistyped as `(` is `(foo (1 2 3))` — the
   ;; caller's VECTOR turned into a call that swallowed the argument standing after it. That
   ;; candidate parses, keeps the line count and the final newline, changes only the line the
