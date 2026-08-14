@@ -106,8 +106,9 @@
         (let [ed (struct-patch "path" path "at" [i] "op" "replace" "code" "(defn g [x] (* x 9))")]
           (expect (:success? ed))
           (expect (str/includes? (slurp (fs/file path)) "(* x 9)")))
-        ;; syntax-breaking edit refused
-        (expect (try (struct-patch "path" path "at" [i] "op" "replace" "code" "(defn g [x]")
+        ;; a syntax break no delimiter repair can close is still refused (a dropped
+        ;; closer, by contrast, is repaired in place — see patch-delimiter-repair-test)
+        (expect (try (struct-patch "path" path "at" [i] "op" "replace" "code" "(defn g [x] \"oops")
                      false
                      (catch clojure.lang.ExceptionInfo _ true)))))))
 

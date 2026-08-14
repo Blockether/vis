@@ -11,12 +11,16 @@
 
    Edits splice the target node's UTF-8 byte range and RE-PARSE, refusing a
    result that introduces a syntax error the original didn't have — the same
-   safety contract as `structural`. Pairs with the name-based ops: locate a def
-   by name, then walk into it by path.
+   safety contract as `structural`. A caller that hands `edit` a `:balancer` (a
+   language pack's delimiter repair) gets one bounded second chance instead: the
+   repair runs over the WHOLE new source and is kept only if it moves delimiters
+   on the lines that splice wrote (`balance`). Pairs with the name-based ops:
+   locate a def by name, then walk into it by path.
 
    All native handles (Parser/Tree/Node) are opened and closed inside each call;
    only plain Clojure data escapes."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.foundation.editing.balance :as balance]
             [com.blockether.vis.internal.foundation.editing.index :as index]
             ;; Side-effecting require: selects + loads the platform native lib.
             [com.blockether.tree-sitter-language-pack])
@@ -555,72 +559,107 @@
    :append-child / :prepend-child insert after the LAST / before the FIRST named
    child of the node at `at`. Insert-before/after reuse the file's inter-sibling gap so
    a spliced form keeps the blank-line rhythm; delete (= :replace with \"\") reclaims one
-   adjacent gap so the survivors keep a single separator, not an orphaned blank line."
-  [lang source at op code]
-  (if (#{:append-child :prepend-child} op)
-    (let [n (or (:named-child-count (inspect lang source at)) 0)]
-      (if (pos? (long n))
-        (if (= op :append-child)
-          (edit lang source (conj (vec at) (dec (long n))) :insert-after code)
-          (edit lang source (conj (vec at) 0) :insert-before code))
-        {:error {:reason :no-children
-                 :message (str (name op)
-                               ": node at " (vec at)
-                               " has no named "
-                               "children — navigate down and insert, or use replace")}}))
-    (with-target
-      lang
-      source
-      at
-      (fn [^Node node src-bytes]
-        (let
-          [sb
-           (.startByte node)
+   adjacent gap so the survivors keep a single separator, not an orphaned blank line.
 
-           eb
-           (.endByte node)
+   `opts` may carry `:balancer` — a language pack's delimiter repair, `String ->
+   String|nil`. Given one, a splice that would NEWLY break the parse gets ONE
+   rebalance attempt over the whole new source, kept only when it stays inside the
+   lines this op wrote (`balance/rebalance`) and reported as `:repairs`. Without a
+   balancer a broken splice is refused, which is what every caller gets until its
+   tool layer hands one down: the repair is a POLICY of the editing tools, never an
+   ambient effect of the zipper."
+  ([lang source at op code] (edit lang source at op code nil))
+  ([lang source at op code opts]
+   (if (#{:append-child :prepend-child} op)
+     (let [n (or (:named-child-count (inspect lang source at)) 0)]
+       (if (pos? (long n))
+         (if (= op :append-child)
+           (edit lang source (conj (vec at) (dec (long n))) :insert-after code opts)
+           (edit lang source (conj (vec at) 0) :insert-before code opts))
+         {:error {:reason :no-children
+                  :message (str (name op)
+                                ": node at " (vec at)
+                                " has no named "
+                                "children — navigate down and insert, or use replace")}}))
+     (with-target
+       lang
+       source
+       at
+       (fn [^Node node src-bytes]
+         (let
+           [sb
+            (.startByte node)
 
-           new-bytes
-           (case op
-             :replace
-             (if (= "" (str code))
-               (let [^longs span (delete-span src-bytes sb eb)]
-                 (byte-splice src-bytes (aget span 0) (aget span 1) (utf8 "")))
-               (byte-splice src-bytes sb eb (utf8 (str code))))
+            eb
+            (.endByte node)
 
-             :insert-before
+            new-bytes
+            (case op
+              :replace
+              (if (= "" (str code))
+                (let [^longs span (delete-span src-bytes sb eb)]
+                  (byte-splice src-bytes (aget span 0) (aget span 1) (utf8 "")))
+                (byte-splice src-bytes sb eb (utf8 (str code))))
+
+              :insert-before
+              (let
+                [sep
+                 (sibling-separator src-bytes sb eb :before)
+
+                 ins
+                 (if sep (str (str/trim (str code)) sep) (str code))]
+
+                (byte-splice src-bytes sb sb (utf8 ins)))
+
+              :insert-after
+              (let
+                [sep
+                 (sibling-separator src-bytes sb eb :after)
+
+                 ins
+                 (if sep (str sep (str/trim (str code))) (str code))]
+
+                (byte-splice src-bytes eb eb (utf8 ins)))
+
+              nil)]
+
+           (if-not new-bytes
+             {:error {:reason :bad-op :message (str "unknown op " op)}}
              (let
-               [sep
-                (sibling-separator src-bytes sb eb :before)
+               [new-source
+                (String. ^bytes new-bytes StandardCharsets/UTF_8)
 
-                ins
-                (if sep (str (str/trim (str code)) sep) (str code))]
+                broke?
+                (and (syntax-broken? lang new-source) (not (syntax-broken? lang source)))
 
-               (byte-splice src-bytes sb sb (utf8 ins)))
+                ;; A structural splice writes ONE contiguous region, so a delimiter
+                ;; repair is allowed exactly the lines this op wrote and no others.
+                ;; See `balance`: repairing the `code` argument on its own balances a
+                ;; partial form into a complete one that parses and means something
+                ;; else, which is worse than the refusal it replaced.
+                repair
+                (when broke?
+                  (balance/rebalance {:balancer (:balancer opts)
+                                      :parses-clean? (fn [^String s]
+                                                       (not (syntax-broken? lang s)))
+                                      :source new-source
+                                      :spans (some-> (balance/changed-span source new-source)
+                                                     vector)}))]
 
-             :insert-after
-             (let
-               [sep
-                (sibling-separator src-bytes sb eb :after)
-
-                ins
-                (if sep (str sep (str/trim (str code))) (str code))]
-
-               (byte-splice src-bytes eb eb (utf8 ins)))
-
-             nil)]
-
-          (if-not new-bytes
-            {:error {:reason :bad-op :message (str "unknown op " op)}}
-            (let [new-source (String. ^bytes new-bytes StandardCharsets/UTF_8)]
-              (if (and (syntax-broken? lang new-source) (not (syntax-broken? lang source)))
-                {:error {:reason :syntax-broken
-                         :message (str "refused: " (name op)
-                                       " at " (vec at)
-                                       " would introduce a syntax error"
-                                       (when-let [d (describe-syntax-errors lang new-source)]
-                                         (str "\n" d)))}}
-                {:ok? true :new-source new-source}))))))))
+               (cond (not broke?) {:ok? true :new-source new-source}
+                     (:ok? repair)
+                     {:ok? true :new-source (:content repair) :repairs (:notes repair)}
+                     :else {:error {:reason :syntax-broken
+                                    :message
+                                    (str "refused: "
+                                         (name op)
+                                         " at "
+                                         (vec at)
+                                         " would introduce a syntax error"
+                                         (when-let [d (describe-syntax-errors lang new-source)]
+                                           (str "\n" d))
+                                         (when-let [why (:why repair)]
+                                           (str "\n" why " — fix the code you passed.")))}})))))))))
 
 ;; ── ZIPPER CURSOR — relative navigation (clojure.zip / rewrite-clj vocabulary) ──
 (def ^:private move-aliases

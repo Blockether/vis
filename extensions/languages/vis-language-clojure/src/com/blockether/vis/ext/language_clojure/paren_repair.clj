@@ -8,7 +8,11 @@
    parinfer-rust shell path + stats/json bits from upstream are dropped; this is
    the pure JVM path only.
 
-   `fix-delimiters` is the entry point used by the `clj_paren_repair` tool."
+   `fix-delimiters` is the entry point, and it repairs WHOLE Clojure source: `format`
+   runs it before cljfmt, and the pack publishes it as the editors' `:balance-fn`, which
+   the foundation applies to the whole file an edit would write and keeps only when the
+   repair stays on that edit's own lines. Handing it a partial form instead balances the
+   fragment into a complete one that means something else."
   (:require [edamame.core :as e]
             [parinferish.core :as parinferish]))
 

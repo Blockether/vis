@@ -10,6 +10,9 @@
             [com.blockether.vis.ext.language-clojure.format :as fmt]
             [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
             [com.blockether.vis.ext.language-clojure.test-runner :as test-runner]
+            [com.blockether.vis.ext.language-clojure.paren-repair :as repair]
+            [com.blockether.vis.internal.foundation.editing.balance :as balance]
+            [com.blockether.vis.internal.foundation.editing.zipper :as zipper]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.nio.file Files)
            (java.nio.file.attribute FileAttribute)))
@@ -104,28 +107,31 @@
                                  (get-in merged ['language-clojure :nses]))))))
 
 (defdescribe surface-test
-             (it "exposes NO engine verbs — repair+format ride the facade + op-hooks, no clj/ alias"
+             (it "exposes NO engine verbs — repair+format ride the facade, no clj/ alias"
                  ;; clj_paren_repair / the `clj/` engine are gone: paren repair now rides inside
-                 ;; `format` AND the auto-repair op-hook. The manifest declares no :ext/engine;
-                 ;; the constructor scaffolds an EMPTY one (no alias, no symbols).
+                 ;; `format` AND the language-tools `:balance-fn` the editors call. The manifest
+                 ;; declares no :ext/engine; the constructor scaffolds an EMPTY one (no alias,
+                 ;; no symbols).
                  (let [engine (:ext/engine core/vis-extension)]
                    (expect (nil? (:ext.engine/alias engine)))
                    (expect (empty? (:ext.engine/symbols engine)))))
-             (it "registers its repair/no-fail behavior DECLARATIVELY via :ext/op-hooks"
+             (it "hands the editors a `:balance-fn` instead of wrapping their ops"
+                 ;; The pack no longer intercepts `patch`/`struct_patch` to repair the FRAGMENT a
+                 ;; caller passed — that turned an informative refusal into a silently corrupt
+                 ;; write. It publishes the repair as data on its language tools and the
+                 ;; foundation decides, per edit, whether the repaired FILE is safe to keep.
                  (let
-                   [hooks
-                    (:ext/op-hooks core/vis-extension)
+                   [tools
+                    (:ext/language-tools core/vis-extension)
 
-                    ops
-                    (set (map (juxt :op :phase) hooks))]
+                    clj-tools
+                    (first (filter #(= "clojure" (:language %)) tools))]
 
-                   ;; Both editors are covered: `struct_patch` repairs its `:code`, `patch`
-                   ;; repairs its trailing positional `replacement`.
-                   (expect (= 2 (count hooks)))
-                   (expect (contains? ops [:struct_patch :around]))
-                   (expect (contains? ops [:patch :around]))
-                   ;; every entry names a real fn — no imperative register-op-hook! at load
-                   (expect (every? ifn? (map :fn hooks))))))
+                   (expect (nil? (:ext/op-hooks core/vis-extension)))
+                   (expect (some? clj-tools))
+                   (expect (= repair/fix-delimiters (:balance-fn clj-tools)))
+                   ;; the function is REAL, not a placeholder the foundation would call into a hole
+                   (expect (= "(defn f [])" ((:balance-fn clj-tools) "(defn f ["))))))
 
 (defdescribe repl-resource-logs-test
              (it "registers managed nREPL resources with tail-able launcher logs"
@@ -544,141 +550,66 @@
                  (expect (= (.getCanonicalPath svc) (.getCanonicalPath (io/file @seen))))))
              (finally (cleanup root))))))
 
-(defn- balanced? [s] (= (count (re-seq #"\(" s)) (count (re-seq #"\)" s))))
+(defn- clj-balancer
+  "The delimiter repair the pack publishes for Clojure on its language tools — the
+   exact function the foundation's editors look up."
+  []
+  (:balance-fn (first (filter #(= "clojure" (:language %))
+                              (:ext/language-tools core/vis-extension)))))
 
 (defdescribe
-  struct-patch-no-fail-test
-  "The :around middleware makes a Clojure struct_patch repair + retry instead of
-   failing on unbalanced delimiters."
-  (it "retries a .clj edit with paren-repaired code after the editor refuses it"
-      (let
-        [seen
-         (atom [])
-
-         ;; fake editor: refuses unbalanced code, accepts balanced. Model args
-         ;; are STRING-keyed (strings-only boundary).
-         next-fn
-         (fn [args]
-           (let [code (get (first args) "code")]
-             (swap! seen conj code)
-             (if (balanced? code)
-               {:success? true :result code}
-               (throw (ex-info "syntax broken" {:type :ext.foundation.editing/struct-zip-error})))))
-
-         out
-         (core/clj-struct-patch-no-fail-around
-           {}
-           :struct_patch
-           [{"path" "x.clj" "code" "(defn f [] (+ 1 2)" "op" "replace"}]
-           next-fn)]
-
-        (expect (:success? out))
-        (expect (= 2 (count @seen)))        ; raw attempt, then repaired retry
-        (expect (balanced? (last @seen))))) ; the retry used balanced code
-  (it "passes a NON-clj failure straight through (no repair, no retry)"
-      (let
-        [calls
-         (atom 0)
-
-         next-fn
-         (fn [_]
-           (swap! calls inc)
-           (throw (ex-info "boom" {})))]
-
-        (expect (true? (try (core/clj-struct-patch-no-fail-around {}
-                                                                  :struct_patch
-                                                                  [{"path" "x.py" "code" "def f("}]
-                                                                  next-fn)
-                            false
-                            (catch clojure.lang.ExceptionInfo _ true))))
-        (expect (= 1 @calls))))
-  (it "surfaces the ORIGINAL error when repair can't make the edit succeed"
-      (let
-        [next-fn (fn [_]
-                   (throw (ex-info "still broken" {:type :unfixable})))]
-        (expect (= :unfixable
-                   (try (core/clj-struct-patch-no-fail-around {}
-                                                              :struct_patch
-                                                              [{"path" "x.clj"
-                                                                "code" "(defn f [] (+ 1 2)"}]
-                                                              next-fn)
-                        nil
-                        (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
-
-
-(defdescribe
-  clj-patch-repairs-delimiters-test
-  ;; `patch` is `(path edits)` — every replacement the call carries lives in an
-  ;; entry's `replace` key, not in a trailing positional argument.
+  balance-fn-boundary-test
+  "The pack's repair reaching the foundation's editors: the SAME `:balance-fn` the
+   manifest publishes, run through the foundation's decision, which keeps a repaired
+   file only when the repair stayed inside the lines the edit wrote."
+  ;; Regression, session 621ba390: a Clojure edit whose replacement was an unbalanced FRAGMENT
+  ;; parinfer-repaired ON ITS OWN and retried, so a partial form silently closed itself
+  ;; and overwrote a good line; the caller was told only "(delimiters repaired)".
   (it
-    "repairs the unbalanced replacement in a MULTI-edit batch and retries the whole batch once"
+    "repairs a dropped closer on the line the edit wrote, and names it"
     (let
-      [seen
-       (atom [])
+      [source
+       "(ns ok)\n\n(defn ok [] 1)\n\n(defn two [] 2)\n"
 
-       balanced?
-       (fn [s]
-         (= (count (re-seq #"\(" (str s))) (count (re-seq #"\)" (str s)))))
+       result
+       (zipper/edit "clojure" source [1] :replace "(defn ok [] (inc 1)" {:balancer (clj-balancer)})]
 
-       replacements
-       (fn [args]
-         (mapv #(get % "replace") (second args)))
-
-       next-fn
-       (fn [args]
-         (let [texts (replacements args)]
-           (swap! seen conj texts)
-           (if (every? balanced? texts)
-             {:success? true
-              :result (str "patched x.clj  2 edits  9 → 9 lines  parse: clean\n"
-                           "  1  3..3  → 1 line  3:abc\n"
-                           "  2  9..9  → 1 line  9:def")}
-             (throw (ex-info "syntax broken" {:type :ext.foundation.editing/patch-refused})))))
-
-       out
-       (core/clj-patch-no-fail-around {}
-                                      :patch
-                                      ["x.clj"
-                                       [{"from" "3:abc" "replace" "(defn f [] (+ 1 2)"}
-                                        {"from" "9:def" "replace" "(defn g [] 3)"}]]
-                                      next-fn)]
-
-      (expect (:success? out))
-      (expect (= 2 (count @seen)))
-      (expect (every? balanced? (last @seen)))
-      ;; The batch is atomic in the editor, so the ALREADY balanced entry is retried
-      ;; unchanged beside the repaired one — never re-applied on its own.
-      (expect (= "(defn g [] 3)" (second (last @seen))))
-      ;; The repair is REPORTED, on the status line and nowhere else.
-      (expect (str/includes? (first (str/split-lines (:result out))) "(delimiters repaired)"))
-      (expect (not (str/includes? (second (str/split-lines (:result out))) "repaired")))))
-  (it "passes a NON-clj refusal straight through"
+      (expect (true? (:ok? result)))
+      (expect (= "(ns ok)\n\n(defn ok [] (inc 1))\n\n(defn two [] 2)\n" (:new-source result)))
+      ;; the repair is NAMED with the character and the line, never a silent footnote
+      (expect (= ["line 3 added `)`"] (:repairs result)))))
+  (it "refuses the reported case: the repair balances a line the edit never wrote"
       (let
-        [calls
-         (atom 0)
+        [;; the file from the report — the caller's anchor had drifted onto the binding
+         ;; VALUE line, and the replacement was the destructuring fragment
+         source
+         "(defn f []\n  (let\n    [{:keys [a b]}\n     form\n\n     x\n     1]\n\n    x))\n"
 
-         next-fn
-         (fn [_]
-           (swap! calls inc)
-           (throw (ex-info "boom" {})))]
+         broken
+         (str/replace source "     form\n" "    [{:keys [a b c]}\n")
 
-        (expect (true? (try (core/clj-patch-no-fail-around {}
-                                                           :patch
-                                                           ["x.txt"
-                                                            [{"from" "3:abc" "replace" "oops ("}]]
-                                                           next-fn)
-                            false
-                            (catch clojure.lang.ExceptionInfo _ true))))
-        (expect (= 1 @calls))))
-  (it "surfaces the ORIGINAL refusal when the repair cannot make the edit land"
+         verdict
+         (balance/rebalance {:balancer (clj-balancer)
+                             :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                             :source broken
+                             :spans [[4 4]]})]
+
+        ;; repairing the FRAGMENT alone is what used to be written — a complete, wrong form
+        (expect (= "    [{:keys [a b c]}]" ((clj-balancer) "    [{:keys [a b c]}")))
+        ;; the whole-file repair instead closes line 3, which this edit never touched
+        (expect (false? (:ok? verdict)))
+        (expect (str/includes? (:why verdict) "line 3"))))
+  (it "leaves an unrepairable edit refused"
       (let
-        [next-fn (fn [_]
-                   (throw (ex-info "stale anchor" {:reason :anchor-not-found})))]
-        (expect (= :anchor-not-found
-                   (try (core/clj-patch-no-fail-around
-                          {}
-                          :patch
-                          ["x.clj" [{"from" "3:abc" "replace" "(defn f [] (+ 1 2)"}]]
-                          next-fn)
-                        nil
-                        (catch clojure.lang.ExceptionInfo e (:reason (ex-data e)))))))))
+        [source
+         "(ns ok)\n\n(defn ok [] 1)\n"
+
+         result
+         (zipper/edit "clojure"
+                      source
+                      [1]
+                      :replace
+                      "(defn ok [] \"unterminated"
+                      {:balancer (clj-balancer)})]
+
+        (expect (= :syntax-broken (get-in result [:error :reason]))))))

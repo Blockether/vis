@@ -29,9 +29,13 @@
             [com.blockether.vis.internal.extension :as extension]
             [lazytest.core :refer [defdescribe describe expect it throws?]]))
 
-(defn- private-fn
+(defn- private-var
+  "The Var behind one of `editing.core`'s private tool fns — `with-redefs-fn` needs
+   the Var, `private-fn` derefs it."
   [name]
-  (deref (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" name))))
+  (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" name)))
+
+(defn- private-fn [name] (deref (private-var name)))
 
 (defn- anchor-at
   "The anchor `cat`/`patch`/`grep` printed for line `n` in one anchored text
@@ -1492,7 +1496,10 @@
 
 (defdescribe
   patch-parse-gate-test
-  (it "a write that would break the parse is refused and nothing lands"
+  (it "a write that would break the parse beyond repair is refused and nothing lands"
+      ;; A dropped delimiter is no longer the interesting case — a language pack that
+      ;; publishes a repair gets it fixed in place (see `patch-delimiter-repair-test`).
+      ;; What still refuses, pack or no pack, is a break no delimiter can close.
       (let
         [rel
          (write-temp! "patch/gate.clj" "(ns gate)\n\n(defn ok [] 1)\n")
@@ -1504,7 +1511,9 @@
          (anchor-at (cat-tool rel) 3)
 
          thrown
-         (try (patch-span rel a3 a3 "(defn ok [] 1") nil (catch clojure.lang.ExceptionInfo e e))]
+         (try (patch-span rel a3 a3 "(defn ok [] \"unterminated")
+              nil
+              (catch clojure.lang.ExceptionInfo e e))]
 
         (expect (some? thrown))
         (expect (= :parse-broken (:reason (ex-data thrown))))
@@ -1560,6 +1569,137 @@
         (expect (not (string/includes? (edit "patch/notes.md" "# One\n\ntwo\n" "TWO") "parse:")))
         (expect (string/includes? (edit "patch/code.py" "def f():\n    return 1\n" "    return 2")
                                   "parse: clean")))))
+
+
+(defdescribe
+  patch-delimiter-repair-test
+  "A language pack's delimiter repair, applied to the WHOLE file the edit would have
+   written and kept only when it stays on that edit's own lines. The balancer is
+   stubbed to an exact candidate here: what is under test is the editors' DECISION,
+   not any pack's idea of a repair."
+  ;; Regression, session 621ba390: an unbalanced replacement used to be repaired as a FRAGMENT and
+  ;; the edit retried, so a partial form closed itself, overwrote a line the caller never
+  ;; meant to touch, and the call reported only "(delimiters repaired)".
+  (let
+    [fixture
+     "(ns reb)\n\n(defn ok [] 1)\n\n(defn two [] 2)\n"
+
+     cat-tool
+     (comp :result (private-fn "cat-tool"))
+
+     with-balancer
+     (fn [candidate f]
+       (with-redefs-fn {(private-var "language-balancer") (constantly (constantly candidate))} f))
+
+     patch-line-3
+     (fn [candidate replacement]
+       (let
+         [rel
+          (write-temp! "patch/rebalance.clj" fixture)
+
+          a3
+          (anchor-at (cat-tool rel) 3)]
+
+         [(try (with-balancer candidate #(:result (patch-span rel a3 a3 replacement)))
+               (catch clojure.lang.ExceptionInfo e (ex-message e))) (slurp rel)]))]
+
+    (it "writes an in-bounds repair and names the character and the line"
+        (let
+          [[out written] (patch-line-3 "(ns reb)\n\n(defn ok [] (inc 1))\n\n(defn two [] 2)\n"
+                                       "(defn ok [] (inc 1)")]
+          (expect (string/includes? out "parse: clean (delimiters repaired: line 3 added `)`)"))
+          (expect (= "(ns reb)\n\n(defn ok [] (inc 1))\n\n(defn two [] 2)\n" written))))
+    (it "refuses a repair that balances by swallowing a form the edit never wrote"
+        ;; the candidate parses — it just closes the LAST defn instead of this line,
+        ;; which is the silent corruption the fragment-level repair used to write
+        (let
+          [[out written] (patch-line-3 "(ns reb)\n\n(defn ok [] (inc 1)\n\n(defn two [] 2))\n"
+                                       "(defn ok [] (inc 1)")]
+          (expect (string/includes? out "would not parse"))
+          (expect (string/includes? out "changes line 5, outside the lines this call edited"))
+          (expect (= fixture written))))
+    (it "refuses a repair that rewrites code instead of delimiters"
+        (let
+          [[out written] (patch-line-3 "(ns reb)\n\n(defn ok [] (dec 1))\n\n(defn two [] 2)\n"
+                                       "(defn ok [] (inc 1)")]
+          (expect (string/includes? out "would rewrite code, not delimiters"))
+          (expect (= fixture written))))
+    (it "keeps the plain refusal for a language whose pack publishes no repair"
+        (let
+          [rel
+           (write-temp! "patch/rebalance-none.clj" fixture)
+
+           a3
+           (anchor-at (cat-tool rel) 3)
+
+           out
+           (with-redefs-fn {(private-var "language-balancer") (constantly nil)}
+             #(try (patch-span rel a3 a3 "(defn ok [] (inc 1)")
+                   (catch clojure.lang.ExceptionInfo e (ex-message e))))]
+
+          (expect (string/includes? out "would not parse"))
+          (expect (not (string/includes? out "delimiter repair")))
+          (expect (= fixture (slurp rel)))))
+    (it "struct_patch by NAME repairs the fragment it was handed and reports it"
+        ;; the structural engine never hands back the content it would have written, so
+        ;; the repair is bounded by the `code` this call passed — every line of it
+        (let
+          [sp
+           (private-fn "struct-patch-tool")
+
+           _
+           (temp-dir-path "spreb")
+
+           f
+           (str (temp-root) "/spreb/m.clj")]
+
+          (spit (fs/file f) "(ns sp)\n\n(defn ok [] 1)\n")
+          (let
+            [r (with-balancer
+                 "(defn ok [] (inc 1))"
+                 #(sp {"path" f "op" "replace" "target" "ok" "code" "(defn ok [] (inc 1)"}))]
+            (expect (:success? r))
+            (expect (= ["code line 1 added `)`"] (get (first (:result r)) "delimiters_repaired")))
+            (expect (= "(ns sp)\n\n(defn ok [] (inc 1))\n" (slurp (fs/file f)))))))
+    (it "struct_patch by LINE repairs the splice inside the lines it wrote"
+        (let
+          [sp
+           (private-fn "struct-patch-tool")
+
+           _
+           (temp-dir-path "sprebline")
+
+           f
+           (str (temp-root) "/sprebline/m.clj")]
+
+          (spit (fs/file f) "(ns sp)\n\n(defn ok [] 1)\n")
+          (let
+            [r (with-balancer
+                 "(ns sp)\n\n(defn ok [] (inc 1))\n"
+                 #(sp {"path" f "op" "replace_node" "line" 3 "code" "(defn ok [] (inc 1)"}))]
+            (expect (:success? r))
+            (expect (= ["line 3 added `)`"] (get (first (:result r)) "delimiters_repaired")))
+            (expect (= "(ns sp)\n\n(defn ok [] (inc 1))\n" (slurp (fs/file f)))))))
+    (it "struct_patch refuses a repair that would rewrite the code it was handed"
+        (let
+          [sp
+           (private-fn "struct-patch-tool")
+
+           _
+           (temp-dir-path "sprebno")
+
+           f
+           (str (temp-root) "/sprebno/m.clj")]
+
+          (spit (fs/file f) "(ns sp)\n\n(defn ok [] 1)\n")
+          (expect (throws? clojure.lang.ExceptionInfo
+                           #(with-balancer "(defn ok [] (dec 1))"
+                                           (fn []
+                                             (sp {"path" f
+                                                  "op" "replace"
+                                                  "target" "ok"
+                                                  "code" "(defn ok [] (inc 1)"})))))
+          (expect (= "(ns sp)\n\n(defn ok [] 1)\n" (slurp (fs/file f))))))))
 
 
 (defdescribe
@@ -2378,8 +2518,14 @@
          (str (temp-root) "/spescparse/m.clj")]
 
         (spit (fs/file f) "(def x 1)\n")
+        ;; Pinned to NO delimiter repair: this test is the decode → parse seam, not the
+        ;; repair, which has its own suite (`patch-delimiter-repair-test`). With a pack's
+        ;; balancer in reach the same broken form would be closed and written instead.
         (expect (throws? clojure.lang.ExceptionInfo
-                         #(sp {"path" f "op" "replace" "target" "x" "code" "(def x \\u2014"})))
+                         #(with-redefs-fn {(private-var "language-balancer") (constantly nil)}
+                            (fn []
+                              (sp
+                                {"path" f "op" "replace" "target" "x" "code" "(def x \\u2014"})))))
         (expect (= "(def x 1)\n" (slurp (fs/file f))))))
   (it "is total, idempotent and line-preserving on random escape soup"
       ;; A seeded walk over backslash/hex soup. Whatever arrives, the decoder may
@@ -2665,12 +2811,12 @@
                 index-result
                 (:ext.symbol/result editing/index-symbol)]
 
-               ;; The Clojure pack's :around hooks REPAIR unbalanced delimiters instead of
-               ;; refusing, so "a syntax break is refused" alone was a lie; the editor says
-               ;; what actually happens.
-               (it "describes parse refusal AND delimiter auto-repair"
+               ;; The Clojure pack publishes a delimiter repair, and the editors apply it
+               ;; when it stays inside the lines the call wrote, so "a syntax break is
+               ;; refused" alone was a lie; the editor says what actually happens.
+               (it "describes parse refusal AND delimiter repair"
                    (expect (string/includes? struct-description "will not parse is REFUSED"))
-                   (expect (string/includes? struct-description "delimiters auto-repaired"))
+                   (expect (string/includes? struct-description "a dropped delimiter is repaired"))
                    ;; The batch's all-or-nothing property is a property of the BATCH,
                    ;; and `doc(name)` is the only place it can be stated now that no
                    ;; schema describes the `edits` parameter.

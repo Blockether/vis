@@ -39,6 +39,7 @@
             [clojure.string :as str]
             [com.blockether.fff :as fff]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.foundation.editing.balance :as balance]
             [com.blockether.vis.internal.foundation.editing.escapes :as escapes]
             [com.blockether.vis.internal.foundation.editing.hashline :as hashline]
             [com.blockether.vis.internal.foundation.editing.index :as index]
@@ -4839,48 +4840,102 @@
            (when edit-count (str " at edit " (inc (long edit-index)) " of " edit-count))
            " — nothing was written."))))
 
-(defn- patch-parse-gate
-  "The consistency check, run AFTER splicing and BEFORE writing. Returns the
-   status clause for the write, or raises when the edit would break a file that
-   parsed clean.
+(defn- language-balancer
+  "The `:balance-fn` an active language pack registered for `lang` — the delimiter
+   repair the editors may try on a splice that would otherwise be refused — or nil
+   when the language has no pack, in which case a broken splice is refused exactly
+   as it always was.
 
-     1. supported language  -> re-parse the new content with tree-sitter;
-     2. new errors, old clean -> REFUSE, write nothing, name the first one;
-     3. already broken       -> WRITE, and say it is still broken (you must be
-                                able to repair a broken file);
-     4. no grammar           -> no gate, no clause."
-  [rel lang ^String original ^String updated span-label]
+   The lookup lives HERE, at the tool boundary, and not inside `balance`/`zipper`:
+   the repair is a POLICY of the model-facing editors, so the structural layer under
+   them stays deterministic — an internal caller or a test gets precisely the splice
+   it asked for unless a tool hands the balancer down."
+  [lang]
+  (when-let
+    [want (some-> lang
+                  name
+                  str/lower-case)]
+    (some (fn [entry]
+            (let [f (:balance-fn entry)]
+              (when (and (ifn? f)
+                         (= want
+                            (some-> (:language entry)
+                                    str
+                                    str/lower-case)))
+                f)))
+          (try (mapcat :ext/language-tools (extension/registered-extensions))
+               (catch Throwable _ nil)))))
+
+(defn- patch-parse-gate
+  "The consistency check, run AFTER splicing and BEFORE writing. Answers
+   `{:content <what to write> :clause <status clause>}`, or raises when the edit
+   would break a file that parsed clean.
+
+     1. supported language    -> re-parse the new content with tree-sitter;
+     2. new errors, old clean -> ask `balance/rebalance` for a delimiter repair of
+                                 the WHOLE spliced file, confined to `spans` — the
+                                 lines THIS call wrote. A confined, delimiters-only
+                                 repair is written and NAMED on the status line;
+                                 anything else REFUSES and says why the repair was
+                                 rejected, because a repair that reaches outside the
+                                 edit is guessing at code nobody here wrote;
+     3. already broken        -> WRITE, and say it is still broken (you must be
+                                 able to repair a broken file);
+     4. no grammar            -> no gate, no clause."
+  [rel lang ^String original ^String updated span-label spans]
   (if-not lang
-    ""
-    (let [after (zipper/error-nodes lang updated)]
+    {:content updated :clause ""}
+    (let
+      [clean?
+       (fn [^String s]
+         (empty? (zipper/error-nodes lang s)))
+
+       after
+       (zipper/error-nodes lang updated)]
+
       (if (empty? after)
-        "  parse: clean"
+        {:content updated :clause "  parse: clean"}
         (let
-          [before (zipper/error-nodes lang original)
-           e (first after)]
+          [before
+           (zipper/error-nodes lang original)
+
+           e
+           (first after)]
 
           (if (seq before)
-            (str "  parse: still broken at line " (:line e))
-            (patch-refusal!
-              rel
-              {:reason :parse-broken :error-line (:line e)}
-              [(str "  " rel "  " span-label)
-               (str "  "
-                    (name lang)
-                    ": "
-                    (if (:missing? e) "MISSING" "ERROR")
-                    " node at line "
-                    (:line e)
-                    ", col "
-                    (:col e)
-                    (when-let
-                      [t (some-> (:text e)
-                                 str
-                                 str/trim
-                                 not-empty)]
-                      (str " — near `" (subs t 0 (min 60 (count t))) "`")))
-               "  the file parsed clean before this edit, so the replacement introduced it."]
-              "patch refused — the edit would not parse; nothing was written.")))))))
+            {:content updated :clause (str "  parse: still broken at line " (:line e))}
+            (let
+              [repair (balance/rebalance {:balancer (language-balancer lang)
+                                          :parses-clean? clean?
+                                          :source updated
+                                          :spans spans})]
+              (if (:ok? repair)
+                {:content (:content repair)
+                 :clause
+                 (str "  parse: clean (delimiters repaired: " (str/join ", " (:notes repair)) ")")}
+                (patch-refusal!
+                  rel
+                  {:reason :parse-broken :error-line (:line e)}
+                  (into
+                    [(str "  " rel "  " span-label)
+                     (str "  "
+                          (name lang)
+                          ": "
+                          (if (:missing? e) "MISSING" "ERROR")
+                          " node at line "
+                          (:line e)
+                          ", col "
+                          (:col e)
+                          (when-let
+                            [t (some-> (:text e)
+                                       str
+                                       str/trim
+                                       not-empty)]
+                            (str " — near `" (subs t 0 (min 60 (count t))) "`")))
+                     "  the file parsed clean before this edit, so the replacement introduced it."]
+                    (when-let [why (:why repair)]
+                      [(str "  " why " — re-read the region and fix the replacement.")]))
+                  "patch refused — the edit would not parse; nothing was written.")))))))))
 
 (defn- patch-status-line
   "The one status line every successful patch answers with: what was written, how
@@ -5130,7 +5185,52 @@
      (let [l (zipper/detect-language rel)]
        (when (contains? index/code-languages l) l))
 
-     parse-clause
+     ;; Where each edit ENDED UP: walk the spans in file order carrying the line
+     ;; delta every earlier edit already applied, so every anchor reported below is
+     ;; one a next call can spend without a `cat` — and so the parse gate knows
+     ;; exactly which lines of the NEW content this call may have its delimiters
+     ;; repaired in. Pure: it reads the resolved spans, never the write.
+     applied
+     (:rows
+       (reduce
+         (fn [{:keys [^long delta rows]} {:keys [index start end from-line to-line replacement]}]
+           (let
+             [;; What the splice ACTUALLY put in the file. The matched
+              ;; region's terminator stays OUTSIDE the span, so a mid-file
+              ;; replacement always closes its last line and only a span
+              ;; that reaches EOF carries a terminator of its own — counting
+              ;; the replacement's own lines instead reported one line too
+              ;; few for every replacement that ended in a newline, and every
+              ;; later row's anchor inherited the drift.
+              written
+              (long (let [text (str replacement)]
+                      ;; The SPLICED text decides, not the caller's `replace`:
+                      ;; a replacement that reduces to nothing — `"\n"` over a
+                      ;; span that ends a file with no final newline — writes
+                      ;; no line at all.
+                      (if (= "" text)
+                        0
+                        (let [breaks (count (filter #(= \newline %) text))]
+                          (if (and (= (long end) (count original)) (str/ends-with? text "\n"))
+                            breaks
+                            (inc breaks))))))
+
+              replaced
+              (inc (- (long to-line) (long from-line)))]
+
+             {:delta (+ delta (- written replaced))
+              :rows (conj rows
+                          {:index index
+                           :from-line from-line
+                           :to-line to-line
+                           :new-from (+ (long from-line) delta)
+                           :written written
+                           :unchanged? (= (subs original (long start) (long end))
+                                          (str replacement))})}))
+         {:delta 0 :rows []}
+         (sort-by :start resolved)))
+
+     gate
      (patch-parse-gate rel
                        lang
                        original
@@ -5138,7 +5238,18 @@
                        (str total
                             (if (= 1 (long total)) " edit" " edits")
                             ", lines " (reduce min (map :from-line resolved))
-                            ".." (reduce max (map :to-line resolved))))
+                            ".." (reduce max (map :to-line resolved)))
+                       (mapv (fn [{:keys [new-from written]}]
+                               [new-from (+ (long new-from) (max 0 (dec (long written))))])
+                             applied))
+
+     ;; What actually reaches disk: the splice, or the delimiter repair the gate
+     ;; accepted for it. Every anchor, count and diff below is taken from THIS.
+     ^String written-content
+     (:content gate)
+
+     parse-clause
+     (:clause gate)
 
      ;; `cat`'s gutter is an ADDRESS, not text. A replacement that carries one is a
      ;; copied read, and it lands in the file verbatim — say so on the status line
@@ -5154,61 +5265,14 @@
      ;; is_dirty_ok: an anchored span replace is SURGICAL and content-verified —
      ;; the dirty guard exists to stop a blind whole-file rewrite, not this.
      result
-     (write-safe {"path" path "content" updated "is_dirty_ok" true})]
+     (write-safe {"path" path "content" written-content "is_dirty_ok" true})]
 
     (if-not (:success? result)
       (throw (ex-info (str "patch refused — nothing was written.\n  " (:message result))
                       {:type :ext.foundation.editing/patch-refused
                        :reason (or (:reason (first (:failures result))) :write-refused)
                        :path rel}))
-      (let
-        [new-lines
-         (hashline/split-content-lines updated)
-
-         ;; Where each edit ENDED UP: walk the spans in file order carrying the line
-         ;; delta every earlier edit already applied, so every anchor reported below
-         ;; is one a next call can spend without a `cat`.
-         applied
-         (:rows
-           (reduce
-             (fn
-               [{:keys [^long delta rows]} {:keys [index start end from-line to-line replacement]}]
-               (let
-                 [;; What the splice ACTUALLY put in the file. The matched
-                  ;; region's terminator stays OUTSIDE the span, so a mid-file
-                  ;; replacement always closes its last line and only a span
-                  ;; that reaches EOF carries a terminator of its own — counting
-                  ;; the replacement's own lines instead reported one line too
-                  ;; few for every replacement that ended in a newline, and every
-                  ;; later row's anchor inherited the drift.
-                  written
-                  (long (let [text (str replacement)]
-                          ;; The SPLICED text decides, not the caller's `replace`:
-                          ;; a replacement that reduces to nothing — `"\n"` over a
-                          ;; span that ends a file with no final newline — writes
-                          ;; no line at all.
-                          (if (= "" text)
-                            0
-                            (let [breaks (count (filter #(= \newline %) text))]
-                              (if (and (= (long end) (count original)) (str/ends-with? text "\n"))
-                                breaks
-                                (inc breaks))))))
-
-                  replaced
-                  (inc (- (long to-line) (long from-line)))]
-
-                 {:delta (+ delta (- written replaced))
-                  :rows (conj rows
-                              {:index index
-                               :from-line from-line
-                               :to-line to-line
-                               :new-from (+ (long from-line) delta)
-                               :written written
-                               :unchanged? (= (subs original (long start) (long end))
-                                              (str replacement))})}))
-             {:delta 0 :rows []}
-             (sort-by :start resolved)))]
-
+      (let [new-lines (hashline/split-content-lines written-content)]
         (tool-success
           {:op :patch
            :path (get-in result [:plan :path])
@@ -5225,12 +5289,12 @@
            ;; anchors it will actually spend.
            :metadata {:mode :patch
                       :file-count 1
-                      :changed-count (if (= original updated) 0 1)
+                      :changed-count (if (= original written-content) 0 1)
                       :edit-count total
                       :from-line (reduce min (map :from-line resolved))
                       :to-line (reduce max (map :to-line resolved))
-                      :diff (unified-diff-text original updated)
-                      :lines (line-change-counts original updated)
+                      :diff (unified-diff-text original written-content)
+                      :lines (line-change-counts original written-content)
                       :file-befores [{:path rel :before original}]}})))))
 
 (defn- patch-tool
@@ -5285,7 +5349,8 @@
        "defaults to `from`, `replace: \"\"` deletes, and the edits may be listed in ANY order because every "
        "anchor resolves against ONE read. NEVER restate the text you are replacing. Atomic: a stale anchor, "
        "an overlap or a syntax-breaking write refuses the WHOLE batch and writes NOTHING, naming the edit "
-       "and carrying the correct anchor; unbalanced Clojure delimiters are auto-repaired.")
+       "and carrying the correct anchor. A dropped delimiter is repaired when the fix stays on the lines "
+       "you wrote, and the repair is named.")
      :call {:pos ["path" "edits"]}
      :before-fn (plan-gated-before-fn :patch :file read-arg-paths)
      :tag :mutation
@@ -5510,7 +5575,7 @@
      (when-let [m (get args "match")]
        (escapes/decode-unicode-escapes (str m)))
 
-     new-content
+     edited
      (if path-locator?
        ;; PATH-based (the zipper): locate by named-child index path + moves.
        (let
@@ -5582,23 +5647,56 @@
             code)
 
           r
-          (zipper/edit lang source at op code)]
+          (zipper/edit lang source at op code {:balancer (language-balancer lang)})]
 
          (if (:ok? r)
-           (:new-source r)
+           {:content (:new-source r) :repairs (:repairs r)}
            (throw (ex-info (get-in r [:error :message] "structural edit failed")
                            {:type :ext.foundation.editing/struct-zip-error
                             :reason (get-in r [:error :reason])
                             :at at}))))
-       ;; NAME/MATCH-based (the original StructuralApi surface).
-       (structural/edit-source path
-                               (slurp (safe-path path))
-                               {:op op
-                                :target (get args "target")
-                                :kind (get args "kind")
-                                :code code
-                                :match match-arg
-                                :anchor (get args "anchor")}))
+       ;; NAME/MATCH-based (the original StructuralApi surface). The engine refuses a
+       ;; `code` fragment that is not a complete form and never hands back the content
+       ;; it would have written, so the repair is asked of the FRAGMENT — every line of
+       ;; which this call wrote — and the engine still re-parses the whole file before
+       ;; anything lands. A name locator cannot drift onto a line the caller did not
+       ;; mean, which is what makes repairing the caller's own text safe here.
+       (let
+         [lang
+          (zipper/detect-language path)
+
+          source
+          (slurp (safe-path path))
+
+          run
+          (fn [c]
+            (structural/edit-source path
+                                    source
+                                    {:op op
+                                     :target (get args "target")
+                                     :kind (get args "kind")
+                                     :code c
+                                     :match match-arg
+                                     :anchor (get args "anchor")}))]
+
+         (try
+           {:content (run code)}
+           (catch clojure.lang.ExceptionInfo e
+             (let
+               [repair (when (and (string? code) (not (str/blank? code)) lang)
+                         (balance/rebalance {:balancer (language-balancer lang)
+                                             :parses-clean? (fn [^String s]
+                                                              (empty? (zipper/error-nodes lang s)))
+                                             :source code
+                                             :spans [[1 (count (str/split-lines code))]]}))]
+               (if (:ok? repair)
+                 {:content (run (:content repair)) :repairs (mapv #(str "code " %) (:notes repair))}
+                 (throw e)))))))
+
+     ;; The content the edit produced, plus any delimiter repair the zipper gate
+     ;; accepted for it — named in the summary, never applied silently.
+     new-content
+     (:content edited)
 
      ;; is_dirty_ok: a re-parsed structural edit is SAFE on a file with
      ;; uncommitted changes — the dirty-guard only blocks a blind whole-file write.
@@ -5611,7 +5709,9 @@
          (:plan result)
 
          summary
-         (patch-result-file-summary plan)]
+         (cond-> (patch-result-file-summary plan)
+           (seq (:repairs edited))
+           (assoc "delimiters_repaired" (vec (:repairs edited))))]
 
         (tool-success {:op :struct_patch
                        :path (:path plan)
@@ -5757,7 +5857,8 @@
      (str
        "Structurally edit supported code: definition by NAME (`target`) or node by "
        "`at`/`line`. Renames, docs, moves, `append_child`. Writes re-parse: code that will not parse "
-       "is REFUSED; unbalanced Clojure delimiters auto-repaired. A batch of `edits` applies in order "
+       "is REFUSED; a dropped delimiter is repaired when the fix stays inside what this call wrote, and "
+       "named in `delimiters_repaired`. A batch of `edits` applies in order "
        "and is ATOMIC: an entry that fails rolls the earlier ones back, so every file is left exactly "
        "as the call found it.")
      :before-fn (plan-gated-before-fn :struct_patch :file struct-arg-paths)
