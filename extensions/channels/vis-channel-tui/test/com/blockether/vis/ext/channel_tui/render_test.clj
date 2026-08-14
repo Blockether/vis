@@ -321,7 +321,14 @@
         (expect (some? head) (str "got: " (mapv :line entries)))
         (expect (str/ends-with? (str/trimr (strip-sentinels (strip-ansi (body-of (:line head)))))
                                 "2.3s"))
-        (expect (= :toggle-details (:kind (:meta head))))))
+        ;; The suffix used to be composed into the summary BEFORE the IR walk,
+        ;; whose pad run collapses to one space: the figure hugged `12 results`
+        ;; while every other head put it on the right edge. It aligns with them
+        ;; now, budgeting the two columns the painter insets a toggle row by
+        ;; (`code-text-inset-cols`) so the figure lands on the same column as a
+        ;; flush-painted headline's: 80 - 1 marker - 2 inset.
+        (expect (= :toggle-details (:kind (:meta head))))
+        (expect (= 77 (count (str/trimr (strip-sentinels (strip-ansi (body-of (:line head))))))))))
   (it "paints nothing when the duration is zero or absent"
       (let
         [zero

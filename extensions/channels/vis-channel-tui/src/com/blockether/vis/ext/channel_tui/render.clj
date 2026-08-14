@@ -1519,6 +1519,12 @@
     th-md-bullet-marker th-md-quote-marker th-md-hr-marker th-md-summary-marker
     th-md-table-head-marker th-md-table-sep-marker th-md-table-row-marker})
 
+(def ^:private code-text-inset-cols
+  "Columns the painter insets a code/result row by (`code-text-inset-markers`).
+   A row that RIGHT-ALIGNS a tail — a head's id badge, a call's duration — must
+   budget for them, or its figure lands two columns past every flush-painted
+   headline and the band's right edge reads ragged."
+  2)
 (defn- ansi-code->fg
   [code current-fg base-fg]
   ;; `(long code)` is what keeps this a constant-time tableswitch: the tests are
@@ -2261,7 +2267,7 @@
                        (+ (long tool-output-indent-cols))
 
                        code-text-inset?
-                       (+ 2))
+                       (+ (long code-text-inset-cols)))
                    iw (if output-indented? (max 0 (- (long iw) (long tool-output-indent-cols))) iw)
                    fbx (if output-indented? (+ (long fbx) (long tool-output-indent-cols)) fbx)]
 
@@ -3783,22 +3789,23 @@
 
         (str left (repeat-str \space pad-w) suffix)))))
 
-(defn- duration-suffixed-lines
-  "Ride the call's duration on the LAST of `lines`, right-aligned inside `max-w`
-   — the same slot the id badge owns on a disclosure head. The companion paints
-   the figure as the trailing chip of EVERY tool-card band
-   (`formatDuration(form.duration_ms)` in `ToolCard`), so every TUI row that ENDS
-   a result wears it there too: a plain card head, a failed call's error
-   headline. `lines` come back untouched when the form carried no duration."
-  [lines duration-ms max-w]
-  (let
-    [v
-     (vec lines)
+(defn- with-right-suffix
+  "Put `suffix` on the RIGHT EDGE of the LAST of `lines`, re-ellipsizing that
+   line so its text and the suffix fit `max-w` together — the slot a head's id
+   badge and the call's duration share.
 
-     d
-     (vis/format-duration duration-ms)]
+   Applied AFTER the IR walker on purpose: a pad RUN inside markdown collapses
+   to a single space, so a suffix composed into the summary BEFORE the walk ends
+   up hugging it instead of reaching the edge every other head aligns to. The
+   companion paints the same figure as the trailing chip of EVERY tool-card band
+   (`formatDuration(form.duration_ms)` in `ToolCard`). `lines` come back
+   untouched when there is no suffix."
+  [lines suffix max-w]
+  (let [v (vec lines)]
+    (if (and (seq suffix) (seq v))
+      (conj (pop v) (format-detail-summary-line (peek v) suffix max-w))
+      v)))
 
-    (if (and d (seq v)) (conj (pop v) (format-detail-summary-line (peek v) d max-w)) v)))
 (defn- detail-node-base-id
   ^String [{:keys [session-turn-id iteration-number block-number section kind]}]
   (str (or (some-> section
@@ -4022,16 +4029,15 @@
      left
      (str " " (if collapsed? "▸ " "▾ ") summary)
 
-     visible
-     (format-detail-summary-line left suffix (max 1 (long max-w)))
-
-     ;; Lift visible-label string through the IR walker so inline
-     ;; emphasis (`**bold**`, `` `code` ``, etc.) renders with
-     ;; sentinel-wrapped runs the painter understands; legacy
-     ;; `markdown->inline` regex parser is gone.
+     ;; Lift the visible label through the IR walker so inline emphasis
+     ;; (`**bold**`, `` `code` ``, etc.) renders with sentinel-wrapped runs the
+     ;; painter understands; legacy `markdown->inline` regex parser is gone.
+     ;; The suffix lands AFTER the walk — inside markdown its pad run collapses
+     ;; and the badge/duration hug the summary instead of the right edge.
      wrapped
-     (wrap-text (layout/ast->inline-sentinel-string (vis/markdown->ast visible))
-                (max 1 (long max-w)))
+     (-> (wrap-text (layout/ast->inline-sentinel-string (vis/markdown->ast left))
+                    (max 1 (long max-w)))
+         (with-right-suffix suffix (max 1 (- (long max-w) (long code-text-inset-cols)))))
 
      meta
      {:kind :toggle-details
@@ -4982,7 +4988,7 @@
                  ;; The same slot the id badge owns on collapsible heads: the
                  ;; duration rides the LAST wrapped line, re-ellipsized so the
                  ;; summary and the figure still fit the band together.
-                 (duration-suffixed-lines wrapped duration-ms w)))
+                 (with-right-suffix wrapped (vis/format-duration duration-ms) w)))
 
          ;; A card can carry a body yet have NO node-id (nothing to fold it
          ;; under — e.g. a nil session-id). Never DROP that body: render it
@@ -5591,7 +5597,8 @@
                   ;; head already wears it.
                   (cond-> (wrap-text (form-error-headline error) fill-w)
                     (and (not printed-cards?) (nil? card))
-                    (duration-suffixed-lines duration-ms (max 1 (- (long fill-w) 2))))))
+                    (with-right-suffix (vis/format-duration duration-ms)
+                                       (max 1 (- (long fill-w) (long code-text-inset-cols)))))))
 
           ;; The program the model wrote is evidence in every state — success,
           ;; failure and while it runs — so the only source a form hides is one it
