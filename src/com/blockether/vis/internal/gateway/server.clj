@@ -2642,31 +2642,75 @@
           not-empty
           keyword))
 
-(defn- with-voice-engine
-  "Resolve the session and the engine, or answer the ONE refusal that fits:
-   404 unknown session, 400 an engine id nobody registered, 501 no transcription
-   engine at all (a build without any voice extension)."
-  [request f]
+(defn- with-direction-engine
+  "Resolve the session and the engine for ONE direction of speech, or answer the ONE
+   refusal that fits: 404 unknown session, 400 an engine id nobody registered, 501 no
+   engine at all in that direction (a build without any voice extension).
+
+   Both directions refuse in the same shape on purpose — a client that learned it from
+   `/voice` reads a `/speech` refusal without a second code path."
+  [direction request f]
   (let
     [sid
      (path-sid request)
 
      id
-     (requested-engine-id request)]
+     (requested-engine-id request)
+
+     noun
+     (voice/direction-nouns direction)]
 
     (cond (not (and sid (state/soul sid)))
           (json-response 404 {:status "unavailable" :error "unknown session"})
-          :else (if-let [engine (try (voice/resolve-engine :transcribe id) (catch Throwable _ nil))]
+          :else (if-let [engine (try (voice/resolve-engine direction id) (catch Throwable _ nil))]
                   (f sid engine)
                   (if id
                     (json-response 400
                                    {:status "unavailable"
-                                    :error (str "unknown voice engine: " (name id))
-                                    :engines (mapv voice/public-engine
-                                                   (voice/engines :transcribe))})
+                                    :error (str "unknown " noun " engine: " (name id))
+                                    :engines (mapv voice/public-engine (voice/engines direction))})
                     (json-response 501
                                    {:status "unavailable"
-                                    :error "no voice transcription engine is registered"}))))))
+                                    :error (str "no " noun " engine is registered")}))))))
+
+(defn- with-voice-engine
+  "[[with-direction-engine]] for the transcription routes."
+  [request f]
+  (with-direction-engine :transcribe request f))
+
+(defn- with-speech-engine
+  "[[with-direction-engine]] for the synthesis routes."
+  [request f]
+  (with-direction-engine :synthesize request f))
+
+(def ^:private ^:const speech-inline-max-chars
+  "Above this many characters `POST /v1/sessions/:sid/speech` answers a JOB instead of
+   the audio itself.
+
+   CHARACTERS, not an estimated duration: the gateway cannot know how long a line takes
+   to speak without speaking it, and a client must be able to predict WHICH of the two
+   answers it will get before it sends. The number is published as
+   `features.speech.inline_max_chars`, so the rule is the server's and the expectation
+   is the client's. A couple of sentences is the whole latency budget of a spoken
+   acknowledgement; past that a progress stream beats a held socket."
+  280)
+
+(def ^:private ^:const speech-max-chars
+  "The longest line the gateway will speak at all. A runaway reply must not become a
+   multi-minute synthesis holding a thread and a temp file, so past this `POST …/speech`
+   answers 413 and the caller splits the text itself."
+  20000)
+
+(defn- speech-disabled-response
+  "403 when spoken replies are turned off, else nil. The toggle gates WORK — a synthesis,
+   and the download that would enable one — never the READ routes, so a client can always
+   see the state it is being refused from."
+  []
+  (when-not (voice/speech-enabled?)
+    (json-response 403
+                   {:status "unavailable"
+                    :error "spoken replies are turned off"
+                    :toggle voice/speech-toggle-id})))
 
 (defn- voice-state->json
   [st]
@@ -2859,10 +2903,12 @@
    Availability describes what THIS gateway can accept; device-side permissions
    remain the client's responsibility. Voice reports the SELECTED engine, every
    engine that is registered, the phase vocabulary a client may be shown, and the
-   selected engine's readiness — without starting any download. `protocol` carries
-   the VERSION contract ([[protocol/handshake]]) and `compatibility` this
-   gateway's verdict on the CALLER, so one request answers both \"what can you
-   do\" and \"can we talk\"."
+   selected engine's readiness — without starting any download; `speech` answers the
+   same questions for the other direction, and adds the voices each engine can speak
+   in and the length at which a line becomes a job instead of a WAV on this
+   connection. `protocol` carries the VERSION contract ([[protocol/handshake]]) and
+   `compatibility` this gateway's verdict on the CALLER, so one request answers both
+   \"what can you do\" and \"can we talk\"."
   [request]
   (let
     [engine
@@ -2884,24 +2930,48 @@
              :phases (mapv name (voice/direction-phases :transcribe))
              :model
              (if engine (voice-state->json (voice/readiness engine)) {:status "unavailable"})}
-            (voice/engines-info :transcribe))]
+            (voice/engines-info :transcribe))
 
-    (json-response {:version 1
-                    :protocol (protocol/handshake)
-                    :addresses (reachable-addresses request)
-                    :compatibility (protocol/gateway-verdict request)
-                    :features {:chat {:enabled true}
-                               :attachments {:enabled true
-                                             :transport "inline-base64"
-                                             :media-types ["image/jpeg" "image/png" "image/gif"
-                                                           "image/webp" "image/bmp" "video/mp4"
-                                                           "video/quicktime"]
-                                             :video-media-types ["video/mp4" "video/quicktime"]
-                                             :max-files attachments/max-image-count
-                                             :max-file-bytes attachments/max-upload-image-bytes
-                                             :max-video-bytes attachments/max-video-bytes}
-                               :voice voice-caps
-                               :push (push/status)}})))
+     speech-engine
+     (try (voice/default-engine :synthesize) (catch Throwable _ nil))
+
+     speech-caps
+     ;; ONE actionable boolean: an engine exists AND the operator left spoken replies on.
+     ;; A client that has to and-together two flags eventually forgets one of them.
+     (merge {:is-enabled (and (boolean speech-engine) (voice/speech-enabled?))
+             :transport "audio/wav"
+             :synthesis "gateway-local"
+             :is-async true
+             :progress "sse"
+             :progress-event wire/speech-job-event
+             :phases (mapv name (voice/direction-phases :synthesize))
+             ;; a short line comes back as the audio on this connection and a long one as
+             ;; a job: both thresholds are published so a client never has to discover
+             ;; either by being refused.
+             :inline-max-chars speech-inline-max-chars
+             :max-chars speech-max-chars
+             :model (if speech-engine
+                      (voice-state->json (voice/readiness speech-engine))
+                      {:status "unavailable"})}
+            (voice/engines-info :synthesize))]
+
+    (json-response
+      {:version 1
+       :protocol (protocol/handshake)
+       :addresses (reachable-addresses request)
+       :compatibility (protocol/gateway-verdict request)
+       :features {:chat {:enabled true}
+                  :attachments {:enabled true
+                                :transport "inline-base64"
+                                :media-types ["image/jpeg" "image/png" "image/gif" "image/webp"
+                                              "image/bmp" "video/mp4" "video/quicktime"]
+                                :video-media-types ["video/mp4" "video/quicktime"]
+                                :max-files attachments/max-image-count
+                                :max-file-bytes attachments/max-upload-image-bytes
+                                :max-video-bytes attachments/max-video-bytes}
+                  :voice voice-caps
+                  :speech speech-caps
+                  :push (push/status)}})))
 
 (defn- wav-file?
   "RIFF/WAVE magic + minimum header length — the CHEAP pre-filter that turns an
@@ -2916,22 +2986,32 @@
                 (= "RIFF" (String. head 0 4 "US-ASCII"))
                 (= "WAVE" (String. head 8 4 "US-ASCII")))))))
 
-(defn- voice-model-handler
-  "GET  /v1/sessions/:sid/voice/model — the selected engine's readiness (clients
-        poll this before recording).
-   POST /v1/sessions/:sid/voice/model — ask the engine to prepare itself (a local
-        model starts downloading; idempotent, returns immediately).
+(defn- model-handler
+  "GET  /v1/sessions/:sid/{voice,speech}/model — the selected engine's readiness (clients
+         poll this before recording, or before asking for a spoken reply).
+   POST the same path — ask the engine to prepare itself (a local model starts
+         downloading; idempotent, returns immediately).
    JSON: {:status \"ready|downloading|failed|absent|unavailable\" :progress 0..100?
    :error \"…\" :engine \"…\"}. An engine that needs no preparation is simply ready."
+  [direction request]
+  (with-direction-engine direction
+                         request
+                         (fn [_sid engine]
+                           (json-response 200
+                                          (assoc (voice-state->json
+                                                   (if (= :post (:request-method request))
+                                                     (voice/prepare! engine)
+                                                     (voice/readiness engine)))
+                                            :engine (name (:id engine)))))))
+
+(defn- voice-model-handler [request] (model-handler :transcribe request))
+
+(defn- speech-model-handler
+  "[[model-handler]] for synthesis. Preparing an engine is WORK — it can start a model
+   download — so a POST is refused while spoken replies are off; the GET always answers."
   [request]
-  (with-voice-engine request
-                     (fn [_sid engine]
-                       (json-response 200
-                                      (assoc (voice-state->json (if (= :post
-                                                                       (:request-method request))
-                                                                  (voice/prepare! engine)
-                                                                  (voice/readiness engine)))
-                                        :engine (name (:id engine)))))))
+  (or (when (= :post (:request-method request)) (speech-disabled-response))
+      (model-handler :synthesize request)))
 
 (defn- voice-handler
   "POST /v1/sessions/:sid/voice — body is a recorded WAV blob. ACCEPTS the audio
@@ -2975,37 +3055,189 @@
                  (tel/log! {:level :error :id ::voice-transcribe-failed :data {:error (str t)}})
                  (json-response 400 {:error (voice/error-message t)}))))))))
 
-(defn- voice-job-handler
-  "GET    /v1/sessions/:sid/voice/jobs/:job-id — where this transcription is:
-          `{:id :engine :phase :progress :is_done :text? :error?}`. ONE read of
-          the job resource; a client that wants to WATCH it streams the twin
+(defn- speech-failure-response
+  "The refusal a THROWN synthesis deserves: 403 when the toggle went off underneath us,
+   otherwise 500 — the request was valid and the engine failed, which is the gateway's
+   fact to report rather than the caller's to fix."
+  [^Throwable t]
+  (if (= :vis/voice-direction-disabled (:type (ex-data t)))
+    (json-response 403 {:status "unavailable" :error (ex-message t) :toggle voice/speech-toggle-id})
+    (do (tel/log! {:level :error :id ::speech-synthesize-failed :data {:error (str t)}})
+        (json-response 500 {:error (voice/error-message t)}))))
+
+(defn- file-bytes
+  ^bytes [^java.io.File f]
+  (with-open
+    [in
+     (io/input-stream f)
+
+     out
+     (java.io.ByteArrayOutputStream.)]
+
+    (io/copy in out)
+    (.toByteArray out)))
+
+(defn- inline-speech-response
+  "A short line spoken on THIS connection: the audio itself, with its media type and
+   length. The temp file is read and deleted here — an inline answer has no job to own
+   the file and no client coming back for it."
+  [work]
+  (let
+    [{:keys [audio-path media-type]}
+     (voice/synthesize! work)
+
+     f
+     (io/file audio-path)]
+
+    (try {:status 200
+          :headers {"Content-Type" (or media-type "audio/wav")
+                    "Content-Length" (str (.length f))
+                    "Cache-Control" "no-store"}
+          :body (file-bytes f)}
+         (finally (.delete f)))))
+
+(defn- speech-handler
+  "POST /v1/sessions/:sid/speech — body is JSON `{\"text\": …, \"voice\": …}` and
+   `?engine=` names the engine. Answers the AUDIO for a short line and **202 with a job**
+   for a long one.
+
+   That split is the whole point: a spoken acknowledgement must land in one round trip,
+   while a paragraph is worth watching — the client STREAMS
+   `/speech/jobs/:job-id/events` and fetches `/speech/jobs/:job-id/audio` when it is done.
+   The threshold is [[speech-inline-max-chars]] and `/v1/capabilities` publishes it, so a
+   client knows which of the two answers it is about to get.
+
+   The engine must be ready — the client drives preparation via /speech/model; a not-ready
+   engine answers 425 (Too Early) with its state, NEVER blocking the request thread on a
+   model download."
+  [request]
+  (or
+    (speech-disabled-response)
+    (with-speech-engine
+      request
+      (fn [_sid engine]
+        (let
+          [body
+           (try (body-json request) (catch Throwable _ nil))
+
+           text
+           (some-> (get body "text")
+                   str
+                   str/trim)
+
+           voice-id
+           (some-> (get body "voice")
+                   str
+                   str/trim
+                   not-empty
+                   keyword)
+
+           work
+           (cond-> {:text text :engine-id (:id engine)}
+             voice-id
+             (assoc :voice-id voice-id))]
+
+          (cond (str/blank? text)
+                (json-response 400 {:error "body must be JSON with a non-empty \"text\""})
+                (> (count text) (long speech-max-chars))
+                (json-response 413
+                               {:error (str "text is longer than " speech-max-chars " characters")})
+                (not (voice/ready? engine))
+                (json-response 425 (voice-state->json (voice/readiness engine)))
+                :else (try (if (> (count text) (long speech-inline-max-chars))
+                             (json-response 202 (voice/submit! :synthesize work))
+                             (inline-speech-response work))
+                           (catch Throwable t (speech-failure-response t)))))))))
+
+(defn- job-handler
+  "GET    /v1/sessions/:sid/{voice,speech}/jobs/:job-id — where this piece of work is:
+          `{:id :direction :engine :phase :progress :is_done :text? :audio? :error?}`. ONE
+          read of the job resource; a client that wants to WATCH it streams the twin
           below instead of asking again and again.
-   DELETE /v1/sessions/:sid/voice/jobs/:job-id — forget it once the transcript has
-          been collected (finished jobs also expire on their own)."
+   DELETE the same path — forget it once the transcript or the audio has been collected
+          (finished jobs also expire on their own, and a forgotten spoken reply takes its
+          audio file with it).
+
+   A job belongs to exactly ONE direction and the other direction's route does not know
+   it: asking `/speech/jobs/` for a transcription is a client bug, answered 404 rather
+   than leaking the other half of the store."
+  [direction request]
+  (let
+    [sid
+     (path-sid request)
+
+     job-id
+     (get-in request [:path-params :job-id])
+
+     job
+     (voice/job job-id)
+
+     mine?
+     (= (name direction) (:direction job))
+
+     unknown
+     {:error (str "unknown " (voice/direction-nouns direction) " job")}]
+
+    (cond (not (and sid (state/soul sid))) (json-response 404 {:error "unknown session"})
+          ;; DELETE stays idempotent — an id nobody knows is already forgotten — but it
+          ;; never reaches across into the other direction's job.
+          (= :delete (:request-method request)) (if (and job (not mine?))
+                                                  (json-response 404 unknown)
+                                                  (do (voice/forget! job-id)
+                                                      (json-response 200 {:is-forgotten true})))
+          mine? (json-response 200 job)
+          :else (json-response 404 unknown))))
+
+(defn- voice-job-handler [request] (job-handler :transcribe request))
+
+(defn- speech-job-handler [request] (job-handler :synthesize request))
+
+(defn- speech-job-audio-handler
+  "GET /v1/sessions/:sid/speech/jobs/:job-id/audio — the audio this job spoke.
+
+   FETCHED, never named: [[voice/public-job]] carries the media type and the byte count
+   but not the path, so the file is reachable only through the job that owns it and only
+   while that job lives. A job that has not produced audio yet answers 425 with its own
+   state, so a client that raced its stream retries instead of caching an error."
   [request]
   (let
     [sid
      (path-sid request)
 
      job-id
-     (get-in request [:path-params :job-id])]
+     (get-in request [:path-params :job-id])
+
+     job
+     (voice/job job-id)]
 
     (cond (not (and sid (state/soul sid))) (json-response 404 {:error "unknown session"})
-          (= :delete (:request-method request)) (do (voice/forget! job-id)
-                                                    (json-response 200 {:is-forgotten true}))
-          :else (if-let [job (voice/job job-id)]
-                  (json-response 200 job)
-                  (json-response 404 {:error "unknown transcription job"})))))
+          (not= "synthesize" (:direction job))
+          (json-response 404 {:error "unknown speech synthesis job"})
+          :else (let
+                  [^java.io.File f (some-> (voice/job-audio-path job-id)
+                                           io/file)]
+                  (if-not (and f (.isFile f))
+                    (json-response 425 job)
+                    {:status 200
+                     :headers {"Content-Type" (or (get-in job [:audio :media-type]) "audio/wav")
+                               "Content-Length" (str (.length f))
+                               "Cache-Control" "no-store"}
+                     :body f})))))
 
-(def ^:private VOICE_JOB_QUEUE_CAP
-  "Per-connection queue of job states. A transcription reports a handful of
-   percentages per second at most, so anything the writer cannot keep up with is
-   a dead socket, not backpressure worth buffering."
+(def ^:private JOB_QUEUE_CAP
+  "Per-connection queue of job states. A transcription or a synthesis reports a handful
+   of percentages per second at most, so anything the writer cannot keep up with is a
+   dead socket, not backpressure worth buffering."
   64)
 
-(defn- voice-job-events-body
-  "Ring streamable body for ONE transcription job: its CURRENT state first, then
-   a `voice.job` frame per change until the job is done or failed.
+(def ^:private job-event-names
+  "The SSE frame name each direction's job stream carries — the one discriminator a
+   client filters on (see [[wire/voice-job-event]])."
+  {:transcribe wire/voice-job-event :synthesize wire/speech-job-event})
+
+(defn- job-events-body
+  "Ring streamable body for ONE speech job: its CURRENT state first, then a frame named
+   `event-name` per change until the job is done or failed.
 
    The current state rides first on purpose — that is what makes a reconnect free
    of a poll: the stream is subscribed BEFORE the snapshot is read, so a job that
@@ -3014,7 +3246,7 @@
 
    [[voice/watch!]] only enqueues; this thread is the connection's single socket
    writer, so the engine's thread is never blocked by a stalled reader."
-  [job-id]
+  [^String event-name job-id]
   (reify
     ring-protocols/StreamableResponseBody
       (write-body-to-stream [_ _ output-stream]
@@ -3023,7 +3255,7 @@
            output-stream
 
            queue
-           (ArrayBlockingQueue. (int VOICE_JOB_QUEUE_CAP))
+           (ArrayBlockingQueue. (int JOB_QUEUE_CAP))
 
            unwatch
            (voice/watch! job-id
@@ -3032,7 +3264,7 @@
 
            write!
            (fn [job]
-             (.write out (.getBytes (wire/voice-job-sse-frame job) StandardCharsets/UTF_8))
+             (.write out (.getBytes (wire/job-sse-frame event-name job) StandardCharsets/UTF_8))
              (.flush out))]
 
           (try (let [current (voice/job job-id)]
@@ -3049,28 +3281,36 @@
                (catch Throwable _ nil)
                (finally (unwatch) (try (.close out) (catch Throwable _ nil))))))))
 
-(defn- voice-job-events-handler
-  "GET /v1/sessions/:sid/voice/jobs/:job-id/events — the job's phase and
+(defn- job-events-handler
+  "GET /v1/sessions/:sid/{voice,speech}/jobs/:job-id/events — the job's phase and
    percentage PUSHED as they happen, as `text/event-stream`.
 
    Progress that is polled is progress that arrives late and costs a request per
    tick; this is the same job resource, streamed. The stream ENDS itself on the
    terminal frame, so the client neither polls nor guesses when to stop reading."
-  [request]
+  [direction request]
   (let
     [sid
      (path-sid request)
 
      job-id
-     (get-in request [:path-params :job-id])]
+     (get-in request [:path-params :job-id])
+
+     job
+     (voice/job job-id)]
 
     (cond (not (and sid (state/soul sid))) (json-response 404 {:error "unknown session"})
-          (nil? (voice/job job-id)) (json-response 404 {:error "unknown transcription job"})
+          (not= (name direction) (:direction job))
+          (json-response 404 {:error (str "unknown " (voice/direction-nouns direction) " job")})
           :else {:status 200
                  :headers {"Content-Type" "text/event-stream"
                            "Cache-Control" "no-cache, no-transform"
                            "X-Accel-Buffering" "no"}
-                 :body (voice-job-events-body job-id)})))
+                 :body (job-events-body (job-event-names direction) job-id)})))
+
+(defn- voice-job-events-handler [request] (job-events-handler :transcribe request))
+
+(defn- speech-job-events-handler [request] (job-events-handler :synthesize request))
 
 (defn- suggest-handler
   "GET /v1/sessions/:sid/suggest?kind=file&q= — the SHARED fuzzy suggestion
@@ -3409,6 +3649,11 @@
         [(sid-route "/voice/model") {:get voice-model-handler :post voice-model-handler}]
         [(sid-route "/voice/jobs/:job-id") {:get voice-job-handler :delete voice-job-handler}]
         [(sid-route "/voice/jobs/:job-id/events") {:get voice-job-events-handler}]
+        [(sid-route "/speech") {:post speech-handler}]
+        [(sid-route "/speech/model") {:get speech-model-handler :post speech-model-handler}]
+        [(sid-route "/speech/jobs/:job-id") {:get speech-job-handler :delete speech-job-handler}]
+        [(sid-route "/speech/jobs/:job-id/events") {:get speech-job-events-handler}]
+        [(sid-route "/speech/jobs/:job-id/audio") {:get speech-job-audio-handler}]
         [(sid-route "/events-since") {:get events-since-handler}]
         [(sid-route "/seq") {:get seq-handler}] [(sid-route "/context") {:get context-handler}]
         [(sid-route "/transcript") {:get transcript-handler}]

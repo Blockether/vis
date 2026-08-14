@@ -322,22 +322,6 @@
 
 (defn ready? "Can this engine take work right now?" [engine] (= :ready (:state (readiness engine))))
 
-(defn engines-info
-  "One direction's engine catalogue as capabilities data: what exists and what is
-   selected."
-  [direction]
-  (let
-    [es
-     (engines direction)
-
-     selected
-     (try (default-engine direction) (catch Throwable _ nil))]
-
-    {:engines (mapv public-engine es)
-     :selected (some-> selected
-                       :id
-                       name)}))
-
 ;; =============================================================================
 ;; Voices - the catalogue only a SPEAKING engine has
 ;; =============================================================================
@@ -359,6 +343,33 @@
   (if-let [f (:voices engine)]
     (mapv public-voice (f))
     []))
+(defn engines-info
+  "One direction's engine catalogue as capabilities data: what exists and what is
+   selected. A SPEAKING engine also carries the voices a caller may name, so
+   `/v1/capabilities` populates a picker in one request instead of a call per engine.
+
+   A catalogue that REFUSES leaves `:voices` absent rather than empty: an empty vector
+   means \"one fixed voice, nothing to choose\", so a broken engine must not be reported
+   as a silent one — and it must not take the whole capabilities response down with it."
+  [direction]
+  (let
+    [es
+     (engines direction)
+
+     selected
+     (try (default-engine direction) (catch Throwable _ nil))
+
+     described
+     (fn [e]
+       (let [vs (when (= :synthesize direction) (try (voices e) (catch Throwable _ nil)))]
+         (cond-> (public-engine e)
+           vs
+           (assoc :voices vs))))]
+
+    {:engines (mapv described es)
+     :selected (some-> selected
+                       :id
+                       name)}))
 
 ;; =============================================================================
 ;; Synchronous work (the TUI's path - same engine, same progress)
@@ -529,6 +540,24 @@
       alive
       (into {} (take-last max-jobs (sort-by (comp :created-at val) alive))))))
 
+(defn- discard-audio!
+  "Delete the file a finished SYNTHESIS job wrote. The store is the only handle on that
+   file, so a job that leaves without it leaks one WAV per spoken reply into the temp
+   directory. A recording is the client's own upload and is never touched here."
+  [job]
+  (when (= :synthesize (:direction job))
+    (when-let [path (:audio-path job)]
+      (try (.delete (File. ^String (str path))) (catch Throwable _ nil))))
+  nil)
+
+(defn- discard-dropped-audio!
+  "Delete the audio of every job that was in `before` and is gone from `after`. Runs
+   OUTSIDE the swap: a compare-and-set retry may compute a different casualty list, and
+   a deletion must never be replayed against a job that survived."
+  [before after]
+  (doseq [[id job] before]
+    (when-not (contains? after id) (discard-audio! job)))
+  nil)
 (defn job "The public job for `id`, or nil." [id] (public-job (get @jobs* id)))
 
 (defn job-audio-path
@@ -538,9 +567,11 @@
   (:audio-path (get @jobs* id)))
 
 (defn forget!
-  "Drop a job (a client that collected its transcript need not wait for the TTL)."
+  "Drop a job (a client that collected its transcript need not wait for the TTL). A
+   spoken reply's audio goes with it — see [[discard-dropped-audio!]]."
   [id]
-  (swap! jobs* dissoc id)
+  (let [[before after] (swap-vals! jobs* dissoc id)]
+    (discard-dropped-audio! before after))
   nil)
 
 ;; =============================================================================
@@ -658,8 +689,11 @@
        voice-id
        (assoc :voice-id voice-id))]
 
-    (swap! jobs* (fn [jobs]
-                   (assoc (sweep jobs) id job)))
+    (let
+      [[before after] (swap-vals! jobs*
+                                  (fn [jobs]
+                                    (assoc (sweep jobs) id job)))]
+      (discard-dropped-audio! before after))
     [engine job]))
 
 (defn submit!
@@ -685,6 +719,7 @@
 (defn reset-jobs!
   "Forget every job and every watcher (tests)."
   []
-  (reset! jobs* {})
+  (let [[before _] (reset-vals! jobs* {})]
+    (discard-dropped-audio! before {}))
   (reset! watchers* {})
   nil)

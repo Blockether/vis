@@ -217,11 +217,22 @@
    on a name it was told rather than guessing from the payload's shape."
   "voice.job")
 
-(defn voice-job-sse-frame
-  "Render one transcription job as its own SSE frame.
+(def speech-job-event
+  "SSE `event:` name of every frame on a SPOKEN REPLY's job stream — everything
+   [[voice-job-event]] says, for the other direction.
+
+   Its own name rather than a shared one: a client may watch a transcription and a
+   synthesis on the same screen, and the two jobs carry different keys (`text` one
+   way, `audio` the other). `/v1/capabilities` publishes it as
+   `features.speech.progress_event`."
+  "speech.job")
+
+(defn job-sse-frame
+  "Render one speech job as its own SSE frame under `event-name` —
+   [[voice-job-event]] for a transcription, [[speech-job-event]] for a spoken reply.
 
    Deliberately no `id:`: a job stream carries a RESOURCE's current state, not a
    replayable log, so there is no cursor to resume from — a reconnect is answered
    with the job as it is now (see [[voice-job-event]])."
-  ^String [job]
-  (str "event: " voice-job-event "\ndata: " (json-str job) "\n\n"))
+  ^String [^String event-name job]
+  (str "event: " event-name "\ndata: " (json-str job) "\n\n"))

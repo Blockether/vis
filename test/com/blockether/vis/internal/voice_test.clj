@@ -160,8 +160,18 @@
       (testing "each direction lists only its own engines"
         (is (= [:parakeet-local] (mapv :id (voice/engines :transcribe))))
         (is (= [:pocket-tts] (mapv :id (voice/engines :synthesize))))
-        (is (= {:engines [{:id "pocket-tts" :label "pocket-tts"}] :selected "pocket-tts"}
-               (voice/engines-info :synthesize))))
+        ;; a SPEAKING engine carries its catalogue in the same answer, so a picker is
+        ;; populated by the one capabilities request instead of a call per engine
+        (is (= {:engines [{:id "pocket-tts"
+                           :label "pocket-tts"
+                           :voices [{:id "alba" :label "Alba" :language "en"}
+                                    {:id "javert" :label "javert"}]}]
+                :selected "pocket-tts"}
+               (voice/engines-info :synthesize)))
+        ;; and a LISTENING engine has none: voices are not a fact about transcription
+        (is (= {:engines [{:id "parakeet-local" :label "parakeet-local"}]
+                :selected "parakeet-local"}
+               (voice/engines-info :transcribe))))
       (testing "an engine that only listens can never be registered as one that speaks"
         (is (= "engine :synthesize must be a function"
                (voice/engine-error :synthesize (echo-engine :parakeet-local "heard it"))))

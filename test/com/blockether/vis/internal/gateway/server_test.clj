@@ -455,19 +455,25 @@
                                                (Thread/sleep 80)
                                                (is (zero? @stops)))))))))
 
-(defn- with-only-engine!
-  "Run `f` with EXACTLY `engine` registered (nil = a gateway with no voice engine
-   at all), then put the registry back."
-  [engine f]
-  (let [before (voice/engines :transcribe)]
+(defn- with-only-direction-engine!
+  "Run `f` with EXACTLY `engine` registered in `direction` (nil = a gateway with no engine
+   in that direction at all), then put the registry back."
+  [direction engine f]
+  (let [before (voice/engines direction)]
     (doseq [e before]
-      (voice/unregister-engine! :transcribe (:id e)))
-    (try (when engine (voice/register-engine! :transcribe engine))
+      (voice/unregister-engine! direction (:id e)))
+    (try (when engine (voice/register-engine! direction engine))
          (f)
-         (finally (doseq [e (voice/engines :transcribe)]
-                    (voice/unregister-engine! :transcribe (:id e)))
+         (finally (doseq [e (voice/engines direction)]
+                    (voice/unregister-engine! direction (:id e)))
                   (doseq [e before]
-                    (voice/register-engine! :transcribe e))))))
+                    (voice/register-engine! direction e))))))
+
+(defn- with-only-engine! [engine f] (with-only-direction-engine! :transcribe engine f))
+
+(defn- with-only-speech-engine! [engine f] (with-only-direction-engine! :synthesize engine f))
+
+(defn- json-body [m] {:body (java.io.ByteArrayInputStream. (.getBytes (wire/json-str m) "UTF-8"))})
 
 (defn- wav-body
   "A RIFF/WAVE header long enough to pass the gateway's cheap pre-filter."
@@ -693,7 +699,7 @@
 ;; session event or a transcription's progress.
 (deftest voice-job-frames-are-named-and-that-name-is-published
   (testing "the frame names itself, and carries no session cursor"
-    (let [frame (wire/voice-job-sse-frame {"id" "vj_1" "phase" "transcribing"})]
+    (let [frame (wire/job-sse-frame wire/voice-job-event {"id" "vj_1" "phase" "transcribing"})]
       (is (= "voice.job" wire/voice-job-event))
       (is (str/starts-with? frame (str "event: " wire/voice-job-event "\n")))
       (is (str/includes? frame "data: {"))
@@ -754,6 +760,311 @@
                                  (is (= "downloading" (get body "status")))
                                  (is (= 42 (get body "progress")))))))))))
 
+(defn- spoken-wav
+  "The bytes a fake synthesis engine writes: a RIFF/WAVE header and then the line itself,
+   so a test can tell two clips apart and compare what the gateway SERVED with what the
+   engine WROTE."
+  ^bytes [text]
+  (let
+    [tail
+     (.getBytes (str text) "UTF-8")
+
+     out
+     (byte-array (+ 64 (alength tail)))]
+
+    (System/arraycopy (.getBytes "RIFF" "US-ASCII") 0 out 0 4)
+    (System/arraycopy (.getBytes "WAVE" "US-ASCII") 0 out 8 4)
+    (System/arraycopy tail 0 out 64 (alength tail))
+    out))
+
+(defn- body-bytes
+  "Everything a Ring body carries, whether the handler answered the bytes or the file."
+  ^bytes [body]
+  (with-open
+    [in
+     (io/input-stream body)
+
+     out
+     (java.io.ByteArrayOutputStream.)]
+
+    (io/copy in out)
+    (.toByteArray out)))
+
+(defn- speaking-engine
+  "A synthesis engine that WRITES a file, the way a real one does — the gateway owns it
+   from there: deleted after an inline answer, served from the audio route after a job.
+   With a `release` promise it blocks mid-synthesis so a stream can be watched."
+  ([] (speaking-engine nil))
+  ([release]
+   {:id :speaker
+    :label "Speaker"
+    :voices (constantly [{:id :alba :label "Alba" :language :en-GB}])
+    :model-state (constantly {:state :ready})
+    :synthesize (fn [{:keys [text on-progress]}]
+                  (on-progress {:phase :synthesizing :progress 40})
+                  (when release @release)
+                  (let [f (java.io.File/createTempFile "vis-speech-test" ".wav")]
+                    (io/copy (spoken-wav text) f)
+                    {:audio-path (str f) :sample-rate 24000}))}))
+
+(deftest capabilities-advertise-the-speech-catalogue-and-both-thresholds
+  ;; A picker cannot be populated by trial: the engine, the voices it can speak in, the
+  ;; phase vocabulary and the two lengths that decide inline-or-job all arrive in the one
+  ;; request a client already makes.
+  (with-only-speech-engine! (speaking-engine)
+                            (fn []
+                              (let
+                                [speech (-> ((rv 'capabilities-handler) {})
+                                            :body
+                                            wire/parse-json
+                                            (get-in ["features" "speech"]))]
+                                (is (true? (get speech "is_enabled")))
+                                (is (= "audio/wav" (get speech "transport")))
+                                (is (true? (get speech "is_async")))
+                                (is (= "sse" (get speech "progress")))
+                                (is (= "speech.job" wire/speech-job-event))
+                                (is (= wire/speech-job-event (get speech "progress_event")))
+                                ;; the OTHER direction's working phase is never promised to a client that would
+                                ;; sit waiting for it
+                                (is (= ["uploading" "queued" "preparing" "synthesizing" "done"
+                                        "failed"]
+                                       (get speech "phases")))
+                                (is (= "speaker" (get speech "selected")))
+                                (is (= [{"id" "alba" "label" "Alba" "language" "en-GB"}]
+                                       (get-in speech ["engines" 0 "voices"])))
+                                (is (= 280 (get speech "inline_max_chars")))
+                                (is (< (get speech "inline_max_chars") (get speech "max_chars"))))))
+  (testing "a gateway that cannot speak says so instead of half-advertising it"
+    (with-only-speech-engine! nil
+                              (fn []
+                                (let
+                                  [speech (-> ((rv 'capabilities-handler) {})
+                                              :body
+                                              wire/parse-json
+                                              (get-in ["features" "speech"]))]
+                                  (is (false? (get speech "is_enabled")))
+                                  (is (= "unavailable" (get-in speech ["model" "status"])))
+                                  (is (empty? (get speech "engines")))
+                                  (is (nil? (get speech "selected"))))))))
+
+(deftest speech-post-speaks-a-short-line-on-the-same-connection
+  ;; A spoken acknowledgement that costs a job, a stream and a second fetch is a spinner
+  ;; where a sentence should have been.
+  (let [sid (str (random-uuid))]
+    (with-redefs-fn {#'state/soul (constantly {:session-id sid})}
+      (fn []
+        (with-only-speech-engine!
+          (speaking-engine)
+          (fn []
+            (let
+              [line "Ready when you are."
+               response ((rv 'speech-handler)
+                          (merge {:request-method :post :path-params {:sid sid}}
+                                 ;; padded on purpose: a client that appends a newline must not
+                                 ;; make the engine speak the whitespace
+                                 (json-body {:text (str "  " line "\n") :voice "alba"})))
+               spoken (body-bytes (:body response))]
+
+              (is (= 200 (:status response)))
+              (is (= "audio/wav" (get-in response [:headers "Content-Type"])))
+              (is (= (str (alength spoken)) (get-in response [:headers "Content-Length"])))
+              (is (= "RIFF" (String. (java.util.Arrays/copyOfRange spoken 0 4) "US-ASCII")))
+              (is (= "WAVE" (String. (java.util.Arrays/copyOfRange spoken 8 12) "US-ASCII")))
+              (is (java.util.Arrays/equals spoken (spoken-wav line))))))))))
+
+(deftest speech-job-streams-its-progress-and-then-serves-the-audio-it-wrote
+  ;; The long path proves the whole loop a client actually walks: accept, watch, fetch,
+  ;; forget — with the file the gateway owns disappearing at the end of it.
+  (let
+    [sid
+     (str (random-uuid))
+
+     release
+     (promise)
+
+     line
+     (str/join " " (repeat 40 "a paragraph worth watching"))]
+
+    (with-redefs-fn {#'state/soul (constantly {:session-id sid})}
+      (fn []
+        (voice/reset-jobs!)
+        (with-only-speech-engine!
+          (speaking-engine release)
+          (fn []
+            (let
+              [accepted
+               ((rv 'speech-handler)
+                 (merge {:request-method :post :path-params {:sid sid}} (json-body {:text line})))
+
+               job
+               (wire/parse-json (:body accepted))
+
+               job-id
+               (get job "id")
+
+               response
+               ((rv 'speech-job-events-handler)
+                 {:request-method :get :path-params {:sid sid :job-id job-id}})
+
+               out
+               (java.io.ByteArrayOutputStream.)
+
+               written
+               (fn []
+                 (String. (.toByteArray out) "UTF-8"))
+
+               stream
+               (future (ring-protocols/write-body-to-stream (:body response) response out)
+                       (written))]
+
+              (testing "the line is accepted as a job instead of held on the connection"
+                (is (= 202 (:status accepted)))
+                (is (= "synthesize" (get job "direction")))
+                (is (= "speaker" (get job "engine")))
+                (is (false? (get job "is_done"))))
+              (testing "the phase a listener waits on is pushed while the engine works"
+                (is (= "text/event-stream" (get-in response [:headers "Content-Type"])))
+                (is (wait-until #(str/includes? (written) "\"synthesizing\""))))
+              (deliver release :go)
+              (let
+                [body
+                 (deref stream 5000 :timeout)
+
+                 frames
+                 (->> (str/split (str body) #"\n\n")
+                      (remove str/blank?)
+                      (remove #(str/starts-with? % ":")))
+
+                 final
+                 (last (sse-jobs (str body)))]
+
+                (testing "every frame names the SYNTHESIS stream, never the transcription one"
+                  (is (seq frames))
+                  (is (every? #(str/starts-with? % (str "event: " wire/speech-job-event)) frames)))
+                (testing "the last frame IS the result: no follow-up request to learn it"
+                  (is (= "done" (get final "phase")))
+                  (is (= 100 (get final "progress")))
+                  (is (true? (get final "is_done"))))
+                (testing "it describes the audio without ever naming the file"
+                  (is (= "audio/wav" (get-in final ["audio" "media_type"])))
+                  (is (= 24000 (get-in final ["audio" "sample_rate"])))
+                  (is (pos? (get-in final ["audio" "bytes"])))
+                  (is (not (str/includes? (str body) "audio_path"))))
+                (testing "the audio route serves exactly the bytes the engine wrote"
+                  (let
+                    [audio ((rv 'speech-job-audio-handler)
+                             {:request-method :get :path-params {:sid sid :job-id job-id}})]
+                    (is (= 200 (:status audio)))
+                    (is (= "audio/wav" (get-in audio [:headers "Content-Type"])))
+                    (is (java.util.Arrays/equals (body-bytes (:body audio)) (spoken-wav line)))))
+                (testing "forgetting the job takes its file with it - one WAV per reply is a leak"
+                  (let [path (voice/job-audio-path job-id)]
+                    (is (.isFile (io/file path)))
+                    (is (= 200
+                           (:status ((rv 'speech-job-handler)
+                                      {:request-method :delete
+                                       :path-params {:sid sid :job-id job-id}}))))
+                    (is (not (.isFile (io/file path))))
+                    (is (= 404
+                           (:status ((rv 'speech-job-audio-handler)
+                                      {:request-method :get
+                                       :path-params {:sid sid :job-id job-id}}))))))))))))))
+
+(deftest a-job-belongs-to-one-direction-and-the-other-route-does-not-know-it
+  ;; Both directions share one store. A client asking the speech routes about a
+  ;; transcription must be told it does not exist, not handed the other half of the store
+  ;; - and a DELETE must never reach across and forget someone else's work.
+  (let [sid (str (random-uuid))]
+    (with-redefs-fn {#'state/soul (constantly {:session-id sid})}
+      (fn []
+        (voice/reset-jobs!)
+        (with-only-engine!
+          {:id :fake-engine
+           :label "Fake"
+           :transcribe (constantly "hi")
+           :model-state (constantly {:state :ready})}
+          (fn []
+            (let
+              [job-id (get (wire/parse-json (:body ((rv 'voice-handler)
+                                                     {:path-params {:sid sid} :body (wav-body)})))
+                           "id")
+               speech (fn [handler method]
+                        (:status ((rv handler)
+                                   {:request-method method
+                                    :path-params {:sid sid :job-id job-id}})))]
+
+              (is (= 404 (speech 'speech-job-handler :get)))
+              (is (= 404 (speech 'speech-job-events-handler :get)))
+              (is (= 404 (speech 'speech-job-audio-handler :get)))
+              (is (= 404 (speech 'speech-job-handler :delete)))
+              (testing "and the job is still there, on its own route"
+                (is (some? (voice/job job-id)))
+                (is (= 200
+                       (:status ((rv 'voice-job-handler)
+                                  {:request-method :get
+                                   :path-params {:sid sid :job-id job-id}}))))))))))))
+
+(deftest speech-refusals-name-the-reason-instead-of-failing-late
+  (let [sid (str (random-uuid))]
+    (with-redefs-fn {#'state/soul (constantly {:session-id sid})}
+      (fn []
+        (testing "no synthesis engine at all is 501, and it names the direction"
+          (with-only-speech-engine!
+            nil
+            (fn []
+              (let
+                [response ((rv 'speech-handler)
+                            (merge {:request-method :post :path-params {:sid sid}}
+                                   (json-body {:text "hello"})))]
+                (is (= 501 (:status response)))
+                (is (str/includes? (get (wire/parse-json (:body response)) "error")
+                                   "speech synthesis"))))))
+        (with-only-speech-engine!
+          (speaking-engine)
+          (fn []
+            (let
+              [say (fn say ([text] (say text nil))
+                     ([text query]
+                      ((rv 'speech-handler)
+                        (merge {:request-method :post :path-params {:sid sid}}
+                          (when query {:query-params query}) (json-body {:text text})))))]
+              (testing "naming an engine nobody registered is the CALLER's 400"
+                (is (= 400 (:status (say "hello" {"engine" "elevenlabs"})))))
+              (testing "nothing to say is refused before the engine is ever woken"
+                (is (= 400 (:status (say "   ")))))
+              (testing "a runaway line is refused rather than synthesized for minutes"
+                (is (= 413 (:status (say (apply str (repeat 21000 "x")))))))
+              (testing "the toggle refuses the WORK, never the readiness a client is watching"
+                (try (toggles/set-enabled! voice/speech-toggle-id false)
+                     (let [refused (say "hello")]
+                       (is (= 403 (:status refused)))
+                       (is (= "speech" (get (wire/parse-json (:body refused)) "toggle")))
+                       (is (= 403
+                              (:status ((rv 'speech-model-handler)
+                                         {:request-method :post :path-params {:sid sid}}))))
+                       (is (= 200
+                              (:status ((rv 'speech-model-handler)
+                                         {:request-method :get :path-params {:sid sid}}))))
+                       (is (false? (-> ((rv 'capabilities-handler) {})
+                                       :body
+                                       wire/parse-json
+                                       (get-in ["features" "speech" "is_enabled"])))))
+                     (finally (toggles/reset-to-default! voice/speech-toggle-id)))))))
+        (testing "an engine that is still preparing answers 425 with its own state"
+          (with-only-speech-engine! {:id :downloading
+                                     :synthesize (constantly "/tmp/vis-never-written.wav")
+                                     :model-state (constantly {:state :downloading :progress 42})}
+                                    (fn []
+                                      (let
+                                        [response ((rv 'speech-handler)
+                                                    (merge {:request-method :post
+                                                            :path-params {:sid sid}}
+                                                           (json-body {:text "hello"})))
+                                         body (wire/parse-json (:body response))]
+
+                                        (is (= 425 (:status response)))
+                                        (is (= "downloading" (get body "status")))
+                                        (is (= 42 (get body "progress")))))))))))
 ;; Regression: the global slash endpoint resolved project skills against the gateway
 ;; process cwd, so nested-project sessions neither saw their own skills nor their children.
 (deftest slashes-handler-uses-the-session-workspace-and-includes-native-commands
@@ -1801,8 +2112,6 @@
 ;; Adding a provider used to be TUI-only: the gateway exposed operations on
 ;; providers that were already configured and nothing that could create one, so
 ;; the companion could never grow a fleet.
-
-(defn- json-body [m] {:body (java.io.ByteArrayInputStream. (.getBytes (wire/json-str m) "UTF-8"))})
 
 (defn- with-stub-fleet!
   "Router payload stubs so a mutation handler can echo the fleet back."

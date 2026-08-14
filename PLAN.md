@@ -378,7 +378,7 @@ shapes.
 
 ## State of the plan
 
-**ACCEPTED** — Phases 1 and 2 have landed.
+**ACCEPTED** — Phases 1, 2 and 3 have landed.
 
 **Phase 1 — DONE**, `f99eaee39`, refined by the commit that carries this line.
 `vis-foundation-voice` resolves `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm v1.13.5` from
@@ -449,6 +449,39 @@ already starts at `:queued` in the shared vocabulary, `submit!` gives each its o
 a surface can ask for a spoken reply (Phase 3) there is no queue to bound. Backpressure is Phase 3's
 question, with a real caller behind it.
 
+**Phase 3 — DONE**, the commit that carries this line. The gateway speaks:
+`POST /v1/sessions/:sid/speech` answers a short line with the WAV on that same connection and a long one
+with a 202 job, behind which sit `GET|DELETE /speech/jobs/:job-id`, `GET /speech/jobs/:job-id/events`
+(SSE, one `speech.job` frame per change) and `GET /speech/jobs/:job-id/audio`; `GET|POST /speech/model`
+drives an engine's preparation exactly as `/voice/model` does. Nothing was copied to get there:
+`with-voice-engine`, the model handler, the job handler and the SSE body are each ONE
+direction-taking implementation now, with a two-line named handler per route, so the two directions
+refuse in the same shape and a client that learned `/voice` reads `/speech` without a second code path.
+A job belongs to exactly ONE direction and the other direction's routes answer 404 — DELETE included, so
+a speech client can never forget a transcription. `features.speech` carries the engine catalogue with
+each engine's VOICES, the phase vocabulary without `transcribing`, `wire/speech-job-event` as the frame
+name and both length thresholds, so a picker is populated and the inline-or-job decision is predictable
+from the one request a client already makes. Two contracts moved in `voice.clj` with it: `engines-info`
+now attaches a speaking engine's voices (absent when that engine's own catalogue refused, `[]` when there
+is one fixed voice — a broken engine must not read as a silent one, and must not take `/v1/capabilities`
+down), and a job that leaves the store DELETES the file it wrote, since the store was the only handle on
+that WAV and a spoken reply per turn would otherwise leak one. `server_test.clj` gained five tests: the
+capability block and its thresholds, a short line answered as RIFF/WAVE bytes with its whitespace
+trimmed, the long path end to end (202, `synthesizing` pushed while the engine works, every frame named
+`speech.job`, a terminal frame that describes the audio without naming the file, an audio route serving
+byte-for-byte what the engine wrote, and a DELETE that takes the file with it), a job refusing the other
+direction's four routes, and the refusal ladder — 501, 400, 400, 413, 425, and the toggle's 403 on the
+work and the download while readiness still answers. 396 tests across the gateway directory and the
+extension green, lint clean.
+
+**Both Phase 3 unknowns are answered.** The inline threshold is CHARACTERS — 280 — not an estimated
+duration: the gateway cannot know how long a line takes to speak without speaking it, and the number is
+published as `features.speech.inline_max_chars` so a client predicts which answer it will get before it
+sends. A second ceiling, `max_chars` (20 000), refuses a runaway reply with 413 rather than holding a
+thread and a temp file for minutes. And the WAV never rides the SSE stream: the terminal frame carries
+`{:audio {:media_type :sample_rate :bytes}}` and the client GETs the audio route, so the progress stream
+stays small enough to watch on a phone and the bytes are fetched once, by a request that can be retried.
+
 **Settled before Phase 1**, from public sources and with no code involved:
 
 - The `kyutai/pocket-tts` gate is `auto` and its only condition is a prohibited-use statement, so
@@ -476,11 +509,10 @@ Three decisions the plan takes, so they are not re-litigated in review:
 
 TODO, in order:
 
-1. **Phase 3** — the HTTP surface and `features.speech`.
-2. **Phase 4** — `tts.clj` in `vis-foundation-voice`, with pocket-tts.
-3. **Phase 5** — our own release, manifest and license test; the espeak-free native build.
-4. **Phase 6** — engine and voice pickers in the companion, Android voice enumeration.
-5. **Phase 7** — Piper and Kokoro, opt-in, never redistributed.
+1. **Phase 4** — `tts.clj` in `vis-foundation-voice`, with pocket-tts.
+2. **Phase 5** — our own release, manifest and license test; the espeak-free native build.
+3. **Phase 6** — engine and voice pickers in the companion, Android voice enumeration.
+4. **Phase 7** — Piper and Kokoro, opt-in, never redistributed.
 
 **Lineage.** This plan supersedes *"Let a session speak to the other sessions in its tree"*, which
 was **ACCEPTED** and unstarted; it is preserved verbatim at `git show b3130f92a:PLAN.md` and nothing
