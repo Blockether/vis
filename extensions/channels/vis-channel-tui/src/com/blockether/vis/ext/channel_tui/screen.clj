@@ -27,6 +27,7 @@
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.magit :as magit]
             [com.blockether.vis.internal.external-opener :as opener]
+            [com.blockether.vis.internal.header :as vis-header]
             [com.blockether.vis.internal.paths :as vis-paths]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
@@ -450,8 +451,14 @@
        copied?)))
 
 (defn- copy-session-id!
+  "Copy the session id in its MARKED form (`vis_session_id#<uuid>`, see
+   `vis-header/marked-session-id`). A bare UUID on the clipboard says nothing
+   about what it addresses; the marker tells whoever it is pasted to — a person,
+   an issue, another agent — that it names a Vis session."
   [text]
-  (copy-text-async! "vis-tui-copy-session-id" text "✓ Copied session ID"))
+  (copy-text-async! "vis-tui-copy-session-id"
+                    (vis-header/marked-session-id text)
+                    "✓ Copied session ID"))
 
 (defn- copy-selection!
   ([text] (copy-selection! text :transcript))

@@ -1269,7 +1269,10 @@
                                          (deliver notified [text kvs]))}
           (fn []
             (copy-session-id! "123e4567-e89b-12d3-a456-426614174000")
-            (expect (= "123e4567-e89b-12d3-a456-426614174000" (deref copied 1000 ::timeout)))
+            ;; The MARKED id lands on the clipboard: a bare UUID pasted
+            ;; anywhere else says nothing about what it addresses.
+            (expect (= "vis_session_id#123e4567-e89b-12d3-a456-426614174000"
+                       (deref copied 1000 ::timeout)))
             (expect (= ["✓ Copied session ID" [:level :success :ttl-ms 1500]]
                        (deref notified 1000 ::timeout)))))))
   (it "mouse selection copy uses the shared success notification contract"

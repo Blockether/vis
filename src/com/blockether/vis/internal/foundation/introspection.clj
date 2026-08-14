@@ -22,7 +22,8 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.transcript :as transcript]
             [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.persistance :as persistance]))
+            [com.blockether.vis.internal.persistance :as persistance]
+            [com.blockether.vis.internal.header :as header]))
 
 ;; ---------------------------------------------------------------------------
 ;; Channels we know how to enumerate. Derived from the global channel
@@ -1325,9 +1326,15 @@
   "Unwrap the ONE argument these reads take. A Python KEYWORD call
    (`read_session(target=…)`) crosses as a trailing dict whose keys are
    VERBATIM STRINGS, so accept that shape as well as the bare positional value
-   and never make the caller choose between `target=` and a positional id."
+   and never make the caller choose between `target=` and a positional id.
+
+   An id COPIED from the TUI header chip or the companion app arrives marked
+   (`vis_session_id#<uuid>` — the marker that tells a reader the id names a Vis
+   session), so it is stripped here, at the one door both reads share, and the
+   caller can paste what the clipboard gave it."
   [value]
-  (if (map? value) (or (get value "target") (get value "session_id") (get value "id")) value))
+  (header/unmark-session-id
+    (if (map? value) (or (get value "target") (get value "session_id") (get value "id")) value)))
 
 (defn- search-arg
   "`list_sessions(search=…)`'s argument, positional or keyword (see
@@ -1387,7 +1394,7 @@
 (def
   ^{:doc
     "await read_session(target=None)  # current session by default; pass an id for another
-String-keyed fields: `session`, `current_turn`, `failures`, `diagnosis`, `session_forks`, `turn_retries`, \"usage\", `transcript`. \"usage\" is compact token/cost/outcome/error/routing; tool rows overlap, so never sum them. Filter `transcript/turns/iterations/blocks` (`code`/`result`) in python_execution; don't dump. Use live `session` for current state. This is the recovery path for raw folded current-session content; it does not undo fold intents or restore them. Find ids via `list_sessions(search=\"…\")`; one row alone is `get_session(id)`."
+String-keyed fields: `session`, `current_turn`, `failures`, `diagnosis`, `session_forks`, `turn_retries`, \"usage\", `transcript`. \"usage\" is compact token/cost/outcome/error/routing; tool rows overlap, so never sum them. Filter `transcript/turns/iterations/blocks` (`code`/`result`) in python_execution; don't dump. Use live `session` for current state. This is the recovery path for raw folded current-session content; it does not undo fold intents or restore them. `target` takes a bare id, a prefix, or the copied `vis_session_id#<uuid>` marker. Find ids via `list_sessions(search=\"…\")`; one row alone is `get_session(id)`."
     :arglists '([] [target])}
   read-session
   foundation-inspect)
@@ -1395,7 +1402,7 @@ String-keyed fields: `session`, `current_turn`, `failures`, `diagnosis`, `sessio
 (def
   ^{:doc
     "await get_session(target=None)  # ONE session's descriptor; current session by default
-String-keyed row: `{id,channel,title,turn_count,created_at,modified_at,is_current}`, plus `provider`/`model`/`provider_model` and `last_turn` (`{id,outcome,user_request}`) when known. `target` is an id or an unambiguous prefix; `None` when nothing matches. No transcript - the content is `read_session(id)`, the whole index is `list_sessions()`."
+String-keyed row: `{id,channel,title,turn_count,created_at,modified_at,is_current}`, plus `provider`/`model`/`provider_model` and `last_turn` (`{id,outcome,user_request}`) when known. `target` is an id, an unambiguous prefix, or the copied `vis_session_id#<uuid>` marker. `None` when nothing matches. No transcript - the content is `read_session(id)`, the whole index is `list_sessions()`."
     :arglists '([] [target])}
   get-session
   foundation-get-session)
@@ -1446,6 +1453,7 @@ String-keyed rows: `{id,channel,title,turn_count,created_at,modified_at}`. `sear
     "- Call `await read_session()` once. `usage` summarizes per-turn/iteration/tool/provider routing; tool rows overlap, never sum them.\n"
     "- Folded content is readable ONLY here: `transcript/turns/iterations/blocks` (`code`/`result`).\n"
     "- Other conversation: `await list_sessions(search=\"…\")` ranks like the TUI/app search; then `get_session(id)` for one row, `read_session(id)` for its content.\n"
+    "- A session id copied from the TUI or the companion app arrives MARKED as `vis_session_id#<uuid>` — that marker means 'this is a Vis session'; pass it verbatim (or the bare id) to `read_session`/`get_session`.\n"
     "- Filter in `python_execution`; never dump whole structures.\n"))
 
 (defn- introspection-prompt [_env] INTROSPECTION_PROMPT)

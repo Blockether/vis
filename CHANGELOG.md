@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   back.
 
 ### Changed
+- Copying a session id — the TUI header chip and the Companion chip beside the title — now puts
+  `vis_session_id#<uuid>` on the clipboard instead of a bare UUID. The marker says WHAT the id
+  addresses, so whoever it is pasted to recognises a Vis session, and `read_session` /
+  `get_session` accept the marked form verbatim (the introspection prompt names the format).
 - The Companion composer has ONE microphone. Tap it and it acts in the mode you are in; press and
   hold it for 450ms and the mode flips — dictation writes into the box, voice conversation sends
   what you said and reads the answer aloud. The disclosure beside it, the two-item mode menu, the

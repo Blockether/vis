@@ -207,6 +207,42 @@
                 str)]
     (when (seq id) (subs id 0 (min (long id-display-chars) (count id))))))
 
+(def session-id-marker-prefix
+  "Prefix every copy affordance stamps in front of a session UUID before it
+   reaches the clipboard: `vis_session_id#<uuid>`.
+
+   A bare UUID is anonymous — pasted into a chat, an issue or another agent's
+   prompt it could be any identifier at all. The marker says WHAT the id
+   addresses, so whoever reads it next (a person or an agent) recognises a Vis
+   session and can hand it straight to `read_session` / `get_session`, which
+   strip the marker again through `unmark-session-id`.
+
+   ONE source of truth for the Clojure side; the companion app mirrors it in
+   `apps/vis-companion/src/lib/session-id.ts`."
+  "vis_session_id#")
+
+(defn marked-session-id
+  "Clipboard form of `id`: `vis_session_id#<uuid>`. nil for blank input, so a
+   channel with no session yet copies nothing instead of a bare marker."
+  [id]
+  (let
+    [id (some-> id
+                str
+                str/trim)]
+    (when (seq id) (str session-id-marker-prefix id))))
+
+(defn unmark-session-id
+  "Inverse of `marked-session-id`: the bare id inside a `vis_session_id#…`
+   marker (matched case-insensitively, since the marker travels through prose),
+   any other string trimmed, and any non-string value untouched."
+  [value]
+  (if (string? value)
+    (let [trimmed (str/trim value)]
+      (if (str/starts-with? (str/lower-case trimmed) session-id-marker-prefix)
+        (subs trimmed (count session-id-marker-prefix))
+        trimmed))
+    value))
+
 (defn tab-group-root
   "The PROJECT grouping key for a tab entry: the root of the workspace its
    session edits in — for a rift draft the trunk it was cloned from

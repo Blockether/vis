@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { renderSessionScreen, sessionFixture } from "./session-screen-harness";
@@ -69,5 +69,31 @@ describe("the composer under an open artifacts sheet", () => {
 
     await user.click(screen.getByRole("button", { name: /close/i }));
     expect(composer).not.toHaveClass("hidden");
+  });
+});
+
+// A session id leaves this screen to be pasted somewhere that knows nothing
+// about it, so the chip copies the MARKED form — a bare UUID could be any id at
+// all, while `vis_session_id#<uuid>` says which kind of thing it names.
+describe("the session id chip", () => {
+  it("puts the marked id on the clipboard, not the bare uuid", async () => {
+    const written: string[] = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: (text: string) => void written.push(text) },
+    });
+    renderSessionScreen({
+      session: sessionFixture({ id: "123e4567-e89b-12d3-a456-426614174000" }),
+    });
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Copy session id" }),
+    );
+
+    await waitFor(() =>
+      expect(written).toEqual([
+        "vis_session_id#123e4567-e89b-12d3-a456-426614174000",
+      ]),
+    );
   });
 });

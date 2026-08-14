@@ -49,6 +49,7 @@ import {
 } from "../components/icons";
 import { HumanInputPrompt } from "../components/HumanInputPrompt";
 import { speechOutput } from "../lib/speech";
+import { markSessionId } from "../lib/session-id";
 import { settledTranscriptCoversLiveTurn } from "../lib/live-turn-handover";
 import {
   VoiceTurnOwnership,
@@ -897,12 +898,15 @@ function keepKeyboard(event: ReactMouseEvent<HTMLElement>) {
 }
 
 // The session id is the durable handle a user pastes into `vis-agent`/tools, so it is
-// tap-to-copy rather than inert text — shown short with the full id on hover.
+// tap-to-copy rather than inert text — shown short with the full id on hover. What
+// LANDS on the clipboard is the marked form (`vis_session_id#<uuid>`): a bare UUID
+// says nothing about what it addresses, while the marker names it as a Vis session
+// for whoever — or whatever — reads it next.
 function CopyableId({ id, className }: { id: string; className: string }) {
   const short = id.length > 8 ? id.slice(0, 8) : id;
   return (
     <CopyChip
-      value={id}
+      value={markSessionId(id)}
       label="Copy session id"
       title={`Copy session id\n${id}`}
       className={className}

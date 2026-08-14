@@ -673,6 +673,13 @@
                    (expect (= "needle" (search-arg "needle")))
                    (expect (= "needle" (search-arg {"search" "needle"})))
                    (expect (= "needle" (search-arg {"query" "needle"}))))
+               (it "takes the marked id a copy affordance puts on the clipboard"
+                   ;; The TUI header chip and the companion app copy
+                   ;; `vis_session_id#<uuid>` so the id says what it addresses;
+                   ;; pasting that verbatim must read the session, not miss.
+                   (expect (= "abc" (target-arg "vis_session_id#abc")))
+                   (expect (= "abc" (target-arg {"target" "vis_session_id#abc"})))
+                   (expect (= "abc" (target-arg {"session_id" "vis_session_id#abc"}))))
                (it "binds a keyword search end-to-end through the enveloped verb"
                    (let [s (vis/db-create-connection! :memory)]
                      (try (let
