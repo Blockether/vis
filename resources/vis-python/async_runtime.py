@@ -884,6 +884,67 @@ def __vis_settle_stmt__(v):
     return v
 
 
+__vis_return_scan_max__ = 1024
+
+
+def __vis_has_thunk__(v, __vis_d__=0):
+    # Is there a deferred call anywhere in this value? EXACT plain containers only,
+    # two levels of them, and a bounded element budget: `return rows` in a loop body
+    # stays a scan of types with no allocation, so the rebuild below runs only when
+    # there is something to settle.
+    if type(v) is __vis_Call__ or type(v) is __vis_Gather__:
+        return True
+    if __vis_d__ > 1:
+        return False
+    __vis_t__ = type(v)
+    if __vis_t__ is dict:
+        __vis_seq__ = v.values()
+    elif __vis_t__ is tuple or __vis_t__ is list or __vis_t__ is set:
+        __vis_seq__ = v
+    else:
+        return False
+    if len(v) > __vis_return_scan_max__:
+        return False
+    for __e__ in __vis_seq__:
+        if __vis_has_thunk__(__e__, __vis_d__ + 1):
+            return True
+    return False
+
+
+def __vis_settle_return__(v, __vis_d__=0):
+    # RETURN-boundary settle: `return` hands the value to the CALLER, so a thunk
+    # riding out in it has left the only scope that could still `await` it. Settle
+    # the value AND the thunks inside a plain container the helper built to answer
+    # with: `async def m(): g = grep(...); return sess, g` handed back a tuple whose
+    # second slot was a raw `__vis_Call__`, and the model only found out blocks
+    # later, when `json.dumps` refused an object it never created.
+    #
+    # This is the ONE settle that also fires inside an `async def`. A coroutine may
+    # HOLD an awaitable (`t = asyncio.to_thread(f, x)` ... `await gather(t, u)`) —
+    # that is what the nested-statement skip protects — but what it RETURNS is its
+    # answer, and `await` on an already-settled value is a no-op
+    # (`__vis_AwaitFix__`), so a caller that awaits the returned value still reads
+    # the same thing. The cost is that a helper BUILDING a batch for its caller runs
+    # it serially at the `return` instead of through the caller's `gather`.
+    if type(v) is __vis_Call__ or type(v) is __vis_Gather__:
+        return __vis_settle__(v)
+    if __vis_d__ > 1 or not __vis_has_thunk__(v, __vis_d__):
+        return v
+    __vis_t__ = type(v)
+    if __vis_t__ is dict:
+        return {
+            __k__: __vis_settle_return__(__e__, __vis_d__ + 1)
+            for __k__, __e__ in v.items()
+        }
+    if __vis_t__ is list:
+        return [__vis_settle_return__(__e__, __vis_d__ + 1) for __e__ in v]
+    if __vis_t__ is tuple:
+        return tuple(__vis_settle_return__(__e__, __vis_d__ + 1) for __e__ in v)
+    if __vis_t__ is set:
+        return {__vis_settle_return__(__e__, __vis_d__ + 1) for __e__ in v}
+    return v
+
+
 def __vis_settle_binding__(name):
     g = globals()
     g[name] = __vis_settle__(g[name])
@@ -2004,7 +2065,9 @@ def __vis_normalize_module__(tree, flags):
     # needs, so `hs = [shell(c) for c in cmds]` still batches — and so does every
     # statement inside an `async def`: a coroutine is where HOLDING an awaitable
     # (`t = asyncio.to_thread(f, x)` ... `await gather(t, u)`) is the idiom, and
-    # `await` is right there to spend it.
+    # `await` is right there to spend it. The ONE statement that settles ANYWAY is
+    # `return`: the value a function hands its CALLER has left the scope that could
+    # await it, so it goes through `__vis_settle_return__` instead.
     def __vis_wrap__(v, __vis_fn__="__vis_settle__"):
         return __vis_ast__.Call(
             func=__vis_ast__.Name(id=__vis_fn__, ctx=__vis_ast__.Load()),
@@ -2038,11 +2101,19 @@ def __vis_normalize_module__(tree, flags):
             continue
         if id(__vis_node__) in __vis_top__:
             __vis_node__.value = __vis_wrap__(__vis_v__)
+        elif isinstance(__vis_v__, __vis_ast__.Constant):
+            # A bare string statement is a DOCSTRING: wrapping it in a call would
+            # strip `__doc__` off the def or class it opens. A constant can never be
+            # a thunk, so nothing is lost by leaving every one of them alone.
+            continue
+        elif isinstance(__vis_node__, __vis_ast__.Return):
+            # A `return` LEAVES the scope that could still `await`, so it settles at
+            # every helper kind, `async def` included, and reaches into the container
+            # the helper answers with. See `__vis_settle_return__`.
+            __vis_node__.value = __vis_wrap__(__vis_v__, "__vis_settle_return__")
         elif id(__vis_node__) in __vis_coro__:
             continue
-        elif not isinstance(__vis_v__, __vis_ast__.Constant):
-            # A bare string statement is a DOCSTRING: wrapping it in a call would
-            # strip `__doc__` off the def or class it opens.
+        else:
             __vis_node__.value = __vis_wrap__(__vis_v__, "__vis_settle_stmt__")
     # Every wrap above is a NEW node with no position: `compile()` refuses an AST
     # whose expr is missing `lineno` (the whole snapshot replay silently restored

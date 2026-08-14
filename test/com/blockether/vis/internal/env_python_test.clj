@@ -685,7 +685,9 @@
    every assign/expr STATEMENT at EVERY depth, not only `tree.body`. A call in
    EXPRESSION position still defers — that is the seam `gather` batches through —
    and so does a statement inside an `async def`, where holding an awaitable is
-   the idiom. Every settle path raises the same catchable `__vis_ToolError__`."
+   the idiom — except a `return`, whose value has LEFT the scope that could await
+   it and settles at every helper kind. Every settle path raises the same
+   catchable `__vis_ToolError__`."
   (let
     [calls
      (atom [])
@@ -756,7 +758,29 @@
                          "    t = nested_ok(7)\n" "    ns_seen2.append(type(t).__name__)\n"
                          "    v = await t\n" "    ns_seen2.append(v['op'])\n"
                          "await ns_coro()\n" "print(ns_seen2)"))]
-          (expect (re-find #"\['__vis_Call__', 'nested_ok'\]" out))))))
+          (expect (re-find #"\['__vis_Call__', 'nested_ok'\]" out))))
+    ;; Regression: `return` inside an `async def` was the ONE statement never
+    ;; settle-wrapped, so `async def m(): g = grep(...); return sess, g` handed the
+    ;; caller a tuple whose second slot was a raw `__vis_Call__`. It survived into the
+    ;; NEXT block, where `json.dumps(g)` refused an object the model never created.
+    (it "an `async def` RETURNS its results, never a thunk it never awaited"
+        (let
+          [out (run (str "async def ns_pair():\n"
+                         "    g = nested_ok(11)\n" "    return 'k', g\n"
+                         "ns_k, ns_v = await ns_pair()\n"
+                         "print([ns_k, isinstance(ns_v, dict), ns_v['op']])"))]
+          (expect (re-find #"\['k', True, 'nested_ok'\]" out))
+          (expect (= 1 (count @calls)))))
+    ;; Regression: only a BARE `return tool(...)` settled; a call one level inside the
+    ;; container the helper answered with (`return a, tool(...)`, `return {'k': [...]}`)
+    ;; still reached the caller as a thunk.
+    (it "a returned container settles the calls inside it"
+        (let
+          [out (run (str "def ns_box3():\n" "    return {'hits': [nested_ok(12)]}\n"
+                         "ns_b = ns_box3()\n"
+                         "print([isinstance(ns_b['hits'][0], dict), ns_b['hits'][0]['op']])"))]
+          (expect (re-find #"\[True, 'nested_ok'\]" out))
+          (expect (= 1 (count @calls)))))))
 
 (defdescribe collect-garbage-gil-budget-test
              ;; Regression: `collect-garbage!` runs in `loop/send!`'s `finally`, i.e. between
