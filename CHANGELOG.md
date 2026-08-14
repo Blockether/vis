@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.37] - 2026-08-14
+
+### Changed
+- Release v0.1.37
+- The notifications row offers the verb, not the state it is already in
+- A turn settles only itself, keeps the answer it just painted, and refetches a short transcript
+
+### Package changes
+
+#### com.blockether/vis
+- Release v0.1.37 (fbca3dd3a)
+- The notifications row offers the verb, not the state it is already in (22f5e2b7a)
+- A turn settles only itself, keeps the answer it just painted, and refetches a short transcript (b20892310)
+
+
+
 ### Added
 - One `C-x g` status buffer for EVERY repository a session works on: the project, every Git
   repository nested below it (a mega-repo's `repositories/` clones) and every read-write
@@ -4627,7 +4643,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.35...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.37...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -4656,3 +4672,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.33]: https://github.com/Blockether/vis/releases/tag/v0.1.33
 [v0.1.34]: https://github.com/Blockether/vis/releases/tag/v0.1.34
 [v0.1.35]: https://github.com/Blockether/vis/releases/tag/v0.1.35
+[v0.1.37]: https://github.com/Blockether/vis/releases/tag/v0.1.37
