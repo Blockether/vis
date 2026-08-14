@@ -75,13 +75,29 @@ export function SwipeActions({
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  /** True while this drawer is sliding home under its own animation. */
+  /** True while this drawer is settling home; see `close`. */
   const isClosing = useRef(false);
 
+  // CLOSED IS A FACT, NEVER AN ANIMATION. `open` flips the moment a close is
+  // asked for, so a close that only REQUESTS the slide home leaves the state
+  // saying shut while the strip is still standing on the screen whenever the
+  // platform declines to run it: the row navigates instead of dismissing, the
+  // next row opens beside it rather than in place of it, and the mark the verb
+  // just left is scrolled off to the left, behind the strip that left it.
+  //
+  // Regression, user report ("when I click the star on some other row, first I
+  // don't see the star ... only after I do slide once again", with the cell
+  // painted over its own old caption): an ANIMATED `scrollTo` inside a mandatory
+  // scroll-snap track is exactly what WebKit is free to swallow — measured there
+  // at 216px eight hundred milliseconds after `behavior: 'smooth'` was asked for,
+  // against home in the same frame for `behavior: 'auto'`, same track, same call
+  // — and starring fires a second animated scroll (`ProjectGroup`'s pin) at this
+  // same scroller in the same commit. The slide OPEN is still the platform's,
+  // finger and momentum and all; only the way home is taken out of its hands.
   const close = useCallback(() => {
     isClosing.current = true;
     setOpen(false);
-    scrollerRef.current?.scrollTo({ left: 0, behavior: 'smooth' });
+    scrollerRef.current?.scrollTo({ left: 0, behavior: 'auto' });
   }, []);
 
   // An open drawer is a modal-ish state: Escape closes it, scrolling the list

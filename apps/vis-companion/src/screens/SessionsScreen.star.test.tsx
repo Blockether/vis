@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -120,6 +120,55 @@ describe("starring a session", () => {
         .getByRole("group", { name: "Older session actions" })
         .querySelector('button[aria-label="Unstar"]'),
     ).not.toBeNull();
+  });
+
+  // Regression, user report on iOS ("when I click the star on some other row, first I
+  // don't see the star automatically, only after I do slide once again ... there is
+  // some mismatch with the state", with the cell painted over its own old caption):
+  // the row starred at the TOP of the list showed its mark at once and every other row
+  // did not. A verb closed the drawer by ASKING for an animated slide home while
+  // `open` flipped on the spot, and the pin then fired a second animated scroll at
+  // that same scroller in the same commit; when the platform ran neither, the strip
+  // stood open over a row whose state said shut — and the mark the tap had just left
+  // sits at the row's LEADING edge, which is the half a slid-open row hides.
+  it("sends the row it pins home in the same tap, not on an animation", async () => {
+    const view = renderSessionsScreen({ machines });
+    restore = view.restore;
+    await screen.findByText("Older session");
+    // The row the pin MOVES: the one not already at the top of its project.
+    const moved = rowOrder()[1]!;
+    const title = moved === "older" ? "Older session" : "Newer session";
+    const row = document.querySelector(
+      `[data-session-id="${moved}"]`,
+    ) as HTMLElement;
+    const track = row.closest("[data-swipe-track]") as HTMLElement;
+
+    // A thumb slid it open: the platform scrolls the track, the component reads it.
+    Object.defineProperty(track, "scrollLeft", { value: 216, configurable: true });
+    fireEvent.scroll(track);
+
+    const home: ScrollToOptions[] = [];
+    const scrollTo = Element.prototype.scrollTo;
+    Element.prototype.scrollTo = function record(
+      this: Element,
+      options?: ScrollToOptions,
+    ) {
+      if (this === track && options) home.push(options);
+    } as typeof Element.prototype.scrollTo;
+    try {
+      await userEvent.click(
+        screen
+          .getByRole("group", { name: `${title} actions` })
+          .querySelector('button[aria-label="Star"]')!,
+      );
+    } finally {
+      Element.prototype.scrollTo = scrollTo;
+    }
+
+    // Home in the same frame the star was tapped — there is no animation left to be
+    // dropped by the re-order that same tap starts.
+    expect(home).toEqual([{ left: 0, behavior: "auto" }]);
+    expect(row.parentElement!.querySelector("svg.fill-accent")).not.toBeNull();
   });
 
   // Regression, user report ("the star is not showing on the session row ... as long

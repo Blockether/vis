@@ -95,14 +95,18 @@ describe('the slide', () => {
 
   /** Every drawer this component closed, in the order it closed them. */
   let closed: Element[] = [];
+  /** How each of those closes asked to travel: the animation is the bug. */
+  let asked: ScrollToOptions[] = [];
   const scrollTo = Element.prototype.scrollTo;
   beforeAll(() => {
-    Element.prototype.scrollTo = function record(this: Element) {
+    Element.prototype.scrollTo = function record(this: Element, options?: ScrollToOptions) {
       closed.push(this);
-    };
+      if (options) asked.push(options);
+    } as typeof Element.prototype.scrollTo;
   });
   afterEach(() => {
     closed = [];
+    asked = [];
   });
   afterAll(() => {
     Element.prototype.scrollTo = scrollTo;
@@ -197,6 +201,35 @@ describe('the slide', () => {
     slide(track(0));
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(closed).toContain(track(0));
+  });
+
+  // Regression, user report about the star on iOS ("first I don't see the star
+  // automatically, only after I do slide once again ... there is some mismatch with
+  // the state"): a verb closed the row by ASKING for an animated slide home while
+  // `open` flipped on the spot, so the one time the platform declined that animation
+  // — an animated `scrollTo` inside a mandatory scroll-snap track, measured in WebKit
+  // still 216px from home 800ms after the call — the strip stayed standing over a row
+  // whose state said shut. The mark the verb had just left was off-screen to the left
+  // behind that strip, the row was a navigation again, and the next row opened beside
+  // it instead of in place of it.
+  it('takes the way home out of the platform\'s hands when a verb is pressed', () => {
+    const onSelect = vi.fn();
+    render(
+      <SwipeActions
+        label="first"
+        actions={[{ key: 'favorite', label: 'Star', icon: <StarIcon />, tone: 'accent', onSelect }]}
+      >
+        <span>row</span>
+      </SwipeActions>,
+    );
+    slide(track(0));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Star' }));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(closed).toContain(track(0));
+    // Home in the same frame the verb was pressed: no animation to lose, whatever
+    // the row does next — and starring moves this row to the top of its project.
+    expect(asked).toEqual([{ left: 0, behavior: 'auto' }]);
   });
 
   it('makes an open row a dismiss target, never a navigation', () => {
