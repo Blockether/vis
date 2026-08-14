@@ -1,5 +1,13 @@
+/* Both axes of both families: upright AND italic. Fontsource's bare package
+   entry is the NORMAL axis only, and `font-synthesis: none` below forbids the
+   browser from slanting an upright face — so an `italic` utility over a family
+   whose italic file was never imported paints perfectly upright. That is what
+   silently un-slanted the THINKING band, whose reasoning is set in italic here
+   exactly as the TUI's transcript sets it (`.thinking-band`). */
 @import '@fontsource-variable/inter';
+@import '@fontsource-variable/inter/wght-italic.css';
 @import '@fontsource-variable/jetbrains-mono';
+@import '@fontsource-variable/jetbrains-mono/wght-italic.css';
 @import 'tailwindcss';
 /* Every theme, rendered from the Clojure palettes by `clojure -X:companion-themes`.
    The gateway no longer serves colours; this file IS the app's theme catalog. */
