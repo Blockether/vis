@@ -224,10 +224,12 @@ describe('the app bar', () => {
     expect(headings).toContain('Machines');
     expect(headings.indexOf('Machines')).toBeLessThan(headings.indexOf('Application'));
 
-    // A machine is a ROW — its name, its address, its verdict — not a bare tab,
-    // and EVERY row keeps the machine's own verbs under its own trailing edge.
+    // A machine is a ROW — its name and its verdict on one line, the address it is
+    // bound to on the line under them — not a bare tab, and EVERY row keeps the
+    // machine's own verbs under its own trailing edge.
     const [row] = within(dialog).getAllByRole('button', { name: /laptop/ });
-    expect(row.textContent).toContain('app-gateway');
+    expect(row.textContent).toContain('laptop');
+    expect(row.parentElement?.textContent).toContain('app-gateway');
     expect(
       within(within(dialog).getByRole('group', { name: 'laptop actions' })).getByRole(
         'button',

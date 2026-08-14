@@ -3,7 +3,9 @@ import type { GatewayConn } from '../lib/types';
 import { GatewayClient, GatewayError } from '../lib/gateway';
 import { parsePairing } from '../lib/pairing';
 import {
+  REACH_HINT,
   REACH_LABEL,
+  bestAddress,
   hostOf,
   mergeAddresses,
   normalizeGatewayUrl,
@@ -11,9 +13,11 @@ import {
 } from '../lib/endpoints';
 import { onWake } from '../lib/wake';
 import { warm } from '../lib/warm';
+import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
 import { Banner, Button, ConfirmRow, Input, ListRow, Spinner } from './ui';
-import { ChevronIcon, PencilIcon, StarIcon, TrashIcon } from './icons';
+import { ChevronIcon, PencilIcon, SortIcon, StarIcon, TrashIcon } from './icons';
 import { SwipeActions, type SwipeAction } from './SwipeActions';
+import { MENU_WIDTH, Menu, MenuHeading, MenuItem } from './Menu';
 
 /**
  * THE MACHINES THIS DEVICE IS PAIRED WITH, AND THE WAY TO ADD ONE — two pieces,
@@ -257,6 +261,176 @@ function healthView(h?: GwHealth): GwHealthView {
 }
 
 /**
+ * WHICH ROUTE THIS DEVICE TAKES TO ONE MACHINE, asked ON that machine's own row.
+ *
+ * A gateway answers on several addresses at once — Tailscale, LAN, tunnel,
+ * loopback — and pairing happens standing next to the machine, where the LAN
+ * address always wins the race to reply. That address stops resolving the moment
+ * the phone leaves the house, so the choice has to be visible, probeable and
+ * pinnable.
+ *
+ * It was a SECOND LIST until now: an `Address` panel under the machine rows, which
+ * existed only for the machine the settings column happened to be READING, vanished
+ * whenever a machine had fewer than two addresses, and gave every address a sliding
+ * row of its own with `Use` / `Pin` / `Auto` on it. So "which machine" and "which
+ * route to it" were two lists asking one question — reported as: the addresses are
+ * not in the slide of the machine line, it should be a dropdown after clicking bind
+ * a different address. The address line under the name IS that control now, because
+ * the line that SHOWS the binding is the line that changes it.
+ */
+
+/** Every address this device knows for one machine, most durable first. */
+function addressesOf(conn: GatewayConn): string[] {
+  return mergeAddresses([conn.url], conn.alts ?? []);
+}
+
+/**
+ * Is there anything to choose between? One address and no pin is simply "the
+ * address", and a dropdown holding a single row is noise, so that row's second
+ * line stays plain text.
+ */
+function canBind(conn: GatewayConn): boolean {
+  return addressesOf(conn).length > 1 || Boolean(conn.pinned);
+}
+
+/** What one address is worth from HERE, right now. */
+type AddressReach = 'checking' | 'online' | 'offline';
+
+/**
+ * Probes every address of the machine whose menu is OPEN, and of no other.
+ *
+ * `conn` is null while nothing is open, so a fleet of ten machines never fans out
+ * ten address sweeps for a question nobody asked; the row's own dot is what says
+ * whether the machine answers at all (`useFleetHealth`).
+ */
+function useAddressReach(conn: GatewayConn | null): Record<string, AddressReach> {
+  // Key on the CONTENTS, never on the array: `conn.alts` is a fresh array on every
+  // reload, and depending on its identity re-ran the probe forever.
+  const addressKey = conn ? addressesOf(conn).join(' ') : '';
+  const token = conn?.token;
+  const [reach, setReach] = useState<Record<string, AddressReach>>({});
+  const [probeNonce, setProbeNonce] = useState(0);
+
+  // A tailnet address is routable seconds *after* the phone wakes, and a probe
+  // taken while the interface was still down would otherwise stay red for as long
+  // as the menu is open.
+  useEffect(() => onWake(() => setProbeNonce((n) => n + 1)), []);
+
+  useEffect(() => {
+    if (!addressKey) return;
+    const addresses = addressKey.split(' ');
+    let cancelled = false;
+    const inFlight = new Set<AbortController>();
+    setReach(Object.fromEntries(addresses.map((url) => [url, 'checking' as const])));
+
+    // One controller PER address, never one shared across the batch: a single
+    // deadline let the slowest address abort every probe still in flight and paint
+    // reachable rows red by association.
+    const probe = async (url: string): Promise<boolean> => {
+      const ctrl = new AbortController();
+      const deadline = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
+      inFlight.add(ctrl);
+      try {
+        return await new GatewayClient({ url, token }).ping(ctrl.signal);
+      } catch (cause) {
+        // Reachable-but-unauthorized still proves the address routes here; only a
+        // transport failure means the address is unusable from this device.
+        return cause instanceof GatewayError;
+      } finally {
+        clearTimeout(deadline);
+        inFlight.delete(ctrl);
+      }
+    };
+
+    void Promise.all(
+      addresses.map(async (url) => {
+        // Retry once before declaring an address dead. The first attempt is what
+        // BRINGS a tailnet path up (handshake, relay fallback); judging the address
+        // on that one cold attempt marks a working gateway red.
+        let ok = await probe(url);
+        if (!ok && !cancelled) ok = await probe(url);
+        if (!cancelled) setReach((current) => ({ ...current, [url]: ok ? 'online' : 'offline' }));
+      }),
+    );
+
+    return () => {
+      cancelled = true;
+      for (const ctrl of inFlight) ctrl.abort();
+    };
+  }, [addressKey, token, probeNonce]);
+
+  return reach;
+}
+
+/** One address's verdict, in the dot the rest of this app measures reachability in. */
+function ReachDot({ state }: { state: AddressReach }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`size-1.5 shrink-0 rounded-full ${
+        state === 'online'
+          ? 'bg-ok'
+          : state === 'offline'
+            ? 'bg-err'
+            : 'animate-pulse bg-dialog-hint motion-reduce:animate-none'
+      }`}
+    />
+  );
+}
+
+/**
+ * THE DROPDOWN THE ADDRESS LINE OPENS: every address this device knows for one
+ * machine, the reach that makes each of them durable, which one is in use, which
+ * one is not answering — and, while a choice is pinned, the way back to letting
+ * this device pick.
+ *
+ * Picking an address PINS it: asking for a route by name is the explicit choice
+ * that outranks the durability order, and it is the same commit the panel's `Use`
+ * verb made. `Automatic` hands the rank back and lands on the most durable address
+ * that answers.
+ */
+function AddressMenu({
+  conn,
+  at,
+  onDismiss,
+  onSelect,
+}: {
+  conn: GatewayConn;
+  at: MenuPosition;
+  onDismiss: () => void;
+  onSelect: (url: string, pinned: boolean) => void;
+}) {
+  const reach = useAddressReach(conn);
+  const name = conn.label ?? hostOf(conn.url);
+  const urls = addressesOf(conn);
+  return (
+    <Menu label={`Addresses on ${name}`} at={at} onDismiss={onDismiss}>
+      <MenuHeading>Bind {name} to…</MenuHeading>
+      {urls.map((url) => {
+        const state = reach[url] ?? 'checking';
+        return (
+          <MenuItem
+            key={url}
+            title={hostOf(url)}
+            hint={REACH_HINT[reachOf(url)]}
+            badge={url === conn.url ? 'in use' : state === 'offline' ? 'no answer' : undefined}
+            icon={<ReachDot state={state} />}
+            onSelect={() => onSelect(url, true)}
+          />
+        );
+      })}
+      {conn.pinned && (
+        <MenuItem
+          title="Automatic"
+          hint="Follow the most durable address that answers"
+          icon={<SortIcon className="size-4" />}
+          onSelect={() => onSelect(bestAddress(urls) ?? conn.url, false)}
+        />
+      )}
+    </Menu>
+  );
+}
+/**
  * THE PAIRED MACHINES, one pressable row each: what it is called, where it
  * answers, how fast, and whether this device is using it right now.
  *
@@ -293,6 +467,7 @@ export function MachineRows({
   onMakePrimary,
   onRename,
   onForget,
+  onSelectAddress,
 }: {
   conns: GatewayConn[];
   selectedUrl?: string | null;
@@ -308,26 +483,35 @@ export function MachineRows({
   onRename?: (conn: GatewayConn, label: string | undefined) => void | Promise<void>;
   /** Deletes this machine's address and token from this device. */
   onForget?: (conn: GatewayConn) => void | Promise<void>;
+  /**
+   * Bind this machine to one of the addresses it answers on. Present only where a
+   * machine can be MANAGED, so `ConnectScreen`'s list — where a row is a place to
+   * go — keeps its address as plain text.
+   */
+  onSelectAddress?: (conn: GatewayConn, url: string, pinned: boolean) => void | Promise<void>;
 }) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [forgetting, setForgetting] = useState<string | null>(null);
+  /** The machine whose address dropdown is open, and where it hangs. */
+  const [binding, setBinding] = useState<{ url: string; at: MenuPosition } | null>(null);
 
   // Escape unwinds THIS row's own surface first. Settings closes itself on an
   // Escape it hears on the window, so a rename opened inside it used to leave with
   // the whole dialog on one keystroke; a capture listener always runs before
   // that one, whatever order the two mounted in.
   useEffect(() => {
-    if (renaming === null && forgetting === null) return;
+    if (renaming === null && forgetting === null && binding === null) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       event.stopPropagation();
       setRenaming(null);
       setForgetting(null);
+      setBinding(null);
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [renaming, forgetting]);
+  }, [renaming, forgetting, binding]);
 
   function startRename(conn: GatewayConn) {
     setDraft(conn.label ?? '');
@@ -344,6 +528,15 @@ export function MachineRows({
     if (next !== (conn.label ?? undefined)) void onRename?.(conn, next);
   }
 
+  /** Hang this machine's addresses under the line the press came from. */
+  function openAddresses(conn: GatewayConn, anchor: HTMLElement) {
+    const at = menuPosition(anchor.getBoundingClientRect(), MENU_WIDTH);
+    if (at) setBinding({ url: conn.url, at });
+  }
+
+  // The open machine, re-read from the live list: the row it was opened from is
+  // replaced whenever a probe answers or a name changes.
+  const bound = binding ? (conns.find((c) => c.url === binding.url) ?? null) : null;
   return (
     <div className="divide-y divide-dialog-edge">
       {conns.map((conn) => {
@@ -426,13 +619,34 @@ export function MachineRows({
             onSelect: () => setForgetting(conn.url),
           });
 
+        // A ROW IS TWO LINES, and the second one is the BINDING: the address this
+        // device talks to, why it is not answering when it is not, and — while there
+        // is more than one route to choose from — the control that changes it.
+        const bindable = Boolean(onSelectAddress) && canBind(conn);
+        const addressLine = (
+          <>
+            <span className="block truncate font-mono text-chip text-dialog-hint">{conn.url}</span>
+            {hv.why && hv.state !== 'online' && (
+              <span className="min-w-0 truncate font-mono text-chip text-dialog-hint">{hv.why}</span>
+            )}
+            {conn.pinned && (
+              <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
+                Pinned
+              </span>
+            )}
+          </>
+        );
+
         return (
           <SwipeActions key={conn.url} label={name} actions={actions}>
-            <ListRow
-              isSelected={isReading}
-              onClick={() => onPick(conn)}
-              className="min-w-0 gap-3"
-            >
+            {/* The selected paper belongs to the WHOLE row, both lines of it: the
+                machine being read is one slab, not a lit name over an unlit address. */}
+            <div className={`min-w-0 ${isReading ? 'bg-panel-2' : ''}`}>
+              <ListRow
+                isSelected={isReading}
+                onClick={() => onPick(conn)}
+                className="min-w-0 gap-3"
+              >
                 <span
                   className={`shrink-0 font-mono text-title ${hv.dotClass} ${hv.state === 'checking' ? 'animate-pulse' : ''}`}
                   aria-hidden="true"
@@ -440,37 +654,25 @@ export function MachineRows({
                 >
                   {hv.glyph}
                 </span>
-                <span className="min-w-0 flex-1">
-                  <span className="flex min-w-0 items-center gap-2">
-                    <span className="truncate font-mono text-body font-bold text-white">
-                      {name}
-                    </span>
-                    {conn.url === primaryUrl && (
-                      <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
-                        Primary
-                      </span>
-                    )}
-                    {conn.url === activeUrl && (
-                      <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-dialog-hint">
-                        Current
-                      </span>
-                    )}
+                <span className="flex min-w-0 flex-1 items-center gap-2">
+                  <span className="truncate font-mono text-body font-bold text-white">
+                    {name}
                   </span>
-                  <span className="flex min-w-0 items-center gap-2">
-                    <span className="block truncate font-mono text-chip text-dialog-hint">
-                      {conn.url}
+                  {conn.url === primaryUrl && (
+                    <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
+                      Primary
                     </span>
-                    <span className={`shrink-0 font-mono text-chip font-bold uppercase tracking-wider ${hv.textClass}`}>
-                      {hv.state === 'online'
-                        ? (hv.ms != null ? `${hv.ms}ms` : '')
-                        : hv.label}
+                  )}
+                  {conn.url === activeUrl && (
+                    <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-dialog-hint">
+                      Current
                     </span>
-                    {hv.why && hv.state !== 'online' && (
-                      <span className="min-w-0 truncate font-mono text-chip text-dialog-hint">
-                        {hv.why}
-                      </span>
-                    )}
-                  </span>
+                  )}
+                </span>
+                <span className={`shrink-0 font-mono text-chip font-bold uppercase tracking-wider ${hv.textClass}`}>
+                  {hv.state === 'online'
+                    ? (hv.ms != null ? `${hv.ms}ms` : '')
+                    : hv.label}
                 </span>
                 {actionLabel && (
                   <span
@@ -481,10 +683,36 @@ export function MachineRows({
                   </span>
                 )}
                 {actionLabel && <ChevronIcon className="size-3 text-dialog-hint" aria-hidden />}
-            </ListRow>
+              </ListRow>
+              {bindable ? (
+                <ListRow
+                  aria-label={`Bind ${name} to a different address`}
+                  className="gap-2"
+                  onClick={(event) => openAddresses(conn, event.currentTarget)}
+                >
+                  {addressLine}
+                  <ChevronIcon className="size-3 shrink-0 text-dialog-hint" aria-hidden />
+                </ListRow>
+              ) : (
+                <div className="flex min-h-12 min-w-0 items-center gap-2 px-3 py-2">
+                  {addressLine}
+                </div>
+              )}
+            </div>
           </SwipeActions>
         );
       })}
+      {bound && onSelectAddress && binding && (
+        <AddressMenu
+          conn={bound}
+          at={binding.at}
+          onDismiss={() => setBinding(null)}
+          onSelect={(url, pinned) => {
+            setBinding(null);
+            void onSelectAddress(bound, url, pinned);
+          }}
+        />
+      )}
     </div>
   );
 }

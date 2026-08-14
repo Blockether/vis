@@ -1,7 +1,6 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
   useState,
   type ReactNode,
 } from "react";
@@ -9,12 +8,7 @@ import {
   GatewayClient,
   GatewayError,
 } from "../lib/gateway";
-import {
-  CheckIcon,
-  ChevronIcon,
-  SortIcon,
-  StarIcon,
-} from "../components/icons";
+import { ChevronIcon } from "../components/icons";
 import type {
   GatewayConn,
   PushDevice,
@@ -86,14 +80,6 @@ import {
   Switch,
 } from "../components/ui";
 import {
-  REACH_LABEL,
-  bestAddress,
-  hostOf,
-  mergeAddresses,
-  reachOf,
-} from "../lib/endpoints";
-import { onWake } from "../lib/wake";
-import {
   ProviderNotice,
   ProviderQuota,
   ProviderRemoveButton,
@@ -111,7 +97,6 @@ import {
   MachineRows,
   useFleetHealth,
 } from "../components/Machines";
-import { SwipeActions, type SwipeAction } from "../components/SwipeActions";
 
 /**
  * ONE MACHINE'S OWN SETTINGS, as a column inside `SettingsDialog`.
@@ -125,11 +110,9 @@ import { SwipeActions, type SwipeAction } from "../components/SwipeActions";
 function GatewayPanels({
   client,
   gateway,
-  onSelectAddress,
 }: {
   client: GatewayClient;
   gateway: GatewayConn;
-  onSelectAddress?: (url: string, pinned: boolean) => void | Promise<void>;
 }) {
   // Reopening the dialog paints the gateway's last known toggles immediately;
   // `load` below refreshes them (and `setSetting` patches the cache in place).
@@ -227,10 +210,6 @@ function GatewayPanels({
             <div className="p-3 sm:p-4">
               <Banner kind="err">{err}</Banner>
             </div>
-          )}
-
-          {onSelectAddress && (
-            <AddressPanel gateway={gateway} onSelect={onSelectAddress} />
           )}
 
           {!unreachable && !unauthorized && <ProvidersPanel client={client} />}
@@ -1080,7 +1059,16 @@ export function SettingsDialog({
   onMakePrimary?: (conn: GatewayConn) => void | Promise<void>;
   onRename?: (conn: GatewayConn, label: string | undefined) => void | Promise<void>;
   onRemove?: (conn: GatewayConn) => void | Promise<void>;
-  onSelectAddress?: (url: string, pinned: boolean) => void | Promise<void>;
+  /**
+   * Bind one machine to a different address. It acts on the ROW it came out of —
+   * the machine's own address line — and never on whichever machine this column
+   * happens to be reading.
+   */
+  onSelectAddress?: (
+    conn: GatewayConn,
+    url: string,
+    pinned: boolean,
+  ) => void | Promise<void>;
   onClose: () => void;
 }) {
   const [pref, setPref] = useState<ThemePref>(DEFAULT_THEME.id);
@@ -1199,6 +1187,7 @@ export function SettingsDialog({
                 onMakePrimary={onMakePrimary}
                 onRename={onRename}
                 onForget={onRemove}
+                onSelectAddress={onSelectAddress}
               />
             )}
 
@@ -1207,7 +1196,6 @@ export function SettingsDialog({
                 key={gatewayKey}
                 client={client}
                 gateway={gateway}
-                onSelectAddress={onSelectAddress}
               />
             ) : (
               <SettingsPanel title="No machine yet">
@@ -1985,224 +1973,3 @@ function gatewayHost(url: string): string {
   }
 }
 
-/**
- * How long ONE probe attempt gets before it counts as unreachable.
- *
- * Without a deadline the probe inherits the platform's TCP timeout — over a
- * minute on iOS — so a row can sit red long after the address came back. The
- * budget is generous on purpose: a tailnet address is cold, and its first
- * packet has to wake the peer, punch NAT or fall back to a relay, which
- * routinely outlasts the sub-second a LAN address needs.
- */
-const PROBE_TIMEOUT_MS = 9000;
-
-/**
- * Which address this device actually talks to.
- *
- * A gateway answers on several at once — Tailscale, LAN, loopback — and pairing
- * happens standing next to the machine, where the LAN address always wins the
- * race to reply. That address stops resolving the moment the phone leaves the
- * house, so the choice has to be visible, probeable and pinnable instead of
- * being whatever answered first months ago.
- *
- * The panel is a list of ROUTES, and each row's one verb waits under its
- * trailing edge (`SwipeActions`): `Use` on an address this device is not on,
- * `Pin` / `Auto` on the one it is. It used to spell that out in prose instead —
- * a 110-character description, a sentence under the row in use, a paragraph
- * under the list and an `Automatic` button beside it — while the verb itself
- * was the word `USE` repeated on every row.
- */
-export function AddressPanel({
-  gateway,
-  onSelect,
-}: {
-  gateway: GatewayConn;
-  onSelect: (url: string, pinned: boolean) => void | Promise<void>;
-}) {
-  // Key on the contents, not on the array identity: `gateway.alts` is a fresh
-  // array on every reload, and depending on it re-ran the probe forever.
-  const altsKey = (gateway.alts ?? []).join(" ");
-  // Content-keyed, never url-keyed: choosing another address rewrites
-  // `gateway.url` but yields the SAME address set. Re-deriving the array on the
-  // url handed the probe effect below a fresh identity, so every dot fell back
-  // to a pulsing "checking" and the rows re-flowed for no reason.
-  const addressKey = mergeAddresses(
-    [gateway.url],
-    altsKey ? altsKey.split(" ") : [],
-  ).join(" ");
-  const addresses = useMemo(
-    () => (addressKey ? addressKey.split(" ") : []),
-    [addressKey],
-  );
-  const [reach, setReach] = useState<
-    Record<string, "checking" | "online" | "offline">
-  >({});
-  const [probeNonce, setProbeNonce] = useState(0);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
-  const token = gateway.token;
-  useEffect(() => {
-    let cancelled = false;
-    const inFlight = new Set<AbortController>();
-    setReach(
-      Object.fromEntries(addresses.map((url) => [url, "checking" as const])),
-    );
-
-    // One controller PER address, never one shared across the batch: a single
-    // deadline let the slowest address abort every probe still in flight and
-    // paint reachable rows red by association.
-    const probe = async (url: string): Promise<boolean> => {
-      const ctrl = new AbortController();
-      const deadline = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
-      inFlight.add(ctrl);
-      try {
-        return await new GatewayClient({ url, token }).ping(ctrl.signal);
-      } catch (cause) {
-        // Reachable-but-unauthorized still proves the address routes here;
-        // only a network failure means the address is unusable from here.
-        return cause instanceof GatewayError;
-      } finally {
-        clearTimeout(deadline);
-        inFlight.delete(ctrl);
-      }
-    };
-
-    void Promise.all(
-      addresses.map(async (url) => {
-        // Retry once before declaring an address dead. The first attempt is
-        // what BRINGS a tailnet path up (handshake, relay fallback); judging
-        // the address on that one cold attempt marks a working gateway red
-        // for the rest of the session.
-        let ok = await probe(url);
-        if (!ok && !cancelled) ok = await probe(url);
-        if (!cancelled)
-          setReach((current) => ({
-            ...current,
-            [url]: ok ? "online" : "offline",
-          }));
-      }),
-    );
-
-    return () => {
-      cancelled = true;
-      for (const ctrl of inFlight) ctrl.abort();
-    };
-  }, [addresses, token, probeNonce]);
-
-  // A tailnet address is routable seconds *after* the phone wakes, and a probe
-  // taken while the interface was still down would otherwise stay red for the
-  // rest of the session.
-  useEffect(() => onWake(() => setProbeNonce((n) => n + 1)), []);
-
-  const choose = async (url: string, pinned: boolean) => {
-    // One switch at a time: a second verb pressed while the first is in flight
-    // would move `busy` onto a row nothing is happening to.
-    if (busy) return;
-    setBusy(url);
-    setErr(null);
-    try {
-      await onSelect(url, pinned);
-    } catch (cause) {
-      setErr((cause as Error).message);
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  // Nothing to choose between: one address and no pin is simply "the address",
-  // and a panel offering a single row is noise.
-  if (addresses.length < 2 && !gateway.pinned) return null;
-
-  return (
-    <SettingsPanel title="Address" meta={gateway.pinned ? "pinned" : "automatic"}>
-      {err && (
-        <div className="p-3">
-          <Banner kind="err">{err}</Banner>
-        </div>
-      )}
-
-      <div className="divide-y divide-dialog-edge">
-        {addresses.map((url) => {
-          const inUse = url === gateway.url;
-          const host = hostOf(url);
-          const state = reach[url] ?? "checking";
-
-          // ONE VERB PER ROW, waiting under its trailing edge like every other
-          // list in this app: `Use` on an address this device is not on, and on
-          // the one it is, the only remaining question — does this address stay
-          // chosen, or does the app keep choosing?
-          const actions: SwipeAction[] = !inUse
-            ? [
-                {
-                  key: "use",
-                  label: "Use",
-                  name: `Use ${host}`,
-                  icon: <CheckIcon className="size-4" />,
-                  onSelect: () => void choose(url, true),
-                },
-              ]
-            : gateway.pinned
-              ? [
-                  {
-                    key: "auto",
-                    label: "Auto",
-                    name: "Let this device pick the address",
-                    icon: <SortIcon className="size-4" />,
-                    onSelect: () =>
-                      void choose(bestAddress(addresses) ?? url, false),
-                  },
-                ]
-              : [
-                  {
-                    key: "pin",
-                    label: "Pin",
-                    name: `Always use ${host}`,
-                    // Pinning is a RANK — an explicit choice outranks the
-                    // durability order — so it wears the amber every rank verb
-                    // in this app wears. Until now it could not be asked for at
-                    // all on the address in use: that row was a DISABLED button.
-                    tone: "accent",
-                    icon: <StarIcon filled className="size-4" />,
-                    onSelect: () => void choose(url, true),
-                  },
-                ];
-
-          return (
-            <SwipeActions key={url} label={host} actions={actions}>
-              {/* A ROW, NEVER A BUTTON. Every address used to be one, so the
-                  address this device talks to was one stray tap away from
-                  changing, and the row in use — the one a reader looks for
-                  first — was that same button disabled, greyed to half ink. */}
-              <div
-                className={`flex min-h-12 min-w-0 items-center gap-3 px-3 py-2 ${inUse ? "bg-panel-2" : ""}`}
-              >
-                <span
-                  className={`size-1.5 shrink-0 rounded-full ${
-                    state === "online"
-                      ? "bg-ok"
-                      : state === "offline"
-                        ? "bg-err"
-                        : "animate-pulse bg-dialog-hint motion-reduce:animate-none"
-                  }`}
-                  aria-hidden="true"
-                />
-                <span className="min-w-0 flex-1 truncate font-mono text-ui text-white">
-                  {host}
-                </span>
-                <span className="shrink-0 font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
-                  {REACH_LABEL[reachOf(url)]}
-                </span>
-                {(inUse || busy === url) && (
-                  <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
-                    {busy === url ? "switching" : "in use"}
-                  </span>
-                )}
-              </div>
-            </SwipeActions>
-          );
-        })}
-      </div>
-    </SettingsPanel>
-  );
-}

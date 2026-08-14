@@ -2753,10 +2753,11 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(connectSource).not.toContain("<button");
   });
 
-  // Regression, user reports on the machines column, in the order they arrived:
-  // "I don't need the ⋯ and swiping, also this long description is shit and the +
-  // alignment IS SHIT", then "what for I need those two selected in red ... this plus
-  // is shitty ... the swipe should be always right without this ⋯", then "you removed
+  // Regression, user reports on the machines column, paraphrased in the order they
+  // arrived: the ⋯ and the swiping were both unwanted, the long description was
+  // rejected outright and the ＋'s alignment with it; then the two rows selected in
+  // red and the ＋ were rejected again, with the swipe asked for as a permanent
+  // right-hand strip and the ⋯ dropped; then "you removed
   // the slides from the session list and also from the machine — we should have the
   // slide and just fix it". The band spelled a 310-character paragraph, then a
   // one-line one, plus a meta naming the very machine the rows under it already name
@@ -2801,29 +2802,32 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(settingsSource).not.toContain("Tap a machine");
   });
 
-  // Regression, user report ("Addresses should be also simplified and in slide"):
-  // the ADDRESS panel spent a 110-character band description, a hint sentence under
-  // the row in use, a paragraph under the list and an `Automatic` button beside it on
-  // one question, and painted the word USE on every row — each row a button, the one
-  // in use that same button DISABLED and greyed to half ink.
-  it("gives an address row the same slide, and spends no prose on it", () => {
-    const address = /export function AddressPanel\(\{[\s\S]*$/.exec(settingsSource)?.[0] ?? "";
-    expect(address.length).toBeGreaterThan(0);
-
-    // The one row-verb surface, on this list too.
-    expect(address).toContain(
-      "<SwipeActions key={url} label={host} actions={actions}>",
-    );
-    // A row, not a control: nothing here switches the address this device talks to
-    // on a stray tap, and nothing is greyed out to say "this is the one you are on".
-    expect(address).not.toContain("<ListRow");
-    expect(address).not.toContain("disabled=");
-    // The prose those slides replaced, in the order it stood on screen.
-    expect(address).not.toContain("description=");
-    expect(address).not.toContain("REACH_HINT");
-    expect(address).not.toContain("Automatic: this device prefers");
-    expect(address).not.toContain("Pinned: this device always uses");
+  // Regression, user reports on addresses, in the order they arrived: "Addresses
+  // should be also simplified and in slide", then "why are addresses not in the
+  // machine's own line? it should be a simple dropdown after I click bind a
+  // different address — I don't need a separate place for it". The ADDRESS panel was
+  // a SECOND list asking the same question the machines list asks: it spent a
+  // 110-character band description, a hint sentence under the row in use, a
+  // paragraph under the list and an `Automatic` button beside it, painted the word
+  // USE on every row, and it existed only for the one machine being read.
+  it("asks for an address on the machine's own line, and keeps no panel of its own", () => {
+    // Not moved, not kept beside the new line: gone, with the prose it carried.
+    expect(settingsSource).not.toContain("AddressPanel");
     expect(settingsSource).not.toContain("REACH_HINT");
+    expect(settingsSource).not.toContain("Automatic: this device prefers");
+    expect(settingsSource).not.toContain("Pinned: this device always uses");
+
+    // The address a machine is bound to stands under its name, and that line IS the
+    // control that changes it — the app's one row, opening the app's one menu.
+    expect(machinesSource).toContain("Bind ${name} to a different address");
+    expect(machinesSource).toContain("<AddressMenu");
+    expect(machinesSource).toContain("<MenuItem");
+    // Only where there is a choice: one address is a line of text, not a control
+    // that opens a menu with one row in it.
+    expect(machinesSource).toContain("bindable ? (");
+    // And no paragraph came back with it: what makes an address durable is said in
+    // the menu, on the row it belongs to.
+    expect(machinesSource).not.toContain("description=");
   });
 
   it("keeps no control nobody uses", () => {
