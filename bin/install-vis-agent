@@ -107,10 +107,10 @@ fi
 # commit on main that touches it refreshes (raw.githubusercontent.com is
 # unreachable from many corporate networks). It is only a bootstrap: step 2
 # refreshes it from the source it pins, so the two can only ever end up the same
-# file.
 # file. Run from a checkout and the wrapper next to this script is used
 # directly; the sibling deps.edn proves it is a real checkout rather than an
-# unrelated file in the current directory.
+# unrelated file in the current directory. What gets installed is the same
+# either way: the command in $install_dir, and the runtime under $vis_home.
 wrapper=""
 here="$(cd -P "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)"
 if [[ -n "$here" && -f "$here/vis-agent" && -f "$here/../deps.edn" ]]; then

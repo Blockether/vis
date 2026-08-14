@@ -7,13 +7,17 @@
 #
 # There is nothing to choose. How Vis was installed decides what runs:
 #   native  the released build, unpacked beside this wrapper (release bundle,
-#           container image), or one you built yourself (target/vis)
+#           container image), or one Vis built from the source it owns
 #   jvm     `clojure -M:vis` from the source Vis owns, pinned to main's newest
 #           commit — what `bin/install-vis-agent` puts in place
 #
 # The native build wins whenever one is installed, because it is the published
 # runtime. `vis-agent runtime` reports which one runs; it never switches, and
 # `vis-agent update` keeps that runtime — and this command — current.
+#
+# Where this file sits decides nothing either. A copy of this wrapper inside a
+# repository checkout is still only the command: it runs the runtime Vis owns
+# under ~/.vis, never the tree it happens to be sitting in.
 #
 # Vis follows main. Everything Vis owns lives under ~/.vis:
 #   install/vis-agent-native   the private native runtime
@@ -77,8 +81,8 @@ read_state() {
   head -n1 "$1" 2>/dev/null | tr -d '[:space:]' || true
 }
 
-# Resolve this script through symlinks. A source checkout has deps.edn one level
-# above bin/; a release bundle puts this wrapper beside vis-agent-native.
+# Resolve this script through symlinks: an install puts this wrapper on PATH, and
+# a release bundle puts it beside vis-agent-native.
 launcher_path="${BASH_SOURCE[0]}"
 while [ -L "$launcher_path" ]; do
   dir="$(cd -P "$(dirname "$launcher_path")" && pwd)"
@@ -87,8 +91,12 @@ while [ -L "$launcher_path" ]; do
 done
 bin_dir="$(cd -P "$(dirname "$launcher_path")" && pwd)"
 launcher_parent="$(cd -P "$bin_dir/.." && pwd)"
-launcher_is_checkout=0
-if [[ -f "$launcher_parent/deps.edn" ]]; then launcher_is_checkout=1; fi
+# Who owns this FILE, and nothing more. A wrapper with deps.edn one level above
+# bin/ is a tracked file in a repository checkout: git is what replaces it, so an
+# update leaves it alone and unpacks the released bundle into Vis state instead.
+# What RUNS is decided by what is installed — here as everywhere else.
+launcher_is_git_owned=0
+if [[ -f "$launcher_parent/deps.edn" ]]; then launcher_is_git_owned=1; fi
 bundled_native="$bin_dir/vis-agent-native"
 clojure_install_dir="$vis_install_dir/clojure"
 if [[ -d "$clojure_install_dir/bin" ]]; then
@@ -227,29 +235,23 @@ collect_user_extension_sdeps() {
 }
 
 # ── Runtime discovery ────────────────────────────────────────────────────────
-# The source the jvm runtime runs: the checkout Vis owns, pinned to main's newest
-# commit. Running a checkout's own launcher runs that checkout — that is what
-# invoking it means.
+# The source the jvm runtime runs: the one checkout Vis owns, pinned to main's
+# newest commit. There is no second source. A checkout of your own is yours —
+# `vis-agent` never runs the tree it was invoked from, whatever directory that is.
 find_jvm_source() {
-  if (( launcher_is_checkout )); then
-    printf '%s\n' "$launcher_parent"
-  elif [[ -f "$managed_src/deps.edn" ]]; then
-    printf '%s\n' "$managed_src"
-  else
-    return 1
-  fi
+  [[ -f "$managed_src/deps.edn" ]] || return 1
+  printf '%s\n' "$managed_src"
 }
 
 # The released native wins: an installed one (beside this wrapper, or in Vis
-# state) is preferred over `target/vis`, the binary this runtime's own source
-# produced. Building one yourself never shadows a release.
+# state) is preferred over `target/vis`, the binary the source Vis owns produced.
+# Building one yourself never shadows a release.
 find_native() {
-  local source_root candidate
-  source_root="$(find_jvm_source 2>/dev/null || true)"
+  local candidate
   for candidate in "$bundled_native" \
                    "$vis_install_dir/vis-agent-native" \
-                   "${source_root:+$source_root/target/vis}"; do
-    [[ -n "$candidate" && -x "$candidate" ]] || continue
+                   "$managed_src/target/vis"; do
+    [[ -x "$candidate" ]] || continue
     printf '%s\n' "$candidate"
     return 0
   done
@@ -511,7 +513,7 @@ update_source() {
 # it. A wrapper that lives IN a checkout is source: git owns it, never this.
 sync_wrapper_from_source() {
   local source_root="$1" incoming="$1/bin/vis-agent"
-  (( ! launcher_is_checkout )) || return 0
+  (( ! launcher_is_git_owned )) || return 0
   [[ -f "$incoming" ]] || return 0
   if cmp -s "$incoming" "$launcher_path"; then return 0; fi
   if [[ ! -w "$launcher_path" || ! -w "$bin_dir" ]]; then
@@ -557,7 +559,7 @@ update_native() {
 
   # Where the private runtime belongs: beside an installed launcher, or in Vis
   # state when the launcher is a tracked checkout file we must never overwrite.
-  if (( launcher_is_checkout )); then
+  if (( launcher_is_git_owned )); then
     mkdir -p "$vis_install_dir"
     native_dir="$vis_install_dir"
   else
@@ -584,7 +586,7 @@ update_native() {
   rm -rf "$native_dir/vis-agent-resources"
   [[ ! -d "$unpack/vis-agent-resources" ]] || \
     mv -f "$unpack/vis-agent-resources" "$native_dir/vis-agent-resources"
-  if (( launcher_is_checkout )); then
+  if (( launcher_is_git_owned )); then
     # Never overwrite a tracked development launcher: the released one lives in
     # Vis state; source stays the checkout's responsibility.
     mv -f "$unpack/vis-agent" "$vis_install_dir/vis-agent"

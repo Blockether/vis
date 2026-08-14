@@ -52,7 +52,7 @@ The app is useless on its own: it needs a gateway. Start one with `vis-agent gat
 
 ## The runtime
 
-There is nothing to choose: how Vis was installed decides what runs, and everything it installs lives under `~/.vis`.
+There is nothing to choose: how Vis was installed decides what runs, and everything it installs lives under `~/.vis`. Where the command file sits decides nothing either — a copy of the wrapper inside a checkout still runs the runtime Vis owns, never the tree around it.
 
 | Runtime | Runs | Comes from |
 |---|---|---|

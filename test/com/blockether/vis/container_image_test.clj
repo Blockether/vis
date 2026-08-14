@@ -163,3 +163,43 @@
                        output))
              (finally (doseq [file (reverse (file-seq tmp))]
                         (io/delete-file file true)))))))
+
+(defdescribe
+  wrapper-ignores-the-tree-it-sits-in-test
+  (it "runs what is installed, never the checkout the command file sits in"
+      ;; A copy of this wrapper inside a repository checkout is still only the
+      ;; command. Neither that tree's source nor a `target/vis` built in it is a
+      ;; runtime, so what runs is what Vis installed under VIS_HOME — here,
+      ;; nothing, and the wrapper says so instead of adopting its surroundings.
+      (let
+        [tmp
+         (.toFile (Files/createTempDirectory "vis-checkout-launcher" (make-array FileAttribute 0)))
+
+         checkout
+         (io/file tmp "checkout")
+
+         wrapper
+         (io/file checkout "bin" "vis-agent")
+
+         native
+         (io/file checkout "target" "vis")]
+
+        (try (.mkdirs (io/file checkout "bin"))
+             (.mkdirs (io/file checkout "target"))
+             (spit (io/file checkout "deps.edn") "{}\n")
+             (io/copy (io/file "bin" "vis-agent") wrapper)
+             (.setExecutable wrapper true false)
+             (spit native "#!/bin/sh\nexit 0\n")
+             (.setExecutable native true false)
+             (let
+               [{:keys [exit output]} (run-wrapper wrapper
+                                                   {"HOME" (.getAbsolutePath tmp)
+                                                    "VIS_HOME" (.getAbsolutePath (io/file tmp
+                                                                                          "state"))}
+                                                   ["runtime"])]
+               (expect (zero? exit) output)
+               (expect (re-find #"(?m)^Runtime: +jvm$" output) output)
+               (expect (re-find #"(?m)^Native: +not installed$" output) output)
+               (expect (re-find #"(?m)^Source: +not installed$" output) output))
+             (finally (doseq [file (reverse (file-seq tmp))]
+                        (io/delete-file file true)))))))

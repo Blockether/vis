@@ -25,8 +25,11 @@ There is no flag, no environment variable and no persisted choice on top of
 that — `vis-agent update` moves the installed runtime forward, and never swaps
 one runtime for the other.
 
-Running a checkout's own `bin/vis-agent` does run that checkout: invoking it
-*is* the answer.
+Where the command file sits decides nothing either. A copy of the wrapper
+inside a repository checkout — this repository's own `bin/vis-agent` included —
+is still only the command: it runs the runtime Vis owns under `~/.vis`, and
+neither that checkout's source nor a `target/vis` built in it is a runtime.
+Run a checkout's own code with `clojure -M:vis` from inside it.
 
 ## What runs
 
