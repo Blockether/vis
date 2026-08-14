@@ -9,7 +9,7 @@ import {
   GatewayClient,
   GatewayError,
 } from "../lib/gateway";
-import { ChevronIcon, PlusIcon } from "../components/icons";
+import { ChevronIcon } from "../components/icons";
 import type {
   GatewayConn,
   PushDevice,
@@ -73,7 +73,6 @@ import {
   ChoiceCell,
   Chip,
   DialogFrame,
-  IconButton,
   Input,
   ListRow,
   Modal,
@@ -972,23 +971,24 @@ function SettingsColumn({
   title: string;
   description?: string;
   meta?: ReactNode;
-  /** The column's ONE verb, at the end of its band: `Add a machine` is the ＋. */
+  /** The column's ONE verb, at the end of its band: `Add a machine`. */
   action?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <section className="flex min-w-0 flex-col sm:min-h-0">
-      {/* A BAND'S VERB CENTRES ITSELF ON THE BAND, and the name keeps its own
-          line. The title, its meta and the ＋ used to share ONE wrapping flex
-          line whose height was the button's: the two words sat at the top of it
-          on their baseline while the ＋ centred itself in the rest, 8px lower
-          than the title it stands beside — the one amber thing in the band was
-          the one thing off its line. The name and its meta wrap inside their own
-          cell now (the same wrap rule a `SettingsPanel` band has: a machine label
-          is as long as the host it names, and it may not eat the column's own
-          title), and the verb is the band's trailing cell, centred against
-          whatever that cell grows to. The band never pads around it: the row is
-          `min-h-12` because a finger lands there. */}
+      {/* A BAND NAMES THE COLUMN IN ONE LINE, and its verb is a WORD.
+          The title, a meta and the ＋ used to share one wrapping flex line whose
+          height was the button's: the two words sat at the top of it on their
+          baseline while the ＋ centred itself in the rest, 8px lower than the title
+          it stands beside. Then the reader asked what the meta and the sentence
+          under it were FOR — a column that lists every machine does not need to
+          name one of them in its own header, and "tap a row" is not news — and a
+          bare ＋ is the mark this app already spends on a new session, so an amber
+          slab of it here was one glyph meaning two things. The name and its meta
+          wrap inside their own cell, the verb is the band's trailing cell centred
+          against whatever that cell grows to, and the band never pads around it:
+          the row is `min-h-12` because a finger lands there. */}
       <header className="min-w-0 shrink-0 border-b border-dialog-edge bg-level-machine">
         <div className="flex min-h-12 min-w-0 items-center gap-3 px-3 py-1 sm:px-4 mouse:min-h-9">
           <div className="flex min-w-0 flex-auto flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -1164,20 +1164,14 @@ export function SettingsDialog({
         <div className="grid min-w-0 grid-cols-1 divide-y divide-dialog-edge sm:min-h-0 sm:flex-1 sm:grid-cols-2 sm:divide-x sm:divide-y-0 sm:overflow-hidden">
           <SettingsColumn
             title="Machines"
-            description="Tap a machine to read its settings."
-            meta={
-              gateway
-                ? (gateway.label ?? gatewayHost(gateway.url))
-                : "none paired"
-            }
             action={
-              <IconButton
-                label="Add a machine"
+              <Button
                 variant="primary"
+                density="compact"
                 onClick={() => setIsAdding(true)}
               >
-                <PlusIcon className="size-4" />
-              </IconButton>
+                Add a machine
+              </Button>
             }
           >
             {/* THE COG'S FIRST ANSWER IS THE FLEET. Reported over the machines screen:
@@ -1213,7 +1207,7 @@ export function SettingsDialog({
             ) : (
               <SettingsPanel title="No machine yet">
                 <p className="px-4 py-6 text-center font-mono text-body text-dialog-hint">
-                  Add one with the + above and its own settings appear here.
+                  Add a machine above and its settings appear here.
                 </p>
               </SettingsPanel>
             )}

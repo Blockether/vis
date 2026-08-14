@@ -10,8 +10,17 @@ import {
   reachOf,
 } from '../lib/endpoints';
 import { onWake } from '../lib/wake';
-import { Banner, Button, ConfirmRow, Input, ListRow, Spinner } from './ui';
-import { ChevronIcon } from './icons';
+import {
+  Banner,
+  Button,
+  ConfirmRow,
+  Input,
+  ListRow,
+  RowVerbs,
+  Spinner,
+  type RowVerb,
+} from './ui';
+import { ChevronIcon, PencilIcon, StarIcon, TrashIcon } from './icons';
 
 /**
  * THE MACHINES THIS DEVICE IS PAIRED WITH, AND THE WAY TO ADD ONE — two pieces,
@@ -263,17 +272,19 @@ function healthView(h?: GwHealth): GwHealthView {
  * and different exactly when you are reading another machine's settings, so they
  * are two marks rather than one.
  *
- * A MACHINE'S OWN VERBS STAND IN THE ROW THIS COLUMN IS READING, and nowhere
- * else. They were a `Saved connection` panel under the list first — a name field,
+ * A MACHINE'S OWN VERBS STAND IN ITS OWN ROW, on every row, always painted.
+ * They were a `Saved connection` panel under the list first — a name field,
  * `Make primary` and `Forget this machine` standing permanently open, three
  * controls for ONE machine, acting on whichever row the column happened to be
  * reading rather than on the row under the thumb. Then they hid behind a left
  * swipe and a `⋯`, and that is what the reader reported next: a gesture nobody
- * can see and a mark that says nothing are not verbs. So the row the column is
- * READING — the machine whose settings fill the rest of the column, the row the
- * thumb just pressed — opens its own strip of WORDS under the name they act on:
- * `Primary`, `Rename`, `Forget`. Rename edits IN the row and Forget asks IN the
- * row, so neither verb opens a surface over the list it acts on.
+ * can see and a mark that says nothing are not verbs. Then they were a strip of
+ * full-width WORDS under the row being read — reported again, because a second
+ * list of buttons under the first is not a row's verbs either, and only one row
+ * in the column ever had any. So they are `RowVerbs`: three marks in the row's
+ * own trailing cell, in the same place on every row, and Rename still edits IN
+ * the row while Forget still asks IN it — neither opens a surface over the list
+ * it acts on.
  *
  * A verb exists here only when its handler does, so `ConnectScreen`'s list —
  * where a row is a place to GO, not a thing to manage — stays exactly as it was.
@@ -387,49 +398,44 @@ export function MachineRows({
             </div>
           );
 
-        // THE VERBS OF THE MACHINE THIS COLUMN IS READING, in words. A verb exists
-        // only when its handler does, and the rank verb is missing from the machine
-        // that already holds the rank.
+        // THE VERBS OF THIS MACHINE, standing in this machine's own row — on EVERY
+        // row, not only the one the column is reading. A verb exists only when its
+        // handler does, so `ConnectScreen`'s list carries none of them, and the rank
+        // verb is missing from the machine that already holds the rank.
         const isReading = conn.url === selectedUrl;
-        const verbs: {
-          key: string;
-          label: string;
-          /** The whole sentence, for a reader who cannot see the name above it. */
-          name: string;
-          variant: 'secondary' | 'danger';
-          onSelect: () => void;
-        }[] = [];
+        const verbs: RowVerb[] = [];
         if (onMakePrimary && conn.url !== primaryUrl)
           verbs.push({
             key: 'primary',
-            label: 'Primary',
-            name: `Make ${name} primary`,
-            variant: 'secondary',
+            label: 'Make primary',
+            icon: <StarIcon className="size-4" />,
             onSelect: () => void onMakePrimary(conn),
           });
         if (onRename)
           verbs.push({
             key: 'rename',
             label: 'Rename',
-            name: `Rename ${name}`,
-            variant: 'secondary',
+            icon: <PencilIcon className="size-4" />,
             onSelect: () => startRename(conn),
           });
         if (onForget)
           verbs.push({
             key: 'forget',
             label: 'Forget',
-            name: `Forget ${name}`,
-            variant: 'danger',
+            icon: <TrashIcon className="size-4" />,
+            tone: 'danger',
             onSelect: () => setForgetting(conn.url),
           });
 
         return (
-          <div key={conn.url} className={isReading ? 'bg-panel-2' : ''}>
+          <div
+            key={conn.url}
+            className={`flex items-stretch ${isReading ? 'bg-panel-2' : ''}`}
+          >
             <ListRow
               isSelected={isReading}
               onClick={() => onPick(conn)}
-              className="min-w-0 gap-3"
+              className="min-w-0 flex-1 gap-3"
             >
                 <span
                   className={`shrink-0 font-mono text-title ${hv.dotClass} ${hv.state === 'checking' ? 'animate-pulse' : ''}`}
@@ -480,28 +486,7 @@ export function MachineRows({
                 )}
                 {actionLabel && <ChevronIcon className="size-3 text-dialog-hint" aria-hidden />}
             </ListRow>
-            {isReading && verbs.length > 0 && (
-              // THE STRIP STANDS INSIDE THE MACHINE'S OWN PAPER, on the row's own
-              // inset, so the words belong to the name above them rather than to
-              // the panels below — and only ONE row can carry them, the one this
-              // column is reading, which is also the row the thumb just pressed.
-              <div className="flex items-stretch gap-2 px-3 pb-2">
-                {verbs.map((verb) => (
-                  <Button
-                    key={verb.key}
-                    type="button"
-                    variant={verb.variant}
-                    density="panel"
-                    aria-label={verb.name}
-                    title={verb.name}
-                    className="min-w-0 flex-1"
-                    onClick={verb.onSelect}
-                  >
-                    {verb.label}
-                  </Button>
-                ))}
-              </div>
-            )}
+            <RowVerbs isRowEnd label={name} verbs={verbs} />
           </div>
         );
       })}

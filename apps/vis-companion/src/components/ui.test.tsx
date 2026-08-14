@@ -1285,14 +1285,22 @@ describe("settings is ONE dialog with two columns", () => {
     expect(settings).toContain("sm:divide-y-0");
   });
 
-  it("pairs a machine from the band's own +, over the column rather than inside it", () => {
+  it("pairs a machine from the band's own word, over the column rather than inside it", () => {
     // The verb used to be a button that CLOSED this dialog and navigated to the
     // machines screen. Then it was two pairing cards standing permanently open
     // under the list, so the column opened on forms for a machine that does not
-    // exist yet, and the fleet the cog was pressed FOR started below them. It is
-    // one icon in the band now, and what it opens is the app's own `fit` sheet.
-    expect(settings).toContain('label="Add a machine"');
-    expect(settings).toContain('<PlusIcon className="size-4" />');
+    // exist yet, and the fleet the cog was pressed FOR started below them. Then it
+    // was an amber ＋ — the mark this app already spends on a NEW SESSION, so one
+    // glyph meant two things and it was the only thing in the band with a face.
+    // It is the band's one WORD now, and what it opens is the app's own `fit` sheet.
+    const band = settings.slice(
+      settings.indexOf("<SettingsColumn"),
+      settings.indexOf("{/* THE COG"),
+    );
+    expect(band).toContain('variant="primary"');
+    expect(band).toContain('density="compact"');
+    expect(band).toContain("Add a machine");
+    expect(settings).not.toContain("<PlusIcon");
     const sheet = settings.slice(settings.indexOf('<Modal size="fit"'));
     expect(sheet).toContain('title="Add a machine"');
     expect(sheet).toContain("<AddMachine");
@@ -2689,18 +2697,23 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(connectSource).not.toContain("<button");
   });
 
-  // Regression, user report on the machines column ("I don't need the ⋯ and
-  // swiping, also this long description is shit and the + alignment IS SHIT"):
-  // the column's band spelled a 310-character paragraph — five lines on a 390px
-  // phone, six on a 320px one, a 123px band introducing a 48px row — a machine's
-  // verbs hid behind a swipe strip and a `⋯`, and the ＋ centred itself in a flex
-  // line whose other two items sat on their baseline, so the one amber thing in
-  // the band was 8px lower than the title it stands beside.
-  it("says a machine's verbs out loud and lets the band centre its own", () => {
-    // Nothing on a machine row is reached by a gesture or by a mark.
+  // Regression, user reports on the machines column ("I don't need the ⋯ and
+  // swiping, also this long description is shit and the + alignment IS SHIT", then
+  // "what for I need those two selected in red ... this plus is shitty ... the
+  // swipe should be always right without this ⋯"): the band spelled a
+  // 310-character paragraph, then a one-line one, plus a meta naming the very
+  // machine the rows under it already name — 71px of header over a 48px row — and
+  // the ＋ was an amber slab of the mark this app spends on a NEW SESSION. The verbs
+  // went from a swipe and a `⋯` to a strip of two full-width words under the one row
+  // being read, which is a second list, not a row's verbs.
+  it("gives the band one line and every row its own verbs", () => {
+    // Nothing on a machine row is reached by a gesture, a mark or a strip.
     expect(machinesSource).not.toContain("SwipeActions");
     expect(machinesSource).not.toContain("KebabButton");
     expect(machinesSource).not.toContain("Actions for");
+    expect(machinesSource).toContain("<RowVerbs isRowEnd label={name} verbs={verbs} />");
+    expect(machinesSource).not.toContain('density="panel"');
+    expect(machinesSource).not.toContain("isReading && verbs.length");
 
     // The verb is the band's trailing CELL, centred against the title's own cell,
     // and that cell is what wraps — never the line the verb stands on.
@@ -2710,12 +2723,20 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(band).toContain("min-h-12");
     expect(band).not.toContain("items-baseline");
 
-    // A band REPORTS in one line. It is a description, not a manual.
-    const description =
-      /title="Machines"\s+description="([^"]*)"/.exec(settingsSource)?.[1] ?? "";
-    expect(description.length).toBeGreaterThan(0);
-    expect(description.length).toBeLessThan(60);
+    // MACHINES says its own name and nothing else: no sentence telling the reader
+    // to tap a row, and no meta naming one machine over a list of them.
+    const machinesColumn =
+      /<SettingsColumn\s+title="Machines"([\s\S]*?)>\s*\{\/\*/.exec(settingsSource)?.[1] ??
+      "";
+    expect(machinesColumn.length).toBeGreaterThan(0);
+    expect(machinesColumn).not.toContain("description=");
+    expect(machinesColumn).not.toContain("meta=");
     expect(settingsSource).not.toContain("Swipe a row");
+    expect(settingsSource).not.toContain("Tap a machine");
+
+    // And no list in the app hides a verb behind a gesture any more.
+    expect(sessionsListSource).not.toContain("SwipeActions");
+    expect(sessionsListSource).toContain("<RowVerbs");
   });
 
   it("keeps no control nobody uses", () => {

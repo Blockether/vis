@@ -23,6 +23,7 @@ import {
   NewSessionButton,
   ProjectCrumb,
   RowDisclosure,
+  RowVerbs,
   SectionGap,
   SectionHeader,
   SectionShelf,
@@ -54,7 +55,6 @@ import {
   useListScrollPark,
   type ListAnchor,
 } from '../lib/list-scroll';
-import { SwipeActions } from '../components/SwipeActions';
 import {
   ManageProjectsSheet,
   type ManagedProject,
@@ -366,7 +366,7 @@ export function SessionsScreen({
   >({});
   const [draftLabel, setDraftLabel] = useState('');
   const pollStartedAt = useRef<number | null>(null);
-  // Swipe-revealed row actions, plus the group header's project delete. One dialog
+  // The verbs standing in every row, plus the group header's project delete. One dialog
   // serves all three: renaming asks for the new title, both deletes ask for consent
   // — a destructive tap two pixels from a thumb rest position must never be one-way.
   const [rowAction, setRowAction] = useState<RowAction | null>(null);
@@ -2417,33 +2417,6 @@ const SessionRow = memo(function SessionRow({
           onConfirm={onConfirmDelete}
         />
       ) : (
-      <SwipeActions
-        label={title}
-        actions={[
-          {
-            key: 'favorite',
-            label: isStarred ? 'Unstar' : 'Star',
-            icon: <StarIcon filled={isStarred} className="size-4" />,
-            // The one action on the strip that is not a neutral verb: it wears the
-            // same brand yellow as the mark it leaves.
-            tone: 'accent',
-            onSelect: toggleStar,
-          },
-          {
-            key: 'rename',
-            label: 'Rename',
-            icon: <PencilIcon className="size-4" />,
-            onSelect: () => onRename(session),
-          },
-          {
-            key: 'delete',
-            label: 'Delete',
-            icon: <TrashIcon className="size-4" />,
-            tone: 'danger',
-            onSelect: () => onDelete(session),
-          },
-        ]}
-      >
       <div className="flex items-stretch">
         <button
           type="button"
@@ -2477,16 +2450,6 @@ const SessionRow = memo(function SessionRow({
             >
               {title}
             </span>
-            {/* The star sits immediately RIGHT of the title, on every row. Riding at
-                the end of the flag cluster, it landed behind `new`/`dirty`/`draft`,
-                so the one mark the human typed in themselves moved with whatever
-                else the row happened to carry. */}
-            {isStarred && (
-              <span className="shrink-0">
-                <StarIcon filled className="size-3" />
-                <span className="sr-only">Favorite</span>
-              </span>
-            )}
           </span>
           {/* What the session HAS — unread answers, unsent words, the draft it was
               forked into — in ONE column of its own, so the flags of every
@@ -2554,6 +2517,33 @@ const SessionRow = memo(function SessionRow({
           </span>
         </span>
         </button>
+        <RowVerbs
+          label={title}
+          verbs={[
+            {
+              key: 'favorite',
+              // The one verb that is also a STATE: filled and amber is starred, so
+              // the row wears ONE star — the mark and the way to take it back.
+              label: isStarred ? 'Unstar' : 'Star',
+              icon: <StarIcon filled={isStarred} className="size-4" />,
+              isOn: isStarred,
+              onSelect: toggleStar,
+            },
+            {
+              key: 'rename',
+              label: 'Rename',
+              icon: <PencilIcon className="size-4" />,
+              onSelect: () => onRename(session),
+            },
+            {
+              key: 'delete',
+              label: 'Delete',
+              icon: <TrashIcon className="size-4" />,
+              tone: 'danger',
+              onSelect: () => onDelete(session),
+            },
+          ]}
+        />
         {/* The same box, the same column and the same right edge as the `⋯` in the
             project header directly above: both promise "there is more here", so
             neither is allowed its own geometry. */}
@@ -2565,7 +2555,6 @@ const SessionRow = memo(function SessionRow({
           />
         </HeaderActions>
       </div>
-      </SwipeActions>
       )}
       {isConfirmingDelete && deleteError && (
         <div className="px-3 pb-2">

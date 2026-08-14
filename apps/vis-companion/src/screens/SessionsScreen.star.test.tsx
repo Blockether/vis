@@ -37,20 +37,23 @@ describe("starring a session", () => {
     },
   ];
 
-  it("paints the star action in the brand accent, not the neutral verb ink", async () => {
+  it("paints the star mark in the brand accent the moment it is on", async () => {
     const view = renderSessionsScreen({ machines });
     restore = view.restore;
     await screen.findByText("Older session");
 
-    const star = screen.getAllByRole("button", { name: "Star" })[0];
-    const rename = screen.getAllByRole("button", { name: "Rename" })[0];
-    expect(star.className).toContain("bg-accent/15");
-    // The amber SLAB, with the palette's amber INK on it: the #ffc420 fill as a
-    // 9px caption on that slab measured 1.37:1 (see SwipeActions.test.tsx).
-    expect(star.className).toContain("text-accent-ink");
-    // Rename stays neutral: the strip has exactly one coloured verb beside Delete.
-    expect(rename.className).toContain("bg-panel-2");
-    expect(rename.className).not.toContain("bg-accent/15");
+    const cell = () => screen.getByRole("group", { name: "Older session actions" });
+    const ink = (label: string) =>
+      cell().querySelector(`button[aria-label="${label}"] span`)!.className;
+    // OFF: the glyph is the row's own quiet chrome, exactly like the Rename beside it.
+    expect(ink("Star")).not.toContain("text-accent-ink");
+
+    await userEvent.click(cell().querySelector('button[aria-label="Star"]')!);
+
+    // ON: the mark IS the state, so it wears the palette's READABLE amber — the
+    // #ffc420 fill measured 1.37:1 as ink and arrived as a smear rather than a mark.
+    expect(ink("Unstar")).toContain("text-accent-ink");
+    expect(ink("Rename")).not.toContain("text-accent-ink");
   });
 
   it("pins the starred row to the top and brings it back into view", async () => {
@@ -91,13 +94,14 @@ describe("starring a session", () => {
   // painted #ffc420 on #faf3eb paper at 1.45:1, so it could not be SEEN until the
   // list was left and re-entered and the eye went looking for it. The state was
   // never the bug; see `icons.tsx` for the outline that gives the mark a shape.
-  it("wears its star on the row the moment the strip is tapped", async () => {
+  it("wears its star on the row the moment the mark is tapped", async () => {
     const view = renderSessionsScreen({ machines });
     restore = view.restore;
     await screen.findByText("Older session");
     const row = () =>
-      document.querySelector('[data-session-id="older"]') as HTMLElement;
-    expect(row().textContent).not.toContain("Favorite");
+      (document.querySelector('[data-session-id="older"]') as HTMLElement)
+        .parentElement!;
+    expect(row().querySelector("svg.fill-accent")).toBeNull();
 
     await userEvent.click(
       screen
@@ -105,9 +109,10 @@ describe("starring a session", () => {
         .querySelector('button[aria-label="Star"]')!,
     );
 
-    // No remount, no reopened list: the same row, in the same commit.
-    expect(row().textContent).toContain("Favorite");
+    // No remount, no reopened list: the same row, in the same commit. One star,
+    // not a mark and a control — the row's state IS the way to take it back.
     expect(row().querySelector("svg.fill-accent")).not.toBeNull();
+    expect(row().querySelectorAll("svg.fill-accent")).toHaveLength(1);
     expect(
       screen
         .getByRole("group", { name: "Older session actions" })
@@ -148,9 +153,10 @@ describe("starring a session", () => {
 
     // The row the thumb was on is still on screen, wearing its mark — on page one,
     // where the pin put it, and at the top of its project.
-    const row = document.querySelector('[data-session-id="s12"]');
+    const row =
+      document.querySelector('[data-session-id="s12"]')?.parentElement ?? null;
     expect(row).not.toBeNull();
-    expect(row!.textContent).toContain("Favorite");
+    expect(row!.querySelector("svg.fill-accent")).not.toBeNull();
     expect(rowOrder()[0]).toBe("s12");
   });
 });

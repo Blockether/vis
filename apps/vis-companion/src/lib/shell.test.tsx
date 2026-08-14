@@ -225,12 +225,17 @@ describe('the app bar', () => {
     expect(headings.indexOf('Machines')).toBeLessThan(headings.indexOf('Application'));
 
     // A machine is a ROW — its name, its address, its verdict — not a bare tab,
-    // and the row this dialog is READING carries the machine's own verbs in words.
+    // and EVERY row carries the machine's own verbs in its own trailing cell.
     const [row] = within(dialog).getAllByRole('button', { name: /laptop/ });
     expect(row.textContent).toContain('app-gateway');
-    expect(within(dialog).getByRole('button', { name: 'Forget laptop' })).toBeTruthy();
+    expect(
+      within(within(dialog).getByRole('group', { name: 'laptop actions' })).getByRole(
+        'button',
+        { name: 'Forget' },
+      ),
+    ).toBeTruthy();
 
-    // Pairing is one icon in the band, and what it opens stands OVER this dialog
+    // Pairing is one word in the band, and what it opens stands OVER this dialog
     // rather than inside it: nothing navigates away to reach either way in.
     expect(within(dialog).queryByPlaceholderText(/vis:\/\/gateway/)).toBeNull();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Add a machine' }));
@@ -253,7 +258,11 @@ describe('the app bar', () => {
     // One box: this application's appearance AND the machines it talks to — a
     // machine's own verbs are inside it, in the row the dialog is reading, and
     // Escape closes what THEY opened before it closes the dialog under it.
-    await userEvent.click(screen.getByRole('button', { name: 'Forget laptop' }));
+    await userEvent.click(
+      within(screen.getByRole('group', { name: 'laptop actions' })).getByRole('button', {
+        name: 'Forget',
+      }),
+    );
     expect(await screen.findByRole('group', { name: 'Forget laptop?' })).toBeTruthy();
     await userEvent.keyboard('{Escape}');
     await waitFor(() =>

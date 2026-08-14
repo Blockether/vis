@@ -485,6 +485,85 @@ export const ListRow = forwardRef<
 });
 
 /**
+ * A ROW'S OWN VERBS, STANDING IN THE ROW, and there is only one of it.
+ *
+ * Star, rename and delete used to hide behind a LEFT SWIPE; a machine's rename
+ * and forget hid behind a `⋯`, and then behind a strip of full-width words that
+ * opened only under the row the column happened to be reading. Every one of
+ * those was reported: a gesture nobody can see, a mark that says nothing, and a
+ * second list of words under the first are not verbs. So a row's verbs are the
+ * row's own TRAILING CELL — on every row, always painted, in the same place,
+ * whatever the row is and whatever the pointer is doing.
+ *
+ * THEY ARE MARKS, NOT WORDS. Three words per row run a second column down the
+ * trailing edge and take the width the name came for; three glyphs cost 92px of
+ * a 320px row. Each one is an `IconButton` — the app's one icon box, a 32px face
+ * with a 44px target on touch and the desktop's 24px under a pointer — and the
+ * GROUP names the row (`Older session actions`), so the word on each glyph
+ * (`Star`, `Rename`, `Delete`) is read in the row it acts on.
+ *
+ * TONE IS THE VERB'S MEANING, spelled here and never at a call site: `neutral`
+ * is chrome, `danger` is the app's one destructive red (`remove` — the page's
+ * own ink at rest, red only under the pointer, exactly like every ✕), and `isOn`
+ * is a verb whose glyph is ALSO the row's state, so a starred session carries
+ * one amber star that is both the mark and the way to take it back.
+ */
+export interface RowVerb {
+  key: string;
+  /** Icon-only, so the word is not optional: `Star`, `Rename`, `Delete`. */
+  label: string;
+  icon: ReactNode;
+  tone?: 'neutral' | 'danger';
+  /** This glyph is the row's own state mark, and the state is ON. */
+  isOn?: boolean;
+  /** A verb this row cannot do keeps its place, so the cluster never goes ragged. */
+  isDisabled?: boolean;
+  onSelect: () => void;
+}
+
+export function RowVerbs({
+  label,
+  verbs,
+  isRowEnd = false,
+}: {
+  label: string;
+  verbs: RowVerb[];
+  /**
+   * This cluster ENDS the row, so it owns the row's trailing gutter and its last
+   * box stops exactly where the band's own verb above it stops. A row that ends
+   * in something else — the sessions list ends in its disclosure — leaves that
+   * edge to the control that owns it.
+   */
+  isRowEnd?: boolean;
+}) {
+  if (verbs.length === 0) return null;
+  return (
+    <span
+      role="group"
+      aria-label={`${label} actions`}
+      className={`flex shrink-0 items-center gap-0.5 ${
+        isRowEnd ? 'pr-3 sm:pr-4' : ''
+      }`}
+    >
+      {verbs.map((verb) => (
+        <IconButton
+          key={verb.key}
+          label={verb.label}
+          title={verb.label}
+          variant={verb.tone === 'danger' ? 'remove' : 'quiet'}
+          disabled={verb.isDisabled}
+          onClick={verb.onSelect}
+        >
+          {/* The ink of a state, not of a control: `isOn` is the row saying what it
+              IS, so the glyph carries the brand ink the mark used to carry. */}
+          <span className={verb.isOn ? 'text-accent-ink' : ''}>{verb.icon}</span>
+        </IconButton>
+      ))}
+    </span>
+  );
+}
+
+/**
  * THE ANSWER TO A DESTRUCTIVE QUESTION, ASKED IN THE ROW ITSELF, and there is
  * only one of it.
  *

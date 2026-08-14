@@ -8,7 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
-- A machine's verbs are words in the row the settings column is reading, not a swipe and a `⋯`
+- Every list row wears its own verbs at its trailing edge — no swipe, no `⋯`, no strip of words under the row
+- The machines band is one line: its name and `Add a machine`, with no sentence about tapping and no address it already lists
 
 ## [v0.1.37] - 2026-08-14
 
