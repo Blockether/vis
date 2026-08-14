@@ -1,3 +1,4 @@
+import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
@@ -57,6 +58,7 @@ import {
   MachineTab,
   MetaButton,
   NewSessionButton,
+  NotifySwitchRow,
   OptionRow,
   Pill,
   Disclosure,
@@ -2436,6 +2438,59 @@ describe("a setting is picked and switched by one control each", () => {
   });
 });
 
+// Regression, user report ("I am on the same device and I see four entries — what is
+// even the purpose? I should just know if I am connected or not"): the notifications
+// panel answered an OPERATOR's question — every push token the gateway holds, one row
+// each, so one reinstalled iPhone stood in it four times — while the reader's own
+// question survived only as the verb printed on a button.
+describe("the notifications row answers one question", () => {
+  const row = (props: Partial<ComponentProps<typeof NotifySwitchRow>> = {}) =>
+    renderToStaticMarkup(
+      <NotifySwitchRow machine="visgw" isOn={false} onClick={() => {}} {...props} />,
+    );
+
+  it("states whether this device is connected, and names the machine either way", () => {
+    const on = row({ isOn: true });
+    expect(on).toContain("Connected");
+    expect(on).toContain("visgw alerts this device when a turn finishes.");
+    expect(on).toContain('aria-label="Notifications from visgw: on"');
+    expect(on).toContain('aria-checked="true"');
+
+    const off = row();
+    expect(off).toContain("Not connected");
+    expect(off).toContain("visgw will not alert this device.");
+    expect(off).toContain('aria-checked="false"');
+  });
+
+  it("keeps ONE control for both verbs, in the same place in both states", () => {
+    const buttons = (markup: string) => (markup.match(/<button/g) ?? []).length;
+    expect(buttons(row({ isOn: true }))).toBe(1);
+    expect(buttons(row())).toBe(1);
+    expect(row({ isOn: true })).toContain('role="switch"');
+    expect(row()).toContain('role="switch"');
+  });
+
+  it("says which way it is moving, and asks before it answers", () => {
+    expect(row({ isBusy: true })).toContain("Connecting…");
+    expect(row({ isOn: true, isBusy: true })).toContain("Disconnecting…");
+
+    const checking = row({ isChecking: true });
+    expect(checking).toContain("Checking…");
+    expect(checking).toContain("Asking visgw whether this device is registered.");
+    // A verdict is never rendered before the machine has answered.
+    expect(checking).not.toContain("Not connected");
+    expect(checking).toContain('aria-busy="true"');
+  });
+
+  it("stands a finger tall and lets a long machine name wrap", () => {
+    const markup = row({ machine: "gateway.example.com" });
+    expect(markup).toContain("min-h-12");
+    expect(markup).toContain("break-words");
+    expect(markup).not.toContain("truncate");
+    expect(markup).toContain("gateway.example.com will not alert this device.");
+  });
+});
+
 // The call sites, one layer down again.
 describe("the session screen and the settings dialog spell no control out", () => {
   it("leaves not one hand-rolled button in either", () => {
@@ -2524,6 +2579,26 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(settingsSource).toContain("<Switch");
     expect(settingsSource).not.toContain("function ChoiceCell");
     expect(settingsSource).not.toContain("function Switch");
+  });
+
+  // Regression, user report ("I am on the same device and I see four entries — what
+  // is even the purpose? I should just know if I am connected or not"): the
+  // notifications panel rendered one row per push TOKEN the gateway holds, so one
+  // iPhone reinstalled three times filled it with four masked-token rows of the same
+  // phone, and `registered && notify` — the only thing the reader asked for — was
+  // left to the verb printed on a button.
+  it("answers the notifications question with one switch, not a token list", () => {
+    // Native push and Web Push are two transports for ONE question, so both panels
+    // ask it with the same row.
+    expect(settingsSource.match(/<NotifySwitchRow/g)).toHaveLength(2);
+    expect(settingsSource).not.toContain("Notify me from this machine");
+    expect(settingsSource).not.toContain("Stop notifying me from this machine");
+    expect(settingsSource).not.toContain("devices?.map(");
+    expect(settingsSource).not.toContain("No devices registered with this machine.");
+    expect(settingsSource).not.toContain("Checking registered devices…");
+    // The list is still READ — matching this device's masks against it is how the
+    // panel knows it is registered at all — it is simply never rendered.
+    expect(settingsSource).toContain("masks.includes(d.token_preview)");
   });
 
   it("picks a saved machine with the one pressable row", () => {
@@ -2779,7 +2854,9 @@ describe("a call site positions, and the component paints", () => {
     expect(panel).toContain("font-mono");
     expect(panel).toContain("min-h-9");
     expect(renderToStaticMarkup(<Button>Save</Button>)).not.toContain("font-mono");
-    expect(settingsSource.match(/density="panel"/g)).toHaveLength(4);
+    // The panel's two verbs became one switch (`NotifySwitchRow`); the one verb
+    // left in this screen is the door to the OS the switch cannot open itself.
+    expect(settingsSource.match(/density="panel"/g)).toHaveLength(1);
   });
 
   it("gives the spinner the app's waiting ink as a tone", () => {

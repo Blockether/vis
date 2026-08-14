@@ -40,6 +40,26 @@ export function isPushSupported(): boolean {
 }
 
 /**
+ * Whether this device has a door to its own notification settings.
+ *
+ * iOS is the one platform that can be sent there from the webview: Capacitor's
+ * navigation delegate hands a top-level navigation it cannot serve to
+ * `UIApplication.shared.open` (`@capacitor/ios` `WebViewDelegationHandler`),
+ * which lands on this app's page in Settings. Android needs an Intent and has no
+ * URL for it, so the verb is not offered there — the banner carries the whole
+ * instruction instead of a button that would do nothing.
+ */
+export function canOpenSystemNotificationSettings(): boolean {
+  return isPushSupported() && Capacitor.getPlatform() === 'ios';
+}
+
+/** Opens this app's page in system Settings, where such a door exists. */
+export function openSystemNotificationSettings(): void {
+  if (!canOpenSystemNotificationSettings()) return;
+  window.location.href = 'app-settings:';
+}
+
+/**
  * APNs has two disjoint token spaces. A debug build installed from Xcode gets a
  * sandbox token; TestFlight and the App Store get production ones — sending to
  * the wrong one fails with `BadDeviceToken`, so the app declares which it holds

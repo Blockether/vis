@@ -944,6 +944,70 @@ export function Switch({
 }
 
 /**
+ * IS THIS DEVICE CONNECTED TO THIS MACHINE — the whole answer, in one row.
+ *
+ * The notifications panel used to answer an OPERATOR's question instead: it
+ * listed every push token the gateway holds, so one iPhone reinstalled three
+ * times stood in it four times under four masked tokens, and the reader's own
+ * question — am I connected? — survived only as the verb on a button. Reported
+ * as: same device, four entries, and no way to just see whether alerts arrive.
+ *
+ * The state is a SENTENCE and the switch is the verb. Connect and disconnect are
+ * the same control in the same place whatever the answer is, so nothing here has
+ * to be read twice. The words live in this component rather than at each call
+ * site because native APNs/FCM and Web Push are two transports for ONE question
+ * and must never become two vocabularies.
+ */
+export function NotifySwitchRow({
+  machine,
+  isOn,
+  isBusy = false,
+  isChecking = false,
+  disabled = false,
+  onClick,
+}: {
+  /** The paired machine this switch speaks for; it names itself in the sentence. */
+  machine: string;
+  isOn: boolean;
+  isBusy?: boolean;
+  /** Before the first answer lands, what this device is registered for is unknown. */
+  isChecking?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  const verdict = isChecking
+    ? 'Checking…'
+    : isBusy
+      ? isOn
+        ? 'Disconnecting…'
+        : 'Connecting…'
+      : isOn
+        ? 'Connected'
+        : 'Not connected';
+  const sentence = isChecking
+    ? `Asking ${machine} whether this device is registered.`
+    : isOn
+      ? `${machine} alerts this device when a turn finishes.`
+      : `${machine} will not alert this device.`;
+
+  return (
+    <div className="flex min-h-12 items-start gap-3 px-3 py-2">
+      <span className="min-w-0 flex-1">
+        <span className="block break-words font-mono text-ui font-bold text-white">{verdict}</span>
+        <span className="block break-words font-mono text-chip text-dialog-hint">{sentence}</span>
+      </span>
+      <Switch
+        label={`Notifications from ${machine}`}
+        isOn={isOn}
+        isBusy={isBusy || isChecking}
+        disabled={disabled}
+        onClick={onClick}
+      />
+    </div>
+  );
+}
+
+/**
  * THE ✕, AND THERE IS EXACTLY ONE OF IT.
  *
  * Eight surfaces were left by three different buttons in five different boxes,

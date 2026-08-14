@@ -25,9 +25,11 @@ import type {
 import {
   acquirePushToken,
   cachedPushToken,
+  canOpenSystemNotificationSettings,
   deviceRegistration,
   isPushSupported,
   maskToken,
+  openSystemNotificationSettings,
   pushPermission,
   pushPlatform,
   type PushPermission,
@@ -49,7 +51,6 @@ import {
   registerForPush,
   registeredIds,
   refusedRelayUrl,
-  relayHost,
   relayUrlFor,
   unregisterFromPush,
 } from "../lib/relay";
@@ -75,6 +76,7 @@ import {
   Input,
   ListRow,
   Modal,
+  NotifySwitchRow,
   PROSE,
   Switch,
 } from "../components/ui";
@@ -1645,6 +1647,9 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
     null,
   );
   const [notify, setNotify] = useState(true);
+  // Nothing may be reported until the browser has answered: "Not connected"
+  // rendered before the first read is a verdict about a question not yet asked.
+  const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState<"enable" | "disable" | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -1660,6 +1665,7 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
       setNotify(wanted);
       setSubscription(current);
       setPerm(webPushPermission());
+      setLoaded(true);
     });
     return () => {
       cancelled = true;
@@ -1717,56 +1723,40 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
 
   const notifying =
     supported && notify && perm === "granted" && subscription !== null;
+  const machine = gateway.label ?? gatewayHost(gateway.url);
+  const blocked = supported && perm === "denied";
+  const hasBanner = Boolean(err) || Boolean(note) || !supported || blocked;
+
   return (
-    <SettingsPanel
-      title="Notifications"
-      description="Alerts from THIS machine only — every paired machine has its own switch."
-      meta={`web push · ${perm}`}
-    >
-      <div className="space-y-2 p-3">
-        {err && <Banner kind="err">{err}</Banner>}
-        {note && <Banner kind="ok">{note}</Banner>}
-        {supported ? (
-          <Banner kind="ok">
-            Background Web Push is available in this browser.
-          </Banner>
-        ) : (
-          <Banner kind="warn">
-            This browser does not support background Web Push.
-          </Banner>
-        )}
-        {supported && perm === "denied" && (
-          <Banner kind="warn">
-            Notifications are blocked in this browser — allow them in browser
-            settings first.
-          </Banner>
-        )}
-        <div className="flex flex-wrap gap-2">
-          {!notifying && (
-            <Button
-              density="panel"
-              className="flex-1"
-              disabled={busy !== null || !supported}
-              onClick={() => void enable()}
-            >
-              {busy === "enable" ? "Enabling…" : "Notify me from this machine"}
-            </Button>
+    <SettingsPanel title="Notifications" meta={machine}>
+      {hasBanner && (
+        <div className="space-y-2 p-3 pb-0">
+          {err && <Banner kind="err">{err}</Banner>}
+          {note && <Banner kind="ok">{note}</Banner>}
+
+          {!supported && (
+            <Banner kind="warn">
+              This browser does not support background Web Push.
+            </Banner>
           )}
-          {notifying && (
-            <Button
-              variant="danger"
-              density="panel"
-              className="flex-1"
-              disabled={busy !== null}
-              onClick={() => void disable()}
-            >
-              {busy === "disable"
-                ? "Disabling…"
-                : "Stop notifying me from this machine"}
-            </Button>
+
+          {blocked && (
+            <Banner kind="warn">
+              Notifications are blocked in this browser — allow them in browser
+              settings and this switch works again.
+            </Banner>
           )}
         </div>
-      </div>
+      )}
+
+      <NotifySwitchRow
+        machine={machine}
+        isOn={notifying}
+        isBusy={busy !== null}
+        isChecking={!loaded}
+        disabled={!supported || blocked || !loaded || busy !== null}
+        onClick={() => void (notifying ? disable() : enable())}
+      />
     </SettingsPanel>
   );
 }
@@ -1916,108 +1906,81 @@ function NativeNotificationsPanel({
   // Gateway too old to know about push at all: render nothing.
   if (unsupported) return null;
 
+  const machine = gateway.label ?? gatewayHost(gateway.url);
+  // The OS outranks everything else: a machine can hold this device's token and
+  // still reach nobody, so a blocked permission is never reported as connected.
+  const blocked = supported && perm === "denied";
+  const checking = devices === null;
+  const hasBanner =
+    Boolean(err) ||
+    Boolean(note) ||
+    !supported ||
+    blocked ||
+    Boolean(push && !available);
+
   return (
-    <SettingsPanel
-      title="Notifications"
-      description="Alerts from THIS machine only — every paired machine has its own switch."
-      meta={
-        push
-          ? available
-            ? `${push.devices} device${push.devices === 1 ? "" : "s"} · ${relayUrl ? `via ${relayHost(relayUrl)}` : pushPlatform() === "android" ? (push.fcm?.project_id ?? "fcm") : (push.environment ?? "production")}`
-            : "relay not https"
-          : "checking…"
-      }
-    >
-      <div className="space-y-2 p-3">
-        {err && <Banner kind="err">{err}</Banner>}
-        {note && <Banner kind="ok">{note}</Banner>}
+    <SettingsPanel title="Notifications" meta={machine}>
+      {hasBanner && (
+        <div className="space-y-2 p-3 pb-0">
+          {err && <Banner kind="err">{err}</Banner>}
+          {note && <Banner kind="ok">{note}</Banner>}
 
-        {push && !available && refusedRelay && (
-          <Banner kind="warn">
-            This machine relays notifications through {refusedRelay}, which is
-            not https — this device will not hand a push grant to an address on
-            the wire. Unset VIS_PUSH_RELAY_URL there and it goes back to the
-            relay this app was built with; point it at an https address to keep
-            your own.
-          </Banner>
-        )}
-
-        {!supported && (
-          <Banner kind="warn">
-            Native alerts need the iOS or Android app. The web build can stay
-            open instead.
-          </Banner>
-        )}
-
-        {supported && perm === "denied" && (
-          <Banner kind="warn">
-            Notifications are turned off for Vis in system Settings — enable
-            them there first.
-          </Banner>
-        )}
-
-        <div className="flex flex-wrap gap-2">
-          {supported && !notifying && (
-            <Button
-              density="panel"
-              className="flex-1"
-              disabled={busy !== null || !available}
-              onClick={() => void enable()}
-            >
-              {busy === "enable"
-                ? "Registering…"
-                : "Notify me from this machine"}
-            </Button>
+          {push && !available && refusedRelay && (
+            <Banner kind="warn">
+              This machine relays notifications through {refusedRelay}, which is
+              not https — this device will not hand a push grant to an address on
+              the wire. Unset VIS_PUSH_RELAY_URL there and it goes back to the
+              relay this app was built with; point it at an https address to keep
+              your own.
+            </Banner>
           )}
-          {supported && notifying && (
-            <Button
-              variant="danger"
-              density="panel"
-              className="flex-1"
-              disabled={busy !== null}
-              onClick={() => void disable()}
-            >
-              {busy === "disable"
-                ? "Removing…"
-                : "Stop notifying me from this machine"}
-            </Button>
+
+          {push && !available && !refusedRelay && (
+            <Banner kind="warn">
+              This machine cannot send notifications — it holds no push
+              credentials and no relay.
+            </Banner>
+          )}
+
+          {!supported && (
+            <Banner kind="warn">
+              Native alerts need the iOS or Android app. The web build can stay
+              open instead.
+            </Banner>
+          )}
+
+          {blocked && (
+            <Banner kind="warn">
+              Notifications are turned off for Vis in system Settings — turn them
+              on there and this switch works again.
+            </Banner>
           )}
         </div>
+      )}
 
-        {devices === null && (
-          <p className="py-4 text-center font-mono text-meta text-dialog-hint">
-            Checking registered devices…
-          </p>
-        )}
+      <NotifySwitchRow
+        machine={machine}
+        isOn={notifying && !blocked}
+        isBusy={busy !== null}
+        isChecking={checking}
+        disabled={
+          !supported || !available || blocked || checking || busy !== null
+        }
+        onClick={() => void (notifying ? disable() : enable())}
+      />
 
-        {devices?.map((device) => (
-          <div
-            key={device.token_preview}
-            className="flex min-h-12 items-center gap-2 border border-dialog-edge bg-panel-2 px-3 py-2"
+      {blocked && canOpenSystemNotificationSettings() && (
+        <div className="px-3 pb-3">
+          <Button
+            variant="secondary"
+            density="panel"
+            className="w-full"
+            onClick={() => openSystemNotificationSettings()}
           >
-            <span className="min-w-0 flex-1">
-              <span className="block truncate font-mono text-ui text-white">
-                {device.label ?? device.platform ?? "device"}
-                {masks.includes(device.token_preview) && (
-                  <span className="ml-2 text-chip font-bold uppercase tracking-wider text-accent">
-                    this device
-                  </span>
-                )}
-              </span>
-              <span className="block truncate font-mono text-meta text-dialog-hint">
-                {device.token_preview} · {device.environment ?? "production"}
-                {device.client_version ? ` · v${device.client_version}` : ""}
-              </span>
-            </span>
-          </div>
-        ))}
-
-        {devices?.length === 0 && (
-          <p className="py-4 text-center font-mono text-meta text-dialog-hint">
-            No devices registered with this machine.
-          </p>
-        )}
-      </div>
+            Open system Settings
+          </Button>
+        </div>
+      )}
     </SettingsPanel>
   );
 }
