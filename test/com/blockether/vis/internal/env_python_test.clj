@@ -451,7 +451,8 @@
         (let
           [out (run (str "print(apropos('fold_session')['fold_session'])\n"
                          "print(doc('fold_session'))"))]
-          (expect (str/includes? out "fold_session(target, gist=None) -> str"))
+          (expect (str/includes? out "fold_session(key, gist=None) -> str"))
+          (expect (str/includes? out "The key is a STRING"))
           (expect (str/includes? out "Folding changes rendering, not storage"))
           (expect (str/includes? out "there is no destructive unfold command"))
           (expect (str/includes? out "its GIST is what survives"))

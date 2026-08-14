@@ -111,7 +111,13 @@
       ;; followed (a `def` lives for the whole session; `session` itself is rebuilt before
       ;; every block and cannot hold one): it was paid for by deleting the glossary
       ;; parenthetical after "higher-order helper", and lands at 5 871.
-      (expect (< (count text) 5900))
+      ;; 5.9k → 6.05k for the fold KEY grammar. `fold_session` takes a key and a gist and
+      ;; nothing else, but §6 named only the verb: the key shape had to be remembered, and a
+      ;; guessed one folds nothing while the card still says `folded …`. Spelling the six key
+      ;; forms inline is what makes the ordered fold executable; it is paid for by dropping
+      ;; "Folding changes rendering, not storage" (the NOT-re-readable clause carries it), and
+      ;; lands at 5 985.
+      (expect (< (count text) 6050))
       (let
         [steps (mapv #(str/index-of text %)
                      ["`grep` locates unknown code" "`struct_index` every known file"
@@ -185,8 +191,11 @@
                    ;; Regression, user report: sessions stopped folding. §6 ORDERED the fold
                    ;; but named no callable, so `fold_session` had to be remembered or
                    ;; rediscovered through `doc()` — every other verb in the core is named.
-                   "`fold_session(target, gist)`" "Fold obsolete settled work"
-                   "one broad `\"-tN/iK\"` range"
+                   "`fold_session(key, gist)`" "Fold obsolete settled work"
+                   ;; Regression, user report: a fold that "saved 0 tokens". §6 named the verb
+                   ;; but not the KEY it takes, so the shape was guessed — a selector structure
+                   ;; or a bare id that resolved to nothing. The key grammar is in the core now.
+                   "the key is a STRING" "`\"-t2/i9\"` everything through it"
                    ;; Nothing stores a folded step for later: the gist is the whole survivor,
                    ;; and a prompt that hints otherwise buys a fold the model regrets.
                    "a folded step is NOT re-readable, so the gist is what survives"

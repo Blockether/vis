@@ -73,20 +73,20 @@
              (get @ca "session_summaries")))
         (expect (re-find #"^folded " out))
         (expect (re-find #"explored auth" out))))
-  (it "normalizes a provider's JSON-encoded string target before selecting scopes"
+  (it "normalizes a provider's JSON-encoded string key before selecting scopes"
       (let
         [[ca ev]
          (with-verbs)
 
          out
-         (ev "fold_session('[\"t1/i2\", \"t1/i3\"]', \"encoded target\")")]
+         (ev "fold_session('[\"t1/i2\", \"t1/i3\"]', \"encoded key\")")]
 
-        (expect
-          (= [{"scopes" #{"t1/i2" "t1/i3"} "issued_turn" 99 "at_turn" 99 "gist" "encoded target"}]
-             (get @ca "session_summaries")))
+        (expect (=
+                  [{"scopes" #{"t1/i2" "t1/i3"} "issued_turn" 99 "at_turn" 99 "gist" "encoded key"}]
+                  (get @ca "session_summaries")))
         (expect (str/includes? out "folded t1/i2, t1/i3"))))
   ;; Regression, reported as "how come the latest fold saved 0 tokens?": a hyphen
-  ;; range typed as ONE target (`"t2/i1-i56"`) used to be swallowed as a single
+  ;; range typed as ONE key (`"t2/i1-i56"`) used to be swallowed as a single
   ;; opaque scope id. It matched no wire step, the card still said `folded …`,
   ;; and the gist anchored to an id the session never had.
   (it "fold_session(\"tN/iA-iB\"): a hyphen RANGE folds the window, not one bogus scope id"
@@ -134,7 +134,7 @@
   ;; A foreign ProxyExecutable is positional-only, so the sandbox folds Python
   ;; **kwargs into ONE trailing dict for the DIRECT verbs and the verb unfolds it.
   ;; Both keyword spellings must bind exactly like the positional call.
-  (it "fold_session(target, gist=…): a trailing KEYWORD gist binds like the positional one"
+  (it "fold_session(key, gist=…): a trailing KEYWORD gist binds like the positional one"
       (let
         [[ca ev]
          (with-verbs)
@@ -146,21 +146,21 @@
                    (get @ca "session_summaries")))
         (expect (re-find #"through t1/i5" out))
         (expect (re-find #"early reads" out))))
-  (it "fold_session(target=…, gist=…): a fully KEYWORD call selects and summarizes"
+  (it "fold_session(key=…, gist=…): a fully KEYWORD call selects and summarizes"
       (let
         [[ca ev]
          (with-verbs)
 
          out
-         (ev "fold_session(target=[\"t1/i2\", \"t1/i3\"], gist=\"explored auth\")")]
+         (ev "fold_session(key=[\"t1/i2\", \"t1/i3\"], gist=\"explored auth\")")]
 
         (expect
           (= [{"scopes" #{"t1/i2" "t1/i3"} "issued_turn" 99 "at_turn" 99 "gist" "explored auth"}]
              (get @ca "session_summaries")))
         (expect (re-find #"explored auth" out))))
-  ;; Selector keywords went away with the selector dict: whatever still spreads at
-  ;; the top level is no longer a selector, so it is REFUSED with the grammar
-  ;; instead of quietly folding nothing.
+  ;; The verb takes a KEY and a gist and nothing else: whatever else still spreads at
+  ;; the top level is not a key, so it is REFUSED with the grammar instead of quietly
+  ;; folding nothing.
   (it "fold_session(through=…): a leftover selector KEYWORD is refused with the grammar"
       (let
         [ca
@@ -174,8 +174,8 @@
               nil
               (catch clojure.lang.ExceptionInfo e e))]
 
-        (expect (= :vis/fold-session-target (:type (ex-data ex))))
-        (expect (str/includes? (ex-message ex) "selector dicts are gone"))
+        (expect (= :vis/fold-session-key (:type (ex-data ex))))
+        (expect (str/includes? (ex-message ex) "fold_session takes a key and a gist"))
         (expect (nil? (get @ca "session_summaries")))))
   (it "fold_session(\"tN/iM-\"): an OPEN END folds every settled step since the cursor"
       (let
@@ -284,7 +284,7 @@
                      "gist" "mixed"}]
                    (get @ca "session_summaries")))
         (expect (str/includes? out "folded t1/i1, t2/i1-t2/i3"))))
-  (it "a token that is not a step id is refused BY NAME, with the grammar"
+  (it "a token that is not a step key is refused BY NAME, with the grammar"
       (let
         [ca
          (atom {"session_turn" 99})
@@ -295,8 +295,8 @@
          ex
          (try (sf "t1/i1, ancient-history" "typo") nil (catch clojure.lang.ExceptionInfo e e))]
 
-        (expect (= :vis/fold-session-target (:type (ex-data ex))))
-        (expect (str/includes? (ex-message ex) "not a step id: \"ancient-history\""))
+        (expect (= :vis/fold-session-key (:type (ex-data ex))))
+        (expect (str/includes? (ex-message ex) "not a step key: \"ancient-history\""))
         (expect (nil? (get @ca "session_summaries")))))
   (it "TWO ranges in one call are refused — one intent carries one window"
       (let
@@ -309,12 +309,12 @@
          ex
          (try (sf "t1/i1-i3, t2/i1-i3" "two") nil (catch clojure.lang.ExceptionInfo e e))]
 
-        (expect (= :vis/fold-session-target (:type (ex-data ex))))
+        (expect (= :vis/fold-session-key (:type (ex-data ex))))
         (expect (str/includes? (ex-message ex) "one range per fold"))
         (expect (nil? (get @ca "session_summaries")))))
   ;; Regression, same report: the fold that "saved 0 tokens" resolved to NOTHING
   ;; and was recorded anyway, so the ack claimed a fold the wire never made.
-  (it "a target that matches NO settled step is refused instead of recording a silent no-op"
+  (it "a key that matches NO settled step is refused instead of recording a silent no-op"
       (let
         [ca
          (atom {"session_turn" 2 "engine_iter_universe" ["t1/i1" "t1/i2" "t2/i1"]})
@@ -325,7 +325,7 @@
          ex
          (try (sf "t1/i7-i9" "nothing there") nil (catch clojure.lang.ExceptionInfo e e))]
 
-        (expect (= :vis/fold-session-unknown-target (:type (ex-data ex))))
+        (expect (= :vis/fold-session-unknown-key (:type (ex-data ex))))
         (expect (str/includes? (ex-message ex) "matches no settled step"))
         (expect (str/includes? (ex-message ex) "t1/i1 … t2/i1"))
         (expect (nil? (get @ca "session_summaries")))))
@@ -351,7 +351,7 @@
         (expect (= [{"scopes" #{"t1/i1"} "issued_turn" 99 "at_turn" 99}]
                    (get @ca "session_summaries")))
         (expect (re-find #"^folded t1/i1" out))))
-  (it "an empty/blank target is a no-op: records nothing, returns a hint"
+  (it "an empty/blank key is a no-op: records nothing, returns a hint"
       (let
         [[ca ev]
          (with-verbs)
@@ -361,7 +361,7 @@
 
         (expect (nil? (get @ca "session_summaries")))
         (expect (re-find #"nothing to fold" out))))
-  (it "a selector DICT target is refused by name with the string grammar"
+  (it "a non-string key — a stale selector structure — is refused by name with the grammar"
       (let
         [ca
          (atom {"session_turn" 99})
@@ -370,10 +370,10 @@
          (get (compaction-verbs ca) 'fold-session)
 
          ex
-         (try (sf {"through" "t1/i5"} "dict") nil (catch clojure.lang.ExceptionInfo e e))]
+         (try (sf {"through" "t1/i5"} "stale shape") nil (catch clojure.lang.ExceptionInfo e e))]
 
-        (expect (= :vis/fold-session-target (:type (ex-data ex))))
-        (expect (str/includes? (ex-message ex) "selector dicts are gone"))
+        (expect (= :vis/fold-session-key (:type (ex-data ex))))
+        (expect (str/includes? (ex-message ex) "fold_session takes a key and a gist"))
         (expect (str/includes? (ex-message ex) "\"t2/i1-i56\" a range"))
         (expect (nil? (get @ca "session_summaries")))))
   (it "blocks only the LIVE (unsettled) iteration of the current turn and any future turn"
@@ -431,42 +431,44 @@
 
         (expect (= :vis/fold-session-turn-unknown (:type (ex-data ex)))))))
 
-;; ── layer 1b: the target GRAMMAR (pure parse, no ctx) ────────────────────────
+;; ── layer 1b: the KEY grammar (pure parse, no ctx) ──────────────────────────
 
 (defdescribe
-  fold-target-test
+  fold-key-test
   (it "one step, one turn, and a form id folding its whole iteration"
-      (expect (= {"scopes" #{"t2/i5"}} (:intent (eng/fold-target "t2/i5"))))
-      (expect (= {"scopes" #{"t2"}} (:intent (eng/fold-target "t2"))))
-      (expect (= {"scopes" #{"t2/i5"}} (:intent (eng/fold-target "t2/i5/f3")))))
+      (expect (= {"scopes" #{"t2/i5"}} (:intent (eng/fold-key "t2/i5"))))
+      (expect (= {"scopes" #{"t2"}} (:intent (eng/fold-key "t2"))))
+      (expect (= {"scopes" #{"t2/i5"}} (:intent (eng/fold-key "t2/i5/f3")))))
   (it "a hyphen or `..` range, with the shared turn optional on the right"
       (doseq [t ["t2/i1-i56" "t2/i1..i56" "t2/i1-t2/i56" "t2/i1-56"]]
-        (expect (= {"from" "t2/i1" "to" "t2/i56"} (:intent (eng/fold-target t)))))
-      (expect (= "t2/i1-t2/i56" (:label (eng/fold-target "t2/i1-i56")))))
+        (expect (= {"from" "t2/i1" "to" "t2/i56"} (:intent (eng/fold-key t)))))
+      (expect (= "t2/i1-t2/i56" (:label (eng/fold-key "t2/i1-i56")))))
   (it "an omitted side opens the range"
-      (expect (= {"through" "t2/i56"} (:intent (eng/fold-target "-t2/i56"))))
-      (expect (= {"through" "t2/i56"} (:intent (eng/fold-target "..t2/i56"))))
-      (expect (= {"since" "t2/i5"} (:intent (eng/fold-target "t2/i5-"))))
-      (expect (= {"since" "t2/i5"} (:intent (eng/fold-target "t2/i5..")))))
+      (expect (= {"through" "t2/i56"} (:intent (eng/fold-key "-t2/i56"))))
+      (expect (= {"through" "t2/i56"} (:intent (eng/fold-key "..t2/i56"))))
+      (expect (= {"since" "t2/i5"} (:intent (eng/fold-key "t2/i5-"))))
+      (expect (= {"since" "t2/i5"} (:intent (eng/fold-key "t2/i5..")))))
   (it "commas, whitespace and lists all union into one intent"
-      (expect (= {"scopes" #{"t1/i2" "t1/i3"}} (:intent (eng/fold-target "t1/i2, t1/i3"))))
-      (expect (= {"scopes" #{"t1/i2" "t1/i3"}} (:intent (eng/fold-target "t1/i2 t1/i3"))))
-      (expect (= {"scopes" #{"t1/i2" "t1/i3"}} (:intent (eng/fold-target ["t1/i2" "t1/i3"]))))
+      (expect (= {"scopes" #{"t1/i2" "t1/i3"}} (:intent (eng/fold-key "t1/i2, t1/i3"))))
+      (expect (= {"scopes" #{"t1/i2" "t1/i3"}} (:intent (eng/fold-key "t1/i2 t1/i3"))))
+      (expect (= {"scopes" #{"t1/i2" "t1/i3"}} (:intent (eng/fold-key ["t1/i2" "t1/i3"]))))
       (expect (= {"scopes" #{"t1"} "from" "t2/i1" "to" "t2/i3"}
-                 (:intent (eng/fold-target ["t1" "t2/i1-i3"])))))
+                 (:intent (eng/fold-key ["t1" "t2/i1-i3"])))))
   (it "nothing named is nil — not an error"
-      (expect (nil? (eng/fold-target nil)))
-      (expect (nil? (eng/fold-target "")))
-      (expect (nil? (eng/fold-target []))))
-  (it "a token that is not a step id, a second range and a dict are refusals"
-      (expect (str/includes? (:error (eng/fold-target "t2/i1-i56x")) "not a step id"))
-      (expect (str/includes? (:error (eng/fold-target "nonsense")) "not a step id"))
-      (expect (str/includes? (:error (eng/fold-target "-")) "not a step id"))
-      (expect (str/includes? (:error (eng/fold-target "t1/i1-i2, t2/i1-i2")) "one range per fold"))
-      (expect (str/includes? (:error (eng/fold-target {"through" "t1/i5"}))
-                             "selector dicts are gone")))
+      (expect (nil? (eng/fold-key nil)))
+      (expect (nil? (eng/fold-key "")))
+      (expect (nil? (eng/fold-key []))))
+  (it "a token that is not a step key, a second range and a non-string key are refusals"
+      (expect (str/includes? (:error (eng/fold-key "t2/i1-i56x")) "not a step key"))
+      (expect (str/includes? (:error (eng/fold-key "nonsense")) "not a step key"))
+      (expect (str/includes? (:error (eng/fold-key "-")) "not a step key"))
+      (expect (str/includes? (:error (eng/fold-key "t1/i1-i2, t2/i1-i2")) "one range per fold"))
+      ;; Regression, user report: the verb is `fold_session(key, gist)` and nothing else, so a
+      ;; leftover selector structure is REFUSED with the grammar instead of folding nothing.
+      (expect (str/includes? (:error (eng/fold-key {"through" "t1/i5"}))
+                             "fold_session takes a key and a gist")))
   (it "every refusal carries the whole grammar, so the caller reads it at once"
-      (expect (str/includes? (:error (eng/fold-target "nonsense")) eng/fold-target-grammar))))
+      (expect (str/includes? (:error (eng/fold-key "nonsense")) eng/fold-key-grammar))))
 
 
 ;; ── layer 2: selector resolution against a live universe ─────────────────────

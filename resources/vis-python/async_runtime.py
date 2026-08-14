@@ -2621,7 +2621,7 @@ def __vis_defer_tools__():
 def __vis_direct_kwargs__(realfn, nm="verb"):
     # KWARGS for the DIRECT (never-deferred) host verbs — today `fold_session`.
     # Those stay raw foreign ProxyExecutables, which accept POSITIONAL args ONLY,
-    # so `fold_session(t, gist='…')` used to die with `__call__() got an
+    # so `fold_session(key, gist='…')` used to die with `__call__() got an
     # unexpected keyword argument` BEFORE any fold validation ran. Fold **kwargs
     # into ONE trailing dict positional — exactly what `__vis_exec_call__` does
     # for the deferred tools — and the Clojure verb unwraps it (`compaction-verbs`),

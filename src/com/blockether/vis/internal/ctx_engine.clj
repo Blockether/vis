@@ -347,10 +347,10 @@
     (when-let [m (re-matches #"t(\d+)" (str/trim scope))]
       (parse-long (nth m 1)))))
 
-(def fold-target-grammar
-  "The fold target grammar in ONE line, said verbatim by every refusal so the
+(def fold-key-grammar
+  "The fold KEY grammar in ONE line, said verbatim by every refusal so the
    caller reads the whole vocabulary at the moment it typed something else."
-  (str "targets are strings — \"t2/i5\" one step · \"t2\" a whole turn · "
+  (str "the key is a string — \"t2/i5\" one step · \"t2\" a whole turn · "
        "\"t2/i1-i56\" a range · \"-t2/i56\" everything through it · "
        "\"t2/i5-\" everything since it · comma-separate several"))
 
@@ -422,34 +422,35 @@
 
       err)))
 
-(defn fold-target
-  "Parse `fold_session`'s model-facing TARGET — the ONLY shape the verb accepts —
-   into one selector intent plus the label its ack card shows. Tokens are comma-
-   or space-separated and `..` and `-` are the same range separator:
+(defn fold-key
+  "Parse `fold_session`'s KEY — the first of the verb's two arguments (a key and
+   an optional gist), and the only shape the verb accepts — into one selector
+   intent plus the label its ack card shows. Tokens are comma- or space-separated
+   and `..` and `-` are the same range separator:
      `\"t2\"`         a whole turn
      `\"t2/i5\"`      one iteration (a `tN/iM/fK` form id folds its iteration)
      `\"t2/i1-i56\"`  an inclusive window; the right side may drop the shared turn
      `\"t1/i3-t4\"`   a window across turns (a bare `tN` bound covers all of turn N)
      `\"-t2/i56\"`    open start: every settled step at or before the cursor
      `\"t2/i5-\"`     open end: every settled step at or after it
-   Several tokens union (`\"t1, t2/i1-i3\"`); at most ONE range per call, because
-   one intent carries one window. The intent is STRING-KEYED and is exactly what
-   `expand-through` resolves: ids land in `\"scopes\"`, a range in
-   `\"through\"`/`\"since\"`/`\"from\"`+`\"to\"`.
+   Several keys union (`\"t1, t2/i1-i3\"`); at most ONE range per call, because one
+   intent carries one window. The parsed intent is what `expand-through` resolves;
+   its string keys are a RECORDED shape (they persist in the ctx nippy blob),
+   never something a caller passes in.
    Returns `{:intent … :label …}`, `{:error <model-facing refusal>}` for an
-   unparseable token, a second range or a leftover selector dict, or nil when the
-   target named nothing at all. Pure."
-  [target]
-  (if (map? target)
-    {:error (str "fold_session: selector dicts are gone — " fold-target-grammar)}
+   unparseable token, a second range or an argument that is not a key string, or
+   nil when the key named nothing at all. Pure."
+  [k]
+  (if (map? k)
+    {:error (str "fold_session takes a key and a gist: " fold-key-grammar)}
     (let
       [tokens
        (into []
              (comp (mapcat (fn [x]
                              (str/split (str/trim (str x)) #"[,\s]+")))
                    (remove str/blank?))
-             (cond (sequential? target) target
-                   (some? target) [target]
+             (cond (sequential? k) k
+                   (some? k) [k]
                    :else nil))
 
        parsed
@@ -469,9 +470,9 @@
        (into (sorted-set) (of-kind :scope))]
 
       (cond (empty? tokens) nil
-            (seq errors) {:error (str "fold_session: not a step id: " (str/join ", "
-                                                                                (map pr-str errors))
-                                      " — " fold-target-grammar)}
+            (seq errors) {:error (str "fold_session: not a step key: "
+                                      (str/join ", " (map pr-str errors))
+                                      " — " fold-key-grammar)}
             (< 1 (count ranges)) {:error (str "fold_session: one range per fold — "
                                               (str/join " and " (map fold-range-label ranges))
                                               " need separate calls")}
@@ -945,8 +946,8 @@
         (fmt-toks cap)
         " compaction budget. "
         (if required?
-          "Fold settled search/tool sweeps and superseded reads NOW with one broad fold_session through the last completed scope"
-          (str "Use one broad fold_session through the last completed scope"
+          "Fold settled search/tool sweeps and superseded reads NOW with one broad fold_session(\"-tN/iK\", gist) through the last completed scope"
+          (str "Use one broad fold_session(\"-tN/iK\", gist) through the last completed scope"
                (when urgent? " before another large tool call")))
         "; If the edit is ready and the next patch fits available headroom, patch first; otherwise preserve a compact actionable checkpoint: exact paths/symbols, hypothesis, intended edit/test, and dirty files; preserve decisions, edits, and verification; preserve exact physical paths—never bare or abbreviated filenames—then confirm the receipt saved tokens."))))
 

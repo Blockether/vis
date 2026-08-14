@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 - Every list row wears its own verbs at its trailing edge — no swipe, no `⋯`, no strip of words under the row
 - The machines band is one line: its name and `Add a machine`, with no sentence about tapping and no address it already lists
+- `fold_session(key, gist)` takes a key and a gist and nothing else: the key is a string — `"t2/i5"` one step, `"t2"` a whole turn, `"t2/i1-i9"` a range, `"-t2/i9"` everything through it, `"t2/i5-"` everything since it, commas union several
 
 ## [v0.1.37] - 2026-08-14
 
