@@ -51,7 +51,10 @@ function installObserver(): (element: Element) => void {
   vi.stubGlobal(
     "ResizeObserver",
     class {
-      constructor(private readonly callback: () => void) {}
+      private readonly callback: () => void;
+      constructor(callback: () => void) {
+        this.callback = callback;
+      }
       observe(target: Element) {
         watchers.push({ target, run: () => this.callback() });
       }
