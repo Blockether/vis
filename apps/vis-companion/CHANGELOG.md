@@ -2,6 +2,29 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.38 (4179) — 2026-08-14
+<!-- commit: 1c55f10b2d9fca5397741b8ac0c8ac1097f97b97 -->
+
+- Repair an edit's delimiters from the file, never from the fragment
+- Ask which address a machine uses on the machine's own line
+- Close the gap the removed duration marker left in the marker tables
+- The TUI tells how long each tool call took, as the companion always has
+- A warm-up owns the failure of a load nobody is waiting for
+- Keep the direct push in the magit push transient (issue #144)
+- Companion: the model picker's verbs stand in its band, and the sheet stops at its content
+- Fix #145 in the app's last carrier: an answer promoted out of a content-less row
+- Fix #145: paint a settled answer exactly once, in the TUI and the companion
+- Every editor write is atomic, and a refused struct_patch batch is rolled back
+- A helper's `return` settles its tool calls, so the caller never gets a thunk
+- The gateway keeps "no AI provider" typed, so the TUI opens the dialog
+- Release v0.1.38
+- A row verb sends its drawer home instead of asking for an animation
+- Pin svar 0.7.117 so GLM-5.3 is routable and :reasoning speaks GLM's own rungs
+- Restore a session's helpers through the rewrite that defined them
+- Address rows are a list, and each one's verb is in its slide
+- Forgetting a machine takes this device off it
+- Record Companion TestFlight build 4159 in the app changelog
+
 ## 0.1.37 (4159) — 2026-08-14
 <!-- commit: 09ad53d9c488577f2f1e512550b11108c4a63cdb -->
 
