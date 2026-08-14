@@ -7,13 +7,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // `vi.mock` factories run at import time, before module-scope `const`s of this
 // file exist — the shared state has to be hoisted with them.
-const native = vi.hoisted(() => ({ store: new Map<string, string>() }));
+const native = vi.hoisted(() => ({
+  store: new Map<string, string>(),
+  /** Every native write, in order: which key it landed on and what it carried. */
+  writes: [] as { key: string; value: string }[],
+}));
 
 vi.mock('@capacitor/preferences', () => ({
   Preferences: {
     get: async ({ key }: { key: string }) => ({ value: native.store.get(key) ?? null }),
     set: async ({ key, value }: { key: string; value: string }) => {
       native.store.set(key, value);
+      native.writes.push({ key, value });
     },
     remove: async ({ key }: { key: string }) => {
       native.store.delete(key);
@@ -117,5 +122,61 @@ describe('draft message attachments', () => {
     const message = await reloaded.readDraftMessage(key);
     expect(message.text).toBe('look at this');
     expect(message.attachments).toEqual([image('shot')]);
+  });
+});
+
+// Regression: typing beside a staged photo re-wrote the photo. Every keystroke
+// marked the store dirty, and the flush behind it serialized the whole base64
+// back into localStorage AND pushed the same megabytes across the native bridge
+// into UserDefaults — so writing a sentence next to an attached image stalled
+// the iOS composer for seconds at every pause in typing, to store a payload
+// identical to the one already on disk.
+describe('draft message bytes', () => {
+  const photo: PendingAttachment = (() => {
+    const base64 = `data:image/jpeg;base64,${'A'.repeat(4096)}`;
+    return {
+      id: 'id-photo',
+      filename: 'IMG_0421.jpeg',
+      media_type: 'image/jpeg',
+      base64,
+      previewUrl: base64,
+      size: 3072,
+    };
+  })();
+
+  const written = () => native.writes.map((write) => write.key);
+
+  beforeEach(async () => {
+    native.store.clear();
+    await hydrateDraftMessages();
+    clearDraftMessage(key);
+    await flushDraftMessages();
+    native.store.clear();
+    native.writes.length = 0;
+  });
+
+  it('writes the bytes once, and not again while only the words change', async () => {
+    writeDraftMessage(key, { text: 'look at', attachments: [photo] });
+    await flushDraftMessages();
+    expect(written()).toContain('vis.draftAttachments');
+
+    native.writes.length = 0;
+    for (const text of ['look at t', 'look at th', 'look at this']) {
+      writeDraftMessage(key, { text, attachments: [photo] });
+      await flushDraftMessages();
+    }
+    expect(written()).toEqual(['vis.draftMessages', 'vis.draftMessages', 'vis.draftMessages']);
+    expect(native.writes.some((write) => write.value.includes(photo.base64))).toBe(false);
+  });
+
+  it('writes them again the moment the staged set itself changes', async () => {
+    writeDraftMessage(key, { text: 'look at this', attachments: [photo] });
+    await flushDraftMessages();
+    native.writes.length = 0;
+
+    writeDraftMessage(key, { text: 'look at this', attachments: [] });
+    await flushDraftMessages();
+    expect(written()).toContain('vis.draftAttachments');
+    expect(peekDraftMessage(key).attachments).toEqual([]);
   });
 });

@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -98,7 +99,12 @@ export function ExpandableImage({
   // The picture is identified by its BYTES, not by this instance: when a turn
   // settles, the transcript re-mounts the row that owns this trigger, and a
   // reader looking at the picture must not be dropped back onto the answer.
-  const [open, setOpen] = useStickyOverlay(`image:${src}`);
+  //
+  // Memoized because `src` may BE the bytes: a composer attachment is a base64
+  // data URL, so composing the key on every render allocated — and compared —
+  // megabytes for every keystroke of the message being typed beside it.
+  const overlayKey = useMemo(() => `image:${src}`, [src]);
+  const [open, setOpen] = useStickyOverlay(overlayKey);
   // A picture laid out in a grid is one step of that grid's gallery. An
   // EDITABLE one is not: `onApply` hands the flattened result back to the slot
   // THIS trigger owns, so a viewer that had walked to a neighbour would send

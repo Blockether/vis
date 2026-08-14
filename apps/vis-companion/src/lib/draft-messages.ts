@@ -13,6 +13,12 @@
 // the FIRST frame, not flash an empty box and fill it a tick later. Writes are
 // debounced (typing must not hit the disk per keystroke) and flushed on every
 // way out of the app — visibility change, pagehide, unload.
+//
+// The staged BYTES are a SECOND key, written only when the staged set itself
+// changes. A photo is megabytes of base64; re-serializing it into localStorage
+// and across the native bridge into UserDefaults every time typing paused stalled
+// the composer for seconds on iOS, to store a payload identical to the one
+// already there.
 
 import { useEffect, useSyncExternalStore } from 'react';
 import { Preferences } from '@capacitor/preferences';
@@ -21,6 +27,8 @@ import type { ComposerPaste } from './paste';
 import type { PendingAttachment } from './attachments';
 
 const DRAFT_MESSAGES_KEY = 'vis.draftMessages';
+/** The staged bytes, apart from the words that are rewritten on every pause. */
+const DRAFT_ATTACHMENTS_KEY = 'vis.draftAttachments';
 /** Sessions that keep a draft message. Oldest-touched entries drop past this. */
 const MAX_DRAFT_MESSAGES = 40;
 /** Per-message ceiling for collapsed paste bodies; beyond it the paste is dropped. */
@@ -71,6 +79,10 @@ let hydrated = false;
 let hydration: Promise<DraftMessageStore> | null = null;
 let writeTimer: ReturnType<typeof setTimeout> | null = null;
 let dirty = false;
+// The bytes signature already on disk (see `persistable`). Typing changes the
+// words several times a second and the staged pictures not at all; this is what
+// keeps the expensive half of the write out of that loop.
+let storedBytes = '';
 
 // Readers outside the composer — the sessions list asks which empty rows are
 // still holding unsent words. They read a SNAPSHOT, replaced on every change,
@@ -90,30 +102,50 @@ export function subscribe(listener: () => void): () => void {
   };
 }
 
+/** The bytes half of the store: attachment id -> base64 data URL. */
+function parseBytes(raw: string | null): StoredBytes {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out: StoredBytes = {};
+    for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === 'string' && value) out[id] = value;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 /**
- * Attachments a previous run persisted. `previewUrl` IS the base64 data URL, so
- * it is rebuilt here instead of being stored twice.
+ * Attachments a previous run persisted, re-joined with their bytes. `previewUrl`
+ * IS the base64 data URL, so it is rebuilt here instead of being stored twice —
+ * and a descriptor whose bytes did not survive the budget is DROPPED, because a
+ * composer chip with nothing behind it is worse than no chip at all.
  */
-function parseAttachments(value: unknown): PendingAttachment[] {
+function parseAttachments(value: unknown, bytes: StoredBytes): PendingAttachment[] {
   if (!Array.isArray(value)) return [];
   const out: PendingAttachment[] = [];
   for (const item of value) {
     const attachment = (item ?? {}) as Partial<PendingAttachment>;
-    if (typeof attachment.base64 !== 'string' || !attachment.base64) continue;
+    if (typeof attachment.id !== 'string') continue;
+    const base64 = bytes[attachment.id];
+    if (!base64) continue;
     if (typeof attachment.filename !== 'string' || typeof attachment.media_type !== 'string') continue;
     out.push({
-      id: typeof attachment.id === 'string' ? attachment.id : crypto.randomUUID(),
+      id: attachment.id,
       filename: attachment.filename,
       media_type: attachment.media_type,
-      base64: attachment.base64,
-      previewUrl: attachment.base64,
-      size: typeof attachment.size === 'number' ? attachment.size : attachment.base64.length,
+      base64,
+      previewUrl: base64,
+      size: typeof attachment.size === 'number' ? attachment.size : base64.length,
     });
   }
   return out;
 }
 
-function parseStore(raw: string | null): DraftMessageStore {
+function parseStore(raw: string | null, bytes: StoredBytes): DraftMessageStore {
   if (!raw) return {};
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -125,7 +157,7 @@ function parseStore(raw: string | null): DraftMessageStore {
       out[key] = {
         text: message.text,
         pastes: Array.isArray(message.pastes) ? (message.pastes as ComposerPaste[]) : [],
-        attachments: parseAttachments((message as { attachments?: unknown }).attachments),
+        attachments: parseAttachments((message as { attachments?: unknown }).attachments, bytes),
         counter: typeof message.counter === 'number' ? message.counter : 0,
         at: typeof message.at === 'number' ? message.at : 0,
       };
@@ -143,26 +175,41 @@ function parseStore(raw: string | null): DraftMessageStore {
 export async function hydrateDraftMessages(): Promise<DraftMessageStore> {
   if (hydrated && store) return store;
   hydration ??= (async () => {
-    let raw: string | null = null;
-    // Bounded: a silent native bridge must not leave the composer without its
-    // draft forever (see `lib/bridge.ts`); localStorage holds the same value.
-    raw = await bridged(
-      async () => (await Preferences.get({ key: DRAFT_MESSAGES_KEY })).value ?? null,
-      () => {
-        try {
-          return globalThis.localStorage?.getItem(DRAFT_MESSAGES_KEY) ?? null;
-        } catch {
-          return null;
-        }
-      },
-    );
+    // Both halves at once: two bounded bridge calls in sequence would double
+    // what a silent bridge costs the first composer to open.
+    const [raw, rawBytes] = await Promise.all([
+      read(DRAFT_MESSAGES_KEY),
+      read(DRAFT_ATTACHMENTS_KEY),
+    ]);
+    const onDisk = parseStore(raw, parseBytes(rawBytes));
+    // The signature names what DISK holds. Anything already staged in a live
+    // composer is newer than disk and unwritten, so it is not counted here.
+    storedBytes = persistable(onDisk).signature;
     // A write that landed while we were reading wins: it is newer than disk.
-    store = { ...parseStore(raw), ...(store ?? {}) };
+    store = { ...onDisk, ...(store ?? {}) };
     hydrated = true;
     announce();
     return store;
   })();
   return hydration;
+}
+
+/**
+ * One stored key. Bounded: a silent native bridge must not leave the composer
+ * without its draft forever (see `lib/bridge.ts`); localStorage holds the same
+ * value.
+ */
+function read(key: string): Promise<string | null> {
+  return bridged(
+    async () => (await Preferences.get({ key })).value ?? null,
+    () => {
+      try {
+        return globalThis.localStorage?.getItem(key) ?? null;
+      } catch {
+        return null;
+      }
+    },
+  );
 }
 
 /** The draft message for one session, or the empty one. Synchronous after hydration. */
@@ -252,18 +299,34 @@ function prune(current: DraftMessageStore): DraftMessageStore {
   return out;
 }
 
-type StoredAttachment = Omit<PendingAttachment, 'previewUrl'>;
+/** What a message stores about an attachment: everything except the bytes. */
+type StoredAttachment = Omit<PendingAttachment, 'previewUrl' | 'base64'>;
 type StoredMessage = Omit<DraftMessage, 'attachments'> & { attachments: StoredAttachment[] };
+/** The bytes, by attachment id — the half of the store that typing never touches. */
+type StoredBytes = Record<string, string>;
 
 /**
- * What goes to disk. Attachments are base64, so a couple of photos dwarf every
- * word in the store: past the budget the NEWEST draft messages keep their
- * attachments and older ones are persisted as text alone. Memory is untouched —
- * dropping a picture from storage must never drop it from a composer you are
- * still looking at.
+ * What goes to disk, split by how often it changes: the words (rewritten on
+ * every pause in typing) and the bytes (rewritten only when a picture is staged
+ * or removed).
+ *
+ * Attachments are base64, so a couple of photos dwarf every word in the store:
+ * past the budget the NEWEST draft messages keep their attachments and older
+ * ones are persisted as text alone. Memory is untouched — dropping a picture
+ * from storage must never drop it from a composer you are still looking at.
+ *
+ * `signature` names the bytes payload without holding it: the same ids, of the
+ * same lengths, in the same order produce byte-identical JSON, which is what
+ * lets the flush skip writing it again.
  */
-function persistable(current: DraftMessageStore): Record<string, StoredMessage> {
-  const out: Record<string, StoredMessage> = {};
+function persistable(current: DraftMessageStore): {
+  messages: Record<string, StoredMessage>;
+  bytes: StoredBytes;
+  signature: string;
+} {
+  const messages: Record<string, StoredMessage> = {};
+  const bytes: StoredBytes = {};
+  const staged: string[] = [];
   let budget = MAX_STORED_ATTACHMENT_CHARS;
   const newestFirst = Object.keys(current)
     .sort((a, b) => (current[b]?.at ?? 0) - (current[a]?.at ?? 0));
@@ -273,17 +336,18 @@ function persistable(current: DraftMessageStore): Record<string, StoredMessage> 
     for (const attachment of message.attachments) {
       if (attachment.base64.length > budget) continue;
       budget -= attachment.base64.length;
+      bytes[attachment.id] = attachment.base64;
+      staged.push(`${attachment.id}:${attachment.base64.length}`);
       attachments.push({
         id: attachment.id,
         filename: attachment.filename,
         media_type: attachment.media_type,
-        base64: attachment.base64,
         size: attachment.size,
       });
     }
-    out[key] = { ...message, attachments };
+    messages[key] = { ...message, attachments };
   }
-  return out;
+  return { messages, bytes, signature: staged.join(',') };
 }
 
 function schedule(): void {
@@ -292,9 +356,38 @@ function schedule(): void {
 }
 
 /**
- * Persist now. Writes localStorage SYNCHRONOUSLY before awaiting the plugin:
- * the last flush before the app dies happens inside `pagehide`, where an awaited
- * write is not guaranteed to finish, and losing that flush is exactly the bug.
+ * Mirror one key into localStorage, SYNCHRONOUSLY. The last flush before the
+ * app dies happens inside `pagehide`, where even a microtask may not get to
+ * run, and losing that flush is exactly the bug.
+ */
+function mirror(key: string, value: string): void {
+  try {
+    globalThis.localStorage?.setItem(key, value);
+  } catch {
+    // Private-mode/quota: the plugin write is still worth attempting.
+  }
+}
+
+/** The durable half of the same write, bounded like every bridge call. */
+function push(key: string, value: string): Promise<void> {
+  return bridged(
+    async () => {
+      await Preferences.set({ key, value });
+    },
+    // Already mirrored to localStorage above.
+    () => undefined,
+  );
+}
+
+/**
+ * Persist now. The words go every time; the BYTES only when the staged set
+ * itself changed.
+ *
+ * Typing beside a staged photo changes the text and nothing else, so
+ * re-serializing that photo and pushing the same megabytes through
+ * `localStorage` and the native bridge into `UserDefaults` at every pause in
+ * typing bought a payload byte-identical to the one already on disk — and cost
+ * the composer a visible stall on the phone every time.
  */
 export async function flushDraftMessages(): Promise<void> {
   if (writeTimer) {
@@ -304,19 +397,19 @@ export async function flushDraftMessages(): Promise<void> {
   if (!dirty || !store) return;
   dirty = false;
   store = prune(store);
-  const value = JSON.stringify(persistable(store));
-  try {
-    globalThis.localStorage?.setItem(DRAFT_MESSAGES_KEY, value);
-  } catch {
-    // Private-mode/quota: the plugin write below is still worth attempting.
+  const { messages, bytes, signature } = persistable(store);
+  const words = JSON.stringify(messages);
+  // Bytes FIRST: a kill between the two writes may then orphan bytes — harmless,
+  // and replaced by the next write of the set — but never leaves a descriptor
+  // pointing at a picture that is not there.
+  const staged = signature === storedBytes ? null : JSON.stringify(bytes);
+  if (staged !== null) mirror(DRAFT_ATTACHMENTS_KEY, staged);
+  mirror(DRAFT_MESSAGES_KEY, words);
+  if (staged !== null) {
+    storedBytes = signature;
+    await push(DRAFT_ATTACHMENTS_KEY, staged);
   }
-  await bridged(
-    async () => {
-      await Preferences.set({ key: DRAFT_MESSAGES_KEY, value });
-    },
-    // Already mirrored to localStorage above.
-    () => undefined,
-  );
+  await push(DRAFT_MESSAGES_KEY, words);
 }
 
 let listening = false;
