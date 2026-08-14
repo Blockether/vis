@@ -1884,11 +1884,13 @@ function releaseRamp(id: symbol): void {
  */
 
 /**
- * Trimmed Markdown of every PROSE block in a settled answer — exactly the strings
- * the answer band under the trace paints.
+ * Trimmed Markdown of every PROSE block in a settled answer, plus the answer
+ * `fallbackAnswer` PROMOTES out of the last iteration when the row carries no
+ * content blocks — exactly the strings the answer band under the trace paints.
  */
 export function answeredProse(
   blocks: readonly ContentBlock[] | undefined,
+  promoted = "",
 ): ReadonlySet<string> {
   const answered = new Set<string>();
   for (const block of blocks ?? []) {
@@ -1896,6 +1898,8 @@ export function answeredProse(
     const markdown = block.markdown?.trim();
     if (markdown) answered.add(markdown);
   }
+  const promotedAnswer = promoted.trim();
+  if (promotedAnswer) answered.add(promotedAnswer);
   return answered;
 }
 
@@ -2383,10 +2387,14 @@ export const AssistantMessage = memo(function AssistantMessage({
   sid?: string;
 }) {
   const blocks = turn.content ?? [];
-  // One answer, one copy: the trace never repeats prose the answer band under it
-  // already paints (issue #145).
-  const answered = useMemo(() => answeredProse(turn.content), [turn.content]);
   const fallback = blocks.length ? "" : fallbackAnswer(turn);
+  // One answer, one copy: the trace never repeats prose the answer band under it
+  // already paints — including the answer PROMOTED out of the last iteration when
+  // the row carries no content blocks (issue #145).
+  const answered = useMemo(
+    () => answeredProse(turn.content, fallback),
+    [turn.content, fallback],
+  );
   const cancelled =
     turn.status === "cancelled" || turn.prior_outcome === "cancelled";
   // A row still IN FLIGHT has no footer to show. Usage, cost and duration only

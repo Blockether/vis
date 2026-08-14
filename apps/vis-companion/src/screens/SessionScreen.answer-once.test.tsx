@@ -154,3 +154,63 @@ describe("an answer its own trace repeats", () => {
     expect(painted(ANSWER)).toBe(1);
   });
 });
+
+// Regression, issue #145 in the carrier only the TUI normalized: a settled row that
+// carries NO content blocks paints its answer from the LAST iteration's own
+// `answer` (`fallbackAnswer`), while the trace beside it paints that iteration's
+// `assistant_prose` — one answer at two widths again. The TUI promotes exactly this
+// prose into a content block on the way in (`terminal-content`) and then drops the
+// trace copy, so the app owes the same one-copy guarantee on the same shape.
+describe("an answer promoted out of a content-less row", () => {
+  const ANSWER = "The suite is green and the pin is unchanged.";
+
+  function mountRow(row: Record<string, unknown>) {
+    renderSessionScreen({
+      client: {
+        cachedTranscript: () => [row],
+        transcript: () => Promise.resolve([row]),
+      },
+    });
+  }
+
+  const promotedRow = {
+    id: "engine-row-3",
+    user_request: "did anything else move",
+    status: "completed",
+    created_at: Date.now(),
+    iterations: [
+      {
+        position: 0,
+        thinking: "weighing it up",
+        assistant_prose: ANSWER,
+        answer: ANSWER,
+      },
+    ],
+  };
+
+  it("paints it once", async () => {
+    mountRow(promotedRow);
+    expect(
+      await screen.findByText("did anything else move"),
+    ).toBeInTheDocument();
+    await linger(50);
+    expect(painted(ANSWER)).toBe(1);
+  });
+
+  it("keeps commentary that only resembles the answer", async () => {
+    const commentary = "The suite is green, and the pin is unchanged.";
+    mountRow({
+      ...promotedRow,
+      id: "engine-row-4",
+      iterations: [
+        { position: 0, assistant_prose: commentary, answer: ANSWER },
+      ],
+    });
+    expect(
+      await screen.findByText("did anything else move"),
+    ).toBeInTheDocument();
+    await linger(50);
+    expect(painted(commentary)).toBe(1);
+    expect(painted(ANSWER)).toBe(1);
+  });
+});
