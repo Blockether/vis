@@ -59,6 +59,11 @@ espeak-ng (GPL-3.0-or-later)**.
 | Model artifacts (`tts-models`, 642 assets) | `sherpa-onnx-pocket-tts-int8-2026-01-26` 98.3 MB, fp32 168.1 MB; kokoro int8 multi-lang 147.0 MB; supertonic int8 84.7 MB; `vits-piper-*` 67-116 MB per voice |
 | Licenses (HF API `cardData.license`) | `kyutai/pocket-tts` cc-by-4.0, **gated (auto)**; `hexgrad/Kokoro-82M` apache-2.0; `rhasspy/piper-voices` mit (repo-level); `Supertone/supertonic` **openrail**; `nvidia/parakeet-tdt-0.6b-v3` cc-by-4.0 |
 | Upstream's own pocket tokenizer script | `scripts/pocket-tts/README.md` converts `tokenizer.model` fetched from the third-party `KevinAHM/pocket-tts-onnx` export |
+| `kyutai/pocket-tts` gate (read without an account) | `gated: "auto"` — instant grant. Its whole condition is a **prohibited-use statement** (no impersonation without consent, no deception, no harassment or privacy invasion) plus a contact form (company, `Work/Studies/Fun`). **No commercial restriction and no extra licence term** — the licence stays CC BY 4.0 |
+| Reference implementation licence | `kyutai-labs/pocket-tts` is **MIT**. Only the weights are CC BY 4.0, so our own ONNX export is written against permissive code |
+| pocket-tts is multilingual | 12 checkpoints: `english`, `english_2026-01`, `english_2026-04`, `french_24l`, `german{,_24l}`, `italian{,_24l}`, `portuguese{,_24l}`, `spanish{,_24l}` — each a `model.safetensors` + `tokenizer.model` plus the same 26 voice embeddings |
+| Voice catalogue licences (26 voices, per `kyutai/tts-voices` README) | **CC BY 4.0**: 13 VCTK voices + `alba` (voice actor). **CC0**: 4 voice-zero (LibriVox), 2 voice-donations, `estelle` (Kyutai's own), `giovanni`/`lola` (Common Voice). **CC BY-NC, dropped**: `cosette` (Expresso), `jean` (EARS). Undocumented: `rafael`, `juergen` |
+| Machine access to the weights | Every file answers **401**. Hugging Face has no password API — `POST /api/login` is 404 and the web form answers 302 with an *expired* token cookie — so the only path is one human click on *Agree* plus a read-scoped `HF_TOKEN` |
 
 ### The root problem
 
@@ -236,15 +241,20 @@ the extension.
 - `speech.clj` — `OfflineTts` + `OfflineTtsPocketModelConfig`; download, verify and atomically
   install into `~/.vis/models/...` in the shape of `asr.clj:279-330`, with the same notification
   and readiness phases the app already renders for ASR.
-- `voices.edn` — one entry per shipped reference clip: id, label, language, source, SPDX license,
-  `is-commercial-ok`.
+- `voices.edn` — one entry per shipped voice: id, label, language, source URL, SPDX id,
+  `is-commercial-ok`. It ships the catalogue voices that are CC0 or CC BY 4.0; **`cosette`
+  (Expresso) and `jean` (EARS) are CC BY-NC and are never converted**, and `rafael`/`juergen` wait
+  on provenance.
+- The engine picks a language checkpoint as well as a voice — `english` is fetched first and the
+  `*_24l` variants are registered but not downloaded until one is asked for.
 - Test that proves it done: synthesize one sentence with a fixture voice, assert a non-silent PCM
   body at the sample rate the model declares, and assert the engine reports `unavailable` with an
   actionable message when the model directory is absent.
 
 **Unknowns.**
-- Which clips become the shipped voices — LibriTTS-R or CML-TTS (CC BY 4.0), Common Voice (CC0), or
-  recordings we make ourselves? Expresso is CC BY-NC and is excluded.
+- Provenance of `rafael` (`g-Vi8PgmSY0-enhanced-v2.wav`, a YouTube id) and `juergen`
+  (`de-DE-juergen.mp3`). Both arrived undocumented on an `add_lang_not_documented` branch and the
+  voices README does not cover them; until Kyutai answers they stay out of the manifest.
 - How many seconds does a stable embedding need, and does int8 (98.3 MB) hold quality against fp32
   (168.1 MB) for a three-second clip?
 
@@ -292,8 +302,9 @@ also what makes its weights ours to serve rather than a third party's export to 
   platform contains no `espeak-ng`, `phontab` or `phondata` marker.
 
 **Unknowns.**
-- What does the `kyutai/pocket-tts` gate say? It answers 401 unauthenticated, so an authenticated
-  read must confirm the click-through adds nothing beyond CC BY 4.0 before we re-host a conversion.
+- Getting the weights at all: the gate is a one-time human click. Someone signed in to Hugging Face
+  presses **Agree** once on `kyutai/pocket-tts`, after which a read-scoped `HF_TOKEN` lives in CI
+  secrets and never in the tree.
 - Do the espeak-free natives get built in this repository's CI or in a small sibling repository,
   given the native build's memory profile?
 
@@ -360,6 +371,15 @@ shapes.
 ## State of the plan
 
 **ACCEPTED** — nothing has landed yet.
+
+**Resolved since acceptance** — no file outside this plan changed:
+
+- The `kyutai/pocket-tts` gate is `auto` and its only condition is a prohibited-use statement, so
+  CC BY 4.0 stands, commercial use is not restricted, and re-hosting our own conversion is open with
+  attribution. We reproduce Kyutai's prohibited-use text as a notice; CC BY 4.0 §2(a)(5)(B) forbids
+  us imposing it as a condition on anyone downstream.
+- The shipped voice list is decided: every CC0 and CC BY 4.0 voice in the catalogue, minus `cosette`
+  and `jean`.
 
 Three decisions the plan takes, so they are not re-litigated in review:
 
