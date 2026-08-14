@@ -2745,6 +2745,31 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(settingsSource).not.toContain("Tap a machine");
   });
 
+  // Regression, user report ("Addresses should be also simplified and in slide"):
+  // the ADDRESS panel spent a 110-character band description, a hint sentence under
+  // the row in use, a paragraph under the list and an `Automatic` button beside it on
+  // one question, and painted the word USE on every row — each row a button, the one
+  // in use that same button DISABLED and greyed to half ink.
+  it("gives an address row the same slide, and spends no prose on it", () => {
+    const address = /export function AddressPanel\(\{[\s\S]*$/.exec(settingsSource)?.[0] ?? "";
+    expect(address.length).toBeGreaterThan(0);
+
+    // The one row-verb surface, on this list too.
+    expect(address).toContain(
+      "<SwipeActions key={url} label={host} actions={actions}>",
+    );
+    // A row, not a control: nothing here switches the address this device talks to
+    // on a stray tap, and nothing is greyed out to say "this is the one you are on".
+    expect(address).not.toContain("<ListRow");
+    expect(address).not.toContain("disabled=");
+    // The prose those slides replaced, in the order it stood on screen.
+    expect(address).not.toContain("description=");
+    expect(address).not.toContain("REACH_HINT");
+    expect(address).not.toContain("Automatic: this device prefers");
+    expect(address).not.toContain("Pinned: this device always uses");
+    expect(settingsSource).not.toContain("REACH_HINT");
+  });
+
   it("keeps no control nobody uses", () => {
     // `Card` and `Section` had no call site left anywhere in the app.
     expect(uiSource).not.toContain("export function Card(");

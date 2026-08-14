@@ -9,7 +9,12 @@ import {
   GatewayClient,
   GatewayError,
 } from "../lib/gateway";
-import { ChevronIcon } from "../components/icons";
+import {
+  CheckIcon,
+  ChevronIcon,
+  SortIcon,
+  StarIcon,
+} from "../components/icons";
 import type {
   GatewayConn,
   PushDevice,
@@ -81,7 +86,6 @@ import {
   Switch,
 } from "../components/ui";
 import {
-  REACH_HINT,
   REACH_LABEL,
   bestAddress,
   hostOf,
@@ -107,6 +111,7 @@ import {
   MachineRows,
   useFleetHealth,
 } from "../components/Machines";
+import { SwipeActions, type SwipeAction } from "../components/SwipeActions";
 
 /**
  * ONE MACHINE'S OWN SETTINGS, as a column inside `SettingsDialog`.
@@ -1999,8 +2004,15 @@ const PROBE_TIMEOUT_MS = 9000;
  * race to reply. That address stops resolving the moment the phone leaves the
  * house, so the choice has to be visible, probeable and pinnable instead of
  * being whatever answered first months ago.
+ *
+ * The panel is a list of ROUTES, and each row's one verb waits under its
+ * trailing edge (`SwipeActions`): `Use` on an address this device is not on,
+ * `Pin` / `Auto` on the one it is. It used to spell that out in prose instead —
+ * a 110-character description, a sentence under the row in use, a paragraph
+ * under the list and an `Automatic` button beside it — while the verb itself
+ * was the word `USE` repeated on every row.
  */
-function AddressPanel({
+export function AddressPanel({
   gateway,
   onSelect,
 }: {
@@ -2084,6 +2096,9 @@ function AddressPanel({
   useEffect(() => onWake(() => setProbeNonce((n) => n + 1)), []);
 
   const choose = async (url: string, pinned: boolean) => {
+    // One switch at a time: a second verb pressed while the first is in flight
+    // would move `busy` onto a row nothing is happening to.
+    if (busy) return;
     setBusy(url);
     setErr(null);
     try {
@@ -2096,78 +2111,97 @@ function AddressPanel({
   };
 
   // Nothing to choose between: one address and no pin is simply "the address",
-  // and a panel offering a single disabled row is noise.
+  // and a panel offering a single row is noise.
   if (addresses.length < 2 && !gateway.pinned) return null;
 
   return (
-    <SettingsPanel
-      title="Address"
-      description="Which network path this device uses to reach the machine — pin one, or let the app pick the most durable route."
-      meta={gateway.pinned ? "pinned" : "automatic"}
-    >
-      <div className="space-y-2 p-3">
-        {err && <Banner kind="err">{err}</Banner>}
-
-        <ul className="space-y-1">
-          {addresses.map((url) => {
-            const inUse = url === gateway.url;
-            const kind = reachOf(url);
-            const state = reach[url] ?? "checking";
-            return (
-              <li key={url}>
-                <ListRow
-                  isFramed
-                  isSelected={inUse}
-                  disabled={inUse || busy !== null}
-                  onClick={() => void choose(url, true)}
-                >
-                  <span
-                    className={`size-1.5 shrink-0 rounded-full ${
-                      state === "online"
-                        ? "bg-ok"
-                        : state === "offline"
-                          ? "bg-err"
-                          : "animate-pulse bg-dialog-hint motion-reduce:animate-none"
-                    }`}
-                    aria-hidden="true"
-                  />
-                  <span className="min-w-0 flex-1 truncate font-mono text-ui text-white">
-                    {hostOf(url)}
-                  </span>
-                  <span className="shrink-0 font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
-                    {REACH_LABEL[kind]}
-                  </span>
-                  <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
-                    {inUse ? "in use" : busy === url ? "switching" : "use"}
-                  </span>
-                </ListRow>
-                {inUse && (
-                  <p className="px-2 pt-1 font-mono text-meta text-dialog-hint">
-                    {REACH_HINT[kind]}
-                  </p>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-
-        <div className="flex flex-wrap items-center gap-2 border-t border-dialog-edge pt-2">
-          <span className="min-w-0 flex-1 font-mono text-meta text-dialog-hint">
-            {gateway.pinned
-              ? "Pinned: this device always uses the address above and never switches on its own."
-              : "Automatic: this device prefers the most durable address that answers — Tailscale over Wi-Fi, Wi-Fi over anything local."}
-          </span>
-          {gateway.pinned && (
-            <Button
-              variant="secondary"
-              onClick={() =>
-                void choose(bestAddress(addresses) ?? gateway.url, false)
-              }
-            >
-              Automatic
-            </Button>
-          )}
+    <SettingsPanel title="Address" meta={gateway.pinned ? "pinned" : "automatic"}>
+      {err && (
+        <div className="p-3">
+          <Banner kind="err">{err}</Banner>
         </div>
+      )}
+
+      <div className="divide-y divide-dialog-edge">
+        {addresses.map((url) => {
+          const inUse = url === gateway.url;
+          const host = hostOf(url);
+          const state = reach[url] ?? "checking";
+
+          // ONE VERB PER ROW, waiting under its trailing edge like every other
+          // list in this app: `Use` on an address this device is not on, and on
+          // the one it is, the only remaining question — does this address stay
+          // chosen, or does the app keep choosing?
+          const actions: SwipeAction[] = !inUse
+            ? [
+                {
+                  key: "use",
+                  label: "Use",
+                  name: `Use ${host}`,
+                  icon: <CheckIcon className="size-4" />,
+                  onSelect: () => void choose(url, true),
+                },
+              ]
+            : gateway.pinned
+              ? [
+                  {
+                    key: "auto",
+                    label: "Auto",
+                    name: "Let this device pick the address",
+                    icon: <SortIcon className="size-4" />,
+                    onSelect: () =>
+                      void choose(bestAddress(addresses) ?? url, false),
+                  },
+                ]
+              : [
+                  {
+                    key: "pin",
+                    label: "Pin",
+                    name: `Always use ${host}`,
+                    // Pinning is a RANK — an explicit choice outranks the
+                    // durability order — so it wears the amber every rank verb
+                    // in this app wears. Until now it could not be asked for at
+                    // all on the address in use: that row was a DISABLED button.
+                    tone: "accent",
+                    icon: <StarIcon filled className="size-4" />,
+                    onSelect: () => void choose(url, true),
+                  },
+                ];
+
+          return (
+            <SwipeActions key={url} label={host} actions={actions}>
+              {/* A ROW, NEVER A BUTTON. Every address used to be one, so the
+                  address this device talks to was one stray tap away from
+                  changing, and the row in use — the one a reader looks for
+                  first — was that same button disabled, greyed to half ink. */}
+              <div
+                className={`flex min-h-12 min-w-0 items-center gap-3 px-3 py-2 ${inUse ? "bg-panel-2" : ""}`}
+              >
+                <span
+                  className={`size-1.5 shrink-0 rounded-full ${
+                    state === "online"
+                      ? "bg-ok"
+                      : state === "offline"
+                        ? "bg-err"
+                        : "animate-pulse bg-dialog-hint motion-reduce:animate-none"
+                  }`}
+                  aria-hidden="true"
+                />
+                <span className="min-w-0 flex-1 truncate font-mono text-ui text-white">
+                  {host}
+                </span>
+                <span className="shrink-0 font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
+                  {REACH_LABEL[reachOf(url)]}
+                </span>
+                {(inUse || busy === url) && (
+                  <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
+                    {busy === url ? "switching" : "in use"}
+                  </span>
+                )}
+              </div>
+            </SwipeActions>
+          );
+        })}
       </div>
     </SettingsPanel>
   );
