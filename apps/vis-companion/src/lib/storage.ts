@@ -277,7 +277,8 @@ export async function rememberSubscribedSession(
 // Native push is a decision about ONE machine, not about the app: the phone can
 // want a buzz when the work laptop finishes a turn and want silence from the
 // build box it is only watching. So the switch lives in that gateway's settings
-// and is stored per gateway URL, exactly like the subscribed-session list.
+// and is stored per gateway URL, exactly like the subscribed-session list — and
+// a machine with no entry here has not been answered for, which is silence.
 const NOTIFY_KEY = "vis.gatewayNotifications";
 
 /** Only an EXPLICIT entry is stored; absence means "not decided yet". */
@@ -307,14 +308,20 @@ async function saveNotifyStore(store: NotifyStore): Promise<void> {
 /**
  * Whether this device wants native pushes FROM ONE gateway.
  *
- * Defaults to on: a machine you paired is a machine you want to hear from, and
- * nothing is delivered anyway until the OS permission exists. Turning the switch
- * off in that gateway's settings is the only thing that silences it — and it
- * stays off, including across relaunches, which is what makes the choice
- * per gateway instead of "whichever gateway the app happened to open".
+ * Defaults to OFF, and the absence of an answer is exactly what that means: a
+ * machine you paired is not yet a machine you asked to be woken by. Consent is
+ * given once per machine, by pressing that machine's own Connect in its
+ * Notifications panel — never inherited from another machine, and never granted
+ * by the act of pairing. The sweep that reads this is what registers this
+ * device's push token, so a default of ON silently subscribed every machine the
+ * moment it was added.
+ *
+ * It stays whatever it was set to, including across relaunches, which is what
+ * makes the choice per gateway instead of "whichever gateway the app happened
+ * to open".
  */
 export async function getGatewayNotify(url: string): Promise<boolean> {
-  return (await loadNotifyStore())[url] ?? true;
+  return (await loadNotifyStore())[url] ?? false;
 }
 
 export async function setGatewayNotify(

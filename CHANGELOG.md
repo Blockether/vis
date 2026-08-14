@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - The machines band is one line: its name and `Add a machine`, with no sentence about tapping and no address it already lists
 - `fold_session(key, gist)` takes a key and a gist and nothing else: the key is a string — `"t2/i5"` one step, `"t2"` a whole turn, `"t2/i1-i9"` a range, `"-t2/i9"` everything through it, `"t2/i5-"` everything since it, commas union several
 
+### Fixed
+- A machine you only paired never wakes this device until that machine's own Connect is pressed — an unanswered switch counted as yes, so pairing a second machine handed it this device's push token on the very next sweep and its panel opened already connected
+- Disconnect lands on a machine that knows this device by its relay grant: it no longer gives up when this run holds no OS push token, and one refused revocation no longer strands the other name the machine is holding
+
 ## [v0.1.37] - 2026-08-14
 
 ### Changed

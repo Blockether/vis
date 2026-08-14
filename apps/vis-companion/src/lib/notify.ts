@@ -4,6 +4,9 @@
 // every machine keeps its own device list and pushes from its own turns. So the
 // app cannot treat notifications as a single app-wide switch — it has to bring
 // EVERY paired gateway in line with the switch in that gateway's own settings.
+// That switch starts at NO (`getGatewayNotify`): pairing a machine is not asking
+// it to wake this device, so the sweep registers nothing until that machine's
+// own Connect has been pressed — and unregisters a machine that has not been.
 //
 // The sweep runs on launch (and whenever the paired set changes) because both
 // halves drift: the OS rotates the push token, so a gateway that should notify

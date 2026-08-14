@@ -1594,7 +1594,7 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
   const [subscription, setSubscription] = useState<PushSubscription | null>(
     null,
   );
-  const [notify, setNotify] = useState(true);
+  const [notify, setNotify] = useState(false);
   // Nothing may be reported until the browser has answered: "Not connected"
   // rendered before the first read is a verdict about a question not yet asked.
   const [loaded, setLoaded] = useState(false);
@@ -1703,7 +1703,7 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
   );
 }
 
-function NativeNotificationsPanel({
+export function NativeNotificationsPanel({
   client,
   gateway,
 }: {
@@ -1722,7 +1722,9 @@ function NativeNotificationsPanel({
   // This device's own answer, remembered per gateway: a machine you disconnected
   // from stays silent across relaunches, and a machine you connected to stays
   // registered even while another gateway is the one you have open.
-  const [notify, setNotify] = useState(true);
+  // Nothing is claimed before that machine's own answer is read back; a machine
+  // this device never connected to answers no.
+  const [notify, setNotify] = useState(false);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -1804,8 +1806,12 @@ function NativeNotificationsPanel({
   }, [client, gateway.url, load]);
 
   const disable = useCallback(async () => {
-    const current = cachedPushToken();
-    if (!current) return;
+    // Never gated on holding the OS token: this machine may know this device by
+    // the relay GRANT instead, and a token this run was not given is no reason
+    // to drop the user's answer on the floor. `unregisterFromPush` names every
+    // id the machine could have filed it under, and the answer is stored first
+    // so an unreachable machine is still silenced by the next sweep.
+    const current = cachedPushToken() ?? "";
     setBusy("disable");
     setErr(null);
     try {

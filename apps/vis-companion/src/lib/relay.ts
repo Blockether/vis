@@ -250,12 +250,26 @@ export async function registeredIds(token: string): Promise<string[]> {
   return ids;
 }
 
-/** Take this device off one gateway, under every name it may be filed under. */
+/**
+ * Take this device off one gateway, under every name it may be filed under.
+ *
+ * Every id is tried even when one refuses. The machine may be holding the GRANT
+ * while the token DELETE is the call that fails, and stopping at the first
+ * refusal left exactly that machine still pushing after the user had said stop.
+ * The failure is still raised — the panel has to be able to say the machine has
+ * not caught up — but only after nothing revocable is left behind.
+ */
 export async function unregisterFromPush(
   token: string,
   gateway: Pick<PushGateway, "unregister">,
 ): Promise<void> {
+  let failure: unknown = null;
   for (const id of await registeredIds(token)) {
-    await gateway.unregister(id);
+    try {
+      await gateway.unregister(id);
+    } catch (cause) {
+      failure ??= cause;
+    }
   }
+  if (failure) throw failure;
 }

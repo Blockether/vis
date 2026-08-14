@@ -313,4 +313,27 @@ describe("taking this device off a gateway", () => {
     await unregisterFromPush(TOKEN, other.gateway);
     expect(other.unregistered).toEqual([TOKEN, "vg1.grant-1"]);
   });
+
+  // Regression, user report (one machine kept alerting after Disconnect): the
+  // ids were revoked in a loop that stopped at the first refusal, so a machine
+  // that answered the token DELETE with an error was left holding the GRANT it
+  // was actually pushing with. Every name is tried; the failure is still raised.
+  it("drops every other name when one revocation is refused", async () => {
+    const relay = minter();
+    const keyless = gatewayOf(status());
+    await registerForPush(device(), keyless.gateway, relay.mint);
+
+    const dropped: string[] = [];
+    const flaky = {
+      unregister: async (id: string) => {
+        if (id === TOKEN) throw new Error("machine unreachable");
+        dropped.push(id);
+      },
+    };
+
+    await expect(unregisterFromPush(TOKEN, flaky)).rejects.toThrow(
+      "machine unreachable",
+    );
+    expect(dropped).toEqual(["vg1.grant-1"]);
+  });
 });
