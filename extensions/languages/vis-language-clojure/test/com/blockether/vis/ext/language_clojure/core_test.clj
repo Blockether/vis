@@ -599,6 +599,26 @@
         ;; the whole-file repair instead closes line 3, which this edit never touched
         (expect (false? (:ok? verdict)))
         (expect (str/includes? (:why verdict) "line 3"))))
+  ;; Regression: parinfer's own answer to a `[` mistyped as `(` is `(foo (1 2 3))` — the
+  ;; caller's VECTOR turned into a call that swallowed the argument standing after it. That
+  ;; candidate parses, keeps the line count and the final newline, changes only the line the
+  ;; edit wrote and leaves the skeleton identical, so the ORDER of the caller's own
+  ;; delimiters is the only thing left that can refuse it.
+  (it "refuses the pack's own repair when it retypes a delimiter the caller wrote"
+      (let
+        [broken
+         "(ns ok)\n\n(defn ok [] (foo (1 2] 3))\n"
+
+         verdict
+         (balance/rebalance {:balancer (clj-balancer)
+                             :parses-clean? #(empty? (zipper/error-nodes "clojure" %))
+                             :source broken
+                             :spans [[3 3]]})]
+
+        ;; what the pack answers on its own is the corruption
+        (expect (= "(ns ok)\n\n(defn ok [] (foo (1 2 3)))\n" ((clj-balancer) broken)))
+        (expect (false? (:ok? verdict)))
+        (expect (str/includes? (:why verdict) "retype"))))
   (it "leaves an unrepairable edit refused"
       (let
         [source

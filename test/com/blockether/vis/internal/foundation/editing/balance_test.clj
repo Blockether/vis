@@ -75,4 +75,22 @@
       (let
         [r (verdict "(ns a)\n(defn f []\n  (inc 1)\n" "(ns a)\n(defn f []\n  (inc 1))\n" [[2 3]])]
         (expect (true? (:ok? r)))
-        (expect (= ["line 3 added `)`"] (:notes r))))))
+        (expect (= ["line 3 added `)`"] (:notes r)))))
+  ;; Regression: `(foo [1 2] 3)` mistyped as `(foo (1 2] 3)` came back as `(foo (1 2 3))`
+  ;; — a vector turned into a call that swallowed the argument after it. Every earlier
+  ;; check passed: it parses, it is one line, the skeleton is identical, and the only
+  ;; characters that moved are delimiters.
+  (it "refuses a repair that retypes a delimiter the caller wrote"
+      (expect (= "the delimiter repair would move or retype a delimiter you wrote"
+                 (:why (verdict "(foo (1 2] 3)\n" "(foo (1 2 3))\n" [[1 1]])))))
+  ;; Regression: a closer deleted from one line and re-added after the NEXT form moved
+  ;; that form inside its neighbour — `(g a) (h a)` became `(g a (h a))`.
+  (it "refuses a repair that moves a closer past a form the caller wrote"
+      (expect (= "the delimiter repair would move or retype a delimiter you wrote"
+                 (:why (verdict "(f\n  (g a)\n    (h a))\n" "(f\n  (g a\n    (h a)))\n" [[1 3]])))))
+  (it "keeps a closer that moved without crossing anything the caller wrote"
+      ;; the caller's own indentation is what says `:else 2` belongs to the `cond`, and
+      ;; no other delimiter of theirs changed places — this is the repair's whole job
+      (let [r (verdict "(cond\n  a 1)\n  :else 2\n" "(cond\n  a 1\n  :else 2)\n" [[1 3]])]
+        (expect (true? (:ok? r)))
+        (expect (= ["line 2 removed `)`" "line 3 added `)`"] (:notes r))))))

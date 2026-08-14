@@ -1640,9 +1640,13 @@
           (expect (string/includes? out "would not parse"))
           (expect (not (string/includes? out "delimiter repair")))
           (expect (= fixture (slurp rel)))))
-    (it "struct_patch by NAME repairs the fragment it was handed and reports it"
-        ;; the structural engine never hands back the content it would have written, so
-        ;; the repair is bounded by the `code` this call passed — every line of it
+    ;; Regression, session 621ba390: `code` that is not a complete form used to be balanced
+    ;; ON ITS OWN and spliced. Over a `match`, which addresses a region in the MIDDLE of a
+    ;; form, that completed `[{:keys [a b]}` into a whole vector and wrote it over the
+    ;; binding it landed on — the file parsed and the caller was told only that a delimiter
+    ;; was added. There is no would-be content here for a repair to be confined to, so
+    ;; there is no repair: the engine's refusal NAMES the unclosed delimiter instead.
+    (it "struct_patch by NAME refuses a `code` fragment instead of completing it"
         (let
           [sp
            (private-fn "struct-patch-tool")
@@ -1655,12 +1659,39 @@
 
           (spit (fs/file f) "(ns sp)\n\n(defn ok [] 1)\n")
           (let
-            [r (with-balancer
-                 "(defn ok [] (inc 1))"
-                 #(sp {"path" f "op" "replace" "target" "ok" "code" "(defn ok [] (inc 1)"}))]
-            (expect (:success? r))
-            (expect (= ["code line 1 added `)`"] (get (first (:result r)) "delimiters_repaired")))
-            (expect (= "(ns sp)\n\n(defn ok [] (inc 1))\n" (slurp (fs/file f)))))))
+            [out (try (with-balancer
+                        "(defn ok [] (inc 1))"
+                        #(sp {"path" f "op" "replace" "target" "ok" "code" "(defn ok [] (inc 1)"}))
+                      (catch clojure.lang.ExceptionInfo e (ex-message e)))]
+            (expect (string/includes? out "syntax error"))
+            (expect (string/includes? out "unclosed"))
+            (expect (= "(ns sp)\n\n(defn ok [] 1)\n" (slurp (fs/file f)))))))
+    ;; Regression: a `[` the caller mistyped as `(` came back as a CALL that had swallowed
+    ;; the argument after it — `(foo [1 2] 3)` written as `(foo (1 2 3))`. It parses, it is
+    ;; one line, its skeleton is identical and only delimiters moved, so nothing but the
+    ;; ORDER of the caller's own delimiters could refuse it.
+    (it "refuses a repair that retypes a delimiter instead of adding one"
+        (let
+          [[out written] (patch-line-3 "(ns reb)\n\n(defn ok [] (foo (1 2 3)))\n\n(defn two [] 2)\n"
+                                       "(defn ok [] (foo (1 2] 3))")]
+          (expect (string/includes? out "would move or retype a delimiter you wrote"))
+          (expect (= fixture written))))
+    ;; Regression: a deletion writes NO line, and the span named the line the deleted text
+    ;; used to occupy — a line the new content no longer has — so the repair of a delete
+    ;; always landed "outside the lines this call edited" and every such edit was refused.
+    (it "repairs a deletion on the seam it left, not on the line it removed"
+        (let
+          [rel
+           (write-temp! "patch/rebalance-delete.clj" "(ns reb)\n\n(defn ok []\n  1)\n")
+
+           a4
+           (anchor-at (cat-tool rel) 4)
+
+           out
+           (with-balancer "(ns reb)\n\n(defn ok [])\n" #(:result (patch-span rel a4 a4 "")))]
+
+          (expect (string/includes? out "delimiters repaired: line 3 added `)`"))
+          (expect (= "(ns reb)\n\n(defn ok [])\n" (slurp rel)))))
     (it "struct_patch by LINE repairs the splice inside the lines it wrote"
         (let
           [sp

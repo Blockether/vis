@@ -16,8 +16,8 @@
      1. the repaired file parses clean;
      2. it keeps the same number of lines and the same final newline;
      3. every line it changes lies inside an edited span;
-     4. it moved delimiters and whitespace only — every other character, in order,
-        is still the caller's.
+     4. it only ADDED delimiters or only DROPPED them — it never moved or retyped
+        one the caller wrote — and every other character, in order, is still theirs.
 
    Fail any one and the edit is REFUSED with its parse error intact. A repair that
    has to reach outside the edit is guessing about code nobody in this call wrote,
@@ -42,6 +42,38 @@
   ^String [^String s]
   (str/replace s #"[\s(){}\[\]]" ""))
 
+(defn- delimiters
+  "Every delimiter character of `s`, in order — the SHAPE the caller wrote, with the
+   code between them dropped."
+  [^String s]
+  (filterv delimiter? s))
+
+(defn- subsequence?
+  "True when every element of `a` appears in `b`, in order — `b` is `a` with things
+   INSERTED and nothing else."
+  [a b]
+  (loop
+    [a
+     (seq a)
+
+     b
+     (seq b)]
+
+    (cond (nil? a) true
+          (nil? b) false
+          (= (first a) (first b)) (recur (next a) (next b))
+          :else (recur a (next b)))))
+
+(defn- one-directional?
+  "True when the repair only ADDED delimiters or only DROPPED them. A repair that does
+   both MOVED or RETYPED one the caller wrote, and both rewrite meaning while leaving
+   the skeleton untouched: `(foo [1 2] 3)` mistyped as `(foo (1 2] 3)` comes back as
+   `(foo (1 2 3))` — a vector turned into a call that swallowed the next argument — and
+   a closer deleted from one line and re-added on the next moves the form that follows
+   INSIDE its neighbour. Neither is a repair the caller can see in a `+)` note, so
+   neither is one this decision may take."
+  [before after]
+  (or (subsequence? before after) (subsequence? after before)))
 (defn changed-span
   "The 1-based, inclusive `[from to]` line range of `after` that differs from
    `before` — shared leading and trailing LINES are dropped, so it is exactly the
@@ -145,6 +177,8 @@
             {:ok? false :why "a delimiter repair was found but it still would not parse"}
             (not= (skeleton source) (skeleton candidate))
             {:ok? false :why "the delimiter repair would rewrite code, not delimiters"}
+            (not (one-directional? (delimiters source) (delimiters candidate)))
+            {:ok? false :why "the delimiter repair would move or retype a delimiter you wrote"}
             (not= (str/ends-with? source "\n") (str/ends-with? ^String candidate "\n"))
             {:ok? false :why "the delimiter repair would change the file's final newline"}
             :else (let

@@ -5240,7 +5240,16 @@
                             ", lines " (reduce min (map :from-line resolved))
                             ".." (reduce max (map :to-line resolved)))
                        (mapv (fn [{:keys [new-from written]}]
-                               [new-from (+ (long new-from) (max 0 (dec (long written))))])
+                               (let [from (long new-from)]
+                                 (if (zero? (long written))
+                                   ;; A deletion writes NO line: what it left behind is a
+                                   ;; SEAM between the line above it and the line that moved
+                                   ;; up into its place, and the delimiters it took with it
+                                   ;; belong to one of those two. Naming the line the deleted
+                                   ;; text used to occupy names a line that no longer exists,
+                                   ;; so every repair of a deletion fell "outside the edit".
+                                   [(max 1 (dec from)) from]
+                                   [from (+ from (dec (long written)))])))
                              applied))
 
      ;; What actually reaches disk: the splice, or the delimiter repair the gate
@@ -5656,42 +5665,21 @@
                             :reason (get-in r [:error :reason])
                             :at at}))))
        ;; NAME/MATCH-based (the original StructuralApi surface). The engine refuses a
-       ;; `code` fragment that is not a complete form and never hands back the content
-       ;; it would have written, so the repair is asked of the FRAGMENT — every line of
-       ;; which this call wrote — and the engine still re-parses the whole file before
-       ;; anything lands. A name locator cannot drift onto a line the caller did not
-       ;; mean, which is what makes repairing the caller's own text safe here.
-       (let
-         [lang
-          (zipper/detect-language path)
-
-          source
-          (slurp (safe-path path))
-
-          run
-          (fn [c]
-            (structural/edit-source path
-                                    source
-                                    {:op op
-                                     :target (get args "target")
-                                     :kind (get args "kind")
-                                     :code c
-                                     :match match-arg
-                                     :anchor (get args "anchor")}))]
-
-         (try
-           {:content (run code)}
-           (catch clojure.lang.ExceptionInfo e
-             (let
-               [repair (when (and (string? code) (not (str/blank? code)) lang)
-                         (balance/rebalance {:balancer (language-balancer lang)
-                                             :parses-clean? (fn [^String s]
-                                                              (empty? (zipper/error-nodes lang s)))
-                                             :source code
-                                             :spans [[1 (count (str/split-lines code))]]}))]
-               (if (:ok? repair)
-                 {:content (run (:content repair)) :repairs (mapv #(str "code " %) (:notes repair))}
-                 (throw e)))))))
+       ;; `code` fragment that is not a complete form and never hands back the content it
+       ;; WOULD have written, so there is nothing here for a repair to be confined to —
+       ;; only the fragment itself, and repairing a fragment is what balanced
+       ;; `[{:keys [a b]}` into a complete vector and spliced it over a `match` in the
+       ;; MIDDLE of a form. The engine's own refusal names the unclosed delimiter and
+       ;; says to check delimiter TYPES; that is the information the caller needs.
+       (let [source (slurp (safe-path path))]
+         {:content (structural/edit-source path
+                                           source
+                                           {:op op
+                                            :target (get args "target")
+                                            :kind (get args "kind")
+                                            :code code
+                                            :match match-arg
+                                            :anchor (get args "anchor")})}))
 
      ;; The content the edit produced, plus any delimiter repair the zipper gate
      ;; accepted for it — named in the summary, never applied silently.
