@@ -2671,10 +2671,10 @@
                (it "describes parse refusal AND delimiter auto-repair"
                    (expect (string/includes? struct-description "will not parse is REFUSED"))
                    (expect (string/includes? struct-description "delimiters auto-repaired"))
-                   ;; "applies in order, never rolled back" is a property of the BATCH, and
-                   ;; `doc(name)` is the only place it can be stated now that no schema
-                   ;; describes the `edits` parameter.
-                   (expect (string/includes? struct-description "never rolled back")))
+                   ;; The batch's all-or-nothing property is a property of the BATCH,
+                   ;; and `doc(name)` is the only place it can be stated now that no
+                   ;; schema describes the `edits` parameter.
+                   (expect (string/includes? struct-description "rolls the earlier ones back")))
                (it "documents the Python result shape instead of relying on rendered output"
                    (expect (string/includes? struct-result "`changed`"))
                    (expect (string/includes? struct-result "`diff`"))
@@ -3518,7 +3518,10 @@
             (expect (= 2 (count (:result r))))
             (expect (clojure.string/includes? src "(defn aa [] 1)"))
             (expect (clojure.string/includes? src "(defn d [] 4)")))))
-    (it "a failing entry stops the batch and names how many edits already applied"
+    ;; Regression, issue #147: a failing entry stopped the batch and the earlier
+    ;; entries stayed on disk — the call raised, the block that could have
+    ;; compensated was unwound, and the tree was left half-edited.
+    (it "a failing entry rolls the whole batch back and says so"
         (let
           [_ (temp-dir-path "spb3")
            f (str (temp-root) "/spb3/m.clj")]
@@ -3531,9 +3534,86 @@
                     (catch Throwable e e))]
             (expect (instance? Throwable r))
             (expect (clojure.string/includes? (ex-message r) "stopped at edit 2 of 2"))
-            (expect (= 1 (:applied-count (ex-data r))))
-            ;; No rollback: the first edit stands.
-            (expect (clojure.string/includes? (slurp (fs/file f)) "(defn a [] 9)")))))))
+            (expect (clojure.string/includes? (ex-message r) "rolled back"))
+            (expect (= 0 (:applied-count (ex-data r))))
+            (expect (= 1 (:rolled-back-count (ex-data r))))
+            ;; ATOMIC: the entry that DID apply is undone, not left standing.
+            (expect (= "(defn a [] 1)\n" (slurp (fs/file f)))))))
+    ;; Regression, issue #147: the batch spanned two files, the second entry was
+    ;; refused for a syntax error, and the first file kept a rename from a batch
+    ;; that reported failure.
+    (it "a batch that fails ACROSS files leaves every file byte-identical"
+        (let
+          [_ (temp-dir-path "spb4")
+           f1 (str (temp-root) "/spb4/one.clj")
+           f2 (str (temp-root) "/spb4/two.clj")
+           src1 "(defn alpha [] 1)\n"
+           src2 "(defn beta [] 2)\n"]
+
+          (spit (fs/file f1) src1)
+          (spit (fs/file f2) src2)
+          (let
+            [r (try (sp {"edits"
+                         [{"path" f1 "op" "rename" "target" "alpha" "code" "alpha-renamed"}
+                          {"path" f2 "op" "replace" "target" "beta" "code" "(defn beta [:"}]})
+                    (catch Throwable e e))]
+            (expect (instance? Throwable r))
+            (expect (= src1 (slurp (fs/file f1))))
+            (expect (= src2 (slurp (fs/file f2)))))))))
+
+
+
+(defdescribe
+  atomic-write-test
+  "Every editor write lands as ONE atomic replacement: a sibling temp file the
+   target's own mode is carried onto, published by a rename, leaving no debris —
+   and a write that cannot land answers a refusal with the previous source
+   untouched instead of a raw java exception."
+  (let
+    [write-safe
+     (private-fn "write-safe")
+
+     atomic-replace!
+     (private-fn "atomic-replace!")]
+
+    ;; Regression, issue #147: `spit` truncated the target IN PLACE, so a failure
+    ;; mid-write destroyed the only copy of the previous source and the raw IO
+    ;; exception escaped write-safe's documented never-throw contract.
+    (it "a write that cannot land answers a refusal instead of throwing"
+        (let
+          [dir
+           (temp-dir-path "atomic1")
+
+           missing
+           (str dir "/no-such-dir/f.txt")
+
+           r
+           (atomic-replace! (fs/file missing) "f.txt" "never lands")]
+
+          (expect (= :io-error (:reason r)))
+          (expect (string/includes? (str (:message r)) "The file is unchanged."))
+          (expect (not (fs/exists? missing)))
+          (expect (empty? (filter #(string/includes? (str (fs/file-name %)) ".vis-")
+                                  (fs/list-dir dir))))))
+    (it "an overwrite carries the file's own mode and leaves no temp behind"
+        (let
+          [dir
+           (temp-dir-path "atomic2")
+
+           f
+           (str dir "/run.sh")
+
+           ^java.io.File ff
+           (fs/file f)]
+
+          (spit ff "#!/bin/sh\necho one\n")
+          (.setExecutable ff true)
+          (let [r (write-safe {"path" f "content" "#!/bin/sh\necho two\n"})]
+            (expect (:success? r))
+            (expect (= "#!/bin/sh\necho two\n" (slurp ff)))
+            (expect (.canExecute ff))
+            (expect (empty? (filter #(string/includes? (str (fs/file-name %)) ".vis-")
+                                    (fs/list-dir dir)))))))))
 
 
 

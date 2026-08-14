@@ -54,7 +54,13 @@
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture])
   (:import (com.github.difflib DiffUtils UnifiedDiffUtils)
            (com.github.difflib.patch AbstractDelta Chunk Patch)
-           (java.io File)))
+           (java.io File)
+           (java.nio.file AtomicMoveNotSupportedException
+                          CopyOption
+                          Files
+                          LinkOption
+                          Path
+                          StandardCopyOption)))
 
 ;; Tools in this namespace (grep/struct_index/struct_patch/move/…) can execute
 ;; DEFERRED on a virtual thread that has entered the GraalPy polyglot Context —
@@ -3325,6 +3331,11 @@
 ;; The `:is_overwrite` knob defaults to true. `:expected_mtime` /
 ;; `:expected_size` guard an atomic read-modify-write on an existing file
 ;; against the `:mtime` / `:size` a caller read earlier.
+;;
+;; The write itself is ATOMIC (`atomic-replace!`): the bytes land in a sibling
+;; temp file that carries the target's own mode and a rename publishes them, so
+;; a failure ANYWHERE — including one mid-write — leaves the previous source
+;; exactly as the caller last read it and answers `:reason :io-error`.
 ;; =============================================================================
 
 (def ^:private write-required-keys #{"path" "content"})
@@ -3373,11 +3384,65 @@
                        :got (type (get args "content"))}))))
   (update args "path" str))
 
+(defn- atomic-replace!
+  "Put `content` in `file` as ONE atomic replacement — the WRITE half of every
+   editor's all-or-nothing promise.
+
+   `spit` opened the target and truncated it IN PLACE, so a failure mid-write
+   destroyed the only copy of the previous source and escaped `write-safe`'s
+   never-throw contract as a raw java exception. Here the bytes go to a sibling
+   temp file that inherits the target's own mode (a patched script keeps its +x
+   bit), and only a rename publishes them: a reader sees the old file or the new
+   one, never a torn one, and a failure ANYWHERE leaves the previous source
+   exactly as the caller last read it.
+
+   Answers nil when the bytes landed, or a `{:reason :io-error :message …}`
+   failure the caller reports like any other refusal — nothing was written."
+  [^File file rel ^String content]
+  (let
+    [^Path target
+     (.toPath file)
+
+     ^File tmp
+     (io/file (.getParentFile file)
+              (str "." (.getName file) ".vis-" (java.util.UUID/randomUUID) ".tmp"))
+
+     ^Path tmp-path
+     (.toPath tmp)
+
+     existed?
+     (.exists file)]
+
+    (try (spit tmp content)
+         ;; A fresh temp file would otherwise hand back a file whose permission bits
+         ;; the caller never asked to change. Where the mode is not ours to read
+         ;; (a non-POSIX filesystem) the new file simply keeps the default.
+         (when existed?
+           (try (Files/setPosixFilePermissions
+                  tmp-path
+                  (Files/getPosixFilePermissions target (into-array LinkOption [])))
+                (catch Throwable _ nil)))
+         (try (Files/move tmp-path target (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE]))
+              (catch AtomicMoveNotSupportedException _
+                (Files/move tmp-path
+                            target
+                            (into-array CopyOption [StandardCopyOption/REPLACE_EXISTING]))))
+         nil
+         (catch Throwable t
+           {:reason :io-error
+            :message (str "write failed: "
+                          rel
+                          " could not be written — "
+                          (or (ex-message t) (str t))
+                          ". The file is unchanged.")})
+         (finally (try (Files/deleteIfExists tmp-path) (catch Throwable _ nil))))))
+
 (defn write-safe
   "Whole-file write primitive: create a new file OR overwrite an
-   existing one with `:content`. Returns a structured result; **never
-   throws on normal failure paths** (file exists with is_overwrite false,
-   stale mtime/size, path escape).
+   existing one with `:content`, as ONE atomic replacement. Returns a
+   structured result; **never throws on normal failure paths** (file exists
+   with is_overwrite false, stale mtime/size, path escape, or bytes that
+   could not land — the previous source stands).
 
    Required keys: `:path`, `:content` (string).
    Optional keys:
@@ -3506,14 +3571,30 @@
                         (>= n (long write-fail-loop-threshold))
                         (str "\n" (write-loop-hint n rel)))})
           (do (ensure-parent-dirs! file)
-              (spit file content)
-              (fff-index/note-fs-write!)
-              (capture-temp-write! file)
-              (clear-write-fail-count! file)
-              {:success? true
-               :plan {:path rel :before before :after content :op (if exists? :update :add)}
-               :checks
-               [{:edit-index 0 :path rel :op (if exists? :update :add) :existed? exists?}]}))))))
+              (if-let [io-fail (atomic-replace! file rel content)]
+                ;; The bytes never reached the target, so this reads like every other
+                ;; refusal instead of surfacing a raw java IO exception: the previous
+                ;; source stands and the caller reports that nothing was written.
+                (let [n (bump-write-fail-count! file)]
+                  {:success? false
+                   :failures [(assoc io-fail
+                                :edit-index 0
+                                :path rel
+                                :consecutive-failures n)]
+                   :checks [(assoc io-fail
+                              :edit-index 0
+                              :path rel)]
+                   :loop-hint (write-loop-hint n rel)
+                   :message (:message io-fail)})
+                (do (fff-index/note-fs-write!)
+                    (capture-temp-write! file)
+                    (clear-write-fail-count! file)
+                    {:success? true
+                     :plan {:path rel :before before :after content :op (if exists? :update :add)}
+                     :checks [{:edit-index 0
+                               :path rel
+                               :op (if exists? :update :add)
+                               :existed? exists?}]}))))))))
 
 ;; =============================================================================
 ;; Batch path specs + directory listing
@@ -5549,6 +5630,34 @@
          :error {:message (:message result) :failures (:failures result) :mode :struct_patch}}))))
 
 
+(defn- restore-file-befores!
+  "Put every file a FAILED `struct_patch` batch already wrote back the way the
+   call found it. Each entry is the `{:path :before}` pre-image `write-safe`
+   captured BEFORE it wrote, in application order, so the FIRST one per path is
+   that file's state at the start of the call — restoring it undoes however many
+   entries touched the file. A file the batch CREATED (no `:before`) is deleted.
+
+   Never throws: a batch that is already failing must not fail a second time on
+   its own undo. Answers how many files were put back."
+  [befores]
+  (let
+    [ordered (:entries (reduce (fn [{:keys [seen entries]} {:keys [path] :as b}]
+                                 (if (contains? seen path)
+                                   {:seen seen :entries entries}
+                                   {:seen (conj seen path) :entries (conj entries b)}))
+                               {:seen #{} :entries []}
+                               befores))]
+    (count (filterv (fn [{:keys [path before]}]
+                      (try (if (nil? before)
+                             (.delete (safe-path path))
+                             ;; is_dirty_ok: restoring the pre-image is the OPPOSITE
+                             ;; of clobbering in-flight work — it hands the file back.
+                             (boolean (:success? (write-safe {"path" path
+                                                              "content" before
+                                                              "is_dirty_ok" true}))))
+                           (catch Throwable _ false)))
+             ordered))))
+
 (defn- struct-patch-tool
   "struct_patch — ONE syntax-safe structural edit, or an ORDERED `edits` BATCH.
 
@@ -5557,8 +5666,14 @@
    are shared defaults for every entry — so one `path` plus many ops needs no
    repetition, and entries may also span several files. Entries apply in request
    order, each against the file as the previous entry left it, and the results
-   come back as ONE ordered array. There is no rollback: a failing entry stops
-   the batch and the earlier writes stand — the error says how many applied."
+   come back as ONE ordered array.
+
+   The batch is ATOMIC: a failing entry stops it AND rolls every earlier write
+   back from the pre-image each write captured, so a refused batch leaves every
+   file exactly as the caller last read it. Half of a batch on disk is a tree
+   only the (now unwound) caller knew how to repair — and the `:around` repair
+   hooks retry a failed batch WHOLE, which is only sound because nothing of the
+   first attempt survives."
   [& {:as args}]
   ;; Same `edits` coercion as patch: a batch a serializer stringified, or a lone edit
   ;; map, becomes a real vector instead of being silently ignored as a single call.
@@ -5568,7 +5683,19 @@
           (let
             [shared (dissoc args "edits")
              specs (mapv #(merge shared %) edits)
-             total (count specs)]
+             total (count specs)
+             stop-note (fn [^long i restored]
+                         (str " — struct_patch batch stopped at edit "
+                              (inc i)
+                              " of "
+                              total
+                              (if (pos? i)
+                                (str "; the "
+                                     i
+                                     " earlier edit(s) were rolled back ("
+                                     restored
+                                     " file(s) restored) — nothing was written.")
+                                "; nothing was written.")))]
 
             (loop
               [i 0
@@ -5589,34 +5716,36 @@
                 (let
                   [env
                    ;; A throwing entry keeps its `:type` (so :on-error-fn still routes
-                   ;; it) but gains the batch position — earlier writes already stand.
+                   ;; it) but gains the batch position — and every earlier write is put
+                   ;; back BEFORE the error escapes, because the caller that could have
+                   ;; compensated is exactly the one the raise unwinds.
                    (try (struct-patch-one (nth specs i))
                         (catch Throwable e
-                          (throw (ex-info (str (ex-message e)
-                                               " — struct_patch batch stopped at edit "
-                                               (inc i)
-                                               " of "
-                                               total
-                                               "; "
-                                               i
-                                               " earlier edit(s) already written.")
-                                          (assoc (or (ex-data e) {})
-                                            :edit-index i
-                                            :applied-count i)
-                                          e))))]
+                          (let [restored (restore-file-befores! befores)]
+                            (throw (ex-info (str (ex-message e) (stop-note i restored))
+                                            (assoc (or (ex-data e) {})
+                                              :edit-index i
+                                              :applied-count 0
+                                              :rolled-back-count i)
+                                            e)))))]
                   (if (:success? env)
                     (recur (inc i)
                            (into summaries (:result env))
                            (into befores (get-in env [:metadata :file-befores])))
-                    (extension/failure {:result nil
-                                        :op :struct_patch
-                                        :metadata (assoc (:metadata env)
-                                                    :mode :struct_patch
-                                                    :edit-index i
-                                                    :applied-count i)
-                                        :error (assoc (:error env)
-                                                 :edit-index i
-                                                 :applied-count i)})))))))))
+                    (let [restored (restore-file-befores! befores)]
+                      (extension/failure {:result nil
+                                          :op :struct_patch
+                                          :metadata (assoc (:metadata env)
+                                                      :mode :struct_patch
+                                                      :edit-index i
+                                                      :applied-count 0
+                                                      :rolled-back-count i)
+                                          :error (assoc (:error env)
+                                                   :message (str (:message (:error env))
+                                                                 (stop-note i restored))
+                                                   :edit-index i
+                                                   :applied-count 0
+                                                   :rolled-back-count i)}))))))))))
 
 (def struct-patch-symbol
   (vis/symbol
@@ -5629,7 +5758,8 @@
        "Structurally edit supported code: definition by NAME (`target`) or node by "
        "`at`/`line`. Renames, docs, moves, `append_child`. Writes re-parse: code that will not parse "
        "is REFUSED; unbalanced Clojure delimiters auto-repaired. A batch of `edits` applies in order "
-       "and is never rolled back: an entry that fails leaves the earlier ones written.")
+       "and is ATOMIC: an entry that fails rolls the earlier ones back, so every file is left exactly "
+       "as the call found it.")
      :before-fn (plan-gated-before-fn :struct_patch :file struct-arg-paths)
      :tag :mutation
      :on-error-fn (tool-failure-on-error :struct_patch :file)}))
