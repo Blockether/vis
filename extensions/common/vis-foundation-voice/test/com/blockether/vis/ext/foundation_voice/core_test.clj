@@ -10,11 +10,21 @@
                  :ext/cli
                  first)]
         (expect (= "voice" (:cmd/name cli)))
-        (expect (= ["models"] (mapv :cmd/name (:cmd/subcommands cli))))))
+        (expect (= ["models"] (mapv :cmd/name (:cmd/subcommands cli))))
+        (expect (= ["status" "download" "licenses"]
+                   (mapv :cmd/name (:cmd/subcommands (first (:cmd/subcommands cli))))))))
+  (it "downloads what Vis fetches by itself unless an opt-in model is NAMED"
+      ;; pocket-tts ships as an engine without its weights: neither `--all` nor
+      ;; a bare `download` may accept its terms for the user.
+      (expect (= [:parakeet :piper] (#'voice/download-families {})))
+      (expect (= [:parakeet :piper] (#'voice/download-families {"all" true})))
+      (expect (= [:pocket-tts] (#'voice/download-families {"pocket-tts" true})))
+      (expect (= [:parakeet :piper] (#'voice/download-families {"parakeet" true "piper" true}))))
   (it "contributes voice-specific doctor diagnostics"
       (with-redefs
         [voice/model-status
-         (constantly {:parakeet {:installed? true}})
+         (constantly {:parakeet {:installed? true}
+                      :speech {:piper {:state :ready} :pocket-tts {:state :absent}}})
 
          com.blockether.vis.ext.foundation-voice.core/executable?
          (constantly true)
@@ -26,8 +36,32 @@
              identity))]
 
         (let [msgs ((:ext/doctor-fn voice/voice-extension) {})]
-          (expect (= [::voice/runtime ::voice/ffmpeg ::voice/parakeet] (mapv :check-id msgs)))
+          (expect (= [::voice/runtime ::voice/ffmpeg ::voice/parakeet ::voice/speech]
+                     (mapv :check-id msgs)))
           (expect (every? #(= :info (:level %)) msgs)))))
+  (it "warns about the speech voice it installs, never about the opt-in one"
+      ;; pocket-tts staying absent is the DESIGNED state, and a warning nobody
+      ;; is meant to act on teaches the user to ignore doctor.
+      (with-redefs
+        [voice/model-status
+         (constantly {:parakeet {:installed? true}
+                      :speech {:piper {:state :absent} :pocket-tts {:state :absent}}})
+
+         com.blockether.vis.ext.foundation-voice.core/executable?
+         (constantly true)
+
+         clojure.core/requiring-resolve
+         (fn [sym]
+           (case sym
+             com.blockether.vis.ext.foundation-voice.asr/transcribe-file!
+             identity))]
+
+        (let
+          [by-id
+           (into {} (map (juxt :check-id identity)) ((:ext/doctor-fn voice/voice-extension) {}))]
+          (expect (= :warn (:level (::voice/speech by-id))))
+          (expect (re-find #"--piper" (:remediation (::voice/speech by-id))))
+          (expect (= 4 (count by-id))))))
   (it "defers voice input namespace until the /voice slash run-fn fires (K10)"
       ;; The declarative `/voice` slash spec lazily requiring-resolves
       ;; `toggle-recording!` from the input ns so the host doesn't pay

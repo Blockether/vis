@@ -3,14 +3,12 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.ext.foundation-voice.files :as files]
+            [com.blockether.vis.ext.foundation-voice.assets :as assets]
             [com.blockether.vis.ext.foundation-voice.sherpa :as sherpa]
             [com.blockether.vis.internal.paths :as paths])
   (:import [com.k2fsa.sherpa.onnx OfflineModelConfig OfflineRecognizer OfflineRecognizerConfig
             OfflineStream OfflineTransducerModelConfig WaveReader]
-           [java.io File FileInputStream FileOutputStream]
-           [org.apache.commons.compress.archivers.tar TarArchiveInputStream]
-           [org.apache.commons.compress.compressors.bzip2 BZip2CompressorInputStream]))
+           [java.io File]))
 
 ;; Reflective interop is FATAL in the native image (needs metadata per call
 ;; site) — keep this ns reflection-free at compile time. An untyped
@@ -20,15 +18,21 @@
 
 (def model-dir-env "VIS_PARAKEET_MODEL_DIR")
 
-(def model-url
-  "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2")
+(def ^:const asset-id "parakeet-tdt-0.6b-v3-int8")
+
+(defn model-asset
+  "This model's manifest entry — where it may be fetched from, what verifies it
+   and what it is licensed under. The URL used to be a literal here; it now lives
+   in one file with an SPDX id beside it."
+  []
+  (assets/entry asset-id))
 
 (defn default-model-dir
   "~/.vis model path used when no env/config override is set. A function, never a
    top-level `def`: `native-image` initializes this namespace at BUILD time, so a
    captured `user.home` would point every installed binary at the BUILDER's home."
   []
-  (str (System/getProperty "user.home") "/.vis/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"))
+  (assets/install-dir (model-asset)))
 
 (defn model-dir
   []
@@ -59,115 +63,13 @@
   ([] (model-installed? (model-dir)))
   ([dir] (every? #(.isFile (io/file %)) (vals (model-files dir)))))
 
-(defn- safe-entry-name
-  [entry-name]
-  (let
-    [parts (->> (str/split entry-name #"/")
-                (remove str/blank?)
-                ;; Release archives contain a top-level directory. Strip it so
-                ;; custom VIS_PARAKEET_MODEL_DIR targets get the files directly.
-                rest)]
-    (when (and (seq parts) (not-any? #(or (= % "..") (str/includes? % "\\")) parts))
-      (str/join File/separator parts))))
-
-(defn- extract-tar-bz2!
-  "Extract `archive-path` into `target-dir`. Decompressing the ~465MB bzip2 model
-   takes MINUTES, so `on-progress` (0..99, optional) is driven by how far the
-   COMPRESSED file has been consumed — read straight off the file channel, so the
-   copy loop stays a plain read/write and no UI has to sit on a frozen number."
-  ([archive-path target-dir] (extract-tar-bz2! archive-path target-dir nil))
-  ([archive-path target-dir on-progress]
-   (.mkdirs (io/file target-dir))
-   (let
-     [archive
-      (io/file archive-path)
-
-      total
-      (.length archive)]
-
-     (with-open
-       [^FileInputStream fis
-        (FileInputStream. archive)
-
-        bz
-        (BZip2CompressorInputStream. fis)
-
-        tar
-        (TarArchiveInputStream. bz)]
-
-       (let
-         [^java.nio.channels.FileChannel channel
-          (.getChannel fis)
-
-          buf
-          (byte-array 262144)
-
-          report!
-          (fn []
-            (when (and on-progress (pos? total))
-              (on-progress (min 99
-                                (long (* 100 (/ (double (.position channel)) (double total))))))))]
-
-         (loop []
-
-           (when-let [entry (.getNextTarEntry tar)]
-             (when-let [relative (safe-entry-name (.getName entry))]
-               (let [out-file (io/file target-dir relative)]
-                 (if (.isDirectory entry)
-                   (.mkdirs out-file)
-                   (do (.mkdirs (.getParentFile out-file))
-                       (with-open [out (FileOutputStream. out-file)]
-                         (loop []
-
-                           (let [n (.read tar buf)]
-                             (when-not (neg? n) (.write out buf 0 n) (report!) (recur)))))))))
-             (recur))))))
-   target-dir))
-
 (defn- install-model!
-  "Download + extract into a STAGING dir, verify all files, then ATOMICALLY
-   move it into place. The final `dir` never holds partial files — an
-   interrupted or corrupt download can't leave a truncated `.onnx` that
-   native-aborts the JVM on the next load; it just stays absent. Returns dir.
-
-   `on-progress` (optional) is called with {:phase :downloading|:extracting
-   :progress 0..99}. Transfer owns 0..89 and unpacking owns 90..98, so the
-   number keeps MOVING through the multi-minute bzip2 extraction instead of
-   parking on 99% and looking hung."
+  "Download + verify + ATOMICALLY install, through the manifest that knows where
+   this model may come from. `on-progress` (optional) is called with
+   {:phase :downloading|:extracting :progress 0..99}."
   [dir on-progress]
-  (let
-    [archive
-     (File/createTempFile "vis-voice-asr-model-" ".tar.bz2")
-
-     staging
-     (io/file (str dir ".staging-" (System/nanoTime)))
-
-     report
-     (fn [phase pct]
-       (when on-progress (on-progress {:phase phase :progress pct})))]
-
-    (try (sherpa/ensure-native!)
-         (files/download! model-url
-                          (str archive)
-                          (fn [pct]
-                            (report :downloading (long (* 0.9 (long pct))))))
-         (extract-tar-bz2! (str archive)
-                           (str staging)
-                           (fn [pct]
-                             (report :extracting (+ 90 (long (* 0.09 (long pct)))))))
-         (when-not (model-installed? (str staging))
-           (throw (ex-info "Parakeet model download did not produce expected files"
-                           {:type :voice-asr/download-incomplete :model-dir dir})))
-         (report :extracting 99)
-         (let [final (io/file dir)]
-           (when (.exists final) (files/delete-dir! final))
-           (.mkdirs (.getParentFile final))
-           (when-not (.renameTo staging final)
-             (throw (ex-info "Could not move the downloaded model into place"
-                             {:type :voice-asr/install-failed :model-dir dir}))))
-         dir
-         (finally (try (.delete archive) (catch Throwable _))
-                  (try (when (.exists staging) (files/delete-dir! staging)) (catch Throwable _))))))
+  (sherpa/ensure-native!)
+  (assets/install! (model-asset) dir on-progress))
 
 (defn ensure-model!
   "Download + atomically install the Parakeet int8 model if missing (blocking).

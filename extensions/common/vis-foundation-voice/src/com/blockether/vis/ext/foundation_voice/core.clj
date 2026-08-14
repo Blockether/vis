@@ -1,21 +1,62 @@
 (ns com.blockether.vis.ext.foundation-voice.core
-  "Local voice input through sherpa-onnx Parakeet ASR."
+  "Local voice: Parakeet ASR in, Piper or pocket-tts speech out."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]))
 
 (defn- cli-out! [s] (.println ^java.io.PrintStream vis/original-stdout (str s)))
 
-(defn- voice-asr-var
-  [sym]
-  (or (requiring-resolve (symbol "com.blockether.vis.ext.foundation-voice.asr" (name sym)))
-      (throw (ex-info "Voice ASR namespace did not expose expected var"
-                      {:type :voice-asr/missing-var :var sym}))))
+(defn- ext-var
+  "A var from one of the voice namespaces, resolved on FIRST USE. Nothing here
+   requires `asr`, `tts` or `assets` at load time: this extension is registered
+   during startup and the audio stack - sherpa's natives included - costs far
+   too much to pay for on a run that never speaks."
+  [ns-name sym]
+  (or (requiring-resolve (symbol ns-name (name sym)))
+      (throw (ex-info (str "Voice namespace " ns-name " did not expose " sym)
+                      {:type :voice-ext/missing-var :ns ns-name :var sym}))))
 
-(defn- voice-asr-call! [sym & args] (apply (voice-asr-var sym) args))
+(defn- asr-call!
+  [sym & args]
+  (apply (ext-var "com.blockether.vis.ext.foundation-voice.asr" sym) args))
 
-(defn- parakeet-status [] {:installed? (boolean (voice-asr-call! 'model-installed?))})
+(defn- tts-call!
+  [sym & args]
+  (apply (ext-var "com.blockether.vis.ext.foundation-voice.tts" sym) args))
 
-(defn model-status [] {:parakeet (parakeet-status)})
+(defn- assets-call!
+  [sym & args]
+  (apply (ext-var "com.blockether.vis.ext.foundation-voice.assets" sym) args))
+
+(defn- parakeet-status [] {:installed? (boolean (asr-call! 'model-installed?))})
+
+(defn- speech-status
+  []
+  (into {}
+        (map (fn [family]
+               [family (tts-call! 'model-state family)]))
+        [:piper :pocket-tts]))
+
+(defn- asset-status
+  [entry]
+  {:id (:id entry)
+   :engine (:engine entry)
+   :license (:license entry)
+   :attribution (:attribution entry)
+   :notice (:notice entry)
+   :dir (assets-call! 'install-dir entry)
+   :is-installed (boolean (assets-call! 'installed? entry))
+   :is-opt-in (boolean (:is-opt-in entry))})
+
+(defn model-status
+  "Every local voice model in one map - the shape doctor and the CLI both read:
+
+     :parakeet  the ASR model, which honours VIS_PARAKEET_MODEL_DIR
+     :speech    per speaking family, the readiness a UI polls
+     :assets    every manifest entry, with its licence and whether it is here"
+  []
+  {:parakeet (parakeet-status)
+   :speech (speech-status)
+   :assets (mapv asset-status (assets-call! 'manifest))})
 
 (defn- executable?
   "True when `cmd` resolves to an executable file on PATH.
@@ -54,31 +95,59 @@
      :message "ffmpeg: missing; voice input cannot convert .oga/.opus to WAV for ASR."
      :remediation "Install ffmpeg and ensure it is on PATH for the Vis process."}))
 
-(defn- parakeet-message
-  []
+(defn- model-message
+  "One doctor line for a model that has to be ON DISK. A check that THROWS warns
+   too: a diagnostic that dies is the one nobody can act on."
+  [check-id label is-ready remediation]
   (try
-    (if (:installed? (:parakeet (model-status)))
-      {:level :info :check-id ::parakeet :message "Parakeet ASR model: installed"}
-      {:level :warn
-       :check-id ::parakeet
-       :message "Parakeet ASR model: missing"
-       :remediation
-       "Run `vis-agent extension voice models download --parakeet` or set VIS_PARAKEET_MODEL_DIR."})
+    (if (is-ready (model-status))
+      {:level :info :check-id check-id :message (str label ": installed")}
+      {:level :warn :check-id check-id :message (str label ": missing") :remediation remediation})
     (catch Throwable t
       {:level :warn
-       :check-id ::parakeet
-       :message (str "Parakeet ASR model: check failed: " (or (ex-message t) t))
+       :check-id check-id
+       :message (str label ": check failed: " (or (ex-message t) t))
        :remediation
        "Run `vis-agent extension voice models status` for detailed voice model diagnostics."})))
 
-(defn doctor-fn [_environment] [(voice-runtime-message) (ffmpeg-message) (parakeet-message)])
+(defn- parakeet-message
+  []
+  (model-message
+    ::parakeet
+    "Parakeet ASR model"
+    #(:installed? (:parakeet %))
+    "Run `vis-agent extension voice models download --parakeet` or set VIS_PARAKEET_MODEL_DIR."))
+
+(defn- speech-message
+  "Piper only, because it is the family Vis installs by itself. pocket-tts
+   staying absent is the DESIGNED state - see its manifest entry - so warning
+   about it would only teach the user to ignore doctor."
+  []
+  (model-message ::speech
+                 "Piper speech voice"
+                 #(= :ready (:state (:piper (:speech %))))
+                 "Run `vis-agent extension voice models download --piper`."))
+
+(defn doctor-fn
+  [_environment]
+  [(voice-runtime-message) (ffmpeg-message) (parakeet-message) (speech-message)])
+
+(defn- status-word
+  [{:keys [is-installed is-opt-in]}]
+  (cond is-installed "installed"
+        is-opt-in "opt-in, not installed"
+        :else "missing"))
 
 (defn- print-status!
   []
-  (let [{:keys [parakeet]} (model-status)]
-    (cli-out! (str "Parakeet: " (if (:installed? parakeet) "installed" "missing")))))
+  (let [{:keys [parakeet speech assets]} (model-status)]
+    (cli-out! (str "Parakeet ASR model: " (if (:installed? parakeet) "installed" "missing")))
+    (doseq [family [:piper :pocket-tts]]
+      (cli-out! (str "Speech (" (name family) "): " (name (:state (get speech family))))))
+    (cli-out! "")
+    (doseq [asset assets]
+      (cli-out! (format "  %-30s %-22s %s" (:id asset) (status-word asset) (:license asset))))))
 
-(defn- ensure-parakeet! [] (voice-asr-call! 'ensure-model!))
 
 (defn- voice-toggle-recording!
   "Slash run-fn body for `/voice`. Resolves the input ns lazily so the
@@ -94,17 +163,49 @@
 
 (defn- voice-models-status-command [_parsed _residual] (vis/init-cli!) (print-status!))
 
-(defn- voice-models-download-command
+(defn- voice-models-licenses-command
+  "What Vis puts on your machine and under what terms, without reading the
+   manifest: the answer to \"may I ship this?\"."
   [_parsed _residual]
   (vis/init-cli!)
-  (cli-out! "Downloading/checking Parakeet ASR model...")
-  (cli-out! (str "Parakeet ready: " (ensure-parakeet!)))
+  (doseq [asset (:assets (model-status))]
+    (cli-out! (str (:id asset) "  [" (:license asset) "]"))
+    (cli-out! (str "  " (:attribution asset)))
+    (when (:notice asset) (cli-out! (str "  Note: " (:notice asset))))
+    (cli-out! (str "  " (:dir asset)))
+    (cli-out! "")))
+
+(defn- download-families
+  "Which families the flags asked for. `--all` and a bare `download` both mean
+   everything Vis fetches on its own; an opt-in model is only ever NAMED."
+  [parsed]
+  (let [named (filterv #(get parsed (name %)) [:parakeet :piper :pocket-tts])]
+    (if (or (get parsed "all") (empty? named)) [:parakeet :piper] named)))
+
+(defn- download-family!
+  [family voice]
+  (if (= :parakeet family)
+    (do (cli-out! "Parakeet ASR model...") (cli-out! (str "  ready: " (asr-call! 'ensure-model!))))
+    (do (cli-out! (str (name family) " speech model..."))
+        (let [installed (tts-call! 'install-model! family voice nil)]
+          (if (seq installed)
+            (doseq [dir installed]
+              (cli-out! (str "  installed: " dir)))
+            (cli-out! "  already installed"))))))
+
+(defn- voice-models-download-command
+  [parsed _residual]
+  (vis/init-cli!)
+  (let [voice (get parsed "voice")]
+    (doseq [family (download-families parsed)]
+      (download-family! family voice)))
   (print-status!))
 
 (def voice-extension
   (vis/extension
     {:ext/name "foundation-voice"
-     :ext/description "Native local voice input: Parakeet ASR through sherpa-onnx."
+     :ext/description
+     "Native local voice: Parakeet ASR and Piper/pocket-tts speech through sherpa-onnx."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -118,19 +219,39 @@
        :cmd/subcommands
        [{:cmd/name "models"
          :cmd/doc "Manage local voice models."
-         :cmd/usage "vis-agent extension voice models <status|download>"
+         :cmd/usage "vis-agent extension voice models <status|download|licenses>"
          :cmd/subcommands
          [{:cmd/name "status"
-           :cmd/doc "Show local Parakeet model status."
+           :cmd/doc "Show which local voice models are installed."
            :cmd/usage "vis-agent extension voice models status"
            :cmd/run-fn #'voice-models-status-command}
           {:cmd/name "download"
-           :cmd/doc "Download the local Parakeet ASR model."
-           :cmd/usage "vis-agent extension voice models download [--parakeet|--all]"
+           :cmd/doc "Download local voice models."
+           :cmd/usage
+           "vis-agent extension voice models download [--parakeet|--piper|--pocket-tts|--all] [--voice ID]"
            :cmd/args
-           [{:name "parakeet" :kind :flag :type :boolean :doc "Download/check Parakeet ASR model."}
-            {:name "all" :kind :flag :type :boolean :doc "Download/check the voice model."}]
-           :cmd/run-fn #'voice-models-download-command}]}]}]
+           [{:name "parakeet"
+             :kind :flag
+             :type :boolean
+             :doc "Download/check the Parakeet ASR model."}
+            {:name "piper" :kind :flag :type :boolean :doc "Download/check the Piper speech voice."}
+            {:name "pocket-tts"
+             :kind :flag
+             :type :boolean
+             :doc "Download/check pocket-tts (opt-in; see `models licenses`)."}
+            {:name "all"
+             :kind :flag
+             :type :boolean
+             :doc "Download/check every model Vis fetches by itself."}
+            {:name "voice"
+             :kind :flag
+             :type :string
+             :doc "Which Piper voice, when the catalogue lists more than one."}]
+           :cmd/run-fn #'voice-models-download-command}
+          {:cmd/name "licenses"
+           :cmd/doc "Show what each voice model is licensed under and who to credit."
+           :cmd/usage "vis-agent extension voice models licenses"
+           :cmd/run-fn #'voice-models-licenses-command}]}]}]
      ;; Declarative slash registration: the TUI renders /voice via the
      ;; engine slash registry, toggling recording through
      ;; input/toggle-recording!.

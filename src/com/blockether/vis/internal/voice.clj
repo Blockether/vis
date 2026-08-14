@@ -163,7 +163,8 @@
    0-arity `register!` that registers whatever directions it serves. Soft: a build
    without the extension simply has no engine and every surface answers \"unavailable\"
    instead of failing to load."
-  ["com.blockether.vis.ext.foundation-voice.engine"])
+  ["com.blockether.vis.ext.foundation-voice.engine"
+   "com.blockether.vis.ext.foundation-voice.speech"])
 
 (defonce ^:private engines* (atom {}))
 (defonce ^:private default-engine* (atom {}))

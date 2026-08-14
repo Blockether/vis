@@ -211,7 +211,12 @@
          seen
          (atom [])]
 
-        (try (with-redefs [asr/model-url (str (.toURI archive))]
+        (try (with-redefs
+               [asr/model-asset
+                (constantly {:id "parakeet-test"
+                             :requires ["encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx"
+                                        "tokens.txt"]
+                             :sources [{:host :test :kind :archive :url (str (.toURI archive))}]})]
                (#'asr/install-model!
                 target
                 (fn [update]

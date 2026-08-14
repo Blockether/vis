@@ -1,0 +1,209 @@
+;; Every model and data artifact the voice extension installs: where it comes
+;; from, what it may be used for, and what has to exist on disk before an engine
+;; is allowed to claim it works. `assets.clj` is the only reader.
+;;
+;; A source is tried in the order `assets/sources` returns:
+;;   :hf        Hugging Face, SKIPPED unless a token is configured, tried FIRST
+;;              when one is (`:is-token-required true`). Credentials are never
+;;              carried across the redirect to HF's CDN.
+;;   :pack      the Vis VOICE_ASSETS_PACK release - the default, so a first run
+;;              needs no account anywhere.
+;;   :upstream  the project that published the artifact, last, as a fallback.
+;;
+;; Every source of one entry delivers the SAME bytes, so one `:sha256` verifies
+;; them all.
+;;
+;; `:is-commercial-ok true` is the bar for anything Vis MIRRORS or fetches by
+;; itself. An entry that fails it may still be listed, marked `:is-opt-in true`:
+;; the engine ships, the model is never mirrored into the pack, and every
+;; automatic path (`assets/ensure!`) refuses it, so it arrives only when a user
+;; asks for it by name and accepts its terms.
+[{:id "parakeet-tdt-0.6b-v3-int8"
+  :engine :parakeet
+  :install-dir "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
+  :requires ["encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt"]
+  :license "CC-BY-4.0"
+  :attribution
+  "Parakeet TDT 0.6B v3 by NVIDIA (https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), CC BY 4.0. ONNX export by k2-fsa/sherpa-onnx."
+  :source-url "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3"
+  :is-commercial-ok true
+  :is-redistributed true
+  :sources
+  [{:host :pack
+    :kind :archive
+    :url "https://github.com/Blockether/vis/releases/download/voice-assets-pack/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2"
+    :sha256 "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf"
+    :bytes 487170055}
+   {:host :upstream
+    :kind :archive
+    :url "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2"
+    :sha256 "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf"
+    :bytes 487170055}]}
+
+ ;; NOT redistributed and NEVER fetched automatically. The ONNX export k2-fsa
+ ;; publishes is a THIRD PARTY's (KevinAHM/pocket-tts-onnx), and the README
+ ;; inside the archive says in as many words "It is for non-commercial", while
+ ;; the LICENSE it points at is plain CC BY 4.0 — which permits commercial use.
+ ;; The licence governs and the export script is MIT, so the sentence looks like
+ ;; a mistaken summary; but an artifact that travels with a written claim
+ ;; contradicting our use is not one to put our name on. Vis therefore ships the
+ ;; ENGINE and lets a user fetch this model deliberately, and pocket-tts becomes
+ ;; redistributable the day we export Kyutai's CC BY 4.0 weights ourselves.
+ {:id "pocket-tts-int8"
+  :engine :pocket-tts
+  :install-dir "sherpa-onnx-pocket-tts-int8-2026-01-26"
+  :requires ["lm_flow.int8.onnx" "lm_main.int8.onnx" "encoder.onnx" "decoder.int8.onnx"
+             "text_conditioner.onnx" "vocab.json" "token_scores.json"]
+  ;; Pocket clones a REFERENCE CLIP instead of selecting a baked speaker, so a
+  ;; voice is a WAV in the bundle and the catalogue is ours to choose the day we
+  ;; export our own.
+  :voices [{:id "bria" :label "Bria (en)" :language "en" :clip "test_wavs/bria.wav"}
+           {:id "loona" :label "Loona (en)" :language "en" :clip "test_wavs/loona.wav"}
+           {:id "hibiki" :label "Hibiki (fr)" :language "fr"
+            :clip "test_wavs/sample_fr_hibiki_crepes.wav"}]
+  :license "CC-BY-4.0"
+  :attribution
+  "pocket-tts by Kyutai (https://huggingface.co/kyutai/pocket-tts), CC BY 4.0. ONNX export by KevinAHM/pocket-tts-onnx (export script MIT), repackaged by k2-fsa/sherpa-onnx. Reference clips from kyutai-labs/delayed-streaming-modeling."
+  :source-url "https://huggingface.co/kyutai/pocket-tts"
+  :notice
+  "The published archive's README states \"It is for non-commercial\" while the LICENSE beside it is CC BY 4.0. Until Vis exports the original weights itself, this model is opt-in and is never mirrored."
+  :is-commercial-ok false
+  :is-opt-in true
+  :is-redistributed false
+  :sources
+  [{:host :upstream
+    :kind :archive
+    :url "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2"
+    :sha256 "2f3b88823cbbb9bf0b2477ec8ae7b3fec417b3a87b6bb5f256dba66f2ad967cb"
+    :bytes 98336520}]}
+
+ ;; espeak-ng's phoneme tables, installed ONCE and shared by every Piper voice.
+ ;; GPL-3.0-or-later: copyleft, not a use restriction, so commercial use is
+ ;; allowed. It is DATA read at run time from a directory of its own, never
+ ;; linked into Vis, so redistributing it beside the Apache-2.0 binary is mere
+ ;; aggregation. `:source-url` is the corresponding source the licence requires
+ ;; us to point at.
+ {:id "espeak-ng-data"
+  :install-dir "espeak-ng-data"
+  :requires ["phontab" "phondata" "phonindex"]
+  :license "GPL-3.0-or-later"
+  :attribution "espeak-ng phoneme data, GPL-3.0-or-later, from https://github.com/espeak-ng/espeak-ng."
+  :source-url "https://github.com/espeak-ng/espeak-ng"
+  :is-commercial-ok true
+  :is-redistributed true
+  :sources
+  [{:host :pack
+    :kind :archive
+    :url "https://github.com/Blockether/vis/releases/download/voice-assets-pack/espeak-ng-data.tar.bz2"
+    :sha256 "4135ccf82e1f40613491c0874d4945ae9e9c7840933d8e25a6f9e003d9ebf533"
+    :bytes 7252012}
+   {:host :upstream
+    :kind :archive
+    :url "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/espeak-ng-data.tar.bz2"
+    :sha256 "4135ccf82e1f40613491c0874d4945ae9e9c7840933d8e25a6f9e003d9ebf533"
+    :bytes 7252012}]}
+
+ {:id "piper-en_US-kristin-medium"
+  :engine :piper
+  :install-dir "vits-piper-en_US-kristin-medium"
+  :requires ["en_US-kristin-medium.onnx" "tokens.txt"]
+  :needs ["espeak-ng-data"]
+  :voice {:id "kristin" :label "Kristin (en-US)" :language "en-US" :gender :female}
+  :license "LicenseRef-public-domain"
+  :attribution
+  "Piper voice en_US-kristin-medium by Bryce Beattie (https://brycebeattie.com/files/tts/), released into the public domain. Trained from scratch on 11.5 hours of public-domain LibriVox recordings. VITS/ONNX export by k2-fsa/sherpa-onnx."
+  :source-url "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/kristin/medium"
+  :is-commercial-ok true
+  :is-redistributed true
+  :sources
+  [{:host :hf
+    :kind :files
+    :is-token-required true
+    :files [{:path "en_US-kristin-medium.onnx"
+             :url "https://huggingface.co/csukuangfj/vits-piper-en_US-kristin-medium/resolve/main/en_US-kristin-medium.onnx"
+             :sha256 "f9a5c375c70ddc33ccdb3969c76a4d7cc5255ac08119a312b0034a1d07041be6"
+             :bytes 63531507}
+            {:path "tokens.txt"
+             :url "https://huggingface.co/csukuangfj/vits-piper-en_US-kristin-medium/resolve/main/tokens.txt"
+             :sha256 "ef3a7e4a8d1af0c9d4dc45aaae1a6242ebe24a7ed6f3d025a49eb29682784c6d"
+             :bytes 940}]}
+   {:host :pack
+    :kind :archive
+    :url "https://github.com/Blockether/vis/releases/download/voice-assets-pack/vits-piper-en_US-kristin-medium.tar.bz2"
+    :sha256 "c2206f572df2956c50b1ae3367eebce3853c663e890cba8048cd62b1e4dbe6c7"
+    :bytes 67259230}
+   {:host :upstream
+    :kind :archive
+    :url "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-kristin-medium.tar.bz2"
+    :sha256 "c2206f572df2956c50b1ae3367eebce3853c663e890cba8048cd62b1e4dbe6c7"
+    :bytes 67259230}]}
+
+ {:id "piper-en_GB-cori-medium"
+  :engine :piper
+  :install-dir "vits-piper-en_GB-cori-medium"
+  :requires ["en_GB-cori-medium.onnx" "tokens.txt"]
+  :needs ["espeak-ng-data"]
+  :voice {:id "cori" :label "Cori (en-GB)" :language "en-GB" :gender :female}
+  :license "LicenseRef-public-domain"
+  :attribution
+  "Piper voice en_GB-cori-medium by Bryce Beattie (https://brycebeattie.com/files/tts/), released into the public domain. Trained from scratch on 24 hours of public-domain LibriVox recordings. VITS/ONNX export by k2-fsa/sherpa-onnx."
+  :source-url "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/cori/medium"
+  :is-commercial-ok true
+  :is-redistributed true
+  :sources
+  [{:host :hf
+    :kind :files
+    :is-token-required true
+    :files [{:path "en_GB-cori-medium.onnx"
+             :url "https://huggingface.co/csukuangfj/vits-piper-en_GB-cori-medium/resolve/main/en_GB-cori-medium.onnx"
+             :sha256 "8b0d3cdd77f2878e0aa2048103eabb4d01b334783f99629f042bcf703aeba487"
+             :bytes 63531507}
+            {:path "tokens.txt"
+             :url "https://huggingface.co/csukuangfj/vits-piper-en_GB-cori-medium/resolve/main/tokens.txt"
+             :sha256 "ef3a7e4a8d1af0c9d4dc45aaae1a6242ebe24a7ed6f3d025a49eb29682784c6d"
+             :bytes 940}]}
+   {:host :pack
+    :kind :archive
+    :url "https://github.com/Blockether/vis/releases/download/voice-assets-pack/vits-piper-en_GB-cori-medium.tar.bz2"
+    :sha256 "49c9a5361bbdd95d7ca9687c4de11e5908481f65e7c7c368960df79949fdac2b"
+    :bytes 67257412}
+   {:host :upstream
+    :kind :archive
+    :url "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_GB-cori-medium.tar.bz2"
+    :sha256 "49c9a5361bbdd95d7ca9687c4de11e5908481f65e7c7c368960df79949fdac2b"
+    :bytes 67257412}]}
+
+ {:id "piper-en_US-john-medium"
+  :engine :piper
+  :install-dir "vits-piper-en_US-john-medium"
+  :requires ["en_US-john-medium.onnx" "tokens.txt"]
+  :needs ["espeak-ng-data"]
+  :voice {:id "john" :label "John (en-US)" :language "en-US" :gender :male}
+  :license "LicenseRef-public-domain"
+  :attribution
+  "Piper voice en_US-john-medium by Bryce Beattie (https://brycebeattie.com/files/tts/), released into the public domain. Fine-tuned from Kristin on 12.5 hours of public-domain LibriVox recordings. VITS/ONNX export by k2-fsa/sherpa-onnx."
+  :source-url "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/john/medium"
+  :is-commercial-ok true
+  :is-redistributed true
+  :sources
+  [{:host :hf
+    :kind :files
+    :is-token-required true
+    :files [{:path "en_US-john-medium.onnx"
+             :url "https://huggingface.co/csukuangfj/vits-piper-en_US-john-medium/resolve/main/en_US-john-medium.onnx"
+             :sha256 "7ab60237f77e06c8f32b811080b7ad82d23bc5bacc4bba2c35e58aeae6833364"
+             :bytes 63531507}
+            {:path "tokens.txt"
+             :url "https://huggingface.co/csukuangfj/vits-piper-en_US-john-medium/resolve/main/tokens.txt"
+             :sha256 "ef3a7e4a8d1af0c9d4dc45aaae1a6242ebe24a7ed6f3d025a49eb29682784c6d"
+             :bytes 940}]}
+   {:host :pack
+    :kind :archive
+    :url "https://github.com/Blockether/vis/releases/download/voice-assets-pack/vits-piper-en_US-john-medium.tar.bz2"
+    :sha256 "d90362cfa48e429d3096f644785184446145b6e38216f2eaf4c0601b8aad5a36"
+    :bytes 67249181}
+   {:host :upstream
+    :kind :archive
+    :url "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-john-medium.tar.bz2"
+    :sha256 "d90362cfa48e429d3096f644785184446145b6e38216f2eaf4c0601b8aad5a36"
+    :bytes 67249181}]}]
