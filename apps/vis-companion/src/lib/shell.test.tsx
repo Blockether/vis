@@ -225,13 +225,13 @@ describe('the app bar', () => {
     expect(headings.indexOf('Machines')).toBeLessThan(headings.indexOf('Application'));
 
     // A machine is a ROW — its name, its address, its verdict — not a bare tab,
-    // and EVERY row carries the machine's own verbs in its own trailing cell.
+    // and EVERY row keeps the machine's own verbs under its own trailing edge.
     const [row] = within(dialog).getAllByRole('button', { name: /laptop/ });
     expect(row.textContent).toContain('app-gateway');
     expect(
       within(within(dialog).getByRole('group', { name: 'laptop actions' })).getByRole(
         'button',
-        { name: 'Forget' },
+        { name: 'Forget laptop' },
       ),
     ).toBeTruthy();
 
@@ -256,11 +256,11 @@ describe('the app bar', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Open preferences' }));
     const close = await screen.findByRole('button', { name: 'Close Settings' });
     // One box: this application's appearance AND the machines it talks to — a
-    // machine's own verbs are inside it, in the row the dialog is reading, and
-    // Escape closes what THEY opened before it closes the dialog under it.
+    // machine's own verbs wait under its own row, and Escape closes what THEY
+    // opened before it closes the dialog under it.
     await userEvent.click(
       within(screen.getByRole('group', { name: 'laptop actions' })).getByRole('button', {
-        name: 'Forget',
+        name: 'Forget laptop',
       }),
     );
     expect(await screen.findByRole('group', { name: 'Forget laptop?' })).toBeTruthy();

@@ -1,19 +1,20 @@
 // @vitest-environment jsdom
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { GatewayConn } from '../lib/types';
 import { MachineRows } from './Machines';
 
-// Regression, user reports about the machines column ("I don't need the ⋯ and
-// swiping", then "what for I need those two selected in red ... the swipe should
-// be always right without this ⋯"): every verb a machine has — rank it primary,
-// rename it, forget it — hid first behind a left swipe and a `⋯` at the end of the
-// row, and then behind a strip of two full-width WORDS that opened under the ONE
-// row the column happened to be reading. A gesture nobody can see, a mark that
-// says nothing, and a second list of buttons under the first are the same bug
-// three times over. The verbs are marks in every row's own trailing cell now.
+// Regression, user reports about the machines column, in the order they arrived:
+// "I don't need the ⋯ and swiping" and then "the swipe should be always right
+// without this ⋯" — the mark beside the gesture said nothing and opened a menu
+// holding what the gesture already held. The verbs were moved first into a strip
+// of full-width words under the ONE row the column was reading, then into marks
+// painted permanently in every row's trailing cell, and the report on that was
+// "you removed the slides from the session list and also from the machine — we
+// should have the slide and just fix it". The slide is the surface; the `⋯` is
+// what goes.
 
 const tower: GatewayConn = { url: 'http://10.0.0.5:7890', label: 'tower' };
 const laptop: GatewayConn = { url: 'http://10.0.0.6:7890', label: 'laptop' };
@@ -35,47 +36,75 @@ function fleet(props: Partial<Parameters<typeof MachineRows>[0]> = {}) {
   );
 }
 
-/** The cell of verbs standing in ONE machine's row. */
-const cellOf = (machine: string) =>
+/** The strip waiting under ONE machine's row. */
+const stripOf = (machine: string) =>
   within(screen.getByRole('group', { name: `${machine} actions` }));
 
 /** What that machine can be told to do, in the order it is offered. */
 const verbsOf = (machine: string) =>
-  cellOf(machine)
+  stripOf(machine)
     .getAllByRole('button')
     .map((button) => button.getAttribute('aria-label') ?? '');
 
-describe('a machine wears its verbs in its own row', () => {
-  it('stands them in EVERY row, not only in the row being read', () => {
+describe('a machine keeps its verbs under its own row', () => {
+  it('gives EVERY row a strip, not only the row being read', () => {
     fleet();
-    expect(verbsOf('laptop')).toEqual(['Make primary', 'Rename', 'Forget']);
+    expect(verbsOf('laptop')).toEqual(['Make laptop primary', 'Rename laptop', 'Forget laptop']);
     // `tower` is not the machine this column is reading, and it carries its own
     // verbs anyway: the row under the thumb is the row that acts.
-    expect(verbsOf('tower')).toEqual(['Rename', 'Forget']);
+    expect(verbsOf('tower')).toEqual(['Rename tower', 'Forget tower']);
   });
 
   it('keeps the rank verb off the machine that already holds the rank', () => {
     fleet({ selectedUrl: tower.url });
-    expect(verbsOf('tower')).toEqual(['Rename', 'Forget']);
-    expect(verbsOf('laptop')).toEqual(['Make primary', 'Rename', 'Forget']);
+    expect(verbsOf('tower')).toEqual(['Rename tower', 'Forget tower']);
+    expect(verbsOf('laptop')).toEqual(['Make laptop primary', 'Rename laptop', 'Forget laptop']);
   });
 
-  it('offers them as marks, and hides nothing behind a gesture', () => {
+  it('reaches them by sliding the row, and by nothing else', () => {
     fleet();
-    const marks = cellOf('laptop').getAllByRole('button');
-    // A mark, not a word: three captions per row are a second list running down
-    // the trailing edge. The group names the row, so each glyph says only its verb.
-    expect(marks.map((button) => button.textContent)).toEqual(['', '', '']);
-    expect(marks.map((button) => button.getAttribute('title'))).toEqual([
-      'Make primary',
+    // The row is the whole width and the strip waits past its trailing edge: one
+    // snap track per row, the row first, the verbs second.
+    const tracks = document.querySelectorAll('.snap-x');
+    expect(tracks).toHaveLength(2);
+    const html = tracks[0]!.innerHTML;
+    expect(html.indexOf('snap-start')).toBeLessThan(html.indexOf('snap-end'));
+
+    // No `⋯` anywhere: nothing stands beside the gesture, and nothing stands in
+    // the row's trailing cell either.
+    expect(screen.queryByRole('button', { name: /^Actions for/ })).toBeNull();
+    // Two machine rows, five verbs, and no other control on this list.
+    expect(screen.getAllByRole('button')).toHaveLength(7);
+
+    // The captions stay one word wide — the cell is 72px — while the accessible
+    // name says which machine the verb acts on.
+    expect(stripOf('laptop').getAllByRole('button').map((b) => b.textContent)).toEqual([
+      'Primary',
       'Rename',
       'Forget',
     ]);
-    // No `⋯`, no swipe track, and no strip of words under the row.
-    expect(screen.queryByRole('button', { name: /^Actions for/ })).toBeNull();
-    expect(document.querySelector('.snap-x')).toBeNull();
-    // Two rows, five verbs, and every other control on this list is a machine.
-    expect(screen.getAllByRole('button')).toHaveLength(7);
+  });
+
+  it('opens one machine at a time', () => {
+    fleet();
+    const closed: Element[] = [];
+    const scrollTo = Element.prototype.scrollTo;
+    Element.prototype.scrollTo = function record(this: Element) {
+      closed.push(this);
+    };
+    try {
+      const tracks = [...document.querySelectorAll<HTMLElement>('.snap-x')];
+      for (const track of tracks) {
+        Object.defineProperty(track, 'scrollLeft', { value: 96, configurable: true });
+        fireEvent.scroll(track);
+      }
+      // Sliding the second row closed the first: two rows standing open is a list
+      // with two right edges and a red verb armed under a thumb that moved on.
+      expect(closed).toContain(tracks[0]);
+      expect(closed).not.toContain(tracks[1]);
+    } finally {
+      Element.prototype.scrollTo = scrollTo;
+    }
   });
 
   it('renames in the row, and an empty name gives the machine its host back', async () => {
@@ -83,10 +112,10 @@ describe('a machine wears its verbs in its own row', () => {
     const onRename = vi.fn();
     fleet({ onRename });
 
-    await user.click(cellOf('laptop').getByRole('button', { name: 'Rename' }));
+    await user.click(stripOf('laptop').getByRole('button', { name: 'Rename laptop' }));
     const field = screen.getByRole('textbox', { name: 'Rename laptop' });
     expect(field).toHaveValue('laptop');
-    // The row it replaced is gone while it is being typed in — verbs and all: the
+    // The row it replaced is gone while it is being typed in — strip and all: the
     // name is edited where it stands, not in a dialog opened over the list.
     expect(screen.queryByRole('group', { name: 'laptop actions' })).toBeNull();
 
@@ -97,18 +126,18 @@ describe('a machine wears its verbs in its own row', () => {
 
     // The list is the caller's state, so the row still reads `laptop` here:
     // clearing the field is what says "no name of its own".
-    await user.click(cellOf('laptop').getByRole('button', { name: 'Rename' }));
+    await user.click(stripOf('laptop').getByRole('button', { name: 'Rename laptop' }));
     await user.clear(screen.getByRole('textbox', { name: 'Rename laptop' }));
     await user.tab();
     expect(onRename).toHaveBeenLastCalledWith(laptop, undefined);
   });
 
-  it('asks before it forgets, in the row the mark was pressed in', async () => {
+  it('asks before it forgets, in the row the verb was pressed in', async () => {
     const user = userEvent.setup();
     const onForget = vi.fn();
     fleet({ onForget });
 
-    await user.click(cellOf('laptop').getByRole('button', { name: 'Forget' }));
+    await user.click(stripOf('laptop').getByRole('button', { name: 'Forget laptop' }));
     const ask = screen.getByRole('group', { name: 'Forget laptop?' });
     expect(within(ask).getAllByRole('button').map((b) => b.textContent)).toEqual([
       'No, keep',
@@ -120,28 +149,10 @@ describe('a machine wears its verbs in its own row', () => {
 
     await user.click(within(ask).getByRole('button', { name: 'No, keep' }));
     expect(onForget).not.toHaveBeenCalled();
-    expect(cellOf('laptop').getByRole('button', { name: 'Forget' })).toBeTruthy();
+    expect(stripOf('laptop').getByRole('button', { name: 'Forget laptop' })).toBeTruthy();
 
-    await user.click(cellOf('laptop').getByRole('button', { name: 'Forget' }));
+    await user.click(stripOf('laptop').getByRole('button', { name: 'Forget laptop' }));
     await user.click(screen.getByRole('button', { name: 'Yes, forget' }));
     expect(onForget).toHaveBeenCalledWith(laptop);
-  });
-});
-
-// `ConnectScreen` lists the same machines for a different question — which one do
-// I go to — so a row there is a place to GO, not a thing to manage.
-describe('a machine row with nowhere to go carries no verbs', () => {
-  it('renders the bare rows when no handler is given', () => {
-    render(
-      <MachineRows
-        conns={[tower, laptop]}
-        selectedUrl={laptop.url}
-        health={{}}
-        onPick={() => {}}
-        actionLabel="Settings"
-      />,
-    );
-    expect(screen.queryAllByRole('group', { name: /actions$/ })).toEqual([]);
-    expect(screen.getAllByRole('button')).toHaveLength(2);
   });
 });

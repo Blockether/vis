@@ -1,0 +1,248 @@
+// @vitest-environment jsdom
+import { fireEvent, render, screen } from '@testing-library/react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+
+import { SwipeActions } from './SwipeActions';
+import { PencilIcon, StarIcon, TrashIcon } from './icons';
+
+// Regression, user reports about row verbs, in the order they arrived: "I don't
+// need the ⋯ and swiping" — the mark beside the gesture said nothing and opened a
+// menu holding what the gesture already held; "the swipe should be always right
+// without this ⋯" — the slide stays, the mark goes; and then, after the verbs had
+// been moved into permanently painted marks in every row, "you removed the slides
+// from the session list and also from the machine — we should have the slide and
+// just fix it". So the slide is the ONE row-verb surface, on both lists, with no
+// mark standing beside it.
+
+// Regression, user report ("the colour is the same as rename"): every action on the
+// strip wore one neutral ink, so the star — the mark the human types in themselves,
+// and the only yellow thing in the list — looked like one more grey verb.
+describe('SwipeActions tones', () => {
+  const strip = (tone?: 'neutral' | 'accent' | 'danger') =>
+    renderToStaticMarkup(
+      <SwipeActions
+        label="a session"
+        actions={[{ key: 'favorite', label: 'Star', icon: <StarIcon />, tone, onSelect: () => {} }]}
+      >
+        <span>row</span>
+      </SwipeActions>,
+    );
+
+  // Regression, user report ("see why the starred stuff looks so disgusting"): the
+  // amber SLAB was right and the amber CAPTION was not — `text-accent` is the
+  // #ffc420 button FILL, and on this cell's own 15% tint it measures 1.37:1, so
+  // "STAR" arrived as a smear the width of a word. The slab keeps the meaning;
+  // the caption takes the ink the palette ships for amber text (6.4:1 here).
+  it('paints an accent action on the brand yellow, in the legible amber ink', () => {
+    const html = strip('accent');
+    expect(html).toContain('bg-accent/15');
+    expect(html).toContain('text-accent-ink');
+    // The fill is spent on hover, where it becomes the background and takes its
+    // own foreground — never on 9px text.
+    expect(html).toContain('hover:bg-accent hover:text-accent-foreground');
+  });
+
+  // The strip's own colour lives in the slab, so a neutral verb has none: it is
+  // the ink alone on the panel, which is what an accent action must not look like.
+  it('leaves a neutral action in the shared verb ink', () => {
+    const html = strip();
+    expect(html).toContain('text-accent-ink');
+    expect(html).toContain('bg-panel-2');
+    expect(html).not.toContain('bg-accent/15');
+  });
+
+  // The same split, in red: `--err` is a badge fill and reads 3.50:1 as a caption
+  // on its own tint, under the 4.5 a 9px bold label owes. The list-safe pair
+  // (`err-surface` + `err-ink`, the tokens the in-row delete confirm already uses)
+  // reads 5.4:1 without turning half the row into an alarm.
+  it('paints a danger action in the list-safe red, not the badge fill', () => {
+    const html = strip('danger');
+    expect(html).toContain('bg-err-surface');
+    expect(html).toContain('text-err-ink');
+    expect(html).not.toContain('bg-err/15');
+  });
+
+  // Regression, user report ("this also has not full height of the parent"): the swipe
+  // track is as tall as its TALLEST panel, and the action strip — a 16px icon over a
+  // 10px caption — measured 34px against a 32px desktop session row. The row panel
+  // stretched to 34 but the row inside it stayed 32, so the button's hover slab stopped
+  // 2px short of the rule under it. The panel is a GRID: one child, stretched on both
+  // axes, so whatever height the track ends up with is the row's height too.
+  it('lets the row fill the swipe track', () => {
+    expect(strip()).toContain('grid w-full shrink-0 snap-start');
+  });
+
+  // The verbs are under the row's TRAILING edge and nowhere else: the row is panel
+  // one at full width and the strip is panel two, so the slide always uncovers them
+  // on the right, and a slide that stops halfway snaps to one of the two.
+  it('keeps the strip on the trailing edge, behind the whole row', () => {
+    const html = strip();
+    expect(html.indexOf('snap-start')).toBeLessThan(html.indexOf('snap-end'));
+    expect(html).toContain('snap-x snap-mandatory');
+  });
+});
+
+describe('the slide', () => {
+  const track = (index = 0) =>
+    document.querySelectorAll<HTMLElement>('.snap-x')[index] as HTMLElement;
+
+  /** What a thumb does: the platform scrolls the track, the component reads it. */
+  function slide(element: HTMLElement) {
+    Object.defineProperty(element, 'scrollLeft', { value: 96, configurable: true });
+    fireEvent.scroll(element);
+  }
+
+  /** Every drawer this component closed, in the order it closed them. */
+  let closed: Element[] = [];
+  const scrollTo = Element.prototype.scrollTo;
+  beforeAll(() => {
+    Element.prototype.scrollTo = function record(this: Element) {
+      closed.push(this);
+    };
+  });
+  afterEach(() => {
+    closed = [];
+  });
+  afterAll(() => {
+    Element.prototype.scrollTo = scrollTo;
+  });
+
+  const row = (label: string, onOpen = () => {}) => (
+    <SwipeActions
+      label={label}
+      actions={[
+        { key: 'rename', label: 'Rename', icon: <PencilIcon />, onSelect: () => {} },
+        { key: 'delete', label: 'Delete', icon: <TrashIcon />, tone: 'danger', onSelect: () => {} },
+      ]}
+    >
+      <button type="button" onClick={onOpen}>
+        {label}
+      </button>
+    </SwipeActions>
+  );
+
+  it('offers the verbs with no mark standing beside them', () => {
+    render(row('first'));
+    // Three buttons in this row: the row itself and its two verbs. A `⋯` would be
+    // a fourth — the control the report asked to be rid of.
+    expect(screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([
+      null,
+      'Rename',
+      'Delete',
+    ]);
+    expect(screen.queryByRole('button', { name: /^Actions for/ })).toBeNull();
+    expect(screen.getByRole('group', { name: 'first actions' })).toBeTruthy();
+  });
+
+  it('opens one row at a time, so no second row keeps a delete armed', () => {
+    render(
+      <>
+        {row('first')}
+        {row('second')}
+      </>,
+    );
+    slide(track(0));
+    expect(closed).not.toContain(track(0));
+
+    slide(track(1));
+    // The row that was open is the row that closed — nobody pressed it.
+    expect(closed).toContain(track(0));
+    expect(closed).not.toContain(track(1));
+  });
+
+  // The row that CLOSES must not take the row that opened with it. `close()` animates
+  // its own scrollLeft home and every frame of that animation is a scroll event on the
+  // window; read as "the list moved under me", it shut the drawer the thumb had just
+  // opened — measured in the browser as both rows sliding back to 0 together.
+  it('keeps the opened row open while the row it replaced slides shut', () => {
+    render(
+      <>
+        {row('first')}
+        {row('second')}
+      </>,
+    );
+    slide(track(0));
+    slide(track(1));
+    const shut = () => closed.filter((element) => element === track(1)).length;
+    expect(shut()).toBe(0);
+
+    // The first row animating home, frame by frame.
+    fireEvent.scroll(track(0));
+    expect(shut()).toBe(0);
+
+    // The LIST moving under it still closes it: that scroll comes from something
+    // that is not a drawer.
+    fireEvent.scroll(document.body);
+    expect(shut()).toBe(1);
+  });
+
+  // A drawer animating home reports itself OPEN for every frame of that slide, and
+  // the row took those frames for a fresh gesture: it re-opened itself, and in
+  // re-opening closed whichever row had just replaced it.
+  it('stays shut while it slides home, so the row is a navigation again', () => {
+    const onOpen = vi.fn();
+    render(row('first', onOpen));
+    slide(track(0));
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    // Mid-animation: the track keeps reporting the offset it has not given back yet.
+    fireEvent.scroll(track(0));
+    fireEvent.click(screen.getByRole('button', { name: 'first' }));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes on Escape, and gives the row back to the list', () => {
+    render(row('first'));
+    slide(track(0));
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(closed).toContain(track(0));
+  });
+
+  it('makes an open row a dismiss target, never a navigation', () => {
+    const onOpen = vi.fn();
+    render(row('first', onOpen));
+    slide(track(0));
+
+    fireEvent.click(screen.getByRole('button', { name: 'first' }));
+    // A thumb resting on the slid row closes it and goes nowhere.
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(closed).toContain(track(0));
+  });
+
+  // A row whose owner wired no verb has no drawer at all: `ConnectScreen` lists
+  // machines as places to GO, and a track there would slide onto an empty strip.
+  it('renders the row bare when it has no verbs', () => {
+    render(
+      <SwipeActions label="first" actions={[]}>
+        <button type="button">first</button>
+      </SwipeActions>,
+    );
+    expect(document.querySelector('.snap-x')).toBeNull();
+  });
+
+  // The caption is one word wide because the cell is 72px; the whole sentence is
+  // what a screen reader hears, so `Primary` on a machine row is `Make tower primary`.
+  it('lets a verb name the thing it acts on without widening the cell', () => {
+    render(
+      <SwipeActions
+        label="tower"
+        actions={[
+          {
+            key: 'primary',
+            label: 'Primary',
+            name: 'Make tower primary',
+            icon: <StarIcon />,
+            tone: 'accent',
+            onSelect: () => {},
+          },
+        ]}
+      >
+        <span>row</span>
+      </SwipeActions>,
+    );
+    const verb = screen.getByRole('button', { name: 'Make tower primary' });
+    expect(verb.textContent).toBe('Primary');
+    expect(verb.getAttribute('title')).toBe('Make tower primary');
+  });
+});

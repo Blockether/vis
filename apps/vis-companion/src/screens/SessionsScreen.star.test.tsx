@@ -37,23 +37,25 @@ describe("starring a session", () => {
     },
   ];
 
-  it("paints the star mark in the brand accent the moment it is on", async () => {
+  it("paints the star's own cell in the brand amber, never the neutral verb ink", async () => {
     const view = renderSessionsScreen({ machines });
     restore = view.restore;
     await screen.findByText("Older session");
 
     const cell = () => screen.getByRole("group", { name: "Older session actions" });
-    const ink = (label: string) =>
-      cell().querySelector(`button[aria-label="${label}"] span`)!.className;
-    // OFF: the glyph is the row's own quiet chrome, exactly like the Rename beside it.
-    expect(ink("Star")).not.toContain("text-accent-ink");
+    const slab = (label: string) =>
+      cell().querySelector(`button[aria-label="${label}"]`)!.className;
+    // The strip's meaning is in the CELL: the amber tint for the mark the human
+    // leaves, nothing at all for the neutral verb beside it.
+    expect(slab("Star")).toContain("bg-accent/15");
+    expect(slab("Rename")).not.toContain("bg-accent/15");
 
     await userEvent.click(cell().querySelector('button[aria-label="Star"]')!);
 
-    // ON: the mark IS the state, so it wears the palette's READABLE amber — the
-    // #ffc420 fill measured 1.37:1 as ink and arrived as a smear rather than a mark.
-    expect(ink("Unstar")).toContain("text-accent-ink");
-    expect(ink("Rename")).not.toContain("text-accent-ink");
+    // The cell keeps the amber while the verb becomes its own undo, and the caption
+    // keeps the READABLE amber — #ffc420 measured 1.37:1 as 9px text on this tint.
+    expect(slab("Unstar")).toContain("bg-accent/15");
+    expect(slab("Unstar")).toContain("text-accent-ink");
   });
 
   it("pins the starred row to the top and brings it back into view", async () => {

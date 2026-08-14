@@ -10,17 +10,9 @@ import {
   reachOf,
 } from '../lib/endpoints';
 import { onWake } from '../lib/wake';
-import {
-  Banner,
-  Button,
-  ConfirmRow,
-  Input,
-  ListRow,
-  RowVerbs,
-  Spinner,
-  type RowVerb,
-} from './ui';
+import { Banner, Button, ConfirmRow, Input, ListRow, Spinner } from './ui';
 import { ChevronIcon, PencilIcon, StarIcon, TrashIcon } from './icons';
+import { SwipeActions, type SwipeAction } from './SwipeActions';
 
 /**
  * THE MACHINES THIS DEVICE IS PAIRED WITH, AND THE WAY TO ADD ONE — two pieces,
@@ -272,19 +264,19 @@ function healthView(h?: GwHealth): GwHealthView {
  * and different exactly when you are reading another machine's settings, so they
  * are two marks rather than one.
  *
- * A MACHINE'S OWN VERBS STAND IN ITS OWN ROW, on every row, always painted.
- * They were a `Saved connection` panel under the list first — a name field,
+ * A MACHINE'S OWN VERBS WAIT UNDER ITS OWN ROW, and a slide is what reaches
+ * them. They were a `Saved connection` panel under the list first — a name field,
  * `Make primary` and `Forget this machine` standing permanently open, three
  * controls for ONE machine, acting on whichever row the column happened to be
- * reading rather than on the row under the thumb. Then they hid behind a left
- * swipe and a `⋯`, and that is what the reader reported next: a gesture nobody
- * can see and a mark that says nothing are not verbs. Then they were a strip of
- * full-width WORDS under the row being read — reported again, because a second
- * list of buttons under the first is not a row's verbs either, and only one row
- * in the column ever had any. So they are `RowVerbs`: three marks in the row's
- * own trailing cell, in the same place on every row, and Rename still edits IN
- * the row while Forget still asks IN it — neither opens a surface over the list
- * it acts on.
+ * reading rather than on the row under the thumb. Then a left swipe with a `⋯`
+ * beside it, and the mark is what was reported: it says nothing and opens a menu
+ * holding exactly what the gesture already holds. Then a strip of full-width
+ * WORDS under the one row being read — a second list, not a row's verbs — and
+ * then marks painted permanently in every row's trailing cell, which took the
+ * width the machine's own name and address came for. The slide is the part the
+ * reports kept asking for: `SwipeActions`, the same strip a session row carries,
+ * with nothing standing beside it. Rename still edits IN the row and Forget still
+ * asks IN it, so neither verb opens a surface over the list it acts on.
  *
  * A verb exists here only when its handler does, so `ConnectScreen`'s list —
  * where a row is a place to GO, not a thing to manage — stays exactly as it was.
@@ -398,44 +390,47 @@ export function MachineRows({
             </div>
           );
 
-        // THE VERBS OF THIS MACHINE, standing in this machine's own row — on EVERY
-        // row, not only the one the column is reading. A verb exists only when its
-        // handler does, so `ConnectScreen`'s list carries none of them, and the rank
-        // verb is missing from the machine that already holds the rank.
+        // THE VERBS OF THIS MACHINE, waiting under its own row's trailing edge and
+        // reached by sliding it. A verb exists only when its handler does, so
+        // `ConnectScreen`'s list carries none and never slides; the rank verb is
+        // missing from the machine that already holds the rank.
         const isReading = conn.url === selectedUrl;
-        const verbs: RowVerb[] = [];
+        const actions: SwipeAction[] = [];
         if (onMakePrimary && conn.url !== primaryUrl)
-          verbs.push({
+          actions.push({
             key: 'primary',
-            label: 'Make primary',
+            label: 'Primary',
+            name: `Make ${name} primary`,
             icon: <StarIcon className="size-4" />,
+            // The one verb here that is a RANK rather than an edit, so it wears the
+            // amber every rank mark in this app wears — the same slab `Star` has.
+            tone: 'accent',
             onSelect: () => void onMakePrimary(conn),
           });
         if (onRename)
-          verbs.push({
+          actions.push({
             key: 'rename',
             label: 'Rename',
+            name: `Rename ${name}`,
             icon: <PencilIcon className="size-4" />,
             onSelect: () => startRename(conn),
           });
         if (onForget)
-          verbs.push({
+          actions.push({
             key: 'forget',
             label: 'Forget',
+            name: `Forget ${name}`,
             icon: <TrashIcon className="size-4" />,
             tone: 'danger',
             onSelect: () => setForgetting(conn.url),
           });
 
         return (
-          <div
-            key={conn.url}
-            className={`flex items-stretch ${isReading ? 'bg-panel-2' : ''}`}
-          >
+          <SwipeActions key={conn.url} label={name} actions={actions}>
             <ListRow
               isSelected={isReading}
               onClick={() => onPick(conn)}
-              className="min-w-0 flex-1 gap-3"
+              className="min-w-0 gap-3"
             >
                 <span
                   className={`shrink-0 font-mono text-title ${hv.dotClass} ${hv.state === 'checking' ? 'animate-pulse' : ''}`}
@@ -486,8 +481,7 @@ export function MachineRows({
                 )}
                 {actionLabel && <ChevronIcon className="size-3 text-dialog-hint" aria-hidden />}
             </ListRow>
-            <RowVerbs isRowEnd label={name} verbs={verbs} />
-          </div>
+          </SwipeActions>
         );
       })}
     </div>

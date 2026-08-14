@@ -2697,23 +2697,33 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(connectSource).not.toContain("<button");
   });
 
-  // Regression, user reports on the machines column ("I don't need the ⋯ and
-  // swiping, also this long description is shit and the + alignment IS SHIT", then
-  // "what for I need those two selected in red ... this plus is shitty ... the
-  // swipe should be always right without this ⋯"): the band spelled a
-  // 310-character paragraph, then a one-line one, plus a meta naming the very
-  // machine the rows under it already name — 71px of header over a 48px row — and
-  // the ＋ was an amber slab of the mark this app spends on a NEW SESSION. The verbs
-  // went from a swipe and a `⋯` to a strip of two full-width words under the one row
-  // being read, which is a second list, not a row's verbs.
-  it("gives the band one line and every row its own verbs", () => {
-    // Nothing on a machine row is reached by a gesture, a mark or a strip.
-    expect(machinesSource).not.toContain("SwipeActions");
+  // Regression, user reports on the machines column, in the order they arrived:
+  // "I don't need the ⋯ and swiping, also this long description is shit and the +
+  // alignment IS SHIT", then "what for I need those two selected in red ... this plus
+  // is shitty ... the swipe should be always right without this ⋯", then "you removed
+  // the slides from the session list and also from the machine — we should have the
+  // slide and just fix it". The band spelled a 310-character paragraph, then a
+  // one-line one, plus a meta naming the very machine the rows under it already name
+  // — 71px of header over a 48px row — and the ＋ was an amber slab of the mark this
+  // app spends on a NEW SESSION. The verbs went from a slide with a `⋯` beside it, to
+  // a strip of full-width words under the one row being read, to marks painted
+  // permanently in every row's trailing cell. The SLIDE is the surface both lists
+  // keep; the `⋯` is what goes.
+  it("gives the band one line and keeps every row's verbs under its own slide", () => {
+    // ONE row-verb surface in this app, on both lists, with nothing standing beside it.
+    expect(machinesSource).toContain(
+      "<SwipeActions key={conn.url} label={name} actions={actions}>",
+    );
+    expect(sessionsListSource).toContain("<SwipeActions");
     expect(machinesSource).not.toContain("KebabButton");
     expect(machinesSource).not.toContain("Actions for");
-    expect(machinesSource).toContain("<RowVerbs isRowEnd label={name} verbs={verbs} />");
     expect(machinesSource).not.toContain('density="panel"');
     expect(machinesSource).not.toContain("isReading && verbs.length");
+    // And no cluster of permanent marks in a row's trailing cell either: three
+    // glyphs per row cost 92px of a 320px row the name came for.
+    expect(machinesSource).not.toContain("RowVerbs");
+    expect(sessionsListSource).not.toContain("RowVerbs");
+    expect(uiSource).not.toContain("export function RowVerbs(");
 
     // The verb is the band's trailing CELL, centred against the title's own cell,
     // and that cell is what wraps — never the line the verb stands on.
@@ -2733,10 +2743,6 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(machinesColumn).not.toContain("meta=");
     expect(settingsSource).not.toContain("Swipe a row");
     expect(settingsSource).not.toContain("Tap a machine");
-
-    // And no list in the app hides a verb behind a gesture any more.
-    expect(sessionsListSource).not.toContain("SwipeActions");
-    expect(sessionsListSource).toContain("<RowVerbs");
   });
 
   it("keeps no control nobody uses", () => {
