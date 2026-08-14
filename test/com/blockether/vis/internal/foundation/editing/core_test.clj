@@ -1677,7 +1677,7 @@
         (let
           [[out written] (patch-line-3 "(ns reb)\n\n(defn ok [] (foo (1 2 3)))\n\n(defn two [] 2)\n"
                                        "(defn ok [] (foo (1 2] 3))")]
-          (expect (string/includes? out "would move or retype a delimiter you wrote"))
+          (expect (string/includes? out "would move or retype a delimiter this edit wrote"))
           (expect (= fixture written))))
     ;; Regression: a replacement that lost its OPENING paren carries a surplus closer, and
     ;; dropping that closer wrote `-> s str/trim` as loose symbols — the same silent
@@ -1688,7 +1688,7 @@
           [[out written] (patch-line-3 "(ns reb)\n\n(defn ok [] inc 1)\n\n(defn two [] 2)\n"
                                        "(defn ok [] inc 1))")]
           (expect (string/includes? out "would delete `)` this edit wrote"))
-          (expect (string/includes? out "closes more than it opens, or dropped an opener"))
+          (expect (string/includes? out "it closes more than it opens, or an opener was lost"))
           (expect (= fixture written))))
     ;; Regression: a deletion writes NO line, and the span named the line the deleted text
     ;; used to occupy — a line the new content no longer has — so the repair of a delete

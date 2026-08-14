@@ -49,9 +49,19 @@
       (let
         [r (verdict "(defn f [s]\n  -> s str/trim))\n" "(defn f [s]\n  -> s str/trim)\n" [[2 2]])]
         (expect (false? (:ok? r)))
-        (expect (= (str "the delimiter repair would delete `)` this edit wrote: the replacement "
-                        "closes more than it opens, or dropped an opener")
+        (expect (= (str "the delimiter repair would delete `)` this edit wrote: it closes more "
+                        "than it opens, or an opener was lost")
                    (:why r)))))
+  ;; The same refusal serves a whole-file formatter, which has no edit to blame: `:subject`
+  ;; names WHOSE delimiters these are, so neither caller has to borrow the other's wording.
+  (it "names the caller's own subject in a refusal"
+      (expect (= (str "the delimiter repair would delete `)` this file has: it closes more "
+                      "than it opens, or an opener was lost")
+                 (:why (balance/rebalance {:balancer (constantly "(defn f [s]\n  -> s str/trim)\n")
+                                           :parses-clean? (constantly true)
+                                           :source "(defn f [s]\n  -> s str/trim))\n"
+                                           :spans [[1 2]]
+                                           :subject "this file has"})))))
   ;; A closer omitted in the MIDDLE of a line comes back at that line's END and regroups
   ;; the arguments between it, so the character alone tells the caller nothing — the note
   ;; carries the line the repair produced.
@@ -99,12 +109,12 @@
   ;; check passed: it parses, it is one line, the skeleton is identical, and the only
   ;; characters that moved are delimiters.
   (it "refuses a repair that retypes a delimiter the caller wrote"
-      (expect (= "the delimiter repair would move or retype a delimiter you wrote"
+      (expect (= "the delimiter repair would move or retype a delimiter this edit wrote"
                  (:why (verdict "(foo (1 2] 3)\n" "(foo (1 2 3))\n" [[1 1]])))))
   ;; Regression: a closer deleted from one line and re-added after the NEXT form moved
   ;; that form inside its neighbour — `(g a) (h a)` became `(g a (h a))`.
   (it "refuses a repair that moves a closer past a form the caller wrote"
-      (expect (= "the delimiter repair would move or retype a delimiter you wrote"
+      (expect (= "the delimiter repair would move or retype a delimiter this edit wrote"
                  (:why (verdict "(f\n  (g a)\n    (h a))\n" "(f\n  (g a\n    (h a)))\n" [[1 3]])))))
   (it "keeps a closer that moved without crossing anything the caller wrote"
       ;; the caller's own indentation is what says `:else 2` belongs to the `cond`, and

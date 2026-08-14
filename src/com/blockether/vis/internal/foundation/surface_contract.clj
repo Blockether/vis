@@ -49,7 +49,11 @@
          #(string? (get % "path"))
          #(contains? % "changed")
          ;; the backend that formatted THIS file ("zprint" | "cljfmt"), when reported
-         (opt "formatter" string?)))
+         (opt "formatter" string?)
+         ;; the add-only delimiter repair: which lines it completed, and why a file
+         ;; whose repair would have DELETED a delimiter was left unformatted instead
+         (opt "repairs" #(s/valid? (s/coll-of string?) %))
+         (opt "unbalanced" string?)))
 
 (s/def ::format-result
   (s/and map?
@@ -60,7 +64,10 @@
          ;; which backend(s) ran: "formatter" on a single-file/code result, the
          ;; distinct "formatters" set on a batch — so the result NAMES the provider
          (opt "formatter" string?)
-         (opt "formatters" #(s/valid? (s/coll-of string?) %))))
+         (opt "formatters" #(s/valid? (s/coll-of string?) %))
+         ;; same two on a single-file / code result
+         (opt "repairs" #(s/valid? (s/coll-of string?) %))
+         (opt "unbalanced" string?)))
 
 ;; =============================================================================
 ;; lint_code result

@@ -109,8 +109,9 @@
 
 (defn- direction-why
   "Why a repair that is not additions-only is refused, told apart so the caller knows
-   which mistake of theirs to go and look for."
-  [^String source ^String candidate]
+    which mistake of theirs to go and look for. `subject` names WHOSE delimiters these
+    are — the replacement an edit wrote, or a whole file a formatter was handed."
+  [^String source ^String candidate ^String subject]
   (let
     [s
      (delimiters source)
@@ -121,8 +122,10 @@
     (if (subsequence? c s)
       (str "the delimiter repair would delete `"
            (surplus s c)
-           "` this edit wrote: the replacement closes more than it opens, or dropped an opener")
-      "the delimiter repair would move or retype a delimiter you wrote")))
+           "` "
+           subject
+           ": it closes more than it opens, or an opener was lost")
+      (str "the delimiter repair would move or retype a delimiter " subject))))
 (defn changed-span
   "The 1-based, inclusive `[from to]` line range of `after` that differs from
    `before` — shared leading and trailing LINES are dropped, so it is exactly the
@@ -206,14 +209,16 @@
    parse — parse, by repairing its delimiters WITHOUT letting the repair reach past
    the caller's own lines. `spans` are `[from-line to-line]` pairs, 1-based and
    inclusive, in `source`'s own coordinates; `parses-clean?` re-parses a candidate;
-   `balancer` is the language pack's `:balance-fn`.
+   `balancer` is the language pack's `:balance-fn`; `subject` names whose delimiters a
+    refusal is about and defaults to the edit that produced `source` — a formatter
+    handed a WHOLE file passes its own.
 
    Answers nil when there is no balancer to ask, `{:ok? true :content S :notes [..]}`
    for a repair that may be written, and `{:ok? false :why msg}` for one that was
    found and REJECTED — the caller puts `why` in its refusal, because \"a repair
    exists but it reaches outside your edit\" is exactly what tells the caller to
    re-read the region instead of retrying the same replacement."
-  [{:keys [balancer parses-clean? ^String source spans]}]
+  [{:keys [balancer parses-clean? ^String source spans subject]}]
   (when (ifn? balancer)
     (let [candidate (try (balancer source) (catch Throwable _ nil))]
       (cond (or (not (string? candidate)) (= candidate source))
@@ -223,7 +228,7 @@
             (not= (skeleton source) (skeleton candidate))
             {:ok? false :why "the delimiter repair would rewrite code, not delimiters"}
             (not (additions-only? (delimiters source) (delimiters candidate)))
-            {:ok? false :why (direction-why source candidate)}
+            {:ok? false :why (direction-why source candidate (or subject "this edit wrote"))}
             (not= (str/ends-with? source "\n") (str/ends-with? ^String candidate "\n"))
             {:ok? false :why "the delimiter repair would change the file's final newline"}
             :else (let

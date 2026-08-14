@@ -6,11 +6,14 @@
    `format` here does parinfer delimiter repair + cljfmt, and the same repair is
    registered as the pack's `:balance-fn`: the foundation's editors call it with
    the WHOLE spliced file when an edit would not parse, and write the repair only
-   when it stays inside the lines that edit wrote."
+   when it stays inside the lines that edit wrote. Both doors are ADD-ONLY: a delimiter
+    you omitted is added back, one you WROTE is never deleted — a lost opening `(` and
+    one `)` too many are the same string, so deleting is a guess that rewrites code."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.foundation.editing.balance :as balance]
             [com.blockether.vis.internal.foundation.environment.languages :as languages]
             [com.blockether.vis.ext.language-clojure.format :as fmt]
             [com.blockether.vis.ext.language-clojure.paren-repair :as repair]
@@ -469,16 +472,42 @@
 
                 (throw e))))))))
 
+(defn clj-repair-source
+  "The delimiter repair `format` is allowed to WRITE, and what it must SAY about it.
+
+   parinfer repairs whatever it is handed, and a file that lost an opening `(` is
+   character-for-character a file with one `)` too many: \"repairing\" it by DELETING
+   that `)` parses, writes, and silently turns `(def defaults {..})` into three loose
+   top-level forms. So the rule the editors use holds here too — a repair is kept only
+   when it ADDED delimiters this file omitted (`balance/rebalance` over the whole file,
+   the only span a formatter has).
+
+   Answers `{:code <what to format> :repaired? bool :repairs [note] :why msg?}`. On a
+   refusal the ORIGINAL code goes to the formatter untouched and `:why` names the
+   mistake to look for, because a formatter that guesses which of the two happened is
+   the corruption it was meant to prevent."
+  [^String code]
+  (if-not (repair/delimiter-error? code)
+    {:code code :repaired? false}
+    (let
+      [verdict (balance/rebalance {:balancer repair/fix-delimiters
+                                   :parses-clean? (fn [^String s]
+                                                    (not (repair/delimiter-error? s)))
+                                   :source code
+                                   :spans [[1 (max 1 (count (str/split-lines code)))]]
+                                   :subject "this file has"})]
+      (if (:ok? verdict)
+        {:code (:content verdict) :repaired? true :repairs (:notes verdict)}
+        {:code code :repaired? false :why (:why verdict)}))))
+
 (defn clj-repair+format
-  "The combined Clojure tidy used by BOTH `format` and the post-edit hook:
-   parinfer delimiter repair FIRST (so unbalanced ( [ { from a raw edit are
-   fixed), THEN indentation via the config-driven formatter (`fmt/format-source`
-   picks zprint when a `.zprint.edn`/`.zprintrc` is near `path`, else cljfmt).
-   Total — returns `code` unchanged on any failure of either step."
+  "The combined Clojure tidy behind `format`: the ADD-ONLY delimiter repair
+   (`clj-repair-source`) FIRST, THEN indentation via the config-driven formatter
+   (`fmt/format-source` picks zprint when a `.zprint.edn`/`.zprintrc` is near `path`,
+   else cljfmt). Total — returns `code` unchanged on any failure of either step, and
+   leaves source whose repair was refused exactly as it was written."
   ([code] (clj-repair+format code nil))
-  ([code path]
-   (let [repaired (or (repair/fix-delimiters code) code)]
-     (fmt/format-source repaired path))))
+  ([code path] (fmt/format-source (:code (clj-repair-source code)) path)))
 
 (defn- relativize-path
   "Rewrite an absolute path to one relative to workspace `root` so tool output
@@ -637,13 +666,14 @@
                   (if (seq d) d [(str root)])))))
 
 (defn- clj-format-one-file!
-  "Format a single file at `path` IN PLACE (paren-repair + cljfmt), writing
+  "Format a single file at `path` IN PLACE (add-only paren repair + cljfmt), writing
    back ONLY when the content changes. Returns a per-file result map with the
    workspace-relative path.
 
-   Runs parinfer ONCE and reuses that result both as the formatter's input and
-   as the `\"repaired\"` flag — the old shape called `fix-delimiters` a second
-   time purely to answer the flag."
+   Runs the repair ONCE and reuses its verdict for the `\"repaired\"` flag, for the
+   `\"repairs\"` notes naming the lines it completed, and for `\"unbalanced\"` — a repair
+   existed but would have DELETED a delimiter this file already has, so the file is
+   left exactly as it is and the reason is reported instead."
   [env path]
   (let
     [code
@@ -652,21 +682,24 @@
      for-path
      (or path (:workspace/root env))
 
-     fixed
-     (repair/fix-delimiters code)
-
-     repaired?
-     (and (string? fixed) (not= fixed code))
+     {:keys [repaired? repairs why] fixed :code}
+     (clj-repair-source code)
 
      out
-     (fmt/format-source (if (string? fixed) fixed code) for-path)]
+     (fmt/format-source fixed for-path)]
 
     (when (not= out code) (spit (str path) out))
-    {"path" (relativize-path (io/file (or (:workspace/root env) ".")) path)
-     "changed" (not= out code)
-     "repaired" repaired?
-     "wrote" (not= out code)
-     "formatter" (name (fmt/formatter-for for-path))}))
+    (cond->
+      {"path" (relativize-path (io/file (or (:workspace/root env) ".")) path)
+       "changed" (not= out code)
+       "repaired" repaired?
+       "wrote" (not= out code)
+       "formatter" (name (fmt/formatter-for for-path))}
+      (seq repairs)
+      (assoc "repairs" repairs)
+
+      why
+      (assoc "unbalanced" why))))
 
 (defn- group-format-by-cwd
   "Nest the per-file format results under their DIRECTORY so each directory
@@ -763,11 +796,11 @@
           for-path
           (or path (:workspace/root env))
 
-          fixed
-          (repair/fix-delimiters code)
+          {:keys [repaired? repairs why] fixed :code}
+          (clj-repair-source code)
 
           out
-          (fmt/format-source (if (string? fixed) fixed code) for-path)]
+          (fmt/format-source fixed for-path)]
 
          (when (and path (not= out code)) (spit (str path) out))
          (extension/success
@@ -777,8 +810,14 @@
                         {"op" "clj-format"
                          "changed" (not= out code)
                          "chars" (- (count out) (count code))
-                         "repaired" (and (string? fixed) (not= fixed code))
+                         "repaired" repaired?
                          "formatter" (name (fmt/formatter-for for-path))}
+                        (seq repairs)
+                        (assoc "repairs" repairs)
+
+                        why
+                        (assoc "unbalanced" why)
+
                         path
                         (assoc "path"
                           (relativize-path (io/file (or (:workspace/root env) ".")) path) "wrote"
@@ -936,7 +975,7 @@
   (vis/extension
     {:ext/name "language-clojure"
      :ext/description
-     "Clojure pack: managed nREPL; generic format/lint/test/repl handlers; formatting and delimiter repair. Active only in Clojure workspaces."
+     "Clojure pack: managed nREPL; generic format/lint/test/repl handlers; formatting and add-only delimiter repair. Active only in Clojure workspaces."
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"

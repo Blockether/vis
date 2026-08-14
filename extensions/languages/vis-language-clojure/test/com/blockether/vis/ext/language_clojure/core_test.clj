@@ -190,6 +190,44 @@
                    ;; the repaired output is stable: re-running the formatter is a no-op
                    (expect (= out (core/clj-repair+format out))))))
 
+;; Regression: `format_code` ran parinfer with NO direction rule, so a file that lost an
+;; opening `(` — character for character a file with one `)` too many — was "repaired" by
+;; DELETING that `)`, rewritten on disk, and reported as `"repaired": true`. `(def defaults
+;; {..})` became three loose top-level forms and nothing in the result named a line.
+(defdescribe format-repair-is-add-only-test
+             (it "adds a closer the file omitted and NAMES the line it completed"
+                 (let [dir (tmp-dir)]
+                   (try (let [f (io/file dir "add.clj")]
+                          (spit f "(defn f [x]\n  (inc x)\n")
+                          (let
+                            [result (:result (core/clj-format-fn {:workspace/root (str dir)}
+                                                                 {"path" "add.clj"}))]
+                            (expect (true? (get result "repaired")))
+                            (expect (= ["line 2 added `)` → `(inc x))`"] (get result "repairs")))
+                            (expect (nil? (get result "unbalanced")))
+                            (expect (= "(defn f [x]\n  (inc x))\n" (slurp f)))))
+                        (finally (cleanup dir)))))
+             (it "refuses a repair that would DELETE a delimiter, leaving the file as written"
+                 (let [dir (tmp-dir)]
+                   (try
+                     (let
+                       [f (io/file dir "lost_opener.clj")
+                        src "(ns demo.core)\n\ndef defaults\n  {:retries 3\n   :timeout 500})\n"]
+
+                       (spit f src)
+                       (let
+                         [result (:result (core/clj-format-fn {:workspace/root (str dir)}
+                                                              {"paths" [(str f)]}))
+                          file-result (first (get result "files"))]
+
+                         (expect (false? (get file-result "repaired")))
+                         (expect (false? (get file-result "wrote")))
+                         (expect (str/includes? (get file-result "unbalanced")
+                                                "would delete `)` this file has"))
+                         ;; the whole point: on disk, character for character what was written
+                         (expect (= src (slurp f)))))
+                     (finally (cleanup dir))))))
+
 (defdescribe multi-file-format-test
              (it "formats every file in {\"paths\": [...]} IN PLACE and rolls up per-file changes"
                  (let [dir (tmp-dir)]
