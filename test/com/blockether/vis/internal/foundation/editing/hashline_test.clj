@@ -13,26 +13,57 @@
   [n]
   (hashline/line-anchor n (nth (hashline/split-content-lines content) (dec (long n)))))
 
-(defdescribe anchor-token-test
-             (it "an anchor is a line number, a colon and exactly three hex chars"
-                 (doseq [n (range 1 6)]
-                   (expect (s/valid? :ext.editing.hashline/anchor (anchor-of n)))
-                   (expect (= n (hashline/anchor->line (anchor-of n))))))
-             (it "a blank line hashes to 000 and is still addressable"
-                 (expect (= "3:000" (anchor-of 3)))
-                 (expect (s/valid? :ext.editing.hashline/anchor (anchor-of 3))))
-             (it "the hash ignores surrounding whitespace, so re-indentation is not a new line"
-                 (expect (= (hashline/line-hash "  (defn f [] 1)")
-                            (hashline/line-hash "(defn f [] 1)  "))))
-             (it "a parsed anchor carries both coordinates"
-                 (expect (s/valid? :ext.editing.hashline/parsed (hashline/parse-anchor "4439:a80")))
-                 (expect (:malformed (hashline/parse-anchor "a80")))
-                 ;; A re-quoted anchor is a common serializer mistake and must still parse.
-                 (expect (= 4439 (:line (hashline/parse-anchor "\"4439:a80\"")))))
-             (it "anchor-string? separates an anchor endpoint from a bare line number"
-                 (expect (hashline/anchor-string? "120:7f2"))
-                 (expect (not (hashline/anchor-string? "120")))
-                 (expect (not (hashline/anchor-string? 120)))))
+(defdescribe
+  anchor-token-test
+  (it "an anchor is a line number, a colon and exactly three hex chars"
+      (doseq [n (range 1 6)]
+        (expect (s/valid? :ext.editing.hashline/anchor (anchor-of n)))
+        (expect (= n (hashline/anchor->line (anchor-of n))))))
+  (it "a blank line hashes to 000 and is still addressable"
+      (expect (= "3:000" (anchor-of 3)))
+      (expect (s/valid? :ext.editing.hashline/anchor (anchor-of 3))))
+  (it "the hash ignores surrounding whitespace, so re-indentation is not a new line"
+      (expect (= (hashline/line-hash "  (defn f [] 1)") (hashline/line-hash "(defn f [] 1)  "))))
+  (it "a parsed anchor carries both coordinates"
+      (expect (s/valid? :ext.editing.hashline/parsed (hashline/parse-anchor "4439:a80")))
+      (expect (:malformed (hashline/parse-anchor "a80")))
+      ;; A re-quoted anchor is a common serializer mistake and must still parse.
+      (expect (= 4439 (:line (hashline/parse-anchor "\"4439:a80\"")))))
+  (it "anchor-string? separates an anchor endpoint from a bare line number"
+      (expect (hashline/anchor-string? "120:7f2"))
+      (expect (not (hashline/anchor-string? "120")))
+      (expect (not (hashline/anchor-string? 120))))
+  ;; Regression (session fbb1093f): `cat`, `grep` and `patch` all print
+  ;; `<line>:<hash>│ <text>` and promise that line goes straight back in
+  ;; as an anchor, but the parser took EVERYTHING after the colon as the
+  ;; hash — gutter and line text included. No line could ever carry such
+  ;; a hash, so every pasted anchor was refused, and the refusal handed
+  ;; back the identical anchor it had just refused.
+  (it "a whole rendered line IS the anchor it renders"
+      (let
+        [rendered (hashline/render-hashline-block
+                    [[2 (nth (hashline/split-content-lines content) 1)]])]
+        (expect (= (hashline/parse-anchor (anchor-of 2)) (hashline/parse-anchor rendered)))
+        (expect (= 2 (hashline/anchor->line rendered)))
+        (expect (hashline/anchor-string? rendered))
+        (expect (= {:from-line 2 :to-line 2}
+                   (hashline/resolve-anchor-range content rendered nil)))))
+  (it "an indented grep row resolves, and its UPPERCASE text is not folded in"
+      (let
+        [text
+         " * Persist SYNCHRONOUSLY before awaiting the plugin"
+
+         shouty
+         (str "alpha\n" text "\n")
+
+         row
+         (hashline/render-hashline-block [[2 text]] "  ")]
+
+        (expect (= {:from-line 2 :to-line 2} (hashline/resolve-anchor-range shouty row nil)))))
+  (it "bare-anchor-string? tells a naked address from a rendered line"
+      (expect (hashline/bare-anchor-string? "120:7f2"))
+      (expect (hashline/anchor-string? "120:7f2│ alpha"))
+      (expect (not (hashline/bare-anchor-string? "120:7f2│ alpha")))))
 
 
 (defdescribe

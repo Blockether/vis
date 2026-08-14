@@ -14,6 +14,7 @@
      split-content-lines / char-offset-at-line   blob <-> line/char coordinates
      line-hash / line-anchor / anchor->line      text  -> `<line>:<hash>`
      render-hashline-block                       [[ln text]…] -> gutter text
+     anchor-token / parse-anchor                 rendered line -> bare anchor
      indices-matching-hash                       content-only hash lookup
      resolve-one-anchor / resolve-anchor-range   anchor -> live line, or refusal
      resolve-anchor-range-read                   the READ-tolerant twin
@@ -131,12 +132,46 @@
   [ln text]
   (str ln hashline-anchor-sep (line-hash text)))
 
+(def ^:private bare-anchor-re
+  "A whole anchor token and nothing else: `<line>:<hash>`, hex in either case."
+  #"\d+:[0-9a-fA-F]+")
+
+(defn anchor-token
+  "The bare `<line>:<hash>` token inside whatever the caller actually passed.
+
+   Every anchor a model ever sees is RENDERED — `<line>:<hash>│ <text>`, because
+   `cat`, `grep` and `patch`'s re-anchored window all print through
+   `render-hashline-block` — and the contract those tools advertise is that one
+   of their lines goes straight back in as an anchor. So everything from
+   `hashline-gutter` on is DECORATION and is cut here: the line number locates
+   and the hash verifies, while the text behind the gutter only SHOWED the line.
+   Without this cut the text became part of the hash, no line could carry it,
+   and the refusal handed back the very anchor it had just refused.
+
+   What is left is unwrapped from stray whitespace and quote chars — the other
+   common JSON/LLM mistake, where `\"4439:a80\"` arrives WITH its literal quotes
+   and `parse-long` chokes on the leading one."
+  ^String [x]
+  (let
+    [s
+     (str x)
+
+     cut
+     (long (or (str/index-of s hashline-gutter) (count s)))]
+
+    (-> (subs s 0 cut)
+        str/trim
+        (str/replace #"^['\"`]+" "")
+        (str/replace #"['\"`]+$" "")
+        str/trim)))
+
 (defn anchor->line
-  "Parse the 1-based line number out of a `<line>:<hash>` anchor."
+  "Parse the 1-based line number out of a `<line>:<hash>` anchor, rendered or
+   bare."
   ^long [anchor]
   (let
     [s
-     (str anchor)
+     (anchor-token anchor)
 
      i
      (str/index-of s hashline-anchor-sep)]
@@ -144,10 +179,22 @@
     (Long/parseLong (subs s 0 (long i)))))
 
 (defn anchor-string?
-  "True when `x` is a well-formed `<line>:<hash>` anchor STRING. `cat` uses it to
-   tell an anchor endpoint from a bare line number; anything else is a number."
+  "True when `x` ADDRESSES a line: a bare `<line>:<hash>` token, or a whole
+   rendered `<line>:<hash>│ <text>` line, which is that same anchor with the
+   gutter still attached. `cat` uses it to tell an anchor endpoint from a bare
+   line number; anything else is a number."
   [x]
-  (boolean (and (string? x) (re-matches #"\s*['\"`]*\d+:[0-9a-fA-F]+['\"`]*\s*" x))))
+  (boolean (and (string? x) (re-matches bare-anchor-re (anchor-token x)))))
+
+(defn bare-anchor-string?
+  "True when `x` is ONLY an anchor — the token, with no line text behind it.
+   `patch` asks this of its REPLACEMENT slot: a bare anchor there is the span
+   the caller forgot to finish, while a rendered line carrying TEXT is plausibly
+   the content it means to write and is written (with a note), not refused."
+  [x]
+  (boolean (and (string? x)
+                (not (str/includes? (str x) hashline-gutter))
+                (re-matches bare-anchor-re (anchor-token x)))))
 
 (defn render-hashline-block
   "Render `[[line-number text]…]` tuples as the MODEL's addressable gutter —
@@ -202,29 +249,19 @@
    refuse costs one re-read, a false accept corrupts the file."
   40)
 
-(defn- unwrap-anchor
-  "Tolerate an anchor wrapped in stray whitespace or quote chars — a common
-   JSON/LLM mistake where the `line:hash` string is re-quoted, so `\"4439:a80\"`
-   arrives WITH the literal quote characters and `parse-long` chokes on the
-   leading quote. A real anchor is only digits, a colon and hex, so trimming
-   surrounding whitespace and matching quotes can never corrupt a valid one."
-  ^String [^String s]
-  (-> s
-      str/trim
-      (str/replace #"^['\"`]+" "")
-      (str/replace #"['\"`]+$" "")
-      str/trim))
-
 (defn parse-anchor
   "Parse a `<line>:<hash>` anchor into `{:line L :hash H}` (L a 1-based long, H
    the hex content hash). The line number is REQUIRED: an anchor with no `:`
    separator, or a non-numeric line part, parses to `{:malformed true :raw S}`
    and `resolve-one-anchor` refuses it (`:anchor-malformed`). Every anchor must
-   carry BOTH coordinates so the line LOCATES and the hash VERIFIES."
+   carry BOTH coordinates so the line LOCATES and the hash VERIFIES.
+
+   A WHOLE RENDERED LINE parses exactly like a bare token: `anchor-token` cuts
+   the gutter and the text behind it first, so the hash is only ever the hex."
   [anchor]
   (let
     [s
-     (unwrap-anchor (str anchor))
+     (anchor-token anchor)
 
      i
      (.indexOf s (int \:))

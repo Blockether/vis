@@ -4956,7 +4956,7 @@
               ", but no replacement was passed.")
          "  patch(path, anchor, new) replaces ONE line; patch(path, from, to, new) replaces a span."
          "  to DELETE the span, pass the empty replacement explicitly: patch(path, anchor, \"\")."])
-      (and (not span?) (hashline/anchor-string? replacement))
+      (and (not span?) (hashline/bare-anchor-string? replacement))
       (patch-refusal!
         rel
         {:reason :replacement-is-anchor}

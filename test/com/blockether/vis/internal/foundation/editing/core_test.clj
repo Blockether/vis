@@ -1281,6 +1281,22 @@
 
         (expect (= by-number by-anchor))
         (expect (= 2 (count (string/split-lines by-number))))))
+  ;; Regression (session fbb1093f): only a BARE `<line>:<hash>` counted as an
+  ;; anchor, so the line `cat` had just printed was not an endpoint `cat` took
+  ;; back — the gutter it prints made its own output unusable as an address.
+  (it "a whole printed line is an endpoint — the gutter travels with the address"
+      (let
+        [rel
+         (write-temp! "cat/whole-line.txt" "alpha\nBETA\ngamma\ndelta\n")
+
+         cat-tool
+         (comp :result (private-fn "cat-tool"))
+
+         printed
+         (first (string/split-lines (cat-tool rel 2 3)))]
+
+        (expect (string/includes? printed "│ BETA"))
+        (expect (= (cat-tool rel 2 3) (cat-tool rel printed 3)))))
   (it "a window is capped and the clip names the call that continues it"
       (let
         [rel
@@ -1730,6 +1746,36 @@
                     (:result (patch-one rel anchor anchor "replaced"))]
 
                    (expect (re-matches #"\d+:[0-9a-f]{3}" anchor))
+                   (expect (string/starts-with? out "patched "))
+                   (expect (= "keep\nreplaced\nkeep\n" (slurp rel)))))
+             ;; Regression (session fbb1093f): the anchor parser took EVERYTHING
+             ;; after the colon as the hash, so a row pasted WHOLE — the only form
+             ;; these tools ever print — hashed to `5af│ /**` and matched no line.
+             ;; Every paste was refused, and the refusal echoed the same anchor back.
+             (it "a whole hit row — indent, gutter, text and all — feeds patch too"
+                 (let
+                   [d
+                    (temp-dir-path "grepanchorwhole")
+
+                    rel
+                    (write-temp! "grepanchorwhole/target.txt" "keep\nZZWHOLEZZ LINE\nkeep\n")
+
+                    grep-tool
+                    (private-fn "grep-tool")
+
+                    patch-one
+                    (private-fn "patch-one")
+
+                    hit-row
+                    (->> (:result (grep-tool {"query" "ZZWHOLEZZ" "paths" [d]}))
+                         string/split-lines
+                         (filter #(re-matches #"  \d+:[0-9a-f]{3}│ .*" %))
+                         first)
+
+                    out
+                    (:result (patch-one rel hit-row hit-row "replaced"))]
+
+                   (expect (string/includes? hit-row "│ ZZWHOLEZZ LINE"))
                    (expect (string/starts-with? out "patched "))
                    (expect (= "keep\nreplaced\nkeep\n" (slurp rel))))))
 

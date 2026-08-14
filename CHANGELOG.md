@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   back.
 
 ### Changed
+- The Companion's Notifications panel answers ONE question: is this device connected to this
+  machine. It used to list every push token the gateway holds — one iPhone reinstalled three times
+  stood in it four times, under four masked tokens and two APNs environments — while the only state
+  a reader wants was left to the verb printed on a button. One row now states it (`Connected` /
+  `Not connected`, naming the machine in the sentence, `Checking…` before the first answer) and one
+  `Switch` is both verbs, in the same place either way; native APNs/FCM and Web Push ask it with the
+  same row. A permission turned off in the OS is never reported as connected, and on iOS the blocked
+  state offers the door to system Settings.
 - Copying a session id — the TUI header chip and the Companion chip beside the title — now puts
   `vis_session_id#<uuid>` on the clipboard instead of a bare UUID. The marker says WHAT the id
   addresses, so whoever it is pasted to recognises a Vis session, and `read_session` /
@@ -207,6 +215,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   feature wants an engine-owned capture directory again.
 
 ### Fixed
+- `patch` and `cat` refused the anchor they had just printed. Every addressable line these tools
+  render is `<line>:<hash>│ <text>`, but the anchor parser read EVERYTHING after the colon as the
+  hash — the gutter and the line's own text included — so a row pasted back whole hashed to
+  `5af│ /**`, matched no line in the file, and came back as `no line within 40 lines carries
+  5af│ /**` with a "current anchor" identical to the one just refused (its text lower-cased on the
+  way out, since the hash is folded case-insensitively). The gutter and everything behind it are
+  now cut before parsing, so a `cat` line, a `grep` hit row (indent and all) or a `struct_index`
+  anchor addresses a line exactly as printed. A REPLACEMENT carrying a gutter is unchanged: it is
+  still written verbatim, with the note that says so.
 - Sandbox HTTPS could not skip certificate verification, and the escape hatch was deleted behind
   the caller's back. `requests.get(url, verify=False)`, `Session.verify`, `cert=`, httpx's
   `verify=`/`cert=` and urllib3's `cert_reqs` / `ca_certs` / `cert_file` / `assert_hostname` /
