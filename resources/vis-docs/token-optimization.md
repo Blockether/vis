@@ -140,16 +140,16 @@ When the same helper survives across turns — a deploy check, a fixture loader,
 
 ```python
 fold_session(
-    ["t2/i4", "t2/i5"],
+    "t2/i4-i5",
     "HTTP timeout fixed in src/vis/net/http.clj:52; regression test passes",
 )
 ```
 
-The only step the runtime refuses to fold is the **live iteration you are emitting right now** (and any future step) — it is not settled yet. Every completed iteration is foldable, including finished iterations of the current turn: trim the current turn up to the last settled iteration with `{"through": "tN/iK"}`. A blocked attempt names only the live scope, so drop it and keep the settled ones. Keep active reproduction output, reads, edits, failures, and verification live until they settle.
+The only step the runtime refuses to fold is the **live iteration you are emitting right now** (and any future step) — it is not settled yet. Every completed iteration is foldable, including finished iterations of the current turn: trim the current turn up to the last settled iteration with `"-tN/iK"`. A blocked attempt names only the live scope, so drop it and keep the settled ones. Keep active reproduction output, reads, edits, failures, and verification live until they settle.
 
 A useful gist records the durable finding, rationale or consequence, and a workspace-relative `path:line`, symbol, or test. Omit the gist when the folded steps contain no reusable information. Re-read any preserved line number before editing, because a write moves the lines under it.
 
-Targets may be step ids, whole prior turns, or `through` / `from`+`to` / `since` ranges. A broader newer fold supersedes every fully covered narrower breadcrumb; equal scopes keep the newer gist. Partial overlaps remain separate.
+The target is a **string**: `"t2/i5"` one step, `"t2"` a whole turn, `"t2/i1-i56"` (or `"t2/i1..i56"`) a range, `"-t2/i56"` everything through it, `"t2/i5-"` everything since it — comma-separate several, and a list of ids works too. A token that is not a step id, a second range, or a target matching no settled step is refused by name rather than folding nothing. A broader newer fold supersedes every fully covered narrower breadcrumb; equal scopes keep the newer gist. Partial overlaps remain separate.
 
 ### Folding changes rendering, not storage
 

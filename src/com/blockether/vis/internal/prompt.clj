@@ -271,7 +271,7 @@
     "- Treat context as a budget: in `session[\"utilization\"]` pressure is `last_request_tokens`\n"
     "  against `auto_compress_above`; `saturation`/`headroom_tokens` price the far larger hard per-call\n"
     "  limit and read calm while that budget empties, and `hint` only arms at 75% of it.\n"
-    "- Fold obsolete settled work: `fold_session(target, gist)` — one broad `through`/range fold; omitting\n"
+    "- Fold obsolete settled work: `fold_session(target, gist)` — one broad `\"-tN/iK\"` range; omitting\n"
     "  the gist discards outright. Folding changes rendering, not storage:\n"
     "  a folded step is NOT re-readable, so the gist is what survives.\n"
     "- When edit-ready and headroom permits, edit before folding. Before unavoidable folds, checkpoint\n"

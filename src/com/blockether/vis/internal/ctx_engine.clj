@@ -347,6 +347,143 @@
     (when-let [m (re-matches #"t(\d+)" (str/trim scope))]
       (parse-long (nth m 1)))))
 
+(def fold-target-grammar
+  "The fold target grammar in ONE line, said verbatim by every refusal so the
+   caller reads the whole vocabulary at the moment it typed something else."
+  (str "targets are strings — \"t2/i5\" one step · \"t2\" a whole turn · "
+       "\"t2/i1-i56\" a range · \"-t2/i56\" everything through it · "
+       "\"t2/i5-\" everything since it · comma-separate several"))
+
+(defn- fold-endpoint
+  "Canonical `tN`/`tN/iM` id for ONE end of a fold target. A `tN/iM/fK` form id
+   collapses to its ITERATION (ranges cover whole iterations), and — on the
+   RIGHT of a range — a bare `iM`/`M` inherits `turn` from the left end, so
+   `\"t2/i1-i56\"` ends at `t2/i56`. nil when it parses as none of those."
+  [raw turn]
+  (let [s (str/trim (str raw))]
+    (cond (scope-key s) (let [[t i] (scope-key s)]
+                          (str "t" t "/i" i))
+          (turn-key s) s
+          :else (when turn
+                  (when-let [m (re-matches #"i?(\d+)" s)]
+                    (str "t" turn "/i" (parse-long (nth m 1))))))))
+
+(defn- fold-range-label
+  "Human spelling of a resolved range selector for the fold ack card."
+  [{:strs [through since from to]}]
+  (cond through (str "through " through)
+        since (str "since " since)
+        :else (str from "-" to)))
+
+(defn- fold-token
+  "Parse ONE target token into `[:scope id]`, `[:range selector]` or
+   `[:error token]`. `..` and `-` are the same separator, so `\"t2/i1-i56\"` and
+   `\"t2/i1..i56\"` are the same window; an omitted side opens the range."
+  [token]
+  (let
+    [t
+     (str/replace (str/trim (str token)) ".." "-")
+
+     parts
+     (str/split t #"-" -1)
+
+     [a b]
+     parts
+
+     one
+     (fn [raw]
+       (fold-endpoint raw nil))
+
+     err
+     [:error (str/trim (str token))]]
+
+    (case (count parts)
+      1
+      (if-let [id (one a)]
+        [:scope id]
+        err)
+
+      2
+      (cond (and (str/blank? a) (str/blank? b)) err
+            (str/blank? a) (if-let [to (one b)]
+                             [:range {"through" to}]
+                             err)
+            (str/blank? b) (if-let [from (one a)]
+                             [:range {"since" from}]
+                             err)
+            :else (let
+                    [from
+                     (one a)
+
+                     to
+                     (when from (fold-endpoint b (or (first (scope-key from)) (turn-key from))))]
+
+                    (if (and from to) [:range {"from" from "to" to}] err)))
+
+      err)))
+
+(defn fold-target
+  "Parse `fold_session`'s model-facing TARGET — the ONLY shape the verb accepts —
+   into one selector intent plus the label its ack card shows. Tokens are comma-
+   or space-separated and `..` and `-` are the same range separator:
+     `\"t2\"`         a whole turn
+     `\"t2/i5\"`      one iteration (a `tN/iM/fK` form id folds its iteration)
+     `\"t2/i1-i56\"`  an inclusive window; the right side may drop the shared turn
+     `\"t1/i3-t4\"`   a window across turns (a bare `tN` bound covers all of turn N)
+     `\"-t2/i56\"`    open start: every settled step at or before the cursor
+     `\"t2/i5-\"`     open end: every settled step at or after it
+   Several tokens union (`\"t1, t2/i1-i3\"`); at most ONE range per call, because
+   one intent carries one window. The intent is STRING-KEYED and is exactly what
+   `expand-through` resolves: ids land in `\"scopes\"`, a range in
+   `\"through\"`/`\"since\"`/`\"from\"`+`\"to\"`.
+   Returns `{:intent … :label …}`, `{:error <model-facing refusal>}` for an
+   unparseable token, a second range or a leftover selector dict, or nil when the
+   target named nothing at all. Pure."
+  [target]
+  (if (map? target)
+    {:error (str "fold_session: selector dicts are gone — " fold-target-grammar)}
+    (let
+      [tokens
+       (into []
+             (comp (mapcat (fn [x]
+                             (str/split (str/trim (str x)) #"[,\s]+")))
+                   (remove str/blank?))
+             (cond (sequential? target) target
+                   (some? target) [target]
+                   :else nil))
+
+       parsed
+       (mapv fold-token tokens)
+
+       of-kind
+       (fn [kind]
+         (into [] (comp (filter #(= kind (first %))) (map second)) parsed))
+
+       errors
+       (of-kind :error)
+
+       ranges
+       (of-kind :range)
+
+       scopes
+       (into (sorted-set) (of-kind :scope))]
+
+      (cond (empty? tokens) nil
+            (seq errors) {:error (str "fold_session: not a step id: " (str/join ", "
+                                                                                (map pr-str errors))
+                                      " — " fold-target-grammar)}
+            (< 1 (count ranges)) {:error (str "fold_session: one range per fold — "
+                                              (str/join " and " (map fold-range-label ranges))
+                                              " need separate calls")}
+            :else {:intent (cond-> {}
+                             (seq scopes)
+                             (assoc "scopes" (into #{} scopes))
+
+                             (seq ranges)
+                             (merge (first ranges)))
+                   :label (str/join ", " (concat scopes (map fold-range-label ranges)))}))))
+
+
 (defn expand-through
   "Resolve every fold SELECTOR on each summary against `universe` (the caller's
    own live iteration scopes) into a concrete `\"scopes\"` set, so ONE intent

@@ -186,7 +186,7 @@
                    ;; but named no callable, so `fold_session` had to be remembered or
                    ;; rediscovered through `doc()` — every other verb in the core is named.
                    "`fold_session(target, gist)`" "Fold obsolete settled work"
-                   "one broad `through`/range fold"
+                   "one broad `\"-tN/iK\"` range"
                    ;; Nothing stores a folded step for later: the gist is the whole survivor,
                    ;; and a prompt that hints otherwise buys a fold the model regrets.
                    "a folded step is NOT re-readable, so the gist is what survives"

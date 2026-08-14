@@ -2549,14 +2549,16 @@
    confirmation string (NOT the `\"vis_silent\"` row-suppression sentinel) so the
    action shows in the Python result instead of vanishing.
 
-   First positional arg selects the target: a list/string of explicit scopes, or
-   a `{\"through\" \"tN/iN\"}` options dict (Python kwargs don't cross `wrap-ifn`;
-   `->clj` keeps dict keys as VERBATIM STRINGS, so `\"through\"` is the accessor).
+   First positional arg selects the target: a STRING (or list of strings) in the
+   `ctx-engine/fold-target` grammar — \"t2/i5\" one step, \"t2\" a whole turn,
+   \"t2/i1-i56\" a range, \"-t2/i56\"/\"t2/i5-\" an open one, commas to union
+   several. There is no options dict; a map target is refused with the grammar,
+   as is any token that is not a step id or that resolves to no settled step.
    The second arg — the gist — is OPTIONAL: pass it to KEEP a one-line takeaway,
    OMIT it to simply DISCARD the step (this replaces the old `session_drop`; a
    gist-less fold collapses the step with no summary line). Intents are
    STRING-KEYED (they persist inside the ctx nippy blob — strings-only DB):
-     {\"scopes\" #{…}|\"through\" \"tN/iN\", \"gist\" <takeaway>?}
+     {\"scopes\" #{…} | \"through\"/\"since\" \"tN/iM\" | \"from\"+\"to\", \"gist\" <takeaway>?}
    `apply-summaries` still renders any legacy persisted `{\"drop\" true}` intents."
   [ctx-atom & [session-rebase-atom]]
   (let
@@ -2567,14 +2569,6 @@
                 (if (or (sequential? parsed) (map? parsed)) parsed value))
               (catch Throwable _ value))
          value))
-
-     ->set
-     (fn [scopes]
-       (into #{}
-             (comp (map str) (map str/trim) (remove str/blank?))
-             (cond (sequential? scopes) scopes
-                   (string? scopes) [scopes]
-                   :else nil)))
 
      freeze
      (fn [intent]
@@ -2603,31 +2597,10 @@
 
      target
      (fn [scopes]
-       (let [scopes (normalize-target scopes)]
-         (if (map? scopes)
-           (let
-             [pick (fn [k]
-                     (some-> (get scopes k)
-                             str
-                             str/trim
-                             not-empty))
-              thr (pick "through")
-              snc (pick "since")
-              frm (pick "from")
-              to (pick "to")]
-
-             (cond thr [{"through" thr} (str "through " thr)]
-                   snc [(freeze {"since" snc}) (str "since " snc)]
-                   (or frm to) [(freeze (cond-> {}
-                                          frm
-                                          (assoc "from" frm)
-
-                                          to
-                                          (assoc "to" to)))
-                                (str "window " (or frm "start") ".." (or to "end"))]
-                   :else nil))
-           (let [ss (->set scopes)]
-             (when (seq ss) [{"scopes" ss} (str/join ", " (sort ss))])))))
+       (when-let [parsed (ctx-engine/fold-target (normalize-target scopes))]
+         (when-let [error (:error parsed)]
+           (throw (ex-info error {:type :vis/fold-session-target :target scopes})))
+         [(freeze (:intent parsed)) (:label parsed)]))
 
      current-turn
      (fn []
@@ -2918,9 +2891,10 @@
           (cond (kwargs? gist) [(if (contains? gist "target") (get gist "target") scopes)
                                 (get gist "gist")]
                 (and (nil? gist) (kwargs? scopes))
-                ;; A fully keyword call: `target=` when given, otherwise the
-                ;; selector keywords (`through=`, `since=`, `from=`/`to=`) were
-                ;; spread at the TOP level - the remaining keys ARE the selector.
+                ;; A fully keyword call: `target=` when given, otherwise the leftover
+                ;; keys ARE a selector dict someone still typed — pass them on so
+                ;; `fold-target` refuses them by name with the string grammar instead
+                ;; of folding nothing.
                 [(or (get scopes "target") (not-empty (dissoc scopes "gist"))) (get scopes "gist")]
                 :else [scopes gist])]
 
@@ -2957,15 +2931,37 @@
                                {:type :vis/fold-session-turn-unknown})))
              (when (seq live-scopes)
                (throw (ex-info
-                        (str
-                          "fold_session blocked: " (str/join ", " live-scopes)
-                          " name the live iteration you are emitting right now — not yet a "
-                          "settled wire step. Fold only COMPLETED steps: every prior turn AND "
-                          "the current turn's finished iterations (e.g. {\"through\": \"tN/iK\"} "
-                          "up to the last settled iteration). Do not retry THESE scopes this turn.")
+                        (str "fold_session blocked: " (str/join ", " live-scopes)
+                             " name the live iteration you are emitting right now — not yet a "
+                             "settled wire step. Fold only COMPLETED steps: every prior turn AND "
+                             "the current turn's finished iterations (e.g. \"-tN/iK\" up to the "
+                             "last settled iteration). Do not retry THESE scopes this turn.")
                         {:type :vis/fold-session-active-turn
                          :current-turn turn
                          :blocked-scopes live-scopes})))
+             ;; A target that resolves to NO settled wire step folds nothing: the ack
+             ;; would read `saved ~0 tokens` and the gist would anchor to an id the
+             ;; wire never held (a mistyped range, a turn that does not exist yet).
+             ;; Refuse it by name instead of recording a silent no-op fold. Whole-turn
+             ;; intent (`turns`) at or before the live turn stays legal even with no
+             ;; iteration on this trailer — it also removes that turn's Q/A recap,
+             ;; which resides outside the iteration universe.
+             (let
+               [named (get resolved "scopes")
+                settled-turns (filter (fn [tn]
+                                        (<= (long tn) (long turn)))
+                                      (get resolved "turns"))
+                ordered (sort-by ctx-engine/scope-key (filter ctx-engine/scope-key uni))]
+
+               (when (and (seq ordered) (empty? settled-turns) (not-any? universe named))
+                 (throw (ex-info (str "fold_session: " label
+                                      " matches no settled step — this session's wire holds "
+                                      (first ordered)
+                                      " … " (last ordered)
+                                      ". " ctx-engine/fold-target-grammar)
+                                 {:type :vis/fold-session-unknown-target
+                                  :target label
+                                  :scopes (into (sorted-set) named)}))))
              (let
                [g (some-> gist
                           str
@@ -2998,9 +2994,7 @@
                (tel/log! {:level :info :id ::fold-session :data {:intent intent}}
                          "model folded scopes")
                (str "folded " label note (when g (str " → " g)))))
-           (str "fold_session: nothing to fold — pass [\"t1/i2\", …] (a bare \"t1\" folds "
-                "the whole turn), or a selector {\"through\"|\"since\": \"t1/i2\"} / "
-                "{\"from\": \"t1/i2\", \"to\": \"t1/i5\"}"))))}))
+           (str "fold_session: nothing to fold — " ctx-engine/fold-target-grammar))))}))
 
 
 (defn- apply-summaries
@@ -9993,13 +9987,14 @@
      ;; ONE model-driven context-compaction verb, recording a
      ;; `:session/summaries` intent the wire applies via `apply-summaries`:
      ;;
-     ;;   fold_session(["tN/iN", …], "what this step established")  — KEEP the
-     ;;     conclusion. Collapses those scopes into a single summary line; the
+     ;;   fold_session("tN/iM", "what this step established")  — KEEP the
+     ;;     conclusion. Collapses that step into a single summary line; the
      ;;     summary is the distilled takeaway you still need.
-     ;;   fold_session({"through": "tN/iN"}, "…")  — RANGE: fold every step at
-     ;;     or before tN/iN in one shot (a positional options dict, NOT a kwarg:
-     ;;     Python kwargs don't cross into a Clojure verb — see wrap-ifn).
-     ;;   fold_session(["tN/iN", …])  — the gist is OPTIONAL: OMIT it to just
+     ;;   fold_session("tN/i1-i56", "…")  — RANGE: ONE string folds a whole
+     ;;     window (`-tN/iM` everything through it, `tN/iM-` everything since
+     ;;     it, `tN` a whole turn, commas union several). See
+     ;;     `ctx-engine/fold-target` for the grammar.
+     ;;   fold_session("tN/iM")  — the gist is OPTIONAL: OMIT it to just
      ;;     DISCARD the step outright (an approach you abandoned, a read you
      ;;     misread) where keeping even a summary would mislead. Replaces the
      ;;     old `session_drop`.
