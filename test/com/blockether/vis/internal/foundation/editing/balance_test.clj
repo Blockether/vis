@@ -87,6 +87,25 @@
       (expect (= "no delimiter repair was found" (:why (verdict "(a" "(a" [[1 1]])))))
   (it "refuses when the balancer answers something that is not a string"
       (expect (= "no delimiter repair was found" (:why (verdict "(a" nil [[1 1]])))))
+  ;; A dropped quote is not a missing bracket, and a caller told only that no repair was
+  ;; found goes looking for a delimiter that is not missing.
+  (it "names an unterminated string instead of a delimiter that is not missing"
+      (expect (= (str "no delimiter repair is possible: line 2 opens a string that is never "
+                      "closed, and a repair only puts back `()[]{}`")
+                 (:why (verdict "(ns a)\n(def s \"hi)\n" nil [[2 2]])))))
+  (it "is not fooled by a quote inside a comment or a character literal"
+      (expect (= "no delimiter repair was found"
+                 (:why
+                   (verdict "(def q \\\")\n;; \" not a string\n(def s \"ok\")\n" nil [[1 1]])))))
+  ;; Whitespace is the one rewrite every other rule is blind to: the skeleton drops it, the
+  ;; delimiters are untouched, and the line count and final newline both hold.
+  (it "refuses a repair that re-indents the line it closed"
+      (let [r (verdict "(ns a)\n(defn f [] (inc 1)\n" "(ns a)\n  (defn f [] (inc 1))\n" [[2 2]])]
+        (expect (false? (:ok? r)))
+        (expect
+          (= (str "the delimiter repair would change whitespace this edit wrote: it re-indents "
+                  "or re-ends lines instead of only putting back the delimiters that were omitted")
+             (:why r)))))
   (it "refuses a candidate that still would not parse"
       (expect (= "a delimiter repair was found but it still would not parse"
                  (:why (verdict "(a" "(a)" [[1 1]] false)))))
@@ -122,3 +141,106 @@
       (let [r (verdict "(cond\n  a 1)\n  :else 2\n" "(cond\n  a 1\n  :else 2)\n" [[1 3]])]
         (expect (true? (:ok? r)))
         (expect (= ["line 2 removed `)` → `a 1`" "line 3 added `)` → `:else 2)`"] (:notes r))))))
+
+(defn- seated
+  "`rebalance` given the text the edit REPLACED, so a delimiter it dropped can go back
+   where that text had it. `candidate` is the stub balancer's answer — the indentation
+   guess the replaced text has to beat."
+  [original source candidate spans]
+  (balance/rebalance {:balancer (constantly candidate)
+                      :parses-clean? (constantly true)
+                      :source source
+                      :original original
+                      :spans spans}))
+
+(defdescribe
+  seated-repair-test
+  "The text an edit REPLACED is better evidence than the caller's indentation: it says
+   WHERE a dropped delimiter sat, which is the only way to put one back in the MIDDLE of
+   a line, or to tell a lost opener from one closer too many. It is tried first; the
+   balancer's own answer is the fallback."
+  ;; Regression, session 621ba390 (the other half): a closer omitted inside a line came back at
+  ;; the line's END, regrouping the arguments between — `(map? x) (str …)` was written as
+  ;; `(map? x (str …))`, one cond clause turned into a call, and it parsed, so it was written.
+  (it "seats a closer where the replaced text had it, not at the end of the line"
+      (let
+        [r (seated "(cond\n  (map? x) (str \"map\" (count x)))\n"
+                   "(cond\n  (map? x (str \"map\" (count x)))\n"
+                   "(cond\n  (map? x (str \"map\" (count x))))\n" [[2 2]])]
+        (expect (true? (:ok? r)))
+        (expect (= "(cond\n  (map? x) (str \"map\" (count x)))\n" (:content r)))
+        (expect (= ["line 2 added `)` → `(map? x) (str \"map\" (count x)))`"] (:notes r)))))
+  ;; Regression: `str/split-lines` drops the `\r` of a CRLF file, so a seat rebuilt by
+  ;; joining its answer normalized every line ending in the file — a whole-file rewrite
+  ;; from a call that asked to put ONE delimiter back.
+  (it "keeps the CRLF line endings of the file it seats a delimiter into"
+      (let
+        [r (seated "(ns a)\r\n(defn ok [] (inc 1))\r\n"
+                   "(ns a)\r\n(defn ok [] (inc 1)\r\n"
+                   nil
+                   [[2 2]])]
+        (expect (true? (:ok? r)))
+        (expect (= "(ns a)\r\n(defn ok [] (inc 1))\r\n" (:content r)))))
+  ;; Regression: `(defn ok [] (inc 1))` retyped without its opening paren IS `defn ok [] (inc 1))`
+  ;; — the same string as one closer too many, and refused as such when that is all there is. The
+  ;; line it replaced says which of the two happened, so this one is repaired instead of refused.
+  (it "restores an opener the edit lost, which the replacement alone cannot prove"
+      (let
+        [r (seated "(ns a)\n(defn ok [] (inc 1))\n" "(ns a)\ndefn ok [] (inc 1))\n"
+                   "(ns a)\ndefn ok [] (inc 1)\n" [[2 2]])]
+        (expect (true? (:ok? r)))
+        (expect (= "(ns a)\n(defn ok [] (inc 1))\n" (:content r)))
+        (expect (= ["line 2 added `(` → `(defn ok [] (inc 1))`"] (:notes r)))))
+  (it "leaves the delimiters of code the edit deleted deleted"
+      ;; the line's CODE changed, so nothing of its is seated: an opener whose form the caller
+      ;; removed must not come back INSIDE what they wrote, and the surplus closer is theirs
+      (let
+        [r (seated "(defn ok []\n  (when x (inc 1)))\n" "(defn ok []\n  (inc 1)))\n"
+                   "(defn ok []\n  (inc 1))\n" [[2 2]])]
+        (expect (false? (:ok? r)))
+        (expect (= (str "the delimiter repair would delete `)` this edit wrote: it closes more "
+                        "than it opens, or an opener was lost")
+                   (:why r)))))
+  (it "falls back to the balancer for a line the edit did not replace"
+      ;; an INSERTED form replaced nothing, so where its missing closer belongs is an indentation
+      ;; guess and nothing else — the fallback is the whole repair here
+      (let
+        [r (seated "(ns a)\n(defn f [] 1)\n" "(ns a)\n(defn g [] (inc 1)\n(defn f [] 1)\n"
+                   "(ns a)\n(defn g [] (inc 1))\n(defn f [] 1)\n" [[2 2]])]
+        (expect (true? (:ok? r)))
+        (expect (= "(ns a)\n(defn g [] (inc 1))\n(defn f [] 1)\n" (:content r)))))
+  ;; Regression: one `(` too many is not an omission — parinfer closed it, the file parsed, and
+  ;; `(inc x)` was written as the call of a call.
+  (it "refuses to close a delimiter the edit typed, which the replaced text never had"
+      (let
+        [r (seated "(ns a)\n(defn f [x] (inc x))\n" "(ns a)\n(defn f [x] ((inc x))\n"
+                   "(ns a)\n(defn f [x] ((inc x)))\n" [[2 2]])]
+        (expect (false? (:ok? r)))
+        (expect (= (str "the delimiter repair would close `(` this edit wrote on line 2, where the "
+                        "text it replaced had `)`: that delimiter was retyped or added, not "
+                        "omitted, and closing it regroups the line into `(defn f [x] ((inc x)))`")
+                   (:why r)))))
+  (it "seats an opener BEFORE the code the edit added on the same line"
+      ;; the `[` belongs where the replaced text had it — in front of the bindings, including the
+      ;; pair this edit appended; seating it after them would bind nothing
+      (let
+        [r (seated "(defn f []\n  (let [a 1]\n    a))\n"
+                   "(defn f []\n  (let a 1 b 2]\n    (+ a b)))\n"
+                   "(defn f []\n  (let a 1 b 2\n    (+ a b)))\n" [[2 3]])]
+        (expect (true? (:ok? r)))
+        (expect (= "(defn f []\n  (let [a 1 b 2]\n    (+ a b)))\n" (:content r)))
+        (expect (= ["line 2 added `[` → `(let [a 1 b 2]`"] (:notes r)))))
+  ;; Regression: the edit swapped two lines and dropped one closer; the balancer closed the OTHER
+  ;; line — one this edit left exactly as it found it — the file parsed, and the `if` lost its
+  ;; branches to the form above it.
+  (it "refuses a repair that closes a line whose code the edit kept"
+      (let
+        [r (seated "(defn f [xs]\n  (if (seq xs)\n    (println \"a\")\n    (println \"b\")))\n"
+                   "(defn f [xs]\n    (println \"a\")\n  (if (seq xs\n    (println \"b\")))\n"
+                   "(defn f [xs]\n    (println \"a\"))\n  (if (seq xs\n    (println \"b\")))\n"
+                   [[2 3]])]
+        (expect (false? (:ok? r)))
+        (expect (= (str "a delimiter repair exists but it adds `)` to line 2, whose code this edit "
+                        "did not change — the text it replaced was `(println \"a\")` and never had "
+                        "that delimiter, so what this call omitted is on another line")
+                   (:why r))))))

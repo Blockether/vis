@@ -8,7 +8,8 @@
    the WHOLE spliced file when an edit would not parse, and write the repair only
    when it stays inside the lines that edit wrote. Both doors are ADD-ONLY: a delimiter
     you omitted is added back, one you WROTE is never deleted — a lost opening `(` and
-    one `)` too many are the same string, so deleting is a guess that rewrites code."
+    one `)` too many are the same string, so deleting is a guess that rewrites code, and
+    the text an edit REPLACED is the only thing that tells the two apart."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]

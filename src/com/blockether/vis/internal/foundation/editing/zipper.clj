@@ -14,7 +14,8 @@
    safety contract as `structural`. A caller that hands `edit` a `:balancer` (a
    language pack's delimiter repair) gets one bounded second chance instead: the
    repair runs over the WHOLE new source and is kept only when it ADDS delimiters the
-   splice omitted, on the lines that splice wrote (`balance`); one the splice wrote
+   splice omitted, on the lines that splice wrote (`balance`) — where the code they
+   replaced survived, at the seat it had there; one the splice wrote
    is never deleted. Pairs with the name-based ops:
    locate a def by name, then walk into it by path.
 
@@ -645,6 +646,7 @@
                                       :parses-clean? (fn [^String s]
                                                        (not (syntax-broken? lang s)))
                                       :source new-source
+                                      :original source
                                       :spans (some-> (balance/changed-span source new-source)
                                                      vector)}))]
 

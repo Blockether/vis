@@ -1612,6 +1612,12 @@
               out
               "parse: clean (delimiters repaired: line 3 added `)` → `(defn ok [] (inc 1))`)"))
           (expect (= "(ns reb)\n\n(defn ok [] (inc 1))\n\n(defn two [] 2)\n" written))))
+    ;; A dropped quote is not a missing bracket: a caller told only that no repair was
+    ;; found goes hunting for a paren that is not missing while the quote is on line 3.
+    (it "names an unterminated string instead of a delimiter that is not missing"
+        (let [[out written] (patch-line-3 nil "(defn ok [] \"1)")]
+          (expect (string/includes? out "line 3 opens a string that is never closed"))
+          (expect (= fixture written))))
     (it "refuses a repair that balances by swallowing a form the edit never wrote"
         ;; the candidate parses — it just closes the LAST defn instead of this line,
         ;; which is the silent corruption the fragment-level repair used to write
@@ -1706,6 +1712,42 @@
 
           (expect (string/includes? out "delimiters repaired: line 3 added `)` → `(defn ok [])`"))
           (expect (= "(ns reb)\n\n(defn ok [])\n" (slurp rel)))))
+    ;; Regression, session 621ba390 (the other half): a repair had only the caller's indentation to
+    ;; go on, so a closer omitted INSIDE a line came back at that line's END and regrouped the
+    ;; arguments between — `(map? x) (str …)` written as `(map? x (str …))` parses, and was written.
+    (it
+      "seats a closer where the text this edit replaced had it, not at the end of the line"
+      (let
+        [rel
+         (write-temp! "patch/rebalance-seat.clj"
+                      "(ns reb)\n\n(cond (map? x) (str \"m\" (count x)))\n")
+
+         a3
+         (anchor-at (cat-tool rel) 3)
+
+         out
+         (with-balancer "(ns reb)\n\n(cond (map? x (str \"m\" (count x))))\n"
+                        #(:result (patch-span rel a3 a3 "(cond (map? x (str \"m\" (count x)))")))]
+
+        (expect (string/includes? out "delimiters repaired: line 3 added `)`"))
+        (expect (= "(ns reb)\n\n(cond (map? x) (str \"m\" (count x)))\n" (slurp rel)))))
+    ;; Regression: a replacement that lost its OPENING paren is the same string as one closer too
+    ;; many, and dropping that closer wrote `defn`, `ok`, `[]` and `(inc 1)` as four loose forms.
+    ;; Refusing it is right when the replacement is all there is — the line it REPLACED settles it.
+    (it "restores an opener this edit lost instead of deleting the closer it kept"
+        (let
+          [rel
+           (write-temp! "patch/rebalance-opener.clj" "(ns reb)\n\n(defn ok [] (inc 1))\n")
+
+           a3
+           (anchor-at (cat-tool rel) 3)
+
+           out
+           (with-balancer "(ns reb)\n\ndefn ok [] (inc 1)\n"
+                          #(:result (patch-span rel a3 a3 "defn ok [] (inc 1))")))]
+
+          (expect (string/includes? out "delimiters repaired: line 3 added `(`"))
+          (expect (= "(ns reb)\n\n(defn ok [] (inc 1))\n" (slurp rel)))))
     (it "struct_patch by LINE repairs the splice inside the lines it wrote"
         (let
           [sp
@@ -2846,34 +2888,37 @@
 
 
 
-(defdescribe editing-native-contract-test
-             (let
-               [struct-description
-                (:ext.symbol/description editing/struct-patch-symbol)
+(defdescribe
+  editing-native-contract-test
+  (let
+    [struct-description
+     (:ext.symbol/description editing/struct-patch-symbol)
 
-                struct-result
-                (:ext.symbol/result editing/struct-patch-symbol)
+     struct-result
+     (:ext.symbol/result editing/struct-patch-symbol)
 
-                index-result
-                (:ext.symbol/result editing/index-symbol)]
+     index-result
+     (:ext.symbol/result editing/index-symbol)]
 
-               ;; The Clojure pack publishes a delimiter repair, and the editors apply it
-               ;; when it stays inside the lines the call wrote, so "a syntax break is
-               ;; refused" alone was a lie; the editor says what actually happens — and
-               ;; which HALF of it, because only the omitted delimiter comes back.
-               (it "describes parse refusal AND delimiter repair"
-                   (expect (string/includes? struct-description "will not parse is REFUSED"))
-                   (expect (string/includes? struct-description
-                                             "a delimiter you OMITTED is added back"))
-                   (expect (string/includes? struct-description "is never deleted"))
-                   ;; The batch's all-or-nothing property is a property of the BATCH,
-                   ;; and `doc(name)` is the only place it can be stated now that no
-                   ;; schema describes the `edits` parameter.
-                   (expect (string/includes? struct-description "rolls the earlier ones back")))
-               (it "documents the Python result shape instead of relying on rendered output"
-                   (expect (string/includes? struct-result "`changed`"))
-                   (expect (string/includes? struct-result "`diff`"))
-                   (expect (string/includes? index-result "definitions")))))
+    ;; The Clojure pack publishes a delimiter repair, and the editors apply it
+    ;; when it stays inside the lines the call wrote, so "a syntax break is
+    ;; refused" alone was a lie; the editor says what actually happens — and
+    ;; refused" alone was a lie; the editor says what actually happens — and
+    ;; which HALF of it, because only the omitted delimiter comes back.
+    (it "describes parse refusal AND delimiter repair"
+        (expect (string/includes? struct-description "will not parse is REFUSED"))
+        (expect (string/includes?
+                  struct-description
+                  "a delimiter you OMITTED is put back where the code this call replaced had it"))
+        (expect (string/includes? struct-description "never deleted or retyped"))
+        ;; The batch's all-or-nothing property is a property of the BATCH,
+        ;; and `doc(name)` is the only place it can be stated now that no
+        ;; schema describes the `edits` parameter.
+        (expect (string/includes? struct-description "rolls the earlier ones back")))
+    (it "documents the Python result shape instead of relying on rendered output"
+        (expect (string/includes? struct-result "`changed`"))
+        (expect (string/includes? struct-result "`diff`"))
+        (expect (string/includes? index-result "definitions")))))
 
 (defdescribe
   outline-path-resolution-test

@@ -4874,7 +4874,9 @@
      1. supported language    -> re-parse the new content with tree-sitter;
      2. new errors, old clean -> ask `balance/rebalance` for a delimiter repair of
                                  the WHOLE spliced file, confined to `spans` — the
-                                 lines THIS call wrote. A confined, delimiters-only
+                                 lines THIS call wrote — with `original`, the text
+                                 this edit replaced, as the evidence for WHERE a
+                                 delimiter it dropped belongs. A confined, delimiters-only
                                  repair is written and NAMED on the status line;
                                  anything else REFUSES and says why the repair was
                                  rejected, because a repair that reaches outside the
@@ -4908,7 +4910,8 @@
               [repair (balance/rebalance {:balancer (language-balancer lang)
                                           :parses-clean? clean?
                                           :source updated
-                                          :spans spans})]
+                                          :spans spans
+                                          :original original})]
               (if (:ok? repair)
                 {:content (:content repair)
                  :clause
@@ -5358,9 +5361,9 @@
        "defaults to `from`, `replace: \"\"` deletes, and the edits may be listed in ANY order because every "
        "anchor resolves against ONE read. NEVER restate the text you are replacing. Atomic: a stale anchor, "
        "an overlap or a syntax-breaking write refuses the WHOLE batch and writes NOTHING, naming the edit "
-       "and carrying the correct anchor. A delimiter you OMITTED is added back when the fix stays on the "
-       "lines you wrote, and the line it produced is named; one you WROTE is never deleted, so closing "
-       "one too many is refused instead of guessed at.")
+       "and carrying the correct anchor. A delimiter you OMITTED is put back where the text you replaced "
+       "had it — mid-line, or a lost opening `(` — and the line it produced is named; one you WROTE is never "
+       "deleted or retyped, so a closer too many, or `(` typed where `]` belongs, is refused instead of guessed at.")
      :call {:pos ["path" "edits"]}
      :before-fn (plan-gated-before-fn :patch :file read-arg-paths)
      :tag :mutation
@@ -5846,9 +5849,9 @@
      (str
        "Structurally edit supported code: definition by NAME (`target`) or node by "
        "`at`/`line`. Renames, docs, moves, `append_child`. Writes re-parse: code that will not parse "
-       "is REFUSED; a delimiter you OMITTED is added back when the fix stays inside what this call wrote "
-       "and the line it produced is named in `delimiters_repaired`, while one you WROTE is never "
-       "deleted. A batch of `edits` applies in order "
+       "is REFUSED; a delimiter you OMITTED is put back where the code this call replaced had it, the line "
+       "it produced is named in `delimiters_repaired`, and one you WROTE is never deleted or "
+       "retyped. A batch of `edits` applies in order "
        "and is ATOMIC: an entry that fails rolls the earlier ones back, so every file is left exactly "
        "as the call found it.")
      :before-fn (plan-gated-before-fn :struct_patch :file struct-arg-paths)

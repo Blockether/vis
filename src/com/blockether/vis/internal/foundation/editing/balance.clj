@@ -16,8 +16,9 @@
      1. the repaired file parses clean;
      2. it keeps the same number of lines and the same final newline;
      3. every line it changes lies inside an edited span;
-     4. it only ADDED delimiters the caller omitted — one they WROTE is never
-        deleted, moved or retyped — and every other character, in order, is theirs.
+      4. it only ADDED delimiters the caller omitted — one they WROTE is never
+         deleted, moved or retyped — and every other character, whitespace and line
+         endings included, is theirs, in order.
 
     Fail any one and the edit is REFUSED with its parse error intact. A repair that
     has to reach outside the edit is guessing about code nobody in this call wrote,
@@ -26,6 +27,23 @@
     reads as `-> s str/trim)`, and dropping that surplus `)` — character for character
     the same mistake as an honest `)` too many — writes a body of three loose symbols
     that parses. The caller is told which of the two to look for instead.
+
+   Add-only still leaves WHERE to guess: a balancer has only the caller's indentation
+   to go on, so a closer omitted in the MIDDLE of a line comes back at that line's END
+   and regroups the arguments between. The text the edit REPLACED settles it. Where a
+   line survived the edit as the same code, every delimiter it dropped goes back
+   exactly where that text had it: `(map? x) (str …)` retyped as `(map? x (str …)` is
+   restored, not closed at the end, and a LOST OPENER stops being indistinguishable
+   from a surplus closer, because the replaced text says which of the two it was. Only
+   where the code around it survived — code the caller DELETED takes its own
+   delimiters with it, and they are never resurrected inside what they wrote.
+
+   That witness binds both ways. A repair may not ADD a delimiter to a line whose code
+   survived either: the text it replaced already says which delimiters that code had, so
+   a balancer closing an untouched line — because the line UNDER it dropped a closer of
+   its own — is guessing against evidence, and `(if (seq names)` closed a second time
+   parses while the branches it was meant to guard move into a form nobody wrote. That is
+   refused too, and the caller is told which line still carries the omission.
 
    The repair itself belongs to a language pack, not here: an `:ext/language-tools`
    entry registers `:balance-fn`, `String -> String | nil` (nil = unrepairable).
@@ -38,6 +56,12 @@
   "The characters a rebalance is allowed to move. Anything else it touches is a
    rewrite, not a repair."
   #{\( \) \[ \] \{ \}})
+
+(def ^:private opener?
+  "The half of `delimiter?` that OPENS. An opener belongs before the code it opens and
+   a closer after the code it closes, which is the only thing that says where a
+   delimiter goes back when the edit also wrote new code beside it."
+  #{\( \[ \{})
 
 (defn- skeleton
   "`s` with every delimiter and every whitespace character removed — what the
@@ -52,6 +76,49 @@
   [^String s]
   (filterv delimiter? s))
 
+(defn- unterminated-string
+  "The 1-based line where a string literal OPENS and is never closed, or nil when every
+   string in `s` closes. Scanned the way the reader reads: a backslash escapes the next
+   character inside a string and makes a character literal outside one, so the character
+   double-quote opens nothing, and a semicolon starts a comment only where no string is
+   open."
+  [^String s]
+  (let [n (long (count s))]
+    (loop
+      [i (long 0)
+       line (long 1)
+       opened nil
+       in-string? false
+       in-comment? false
+       escaped? false]
+
+      (if (>= i n)
+        (when in-string? opened)
+        (let
+          [c (.charAt s (int i))
+           next-line (if (= c \newline) (inc line) line)]
+
+          (cond escaped? (recur (inc i) next-line opened in-string? in-comment? false)
+                in-string? (cond (= c \\) (recur (inc i) line opened true false true)
+                                 (= c \") (recur (inc i) line nil false false false)
+                                 :else (recur (inc i) next-line opened true false false))
+                in-comment? (recur (inc i) next-line opened false (not= c \newline) false)
+                (= c \\) (recur (inc i) line opened false false true)
+                (= c \") (recur (inc i) line line true false false)
+                (= c \;) (recur (inc i) line opened false true false)
+                :else (recur (inc i) next-line opened false false false)))))))
+
+(defn- open-string-why
+  "Why nothing can be repaired when the text leaves a STRING open — the message, or nil
+   when every string closes. A repair only puts back `()[]{}`, so a dropped quote is a
+   different mistake with a different fix: a caller told only that no repair was found
+   goes hunting for a bracket that is not missing, while the quote is on the line named
+   here."
+  ^String [^String s]
+  (when-let [line (unterminated-string s)]
+    (str "no delimiter repair is possible: line "
+         line
+         " opens a string that is never closed, and a repair only puts back `()[]{}`")))
 (defn- subsequence?
   "True when every element of `a` appears in `b`, in order — `b` is `a` with things
    INSERTED and nothing else."
@@ -85,6 +152,17 @@
   [before after]
   (subsequence? before after))
 
+(defn- undelimited
+  "`s` with every delimiter removed — every OTHER character, whitespace and line endings
+   included, exactly as it stands. Two texts that agree here differ in delimiters alone.
+
+   `skeleton` drops whitespace as well, so nothing else in this decision can see the two
+   rewrites that keep the code, the delimiters, the line count and the final newline and
+   rewrite the file anyway: a repair that RE-INDENTS the lines it closed, and one that
+   normalizes a file's CRLF line endings to LF — every line of a file the call asked to
+   put ONE delimiter back into."
+  ^String [^String s]
+  (str/replace s #"[(){}\[\]]" ""))
 (defn- surplus
   "The delimiters `a` has and `b` does not, as a string in delimiter order: `((a))`
    over `(a)` answers `()`."
@@ -179,9 +257,11 @@
   "What the repair did to ONE line, as the caller reads it:
    ``line 5193 added `]` → `(let [{:keys [a b]}]` ``. The note exists so a repair is
    never a silent footnote, and it carries the RESULTING line and not just the
-   character, because a closer omitted in the middle of a line comes back at its END —
-   `(count names \"at\" stamp` closes as `(count names \"at\" stamp)`, regrouping the
-   arguments between. Reading the line is how the caller catches that in one glance."
+   character. With the replaced text to seat it from, that line is the one the caller
+   meant; without it — a formatter, or a line this edit rewrote — a closer omitted in
+   the middle comes back at the line's END, and `(count names \"at\" stamp` closing as
+   `(count names \"at\" stamp)` regroups the arguments between. Reading the line is how
+   the caller catches that in one glance."
   [line-no ^String before ^String after]
   (let
     [b
@@ -204,52 +284,442 @@
          (excerpt after)
          "`")))
 
+(defn- align
+  "A longest-common-subsequence alignment of `a` and `b`: the `[i j]` index pairs of
+   the elements they share, in order. Answers nil when the two are too large to align
+   in one table, and the repair falls back to the balancer's own answer."
+  [a b]
+  (let
+    [m
+     (count a)
+
+     n
+     (count b)]
+
+    (when (and (pos? m) (pos? n) (<= (* (long m) (long n)) 1000000))
+      (let
+        [w
+         (inc (long n))
+
+         ;; t[i][j] is the length of the longest common subsequence of the suffixes
+         ;; a[i..] and b[j..], so the walk below can read it forwards.
+         t
+         (int-array (* (inc (long m)) w))]
+
+        (dotimes [ii m]
+          (let [i (- (long m) 1 (long ii))]
+            (dotimes [jj n]
+              (let [j (- (long n) 1 (long jj))]
+                (aset-int t
+                          (+ (* i w) j)
+                          (if (= (nth a i) (nth b j))
+                            (inc (aget t (+ (* (inc i) w) (inc j))))
+                            (max (aget t (+ (* (inc i) w) j)) (aget t (+ (* i w) (inc j))))))))))
+        (loop
+          [i
+           0
+
+           j
+           0
+
+           acc
+           []]
+
+          (cond (or (= i m) (= j n)) acc
+                (= (nth a i) (nth b j)) (recur (inc i) (inc j) (conj acc [i j]))
+                (>= (aget t (+ (* (inc (long i)) w) (long j)))
+                    (aget t (+ (* (long i) w) (inc (long j)))))
+                (recur (inc i) j acc)
+                :else (recur i (inc j) acc)))))))
+
+(defn- splice
+  "`s` with each `[index char]` of `seats` inserted BEFORE that index — the only
+   mutation a reseat performs, so nothing the caller wrote can be overwritten."
+  ^String [seats ^String s]
+  (let [sb (StringBuilder.)]
+    (loop
+      [i 0
+       remaining (seq seats)]
+
+      (cond (and remaining (= (long (first (first remaining))) (long i)))
+            (do (.append sb ^char (second (first remaining))) (recur i (next remaining)))
+            (< (long i) (count s)) (do (.append sb (.charAt s i)) (recur (inc i) remaining))
+            :else nil))
+    (.toString sb)))
+
+(defn- reseat-line
+  "`wrote` with every delimiter it dropped from `replaced` put back WHERE that line
+   had it. A delimiter is put back only when everything else the edit did not keep
+   around it is delimiters and whitespace: code the caller deleted takes its own
+   delimiters with it. nil when nothing was dropped."
+  ^String [^String replaced ^String wrote]
+  (when-let [pairs (align replaced wrote)]
+    (let
+      [seats (loop
+               [remaining (concat pairs [[(count replaced) (count wrote)]])
+                ;; the next unmatched character of `replaced`, and the place in `wrote` just
+                ;; after the previous match — the two edges of the same hole.
+                was-from 0
+                wrote-from 0
+                acc []]
+
+               (if-let [[was-at wrote-at] (first remaining)]
+                 (let
+                   [gap (subs replaced was-from (long was-at))
+                    dropped (filterv delimiter? gap)
+                    seat
+                    (if (and (seq dropped) (every? opener? dropped)) wrote-from (long wrote-at))]
+
+                   (recur (next remaining)
+                          (inc (long was-at))
+                          (inc (long wrote-at))
+                          (if (every? #(or (delimiter? %) (Character/isWhitespace ^char %)) gap)
+                            (into acc
+                                  (map (fn [ch]
+                                         [seat ch]))
+                                  dropped)
+                            acc)))
+                 acc))]
+      (when (seq seats) (splice seats wrote)))))
+
+(defn- similar?
+  "True when two lines are the SAME line, edited: their code shares more than half of
+   the longer one's characters. Below that they are different lines that happen to fall
+   at the same offset, and nothing the older one had can be trusted onto the newer."
+  [^String was ^String now]
+  (let
+    [a
+     (skeleton was)
+
+     b
+     (skeleton now)
+
+     longer
+     (max (count a) (count b))]
+
+    (and (pos? longer) (> (* 2 (count (align a b))) longer))))
+
+(defn- paired-lines
+  "Which line of `original` each line of `source` IS, as `{:line :replaced :wrote
+   :same-code?}` maps whose `:line` is 1-based in `source`.
+
+   Two passes, because two different questions are being asked. Lines whose `skeleton`
+   matches are anchors: their code is untouched, so the only difference is delimiters
+   and whitespace, and what the replaced text says about them is fact — `:same-code?`.
+   Between two anchors, when the edit left as many lines as it found, each is paired
+   with the line it stands in for as long as the two are still `similar?`: the edit
+   REWROTE that line, so its delimiters are its own business, but the text it replaced
+   still says where a delimiter it KEPT used to sit. A line inserted or deleted has no
+   pair at all, and nothing here can speak for it. Blank lines pair with anything and
+   say nothing, so they are dropped."
+  [^String original ^String source]
+  (let
+    [was
+     (vec (str/split-lines original))
+
+     now
+     (vec (str/split-lines source))
+
+     head
+     (long (count (take-while true? (map = was now))))
+
+     tail
+     (long (count (take-while true?
+                              (map = (reverse (subvec was head)) (reverse (subvec now head))))))
+
+     was-mid
+     (subvec was head (- (count was) tail))
+
+     now-mid
+     (subvec now head (- (count now) tail))
+
+     anchors
+     (when (and (seq was-mid) (seq now-mid))
+       (align (mapv skeleton was-mid) (mapv skeleton now-mid)))
+
+     indexes
+     (loop
+       [remaining
+        (concat anchors [[(count was-mid) (count now-mid)]])
+
+        was-at
+        0
+
+        now-at
+        0
+
+        acc
+        []]
+
+       (if-let [[was-to now-to] (first remaining)]
+         (let
+           [gap (- (long was-to) (long was-at))
+            filled (if (and (pos? gap) (= gap (- (long now-to) (long now-at))))
+                     (into acc
+                           (map (fn [k]
+                                  [(+ (long was-at) (long k)) (+ (long now-at) (long k)) false]))
+                           (range gap))
+                     acc)]
+
+           (recur (next remaining)
+                  (inc (long was-to))
+                  (inc (long now-to))
+                  (cond-> filled
+                    (< (long was-to) (count was-mid))
+                    (conj [(long was-to) (long now-to) true]))))
+         acc))]
+
+    (into []
+          (comp (map (fn [[was-at now-at same?]]
+                       {:line (inc (+ head (long now-at)))
+                        :replaced (nth was-mid was-at)
+                        :wrote (nth now-mid now-at)
+                        :same-code? same?}))
+                (remove (fn [{:keys [replaced wrote same-code?]}]
+                          (or (str/blank? (skeleton replaced))
+                              (and (not same-code?) (not (similar? replaced wrote)))))))
+          indexes)))
+
+(defn- terminated-lines
+  "`s` cut into lines that KEEP their own ending. `str/split-lines` drops the `\r` of a
+   CRLF file, so a file rebuilt by joining its answer comes back with every line ending
+   in the file normalized — a whole-file rewrite from a call that asked to put back ONE
+   delimiter, and one no rule that compares code, delimiters or line counts can see."
+  [^String s]
+  (vec (re-seq #"[^\n]*\n|[^\n]+" s)))
+
+(defn- line-ending
+  "The terminator `line` carries — `\r\n`, `\n`, or nothing for a last line that ends the
+   file without one."
+  ^String [^String line]
+  (cond (str/ends-with? line "\r\n") "\r\n"
+        (str/ends-with? line "\n") "\n"
+        :else ""))
+(defn- reseat
+  "`source` with every delimiter its `paired-lines` dropped from the text they REPLACED
+   put back WHERE that text had it — the only way a closer omitted in the MIDDLE of a
+   line goes back in the middle instead of at its end. nil when nothing was dropped."
+  ^String [pairs ^String source]
+  (let
+    [now
+     (terminated-lines source)
+
+     reseated
+     (reduce (fn [acc {:keys [line replaced wrote]}]
+               (if (= replaced wrote)
+                 acc
+                 (if-let [seated (reseat-line replaced wrote)]
+                   (assoc acc (dec (long line)) seated)
+                   acc)))
+             {}
+             pairs)]
+
+    (when (seq reseated)
+      (apply str
+        (reduce-kv (fn [acc i seated]
+                     (assoc acc i (str seated (line-ending (nth acc i)))))
+                   now
+                   reseated)))))
+
+(defn- substitution
+  "The first delimiter `wrote` has that `replaced` did not, as `[typed had]`: the
+   character the edit typed and the one it stood in for, `had` nil when the line simply
+   has one delimiter more. nil when `wrote` only OMITTED delimiters `replaced` had —
+   the one mistake a repair can put right.
+
+   A RETYPED delimiter is the third way to break a line, and the only one nothing
+   downstream can see: `[a b]` typed as `[a b(` is balanced by closing the `(`, and
+   `[a b ()]` parses. Every rule holds — code untouched, delimiters only added, inside
+   the edited lines — and the meaning is still gone. The text that line replaced is the
+   only witness that the `(` was never meant, and it is why a repair that touches such
+   a line is refused instead of guessed at."
+  [^String replaced ^String wrote]
+  (loop
+    [a
+     (seq (delimiters wrote))
+
+     b
+     (seq (delimiters replaced))
+
+     skipped
+     nil]
+
+    (cond (nil? a) nil
+          (nil? b) [(first a) skipped]
+          (= (first a) (first b)) (recur (next a) (next b) nil)
+          :else (recur a (next b) (or skipped (first b))))))
+
+(defn- substitution-why
+  "Why a repair is refused on a line whose code the edit KEPT: the line holds a
+   delimiter the text it replaced did not, so the repair would close something the
+   caller never opened. Both characters are named, and so is the line the repair would
+   have written — the caller reads it and sees at once that it is not what they meant."
+  [line-no [typed had] ^String repaired ^String subject]
+  (str "the delimiter repair would close `"
+       typed
+       "` "
+       subject
+       " on line "
+       line-no
+       (if had
+         (str ", where the text it replaced had `" had "`")
+         ", one more than the text it replaced has")
+       ": that delimiter was retyped or added, not omitted, and closing it regroups the"
+       " line into `"
+       (excerpt repaired)
+       "`"))
+
+(defn- invention
+  "The delimiter a repair would add to a line whose CODE the edit left alone and whose
+   replaced text never had it, as a string — nil when the repair only puts back
+   delimiters that text proves were omitted.
+
+   A line the edit did not rewrite carries its own witness: the text it replaced says
+   exactly which delimiters that code had. Adding one it did not have is the balancer
+   reading INDENTATION against that witness — `(if (seq names)` closed a second time
+   because the line under it dropped a closer of its own — and the result parses, so
+   nothing downstream catches it. The omission is real; it is on another line."
+  ^String [^String replaced ^String repaired]
+  (let
+    [had
+     (delimiters replaced)
+
+     now
+     (delimiters repaired)]
+
+    (when-not (subsequence? now had) (surplus now had))))
+
+(defn- invention-why
+  "Why a repair is refused for adding a delimiter to a line the edit KEPT. The replaced
+   text is quoted because it is the evidence: that code never carried this delimiter, so
+   the caller's omission is on a line they actually wrote, and that is where to look."
+  [line-no ^String added ^String replaced]
+  (str "a delimiter repair exists but it adds `"
+       added
+       "` to line "
+       line-no
+       ", whose code this edit did not change — the text it replaced was `"
+       (excerpt replaced)
+       "` and never had that delimiter, so what this call omitted is on another line"))
+
+(defn- verdict
+  "Whether `candidate` may be written in place of `source`. Every rule is a licence the
+   caller gave: their code untouched (`skeleton`), their delimiters untouched
+   (`additions-only?`), their lines only (`spans`), their file's shape (line count and
+   final newline). Where the text a line REPLACED is known it is the strictest licence of
+   all: on a line whose code the edit kept, a repair may only put back delimiters that
+   text had — one the edit typed instead (`substitution`) and one the balancer invents
+   from indentation (`invention`) both regroup code nobody in this call rewrote. Fail one
+   and the repair is REJECTED, naming the mistake to look for."
+  [{:keys [parses-clean? ^String source spans subject pairs]} candidate]
+  (cond (or (not (string? candidate)) (= candidate source))
+        {:ok? false :why (or (open-string-why source) "no delimiter repair was found")}
+        (not (parses-clean? candidate))
+        {:ok? false
+         :why (or (open-string-why source)
+                  "a delimiter repair was found but it still would not parse")}
+        (not= (skeleton source) (skeleton candidate))
+        {:ok? false :why "the delimiter repair would rewrite code, not delimiters"}
+        (not (additions-only? (delimiters source) (delimiters candidate)))
+        {:ok? false :why (direction-why source candidate (or subject "this edit wrote"))}
+        (not= (str/ends-with? source "\n") (str/ends-with? ^String candidate "\n"))
+        {:ok? false :why "the delimiter repair would change the file's final newline"}
+        :else
+        (let
+          [before
+           (str/split-lines source)
+
+           after
+           (str/split-lines candidate)
+
+           changed
+           (when (= (count before) (count after))
+             (into []
+                   (keep-indexed (fn [i l]
+                                   (when (not= l (nth after i)) (inc (long i)))))
+                   before))
+
+           outside
+           (remove #(inside-spans? % spans) changed)
+
+           paired
+           (into {}
+                 (comp (filter :same-code?)
+                       (map (fn [{:keys [line replaced wrote]}]
+                              [(long line) [replaced wrote]])))
+                 pairs)
+
+           typed
+           (some (fn [n]
+                   (when-let [[replaced wrote] (get paired (long n))]
+                     (when-let [s (substitution replaced wrote)]
+                       [n s])))
+                 changed)
+
+           invented
+           (some (fn [n]
+                   (when-let [[replaced _] (get paired (long n))]
+                     (when-let [c (invention replaced (nth after (dec (long n))))]
+                       [n c replaced])))
+                 changed)]
+
+          (cond (not= (count before) (count after))
+                {:ok? false :why "the delimiter repair would add or drop lines"}
+                (seq outside) {:ok? false
+                               :why (str "a delimiter repair exists but it changes line "
+                                         (first outside)
+                                         ", outside the lines this call edited")}
+                (not= (undelimited source) (undelimited candidate))
+                {:ok? false
+                 :why (str "the delimiter repair would change whitespace " (or subject
+                                                                               "this edit wrote")
+                           ": it re-indents or re-ends lines instead of only putting back "
+                           "the delimiters that were omitted")}
+                typed {:ok? false
+                       :why (substitution-why (first typed)
+                                              (second typed)
+                                              (nth after (dec (long (first typed))))
+                                              (or subject "this edit wrote"))}
+                invented {:ok? false
+                          :why (invention-why (first invented) (second invented) (nth invented 2))}
+                :else {:ok? true
+                       :content candidate
+                       :notes (mapv #(delimiter-note %
+                                                     (nth before (dec (long %)))
+                                                     (nth after (dec (long %))))
+                                    changed)}))))
+
 (defn rebalance
   "Try to make `source` — the content an edit WOULD have written, which does not
    parse — parse, by repairing its delimiters WITHOUT letting the repair reach past
    the caller's own lines. `spans` are `[from-line to-line]` pairs, 1-based and
    inclusive, in `source`'s own coordinates; `parses-clean?` re-parses a candidate;
    `balancer` is the language pack's `:balance-fn`; `subject` names whose delimiters a
-    refusal is about and defaults to the edit that produced `source` — a formatter
-    handed a WHOLE file passes its own.
+   refusal is about and defaults to the edit that produced `source` — a formatter
+   handed a WHOLE file passes its own.
+
+   `original` is the content this edit REPLACED, when there is one. It is the better
+   evidence and is tried FIRST: a delimiter dropped from a line whose code survived
+   goes back where that line had it, which is the only way to put a closer back in the
+   MIDDLE of a line, or to tell a lost opener from one closer too many. The balancer's
+   own answer — indentation, and nothing else — is the fallback, and a refusal always
+   speaks about it, because it is the repair that was actually available.
 
    Answers nil when there is no balancer to ask, `{:ok? true :content S :notes [..]}`
    for a repair that may be written, and `{:ok? false :why msg}` for one that was
    found and REJECTED — the caller puts `why` in its refusal, because \"a repair
    exists but it reaches outside your edit\" is exactly what tells the caller to
    re-read the region instead of retrying the same replacement."
-  [{:keys [balancer parses-clean? ^String source spans subject]}]
+  [{:keys [balancer ^String source ^String original] :as request}]
   (when (ifn? balancer)
-    (let [candidate (try (balancer source) (catch Throwable _ nil))]
-      (cond (or (not (string? candidate)) (= candidate source))
-            {:ok? false :why "no delimiter repair was found"}
-            (not (parses-clean? candidate))
-            {:ok? false :why "a delimiter repair was found but it still would not parse"}
-            (not= (skeleton source) (skeleton candidate))
-            {:ok? false :why "the delimiter repair would rewrite code, not delimiters"}
-            (not (additions-only? (delimiters source) (delimiters candidate)))
-            {:ok? false :why (direction-why source candidate (or subject "this edit wrote"))}
-            (not= (str/ends-with? source "\n") (str/ends-with? ^String candidate "\n"))
-            {:ok? false :why "the delimiter repair would change the file's final newline"}
-            :else (let
-                    [before (str/split-lines source)
-                     after (str/split-lines candidate)
-                     changed (when (= (count before) (count after))
-                               (into []
-                                     (keep-indexed (fn [i l]
-                                                     (when (not= l (nth after i)) (inc (long i)))))
-                                     before))
-                     outside (remove #(inside-spans? % spans) changed)]
+    (let
+      [pairs
+       (when (string? original) (paired-lines original source))
 
-                    (cond (not= (count before) (count after))
-                          {:ok? false :why "the delimiter repair would add or drop lines"}
-                          (seq outside) {:ok? false
-                                         :why (str "a delimiter repair exists but it changes line "
-                                                   (first outside)
-                                                   ", outside the lines this call edited")}
-                          :else {:ok? true
-                                 :content candidate
-                                 :notes (mapv #(delimiter-note %
-                                                               (nth before (dec (long %)))
-                                                               (nth after (dec (long %))))
-                                              changed)}))))))
+       request
+       (assoc request :pairs pairs)
+
+       seated
+       (when (seq pairs) (verdict request (reseat pairs source)))]
+
+      (if (:ok? seated) seated (verdict request (try (balancer source) (catch Throwable _ nil)))))))
