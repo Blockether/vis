@@ -372,7 +372,41 @@
 
         (expect (some? head) (str "got: " (mapv :line entries)))
         (expect (str/ends-with? (str/trimr (strip-sentinels (strip-ansi (body-of (:line head)))))
-                                "1m 1s")))))
+                                "1m 1s"))))
+  ;; The three shapes the companion bands and the TUI did not: `toolCards`
+  ;; returns `[form]` for EVERY non-silent form, so a bare value, a call that
+  ;; returned nothing and a FAILED call all wear the figure in the app while the
+  ;; terminal said nothing about how long they took.
+  (it "stamps the duration under a bare value that carried no card"
+      (let [lines (render-forms [{:success? true :code "x = 42" :result "42" :duration-ms 2300}])]
+        (expect (some #(str/ends-with? (str/trimr (strip-sentinels (body-of %))) "2.3s") lines)
+                (str "got: " lines))))
+  (it "stamps the duration on a call that returned nothing at all"
+      (let [lines (render-forms [{:success? true :code "x = 1" :result nil :duration-ms 9000}])]
+        (expect (some #(str/ends-with? (str/trimr (strip-sentinels (body-of %))) "9.0s") lines)
+                (str "got: " lines))))
+  (it "rides the duration on a failed call's error row"
+      (let
+        [lines
+         (render-forms [{:success? false
+                         :code "boom()"
+                         :error {:message "kaboom"}
+                         :result nil
+                         :duration-ms 2300}])
+
+         err-line
+         (first (filter #(str/includes? (str %) "kaboom") lines))]
+
+        (expect (some? err-line) (str "got: " lines))
+        (expect (str/starts-with? (str err-line) p/MARKER_ERR_RESULT))
+        (expect (str/ends-with? (str/trimr (strip-sentinels (body-of err-line))) "2.3s"))))
+  (it "never stamps a second copy when a card head already wears the figure"
+      (let
+        [txt (str/join "\n"
+                       (map (comp strip-sentinels strip-ansi)
+                            (render-forms [(assoc (result-form "grep" "12 results")
+                                             :duration-ms 2300)])))]
+        (expect (= 1 (count (re-seq #"2\.3s" txt))) txt))))
 
 (defdescribe input-overflow-hint-test
              (it "shows hidden visual-row count as an N more label for the input top border"
@@ -540,13 +574,14 @@
       (expect (not (str/includes? body "ERROR:")))
       (expect (not (str/includes? body "ERROR —")))))
   (it
-    "omits success status footer and keeps only code band edges"
+    "omits the success status footer but still stamps the call's duration"
     (with-raw-code-on
       ;; Layout (post status-footer removal):
       ;;   iteration-pad
       ;;   code-pad
       ;;   <code line>
       ;;   code-pad
+      ;;   duration stamp
       ;;   iteration-pad
       ;; Plain `:value` form results no longer render — the trailing
       ;; result row is gone for non-tool forms per user directive.
@@ -569,8 +604,11 @@
          bodies
          (mapv (comp strip-ansi body-of) lines)]
 
+        ;; The retired status footer took the FIGURE with it, and the companion
+        ;; paints one on every band: the status glyph stays gone, the duration
+        ;; comes back on its own flush-painted row.
         (expect (not-any? #(str/includes? % "✓") lines))
-        (expect (not-any? #(str/includes? % "1ms") lines))
+        (expect (= 1 (count (filter #(str/includes? % "1ms") lines))))
         (expect (= 2 (count (filter #(= p/MARKER_CODE_PAD (marker-of %)) lines))))
         (expect (not-any? #(str/includes? (or % "") "3") bodies)))))
   (it "pads displayed form comments by one column"

@@ -3783,6 +3783,22 @@
 
         (str left (repeat-str \space pad-w) suffix)))))
 
+(defn- duration-suffixed-lines
+  "Ride the call's duration on the LAST of `lines`, right-aligned inside `max-w`
+   — the same slot the id badge owns on a disclosure head. The companion paints
+   the figure as the trailing chip of EVERY tool-card band
+   (`formatDuration(form.duration_ms)` in `ToolCard`), so every TUI row that ENDS
+   a result wears it there too: a plain card head, a failed call's error
+   headline. `lines` come back untouched when the form carried no duration."
+  [lines duration-ms max-w]
+  (let
+    [v
+     (vec lines)
+
+     d
+     (vis/format-duration duration-ms)]
+
+    (if (and d (seq v)) (conj (pop v) (format-detail-summary-line (peek v) d max-w)) v)))
 (defn- detail-node-base-id
   ^String [{:keys [session-turn-id iteration-number block-number section kind]}]
   (str (or (some-> section
@@ -4961,17 +4977,12 @@
                   (max 1 (- (long fill-w) 1))
 
                   wrapped
-                  (wrap-text (layout/ast->inline-sentinel-string (vis/markdown->ast head-line)) w)
+                  (wrap-text (layout/ast->inline-sentinel-string (vis/markdown->ast head-line)) w)]
 
-                  d
-                  (vis/format-duration duration-ms)]
-
-                 (if (and d (seq wrapped))
-                   ;; The same slot the id badge owns on collapsible heads: the
-                   ;; duration rides the LAST wrapped line, re-ellipsized so the
-                   ;; summary and the figure still fit the band together.
-                   (into (pop wrapped) [(format-detail-summary-line (peek wrapped) d w)])
-                   wrapped)))
+                 ;; The same slot the id badge owns on collapsible heads: the
+                 ;; duration rides the LAST wrapped line, re-ellipsized so the
+                 ;; summary and the figure still fit the band together.
+                 (duration-suffixed-lines wrapped duration-ms w)))
 
          ;; A card can carry a body yet have NO node-id (nothing to fold it
          ;; under — e.g. a nil session-id). Never DROP that body: render it
@@ -5440,6 +5451,22 @@
           printed-cards?
           (seq (:cards form))
 
+          ;; The trailing figure the companion paints on EVERY tool-card band:
+          ;; `toolCards` returns `[form]` for every non-silent form, so a bare
+          ;; value and a call that returned NOTHING are banded and timed there
+          ;; while the terminal said nothing at all. Those two shapes have no
+          ;; head to carry the figure, so the result band gets one row that
+          ;; carries only it — flush-painted like any no-chevron headline. A card
+          ;; head, a printed card and the `+N more` disclosure already wear it,
+          ;; and a FAILED call rides its error headline (below): never both.
+          duration-stamp
+          (when-let
+            [d
+             (and (not printed-cards?) (nil? card) (nil? error) (vis/format-duration duration-ms))]
+            {:line
+             (str result-marker " " (format-detail-summary-line "" d (max 1 (dec (long fill-w)))))
+             :meta {:kind :result-headline}})
+
           result-lines
           (cond
             printed-cards? (vec
@@ -5543,7 +5570,12 @@
                       :duration-ms duration-ms})]
 
                   (vec (concat visible summary (when expanded? hidden))))
-                :else entries)))
+                :else (cond-> entries
+                        duration-stamp
+                        (conj duration-stamp))))
+            ;; A call that returned nothing at all still took time. Its band is
+            ;; the figure and nothing else — the companion's empty-summary card.
+            duration-stamp [duration-stamp])
 
           ;; The FAILURE row of a call. Code bands stay status-neutral, so this line
           ;; is the only place a failed tool can read as failed: it wears the error
@@ -5552,7 +5584,14 @@
           inline-error-message-lines
           (when error
             (mapv #(line-entry (str err-result-marker %))
-                  (wrap-text (form-error-headline error) fill-w)))
+                  ;; A failed call is where the terminal was most silent: the
+                  ;; companion bands it `Failed` and still paints the figure, so
+                  ;; the error headline carries it — right-aligned inside the two
+                  ;; columns every error row is inset by, and never when a card
+                  ;; head already wears it.
+                  (cond-> (wrap-text (form-error-headline error) fill-w)
+                    (and (not printed-cards?) (nil? card))
+                    (duration-suffixed-lines duration-ms (max 1 (- (long fill-w) 2))))))
 
           ;; The program the model wrote is evidence in every state — success,
           ;; failure and while it runs — so the only source a form hides is one it
