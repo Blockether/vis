@@ -103,4 +103,40 @@ describe("a running turn the session read cannot confirm", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/Vis is waiting for an update/)).toBeNull();
   });
+
+  // Regression, same report: a submit paints an optimistic bubble with nothing
+  // in it, and the hub still remembers the PREVIOUS turn's terminal frame. Seeding
+  // that empty bubble as `completed` renders the assistant rail as a bare "Vis" —
+  // no phase, no clock, no answer — for the whole turn.
+  it("does not seed a bubble that never painted anything", async () => {
+    const justSent = {
+      request: "run the tests",
+      answer: "",
+      iterations: [],
+      startedAt: Date.now(),
+      status: "running" as const,
+    };
+
+    renderSessionScreen({
+      client: {
+        cachedLiveTurn: () => ({ turn: justSent, seq: 7 }),
+        cachedTranscript: () => [],
+        transcript: () => Promise.resolve([runningRow]),
+      },
+      subscriptions: {
+        hasEndedTurn: () => true,
+        subscribeConnection: (on: (live: boolean) => void) => {
+          on(true);
+          return () => {};
+        },
+      },
+    });
+
+    // The transcript's own running row is what says there is work, and it says
+    // so out loud instead of leaving the reader a nameless "Vis".
+    expect(await screen.findByText("check the logs")).toBeInTheDocument();
+    expect(
+      (await screen.findAllByText(/Vis is waiting for an update/)).length,
+    ).toBeGreaterThan(0);
+  });
 });

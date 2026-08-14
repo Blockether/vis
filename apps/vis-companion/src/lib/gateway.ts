@@ -2406,8 +2406,19 @@ export class GatewayClient {
       total: page.total,
     });
     // Stamp with the freshest meta row we hold, so a caller that already knows
-    // the session did not move can skip the next fetch entirely.
-    transcriptStamps.set(key, transcriptStamp(this.cachedSession(sid)));
+    // the session did not move can skip the next fetch entirely — but ONLY when
+    // that row is describing THIS body. The row is a SEPARATE observation of the
+    // session, and the settle path deliberately refreshes it while the transcript
+    // page is still in flight: stamping a body that is one turn short with a row
+    // that already counts that turn is how a transcript stopped revalidating
+    // while it was missing the newest answer.
+    const meta = this.cachedSession(sid);
+    transcriptStamps.set(
+      key,
+      typeof meta?.turn_count === "number" && meta.turn_count !== page.total
+        ? ""
+        : transcriptStamp(meta),
+    );
     return turns;
   }
 
@@ -2481,10 +2492,23 @@ export class GatewayClient {
     // finished, failed or been cancelled since, and the caller would keep
     // painting a spinner for work that is long over.
     const provisional = !!cached?.some((turn) => turn.status === "running");
+    // …and the rows we hold have to ACCOUNT for the row we are revalidating
+    // against. `total` is the gateway's own count of this session's turns — the
+    // same population `turn_count` counts — so a row that counts more turns than
+    // the body holds is describing an answer the body is missing, whatever the
+    // stamp says. Without this check one poisoned stamp (see `transcript`) made
+    // every later revalidation answer "nothing moved" for the rest of the
+    // session's life: the list showed an answer, and opening the session painted
+    // the transcript from before it. The stamp is persisted, so this is also the
+    // repair path for a snapshot written by an older build.
+    const short =
+      typeof row?.turn_count === "number" &&
+      row.turn_count > this.transcriptWindow(sid).total;
     if (
       stamp &&
       cached?.length &&
       !provisional &&
+      !short &&
       transcriptStamps.get(key) === stamp
     )
       return null;

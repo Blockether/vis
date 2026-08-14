@@ -989,6 +989,13 @@ function seedLiveTurn(
     // contain only the running placeholder. Keep the last painted bubble and
     // settle it locally; otherwise switching back replaces a complete answer
     // with "waiting for an update" (or nothing) until the transcript refetch.
+    //
+    // Only while there is something to keep. A bubble that painted NOTHING — the
+    // optimistic one a submit puts up before its first frame — becomes a
+    // `completed` turn with no content, and that renders as a bare "Vis": no
+    // phase, no clock, no answer, for the whole turn. The transcript row and
+    // `adoptRunningTurn` can both describe that turn properly, so let them.
+    if (!liveTurnCarriesOutput(cached.turn)) return null;
     return {
       seq: cached.seq,
       turn: {
@@ -1001,8 +1008,9 @@ function seedLiveTurn(
   }
 
   // A screen can leave after applying the terminal frame but before the engine's
-  // persisted row reaches the transcript. Retain that completed/error bubble too.
-  return cached;
+  // persisted row reaches the transcript. Retain that completed/error bubble too
+  // — for as long as it still carries the pixels that made it worth retaining.
+  return liveTurnCarriesOutput(cached.turn) ? cached : null;
 }
 
 function PasteEditor({
@@ -2818,30 +2826,43 @@ export function SessionScreen({
       // to completion into a bubble nobody was painting: an empty "Vis" until the
       // whole thing persisted. This is the same rule the reconcile tick already
       // applies before it clears a bubble.
-      const finishedId =
-        stringField(event, "turn_id") || liveTurnRef.current?.id || "";
-      // An id-less bubble is OUR optimistic one, i.e. this very turn. Anything
-      // started since carries the gateway's own id, so it can never be mistaken
-      // for the turn that just ended.
+      const claimedId = stringField(event, "turn_id");
+      const finishedId = claimedId || liveTurnRef.current?.id || "";
+      // A bubble with NO id is this device's OPTIMISTIC one: the POST that will
+      // name it has not answered yet. A frame that NAMES a turn is therefore
+      // about a turn this screen holds no id for, and claiming it stamped a
+      // brand-new bubble `completed` with nothing in it — the bare "Vis" that
+      // then never streamed again, because `reduceLiveEvent` drops every delta
+      // once a bubble has stopped running. The id lands within the same second
+      // (`submitTurn`'s answer, or `turn.started`); a bubble whose OWN terminal
+      // frame was genuinely missed is settled by the reconcile tick and the
+      // liveness probe instead, which is what they are for.
       const ownsTerminal = (turn: LiveTurn | null) =>
-        !!turn && ((turn.id ?? "") === "" || turn.id === finishedId);
-      const finishedStartedAt = ownsTerminal(liveTurnRef.current)
-        ? liveTurnRef.current?.startedAt
+        !!turn &&
+        (turn.id === finishedId || (!claimedId && (turn.id ?? "") === ""));
+      const held = ownsTerminal(liveTurnRef.current) ? liveTurnRef.current : null;
+      const terminalBlocks = Array.isArray(event.content)
+        ? (event.content as ContentBlock[])
         : undefined;
-      const finishedRequest = ownsTerminal(liveTurnRef.current)
-        ? liveTurnRef.current?.request
-        : undefined;
-      const finishedHadOutput = ownsTerminal(liveTurnRef.current)
-        ? liveTurnCarriesOutput(liveTurnRef.current)
-        : false;
-      const finishedHadProse = ownsTerminal(liveTurnRef.current)
-        ? liveTurnCarriesProse(liveTurnRef.current)
-        : false;
+      // What the reader is looking at once THIS frame is applied, never what
+      // stood there before it. Completion routinely overtakes the 150 ms body
+      // queue, so the terminal frame's own `content` is very often the whole
+      // answer; sampling ahead of it told the coverage test the bubble carried
+      // no prose, and the bubble was then handed over to a persisted row that
+      // carried none either — the answer the reader had just watched arrive,
+      // deleted on the way to its own transcript row.
+      const settledBubble: LiveTurn | null = held
+        ? {
+            ...held,
+            content: terminalBlocks?.length ? terminalBlocks : held.content,
+          }
+        : null;
+      const finishedStartedAt = held?.startedAt;
+      const finishedRequest = held?.request;
+      const finishedHadOutput = liveTurnCarriesOutput(settledBubble);
+      const finishedHadProse = liveTurnCarriesProse(settledBubble);
       const voiceOwned = voiceOwnershipRef.current.settle(finishedId);
       if (type === "turn.completed" && voiceConversationRef.current && voiceOwned) {
-        const terminalBlocks = Array.isArray(event.content)
-          ? (event.content as ContentBlock[])
-          : undefined;
         const spoken = terminalBlocks
           ?.find((block) => block.type === "speech")
           ?.text?.trim();
@@ -2868,9 +2889,6 @@ export function SessionScreen({
       setLiveTurn((turn) => {
         if (!turn || turn.status !== "running" || !ownsTerminal(turn))
           return turn;
-        const terminalBlocks = Array.isArray(event.content)
-          ? (event.content as ContentBlock[])
-          : undefined;
         const next: LiveTurn = {
           ...turn,
           status:
@@ -3132,11 +3150,14 @@ export function SessionScreen({
       // AFTER `settle` below: a terminal and the `turn.started` of the queued row
       // it drained can share one throttle window, and settle's `setRunning(false)`
       // must not be the final word when a new turn is already running.
-      setLiveTurn((turn) => {
-        const reduced = batch.reduce(reduceLiveEvent, turn);
-        liveTurnRef.current = reduced;
-        return reduced;
-      });
+      // Reduced against the REF, not inside the updater. React runs an updater
+      // during the render it schedules, so a `liveTurnRef` written in there is
+      // still the PREVIOUS batch's bubble when `settle` reads it three lines
+      // below — and settle decides both who owns the terminal frame and what
+      // this bubble had already painted from exactly that read.
+      const reduced = batch.reduce(reduceLiveEvent, liveTurnRef.current);
+      liveTurnRef.current = reduced;
+      setLiveTurn(reduced);
 
       let terminal: SseEvent | undefined;
       for (let index = batch.length - 1; index >= 0; index -= 1) {
@@ -4145,7 +4166,7 @@ export function SessionScreen({
         // instead of waiting for `turn.started` to come back around.
         if (!isQueuedSubmission(submitted)) {
           setRunning(true);
-          setLiveTurn({
+          const started: LiveTurn = {
             id: queuedId,
             request: displayRequest,
             answer: "",
@@ -4153,7 +4174,9 @@ export function SessionScreen({
             startedAt: Date.now(),
             status: "running",
             attachments: sent.length ? sent : undefined,
-          });
+          };
+          liveTurnRef.current = started;
+          setLiveTurn(started);
           // This bubble goes into the TRANSCRIPT, so ride it down on the settle
           // schedule: a single scroll measures the height before the deferred
           // segments land, and its own late scroll event then clears
@@ -4193,14 +4216,21 @@ export function SessionScreen({
         base64,
       }),
     );
-    setLiveTurn({
+    // Mirrored into the ref in the same breath. The ref is what every async
+    // path — `settle`, the reconcile tick, the liveness probe — reads to know
+    // WHICH turn is on the rail, and leaving it behind is how a terminal frame
+    // for the PREVIOUS turn reached a screen whose ref still said nothing was
+    // live at all.
+    const optimistic: LiveTurn = {
       request: displayRequest,
       answer: "",
       iterations: [],
       startedAt: Date.now(),
       status: "running",
       attachments: sent.length ? sent : undefined,
-    });
+    };
+    liveTurnRef.current = optimistic;
+    setLiveTurn(optimistic);
     // The optimistic bubble has just been added to the transcript: same settle
     // schedule, for the same reason one frame is not enough.
     pinToEnd();
@@ -4236,10 +4266,15 @@ export function SessionScreen({
           return next;
         });
       } else {
-        setLiveTurn((turn) => (turn ? { ...turn, id: submittedId } : turn));
+        setLiveTurn((turn) => {
+          const next = turn ? { ...turn, id: submittedId } : turn;
+          liveTurnRef.current = next;
+          return next;
+        });
       }
     } catch (cause) {
       setRunning(false);
+      liveTurnRef.current = null;
       setLiveTurn(null);
       setPrompt(authoredRequest);
       setPastes(pendingPastes);

@@ -238,3 +238,52 @@ describe('GatewayClient artifact revisions', () => {
     expect(seen).toEqual([]);
   });
 });
+
+// Reported from a phone: the sessions list says a session has been answered, but
+// opening it paints the transcript from before that answer and never corrects
+// itself. The body a `transcript` read wrote was stamped with the session row
+// the CACHE happened to hold at that moment — a row that can already describe a
+// turn the body does not contain — so every later `transcriptIfMoved` answered
+// "nothing moved" about a transcript that was missing the newest turn.
+describe('GatewayClient transcript revalidation', () => {
+  it('does not stamp a transcript page with a session row that outruns it', async () => {
+    const answered = {
+      id: 'session-1',
+      title: 'Cached session',
+      turn_count: 2,
+      modified_at: '2026-08-14T03:00:02Z',
+    };
+    const stale = [{ id: 'turn-1', user_request: 'first', status: 'completed' }];
+    const fresh = [
+      ...stale,
+      { id: 'turn-2', user_request: 'second', status: 'completed' },
+    ];
+    let turns = stale;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string) =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify(
+              String(url).includes('/transcript')
+                ? { turns, total: turns.length, offset: 0, has_more: false }
+                : answered,
+            ),
+          ),
+        ),
+      ),
+    );
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+
+    // The list already knows the session was answered; the transcript read that
+    // follows still comes back one turn short.
+    await client.session('session-1');
+    await client.transcript('session-1');
+    expect(client.cachedTranscript('session-1')).toHaveLength(1);
+
+    // Re-opening the session must go and fetch, not trust that stamp.
+    turns = fresh;
+    expect(await client.transcriptIfMoved('session-1', answered)).toHaveLength(2);
+  });
+});
