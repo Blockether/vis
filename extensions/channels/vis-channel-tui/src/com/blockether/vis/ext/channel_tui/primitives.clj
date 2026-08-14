@@ -1132,7 +1132,6 @@
 
 (def MARKER_ERR_RESULT "\u2063")  ;; invisible separator    -> error result line
 
-
 (def MARKER_ITERATION_HDR "\u2066")  ;; LRI                    -> iteration header with bg
 
 (def MARKER_ANSWER_SEP "\u2069")  ;; PDI                    -> answer separator (trace->answer break)
