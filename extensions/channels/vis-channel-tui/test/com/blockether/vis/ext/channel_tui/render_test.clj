@@ -282,6 +282,98 @@
   [s]
   (when (string? s) (if (zero? (count s)) "" (subs s 1))))
 
+(defdescribe
+  tool-card-duration-test
+  ;; The companion ends every tool-card band with the call's duration
+  ;; (`formatDuration(form.duration_ms)` in `ToolCard`); the TUI parsed
+  ;; `:duration-ms` all the way into the renderer and never painted a single
+  ;; one — a finished call said how long it took in the app and nothing at all
+  ;; in the terminal. Parity: the card head wears the figure in the same
+  ;; right-aligned slot the id badge owns, on the head's LAST line.
+  (it "paints the duration at the right edge of a plain card head"
+      (let
+        [lines
+         (render-forms [(assoc (result-form "grep" "12 results") :duration-ms 2300)])
+
+         head
+         (first (filter #(str/includes? % "12 results") lines))]
+
+        (expect (some? head) (str "got: " lines))
+        (expect (str/ends-with? (str/trimr (strip-sentinels (body-of head))) "2.3s"))))
+  (it "paints the duration on the collapsible head, which stays the toggle"
+      (let
+        [entries
+         (format-iteration-entry-entries
+           (iteration/canonicalize {:position 0
+                                    :thinking nil
+                                    :forms [{:success? true
+                                             :code ""
+                                             :result-summary "12 results"
+                                             :result-render "**STDOUT**\n```\none hit\n```"
+                                             :duration-ms 2300}]})
+           80
+           1
+           {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
+
+         head
+         (first (filter #(str/includes? (body-of (:line %)) "12 results") entries))]
+
+        (expect (some? head) (str "got: " (mapv :line entries)))
+        (expect (str/ends-with? (str/trimr (strip-sentinels (strip-ansi (body-of (:line head)))))
+                                "2.3s"))
+        (expect (= :toggle-details (:kind (:meta head))))))
+  (it "paints nothing when the duration is zero or absent"
+      (let
+        [zero
+         (render-forms [(assoc (result-form "grep" "12 results") :duration-ms 0)])
+
+         none
+         (render-forms [(result-form "grep" "12 results")])
+
+         head
+         (fn [lines]
+           (str/trimr (strip-sentinels (body-of (first (filter #(str/includes? % "12 results")
+                                                               lines))))))]
+
+        (expect (not (str/includes? (head zero) "0ms")))
+        (expect (= (head zero) (head none)))))
+  (it "gives each printed card its OWN duration, never the envelope's"
+      (let
+        [lines
+         (render-forms [{:success? true
+                         :code "print(1)"
+                         :duration-ms 9000
+                         :cards [{:op "grep" :result-summary "5 hits" :duration-ms 40}
+                                 {:op "cat" :result-summary "read 3 lines"}]}])
+
+         head
+         (fn [needle]
+           (first (filter #(str/includes? % needle) lines)))]
+
+        (expect (str/ends-with? (str/trimr (strip-sentinels (body-of (head "5 hits")))) "40ms"))
+        (expect (not (str/includes? (body-of (head "read 3 lines")) "9.0s")))))
+  (it "carries the duration on the long-result RESULT disclosure head"
+      (let
+        [entries
+         (format-iteration-entry-entries
+           (iteration/canonicalize {:position 0
+                                    :thinking nil
+                                    :forms [{:success? true
+                                             :code "x = 1"
+                                             :result (str/join "\n"
+                                                               (map #(str "line " %) (range 1 40)))
+                                             :duration-ms 61000}]})
+           80
+           1
+           {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
+
+         head
+         (first (filter #(str/includes? (body-of (:line %)) "RESULT") entries))]
+
+        (expect (some? head) (str "got: " (mapv :line entries)))
+        (expect (str/ends-with? (str/trimr (strip-sentinels (strip-ansi (body-of (:line head)))))
+                                "1m 1s")))))
+
 (defdescribe input-overflow-hint-test
              (it "shows hidden visual-row count as an N more label for the input top border"
                  (expect (= nil (input-more-hint 1 4)))

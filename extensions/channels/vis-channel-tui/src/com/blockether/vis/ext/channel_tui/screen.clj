@@ -1055,7 +1055,7 @@
    Mouse-selection copy operates on rendered screen cells, so clipping these
    rows before extraction keeps copied transcript text free of role banners,
    answer dividers, padding bands, iteration labels, and provider/model footers."
-  #{p/MARKER_ITERATION_HDR p/MARKER_DURATION p/MARKER_SEP p/MARKER_ANSWER_SEP p/MARKER_ANSWER_HDR
+  #{p/MARKER_ITERATION_HDR p/MARKER_SEP p/MARKER_ANSWER_SEP p/MARKER_ANSWER_HDR
     p/MARKER_ANSWER_PAD p/MARKER_CODE_PAD p/MARKER_CODE_OK_PAD p/MARKER_CODE_ERR_PAD
     p/MARKER_ITERATION_PAD p/MARKER_QUEUE_HDR})
 

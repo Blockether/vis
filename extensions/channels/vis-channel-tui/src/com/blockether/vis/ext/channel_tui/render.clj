@@ -1410,7 +1410,6 @@
 
 (def ^:private err-result-marker p/MARKER_ERR_RESULT)
 
-(def ^:private duration-marker p/MARKER_DURATION)
 
 (def ^:private iteration-hdr-marker p/MARKER_ITERATION_HDR)
 
@@ -2179,9 +2178,6 @@
          i-end
          (long (if (pos? (long viewport-h)) (min (long n) (- (long viewport-h) (long btop))) n))
 
-         iteration-bg
-         t/iteration-header-bg
-
          answer-marker?
          (fn [^String l]
            (or (str/starts-with? l answer-sep-marker)
@@ -2560,11 +2556,6 @@
                       (p/fill-rect! g fbx y iw 1)
                       (paint-ansi-line! g x y (subs line 1) row-fg row-bg)
                       (register-toggle-region! meta viewport-top y x iw))
-                    ;; ── Duration annotation ──
-                    (str/starts-with? line duration-marker)
-                    (do (p/set-colors! g t/code-duration-fg iteration-bg)
-                        (p/fill-rect! g fbx y iw 1)
-                        (p/put-str! g x y (subs line 1)))
                     ;; ── Result (success) - neutral code-block bg ──
                     (str/starts-with? line result-marker)
                     ;; Body rows stay on the quiet RESULT band; a card's headline
@@ -3710,6 +3701,22 @@
     ;; Only the informative `[turn 7 · iteration 3 · …]` form is kept, when present.
     (if (seq parts) (str "[" (str/join " · " parts) "]") "")))
 
+(defn- detail-head-suffix
+  "The right-aligned tail of a disclosure head row: the id badge, then the
+  duration of the form the band reports when it carries one. The companion
+  paints the same figure as the trailing chip of every tool-card band
+  (`formatDuration(form.duration_ms)` in `ToolCard`), so the TUI band wears it
+  in the same slot — one number for how long a call took, in both channels."
+  [{:keys [duration-ms] :as detail-ctx}]
+  (let
+    [id
+     (detail-id-suffix detail-ctx)
+
+     d
+     (vis/format-duration duration-ms)]
+
+    (str id (when (and (seq id) d) " ") (or d ""))))
+
 (defn- truncate-with-suffix
   "Truncate `s` so that `s` + `suffix` together fit within `max-w` display
    columns, then append `suffix`. The result NEVER exceeds `max-w`, so the
@@ -3992,7 +3999,7 @@
   [{:keys [marker max-w summary collapsed? session-id node-id] :as detail-ctx}]
   (let
     [suffix
-     (detail-id-suffix detail-ctx)
+     (detail-head-suffix detail-ctx)
 
      summary
      (or summary "Details")
@@ -4850,7 +4857,8 @@
    tool-authored summary on a neutral headline, with the markdown body nested
    under it (collapsible via `node-id`). A summary-only card has one headline row
    and no expand triangle."
-  [{:keys [summary body]} {:keys [fill-w session-id detail-expansions node-id] :as opts}]
+  [{:keys [summary body]}
+   {:keys [fill-w session-id detail-expansions node-id duration-ms] :as opts}]
   (let
     [body-text
      (some-> body
@@ -4926,7 +4934,8 @@
                                   :hidden-entries body-entries
                                   :collapsed? (not expanded?)
                                   :session-id session-id
-                                  :node-id node-id})]
+                                  :node-id node-id
+                                  :duration-ms duration-ms})]
 
         ;; Collapsed op-card gets ONE trailing `result-bg` pad row so the
         ;; headline reads as its own background BAND (not a lone colored line).
@@ -4948,8 +4957,22 @@
          headline
          (mapv (fn [line]
                  {:line (str result-marker " " line) :meta meta})
-               (wrap-text (layout/ast->inline-sentinel-string (vis/markdown->ast head-line))
-                          (max 1 (- (long fill-w) 1))))
+               (let
+                 [w
+                  (max 1 (- (long fill-w) 1))
+
+                  wrapped
+                  (wrap-text (layout/ast->inline-sentinel-string (vis/markdown->ast head-line)) w)
+
+                  d
+                  (vis/format-duration duration-ms)]
+
+                 (if (and d (seq wrapped))
+                   ;; The same slot the id badge owns on collapsible heads: the
+                   ;; duration rides the LAST wrapped line, re-ellipsized so the
+                   ;; summary and the figure still fit the band together.
+                   (into (pop wrapped) [(format-detail-summary-line (peek wrapped) d w)])
+                   wrapped)))
 
          ;; A card can carry a body yet have NO node-id (nothing to fold it
          ;; under — e.g. a nil session-id). Never DROP that body: render it
@@ -5195,7 +5218,8 @@
      form-lines
      (fn [form block-number]
        (let
-         [{:keys [code display-code display-language comment error success? started-at-ms]}
+         [{:keys [code display-code display-language comment error success? started-at-ms
+                  duration-ms]}
           form
 
           is-error?
@@ -5419,22 +5443,28 @@
 
           result-lines
           (cond
-            printed-cards? (vec (mapcat (fn [i c]
-                                          (tool-card-entries
-                                            c
-                                            {:fill-w fill-w
-                                             :session-id session-id
-                                             :detail-expansions detail-expansions
-                                             :node-id
-                                             (when (and session-id (or (:body c) (:summary c)))
-                                               (detail-node-id {:session-turn-id session-turn-id
-                                                                :iteration-number iteration-number
-                                                                :block-number block-number
-                                                                :section :iteration
-                                                                :kind :result
-                                                                :details-path [i]}))}))
-                                        (range)
-                                        (vis/result-cards form)))
+            printed-cards? (vec
+                             (mapcat (fn [i c]
+                                       (tool-card-entries
+                                         c
+                                         {:fill-w fill-w
+                                          ;; Each printed result wears its OWN
+                                          ;; duration when the sandbox reported one —
+                                          ;; never the envelope's figure repeated on
+                                          ;; every card.
+                                          :duration-ms (:duration-ms (get (:cards form) i))
+                                          :session-id session-id
+                                          :detail-expansions detail-expansions
+                                          :node-id
+                                          (when (and session-id (or (:body c) (:summary c)))
+                                            (detail-node-id {:session-turn-id session-turn-id
+                                                             :iteration-number iteration-number
+                                                             :block-number block-number
+                                                             :section :iteration
+                                                             :kind :result
+                                                             :details-path [i]}))}))
+                                     (range)
+                                     (vis/result-cards form)))
             (or result-text head-summary)
             (let
               [entries
@@ -5484,7 +5514,8 @@
                                         {:fill-w fill-w
                                          :session-id session-id
                                          :detail-expansions detail-expansions
-                                         :node-id result-node-id})
+                                         :node-id result-node-id
+                                         :duration-ms duration-ms})
                 ;; Non-tool, long result: keep the first rows visible and
                 ;; collapse only the surplus behind the band's own name.
                 (and result-node-id (seq hidden))
@@ -5509,7 +5540,8 @@
                       :hidden-entries hidden
                       :collapsed? (not expanded?)
                       :session-id session-id
-                      :node-id result-node-id})]
+                      :node-id result-node-id
+                      :duration-ms duration-ms})]
 
                   (vec (concat visible summary (when expanded? hidden))))
                 :else entries)))

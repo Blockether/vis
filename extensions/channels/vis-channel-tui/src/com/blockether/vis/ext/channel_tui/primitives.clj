@@ -1132,7 +1132,6 @@
 
 (def MARKER_ERR_RESULT "\u2063")  ;; invisible separator    -> error result line
 
-(def MARKER_DURATION "\u2064")  ;; invisible plus         -> duration annotation
 
 (def MARKER_ITERATION_HDR "\u2066")  ;; LRI                    -> iteration header with bg
 
