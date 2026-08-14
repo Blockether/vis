@@ -169,6 +169,14 @@
                               (.getCause x))
                             t))))
 
+(def ^:private CAUSE_CHAIN_LIMIT
+  "How many links of a cause chain the error path inspects. Wrapped provider
+   failures sit one or two causes deep; a bound keeps a pathological chain from
+   turning error formatting into work."
+  8)
+
+(defn- bounded-cause-chain [^Throwable e] (take CAUSE_CHAIN_LIMIT (throwable-chain e)))
+
 (defn- throwable-cause-summary
   [^Throwable t]
   (mapv (fn [^Throwable x]
@@ -186,9 +194,31 @@
                        (str "  at " frame))
                      frames)))))
 
+(def ^:private STREAM_FINALIZATION_LOG_KEYS
+  "The bounded part of svar's `:stream-finalization` summary: every value is a
+   scalar, so the whole selection is safe to log verbatim. It answers what a
+   truncated or stalled stream always raises — which SSE event arrived last,
+   whether a finish reason was seen, how much had already accumulated — and none
+   of it used to survive into the log, so `:svar.core/stream-truncated` read as a
+   bare message with no evidence at all.
+
+   The sibling `:partial-content` / `:reasoning` keys of the same ex-data are the
+   whole assistant turn and are deliberately never copied here."
+  [:terminal? :terminal-kind :terminal-event-type :last-event-type :finish-reason :incomplete?
+   :incomplete-reason :content-acc-len :reasoning-acc-len :http-status])
+
 (defn- format-exception-short
   [^Throwable t]
-  (let [ed (ex-data t)]
+  (let
+    [ed
+     (ex-data t)
+
+     finalization
+     (let [sf (:stream-finalization ed)]
+       (when (map? sf)
+         (not-empty
+           (into {} (filter (comp some? val)) (select-keys sf STREAM_FINALIZATION_LOG_KEYS)))))]
+
     (cond->
       {:class (.getName (class t))
        :message (or (ex-message t) (str t))
@@ -201,7 +231,16 @@
       (assoc :status (:status ed))
 
       (:cause-class ed)
-      (assoc :cause-class (:cause-class ed)))))
+      (assoc :cause-class (:cause-class ed))
+
+      finalization
+      (assoc :stream-finalization finalization)
+
+      (some? (:content-acc-len ed))
+      (assoc :content-acc-len (:content-acc-len ed))
+
+      (some? (:reasoning-acc-len ed))
+      (assoc :reasoning-acc-len (:reasoning-acc-len ed)))))
 
 (defn- format-exception
   [^Throwable t & [{:keys [context]}]]
@@ -968,16 +1007,27 @@
   [ex-data-map]
   (contains? INFRASTRUCTURE_ERROR_TYPES (:type ex-data-map)))
 
-(defn- non-correctable-provider-error?
-  "True when a provider failure escaped svar. Svar has already classified it and
-   exhausted every retry/fallback policy it owns, so feeding it back to the model
-   would issue a second provider request from Vis. HTTP clients may wrap the typed
-   exception, so inspect bounded causes without reclassifying the error here."
+(defn- provider-failure-cause
+  "The throwable carrying a provider failure that escaped svar, or nil. Svar has
+   already classified it and exhausted every retry/fallback policy it owns, so
+   feeding it back to the model would issue a second provider request from Vis.
+   HTTP clients wrap the typed exception, so inspect bounded causes without
+   reclassifying the error here; the throwable returned is the one whose
+   `perr/provider-error-kind` names the failure on the card AND in the log."
   [^Throwable e]
-  (boolean (some perr/provider-failure?
-                 (->> (iterate #(.getCause ^Throwable %) e)
-                      (take-while some?)
-                      (take 8)))))
+  (some (fn [^Throwable t]
+          (when (perr/provider-failure? t) t))
+        (bounded-cause-chain e)))
+
+(defn- non-correctable-log-message
+  "The fatal log line for a provider failure svar already gave up on. It names
+   the CLASSIFIED kind — the same one the card shows — because the previous fixed
+   text called every one of them a rate limit / auth / spend cap failure, which
+   sent readers of a truncated stream hunting for a billing problem."
+  [^Throwable provider-failure]
+  (str "Non-correctable provider error ("
+       (name (perr/provider-error-kind provider-failure))
+       ") - failing turn instead of re-asking the same provider"))
 
 (defn- user-error-data?
   "True when an ex-data / iteration-error `:data` map marks a user-fixable failure."
@@ -993,11 +1043,7 @@
    message intact."
   [^Throwable e ex-data-map]
   (boolean (or (user-error-data? ex-data-map)
-               (some user-error-data?
-                     (->> (iterate #(.getCause ^Throwable %) e)
-                          (take-while some?)
-                          (take 8)
-                          (map ex-data))))))
+               (some user-error-data? (map ex-data (bounded-cause-chain e))))))
 
 (defn- user-error-content
   "Terminal content for a turn killed by a user-fixable configuration error.
@@ -1100,8 +1146,11 @@
      hopeless-overflow?
      (hopeless-context-overflow? ex-data-map)
 
+     provider-failure
+     (provider-failure-cause e)
+
      non-correctable?
-     (non-correctable-provider-error? e)
+     (some? provider-failure)
 
      user-error?
      (user-configuration-error? e ex-data-map)
@@ -1140,8 +1189,7 @@
       (cond
         hopeless-overflow?
         "Hopeless preflight context overflow - failing turn (feeding it back can never reach the model and only grows the input; VIS-9)"
-        non-correctable?
-        "Non-correctable provider error (rate limit / auth / spend cap) - failing turn instead of re-asking the same provider"
+        non-correctable? (non-correctable-log-message provider-failure)
         user-error?
         "User configuration error (unset env var / no usable provider) - failing turn once with the actionable message"
         fatal? "Provider infrastructure error - failing turn without RLM restarts"

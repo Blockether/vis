@@ -4841,6 +4841,84 @@
                   {:iteration 2 :messages [{:role "user" :content "hi"}]})]
         (expect (true? (::lp/fatal-iteration-error result))))))
 
+;; Regression: a stream that ended before the provider's terminal marker reached
+;; the log as class/message/type alone. Svar had already measured WHY — the last
+;; SSE event, the finish reason, how much had streamed — and `format-exception-short`
+;; dropped all of it, while the fatal line called the failure a rate limit /
+;; auth / spend cap problem and sent the reader after a billing bug.
+(defdescribe
+  provider-failure-diagnostics-test
+  "Svar refuses to resend a stream once output has been rendered, so a truncation
+   is TERMINAL by design and the log line is the only record left. It must carry
+   svar's bounded stream-finalization evidence and name the classified kind."
+  (let
+    [reasoning-transcript
+     (apply str (repeat 200 "reasoning-transcript "))
+
+     truncated
+     (ex-info "Stream ended before terminal marker."
+              {:type :svar.core/stream-truncated
+               :stream? true
+               :url "https://gateway.example.com/v1/messages"
+               :stream-finalization {:terminal? false
+                                     :terminal-kind nil
+                                     :terminal-event-type nil
+                                     :last-event-type "content_block_delta"
+                                     :finish-reason nil
+                                     :incomplete? false
+                                     :incomplete-reason nil
+                                     :content-acc-len 0
+                                     :reasoning-acc-len 4200
+                                     :http-status 200}
+               :content-acc-len 0
+               :reasoning-acc-len 4200
+               :partial-content nil
+               :reasoning reasoning-transcript})
+
+     format-exception-short
+     #'com.blockether.vis.internal.loop/format-exception-short
+
+     log-message
+     #'com.blockether.vis.internal.loop/non-correctable-log-message
+
+     short-form
+     (format-exception-short truncated)]
+
+    (it "keeps svar's stream-finalization evidence in the logged short form"
+        (expect (= {:terminal? false
+                    :last-event-type "content_block_delta"
+                    :incomplete? false
+                    :content-acc-len 0
+                    :reasoning-acc-len 4200
+                    :http-status 200}
+                   (:stream-finalization short-form))))
+    (it "keeps a zero accumulator length — the fact that no content ever streamed"
+        (expect (= 0 (:content-acc-len short-form)))
+        (expect (= 4200 (:reasoning-acc-len short-form))))
+    (it "never copies the streamed transcript into the log"
+        (expect (nil? (:reasoning short-form)))
+        (expect (nil? (:partial-content short-form)))
+        (expect (not (str/includes? (pr-str short-form) "reasoning-transcript"))))
+    (it "leaves an ordinary failure without stream keys"
+        (let [plain (format-exception-short (ex-info "boom" {:type :vis/code-error}))]
+          (expect (nil? (:stream-finalization plain)))
+          (expect (nil? (:content-acc-len plain)))))
+    (it "names the classified kind in the fatal line instead of a spend cap"
+        (expect (= (str "Non-correctable provider error (stream-interrupted)"
+                        " - failing turn instead of re-asking the same provider")
+                   (log-message truncated)))
+        (expect (str/includes? (log-message (ex-info "provider rate limited this request"
+                                                     {:status 429 :provider :anthropic-coding-plan}))
+                               "(rate-limit)")))
+    (it "still ends the turn and carries the evidence onto the turn row"
+        (let [result (lp/handle-iteration-exception!
+                       truncated
+                       {:iteration 14 :messages [{:role "user" :content "hi"}]})]
+          (expect (true? (::lp/fatal-iteration-error result)))
+          (expect (= "content_block_delta"
+                     (get-in (::lp/iteration-error result)
+                             [:stream-finalization :last-event-type])))))))
+
 (defdescribe
   user-configuration-error-test
   "An unset `${API_KEY}` env var (issues #51/#54) reaches the loop as a
