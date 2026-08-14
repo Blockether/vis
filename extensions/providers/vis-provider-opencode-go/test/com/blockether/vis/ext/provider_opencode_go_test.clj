@@ -1,6 +1,8 @@
 (ns com.blockether.vis.ext.provider-opencode-go-test
   (:require [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.provider-opencode-go :as opencode-go]
+            [com.blockether.vis.ext.provider-opencode-go.limits :as go-limits]
+            [com.blockether.vis.internal.provider-limits :as provider-limits]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- reload! [] (require 'com.blockether.vis.ext.provider-opencode-go :reload))
@@ -130,22 +132,85 @@
         (expect (some #(= "         export OPENCODE_API_KEY=<your-opencode-go-api-key>" %) lines))
         (expect (some #(= "  Endpoint: https://opencode.ai/zen/go/v1" %) lines)))))
 
-(defdescribe limits-test
-             (it "reports :ok and a flat-rate note when authenticated"
+(defdescribe
+  limits-test
+  (it "reports the live 5h / weekly / monthly windows when authenticated"
+      (reload!)
+      (with-redefs-fn {#'opencode-go/detect-key (constantly {:api-key "k" :source :env-var})
+                       #'go-limits/fetch-usage!
+                       (constantly
+                         {:usage
+                          {:rolling {:status "ok" :percent 37 :resetsAt "2026-08-14T12:00:00.000Z"}
+                           :weekly {:status "ok" :percent 12 :resetsAt "2026-08-17T00:00:00.000Z"}
+                           :monthly
+                           {:status "ok" :percent 0 :resetsAt "2026-09-01T00:00:00.000Z"}}})}
+        (fn []
+          (let [report ((:provider/limits-fn (vis/provider-by-id :opencode-go)))]
+            (expect (= :opencode-go (:provider-id report)))
+            (expect (= :ok (:status report)))
+            (expect (= [:opencode-go-5h :opencode-go-7d :opencode-go-30d]
+                       (mapv :id (get-in report [:dynamic :limits]))))
+            (expect (= 63.0 (get-in report [:dynamic :limits 0 :remaining])))))))
+  (it "reports :unauthenticated when the usage endpoint rejects the key"
+      (reload!)
+      (with-redefs-fn {#'opencode-go/detect-key (constantly {:api-key "k" :source :env-var})
+                       #'go-limits/fetch-usage!
+                       (fn [_api-key]
+                         (throw (ex-info "OpenCode Go usage request failed: HTTP 401"
+                                         {:type :provider/opencode-go-usage-error :status 401})))}
+        (fn []
+          (let [report ((:provider/limits-fn (vis/provider-by-id :opencode-go)))]
+            (expect (= :unauthenticated (:status report)))
+            (expect (= [] (get-in report [:dynamic :limits])))
+            (expect (= :provider/opencode-go-usage-error (get-in report [:error :type])))))))
+  (it "reports :error when the key is valid but carries no Go subscription"
+      (reload!)
+      (with-redefs-fn {#'opencode-go/detect-key (constantly {:api-key "k" :source :env-var})
+                       #'go-limits/fetch-usage!
+                       (fn [_api-key]
+                         (throw (ex-info "OpenCode Go usage request failed: HTTP 403"
+                                         {:type :provider/opencode-go-usage-error :status 403})))}
+        (fn []
+          (let [report ((:provider/limits-fn (vis/provider-by-id :opencode-go)))]
+            (expect (= :error (:status report)))
+            (expect (re-find #"subscription" (get-in report [:dynamic :note])))))))
+  (it "reports :unauthenticated without calling the endpoint when no key is available"
+      (reload!)
+      (with-redefs-fn {#'opencode-go/detect-key (constantly nil)
+                       #'go-limits/fetch-usage!
+                       (fn [_api-key]
+                         (throw (ex-info "usage endpoint must not be called" {})))}
+        (fn []
+          (let [report ((:provider/limits-fn (vis/provider-by-id :opencode-go)))]
+            (expect (= :opencode-go (:provider-id report)))
+            (expect (= :unauthenticated (:status report)))
+            (expect (= [] (get-in report [:dynamic :limits]))))))))
+
+;; The host does not trust a provider's report: `vis/provider-limits` runs it
+;; through `::provider-limits/report` and swaps in an error envelope when a row
+;; is malformed. Proving the REAL rows survive that gate is what makes the
+;; window shapes (`:calendar` week/month, `:rolling` 5h) a contract rather than
+;; something that merely looked right in this file.
+(defdescribe host-envelope-test
+             (it "produces rows the host limits spec accepts"
                  (reload!)
-                 (with-redefs-fn {#'opencode-go/detect-key (constantly {:api-key "k"
-                                                                        :source :env-var})}
+                 (provider-limits/flush-limits-cache! :opencode-go)
+                 (with-redefs-fn
+                   {#'opencode-go/detect-key (constantly {:api-key "k" :source :env-var})
+                    #'go-limits/fetch-usage!
+                    (constantly
+                      {:usage
+                       {:rolling {:status "ok" :percent 37 :resetsAt "2026-08-14T12:00:00.000Z"}
+                        :weekly {:status "ok" :percent 12 :resetsAt "2026-08-17T00:00:00.000Z"}
+                        :monthly {:status "rate-limited"
+                                  :percent 100
+                                  :resetsAt "2026-09-01T00:00:00.000Z"}}})}
                    (fn []
-                     (let [report ((:provider/limits-fn (vis/provider-by-id :opencode-go)))]
-                       (expect (= :opencode-go (:provider-id report)))
+                     (let [report (vis/provider-limits :opencode-go)]
                        (expect (= :ok (:status report)))
-                       (expect (= [] (get-in report [:dynamic :limits])))
-                       (expect (some? (get-in report [:dynamic :note])))))))
-             (it "reports :unauthenticated when no key is available"
-                 (reload!)
-                 (with-redefs-fn {#'opencode-go/detect-key (constantly nil)}
-                   (fn []
-                     (let [report ((:provider/limits-fn (vis/provider-by-id :opencode-go)))]
-                       (expect (= :opencode-go (:provider-id report)))
-                       (expect (= :unauthenticated (:status report)))
-                       (expect (= [] (get-in report [:dynamic :limits]))))))))
+                       ;; An invalid row would arrive as :error + :provider/invalid-limits-report.
+                       (expect (nil? (:error report)))
+                       (expect (= [:opencode-go-5h :opencode-go-7d :opencode-go-30d]
+                                  (mapv :id (get-in report [:dynamic :limits]))))
+                       (expect (= 0.0 (get-in report [:dynamic :limits 2 :remaining]))))))
+                 (provider-limits/flush-limits-cache! :opencode-go)))

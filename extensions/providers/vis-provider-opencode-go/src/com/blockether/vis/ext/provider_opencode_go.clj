@@ -34,6 +34,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.provider-opencode-go.limits :as go-limits]
             [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -203,19 +204,45 @@
 ;; Limits
 ;; =============================================================================
 
+(defn- usage-error-note
+  [status]
+  (case status
+    401
+    (str LABEL " rejected the API key; re-run `vis-agent providers auth opencode-go`.")
+
+    403
+    (str LABEL " reports no active subscription behind this key.")
+
+    (str LABEL " usage is unavailable.")))
+
+(defn- usage-error-report
+  [^Throwable t]
+  (let [status (:status (ex-data t))]
+    {:provider-id PROVIDER_ID
+     ;; 401 is a key problem the user fixes by re-authenticating; 403 means the
+     ;; key is real but carries no Go subscription, which is not an auth failure.
+     :status (if (= 401 status) :unauthenticated :error)
+     :fetched-at-ms (System/currentTimeMillis)
+     :dynamic {:limits [] :note (usage-error-note status)}
+     :error {:type :provider/opencode-go-usage-error
+             :message (or (ex-message t) (.getName (class t)))}}))
+
 (defn- limits-fn
   []
   (let [detected (detect-key)]
-    {:provider-id PROVIDER_ID
-     :status (if detected :ok :unauthenticated)
-     :fetched-at-ms (System/currentTimeMillis)
-     :dynamic (if (nil? detected)
-                {:limits [] :note (str LABEL " is not authenticated.")}
-                ;; OpenCode Go is a flat-rate subscription: there is no
-                ;; per-request metering endpoint, so report an unmetered plan.
-                {:limits []
-                 :note (str LABEL
-                            " is a flat-rate subscription; usage is not metered per request.")})}))
+    (if (nil? detected)
+      {:provider-id PROVIDER_ID
+       :status :unauthenticated
+       :fetched-at-ms (System/currentTimeMillis)
+       :dynamic {:limits [] :note (str LABEL " is not authenticated.")}}
+      ;; OpenCode Go meters three dollar budgets (5h / week / month) and
+      ;; publishes them at /usage, so the plan is reported from the live
+      ;; counters rather than assumed unmetered.
+      (try {:provider-id PROVIDER_ID
+            :status :ok
+            :fetched-at-ms (System/currentTimeMillis)
+            :dynamic (go-limits/dynamic-limits! (:api-key detected))}
+           (catch Throwable t (usage-error-report t))))))
 
 ;; =============================================================================
 ;; Interactive auth

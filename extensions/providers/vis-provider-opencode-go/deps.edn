@@ -17,7 +17,7 @@
   ;; JSON for the persisted auth file (charred is already on the runtime
   ;; classpath via vis itself).
   com.cnuernber/charred {:mvn/version "1.041"}
-  ;; HTTP client for fetching the live `/models` catalog at registration.
+  ;; HTTP client for the live `/usage` quota endpoint (see limits.clj).
   org.babashka/http-client {:mvn/version "0.4.24"}
   com.taoensso/telemere {:mvn/version "1.2.1"}}
 
