@@ -3578,17 +3578,22 @@ export function SessionScreen({
   // height left untouched, reading `scrollHeight` only lays out the textarea's
   // own content, so the common case (no height change) costs nothing upstream.
   const promptLengthRef = useRef(0);
-  useEffect(() => {
+  const composerWidthRef = useRef(0);
+  // Fit the box to the text it holds. `remeasure` is the expensive direction:
+  // only a box measured from its NATURAL height can come back DOWN, so growth,
+  // the common case, never pays for it.
+  const fitComposer = useCallback((remeasure: boolean) => {
     const textarea = composerRef.current;
     if (!textarea) return;
-    const shrunk = prompt.length < promptLengthRef.current;
-    promptLengthRef.current = prompt.length;
     // Sending clears the composer outright. Measuring `scrollHeight` on that
     // commit forces a synchronous layout of the whole footer → section →
     // transcript chain in the very frame that mounts the optimistic bubble —
     // the hitch you feel on send. An empty box has exactly one height, the
-    // class's own, so drop the inline override and measure nothing.
-    if (!prompt) {
+    // class's own, so drop the inline override and measure nothing. It is also
+    // the only correct answer: an empty box measures its PLACEHOLDER, which
+    // wraps to two lines on a phone, so a measurement here would size the
+    // composer around text nobody typed.
+    if (!textarea.value) {
       if (textarea.style.height) textarea.style.height = "";
       return;
     }
@@ -3598,33 +3603,66 @@ export function SessionScreen({
     if (needed > textarea.clientHeight + 1) {
       // Content wrapped past the current box — grow (one cheap targeted write).
       textarea.style.height = `${needed}px`;
-    } else if (shrunk && textarea.style.height) {
-      // Text got shorter while grown: remeasure from natural height so the box
-      // shrinks back. Only this rare path pays the full reset + reflow.
-      //
-      // `height: auto` collapses the composer to ONE row for the duration of that
-      // measurement, and the transcript scroller grows by the whole difference in
-      // the same synchronous layout. A reader pinned to the end is past the new
-      // (smaller) maximum, so the browser CLAMPS `scrollTop` down — and the clamp
-      // is not undone when the height is written back a statement later. Deleting
-      // a single character therefore walked the transcript down by up to a full
-      // composer's worth of pixels. Undo the transient clamp here: same scroller
-      // geometry before and after means the only thing that moved was the browser's
-      // clamp.
-      const box = scrollRef.current;
-      const parkedTop = box ? box.scrollTop : 0;
-      const parkedHeight = box ? box.clientHeight : 0;
-      textarea.style.height = "auto";
-      textarea.style.height = `${Math.min(textarea.scrollHeight, 80)}px`;
-      if (
-        box &&
-        box.clientHeight === parkedHeight &&
-        box.scrollTop !== parkedTop
-      ) {
-        box.scrollTop = parkedTop;
-      }
+      return;
     }
-  }, [prompt]);
+    if (!remeasure || !textarea.style.height) return;
+    // The text got shorter, or the box got wider, while grown: remeasure from
+    // the natural height so the box shrinks back. Only this rare path pays the
+    // full reset + reflow.
+    //
+    // `height: auto` collapses the composer to ONE row for the duration of that
+    // measurement, and the transcript scroller grows by the whole difference in
+    // the same synchronous layout. A reader pinned to the end is past the new
+    // (smaller) maximum, so the browser CLAMPS `scrollTop` down — and the clamp
+    // is not undone when the height is written back a statement later. Deleting
+    // a single character therefore walked the transcript down by up to a full
+    // composer's worth of pixels. Undo the transient clamp here: same scroller
+    // geometry before and after means the only thing that moved was the browser's
+    // clamp.
+    const box = scrollRef.current;
+    const parkedTop = box ? box.scrollTop : 0;
+    const parkedHeight = box ? box.clientHeight : 0;
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 80)}px`;
+    if (
+      box &&
+      box.clientHeight === parkedHeight &&
+      box.scrollTop !== parkedTop
+    ) {
+      box.scrollTop = parkedTop;
+    }
+  }, []);
+
+  useEffect(() => {
+    const shrunk = prompt.length < promptLengthRef.current;
+    promptLengthRef.current = prompt.length;
+    fitComposer(shrunk);
+  }, [fitComposer, prompt]);
+
+  // Typing is not the only thing that puts a word on the next line: the box's
+  // own WIDTH moves under text that never changed — a rotation or a split view,
+  // a desktop window, the transcript's scrollbar arriving mid-turn, the mic
+  // button mounting with the capabilities answer — and each of those rewraps a
+  // line the effect above will never look at again. The composer then stood ONE
+  // line tall around two lines of text until the next keystroke happened to
+  // grow it, showing the line just typed cut in half inside its own padding.
+  // A `ResizeObserver` still runs before the browser paints, so the refit lands
+  // in the very frame the width changed. Width is the only trigger: reacting to
+  // the height WE write here would be a feedback loop.
+  useEffect(() => {
+    const textarea = composerRef.current;
+    if (!textarea || typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(() => {
+      const width = textarea.clientWidth;
+      if (width === composerWidthRef.current) return;
+      composerWidthRef.current = width;
+      fitComposer(true);
+    });
+    observer.observe(textarea);
+
+    return () => observer.disconnect();
+  }, [fitComposer]);
 
   // Cold start: read the stored draft message and adopt it only while the
   // composer is still untouched, so typing that raced the read is never
