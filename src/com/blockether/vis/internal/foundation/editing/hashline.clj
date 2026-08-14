@@ -476,9 +476,11 @@
    hashes elsewhere never make an exact `line:hash` anchor ambiguous.
 
    Newline semantics: a replacement need NOT end in `\\n` — the matched region's
-   terminator is preserved (`\\r\\n` stays `\\r\\n` on a CRLF file) — and an EMPTY
-   replacement consumes the trailing newline, so the lines actually vanish
-   instead of leaving blanks behind."
+   terminator is preserved (`\\r\\n` stays `\\r\\n` on a CRLF file) — and one that
+   DOES is not doubled: exactly one trailing terminator is dropped, so a block
+   copied with its own newline REPLACES the span instead of growing a blank line
+   after it. An EMPTY replacement consumes the trailing newline, so the lines
+   actually vanish instead of leaving blanks behind."
   [^String current from-anchor to-anchor ^String replacement]
   (let [res (resolve-anchor-range current from-anchor to-anchor)]
     (if (:error res)
@@ -505,22 +507,31 @@
              :to-line (:to-line res)})
           (let
             [[char-start char-end] (line-span->char-span current line-start line-end)
-             ;; Only a NON-EMPTY span can end in a newline. An empty-line span is
-             ;; zero-width (char-start == char-end); without this guard the check
-             ;; reads the PREVIOUS line's `\n` and wrongly pads the replacement,
-             ;; inserting instead of replacing.
-             matched-ends-nl? (and (< (long char-start) (long char-end))
+             ;; The terminator is INSIDE the span only at EOF — `line-span->char-span`
+             ;; keeps every other line's `\n` outside it. Reading the last char of a
+             ;; span that ends anywhere else answers the PREVIOUS line's `\n` whenever
+             ;; the span's last line is EMPTY, and the replacement was then padded with
+             ;; a newline it must not carry: every replace over a span ending on a blank
+             ;; line grew one extra blank line.
+             matched-ends-nl? (and (= (long char-end) (.length current))
+                                   (< (long char-start) (long char-end))
                                    (= \newline (.charAt current (dec (long char-end)))))
-             ;; The terminator is only inside the span for the FILE'S LAST line;
-             ;; re-add the SAME one (`\r\n` in a CRLF file, else `\n`) so a
-             ;; last-line replace does not downgrade that line's ending.
+             ;; The terminator that IS inside the span belongs to the file's last line;
+             ;; re-add the SAME one (`\r\n` in a CRLF file, else `\n`) so a last-line
+             ;; replace does not downgrade that line's ending.
              matched-ends-crlf? (and matched-ends-nl?
                                      (< (long char-start) (dec (long char-end)))
                                      (= \return (.charAt current (- (long char-end) 2))))
-             replacement-ends-nl? (str/ends-with? replacement "\n")
-             rewritten (if (and matched-ends-nl? (not replacement-ends-nl?))
-                         (str replacement (if matched-ends-crlf? "\r\n" "\n"))
-                         replacement)]
+             ;; The replacement's OWN terminator is redundant — the matched region's is
+             ;; preserved — so a block copied with its trailing newline would otherwise
+             ;; add a blank line nobody asked for, once per edit and silently. Exactly
+             ;; ONE is dropped, so `"…\n\n"` still says "and then one blank line".
+             body (cond (str/ends-with? replacement "\r\n")
+                        (subs replacement 0 (- (.length replacement) 2))
+                        (str/ends-with? replacement "\n")
+                        (subs replacement 0 (dec (.length replacement)))
+                        :else replacement)
+             rewritten (if matched-ends-nl? (str body (if matched-ends-crlf? "\r\n" "\n")) body)]
 
             {:start char-start
              :end char-end

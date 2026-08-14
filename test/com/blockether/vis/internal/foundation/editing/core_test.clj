@@ -1563,6 +1563,60 @@
 
 
 (defdescribe
+  patch-newline-semantics-test
+  ;; Regression: a span whose LAST line was BLANK grew one extra blank line on every
+  ;; replace — that line's terminator sits OUTSIDE the span, so the check read the
+  ;; PREVIOUS line's `\n` and padded the replacement with a newline it must not carry.
+  (it "a span that ends on a blank line replaces it instead of growing another"
+      (let
+        [rel
+         (write-temp! "patch/blank-tail.txt" "alpha\nbeta\n\ngamma\n")
+
+         patch-tool
+         (private-fn "patch-tool")
+
+         out
+         (:result (patch-tool rel
+                              [{"from" (hashline/line-anchor 2 "beta")
+                                "to" (hashline/line-anchor 3 "")
+                                "replace" "BETA"}]))]
+
+        (expect (= "alpha\nBETA\ngamma\n" (slurp rel)))
+        (expect (string/includes? out "2..3"))))
+  ;; Regression: a replacement carrying its OWN trailing newline wrote a blank line
+  ;; nobody asked for, and the row counted the lines it had not written — so every
+  ;; later row's anchor drifted by one and addressed the wrong line.
+  (it "a replacement's own trailing newline neither doubles the line nor drifts the rows"
+      (let
+        [rel
+         (write-temp! "patch/trailing-nl.txt" "one\ntwo\nthree\nfour\n")
+
+         patch-tool
+         (private-fn "patch-tool")
+
+         out
+         (:result (patch-tool rel
+                              [{"from" (hashline/line-anchor 1 "one") "replace" "ONE\n"}
+                               {"from" (hashline/line-anchor 3 "three") "replace" "THREE"}]))]
+
+        (expect (= "ONE\ntwo\nTHREE\nfour\n" (slurp rel)))
+        (expect (string/includes? out (hashline/line-anchor 3 "THREE")))))
+  (it "a replacement ending in TWO newlines still asks for one blank line after it"
+      (let
+        [rel
+         (write-temp! "patch/trailing-blank.txt" "one\ntwo\n")
+
+         patch-tool
+         (private-fn "patch-tool")
+
+         out
+         (:result (patch-tool rel [{"from" (hashline/line-anchor 1 "one") "replace" "ONE\n\n"}]))]
+
+        (expect (= "ONE\n\ntwo\n" (slurp rel)))
+        (expect (string/includes? out "2 lines")))))
+
+
+(defdescribe
   patch-batch-shape-test
   ;; Regression: `patch(path, anchor)` reported success and DELETED the line —
   ;; a missing replacement reached the splice as `(str nil)`, the empty string.

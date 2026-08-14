@@ -171,7 +171,28 @@
   (it "a multi-line span replace reports the lines it resolved"
       (let [span (hashline/resolve-anchor-edit-span content (anchor-of 2) (anchor-of 4) "X\nY")]
         (expect (= 2 (:from-line span)))
-        (expect (= 4 (:to-line span))))))
+        (expect (= 4 (:to-line span)))))
+  ;; Regression: a span whose LAST line was BLANK grew one extra blank line on every
+  ;; replace — the span's own terminator sits OUTSIDE it, so the check read the
+  ;; PREVIOUS line's `\n` and padded the replacement with a newline it must not carry.
+  (it "a span ending on a blank line replaces it instead of growing another"
+      (let
+        [span
+         (hashline/resolve-anchor-edit-span content (anchor-of 2) (anchor-of 3) "BETA")
+
+         updated
+         (str (subs content 0 (:start span)) (:replacement span) (subs content (:end span)))]
+
+        (expect (= "alpha\nBETA\ngamma\ndelta\n" updated))))
+  (it "a span ending on the file's last line keeps the file's final newline"
+      (let
+        [span
+         (hashline/resolve-anchor-edit-span content (anchor-of 4) (anchor-of 5) "TAIL")
+
+         updated
+         (str (subs content 0 (:start span)) (:replacement span) (subs content (:end span)))]
+
+        (expect (= "alpha\nbeta\n\nTAIL\n" updated)))))
 
 
 (defdescribe

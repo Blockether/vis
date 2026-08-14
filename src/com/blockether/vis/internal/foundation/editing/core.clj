@@ -5089,29 +5089,44 @@
          ;; is one a next call can spend without a `cat`.
          applied
          (:rows
-           (reduce (fn
-                     [{:keys [^long delta rows]}
-                      {:keys [index start end from-line to-line replacement new-text]}]
-                     (let
-                       [written
-                        (long (if (= "" new-text)
-                                0
-                                (count (hashline/split-content-lines (str replacement)))))
+           (reduce
+             (fn
+               [{:keys [^long delta rows]} {:keys [index start end from-line to-line replacement]}]
+               (let
+                 [;; What the splice ACTUALLY put in the file. The matched
+                  ;; region's terminator stays OUTSIDE the span, so a mid-file
+                  ;; replacement always closes its last line and only a span
+                  ;; that reaches EOF carries a terminator of its own — counting
+                  ;; the replacement's own lines instead reported one line too
+                  ;; few for every replacement that ended in a newline, and every
+                  ;; later row's anchor inherited the drift.
+                  written
+                  (long (let [text (str replacement)]
+                          ;; The SPLICED text decides, not the caller's `replace`:
+                          ;; a replacement that reduces to nothing — `"\n"` over a
+                          ;; span that ends a file with no final newline — writes
+                          ;; no line at all.
+                          (if (= "" text)
+                            0
+                            (let [breaks (count (filter #(= \newline %) text))]
+                              (if (and (= (long end) (count original)) (str/ends-with? text "\n"))
+                                breaks
+                                (inc breaks))))))
 
-                        replaced
-                        (inc (- (long to-line) (long from-line)))]
+                  replaced
+                  (inc (- (long to-line) (long from-line)))]
 
-                       {:delta (+ delta (- written replaced))
-                        :rows (conj rows
-                                    {:index index
-                                     :from-line from-line
-                                     :to-line to-line
-                                     :new-from (+ (long from-line) delta)
-                                     :written written
-                                     :unchanged? (= (subs original (long start) (long end))
-                                                    (str replacement))})}))
-                   {:delta 0 :rows []}
-                   (sort-by :start resolved)))]
+                 {:delta (+ delta (- written replaced))
+                  :rows (conj rows
+                              {:index index
+                               :from-line from-line
+                               :to-line to-line
+                               :new-from (+ (long from-line) delta)
+                               :written written
+                               :unchanged? (= (subs original (long start) (long end))
+                                              (str replacement))})}))
+             {:delta 0 :rows []}
+             (sort-by :start resolved)))]
 
         (tool-success
           {:op :patch
