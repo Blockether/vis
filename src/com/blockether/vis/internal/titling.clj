@@ -263,13 +263,14 @@
    (it would dodge the metered-but-actually-free plans toward $0 Copilot).
    Instead we pin each plan in this deliberate order and pick its SMALLEST
    model (`{:provider p :optimize [:cost :speed]}` selects the cheapest +
-   fastest model WITHIN the pinned provider: glm on zai, gpt-5.3-codex on
-   codex, haiku on anthropic, a mini on copilot). Any configured provider not
+   fastest model WITHIN the pinned provider: glm on zai, a qwen coder on the
+   alibaba coding plan, gpt-5.3-codex on codex, haiku on anthropic, a mini on
+   copilot). Any configured provider not
    listed here is appended afterwards so the chain still covers the whole
    fleet. First provider that returns a usable title wins; on failure
    (model unavailable / endpoint rejects) we fall through to the next."
-  [:zai-coding-plan :openai-codex :anthropic-coding-plan :github-copilot-individual
-   :github-copilot-business :github-copilot-enterprise])
+  [:zai-coding-plan :alibaba-coding-plan :openai-codex :anthropic-coding-plan
+   :github-copilot-individual :github-copilot-business :github-copilot-enterprise])
 
 ;; -----------------------------------------------------------------------------
 ;; `titling:` config (Blockether/vis#71)
