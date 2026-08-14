@@ -138,32 +138,28 @@ coordinate gives the full agent. Depend on one package
 (`com.blockether/vis-channel-tui`, `com.blockether/vis-provider-anthropic`,
 `com.blockether/vis-language-python`, …) only when you embed a part of it.
 
-## Choose native, tagged source, or dev
+## Choose native or the source Vis owns
 
 The wrapper owns runtime selection, and it follows releases unless told
 otherwise: the installed native runtime, else JVM source pinned to the newest
-`vX.Y.Z` tag. A live checkout is **dev mode** — the only runtime that follows a
-moving branch, and it has to be asked for.
+`vX.Y.Z` tag.
 
 ```bash
-vis-agent update native|jvm|dev             # acquire it, update it, select it
+vis-agent update native|jvm                 # acquire it, update it, select it
 vis-agent runtime show
-vis-agent runtime use native|jvm|dev|auto   # switch only (auto = follow releases)
-vis-agent --native|--jvm|--dev help         # one launch only
-VIS_RUNTIME=dev vis-agent help              # one process only
+vis-agent runtime use native|jvm|auto       # switch only (auto = follow releases)
+vis-agent --native|--jvm help               # one launch only
+VIS_RUNTIME=jvm vis-agent help              # one process only
 ```
 
 A one-launch flag beats `VIS_RUNTIME`, which beats the persisted default in
-`~/.vis/runtime`. Dev mode also hands off to `$VIS_DEV_CHECKOUT` (default
-`~/vis`) when the command was installed elsewhere. A selected runtime that is
-not installed stops the wrapper with the command that fixes it — it never
-silently picks another.
+`~/.vis/runtime`. A selected runtime that is not installed stops the wrapper
+with the command that fixes it — it never silently picks another.
 
 `vis-agent update` updates whichever runtime is in effect: the newest release
 bundle, or the checkout Vis owns (`~/.vis/install/src`) moved onto the newest
-`vX.Y.Z` tag. Only `vis-agent update --dev` fast-forwards a live checkout's
-branch, and any target that is not a release tag pins the owned source to that
-git ref. Full matrix: [Runtime distributions](distributions.md).
+`vX.Y.Z` tag, and any target that is not a release tag pins the owned source to
+that git ref. Full matrix: [Runtime distributions](distributions.md).
 
 There is no jar runtime and no `--jar` selector; `target/vis.jar` exists only as
 an intermediate build artifact. The JVM runtime means source plus Java 25 and

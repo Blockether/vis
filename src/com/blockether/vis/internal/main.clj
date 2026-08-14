@@ -4483,10 +4483,9 @@
      (help-row "--help, -h" "Show help.") "" "RUNTIME (WHICH DISTRIBUTION RUNS)"
      (help-row "--native" "Run the released native build, else your own.")
      (help-row "--jvm" "Run the release-tagged source Vis owns.")
-     (help-row "--dev" "Run your live checkout.")
-     (help-row "VIS_RUNTIME=native|jvm|dev" "The same choice, for one process.")
+     (help-row "VIS_RUNTIME=native|jvm" "The same choice, for one process.")
      (help-row "vis-agent runtime show" "Name the runtime in effect and who chose it.")
-     (help-row "vis-agent runtime use NAME" "Switch to native|jvm|dev|auto without updating.")
+     (help-row "vis-agent runtime use NAME" "Switch to native|jvm|auto without updating.")
      (help-row "vis-agent update [RUNTIME]" "Update vis-agent + that runtime, and select it.") ""
      "CONFIGURATION" (help-row "~/.vis/config.yml" "Global settings: providers, models, tools.")
      (help-row "<project>/vis.yml" "Project settings; .vis/config.yml overrides it.")
@@ -4496,7 +4495,7 @@
      "vis-agent --provider zai-coding-plan --model glm-5.2 --reasoning-effort high --json \"task\""
      "vis-agent --toggles reasoning_level=deep \"refactor carefully\""
      "vis-agent --full-trace-json-stream --db :memory \"debug startup\""
-     "vis-agent --dev \"run this from my live checkout\"" "vis-agent sessions search sqlite"]))
+     "vis-agent sessions search sqlite"]))
 
 (defn root-command
   "Build the root `vis-agent` command tree. Subcommands are pulled fresh on
@@ -4720,7 +4719,7 @@
   ;; `bin/vis-agent` normally consumes these before invoking Clojure, but keep
   ;; the JVM entry point tolerant too (e.g. `clojure -M:vis-agent channels --jvm --help`).
   ;; There is intentionally no --jar runtime: jars are build artifacts only.
-  #{"--native" "--jvm" "--dev" "--jfr" "--stream-trace"})
+  #{"--native" "--jvm" "--jfr" "--stream-trace"})
 
 (defn- global-arg? [arg] (or (measure-arg? arg) (contains? launcher-selector-args arg)))
 

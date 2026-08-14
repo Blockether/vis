@@ -6,14 +6,12 @@
 #   2. show that selection              (`vis-agent runtime`),
 #   3. update — and select — a runtime  (`vis-agent update`).
 #
-# Three runtimes, one word each:
+# Two runtimes, one word each:
 #   native  the released build, downloaded beside this wrapper; a native you
 #           built yourself (target/vis) is used only when none is installed
 #   jvm     `clojure -M:vis` from source pinned to main's newest commit
-#   dev     `clojure -M:vis` from a live checkout — the only moving runtime
 #
-# Vis follows main by default; `dev` is opt-in. Everything Vis owns lives
-# under ~/.vis:
+# Vis follows main. Everything Vis owns lives under ~/.vis:
 #   runtime                    persisted selection (absent = automatic)
 #   install/vis-agent-native   the private native runtime
 #   install/src                the checkout Vis owns
@@ -95,16 +93,8 @@ if [[ -d "$clojure_install_dir/bin" ]]; then
   export PATH="$clojure_install_dir/bin:$PATH"
 fi
 
-# The live checkout `dev` runs: this one when the launcher is a checkout file,
-# otherwise $VIS_DEV_CHECKOUT (default ~/vis).
-if (( launcher_is_checkout )); then
-  dev_checkout="${VIS_DEV_CHECKOUT:-$launcher_parent}"
-else
-  dev_checkout="${VIS_DEV_CHECKOUT:-$HOME/vis}"
-fi
-
 # ── Arguments the wrapper owns ───────────────────────────────────────────────
-# --native/--jvm/--dev name a runtime. On a launch they say which runtime RUNS;
+# --native/--jvm name a runtime. On a launch they say which runtime RUNS;
 # on `update` they say which runtime is UPDATED, so `update` keeps them.
 flag_runtime=""
 jfr=0
@@ -114,7 +104,7 @@ update_cmd=0
 if [[ "${1:-}" == "update" ]]; then update_cmd=1; fi
 for arg in "$@"; do
   # `--` ends the WRAPPER's parsing too, not just the app's. Without this,
-  # `vis-agent -- --dev` silently switched runtime and handed the app an empty
+  # `vis-agent -- --jvm` silently switched runtime and handed the app an empty
   # prompt — the one escape hatch the help promises would eat its own argument.
   if (( end_of_flags )); then args+=("$arg"); continue; fi
   case "$arg" in
@@ -122,7 +112,7 @@ for arg in "$@"; do
     --measure) export VIS_MEASURE=1 ;;
     --jfr)     jfr=1 ;;
     --stream-trace) export VIS_STREAM_TRACE=1 ;;
-    --native|--jvm|--dev)
+    --native|--jvm)
       if [[ -n "$flag_runtime" && "$flag_runtime" != "${arg#--}" ]]; then
         die "name one runtime, not --$flag_runtime and $arg"
       fi
@@ -139,7 +129,7 @@ if (( ${#args[@]} > 0 )); then set -- "${args[@]}"; else set --; fi
 # in ~/.vis/runtime. No selection at all means automatic: follow the releases.
 persisted_runtime="$(read_state "$vis_runtime_file")"
 case "$persisted_runtime" in
-  native|jvm|dev) ;;
+  native|jvm) ;;
   "") ;;
   *) warn "ignoring invalid runtime in $vis_runtime_file: $persisted_runtime"; persisted_runtime="" ;;
 esac
@@ -151,16 +141,14 @@ if [[ -n "$flag_runtime" ]]; then
   runtime_origin="--$flag_runtime"
 elif [[ -n "${VIS_RUNTIME:-}" ]]; then
   case "$VIS_RUNTIME" in
-    native|jvm|dev) selected_runtime="$VIS_RUNTIME"; runtime_origin="VIS_RUNTIME" ;;
-    *) warn "ignoring invalid VIS_RUNTIME '$VIS_RUNTIME' (use native, jvm, or dev)" ;;
+    native|jvm) selected_runtime="$VIS_RUNTIME"; runtime_origin="VIS_RUNTIME" ;;
+    *) warn "ignoring invalid VIS_RUNTIME '$VIS_RUNTIME' (use native or jvm)" ;;
   esac
 fi
 if [[ -z "$selected_runtime" && -n "$persisted_runtime" ]]; then
   selected_runtime="$persisted_runtime"
   runtime_origin="$vis_runtime_file"
 fi
-dev_mode=0
-if [[ "$selected_runtime" == dev ]]; then dev_mode=1; fi
 
 # ── --jfr: Java Flight Recorder profiling ────────────────────────────────────
 # Export VIS_JFR=1 so the client and detached gateway daemon each create their
@@ -188,20 +176,6 @@ stream_trace_on() {
   return 1
 }
 if stream_trace_on; then export VIS_STREAM_TRACE=1; fi
-
-# Dev mode — and only dev mode — hands off to the live checkout's own launcher.
-# Carry the installed sidecar across that handoff: the checkout wrapper otherwise
-# cannot discover the native runtime beside the original installed wrapper.
-if (( dev_mode )) \
-      && [[ -z "${VIS_NO_DEV_CHECKOUT:-}" \
-      && "$launcher_parent" != "$dev_checkout" \
-      && -x "$dev_checkout/bin/vis-agent" \
-      && -f "$dev_checkout/deps.edn" ]]; then
-  export VIS_NO_DEV_CHECKOUT=1
-  export VIS_RUNTIME=dev
-  if [[ -x "$bundled_native" ]]; then export VIS_INSTALLED_NATIVE="$bundled_native"; fi
-  exec "$dev_checkout/bin/vis-agent" "$@"
-fi
 
 # ── Measurement ──────────────────────────────────────────────────────────────
 measure_enabled() {
@@ -289,15 +263,11 @@ collect_user_extension_sdeps() {
 }
 
 # ── Runtime discovery ────────────────────────────────────────────────────────
-# The source checkout each runtime runs: dev = the live checkout; jvm = the
-# checkout Vis owns, pinned to main's newest commit. Running a checkout's own launcher
-# runs that checkout — that is what invoking it means.
+# The source the jvm runtime runs: the checkout Vis owns, pinned to main's newest
+# commit. Running a checkout's own launcher runs that checkout — that is what
+# invoking it means.
 find_jvm_source() {
-  if (( dev_mode )); then
-    # dev names ONE checkout. If it is not there, say so — never run another.
-    [[ -f "$dev_checkout/deps.edn" ]] || return 1
-    printf '%s\n' "$dev_checkout"
-  elif (( launcher_is_checkout )); then
+  if (( launcher_is_checkout )); then
     printf '%s\n' "$launcher_parent"
   elif [[ -f "$managed_src/deps.edn" ]]; then
     printf '%s\n' "$managed_src"
@@ -306,13 +276,13 @@ find_jvm_source() {
   fi
 }
 
-# The released native wins: an installed one (VIS_INSTALLED_NATIVE, beside this
-# wrapper, or in Vis state) is preferred over `target/vis`, the binary this
-# runtime's own source produced. Building one yourself never shadows a release.
+# The released native wins: an installed one (beside this wrapper, or in Vis
+# state) is preferred over `target/vis`, the binary this runtime's own source
+# produced. Building one yourself never shadows a release.
 find_native() {
   local source_root candidate
   source_root="$(find_jvm_source 2>/dev/null || true)"
-  for candidate in "${VIS_INSTALLED_NATIVE:-}" "$bundled_native" \
+  for candidate in "$bundled_native" \
                    "$vis_install_dir/vis-agent-native" \
                    "${source_root:+$source_root/target/vis}"; do
     [[ -n "$candidate" && -x "$candidate" ]] || continue
@@ -323,8 +293,7 @@ find_native() {
 }
 
 # Automatic means "follow the published runtime": the native runtime when it is
-# installed, otherwise source at main's newest commit. A live checkout is never picked
-# implicitly — that is dev mode, and it must be asked for.
+# installed, otherwise source at main's newest commit.
 runtime_effective() {
   if [[ -n "$selected_runtime" ]]; then
     printf '%s\n' "$selected_runtime"
@@ -396,7 +365,6 @@ vis_runtime() {
       printf 'Native:       %s\n' "$native"
       printf 'Source:       %s\n' "$source_root"
       printf 'Pinned at:    %s\n' "$ref"
-      printf 'Dev checkout: %s\n' "$dev_checkout"
       ;;
     use)
       if [[ -n "${3:-}" ]]; then
@@ -405,16 +373,16 @@ vis_runtime() {
         return 2
       fi
       # A one-launch flag and a persisted default are different questions.
-      # `vis-agent --dev runtime use jvm` used to persist jvm and drop --dev
+      # `vis-agent --native runtime use jvm` used to persist jvm and drop --native
       # without a word. Answer one question at a time.
       if [[ -n "$flag_runtime" ]]; then
         warn "runtime use sets the persisted runtime; --$flag_runtime only overrides one launch"
-        warn "  persist it:  vis-agent runtime use ${2:-native|jvm|dev|auto}"
+        warn "  persist it:  vis-agent runtime use ${2:-native|jvm|auto}"
         warn "  or override: vis-agent --$flag_runtime <prompt>"
         return 2
       fi
       case "${2:-}" in
-        native|jvm|dev)
+        native|jvm)
           write_runtime_file "$2"
           say "runtime is now $2"
           runtime_readiness "$2"
@@ -446,13 +414,6 @@ runtime_readiness() {
         say "no source is installed yet — get it: vis-agent update --jvm"
       fi
       if ! ensure_clojure_cli; then say_missing_clojure; return 1; fi
-      ;;
-    dev)
-      say "dev follows the live checkout at $dev_checkout (VIS_DEV_CHECKOUT overrides it)"
-      if [[ ! -f "$dev_checkout/deps.edn" ]]; then
-        say "there is no checkout there yet — get it: vis-agent update --dev"
-      fi
-      say_missing_clojure
       ;;
   esac
 }
@@ -554,10 +515,9 @@ say_missing_clojure() {
 vis_runtime_usage() {
   cat >&2 <<'EOF'
 Usage: vis-agent runtime [show]
-       vis-agent runtime use native|jvm|dev|auto
+       vis-agent runtime use native|jvm|auto
          native  the released build ('vis-agent update --native'), else your own target/vis
          jvm     source pinned to main's newest commit
-         dev     a live checkout, tracking its branch
          auto    forget the choice: native if installed, else pinned source
        This only switches. 'vis-agent update <runtime>' acquires it and selects it.
 EOF
@@ -606,8 +566,8 @@ build_native_runtime() {
 # Follow the development branch: the checkout Vis owns is moved onto the newest
 # commit of `$vis_branch`, or onto an exact ref you name. Release tags are not
 # consulted at all — a release is a commit like any other, and asking for the
-# newest tag is how an install lands on published-but-broken source. A
-# developer's own checkout is never moved by this path — that is `update --dev`.
+# newest tag is how an install lands on published-but-broken source. A checkout
+# of your own is never moved by this path: git owns it.
 #
 # Pinned is meant literally. This source is built by hand — `git init` plus ONE
 # shallow ref — rather than cloned, and every branch and remote-tracking ref is
@@ -697,67 +657,6 @@ sync_wrapper_from_source() {
   fi
 }
 
-# ── update: dev runtime ──────────────────────────────────────────────────────
-# The only runtime that follows a moving branch, so the only update that pulls.
-# It is also the only checkout Vis CREATES: choosing dev and having no checkout
-# yet is one clone away, never an errand handed back to the user. Dev means main
-# — a branch to follow, not a pin.
-clone_dev_checkout() {
-  local parent
-  if [[ -e "$dev_checkout" && -n "$(ls -A "$dev_checkout" 2>/dev/null || true)" ]]; then
-    die "update --dev: $dev_checkout is not a git checkout, and it is not empty" \
-        "Move it aside, or point VIS_DEV_CHECKOUT at your own checkout."
-  fi
-  parent="$(dirname "$dev_checkout")"
-  mkdir -p "$parent" 2>/dev/null \
-    || die "update --dev: cannot create $parent for the dev checkout" \
-           "Check its permissions, or point VIS_DEV_CHECKOUT at a writable path."
-  say "cloning $vis_repo_slug into $dev_checkout (dev follows main)"
-  git clone --branch main "$vis_repo_url" "$dev_checkout" || exit 1
-  say "dev checkout ready at $dev_checkout on main"
-}
-
-update_dev() {
-  require_cmd git "the dev runtime"
-  # A fresh clone is already at its branch tip, so there is nothing left to pull.
-  if [[ ! -d "$dev_checkout/.git" ]]; then
-    clone_dev_checkout
-    return 0
-  fi
-  say "updating $dev_checkout (git fetch + pull --ff-only)"
-  git -C "$dev_checkout" fetch --tags origin || exit 1
-  git -C "$dev_checkout" pull --ff-only || {
-    # Say WHAT blocked the fast-forward: dirty tree vs. diverged history (usually
-    # an upstream force-push), with the counts and the exact recovery command.
-    # A bare 'not possible to fast-forward' tells the user nothing.
-    local branch upstream counts ahead behind
-    branch="$(git -C "$dev_checkout" rev-parse --abbrev-ref HEAD 2>/dev/null)"
-    upstream="$(git -C "$dev_checkout" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)"
-    warn "update --dev: 'git pull --ff-only' failed on branch '${branch:-?}'."
-    if [[ -n "$(git -C "$dev_checkout" --no-optional-locks status --porcelain 2>/dev/null)" ]]; then
-      echo "  - Working tree has local changes: commit or stash them, then retry." >&2
-    fi
-    if [[ -n "$upstream" ]]; then
-      counts="$(git -C "$dev_checkout" rev-list --left-right --count "HEAD...$upstream" 2>/dev/null)"
-      ahead="${counts%%[[:space:]]*}"
-      behind="${counts##*[[:space:]]}"
-      if [[ -n "$counts" && ( "$ahead" != 0 || "$behind" != 0 ) ]]; then
-        echo "  - '$branch' and '$upstream' have diverged: $ahead local commit(s), $behind upstream commit(s)." >&2
-      fi
-      if [[ "${ahead:-0}" != 0 ]]; then
-        echo "      keep your work:    git -C '$dev_checkout' rebase $upstream" >&2
-      fi
-      echo "      discard local commits (DESTRUCTIVE, after an upstream force-push):" >&2
-      echo "                         git -C '$dev_checkout' reset --hard $upstream" >&2
-    else
-      echo "  - Branch '${branch:-?}' has no upstream; set one with 'git branch -u origin/main'." >&2
-    fi
-    echo "    Then run 'vis-agent update --dev' again." >&2
-    exit 1
-  }
-  say "checkout updated ($dev_checkout)"
-}
-
 # ── update: native runtime ───────────────────────────────────────────────────
 # Releases ship the launcher and its native runtime as a single bundle, so both
 # are replaced together and can never drift apart.
@@ -831,17 +730,15 @@ update_native() {
 
 vis_update_usage() {
   cat >&2 <<'EOF'
-Usage: vis-agent update [native|jvm|dev] [--rebuild] [vX.Y.Z|<sha>]
+Usage: vis-agent update [native|jvm] [--rebuild] [vX.Y.Z|<sha>]
          (no runtime)  update the runtime that is in effect
          native        download the published launcher + native runtime
          jvm           move the source Vis owns onto main's newest commit, or onto a ref you name
-         dev           fast-forward your live checkout (git pull --ff-only)
          --rebuild     after a source update, build the native runtime from that source
-       Every runtime word also has a flag form: --native, --jvm, --dev, and naming
+       Every runtime word also has a flag form: --native and --jvm, and naming
        one also makes it the default — there is no second command to switch.
        The vis-agent command travels with its runtime: native replaces it from the
-       release bundle, jvm from the source it just pinned, and dev mode always runs
-       your checkout's own bin/vis-agent.
+       release bundle, and jvm from the source it just pinned.
 EOF
 }
 
@@ -850,12 +747,12 @@ vis_do_update() {
   local target="" rebuild=0 want="" want_named=0 arg
   for arg in "$@"; do
     case "$arg" in
-      --native|--jvm|--dev) want="${arg#--}"; want_named=1 ;;
-      # A bare runtime word is its flag: `update dev` is `update --dev`. Without
-      # this, `update dev` fell through to the target case and tried to pin the
-      # source Vis owns to a git ref called 'dev'. A runtime already named means
-      # the word IS a ref: `update --jvm dev` still pins source to branch dev.
-      native|jvm|dev)
+      --native|--jvm) want="${arg#--}"; want_named=1 ;;
+      # A bare runtime word is its flag: `update jvm` is `update --jvm`. Without
+      # this, `update jvm` fell through to the target case and tried to pin the
+      # source Vis owns to a git ref called 'jvm'. A runtime already named means
+      # the word IS a ref: `update --jvm native` still pins source to branch native.
+      native|jvm)
         if [[ -z "$want" ]]; then
           want="$arg"
           want_named=1
@@ -866,7 +763,7 @@ vis_do_update() {
         ;;
       --rebuild) rebuild=1 ;;
       -h|--help) vis_update_usage; exit 0 ;;
-      -*) die "update: unknown option $arg" "Usage: vis-agent update [native|jvm|dev] [--rebuild] [vX.Y.Z|<sha>]" ;;
+      -*) die "update: unknown option $arg" "Usage: vis-agent update [native|jvm] [--rebuild] [vX.Y.Z|<sha>]" ;;
       *)
         [[ -z "$target" ]] || die "update: one target at a time, not '$target' and '$arg'"
         target="$arg"
@@ -888,12 +785,6 @@ vis_do_update() {
   [[ -n "$want" ]] || want="$(runtime_effective)"
 
   case "$want" in
-    dev)
-      [[ -z "$target" ]] || die "update dev: dev follows its branch and takes no target" \
-                                "Pin the managed source instead: vis-agent update jvm $target"
-      update_dev
-      if (( rebuild )); then build_native_runtime "$dev_checkout"; fi
-      ;;
     jvm)
       if (( target_is_ref )); then say "pinning source to $target"; fi
       update_source "$target"
@@ -902,7 +793,7 @@ vis_do_update() {
       ;;
     native)
       (( ! rebuild )) || die "update --native: --rebuild builds FROM source" \
-                             "Use: vis-agent update --jvm --rebuild (or --dev --rebuild)"
+                             "Use: vis-agent update --jvm --rebuild"
       update_native "${target:-latest}"
       ;;
   esac
@@ -962,14 +853,9 @@ case "$runtime" in
     if stream_trace_on; then stream_trace_args=("-Dsvar.stream.trace=true"); fi
     run_measured_or_exec "process native runtime" "$native_runtime" "-Duser.home=${HOME:-$vis_home}" ${resource_args[@]+"${resource_args[@]}"} ${stream_trace_args[@]+"${stream_trace_args[@]}"} "$@"
     ;;
-  jvm|dev)
+  jvm)
     source_root="$(find_jvm_source 2>/dev/null || true)"
     if [[ -z "$source_root" ]]; then
-      if (( dev_mode )); then
-        die "the dev runtime is selected ($runtime_origin), but $dev_checkout is not a checkout" \
-            "Clone it:  vis-agent update --dev (or set VIS_DEV_CHECKOUT)," \
-            "or leave dev mode: vis-agent runtime use auto"
-      fi
       die "the jvm runtime is selected ($runtime_origin), but no source is installed" \
           "Install the source runtime:     vis-agent update --jvm" \
           "Or use the native runtime:      vis-agent update --native"

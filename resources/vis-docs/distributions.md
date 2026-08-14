@@ -12,18 +12,16 @@ called `vis-agent-native` that lives beside the wrapper; it is never installed
 as `vis` (Linux already has an unrelated `vis`) and never invoked directly.
 `target/vis.jar` is a build artifact, not a runtime you can select.
 
-## Three runtimes, one word each
+## Two runtimes, one word each
 
 | Runtime | Runs | Moves when |
 |---|---|---|
 | `native` | the private `vis-agent-native` sidecar | `vis-agent update` |
 | `jvm` | `clojure -M:vis` from the checkout Vis owns, pinned to the newest `vX.Y.Z` tag | `vis-agent update` |
-| `dev` | `clojure -M:vis` from your live checkout | you pull or commit |
 
-`auto` is not a fourth runtime; it is the *absence* of a choice: native when a
+`auto` is not a third runtime; it is the *absence* of a choice: native when a
 sidecar is installed, otherwise tagged source. So Vis follows releases by
-default, `dev` is the only runtime that follows a moving branch, and `dev` is
-never selected for you — not even when you run Vis from inside a Vis checkout.
+default.
 
 Running a checkout's own `bin/vis-agent` does run that checkout: invoking it
 *is* the choice.
@@ -31,17 +29,17 @@ Running a checkout's own `bin/vis-agent` does run that checkout: invoking it
 ## Choosing a runtime
 
 ```bash
-vis-agent update native|jvm|dev             # acquire it, update it, select it
+vis-agent update native|jvm                 # acquire it, update it, select it
 vis-agent runtime show
-vis-agent runtime use native|jvm|dev|auto   # switch only (auto = forget the choice)
-vis-agent --native|--jvm|--dev help         # this launch only
-VIS_RUNTIME=dev vis-agent help              # this process only
+vis-agent runtime use native|jvm|auto       # switch only (auto = forget the choice)
+vis-agent --native|--jvm help               # this launch only
+VIS_RUNTIME=jvm vis-agent help              # this process only
 ```
 
 Precedence, highest first:
 
-1. a one-launch flag: `--native`, `--jvm`, `--dev`;
-2. `VIS_RUNTIME=native|jvm|dev` — any other value warns and is ignored, and
+1. a one-launch flag: `--native` or `--jvm`;
+2. `VIS_RUNTIME=native|jvm` — any other value warns and is ignored, and
    there is no `VIS_RUNTIME=auto`: unset the variable instead;
 3. `~/.vis/runtime`, written by `vis-agent update <runtime>` and by
    `vis-agent runtime use`;
@@ -54,7 +52,6 @@ Runtime:      native (--native)          # or VIS_RUNTIME, ~/.vis/runtime, autom
 Native:       ~/.vis/install/vis-agent-native
 Source:       ~/.vis/install/src
 Pinned at:    49ccf1b155ec8fe18db7f48f00a30d1ac21be90d
-Dev checkout: ~/vis
 ```
 
 A selected runtime that is not installed is an error with the command that
@@ -64,30 +61,27 @@ fixes it. The wrapper never silently substitutes another runtime.
 
 `vis-agent update` updates the runtime that is in effect; a flag updates a
 different one. Naming a runtime also makes it the default, so `vis-agent update
-dev` is the whole switch — there is no `runtime use` to follow it with.
+jvm` is the whole switch — there is no `runtime use` to follow it with.
 
 | Command | Updates |
 |---|---|
 | `vis-agent update` | whichever runtime is in effect |
 | `vis-agent update --native` | downloads the newest release bundle — wrapper and sidecar together |
 | `vis-agent update --jvm` | fetches the newest commit of the branch it follows (`VIS_BRANCH`, default `main`) and checks the owned checkout out there, then refreshes the `vis-agent` command from that source |
-| `vis-agent update --dev` | clones the dev checkout on `main` when that path holds none, otherwise `git fetch` + `git pull --ff-only` — the only update that follows a branch |
 | `vis-agent update vX.Y.Z` | that release instead of the newest: bundle for `native`, tag for `jvm` |
 | `vis-agent update <sha\|branch>` | any target that is not `vX.Y.Z` is a git ref, so it pins the owned checkout and implies `--jvm` |
-| `vis-agent update --rebuild` | after a source update, builds the sidecar locally (`clojure -T:build native`); pairs with `--jvm` or `--dev` |
+| `vis-agent update --rebuild` | after a source update, builds the sidecar locally (`clojure -T:build native`); pairs with `--jvm` |
 
 Every update carries the `vis-agent` command with it, because a command that is
 older than its runtime is the one drift this design refuses: `--native` replaces
-it from the release bundle, `--jvm` copies it out of the source it just pinned,
-and `dev` needs no copy — dev mode always execs your checkout's own
-`bin/vis-agent`. A wrapper that lives inside a checkout is source and is only
-ever moved by git. If the installed command is not writable, the update says so
+it from the release bundle and `--jvm` copies it out of the source it just
+pinned. A wrapper that lives inside a checkout is source and is only ever moved
+by git. If the installed command is not writable, the update says so
 and leaves it alone.
 
 Name at most one runtime and at most one target per invocation; a conflict is
-an error rather than a guess. Your own checkout is never moved unless you say
-`--dev`, and a blocked fast-forward reports what blocked it — dirty tree or
-diverged history, with the counts and the exact recovery command.
+an error rather than a guess. A checkout of your own is never moved by an
+update: git owns it.
 
 ## Installing
 
@@ -124,11 +118,10 @@ installs that checkout's own wrapper.
 
 | Path | Holds |
 |---|---|
-| `~/.vis/runtime` | the persisted selection: `native`, `jvm`, or `dev`; absent means automatic |
+| `~/.vis/runtime` | the persisted selection: `native` or `jvm`; absent means automatic |
 | `~/.vis/install/vis-agent-native` | the private native runtime |
 | `~/.vis/install/src` | the checkout Vis owns: one shallow, detached commit, no branches, no remote-tracking refs |
 | `~/.vis/install/ref` | the commit that checkout sits at — always a SHA, never a branch; `runtime show` marks it `DRIFTED` when `HEAD` no longer matches |
-| `$VIS_DEV_CHECKOUT` (default `~/vis`) | the live checkout `dev` runs; `vis-agent update --dev` clones it there on `main` when it is missing |
 
 That is the entire runtime state. Deleting `~/.vis/runtime` returns to
 automatic; deleting `~/.vis/install` is a full reset.
@@ -141,8 +134,7 @@ is repaired into that shape by the next update.
 
 | Variable | Effect |
 |---|---|
-| `VIS_RUNTIME` | runtime for this process: `native`, `jvm`, or `dev` |
-| `VIS_DEV_CHECKOUT` | where the `dev` runtime lives (default `~/vis`) |
+| `VIS_RUNTIME` | runtime for this process: `native` or `jvm` |
 | `VIS_HOME` | where Vis keeps its state (default `~/.vis`) |
 
 The wrapper owns two diagnostics flags on any launch: `--measure` prints shell

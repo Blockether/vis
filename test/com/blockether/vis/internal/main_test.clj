@@ -55,12 +55,16 @@
       (let [^String help (commandline/render-tree (#'main/root-command))]
         (expect (.contains help "RUNTIME (WHICH DISTRIBUTION RUNS)"))
         (doseq
-          [row ["--native" "--jvm" "--dev" "VIS_RUNTIME=native|jvm|dev" "vis-agent runtime show"
+          [row ["--native" "--jvm" "VIS_RUNTIME=native|jvm" "vis-agent runtime show"
                 "vis-agent runtime use NAME" "vis-agent update [RUNTIME]"]]
           (expect (.contains help row)))
         ;; The distribution question this section answers: --native is the
         ;; RELEASED native, and only falls back to a build you made yourself.
-        (expect (re-find #"--native\s+Run the released native" help))))
+        (expect (re-find #"--native\s+Run the released native" help))
+        ;; There is no live-checkout runtime any more: vis-agent installs under
+        ;; ~/.vis and runs native or jvm, so help must not advertise one.
+        (expect (not (str/includes? help "--dev")))
+        (expect (not (str/includes? help "dev|auto")))))
   (it "points at the configuration a run reads"
       (let [^String help (commandline/render-tree (#'main/root-command))]
         (expect (.contains help "CONFIGURATION"))

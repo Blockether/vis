@@ -52,26 +52,23 @@ The app is useless on its own: it needs a gateway. Start one with `vis-agent gat
 
 ## Choose the runtime
 
-`vis-agent` follows the releases by default. A live checkout is **dev mode** — opt in; it is never picked for you.
+`vis-agent` follows the releases by default, and everything it installs lives under `~/.vis`.
 
 | Runtime | Runs |
 |---|---|
 | `native` | the private sidecar downloaded by `vis-agent update` |
 | `jvm` | source pinned to the newest `vX.Y.Z` tag |
-| `dev` | a live checkout (`~/vis`, or `$VIS_DEV_CHECKOUT`), tracking its branch |
 | `auto` | no choice at all: native if installed, else tagged source |
 
-With nothing at the dev path, `vis-agent update` clones the repository there on `main`.
-
 ```bash
-vis-agent update native|jvm|dev             # acquire it, update it, select it
+vis-agent update native|jvm                 # acquire it, update it, select it
 vis-agent runtime show
-vis-agent runtime use native|jvm|dev|auto   # switch only (auto = forget the choice)
-vis-agent --native|--jvm|--dev help         # one launch only
-VIS_RUNTIME=dev vis-agent help              # one process only
+vis-agent runtime use native|jvm|auto       # switch only (auto = forget the choice)
+vis-agent --native|--jvm help               # one launch only
+VIS_RUNTIME=jvm vis-agent help              # one process only
 ```
 
-A one-launch flag beats `VIS_RUNTIME`, which beats the persisted default in `~/.vis/runtime`. `vis-agent update` updates the runtime in effect; naming one (`vis-agent update dev`) also makes it the default. A selected runtime that is not installed is an error, never a silent substitution. Full matrix: [Runtime distributions](resources/vis-docs/distributions.md).
+A one-launch flag beats `VIS_RUNTIME`, which beats the persisted default in `~/.vis/runtime`. `vis-agent update` updates the runtime in effect; naming one (`vis-agent update jvm`) also makes it the default. A selected runtime that is not installed is an error, never a silent substitution. Full matrix: [Runtime distributions](resources/vis-docs/distributions.md).
 
 ## License
 
