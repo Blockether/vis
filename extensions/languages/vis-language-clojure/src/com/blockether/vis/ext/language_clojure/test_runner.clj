@@ -519,11 +519,31 @@
     (assoc parsed "output" (str/join "\n\n" (remove nil? [cap digest])))))
 
 (defn- ns-of-file
-  "Read the ns symbol declared in a Clojure (test) file as a string, or nil when
-   the file has no parseable `(ns ...)` form."
+  "The ns symbol a Clojure (test) file declares, as a string, or nil when it
+   declares none.
+
+   READS the form; never scans for it. `(ns ^{:clj-kondo/config …} foo.bar-test)`
+   is an ordinary namespace, but a pattern anchored on `(ns` + a symbol meets the
+   `^`, matches nothing and answers nil — and a nil name makes the WHOLE namespace
+   invisible: it is missing from the workspace index, and naming its own file
+   selects nothing, so `run_tests` refuses the path as if the tests were not
+   there. Metadata belongs to the symbol, and `read` hands back the name with the
+   metadata attached to it.
+
+   The declaration is not always the first form (a leading comment form, a
+   discard or a `set!` is legal), so a bounded prefix is read. `*read-eval*` is
+   off: this parses source, it never runs it."
   [^java.io.File f]
-  (try (when-let [m (re-find #"\(ns\s+([A-Za-z0-9_.?!*+=<>$%&|-]+)" (slurp f))]
-         (second m))
+  (try (with-open [r (java.io.PushbackReader. (io/reader f))]
+         (binding [*read-eval* false]
+           (let [opts {:eof ::eof :read-cond :allow :features #{:clj}}]
+             (loop [read-so-far 0]
+               (when (< read-so-far 16)
+                 (let [form (read opts r)]
+                   (cond (= ::eof form) nil
+                         (and (seq? form) (= 'ns (first form)) (symbol? (second form)))
+                         (str (second form))
+                         :else (recur (inc read-so-far)))))))))
        (catch Throwable _ nil)))
 
 (defn- source-ns->test-ns

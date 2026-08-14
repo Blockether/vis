@@ -532,3 +532,74 @@
                             (expect (= 1 (get r "errored")))
                             (expect (= ["error"] (mapv #(get % "type") (get r "failures"))))))
                         (finally (remove-ns fixture-ns))))))
+
+(def ^:private ns-of-file @#'com.blockether.vis.ext.language-clojure.test-runner/ns-of-file)
+
+(def ^:private resolve-selection
+  @#'com.blockether.vis.ext.language-clojure.test-runner/resolve-selection)
+
+(defn- temp-project!
+  "Write `files` ({relative-path body}) under a fresh temp root and answer the
+   root as a File."
+  [files]
+  (let
+    [root (.toFile (java.nio.file.Files/createTempDirectory
+                     "vis-ns-of-file"
+                     (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (doseq [[rel body] files]
+      (let [f (io/file root rel)]
+        (io/make-parents f)
+        (spit f body)))
+    root))
+
+;; The real shape: a namespace that carries a clj-kondo config map, with comment
+;; lines INSIDE the metadata, exactly like the sqlite store's own test namespace.
+(def ^:private metadata-test-source
+  (str "(ns ^{:clj-kondo/config\n"
+       "      ;; Aggregator file: many blocks bind ids for side effect only.\n"
+       "      '{:linters {:redundant-let {:level :off} :unused-binding {:level :off}}}}\n"
+       "    vis.fixture.core-test\n"
+       "  (:require [lazytest.core :refer [defdescribe expect it]]))\n"
+       "\n" "(defdescribe adds-test (it \"adds\" (expect (= 2 (+ 1 1)))))\n"))
+
+;; Regression, user report (paraphrased: the sqlite store's test namespace was
+;; invisible to run_tests — its `ns` form carries a `^{:clj-kondo/config …}`
+;; metadata map, so no name was read from the file, the namespace was missing
+;; from the workspace index, and naming that very file selected nothing).
+(defdescribe
+  ns-of-file-metadata-test
+  (it "reads the name through a metadata MAP on the ns symbol"
+      (let [root (temp-project! {"test/vis/fixture/core_test.clj" metadata-test-source})]
+        (expect (= "vis.fixture.core-test"
+                   (ns-of-file (io/file root "test/vis/fixture/core_test.clj"))))))
+  (it "reads the name through a metadata KEYWORD on the ns symbol"
+      (let
+        [root (temp-project! {"test/vis/fixture/plain_test.clj"
+                              "(ns ^:no-doc vis.fixture.plain-test)\n"})]
+        (expect (= "vis.fixture.plain-test"
+                   (ns-of-file (io/file root "test/vis/fixture/plain_test.clj"))))))
+  (it "answers nil for a file that declares no namespace"
+      (let [root (temp-project! {"test/vis/fixture/none_test.clj" ";; no ns here\n(def x 1)\n"})]
+        (expect (nil? (ns-of-file (io/file root "test/vis/fixture/none_test.clj"))))))
+  (it "SELECTS the namespace when its own test file is named"
+      (let [root (temp-project! {"test/vis/fixture/core_test.clj" metadata-test-source})]
+        (expect (= {:nses ["vis.fixture.core-test"] :vars []}
+                   (resolve-selection (.getPath root)
+                                      [{:path "test/vis/fixture/core_test.clj" :var nil}])))))
+  (it
+    "SELECTS it from the SOURCE file it covers, metadata on both"
+    (let
+      [root
+       (temp-project!
+         {"test/vis/fixture/core_test.clj" metadata-test-source
+          "src/vis/fixture/core.clj"
+          "(ns ^{:clj-kondo/config '{:linters {:unused-public-var {:level :off}}}}\n    vis.fixture.core)\n"})]
+      (expect (= ["vis.fixture.core-test"]
+                 (:nses (resolve-selection (.getPath root)
+                                           [{:path "src/vis/fixture/core.clj" :var nil}]))))))
+  (it "finds a namespace declared after a leading form"
+      (let
+        [root (temp-project! {"test/vis/fixture/late_test.clj"
+                              "(comment \"a note before the ns\")\n(ns vis.fixture.late-test)\n"})]
+        (expect (= "vis.fixture.late-test"
+                   (ns-of-file (io/file root "test/vis/fixture/late_test.clj")))))))
