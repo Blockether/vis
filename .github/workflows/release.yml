@@ -2,7 +2,10 @@ name: Release & Deploy to Clojars
 
 on:
   push:
-    tags: ['v*']
+    # v[0-9]* and not v*: `v*` also matches the `voice-assets-pack` tag, and
+    # pushing that model pack started this workflow against a ref that is not
+    # a version at all.
+    tags: ['v[0-9]*']
 
 permissions:
   contents: write

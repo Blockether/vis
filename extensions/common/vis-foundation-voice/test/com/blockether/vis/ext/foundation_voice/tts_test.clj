@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.foundation-voice.tts-test
-  (:require [com.blockether.vis.ext.foundation-voice.assets :as assets]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.ext.foundation-voice.assets :as assets]
             [com.blockether.vis.ext.foundation-voice.sherpa :as sherpa]
             [com.blockether.vis.ext.foundation-voice.tts :as tts]
             [lazytest.core :refer [defdescribe it expect]]))
@@ -22,11 +23,9 @@
         (expect (= :voice-tts/unknown-voice (:type data)))
         (expect (= :piper (:family data)))
         (expect (= ["kristin" "cori" "john" "ryan"] (:known data)))))
-  (it "asks for the shared phoneme tables before the voice that reads them"
-      (expect (= ["espeak-ng-data" "piper-en_US-kristin-medium"]
-                 (mapv :id (#'tts/required-assets :piper nil))))
-      (expect (= ["espeak-ng-data" "piper-en_GB-cori-medium"]
-                 (mapv :id (#'tts/required-assets :piper "cori"))))
+  (it "asks only for the voice, because the phoneme tables are the system's"
+      (expect (= ["piper-en_US-kristin-medium"] (mapv :id (#'tts/required-assets :piper nil))))
+      (expect (= ["piper-en_GB-cori-medium"] (mapv :id (#'tts/required-assets :piper "cori"))))
       (expect (= ["pocket-tts-int8"] (mapv :id (#'tts/required-assets :pocket-tts nil)))))
   (it "marks the voice a user has to install deliberately"
       ;; Ryan is in the catalogue and ONLY in the catalogue: CC BY-NC-SA, so a
@@ -41,13 +40,12 @@
         (expect (= "ryan" (name (:id voice))))
         (expect (true? (:is-opt-in voice)))
         (expect (true? (:is-opt-in entry)))
-        (expect (= ["espeak-ng-data" "piper-en_US-ryan-high"]
-                   (mapv :id (#'tts/required-assets :piper "ryan")))))))
+        (expect (= ["piper-en_US-ryan-high"] (mapv :id (#'tts/required-assets :piper "ryan")))))))
 
 (defdescribe
   readiness-test
   (it "is as ready as its worst part, and its progress never jumps backwards"
-      ;; A two-part install: espeak finishing must not reset the number to 0.
+      ;; Two parts of one install: the first finishing must not reset it to 0.
       (expect (= {:state :ready} (#'tts/combined-state [{:state :ready} {:state :ready}])))
       (expect (= :absent (:state (#'tts/combined-state [{:state :ready} {:state :absent}]))))
       (let
@@ -128,3 +126,42 @@
                    (let [data (ex-data-of #(tts/synthesize! :piper {:text "   "}))]
                      (expect (= :voice-tts/blank-text (:type data)))
                      (expect (= :piper (:family data)))))))
+
+(defdescribe espeak-test
+             (it "finds the tables by their contents, not by a directory's name"
+                 (let [dir (java.io.File/createTempFile "espeak-ng-data" "")]
+                   (try (.delete dir)
+                        (.mkdirs dir)
+                        (expect (false? (tts/espeak-data-dir? (str dir))))
+                        (doseq [f tts/espeak-data-files]
+                          (spit (java.io.File. dir ^String f) "x"))
+                        (expect (true? (tts/espeak-data-dir? (str dir))))
+                        (expect (false? (tts/espeak-data-dir? nil)))
+                        (with-redefs
+                          [assets/env-value (fn [name]
+                                              (when (= tts/espeak-data-env name) (str dir)))]
+                          (expect (= (str dir) (tts/espeak-data-dir))))
+                        (finally (doseq [f (reverse (file-seq dir))]
+                                   (.delete ^java.io.File f))))))
+             (it "refuses a Piper voice on a machine without them, and names the command"
+                 ;; espeak-ng is GPL-3, everywhere, and read at run time - so Vis never
+                 ;; ships it. Missing tables must read as "install this", never as a
+                 ;; voice that downloads 63 MB and then cannot speak.
+                 (with-redefs [tts/espeak-data-dir (constantly nil)]
+                   (let [state (tts/model-state :piper)]
+                     (expect (= :failed (:state state)))
+                     (expect (str/includes? (:error state) "espeak-ng")))
+                   (expect (= :failed (:state (tts/start-download! :piper))))
+                   (with-redefs
+                     [assets/ensure! (fn [& _]
+                                       (throw (ex-info "must not download" {})))
+                      sherpa/ensure-native! (constantly nil)]
+
+                     (let [data (ex-data-of #(tts/synthesize! :piper {:text "hello"}))]
+                       (expect (= :voice-tts/espeak-ng-missing (:type data)))
+                       (expect (seq (:remediation data)))
+                       (expect (seq (:searched data)))))))
+             (it "still reports a pocket voice's readiness without any tables"
+                 ;; pocket-tts does not phonemize, so espeak has nothing to do with it.
+                 (with-redefs [tts/espeak-data-dir (constantly nil)]
+                   (expect (not= :failed (:state (tts/model-state :pocket-tts)))))))

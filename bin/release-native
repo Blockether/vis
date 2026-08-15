@@ -8,10 +8,11 @@
 #     A 32 GB+ machine never enters that regime and finishes in a fraction of it.
 #   * GitHub has NO macOS runner that fits: free arm64 macOS is 3 cores / 7 GB and
 #     even the paid macos-*-xlarge is 14 GB. The macOS asset therefore comes from
-#     an Apple-silicon machine like this one, or from a CLOUD Apple-silicon
-#     runner (>= 16 GiB) named by the repository variable VIS_MACOS_ARM64_RUNNER
-#     — never from a laptop wearing a CI hat, which this build makes unusable
-#     for as long as it runs.
+#     an Apple-silicon machine like this one — in CI from the repository's OWN
+#     runner, registered with the label `vis-macos-arm64`, or from a CLOUD
+#     Apple-silicon runner (>= 16 GiB) named by the repository variable
+#     VIS_MACOS_ARM64_RUNNER. The build pins every core and ~15 GiB, so the
+#     machine that runs it is unusable for as long as it runs.
 #   * On Apple silicon, linux-arm64 is a NATIVE container build, and linux-x64
 #     is a ROSETTA-translated one. Measured here with a native-image hello
 #     world: 15.8 s on linux/arm64 vs 1 m 16 s on linux/amd64 — 4.8x, which is

@@ -36,6 +36,14 @@
                [family (tts-call! 'model-state family)]))
         [:piper :pocket-tts]))
 
+(defn- espeak-status
+  "Piper's phonemizer data, which the SYSTEM owns. Vis does not ship espeak-ng
+   (GPL-3.0-or-later, and in every package manager), so this reports what is
+   on the machine and, when nothing is, the command that puts it there."
+  []
+  (let [dir (tts-call! 'espeak-data-dir)]
+    {:dir dir :is-installed (some? dir) :remediation (tts-call! 'espeak-install-hint)}))
+
 (defn- asset-status
   [entry]
   {:id (:id entry)
@@ -51,10 +59,12 @@
   "Every local voice model in one map - the shape doctor and the CLI both read:
 
      :parakeet  the ASR model, which honours VIS_PARAKEET_MODEL_DIR
+     :espeak    the system's espeak-ng tables, without which Piper cannot speak
      :speech    per speaking family, the readiness a UI polls
      :assets    every manifest entry, with its licence and whether it is here"
   []
   {:parakeet (parakeet-status)
+   :espeak (espeak-status)
    :speech (speech-status)
    :assets (mapv asset-status (assets-call! 'manifest))})
 
@@ -128,9 +138,19 @@
                  #(= :ready (:state (:piper (:speech %))))
                  "Run `vis-agent extension voice models download --piper`."))
 
+(defn- espeak-message
+  "A machine without espeak-ng gets NO Piper voice, however many are installed,
+   so this is a check of its own rather than a footnote on the voice line."
+  []
+  (model-message ::espeak
+                 "espeak-ng phoneme data"
+                 #(:is-installed (:espeak %))
+                 (try (tts-call! 'espeak-install-hint)
+                      (catch Throwable _ "Install espeak-ng from your package manager."))))
+
 (defn doctor-fn
   [_environment]
-  [(voice-runtime-message) (ffmpeg-message) (parakeet-message) (speech-message)])
+  [(voice-runtime-message) (ffmpeg-message) (parakeet-message) (espeak-message) (speech-message)])
 
 (defn- status-word
   [{:keys [is-installed is-opt-in]}]

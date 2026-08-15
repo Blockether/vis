@@ -24,6 +24,7 @@
       (with-redefs
         [voice/model-status
          (constantly {:parakeet {:installed? true}
+                      :espeak {:is-installed true}
                       :speech {:piper {:state :ready} :pocket-tts {:state :absent}}})
 
          com.blockether.vis.ext.foundation-voice.core/executable?
@@ -36,7 +37,7 @@
              identity))]
 
         (let [msgs ((:ext/doctor-fn voice/voice-extension) {})]
-          (expect (= [::voice/runtime ::voice/ffmpeg ::voice/parakeet ::voice/speech]
+          (expect (= [::voice/runtime ::voice/ffmpeg ::voice/parakeet ::voice/espeak ::voice/speech]
                      (mapv :check-id msgs)))
           (expect (every? #(= :info (:level %)) msgs)))))
   (it "warns about the speech voice it installs, never about the opt-in one"
@@ -45,6 +46,7 @@
       (with-redefs
         [voice/model-status
          (constantly {:parakeet {:installed? true}
+                      :espeak {:is-installed true}
                       :speech {:piper {:state :absent} :pocket-tts {:state :absent}}})
 
          com.blockether.vis.ext.foundation-voice.core/executable?
@@ -61,7 +63,7 @@
            (into {} (map (juxt :check-id identity)) ((:ext/doctor-fn voice/voice-extension) {}))]
           (expect (= :warn (:level (::voice/speech by-id))))
           (expect (re-find #"--piper" (:remediation (::voice/speech by-id))))
-          (expect (= 4 (count by-id))))))
+          (expect (= 5 (count by-id))))))
   (it "defers voice input namespace until the /voice slash run-fn fires (K10)"
       ;; The declarative `/voice` slash spec lazily requiring-resolves
       ;; `toggle-recording!` from the input ns so the host doesn't pay

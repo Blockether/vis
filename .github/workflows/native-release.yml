@@ -19,7 +19,10 @@ name: Native Release
 # so the release build is verifiable without spending a tag on it.
 on:
   push:
-    tags: ['v*']
+    # v[0-9]* and not v*: `voice-assets-pack` is a tag in this repository and
+    # `v*` matched it, so pushing the asset pack started a native release that
+    # attached two Linux binaries to a release meant to carry models only.
+    tags: ['v[0-9]*']
   workflow_dispatch:
     inputs:
       tag:
@@ -97,8 +100,8 @@ jobs:
           - { os: ubuntu-latest, bin: target/vis, asset: vis-agent-linux-x64-community.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
           - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-agent-linux-arm64-community.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
           # macOS arm64 is NOT in this matrix: it needs its own heap sizing and
-          # its own swap story, so it is the SEPARATE `macos` job below, on
-          # GitHub's free hosted `macos-26`. Every hosted macOS class GitHub
+          # its own runner, so it is the SEPARATE `macos` job below, on our own
+          # labelled Apple-silicon builder. Every hosted macOS class GitHub
           # sells is under the ~13.7 GiB live set (specs re-checked 2026-08):
           #   * free arm64 macOS (macos-latest/14/15/26) is 3 cores / 7 GB, so
           #     the builder heap has to live in macOS DYNAMIC SWAP;
@@ -128,7 +131,7 @@ jobs:
         run: |
           ref='${{ inputs.tag || github.ref_name }}'
           case "$ref" in
-            v*) echo 'publish=true' >> "$GITHUB_OUTPUT"; echo "attaching to $ref" ;;
+            v[0-9]*) echo 'publish=true' >> "$GITHUB_OUTPUT"; echo "attaching to $ref" ;;
             *) echo 'publish=false' >> "$GITHUB_OUTPUT"; echo "dry run on $ref: building and testing, publishing nothing" ;;
           esac
       # A dispatch may name an ALREADY-PUSHED tag: build that tag's source with
@@ -231,56 +234,46 @@ jobs:
           fail_on_unmatched_files: true
 
   # ── macOS arm64 ────────────────────────────────────────────────────────────
-  # GITHUB'S OWN HOSTED RUNNER BUILDS THIS. NOBODY'S LAPTOP DOES.
-  # A self-hosted Apple-silicon runner carried this job until 2026-08 and is
-  # retired for good — deregistered, service uninstalled, machine gone: the
-  # analysis pins every core and ~15 GiB for the whole build, so the box it runs
-  # on is unusable and, on a fanless Mac, thermally throttled throughout. This
-  # repository registers NO self-hosted runner, and this workflow must never
-  # grow one back. `runs-on: [self-hosted, …]` here is a bug, not an option.
+  # OUR OWN APPLE-SILICON BUILDER BUILDS THIS, by decision, not by accident.
+  # The numbers are why. native-image's points-to analysis holds a ~13.7 GiB live
+  # set; GitHub's free `macos-26` is 3 cores / 7 GiB, so every heap that fits in
+  # its RAM is a known OOM (5g dies at 7 min, 8g at 9 min) and the only hosted
+  # configuration with a chance is a heap ABOVE physical RAM backed by macOS
+  # dynamic swap — v0.1.6 and v0.1.8 each burned 4 h on that class and shipped
+  # nothing. A 32 GiB+ Mac builds it in RAM, first try. The cost is real and
+  # accepted: the build pins every core and ~15 GiB for its duration, so the
+  # machine is unusable while a release is cutting.
   #
-  # `macos-26` is FREE and unlimited on public repositories (only LARGER runners
-  # are billed, and this workflow uses none). Its spec is the whole difficulty:
-  # 3 cores / 7 GiB against a ~13.7 GiB points-to live set. Every heap that fits
-  # in RAM is a known OOM (the matrix table: 5g dies at 7 min, 8g at 9 min), so
-  # the ONLY configuration with a chance is a heap ABOVE physical RAM backed by
-  # macOS DYNAMIC SWAP — the exception to the matrix comment's "never raise
-  # -J-Xmx above runner RAM", made deliberately because here there is no
-  # in-RAM option to prefer. It is a real constraint, not a comfortable one:
-  # v0.1.6 and v0.1.8 each burned 4 h on this class and shipped nothing. The
-  # first step therefore prints cores, RAM, free disk and swap, so a failure is
-  # a NUMBER on the log and not a guess.
+  # HOW THE RUNNER IS TARGETED. `runs-on` names ONE custom label, not the
+  # [self-hosted, macOS, ARM64] triple: cloud macOS vendors register in the
+  # organization's default runner group as self-hosted macOS ARM64 too, and a
+  # release must never land on a billed runner because a triple happened to
+  # match. Register the machine with that label and nothing else is needed:
   #
-  # Two escape hatches when the free runner cannot finish, in order:
-  #   1. set the repository variable VIS_MACOS_ARM64_RUNNER to a CLOUD
-  #      Apple-silicon runner LABEL — it overrides `runs-on` and nothing else.
-  #      Those register as self-hosted in the ORGANIZATION's default runner
-  #      group (never on a laptop), which must "Allow public repositories"
-  #      first — safe here because this workflow runs only on `v*` tags and
-  #      manual dispatch, never on a pull request from a fork. Vetted labels,
-  #      specs and list prices checked 2026-08; all are BILLED per minute by
-  #      their vendor, none are free for public repos:
-  #        warp-macos-26-arm64-12x         WarpBuild M4 Pro 12 vCPU / 44 GB $0.16/min
-  #        warp-macos-26-arm64-6x          WarpBuild M4 Pro  6 vCPU / 22 GB $0.08/min
-  #        depot-macos-26                  Depot     M4      8 vCPU / 24 GB $0.08/min
-  #        nscloud-macos-tahoe-arm64-6x28  Namespace M4 Pro  6 vCPU / 28 GB $0.075/min
-  #        ghcr.io/cirruslabs/macos-runner:tahoe-xl
-  #                                        Cirrus    M4 Pro  8 vCPU / 24 GB $150/month
-  #      A ~15 min build on the 12x costs ~$2.40 per release.
-  #      The variable is the LAST step of that hatch, never the first: the
-  #      vendor's GitHub App must already be installed on the ORGANIZATION and
-  #      serving that label, or this job just sits QUEUED (GitHub gives a job
-  #      24 h to find a self-hosted runner) and the release gets no macOS
-  #      asset at all. GitHub's own larger runners are not a substitute: they
-  #      bill on a paid org plan only, and their biggest Apple-silicon size is
-  #      5 cores / 14 GB (macos-26-xlarge, checked 2026-08) — under the live
-  #      set, so it would swap exactly like the free class.
-  #   2. `bin/release-native --tag vX.Y.Z --upload` by hand on any 32 GB+ Mac.
+  #   ./config.sh --url https://github.com/Blockether/vis \
+  #               --labels vis-macos-arm64 --name <machine> --unattended
+  #   ./svc.sh install && ./svc.sh start     # survives reboot
+  #
+  # A job whose label matches no online runner QUEUES for 24 h and then fails,
+  # so when the Mac is off or busy, point the build elsewhere for that release:
+  # set the repository variable VIS_MACOS_ARM64_RUNNER (Settings → Secrets and
+  # variables → Actions → Variables) to another LABEL — it overrides `runs-on`
+  # and nothing else:
+  #   macos-26                        GitHub hosted, free, 3 cores / 7 GiB — the
+  #                                   swap path above; slow, historically flaky.
+  #   warp-macos-26-arm64-12x         WarpBuild M4 Pro 12 vCPU / 44 GB $0.16/min
+  #   depot-macos-26                  Depot     M4      8 vCPU / 24 GB $0.08/min
+  #   nscloud-macos-tahoe-arm64-6x28  Namespace M4 Pro  6 vCPU / 28 GB $0.075/min
+  # A cloud label needs that vendor's GitHub App installed on the ORGANIZATION
+  # and its runner group set to "Allow public repositories" FIRST, or the job
+  # just queues. Prices checked 2026-08; all are billed per minute by the vendor.
+  #
+  # Last resort, no runner at all: `bin/release-native --tag vX.Y.Z --upload`
+  # by hand on any 32 GB+ Mac produces the identical bundle.
   macos:
     name: native / vis-agent-macos-arm64-community.tar.gz
-    # The variable is an OPTIONAL override for a bigger cloud builder. Unset —
-    # the default — means GitHub's free hosted macOS runner, never a laptop.
-    runs-on: ${{ vars.VIS_MACOS_ARM64_RUNNER || 'macos-26' }}
+    # Unset — the default — is OUR labelled Apple-silicon builder.
+    runs-on: ${{ vars.VIS_MACOS_ARM64_RUNNER || 'vis-macos-arm64' }}
     timeout-minutes: 350
     env:
       VIS_ASSET: vis-agent-macos-arm64-community.tar.gz
@@ -300,17 +293,17 @@ jobs:
         run: |
           ref='${{ inputs.tag || github.ref_name }}'
           case "$ref" in
-            v*) echo 'publish=true' >> "$GITHUB_OUTPUT"; echo "attaching to $ref" ;;
+            v[0-9]*) echo 'publish=true' >> "$GITHUB_OUTPUT"; echo "attaching to $ref" ;;
             *) echo 'publish=false' >> "$GITHUB_OUTPUT"; echo "dry run on $ref: building and testing, publishing nothing" ;;
           esac
       # The builder's own numbers, and the heap sized FROM them — printed before
       # anything is downloaded so a failed run is diagnosable from its first
-      # step. Under 16 GiB (i.e. the free hosted runner) the heap is pinned to
-      # the known-green Linux ceiling and macOS grows swap on the system volume
-      # to back it; free disk is printed because swap cannot exceed it. On a
-      # 16 GiB+ cloud builder nothing is set and build.clj sizes the heap from
-      # the machine's own RAM (0.6x, capped at 18g), which is the right answer
-      # there.
+      # step. Our own builder has 32 GiB+, so nothing is set here and build.clj
+      # sizes the heap from the machine's own RAM (0.6x, capped at 18g). The
+      # branch below is for the hosted/cloud fallback: under 16 GiB the heap is
+      # pinned to the known-green Linux ceiling and macOS grows swap on the
+      # system volume to back it, so free disk is printed too — swap cannot
+      # exceed it.
       - name: Size the builder heap from the builder
         shell: bash
         run: |
@@ -330,9 +323,10 @@ jobs:
       - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest
-      # A hosted runner is EPHEMERAL — unlike the retired self-hosted box it does
-      # not keep ~/.m2 between runs, so the dependency cache is what keeps the
-      # release from re-downloading the whole tree on every tag.
+      # For the hosted/cloud fallback, which is EPHEMERAL: it does not keep
+      # ~/.m2 between runs, so this cache is what keeps that release from
+      # re-downloading the whole tree. Our own builder already has ~/.m2 warm
+      # and restores nothing it does not need.
       - uses: actions/cache@v6
         with:
           path: |

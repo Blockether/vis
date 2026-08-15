@@ -285,8 +285,8 @@ download URL exists in the tree, and its entries are what a licence audit reads.
 - `.../assets.clj` — the manifest's only reader: `sources` implements that token policy, `install!`
   downloads into a staging directory and renames it into place so a failed install leaves NOTHING, and
   `ensure!` — the automatic path — REFUSES an `:is-opt-in` entry with the notice that explains why.
-- `.../tts.clj` — two families on one shape. `:piper` is a voice per 63 MB VITS model over one shared copy
-  of espeak-ng's phoneme tables; `:pocket-tts` is a reference clip the model clones. `synthesize!` returns
+- `.../tts.clj` — two families on one shape. `:piper` is a voice per 63 MB VITS model, phonemized by the SYSTEM's
+  espeak-ng; `:pocket-tts` is a reference clip the model clones. `synthesize!` returns
   the WAV it wrote with its sample rate and duration; readiness is DERIVED from disk and a group is as
   ready as its worst member.
 - `.../speech.clj` — registers `piper-local` (default) and `pocket-tts-local` into the Phase 2 registry, so
@@ -303,11 +303,10 @@ download URL exists in the tree, and its entries are what a licence audit reads.
   licence, an attribution and a checksum; an entry with a `:pack` source is one we may host; every asset is
   reachable with no token) and installs one atomically from a `file:` URL, proving both that a source that
   fails leaves no directory behind and that a `.staging-` sibling never survives. `tts_test.clj` pins the
-  catalogue, the espeak-before-voice order, the group readiness arithmetic and every refusal.
+  catalogue, the espeak refusal, the group readiness arithmetic and every refusal.
   `core_test.clj` pins the CLI surface and that neither `--all` nor a bare `download` accepts an opt-in
-  model's terms. End to end, off the manifest: `en_US-kristin-medium` + `espeak-ng-data` installed from
-  upstream after the (still absent) pack 404s, and one sentence synthesized to 197 KB of RIFF/WAVE,
-  22 050 Hz, 4.5 s.
+  model's terms. End to end, off the manifest: `en_US-kristin-medium` installed from upstream after the
+  (still absent) pack 404s, and one sentence synthesized to 197 KB of RIFF/WAVE, 22 050 Hz, 4.5 s.
 
 **Unknowns.** None. Both questions this phase carried are answered above and in the state section: the
 voices are Piper's public-domain three rather than pocket's clips, and pocket-tts ships as an engine
@@ -315,40 +314,64 @@ without weights until Phase 5 exports them.
 
 ---
 
-## Phase 5 — Host what we redistribute: the VOICE_ASSETS_PACK release and our own pocket-tts export
+## Phase 5 — Ship only what we make: an assets-only pack, our own pocket-tts export, espeak from the system
 
-**Rationale.** DONE for the mirror: the `voice-assets-pack` release is up and holds the five redistributable
-assets byte-for-byte, so `:pack` is a real default instead of a 404 that falls through to upstream. What is left
-is the part that needs a conversion rather than an upload — pocket-tts stays an engine without weights until we
-export Kyutai's CC BY 4.0 weights ourselves — and the generated third-party file.
+**Rationale.** The release published last session was wrong twice. It carried three archives that are not ours to
+host — a Piper voice belongs to its publisher, and espeak-ng's tables are GPL-3 — and the tag `voice-assets-pack`
+MATCHED the `v*` trigger glob on `release.yml` and `native-release.yml`, so publishing an ASSET release started a
+product release and attached two ~196 MB Linux binaries to it. Both are corrected here. The pack becomes exactly
+what Vis makes or may mirror outright: Parakeet today, our own pocket-tts export next. Everything else moves to the
+party that owns it — voices to their publishers, espeak-ng to the operating system's package manager, where a
+GPL-3 phonemizer everybody already has costs us nothing to require and would cost us a licence to ship.
 
-**Data.** None. The manifest landed in Phase 4; this phase fills URLs it already declares and adds no key.
+**Data.**
+
+| Fact | Evidence |
+|---|---|
+| The ungated weights cannot voice anything | `kyutai/pocket-tts-without-voice-cloning` is byte-identical to the gated repo EXCEPT every `mimi.encoder.*` tensor is ZEROED (its own `remove_voice_cloning_and_push.py` does it), and sherpa's `GetVoiceEmbedding` runs that encoder over the reference clip |
+| A pocket voice IS a reference clip | `csrc/offline-tts-pocket-impl.h` requires `reference_audio` + `reference_sample_rate`; `NumSpeakers()` is 1 |
+| No mirror substitutes for the gate | seven third-party copies checked; none matches the gated repo's digests. Our own export therefore needs an HF token ONCE, at build time |
+| The exporter is MIT and pinned | `KevinAHM/pocket-tts-onnx-export@b25d4a7`, `python export.py --language english_2026-04 --quantize` |
+| Seven files reach sherpa | `flow_lm_main_int8`→`lm_main.int8.onnx`, `flow_lm_flow_int8`→`lm_flow.int8.onnx`, `mimi_encoder`→`encoder.onnx`, `mimi_decoder_int8`→`decoder.int8.onnx`, `text_conditioner.onnx`, plus `vocab.json`/`token_scores.json` flattened from `tokenizer.model` |
+| espeak-ng is a package everywhere | Homebrew, MacPorts, apt, dnf, pacman; the tables are read from a directory at run time, never linked into anything Vis builds |
 
 **Acceptance criteria.**
-- DONE. A `voice-assets-pack` release holding exactly the five mirrored assets, byte-identical to the checksums
-  already in the manifest: `sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2`, `espeak-ng-data.tar.bz2`
-  and the three `vits-piper-en_*.tar.bz2`, plus `SHA256SUMS.txt`. Nothing else is uploaded there — a native or a
-  model that is not in the manifest has no business on a Vis host. Proven by installing espeak-ng-data and
-  Kristin from the pack URLs alone, each verified against the manifest digest as it streamed.
-- `scripts/convert-pocket-tts.py` — our export from the original CC BY 4.0 weights, reusing upstream's
-  `convert_tokenizer.py` against the original `tokenizer.model`. The gate is one human click; the
-  read-scoped `HF_TOKEN` lives in CI secrets and in no file in this tree.
-- With that export mirrored, `pocket-tts-int8` flips: `:is-commercial-ok true`, `:is-opt-in` and `:notice`
-  gone, a `:pack` source added, `:attribution` naming Kyutai instead of a third party's export.
+- DONE. The `voice-assets-pack` release is rebuilt as an ASSETS release: `sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2`
+  plus `SHA256SUMS.txt`, and nothing else. The old release, its stray `vis-agent-linux-*` binaries and its tag are gone.
+- DONE. `release.yml` and `native-release.yml` trigger on `v[0-9]*` and gate their publish steps on the same pattern, so
+  an asset tag can never start a product release again. The macOS arm64 job runs on the repository's OWN Apple-silicon
+  runner (label `vis-macos-arm64`, overridable by the `VIS_MACOS_ARM64_RUNNER` variable) because no hosted macOS runner
+  has the ~14 GiB the image needs.
+- DONE. espeak-ng is the SYSTEM's. The manifest has no `espeak-ng-data` entry; every Piper entry carries
+  `:needs-espeak-ng true`; `tts/espeak-data-dir` finds the tables through `VIS_ESPEAK_NG_DATA` or the seven standard
+  locations; readiness, `start-download!` and `synthesize!` all refuse BEFORE downloading a 63 MB voice that could not
+  speak; and doctor's `::espeak` line names the command for the platform it is refusing on.
+- DONE. No voice is mirrored. Kristin, Cori, John and Ryan are `:is-redistributed false` with upstream and Hugging Face
+  sources only, and `assets_test.clj` fails on any entry that gains a `:pack` source without being ours to host.
+- `bin/export-pocket-tts` — Vis' own export from Kyutai's CC BY 4.0 weights: pinned exporter, `uv` environment, the
+  seven-file sherpa layout, the flattened tokenizer, a LICENSE and README naming Kyutai, and the digest to paste into
+  the manifest. The HF token is a build-time credential that reaches no user and lives in no file in this tree.
+- With that export in the pack, `pocket-tts-int8` flips: `:is-commercial-ok true`, `:is-opt-in` and `:notice` gone, a
+  `:pack` source added, `:attribution` naming Kyutai instead of a third party's export.
 - `THIRD_PARTY_MODELS.md` generated FROM the manifest, so the file cannot drift from what ships.
-- The natives stay upstream's. `sherpa.clj/jar-url` fetches them from JitPack, and sherpa's VITS path
-  phonemizes through espeak-ng compiled INTO that library — `nm` finds 10 `espeak_*` symbols and its data paths
-  in the shipped `libsherpa-onnx-jni` — so the jar is GPL-3 object code and Vis never re-hosts it. The image is
-  the open question, not the pack: `build.clj` puts `-H:IncludeResources=sherpa-onnx/native/<tok>/.*` on the
-  native build, so the binary we ship carries the build host's pair as embedded resources today. Mirroring a
-  native into the pack — or embedding one — is settled only by an espeak-free build (upstream plus a patch
-  adding `SHERPA_ONNX_ENABLE_ESPEAK`, default ON so it is upstreamable, built with it OFF).
-- Test that proves it done: every URL in the manifest resolves with the byte length and checksum it
-  declares, and every entry with `:is-redistributed true` has a `:pack` source on a host we control.
+- The natives stay upstream's. `sherpa.clj/jar-url` fetches them from JitPack, and sherpa's VITS path phonemizes through
+  espeak-ng compiled INTO that library — `nm` finds 10 `espeak_*` symbols and its data paths in the shipped
+  `libsherpa-onnx-jni` — so the jar is GPL-3 object code and Vis never re-hosts it. The image is the open question, not
+  the pack: `build.clj` puts `-H:IncludeResources=sherpa-onnx/native/<tok>/.*` on the native build, so the binary we ship
+  carries the build host's pair as embedded resources today. Mirroring a native into the pack — or embedding one — is
+  settled only by an espeak-free build (upstream plus a patch adding `SHERPA_ONNX_ENABLE_ESPEAK`, default ON so it is
+  upstreamable, built with it OFF).
+- Test that proves it done: `assets_test.clj` holds the manifest to the hosting policy (a `:pack` source only on an entry
+  that is redistributable, commercial-safe and not a voice, and only on a `github.com/Blockether/vis/releases/download/`
+  URL; no espeak entry at all), and `tts_test.clj` pins the espeak refusal end to end — discovery by CONTENTS rather than
+  by directory name, `:failed` readiness with the install command in it, and `synthesize!` throwing
+  `:voice-tts/espeak-ng-missing` without touching the network.
 
 **Unknowns.**
-- Does the espeak-free native still serve Parakeet and pocket-tts unchanged, and is a Piper voice then
-  simply unavailable on it — one binary with a smaller catalogue rather than two builds to ship?
+- Which reference clips ship as pocket voices? The model clones a recording, so the catalogue needs redistributable
+  audio — a public-domain or CC BY recording, or one we record ourselves — not the third-party bundle's clips.
+- Does the espeak-free native still serve Parakeet and pocket-tts unchanged, and is a Piper voice then simply
+  unavailable on it — one binary with a smaller catalogue rather than two builds to ship?
 
 ---
 
@@ -412,7 +435,8 @@ per-voice reading. Without this phase the catalogue is three voices in two accen
 
 ## State of the plan
 
-**ACCEPTED** — Phases 1, 2, 3 and 4 have landed, and Phase 5's `voice-assets-pack` release is up.
+**ACCEPTED** — Phases 1, 2, 3 and 4 have landed. Phase 5 is in flight: the assets-only pack is rebuilt and
+espeak-ng now belongs to the system.
 
 **Phase 1 — DONE**, `f99eaee39`, refined by the commit that carries this line.
 `vis-foundation-voice` resolves `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm v1.13.5` from
@@ -518,7 +542,7 @@ stays small enough to watch on a phone and the bytes are fetched once, by a requ
 
 **Phase 4 — DONE**, in the commit that carries this line. Vis speaks locally, and "may we redistribute
 this" is answered by a file instead of a memory. `resources/vis-models/manifest.edn` carries six entries —
-Parakeet, pocket-tts, espeak-ng's phoneme tables and three Piper voices — each with an SPDX id, an
+Parakeet, pocket-tts and four Piper voices — each with an SPDX id, an
 attribution line, the original `:source-url` and its sources in preference order, and `assets.clj` is its
 only reader: nothing else in the tree holds a download URL. **A Hugging Face token is optional by
 construction.** A `:is-token-required` source is dropped when there is no token and moved to the FRONT when
@@ -541,13 +565,12 @@ PARTY's export whose README says in as many words that it is for non-commercial 
 is plain CC BY 4.0. The licence governs and the export script is MIT, so the sentence looks like a mistaken
 summary — but an artifact travelling with a written claim against our use is not one to put our name on. It
 therefore ships as an ENGINE with no weights: `:is-opt-in`, never mirrored, refused by every automatic path with
-the notice that says why, and installed only by a user who names it. espeak-ng's data is GPL-3.0-or-later and is
-mirrored anyway: copyleft is not a use restriction, and the tables are DATA read at runtime from a directory of
-their own, never linked, so they sit beside an Apache-2.0 binary as mere aggregation with the corresponding
-source URL the licence asks for.
+the notice that says why, and installed only by a user who names it. espeak-ng is not mirrored at all: its tables
+are GPL-3.0-or-later, in every package manager, and read from a directory at run time, so the SYSTEM installs them
+once and Piper refuses with the command that gets them (see Phase 5).
 
 `tts.clj` runs both families on one shape — prepare the assets, build one `OfflineTts`, generate — and they
-differ only in what a voice IS: a 63 MB VITS model over one shared copy of the phoneme tables, or a reference
+differ only in what a voice IS: a 63 MB VITS model phonemized by the system's espeak-ng, or a reference
 clip the model clones. Readiness is derived from disk, a group is as ready as its worst member, and its
 progress is the average, so a two-part install does not jump back to 0% when the first part finishes.
 `speech.clj` registers `piper-local` (default) and `pocket-tts-local`, so `features.speech` already publishes
@@ -556,8 +579,36 @@ both catalogues to the app. `asr.clj` lost its literal URL and its private extra
 line — a doctor check per model, and a `download` that will not accept an opt-in model's terms unless the flag
 names it. Proof: 147 tests green across the extension, `internal/voice` and the gateway, lint clean, and one
 real sentence spoken end to end — the pack release does not exist yet, so the install 404'd on our own URL and
-fell through to upstream exactly as designed, installing `espeak-ng-data` and `en_US-kristin-medium` and
-writing 197 KB of RIFF/WAVE at 22 050 Hz, 4.5 seconds long.
+fell through to upstream exactly as designed, installing `en_US-kristin-medium` and writing 197 KB of RIFF/WAVE at
+22 050 Hz, 4.5 seconds long.
+
+**Phase 5 — IN FLIGHT**, in the commit that carries this line. Two corrections and one export.
+
+The `voice-assets-pack` release is now an ASSETS release and nothing else: Parakeet plus `SHA256SUMS.txt`. The
+previous one is deleted, and with it two `vis-agent-linux-*` binaries that CI attached by accident — the tag
+`voice-assets-pack` matched the `v*` glob on `release.yml` and `native-release.yml`, so publishing assets started a
+product release. Both workflows now trigger and gate on `v[0-9]*`, and the macOS arm64 job names the repository's own
+Apple-silicon runner (`vis-macos-arm64`, overridable by `VIS_MACOS_ARM64_RUNNER`), because no hosted macOS runner has
+the memory the image needs.
+
+**espeak-ng is the system's, not ours.** The tables are GPL-3.0-or-later, sit in every package manager, and are read
+from a directory at run time; a machine that has them shares one copy with everything else on it. So Vis ships none:
+`:needs-espeak-ng true` marks the entries that need them, `tts/espeak-data-dir` finds them by their CONTENTS through
+`VIS_ESPEAK_NG_DATA` or seven standard locations, and a machine without them is TOLD — readiness is `:failed` with
+the install command in it, `synthesize!` throws `:voice-tts/espeak-ng-missing` before touching the network, and
+doctor's `::espeak` line prints `brew install espeak-ng` or `apt install espeak-ng` depending on where it is refusing.
+No tables, no Piper, and nobody downloads 63 MB to find that out.
+
+**No voice is mirrored either.** Kristin, Cori and John lost their `:pack` source: a voice belongs to the party that
+published it, and `assets_test.clj` now fails the manifest if any entry gains a `:pack` source without being ours to
+host — redistributable, commercial-safe, not a voice, and on a Blockether release URL.
+
+What is left is the export. `bin/export-pocket-tts` runs the MIT exporter (pinned at `b25d4a7`) over Kyutai's CC BY 4.0
+weights and assembles the seven files sherpa reads, with the tokenizer flattened to JSON and a LICENSE naming Kyutai. It
+needs a Hugging Face token ONCE, at build time: the ungated `pocket-tts-without-voice-cloning` repo has every
+`mimi.encoder.*` tensor zeroed, and that encoder is exactly what turns a reference clip into a voice, so an export from
+it could not speak in anyone's voice. No third-party mirror matches the gated digests either. The token reaches no user
+and lives in no file in this tree; what it produces needs no account at all.
 **Settled before Phase 1**, from public sources and with no code involved:
 
 - The `kyutai/pocket-tts` gate is `auto` and its only condition is a prohibited-use statement, so
@@ -576,9 +627,9 @@ Three decisions the plan takes, so they are not re-litigated in review:
 1. **Commercial use is the bar; attribution is not a disqualifier.** CC BY 4.0 artifacts stay and
    earn a line in `THIRD_PARTY_MODELS.md` (Parakeet, pocket-tts). Non-commercial terms (Expresso
    voices), use-based restrictions (OpenRAIL, so Supertonic) and unstated third-party derivative
-   terms are excluded. Copyleft is refused only where we would *distribute code*: espeak-ng's phoneme
-   tables are GPL-3.0-or-later DATA, read at run time from a directory of their own and never linked, so
-   Vis mirrors them; espeak-ng's CODE stays inside the natives k2-fsa publishes, fetched from upstream by the
+   terms are excluded. Copyleft is refused wherever we would DISTRIBUTE it: espeak-ng's phoneme tables are
+   GPL-3.0-or-later data, so the system's package manager installs them and Vis mirrors neither them nor the
+   natives k2-fsa publishes, which have espeak-ng's CODE compiled in.
    user and never re-hosted by us. The native image embeds the build host's pair as a resource today, which is
    what the espeak-free build in Phase 5 exists to end.
 2. **Piper is the first gateway engine, not pocket-tts.** Pocket needs no phonemizer, which is why it was

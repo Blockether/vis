@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+# Export Kyutai's pocket-tts to the ONNX bundle sherpa-onnx loads — from the
+# ORIGINAL weights, so the artifact Vis publishes is Vis' own.
+#
+# WHY this exists (licence, not preference):
+#   * Kyutai publishes pocket-tts under CC BY 4.0. Commercial use and
+#     redistribution of an adaptation are both permitted, with attribution — so
+#     an export WE make is ours to ship in the voice assets release.
+#   * The ready-made ONNX bundle everyone else uses is a THIRD PARTY's export,
+#     and the README inside that archive says "It is for non-commercial" while
+#     the LICENSE beside it is plain CC BY 4.0. Nobody here can resolve someone
+#     else's contradiction, so Vis does not mirror that file: it exports the
+#     weights itself and ships the result under CC BY 4.0 with attribution.
+#   * The exporter (KevinAHM/pocket-tts-onnx-export) is MIT. Its CODE is fine to
+#     run; it was only that repo's published ARTIFACT that carried terms we
+#     could not restate.
+#
+# The Hugging Face token is a BUILD-TIME credential and never reaches a user:
+# kyutai/pocket-tts is gated (auto-approve), so fetching the weights needs an
+# account. Everything this script produces is published in the voice assets
+# release, which needs no account, no token and no Hugging Face at all.
+#
+# Usage:
+#   HF_TOKEN=… bin/export-pocket-tts                       # english, int8, packaged
+#   HF_TOKEN=… bin/export-pocket-tts --language spanish
+#   HF_TOKEN=… bin/export-pocket-tts --voices ~/clips      # reference clips to bundle
+#   bin/export-pocket-tts --out /tmp/pack --keep-work
+#
+# Then, deliberately and only when asked:
+#   gh release upload voice-assets-pack <out>/pocket-tts-int8.tar.bz2 --repo Blockether/vis
+#
+# Requires: uv, git, tar, bzip2. ~10 GB of disk and one CPU-hour of patience.
+
+set -euo pipefail
+
+# Pinned deliberately: an export is only reproducible if the exporter is. Bump
+# this, re-export, and publish the new digest — never float the branch.
+EXPORT_REPO="https://github.com/KevinAHM/pocket-tts-onnx-export"
+EXPORT_REV="b25d4a7da07c5a96d1429102fcd9116f25d7ab5d"
+WEIGHTS_REPO="kyutai/pocket-tts"
+LANGUAGE="english_2026-04"
+PYTHON_VERSION="3.12"
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+out_dir="${repo_root}/dist/voice-assets"
+work_dir=""
+voices_dir=""
+keep_work=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --language) LANGUAGE="$2"; shift 2 ;;
+    --out) out_dir="$2"; shift 2 ;;
+    --work) work_dir="$2"; shift 2 ;;
+    --voices) voices_dir="$2"; shift 2 ;;
+    --keep-work) keep_work=1; shift ;;
+    -h|--help) sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+token="${HF_TOKEN:-${HUGGING_FACE_HUB_TOKEN:-}}"
+if [[ -z "$token" ]]; then
+  cat >&2 <<'EOF'
+No Hugging Face token.
+
+  kyutai/pocket-tts is gated (auto-approve): accept the terms once at
+  https://huggingface.co/kyutai/pocket-tts, then
+
+      HF_TOKEN=hf_… bin/export-pocket-tts
+
+  This credential is used ONCE, here, to fetch CC BY 4.0 weights. It is not
+  needed to USE anything this script produces.
+EOF
+  exit 1
+fi
+
+for tool in uv git tar; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "missing required tool: $tool" >&2; exit 1; }
+done
+
+if [[ -z "$work_dir" ]]; then
+  work_dir="$(mktemp -d "${TMPDIR:-/tmp}/vis-pocket-tts-export.XXXXXX")"
+fi
+mkdir -p "$work_dir" "$out_dir"
+cleanup() {
+  if [[ "$keep_work" -eq 0 && -d "$work_dir" ]]; then rm -rf "$work_dir"; fi
+}
+trap cleanup EXIT
+
+echo "==> work    ${work_dir}"
+echo "==> out     ${out_dir}"
+echo "==> weights ${WEIGHTS_REPO} (CC BY 4.0)"
+echo "==> export  ${EXPORT_REPO}@${EXPORT_REV} (MIT)"
+
+exporter="${work_dir}/pocket-tts-onnx-export"
+if [[ ! -d "$exporter" ]]; then
+  git clone --quiet "$EXPORT_REPO" "$exporter"
+fi
+git -C "$exporter" -c advice.detachedHead=false checkout --quiet "$EXPORT_REV"
+
+echo "==> creating the export environment (python ${PYTHON_VERSION})"
+uv venv --quiet --python "$PYTHON_VERSION" "${work_dir}/venv"
+# shellcheck disable=SC1091
+source "${work_dir}/venv/bin/activate"
+uv pip install --quiet -r "${exporter}/requirements.txt"
+
+echo "==> exporting ${LANGUAGE} (this is the hour)"
+(
+  cd "$exporter"
+  HF_TOKEN="$token" HUGGING_FACE_HUB_TOKEN="$token" \
+    python export.py --language "$LANGUAGE" --quantize
+)
+
+bundle="${exporter}/pocket-tts-onnx/onnx/${LANGUAGE}"
+[[ -d "$bundle" ]] || { echo "the exporter wrote no bundle at ${bundle}" >&2; exit 1; }
+
+# sherpa-onnx reads seven files under names of its own. Everything else the
+# exporter wrote is either a duplicate precision or runtime metadata its C++
+# loader does not read, and shipping it would only make the archive bigger.
+stage="${work_dir}/sherpa-onnx-pocket-tts-int8"
+rm -rf "$stage"
+mkdir -p "$stage"
+copy_as() {
+  local from="${bundle}/$1" to="${stage}/$2"
+  [[ -f "$from" ]] || { echo "the exporter did not produce $1" >&2; exit 1; }
+  cp "$from" "$to"
+}
+copy_as flow_lm_main_int8.onnx  lm_main.int8.onnx
+copy_as flow_lm_flow_int8.onnx  lm_flow.int8.onnx
+copy_as mimi_encoder.onnx       encoder.onnx
+copy_as mimi_decoder_int8.onnx  decoder.int8.onnx
+copy_as text_conditioner.onnx   text_conditioner.onnx
+
+# sherpa's C++ tokenizer reads plain JSON instead of linking sentencepiece, so
+# the vocabulary is flattened here (the same transformation as
+# k2-fsa/sherpa-onnx scripts/pocket-tts/convert_tokenizer.py, Apache-2.0).
+echo "==> flattening the tokenizer"
+python - "$bundle" "$stage" <<'PY'
+import json
+import sys
+
+import sentencepiece as spm
+
+bundle, stage = sys.argv[1], sys.argv[2]
+sp = spm.SentencePieceProcessor(model_file=f"{bundle}/tokenizer.model")
+vocab = {sp.id_to_piece(i): i for i in range(sp.get_piece_size())}
+scores = {sp.id_to_piece(i): sp.get_score(i) for i in range(sp.get_piece_size())}
+for name, data in (("vocab.json", vocab), ("token_scores.json", scores)):
+    with open(f"{stage}/{name}", "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+PY
+
+# A pocket voice IS a reference clip the model clones, so the bundle carries its
+# own. Each clip keeps whatever licence its recording has - only clips that may
+# be redistributed belong here.
+if [[ -n "$voices_dir" ]]; then
+  mkdir -p "${stage}/test_wavs"
+  cp "${voices_dir}"/*.wav "${stage}/test_wavs/"
+  echo "==> bundled $(find "${stage}/test_wavs" -name '*.wav' | wc -l | tr -d ' ') reference clips"
+fi
+
+cat > "${stage}/LICENSE" <<EOF
+Kyutai pocket-tts, exported to ONNX by the Vis project.
+
+Weights: https://huggingface.co/${WEIGHTS_REPO}
+Licence: Creative Commons Attribution 4.0 International (CC BY 4.0)
+         https://creativecommons.org/licenses/by/4.0/
+
+This bundle is an adaptation of Kyutai's model, produced by
+${EXPORT_REPO} at ${EXPORT_REV} (MIT) and repacked for sherpa-onnx.
+It is distributed under the same CC BY 4.0 terms, with attribution to Kyutai.
+
+Reference clips under test_wavs/, when present, carry their own licences.
+EOF
+
+cat > "${stage}/README.md" <<EOF
+# pocket-tts (int8), exported by Vis
+
+| | |
+|---|---|
+| weights | [${WEIGHTS_REPO}](https://huggingface.co/${WEIGHTS_REPO}) — CC BY 4.0 |
+| language bundle | ${LANGUAGE} |
+| exporter | ${EXPORT_REPO} @ \`${EXPORT_REV}\` (MIT) |
+| exported | $(date -u +%Y-%m-%d) |
+| reproduce | \`bin/export-pocket-tts --language ${LANGUAGE}\` |
+
+Vis exports these weights itself rather than mirroring a third party's bundle;
+\`bin/export-pocket-tts\` says why in its header. Attribution belongs to Kyutai.
+EOF
+
+archive="${out_dir}/pocket-tts-int8.tar.bz2"
+echo "==> packaging ${archive}"
+tar -cjf "$archive" -C "$work_dir" "$(basename "$stage")"
+
+if command -v sha256sum >/dev/null 2>&1; then
+  digest="$(sha256sum "$archive" | cut -d' ' -f1)"
+else
+  digest="$(shasum -a 256 "$archive" | cut -d' ' -f1)"
+fi
+bytes="$(wc -c < "$archive" | tr -d ' ')"
+
+cat <<EOF
+
+Done.
+
+  ${archive}
+  sha256 ${digest}
+  bytes  ${bytes}
+
+Paste into extensions/common/vis-foundation-voice/resources/vis-models/manifest.edn:
+
+   :sha256 "${digest}"
+   :bytes ${bytes}
+EOF

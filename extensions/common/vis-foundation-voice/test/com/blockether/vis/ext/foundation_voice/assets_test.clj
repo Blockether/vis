@@ -104,14 +104,14 @@
              (it "resolves the ids the engines ask for and refuses one it does not know"
                  (expect (= "parakeet-tdt-0.6b-v3-int8"
                             (:id (assets/entry "parakeet-tdt-0.6b-v3-int8"))))
-                 (expect (= "espeak-ng-data" (:id (assets/entry "espeak-ng-data"))))
+                 (expect (= "pocket-tts-int8" (:id (assets/entry "pocket-tts-int8"))))
                  (expect (= ["piper-en_US-kristin-medium" "piper-en_GB-cori-medium"
                              "piper-en_US-john-medium" "piper-en_US-ryan-high"]
                             (mapv :id (assets/for-engine :piper))))
                  (expect (= ["pocket-tts-int8"] (mapv :id (assets/for-engine :pocket-tts))))
                  (let [data (ex-data-of #(assets/entry "no-such-model"))]
                    (expect (= :voice-assets/unknown-asset (:type data)))
-                   (expect (contains? (set (:known data)) "espeak-ng-data"))))
+                   (expect (contains? (set (:known data)) "parakeet-tdt-0.6b-v3-int8"))))
              (it "lists Ryan and refuses to host him"
                  ;; The voice a user asked for by name: CC BY-NC-SA 4.0, so he is in the
                  ;; catalogue with his terms attached and no source of him is ours.
@@ -197,15 +197,21 @@
                      (expect (= "pocket-tts-int8" (:id data)))
                      (expect (seq (:notice data)))
                      (expect (seq (:source-url data))))))
-             (it "installs what an asset NEEDS before the asset itself"
-                 ;; A Piper voice whose phoneme tables are still arriving is
-                 ;; present-but-unusable, which reads to a user as a broken model.
-                 (let [installed (atom [])]
-                   (with-redefs
-                     [assets/installed? (constantly false)
-                      assets/install! (fn [entry & _]
-                                        (swap! installed conj (:id entry))
-                                        (:install-dir entry))]
-
-                     (assets/ensure! (assets/entry "piper-en_US-kristin-medium"))
-                     (expect (= ["espeak-ng-data" "piper-en_US-kristin-medium"] @installed))))))
+             (it "mirrors nothing it may not host, and hosts nothing it did not make"
+                 ;; The pack is a release of ASSETS WE OWN: our own exports and the
+                 ;; models we may mirror outright. A voice is never in it - each comes
+                 ;; from its publisher - and neither are espeak-ng's GPL tables, which
+                 ;; the SYSTEM installs.
+                 (doseq [entry (assets/manifest)]
+                   (let [pack (filter #(= :pack (:host %)) (:sources entry))]
+                     (when (seq pack)
+                       (expect (true? (:is-redistributed entry)) (:id entry))
+                       (expect (true? (:is-commercial-ok entry)) (:id entry))
+                       (expect (nil? (:voice entry)) (:id entry))
+                       (doseq [source pack]
+                         (expect (str/starts-with?
+                                   (:url source)
+                                   "https://github.com/Blockether/vis/releases/download/")
+                                 (:id entry))))
+                     (when-not (:is-redistributed entry) (expect (empty? pack) (:id entry)))))
+                 (expect (empty? (filter #(= "espeak-ng-data" (:id %)) (assets/manifest))))))

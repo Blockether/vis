@@ -4,9 +4,10 @@
    Two families, one shape: make the assets present, build one `OfflineTts`,
    generate. They differ only in what a VOICE is.
 
-     :piper       a voice IS a model — one 63 MB VITS network per speaker, all of
-                  them sharing one installed copy of espeak-ng's phoneme tables.
-                  Public-domain voices, so this is the family Vis ships.
+     :piper       a voice IS a model — one 63 MB VITS network per speaker,
+                  phonemized by the SYSTEM's espeak-ng. Vis mirrors no voice
+                  and no phoneme tables: each comes from its publisher, and
+                  a machine without espeak-ng is told so instead of failing.
      :pocket-tts  a voice is a reference CLIP the model clones, so the catalogue
                   is a directory of WAVs. Opt-in until Vis exports the original
                   CC BY 4.0 weights itself — see the manifest entry for why.
@@ -28,8 +29,74 @@
 ;; site) — keep this ns reflection-free at compile time.
 (set! *warn-on-reflection* true)
 
-(def ^:const espeak-asset-id "espeak-ng-data")
 (def ^:const pocket-asset-id "pocket-tts-int8")
+
+;; =============================================================================
+;; espeak-ng, which is the SYSTEM's to install and not Vis' to ship
+;; =============================================================================
+
+;; Piper phonemizes through espeak-ng, which reads its phoneme tables from a
+;; directory at run time. Vis does not ship those tables: espeak-ng is
+;; GPL-3.0-or-later and one command away in every package manager, so the
+;; machine installs it once and every Piper voice - and everything else on that
+;; machine - shares the copy. Missing tables are therefore a REFUSAL that names
+;; the command for the platform it is refusing on, never a silent failure and
+;; never a download.
+(def ^:const espeak-data-env "VIS_ESPEAK_NG_DATA")
+
+(def espeak-data-files
+  "What makes a directory espeak-ng's data directory rather than any directory."
+  ["phontab" "phondata" "phonindex"])
+
+(def espeak-data-candidates
+  "Where each package manager puts the tables, in the order they are tried."
+  ["/opt/homebrew/share/espeak-ng-data"       ; Homebrew, Apple silicon
+   "/usr/local/share/espeak-ng-data"          ; Homebrew on Intel, /usr/local
+   "/opt/local/share/espeak-ng-data"          ; MacPorts
+   "/usr/share/espeak-ng-data"                ; Debian, Ubuntu, Fedora, Arch
+   "/usr/lib/x86_64-linux-gnu/espeak-ng-data" ; Debian multiarch
+   "/usr/lib/aarch64-linux-gnu/espeak-ng-data" "/usr/local/lib/espeak-ng-data"])          ; built from source
+
+(defn espeak-data-dir?
+  "True when `dir` holds espeak-ng's tables and not merely the right name."
+  [dir]
+  (boolean (and (not (str/blank? (str dir)))
+                (every? #(.isFile (io/file (str dir) ^String %)) espeak-data-files))))
+
+(defn espeak-data-dir
+  "The system's espeak-ng phoneme tables, or nil. `VIS_ESPEAK_NG_DATA` wins so a
+   machine with them somewhere unusual - or a test - can say where."
+  []
+  (or (let [named (assets/env-value espeak-data-env)]
+        (when (espeak-data-dir? named) named))
+      (first (filter espeak-data-dir? espeak-data-candidates))))
+
+(defn espeak-install-hint
+  "How to get the tables on THIS platform, in the words that machine uses."
+  []
+  (let [os (str/lower-case (str (System/getProperty "os.name")))]
+    (cond
+      (str/includes? os "mac") "Install espeak-ng: `brew install espeak-ng`."
+      (str/includes? os "win")
+      "Install espeak-ng from https://github.com/espeak-ng/espeak-ng/releases and set VIS_ESPEAK_NG_DATA to its espeak-ng-data directory."
+      :else
+      "Install espeak-ng: `apt install espeak-ng`, `dnf install espeak-ng` or `pacman -S espeak-ng`.")))
+
+(defn espeak-missing-message
+  []
+  (str "espeak-ng's phoneme tables are not on this system, and Piper cannot "
+       "speak without them. "
+       (espeak-install-hint)))
+
+(defn- espeak-data-dir!
+  []
+  (or (espeak-data-dir)
+      (throw (ex-info (espeak-missing-message)
+                      {:type :voice-tts/espeak-ng-missing
+                       :family :piper
+                       :env espeak-data-env
+                       :searched espeak-data-candidates
+                       :remediation (espeak-install-hint)}))))
 
 ;; =============================================================================
 ;; Catalogue
@@ -141,32 +208,40 @@
   [family voice-id]
   (case family
     :piper
-    [(assets/entry espeak-asset-id) (piper-asset-for voice-id)]
+    [(piper-asset-for voice-id)]
 
     :pocket-tts
     [(pocket-asset)]))
 
 (defn model-state
   ([family] (model-state family nil))
-  ([family voice-id] (combined-state (mapv asset-state (required-assets family voice-id)))))
+  ([family voice-id]
+   ;; A voice on disk with no phoneme tables under it is not ready, and saying
+   ;; `:ready` there would only move the failure to the first spoken word.
+   (if (and (= :piper family) (not (espeak-data-dir)))
+     {:state :failed :error (espeak-missing-message)}
+     (combined-state (mapv asset-state (required-assets family voice-id))))))
 
 (defn start-download!
   "Begin (or report) the download every surface polls. An OPT-IN model is never
-   started here: the refusal names the command that installs it, because a
-   silent `:absent` forever is the one answer a user cannot act on."
+   started here, and neither is a Piper voice on a machine without espeak-ng:
+   the refusal names the command that fixes it, because a silent `:absent`
+   forever is the one answer a user cannot act on."
   ([family] (start-download! family nil))
   ([family voice-id]
-   (let [needed (required-assets family voice-id)]
-     (if-let [opt-in (first (filter #(and (:is-opt-in %) (not (assets/installed? %))) needed))]
-       {:state :failed
-        :error (str (:id opt-in)
-                    " is not downloaded automatically. Install it with "
-                    "`vis-agent extension voice models download --"
-                    (name family)
-                    (when-let [voice (:voice opt-in)]
-                      (str " --voice " (name (:id voice))))
-                    "`.")}
-       (combined-state (mapv start-asset-download! needed))))))
+   (if (and (= :piper family) (not (espeak-data-dir)))
+     {:state :failed :error (espeak-missing-message)}
+     (let [needed (required-assets family voice-id)]
+       (if-let [opt-in (first (filter #(and (:is-opt-in %) (not (assets/installed? %))) needed))]
+         {:state :failed
+          :error (str (:id opt-in)
+                      " is not downloaded automatically. Install it with "
+                      "`vis-agent extension voice models download --"
+                      (name family)
+                      (when-let [voice (:voice opt-in)]
+                        (str " --voice " (name (:id voice))))
+                      "`.")}
+         (combined-state (mapv start-asset-download! needed)))))))
 
 (defn install-model!
   "Blocking install of everything `family` needs before it can speak, for the
@@ -279,8 +354,11 @@
      produced
      (AtomicLong. 0)
 
-     callback
-     (generation-callback produced sample-rate (/ (count text) chars-per-second) report)
+     ^OfflineTtsCallback callback
+     (generation-callback produced
+                          sample-rate
+                          (/ (double (count text)) (double chars-per-second))
+                          report)
 
      ^GeneratedAudio audio
      (.generateWithConfigAndCallback tts text gen callback)
@@ -327,6 +405,9 @@
 
 (defn- ensure-assets!
   [family voice-id report]
+  ;; Refuse BEFORE the download: a 63 MB voice that cannot be phonemized is a
+  ;; wasted download and a worse error message.
+  (when (= :piper family) (espeak-data-dir!))
   (report {:phase :preparing :progress 0})
   (sherpa/ensure-native!)
   (mapv #(do (assets/ensure! %
@@ -365,7 +446,7 @@
         :piper
         (let
           [espeak-dir
-           (assets/install-dir (first installed))
+           (espeak-data-dir!)
 
            model-file
            (first (filter #(str/ends-with? % ".onnx") (:requires (last installed))))

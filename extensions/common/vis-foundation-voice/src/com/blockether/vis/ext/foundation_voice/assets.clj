@@ -56,7 +56,9 @@
       (throw (ex-info (str "No voice asset named " id " in the manifest")
                       {:type :voice-assets/unknown-asset :id id :known (mapv :id (manifest))}))))
 
-(defn- env-value
+(defn env-value
+  "An environment value as Vis sees it: the extension environment first, then
+   the process environment, blank treated as absent."
   [name]
   (or (some-> (vis/extension-env-value name)
               str
@@ -251,10 +253,8 @@
   (filterv #(= engine (:engine %)) (manifest)))
 
 (defn ensure!
-  "Install `asset` and everything it `:needs` if they are not already there
-   (blocking). Returns the install dir. A dependency — the shared espeak-ng data
-   every Piper voice reads — is installed FIRST, so a voice directory is never
-   present-but-unusable.
+  "Install `asset` if it is not already there (blocking). Returns the install
+   dir.
 
    This is the AUTOMATIC path, so it refuses an `:is-opt-in` asset: one whose
    terms we will not accept on a user's behalf arrives only through an explicit
@@ -268,7 +268,4 @@
                       :license (:license asset)
                       :notice (:notice asset)
                       :source-url (:source-url asset)})))
-   (doseq [id (:needs asset)]
-     (let [dep (entry id)]
-       (when-not (installed? dep) (install! dep on-progress))))
    (if (installed? asset) (install-dir asset) (install! asset (install-dir asset) on-progress))))
