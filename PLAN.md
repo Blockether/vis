@@ -337,7 +337,7 @@ GPL-3 phonemizer everybody already has costs us nothing to require and would cos
 | espeak-ng is a package everywhere | Homebrew, MacPorts, apt, dnf, pacman; the tables are read from a directory at run time, never linked into anything Vis builds |
 
 **Acceptance criteria.**
-- DONE. The `voice-assets-pack` release is an ASSETS release and nothing else: `parakeet-onnx.tar.bz2`,
+- DONE. The `voice-assets-pack` release is an ASSETS release and nothing else: `parakeet-asr-onnx.tar.bz2`,
   Vis' own `pocket-tts-onnx.tar.bz2` (96 MB, three reference clips inside) and `SHA256SUMS.txt`. The old release, its
   stray `vis-agent-linux-*` binaries and its tag are gone, and the new tag started no workflow.
 - DONE. `release.yml` and `native-release.yml` trigger on `v[0-9]*` and gate their publish steps on the same pattern, so

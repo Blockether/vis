@@ -43,7 +43,7 @@
     :kind :archive
     :sha256 "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf"
     :url
-    "https://github.com/Blockether/vis/releases/download/voice-assets-pack/parakeet-onnx.tar.bz2"}
+    "https://github.com/Blockether/vis/releases/download/voice-assets-pack/parakeet-asr-onnx.tar.bz2"}
    {:bytes 487170055
     :host :upstream
     :kind :archive
