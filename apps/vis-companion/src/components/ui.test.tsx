@@ -3275,3 +3275,55 @@ describe("one way out, and it says what it closes", () => {
     expect(artifactsSheetSource).not.toContain('closeLabel="Back to artifacts"');
   });
 });
+
+// A pocket voice IS a reference recording, so "create a voice" is an upload. The band
+// that does it stands in the MACHINE's own settings column, beside that machine's other
+// inventories, because the clip is stored on the machine and every session there speaks
+// with the same catalogue.
+describe("the machine's voices", () => {
+  const panel = settingsSource.slice(
+    settingsSource.indexOf("function VoicesPanel"),
+    settingsSource.indexOf("function FormLabel"),
+  );
+
+  it("is a band on the machine's column and disappears where speech is not installed", () => {
+    expect(settingsSource).toContain("<VoicesPanel client={client} />");
+    // 501 is a Vis with no voice extension — the ordinary one. Speech is not required
+    // to run Vis, so the band goes away entirely instead of explaining a feature this
+    // machine does not have, or worse, painting a red banner about it.
+    expect(panel).toContain("e.status === 501");
+    expect(panel).toContain("if (isAbsent) return null;");
+  });
+
+  it("offers the import on the engine's own word, never by being refused", () => {
+    // An engine that cannot clone answers 409 to an upload. The screen reads the flag
+    // the gateway already published rather than finding out the hard way.
+    expect(panel).toContain("catalogue?.engine?.is_voice_import === true");
+    expect(panel).toContain("{canImport && (");
+  });
+
+  it("sends the recording itself, and the words it says with it", () => {
+    expect(panel).toContain("client.importSpeechVoice(clip, {");
+    // The transcript is what the model is TOLD, which is what makes a clone track the
+    // voice instead of guessing the words.
+    expect(panel).toContain("text: says.trim() || undefined");
+    expect(panel).toContain('accept="audio/*"');
+    expect(panel).toContain('aria-label="Recording to import as a voice"');
+  });
+
+  it("only takes back what somebody brought, and asks first", () => {
+    expect(panel).toContain("voice.is_imported && confirming !== voice.id");
+    expect(panel).toContain("<ConfirmRow");
+    expect(panel).toContain("client.forgetSpeechVoice(voice.id)");
+  });
+
+  it("is built from the closed vocabulary", () => {
+    expect(panel).toContain("<SettingsPanel");
+    expect(panel).toContain("<Button");
+    expect(panel).toContain("<Input");
+    expect(panel).toContain("<Banner");
+    expect(panel).not.toContain("<button");
+    // The one raw element is the file picker the platform owns; it is never seen.
+    expect(panel.match(/<input/g)).toHaveLength(1);
+  });
+});

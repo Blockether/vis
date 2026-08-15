@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -20,6 +21,8 @@ import type {
   McpServer,
   McpServerInput,
   McpTestResult,
+  SpeechVoice,
+  SpeechVoices,
 } from "../lib/types";
 import {
   acquirePushToken,
@@ -71,6 +74,7 @@ import {
   Button,
   ChoiceCell,
   Chip,
+  ConfirmRow,
   DialogFrame,
   Input,
   ListRow,
@@ -219,6 +223,8 @@ function GatewayPanels({
           )}
 
           {!unreachable && !unauthorized && <McpServersPanel client={client} />}
+
+          {!unreachable && !unauthorized && <VoicesPanel client={client} />}
 
           {unreachable ? (
             <SettingsPanel title="Settings">
@@ -913,6 +919,260 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
   );
 }
 
+/**
+ * THE MACHINE'S VOICES, and the one way to add another.
+ *
+ * A cloning engine speaks by imitating a reference recording, so a voice IS a clip and
+ * "create a voice" is an upload and nothing else. The clip is stored on the machine that
+ * imported it and every session there speaks with the same catalogue, so this band stands
+ * beside that machine's other inventories rather than inside whichever session was open.
+ *
+ * A machine with no speaking engine renders NOTHING. Speech is an extension and most
+ * installs do not carry it; a band explaining a feature that is not there is noise on
+ * every one of them.
+ */
+function VoicesPanel({ client }: { client: GatewayClient }) {
+  const [catalogue, setCatalogue] = useState<SpeechVoices | null>(null);
+  const [isAbsent, setIsAbsent] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [clip, setClip] = useState<File | null>(null);
+  const [voiceName, setVoiceName] = useState("");
+  const [language, setLanguage] = useState("");
+  const [says, setSays] = useState("");
+  const [pending, setPending] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      try {
+        const answer = await client.speechVoices(signal);
+        if (signal?.aborted) return;
+        setCatalogue(answer);
+        setIsAbsent(false);
+        setErr(null);
+      } catch (e) {
+        if (signal?.aborted) return;
+        // 501 is a machine with no voice extension installed — the ordinary Vis. That
+        // is not a failure worth a red banner, it is a feature this machine does not
+        // have, so the whole band goes away.
+        if (e instanceof GatewayError && e.status === 501) {
+          setIsAbsent(true);
+          setCatalogue(null);
+          setErr(null);
+          return;
+        }
+        setErr((e as Error).message);
+      }
+    },
+    [client],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
+
+  function chooseClip(file: File | null) {
+    setClip(file);
+    setNote(null);
+    setErr(null);
+    if (fileRef.current && !file) fileRef.current.value = "";
+    if (file && !voiceName.trim()) {
+      setVoiceName(
+        file.name
+          .replace(/\.[^.]+$/, "")
+          .replace(/[_-]+/g, " ")
+          .trim(),
+      );
+    }
+  }
+
+  async function importClip() {
+    if (!clip || !voiceName.trim()) return;
+    setPending("import");
+    try {
+      const voice = await client.importSpeechVoice(clip, {
+        name: voiceName.trim(),
+        lang: language.trim() || undefined,
+        text: says.trim() || undefined,
+      });
+      setNote(`${voice.label ?? voice.id} can speak on this machine now.`);
+      chooseClip(null);
+      setVoiceName("");
+      setLanguage("");
+      setSays("");
+      await load();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function forget(voice: SpeechVoice) {
+    setPending(voice.id);
+    try {
+      await client.forgetSpeechVoice(voice.id);
+      setConfirming(null);
+      setNote(null);
+      await load();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  if (isAbsent) return null;
+
+  const voices = catalogue?.voices ?? [];
+  const canImport = catalogue?.engine?.is_voice_import === true;
+
+  return (
+    <SettingsPanel
+      title="Voices"
+      description="How this machine speaks. A cloning engine learns a voice from one recording, so adding a voice is uploading the clip it should sound like."
+      meta={
+        catalogue
+          ? `${voices.length} ${voices.length === 1 ? "voice" : "voices"}`
+          : "checking…"
+      }
+    >
+      <div className="space-y-2 p-3">
+        {err && <Banner kind="err">{err}</Banner>}
+        {note && <Banner kind="ok">{note}</Banner>}
+
+        {catalogue === null && !err && (
+          <p className="py-4 text-center font-mono text-meta text-dialog-hint">
+            Reading this machine's voices…
+          </p>
+        )}
+
+        {catalogue && voices.length === 0 && (
+          <p className="py-4 text-center font-mono text-meta text-dialog-hint">
+            {canImport
+              ? "No voice yet — import a recording and it becomes one."
+              : "This engine speaks in no named voice."}
+          </p>
+        )}
+
+        {voices.map((voice) => (
+          <div
+            key={voice.id}
+            className="border border-dialog-edge bg-panel-2"
+          >
+            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-2">
+              <div className="min-w-0">
+                <p className="truncate font-mono text-ui font-bold text-white">
+                  {voice.label ?? voice.id}
+                </p>
+                <p className="truncate font-mono text-chip text-dialog-hint">
+                  {[
+                    voice.language,
+                    voice.is_imported ? "imported here" : "ships with the engine",
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+              </div>
+              {voice.is_imported && confirming !== voice.id && (
+                <Button
+                  variant="secondary"
+                  onClick={() => setConfirming(voice.id)}
+                >
+                  Forget
+                </Button>
+              )}
+            </div>
+            {confirming === voice.id && (
+              <ConfirmRow
+                question={`Forget ${voice.label ?? voice.id}?`}
+                confirmLabel="Forget"
+                isBusy={pending === voice.id}
+                onKeep={() => setConfirming(null)}
+                onConfirm={() => void forget(voice)}
+              />
+            )}
+          </div>
+        ))}
+
+        {canImport && (
+          <div className="space-y-2 border border-dialog-edge bg-panel-2 p-3">
+            <input
+              ref={fileRef}
+              type="file"
+              accept="audio/*"
+              className="hidden"
+              aria-label="Recording to import as a voice"
+              onChange={(event) => chooseClip(event.target.files?.[0] ?? null)}
+            />
+            {clip === null ? (
+              <Button
+                variant="secondary"
+                onClick={() => fileRef.current?.click()}
+              >
+                Import a voice…
+              </Button>
+            ) : (
+              <div className="space-y-2">
+                <FormLabel
+                  label="Recording"
+                  hint="Ten to thirty seconds of clear speech is plenty."
+                >
+                  <p className="truncate font-mono text-meta text-white">
+                    {clip.name}
+                  </p>
+                </FormLabel>
+                <FormLabel label="Name">
+                  <Input
+                    value={voiceName}
+                    placeholder="What to call this voice"
+                    onChange={(event) => setVoiceName(event.target.value)}
+                  />
+                </FormLabel>
+                <FormLabel
+                  label="Language"
+                  hint="Optional — the tag this clip speaks in, like en or en-GB."
+                >
+                  <Input
+                    value={language}
+                    placeholder="en"
+                    onChange={(event) => setLanguage(event.target.value)}
+                  />
+                </FormLabel>
+                <FormLabel
+                  label="What the clip says"
+                  hint="Optional, and worth typing: the model is TOLD these words, so the clone tracks the voice instead of guessing them."
+                >
+                  <Input
+                    value={says}
+                    placeholder="Transcript of the recording"
+                    onChange={(event) => setSays(event.target.value)}
+                  />
+                </FormLabel>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="primary"
+                    disabled={!voiceName.trim() || pending === "import"}
+                    onClick={() => void importClip()}
+                  >
+                    {pending === "import" ? "Importing…" : "Import"}
+                  </Button>
+                  <Button variant="quiet" onClick={() => chooseClip(null)}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </SettingsPanel>
+  );
+}
 function FormLabel({
   label,
   hint,

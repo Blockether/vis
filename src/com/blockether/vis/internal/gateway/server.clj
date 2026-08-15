@@ -2662,36 +2662,47 @@
           not-empty
           keyword))
 
-(defn- with-direction-engine
-  "Resolve the session and the engine for ONE direction of speech, or answer the ONE
-   refusal that fits: 404 unknown session, 400 an engine id nobody registered, 501 no
-   engine at all in that direction (a build without any voice extension).
+(defn- with-engine
+  "Resolve the engine for ONE direction and hand it to `f`, or answer the refusal that fits:
+   400 an engine id nobody registered, 501 no engine at all in that direction.
 
-   Both directions refuse in the same shape on purpose — a client that learned it from
-   `/voice` reads a `/speech` refusal without a second code path."
+   501 is a NORMAL Vis, not a broken one: speech is an extension, so a gateway with no
+   voice extension installed answers every route in this file rather than failing to start.
+
+   Session-less on purpose - which voices a machine can speak with is a fact about the
+   MACHINE, so the routes that only ask that question carry no session id."
   [direction request f]
   (let
-    [sid
-     (path-sid request)
-
-     id
+    [id
      (requested-engine-id request)
 
      noun
      (voice/direction-nouns direction)]
 
-    (cond (not (and sid (state/soul sid)))
-          (json-response 404 {:status "unavailable" :error "unknown session"})
-          :else (if-let [engine (try (voice/resolve-engine direction id) (catch Throwable _ nil))]
-                  (f sid engine)
-                  (if id
-                    (json-response 400
-                                   {:status "unavailable"
-                                    :error (str "unknown " noun " engine: " (name id))
-                                    :engines (mapv voice/public-engine (voice/engines direction))})
-                    (json-response 501
-                                   {:status "unavailable"
-                                    :error (str "no " noun " engine is registered")}))))))
+    (if-let [engine (try (voice/resolve-engine direction id) (catch Throwable _ nil))]
+      (f engine)
+      (if id
+        (json-response 400
+                       {:status "unavailable"
+                        :error (str "unknown " noun " engine: " (name id))
+                        :engines (mapv voice/public-engine (voice/engines direction))})
+        (json-response 501
+                       {:status "unavailable" :error (str "no " noun " engine is registered")})))))
+
+(defn- with-direction-engine
+  "[[with-engine]] for the routes whose work belongs to a SESSION: 404 first when nobody
+   knows that id.
+
+   Both directions refuse in the same shape on purpose - a client that learned it from
+   `/voice` reads a `/speech` refusal without a second code path."
+  [direction request f]
+  (let [sid (path-sid request)]
+    (if-not (and sid (state/soul sid))
+      (json-response 404 {:status "unavailable" :error "unknown session"})
+      (with-engine direction
+                   request
+                   (fn [engine]
+                     (f sid engine))))))
 
 (defn- with-voice-engine
   "[[with-direction-engine]] for the transcription routes."
@@ -3264,19 +3275,23 @@
                     (json-response 500 {:error (voice/error-message t)})))))
 
 (defn- speech-voices-handler
-  "GET  /v1/sessions/:sid/speech/voices - every voice the speaking engine can use, plus
-         whether it can learn another one.
+  "GET  /v1/speech/voices - every voice the speaking engine can use, plus whether it can
+         learn another one.
    POST the same path - the body is a RECORDING, described by `?name=`, `?lang=` and
          `?text=` (the clip's own transcript). Answers 201 with the voice it became.
 
    A cloning voice IS a reference clip, so \"create a voice\" is an upload and nothing
    else. Deliberately NOT gated on model readiness: the clip is stored on disk and needs
-   no model, so a voice can be added while the bundle is still downloading."
+   no model, so a voice can be added while the bundle is still downloading.
+
+   No session in the path: an imported clip belongs to the machine, and every session on
+   it speaks with the same catalogue."
   [request]
   (or (when (= :post (:request-method request)) (speech-disabled-response))
-      (with-speech-engine
+      (with-engine
+        :synthesize
         request
-        (fn [_sid engine]
+        (fn [engine]
           (if-not (= :post (:request-method request))
             (json-response 200 {:engine (voice/public-engine engine) :voices (voice/voices engine)})
             (let [tmp (java.io.File/createTempFile "vis-voice-clip" ".upload")]
@@ -3296,19 +3311,19 @@
                    (finally (.delete tmp)))))))))
 
 (defn- speech-voice-handler
-  "DELETE /v1/sessions/:sid/speech/voices/:voice-id - forget an imported voice.
+  "DELETE /v1/speech/voices/:voice-id - forget an imported voice.
 
    404 when the engine has no such imported voice: a client that deleted a voice it
    could still see is looking at a stale catalogue, and that is worth being told."
   [request]
   (or (speech-disabled-response)
-      (with-speech-engine request
-                          (fn [_sid engine]
-                            (try (if (voice/forget-voice! engine
-                                                          (get-in request [:path-params :voice-id]))
-                                   (json-response 200 {:is-forgotten true})
-                                   (json-response 404 {:error "no imported voice with that id"}))
-                                 (catch Throwable t (voice-import-failure t)))))))
+      (with-engine :synthesize
+                   request
+                   (fn [engine]
+                     (try (if (voice/forget-voice! engine (get-in request [:path-params :voice-id]))
+                            (json-response 200 {:is-forgotten true})
+                            (json-response 404 {:error "no imported voice with that id"}))
+                          (catch Throwable t (voice-import-failure t)))))))
 (def ^:private JOB_QUEUE_CAP
   "Per-connection queue of job states. A transcription or a synthesis reports a handful
    of percentages per second at most, so anything the writer cannot keep up with is a
@@ -3711,6 +3726,8 @@
         ["/providers/:provider-id/auth/poll" {:post provider-auth-poll-handler}]
         ["/providers/:provider-id/auth/cancel" {:post provider-auth-cancel-handler}]
         ["/providers/:provider-id/logout" {:post provider-logout-handler}]
+        ["/speech/voices" {:get speech-voices-handler :post speech-voices-handler}]
+        ["/speech/voices/:voice-id" {:delete speech-voice-handler}]
         ["/router" {:get router-handler :patch router-default-handler}]
         ["/clients" {:post client-register-handler}]
         ["/clients/:cid" {:delete client-release-handler}] ["/admin/status" {:get status-handler}]
@@ -3736,8 +3753,6 @@
         [(sid-route "/voice/jobs/:job-id/events") {:get voice-job-events-handler}]
         [(sid-route "/speech") {:post speech-handler}]
         [(sid-route "/speech/model") {:get speech-model-handler :post speech-model-handler}]
-        [(sid-route "/speech/voices") {:get speech-voices-handler :post speech-voices-handler}]
-        [(sid-route "/speech/voices/:voice-id") {:delete speech-voice-handler}]
         [(sid-route "/speech/jobs/:job-id") {:get speech-job-handler :delete speech-job-handler}]
         [(sid-route "/speech/jobs/:job-id/events") {:get speech-job-events-handler}]
         [(sid-route "/speech/jobs/:job-id/audio") {:get speech-job-audio-handler}]

@@ -367,9 +367,18 @@ GPL-3 phonemizer everybody already has costs us nothing to require and would cos
 - DONE. A voice can be BROUGHT, not just shipped. `voices.clj` is the imported-clip store (`VIS_VOICES_DIR` or `~/.vis/voices`:
   decode, downmix to one channel, trim to 30 s, 16-bit WAV, an `<id>.edn` sidecar, ffmpeg only for what Vis cannot decode);
   the pocket engine declares `:import-voice`/`:forget-voice`; the host seam is `voice/import-voice!` and `voice/forget-voice!`
-  with `:is-voice-import` advertised in `/v1/capabilities`; the gateway serves `POST|GET /v1/sessions/:sid/speech/voices` and
-  `DELETE /v1/sessions/:sid/speech/voices/:voice-id`; and the CLI is `vis-agent extension voice voices|import <clip.wav>
+   with `:is-voice-import` advertised in `/v1/capabilities`; the gateway serves `POST|GET /v1/speech/voices` and
+  `DELETE /v1/speech/voices/:voice-id` — off the MACHINE, not off a session, because a voice outlives the conversation
+  that added it; and the CLI is `vis-agent extension voice voices|import <clip.wav>
   --name --lang --text|forget <name>`. One store, so a clip imported from the terminal is a voice the app can speak in.
+- DONE. The app brings one too. `SettingsScreen.tsx`'s `VoicesPanel` lists the machine's voices, uploads a recording
+  through a file input with its name, language and transcript, and forgets one behind a `ConfirmRow`; `gateway.ts`
+  passes the clip through as a `Blob` body it no longer JSON-encodes (`speechVoices`, `importSpeechVoice`,
+  `forgetSpeechVoice`). The panel renders NOTHING when the gateway answers 501, so a machine that cannot clone shows
+  no dead control.
+- DONE. Neither direction is REQUIRED. Speaking and listening are extensions: with no engine registered the gateway
+  still starts and chat still works, `/v1/capabilities` reports `voice.enabled false` and `speech.is_enabled false`,
+  and all six voice routes answer 501 with the reason — no 500 and nothing thrown.
 - PROVEN on this machine through the JVM path: all three shipped clips synthesized (~4.7 s of audio each) and Parakeet
   transcribed every one of them back verbatim, and an imported clip cloned and spoke the same way.
 - `THIRD_PARTY_MODELS.md` generated FROM the manifest, so the file cannot drift from what ships.
@@ -647,11 +656,18 @@ did not carry would report itself ready and fail at the first sentence.
 The same fact makes "add a voice" an UPLOAD. `voices.clj` stores a brought clip under `VIS_VOICES_DIR` or `~/.vis/voices`
 — decoded, mixed to one channel, trimmed to 30 seconds, written as 16-bit WAV beside an `<id>.edn` sidecar, with ffmpeg
 used only for containers Vis cannot decode itself. The pocket engine declares `:import-voice`/`:forget-voice`, so
-`/v1/capabilities` advertises `is_voice_import`, the gateway serves `POST|GET /v1/sessions/:sid/speech/voices` and
-`DELETE …/speech/voices/:voice-id`, and the terminal has `vis-agent extension voice import <clip.wav> --name --lang
---text`. One store behind all of them: a clip imported from the CLI is a voice the app can speak in, an imported id
-shadows a shipped one, and the clip's transcript is passed to the model as reference text. Proven on this machine —
-each shipped clip synthesized and transcribed back verbatim by our own Parakeet, and an imported clip did the same.
+`/v1/capabilities` advertises `is_voice_import`, the gateway serves `POST|GET /v1/speech/voices` and
+`DELETE /v1/speech/voices/:voice-id` — off the MACHINE, not off a session, because a voice outlives the conversation
+that added it — the app's Settings screen uploads a recording and forgets one, and the terminal has `vis-agent
+extension voice import <clip.wav> --name --lang --text`. One store behind all three: a clip imported from the CLI is a
+voice the app can speak in, an imported id shadows a shipped one, and the clip's transcript is passed to the model as
+reference text. Proven on this machine — each shipped clip synthesized and transcribed back verbatim by our own
+Parakeet, and an imported clip did the same.
+
+And none of it is required to run Vis. With no engine registered in either direction the gateway still starts, chat is
+untouched, capabilities say `voice.enabled false` and `speech.is_enabled false`, and every voice route — both models,
+transcription, synthesis and all three voice routes — answers 501 with the reason instead of failing. Vis is an agent
+that CAN speak, not one that needs to.
 
 **Settled before Phase 1**, from public sources and with no code involved:
 
@@ -686,8 +702,8 @@ Three decisions the plan takes, so they are not re-litigated in review:
 
 TODO, in order:
 
-1. **Phase 5** — `THIRD_PARTY_MODELS.md` generated FROM the manifest, and reference clips of our own so pocket-tts has a voice.
-2. **Phase 6** — engine and voice pickers in the companion, Android voice enumeration.
+1. **Phase 5** — `THIRD_PARTY_MODELS.md` generated FROM the manifest.
+2. **Phase 6** — engine and voice pickers in the companion (Settings already imports and forgets voices), Android voice enumeration.
 3. **Phase 7** — the rest of the Piper catalogue and Kokoro, licensed one voice at a time.
 
 **Lineage.** This plan supersedes *"Let a session speak to the other sessions in its tree"*, which

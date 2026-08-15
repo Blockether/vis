@@ -43,6 +43,8 @@ import type {
   PushDevice,
   PushDeviceInput,
   PushStatus,
+  SpeechVoice,
+  SpeechVoices,
   VoiceJob,
   VoiceModelState,
   VoiceProgress,
@@ -626,7 +628,11 @@ export class GatewayClient {
     headers: Headers;
   }> {
     const headers = this.headers(extraHeaders);
-    if (body !== undefined) headers.set("Content-Type", "application/json");
+    // A Blob is a RECORDING (or any raw upload) and travels as itself: it carries its
+    // own media type and JSON-encoding it would destroy it.
+    const isRaw = body instanceof Blob;
+    if (body !== undefined && !isRaw)
+      headers.set("Content-Type", "application/json");
     // Bound the whole exchange, not just the connect: a resumed request usually
     // parks on the BODY read, with its headers already delivered.
     const deadline = new AbortController();
@@ -644,7 +650,12 @@ export class GatewayClient {
         res = await fetch(this.base + path, {
           method,
           headers,
-          body: body === undefined ? undefined : JSON.stringify(body),
+          body:
+            body === undefined
+              ? undefined
+              : isRaw
+                ? (body as Blob)
+                : JSON.stringify(body),
           signal: attemptSignal,
         });
       } catch (e) {
@@ -810,6 +821,55 @@ export class GatewayClient {
     return this.request<VoiceModelState>(
       start ? "POST" : "GET",
       `/v1/sessions/${encodeURIComponent(sid)}/voice/model`,
+      undefined,
+      signal,
+    );
+  }
+
+  // ── Voices: what this MACHINE can speak with ────────────────────
+  //
+  // No session in these paths on purpose. A cloning voice is a stored recording, so it
+  // belongs to the machine, and the screen that manages voices is settings — which is
+  // reading a machine and not a session.
+
+  /** Every voice the speaking engine can use, plus whether it can learn another one. */
+  speechVoices(signal?: AbortSignal): Promise<SpeechVoices> {
+    return this.request<SpeechVoices>(
+      "GET",
+      "/v1/speech/voices",
+      undefined,
+      signal,
+    );
+  }
+
+  /**
+   * Create a voice by UPLOADING the recording that is it. The clip travels as the body;
+   * everything said ABOUT it travels in the query, including its own transcript — the
+   * model is told the words, which is what makes the clone track the voice instead of
+   * guessing them.
+   */
+  async importSpeechVoice(
+    clip: Blob,
+    about: { name: string; lang?: string; text?: string },
+    signal?: AbortSignal,
+  ): Promise<SpeechVoice> {
+    const query = new URLSearchParams({ name: about.name });
+    if (about.lang) query.set("lang", about.lang);
+    if (about.text) query.set("text", about.text);
+    const answer = await this.request<{ voice: SpeechVoice }>(
+      "POST",
+      `/v1/speech/voices?${query.toString()}`,
+      clip,
+      signal,
+    );
+    return answer.voice;
+  }
+
+  /** Take an imported voice back. 404 means the catalogue on screen is stale. */
+  async forgetSpeechVoice(id: string, signal?: AbortSignal): Promise<void> {
+    await this.request(
+      "DELETE",
+      `/v1/speech/voices/${encodeURIComponent(id)}`,
       undefined,
       signal,
     );

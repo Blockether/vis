@@ -2638,77 +2638,133 @@
   ;; upload and nothing else. The route has to carry the RECORDING through to the
   ;; engine, report what it became in the same vocabulary a picker already reads, and
   ;; let it be taken back.
+  ;;
+  ;; No session id anywhere in here: a clip lives on the MACHINE, so these routes are
+  ;; reachable from a settings screen that is not looking at any session.
+  (let [store (atom {})]
+    (with-only-speech-engine!
+      (cloning-speaker store)
+      (fn []
+        (let
+          [upload (fn [query clip]
+                    ((rv 'speech-voices-handler)
+                      {:request-method :post
+                       :query-params query
+                       :body (java.io.ByteArrayInputStream. (.getBytes (str clip) "UTF-8"))}))
+           listed (fn []
+                    ((rv 'speech-voices-handler) {:request-method :get}))
+           forget (fn [id]
+                    ((rv 'speech-voice-handler)
+                      {:request-method :delete :path-params {:voice-id id}}))]
+
+          (testing "the upload IS the voice: bytes in, catalogue entry out"
+            (let
+              [response (upload {"name" "My Own" "lang" "en-GB" "text" "what the clip says"}
+                                "RIFFclip")
+               body (wire/parse-json (:body response))]
+
+              (is (= 201 (:status response)))
+              (is (= {"id" "my-own" "label" "My Own" "language" "en-GB" "is_imported" true}
+                     (get body "voice")))
+              ;; the engine was handed the RECORDING, not merely a name for it
+              (is (= "RIFFclip" (:heard (get @store "my-own"))))
+              (is (= "what the clip says" (:clip-text (get @store "my-own"))))))
+          (testing "one request answers both what can be spoken and whether more may be added"
+            (let [body (wire/parse-json (:body (listed)))]
+              (is (true? (get-in body ["engine" "is_voice_import"])))
+              (is (= ["my-own"] (mapv #(get % "id") (get body "voices"))))
+              (is (true? (get-in body ["voices" 0 "is_imported"])))))
+          (testing "a voice can be taken back, and asking twice says it is gone"
+            (let [gone (forget "my-own")]
+              (is (= 200 (:status gone)))
+              (is (true? (get (wire/parse-json (:body gone)) "is_forgotten"))))
+            (is (empty? (get (wire/parse-json (:body (listed))) "voices")))
+            (is (= 404 (:status (forget "my-own")))))
+          (testing "the toggle refuses the upload without hiding the catalogue"
+            (try (toggles/set-enabled! voice/speech-toggle-id false)
+                 (is (= 403 (:status (upload {"name" "Later"} "RIFFclip"))))
+                 (is (= 403 (:status (forget "my-own"))))
+                 (is (= 200 (:status (listed))))
+                 (finally (toggles/set-enabled! voice/speech-toggle-id true)))))))
+    (testing "an engine that cannot clone refuses the upload by name, and it is not a 500"
+      (with-only-speech-engine!
+        (speaking-engine)
+        (fn []
+          (let
+            [response ((rv 'speech-voices-handler)
+                        {:request-method :post
+                         :query-params {"name" "My Own"}
+                         :body (java.io.ByteArrayInputStream. (.getBytes "RIFFclip" "UTF-8"))})]
+            (is (= 409 (:status response)))
+            (is (str/includes? (get (wire/parse-json (:body response)) "error")
+                               "cannot learn a voice"))))))))
+
+(deftest voices-hang-off-the-machine-not-off-a-session
+  ;; An imported clip is stored on the machine and every session on it speaks with the
+  ;; same catalogue, so the one screen that manages voices - settings, which is looking
+  ;; at a machine and not at a session - can reach them without inventing a session id.
+  (let
+    [match-by-path
+     (requiring-resolve 'reitit.core/match-by-path)
+
+     router
+     ((rv 'router) "token" [])]
+
+    (testing "the machine's own catalogue is listed, added to and pruned"
+      (is (= @(rv 'speech-voices-handler)
+             (get-in (match-by-path router "/v1/speech/voices") [:data :get :handler])))
+      (is (= @(rv 'speech-voices-handler)
+             (get-in (match-by-path router "/v1/speech/voices") [:data :post :handler])))
+      (is (= @(rv 'speech-voice-handler)
+             (get-in (match-by-path router "/v1/speech/voices/mine") [:data :delete :handler]))))
+    (testing "and nothing serves them under a session"
+      (is (nil? (match-by-path router (str "/v1/sessions/" (random-uuid) "/speech/voices")))))))
+
+(deftest neither-speaking-nor-listening-is-required-to-run-vis
+  ;; Vis is an agent that CAN speak, not one that needs to. Speech and transcription are
+  ;; extensions, so a machine with neither installed is the ordinary one: the gateway
+  ;; still starts, chat still works, and every route in both directions answers the one
+  ;; refusal a client can read - 501, "no ... engine is registered". None of it may be a
+  ;; 500, and none of it may throw.
   (let
     [sid
      (str (random-uuid))
 
-     store
-     (atom {})]
+     refusals
+     [['speech-voices-handler {:request-method :get}]
+      ['speech-voices-handler
+       {:request-method :post
+        :query-params {"name" "Mine"}
+        :body (java.io.ByteArrayInputStream. (byte-array 0))}]
+      ['speech-voice-handler {:request-method :delete :path-params {:voice-id "mine"}}]
+      ['speech-model-handler {:request-method :get :path-params {:sid sid}}]
+      ['voice-model-handler {:request-method :get :path-params {:sid sid}}]
+      ['speech-handler
+       (merge {:request-method :post :path-params {:sid sid}} (json-body {:text "hello"}))]]]
 
     (with-redefs-fn {#'state/soul (constantly {:session-id sid})}
       (fn []
-        (with-only-speech-engine!
-          (cloning-speaker store)
+        (with-only-direction-engine!
+          :synthesize
+          nil
           (fn []
-            (let
-              [upload
-               (fn [query clip]
-                 ((rv 'speech-voices-handler)
-                   {:request-method :post
-                    :path-params {:sid sid}
-                    :query-params query
-                    :body (java.io.ByteArrayInputStream. (.getBytes (str clip) "UTF-8"))}))
-
-               listed
-               (fn []
-                 ((rv 'speech-voices-handler) {:request-method :get :path-params {:sid sid}}))
-
-               forget
-               (fn [id]
-                 ((rv 'speech-voice-handler)
-                   {:request-method :delete :path-params {:sid sid :voice-id id}}))]
-
-              (testing "the upload IS the voice: bytes in, catalogue entry out"
-                (let
-                  [response
-                   (upload {"name" "My Own" "lang" "en-GB" "text" "what the clip says"} "RIFFclip")
-
-                   body
-                   (wire/parse-json (:body response))]
-
-                  (is (= 201 (:status response)))
-                  (is (= {"id" "my-own" "label" "My Own" "language" "en-GB" "is_imported" true}
-                         (get body "voice")))
-                  ;; the engine was handed the RECORDING, not merely a name for it
-                  (is (= "RIFFclip" (:heard (get @store "my-own"))))
-                  (is (= "what the clip says" (:clip-text (get @store "my-own"))))))
-              (testing "one request answers both what can be spoken and whether more may be added"
-                (let [body (wire/parse-json (:body (listed)))]
-                  (is (true? (get-in body ["engine" "is_voice_import"])))
-                  (is (= ["my-own"] (mapv #(get % "id") (get body "voices"))))
-                  (is (true? (get-in body ["voices" 0 "is_imported"])))))
-              (testing "a voice can be taken back, and asking twice says it is gone"
-                (let [gone (forget "my-own")]
-                  (is (= 200 (:status gone)))
-                  (is (true? (get (wire/parse-json (:body gone)) "is_forgotten"))))
-                (is (empty? (get (wire/parse-json (:body (listed))) "voices")))
-                (is (= 404 (:status (forget "my-own")))))
-              (testing "the toggle refuses the upload without hiding the catalogue"
-                (try (toggles/set-enabled! voice/speech-toggle-id false)
-                     (is (= 403 (:status (upload {"name" "Later"} "RIFFclip"))))
-                     (is (= 403 (:status (forget "my-own"))))
-                     (is (= 200 (:status (listed))))
-                     (finally (toggles/set-enabled! voice/speech-toggle-id true)))))))
-        (testing "an engine that cannot clone refuses the upload by name, and it is not a 500"
-          (with-only-speech-engine!
-            (speaking-engine)
-            (fn []
-              (let
-                [response ((rv 'speech-voices-handler)
-                            {:request-method :post
-                             :path-params {:sid sid}
-                             :query-params {"name" "My Own"}
-                             :body (java.io.ByteArrayInputStream. (.getBytes "RIFFclip" "UTF-8"))})]
-                (is (= 409 (:status response)))
-                (is (str/includes? (get (wire/parse-json (:body response)) "error")
-                                   "cannot learn a voice"))))))))))
+            (with-only-direction-engine!
+              :transcribe
+              nil
+              (fn []
+                (testing "the gateway answers, and says plainly what it cannot do"
+                  (let
+                    [features (-> ((rv 'capabilities-handler) {})
+                                  :body
+                                  wire/parse-json
+                                  (get "features"))]
+                    (is (true? (get-in features ["chat" "enabled"])))
+                    (is (false? (get-in features ["voice" "enabled"])))
+                    (is (false? (get-in features ["speech" "is_enabled"])))))
+                (testing "every voice route refuses the same readable way, in both directions"
+                  (doseq [[handler request] refusals]
+                    (let [response ((rv handler) request)]
+                      (is (= 501 (:status response)) (str handler))
+                      (is (str/includes? (get (wire/parse-json (:body response)) "error")
+                                         "engine is registered")
+                          (str handler)))))))))))))

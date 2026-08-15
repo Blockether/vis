@@ -287,3 +287,57 @@ describe('GatewayClient transcript revalidation', () => {
     expect(await client.transcriptIfMoved('session-1', answered)).toHaveLength(2);
   });
 });
+
+// A pocket voice IS a recording, so "create a voice" is an upload: the clip has to
+// reach the gateway as ITSELF, and everything said about it rides in the query.
+describe('GatewayClient imported voices', () => {
+  it('posts the recording verbatim to the machine, not to a session', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ voice: { id: 'my-own', label: 'My Own', is_imported: true } }),
+        { status: 201 },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+    const clip = new Blob([new Uint8Array([82, 73, 70, 70])], { type: 'audio/wav' });
+
+    const voice = await new GatewayClient(conn).importSpeechVoice(clip, {
+      name: 'My Own',
+      lang: 'en-GB',
+      text: 'what the clip says',
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    const asked = new URL(String(url));
+    expect(asked.pathname).toBe('/v1/speech/voices');
+    expect(asked.searchParams.get('name')).toBe('My Own');
+    expect(asked.searchParams.get('lang')).toBe('en-GB');
+    expect(asked.searchParams.get('text')).toBe('what the clip says');
+    // The BYTES travel, not a JSON envelope around them — and the clip keeps its own
+    // media type, so nothing stamps `application/json` on a WAV.
+    expect((init as RequestInit).body).toBe(clip);
+    expect(new Headers((init as RequestInit).headers).get('Content-Type')).toBeNull();
+    expect(voice.id).toBe('my-own');
+  });
+
+  it('lists and forgets voices on the machine-level route', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(
+        () =>
+          new Response(JSON.stringify({ engine: { id: 'pocket-tts' }, voices: [] })),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+
+    await client.speechVoices();
+    await client.forgetSpeechVoice('my own');
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/v1/speech/voices');
+    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain('/sessions/');
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('/v1/speech/voices/my%20own');
+    expect(fetchMock.mock.calls[1]?.[1]?.method).toBe('DELETE');
+  });
+});

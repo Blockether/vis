@@ -504,6 +504,28 @@ export interface GatewayCapabilities {
       /** Id of the engine a recording is sent to unless one is named. */
       selected?: string | null;
     };
+    /**
+     * SPEAKING back, which is a separate extension from listening: a gateway can
+     * transcribe and not speak, speak and not transcribe, or neither. `is_enabled` is
+     * already the AND of "an engine exists" and "the operator left spoken replies on",
+     * so a client never has to remember to check both.
+     */
+    speech?: {
+      is_enabled: boolean;
+      transport?: "audio/wav";
+      synthesis?: "gateway-local";
+      is_async?: boolean;
+      progress?: "sse";
+      progress_event?: string;
+      phases?: string[];
+      /** Above this many characters a synthesis answers a JOB instead of the audio. */
+      inline_max_chars?: number;
+      /** The longest line this gateway will speak at all. */
+      max_chars?: number;
+      model: VoiceModelState;
+      engines?: SpeechEngine[];
+      selected?: string | null;
+    };
     push?: PushStatus;
   };
 }
@@ -516,6 +538,42 @@ export interface VoiceTranscript {
 export interface VoiceEngine {
   id: string;
   label?: string;
+}
+
+/**
+ * ONE voice a speaking engine can use. A cloning engine's voice IS a recording, so
+ * `is_imported` marks the ones somebody on that machine brought — and those are the
+ * only ones that can be taken back.
+ */
+export interface SpeechVoice {
+  id: string;
+  label?: string;
+  language?: string;
+  is_imported?: boolean;
+}
+
+/** One synthesis engine as the gateway advertises it. */
+export interface SpeechEngine {
+  id: string;
+  label?: string;
+  is_default?: boolean;
+  /**
+   * This engine can LEARN a voice from a recording. It is a fact about the engine, not
+   * about the machine's mood: a screen reads it to decide whether to offer the import at
+   * all, rather than offering it and being refused with a 409.
+   */
+  is_voice_import?: boolean;
+  voices?: SpeechVoice[];
+}
+
+/**
+ * `GET /v1/speech/voices` — the MACHINE's catalogue plus whether more may be added.
+ * Machine-level, not session-level: an imported clip is stored on the machine and every
+ * session on it speaks with the same voices.
+ */
+export interface SpeechVoices {
+  engine: SpeechEngine;
+  voices: SpeechVoice[];
 }
 
 /**
