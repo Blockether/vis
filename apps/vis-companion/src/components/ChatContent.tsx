@@ -2122,11 +2122,29 @@ export const IterationTrace = memo(function IterationTrace({
     whole ? segments.length : SEGMENT_FIRST_PAINT,
   );
 
-  const rampDone = mountedSegments >= segments.length;
+  // `whole` also arrives LATE, and it has to count then too. WHICH reconcile
+  // tick retires the live bubble is not this trace's business: the settled row
+  // can mount a tick BEFORE the bubble is dropped — the registry still calls the
+  // turn running when its finished row lands — and read only as the initial
+  // state, `whole` changed nothing for exactly those handovers. The collapse
+  // documented above came back for them. Derived per render, it costs no commit
+  // and no frame.
+  const shownSegments = whole ? segments.length : mountedSegments;
+
+  const rampDone = shownSegments >= segments.length;
 
   // A chunk per frame, so the work the first paint skipped never lands as one
   // long frame either.
   useEffect(() => {
+    // A late `whole` also has to STICK. It arrives as a prop and can leave the
+    // same way — the NEXT turn's handover moves the flag to its own row — so a
+    // trace that showed everything only because the flag was up would collapse
+    // the moment it left. Bank it in the ramp's own state, which only grows.
+    if (whole) {
+      setMountedSegments((count) => Math.max(count, segments.length));
+      releaseRamp(rampId);
+      return;
+    }
     if (rampDone) {
       releaseRamp(rampId);
       return;
@@ -2165,12 +2183,12 @@ export const IterationTrace = memo(function IterationTrace({
     };
     frame = window.requestAnimationFrame(tick);
     return () => window.cancelAnimationFrame(frame);
-  }, [mountedSegments, rampDone, rampId]);
+  }, [mountedSegments, rampDone, rampId, whole, segments.length]);
 
   if (!segments.length) return null;
   const shown = rampDone
     ? segments
-    : segments.slice(segments.length - mountedSegments);
+    : segments.slice(segments.length - shownSegments);
 
   return (
     <div ref={rootRef} className="mb-2.5 grid gap-2.5">

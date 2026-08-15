@@ -486,4 +486,36 @@ describe("the trace a settled row inherits from the live bubble", () => {
     expect(text(html)).toContain("step 19");
     expect(text(html)).not.toContain("step 0");
   });
+
+  // Regression, the same flicker one tick later: the row can MOUNT before the
+  // bubble is retired. Its settled transcript row lands while the registry still
+  // reports the turn as running, so the handover verdict only comes on the NEXT
+  // reconcile tick — and `whole`, read once as the ramp's initial state, arrived
+  // after that mount and changed nothing. The transcript collapsed to
+  // `SEGMENT_FIRST_PAINT` exactly as before for every handover that took more
+  // than one tick.
+  it("takes the whole trace even when it mounted before the handover", () => {
+    const { container, rerender } = render(<AssistantMessage turn={finished} />);
+
+    // Mounted cold: the ramp is holding everything but the tail.
+    expect(container.textContent).not.toContain("step 0");
+
+    rerender(<AssistantMessage turn={finished} whole />);
+
+    for (let step = 0; step < 20; step += 1)
+      expect(container.textContent).toContain(`step ${step}`);
+  });
+
+  // Regression, the same collapse deferred by one turn: `handedOverRowId` holds
+  // ONE row, so the next turn's handover takes the flag away from this one. A
+  // trace that showed everything only while the flag was up dropped back to the
+  // tail the moment it moved on.
+  it("keeps the whole trace after the flag moves to the next turn's row", () => {
+    const { container, rerender } = render(<AssistantMessage turn={finished} />);
+    rerender(<AssistantMessage turn={finished} whole />);
+    rerender(<AssistantMessage turn={finished} />);
+
+    expect(container.textContent).toContain("step 0");
+    expect(container.textContent).toContain("step 19");
+  });
 });
