@@ -461,6 +461,13 @@ function AddressMenu({
  * `Primary` and `Current`, and why a machine is not answering rides the verdict
  * cell it belongs to.
  *
+ * A RANK MARK EXISTS ONLY WHERE THERE IS A FLEET TO RANK. `Primary` names the
+ * machine the app opens on and `Current` the one it is using; with a single
+ * machine paired both are lit for ever and neither can ever vary, so the row
+ * wore two permanent words that told the reader nothing — the same reason a
+ * solo fleet renders no `All` tile. In a fleet `Current` is worth saying only
+ * where it is NOT the primary; on the primary's own row it repeats it.
+ *
  * A verb exists here only when its handler does, so `ConnectScreen`'s list —
  * where a row is a place to GO, not a thing to manage — stays exactly as it was.
  */
@@ -545,6 +552,8 @@ export function MachineRows({
   // The open machine, re-read from the live list: the row it was opened from is
   // replaced whenever a probe answers or a name changes.
   const bound = binding ? (conns.find((c) => c.url === binding.url) ?? null) : null;
+  // Rank marks only exist where there is a fleet to rank: see the header.
+  const isFleet = conns.length > 1;
   return (
     <div className="divide-y divide-dialog-edge">
       {conns.map((conn) => {
@@ -658,12 +667,12 @@ export function MachineRows({
                   <span className="truncate font-mono text-body font-bold text-white">
                     {name}
                   </span>
-                  {conn.url === primaryUrl && (
+                  {isFleet && conn.url === primaryUrl && (
                     <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
                       Primary
                     </span>
                   )}
-                  {conn.url === activeUrl && (
+                  {isFleet && conn.url === activeUrl && conn.url !== primaryUrl && (
                     <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-dialog-hint">
                       Current
                     </span>
