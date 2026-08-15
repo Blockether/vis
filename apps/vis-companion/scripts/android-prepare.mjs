@@ -558,39 +558,31 @@ const nativeSpeechPlugin = `package ${appId};
 
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
+import android.speech.tts.Voice;
+import com.getcapacitor.JSArray;
+import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import java.util.Set;
 
 @CapacitorPlugin(name = "NativeSpeech")
 public class NativeSpeechPlugin extends Plugin {
     private TextToSpeech tts;
     private PluginCall pending;
     private String pendingText;
+    private String voiceName;
+    private float rate = 1.0f;
 
     @PluginMethod
     public void speak(PluginCall call) {
         stopPending();
         pending = call;
         pendingText = call.getString("text", "");
-        if (tts != null) {
-            speakPending();
-            return;
-        }
-        tts = new TextToSpeech(getContext(), status -> {
-            if (status != TextToSpeech.SUCCESS) {
-                fail("Android text-to-speech could not start.");
-                return;
-            }
-            tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
-                @Override public void onStart(String id) {}
-                @Override public void onDone(String id) { finish(); }
-                @Override public void onError(String id) { fail("Android text-to-speech failed."); }
-                @Override public void onError(String id, int code) { fail("Android text-to-speech failed (" + code + ")."); }
-            });
-            speakPending();
-        });
+        applyVoice(call.getString("voice"));
+        applyRate(call.getDouble("rate"));
+        withTts(this::speakPending, call);
     }
 
     @PluginMethod
@@ -599,8 +591,99 @@ public class NativeSpeechPlugin extends Plugin {
         call.resolve();
     }
 
+    // Every voice this phone actually has, so the app offers the list the device
+    // carries rather than a list it hopes for.
+    @PluginMethod
+    public void getVoices(final PluginCall call) {
+        withTts(() -> {
+            JSArray voices = new JSArray();
+            Voice fallback = null;
+            try { fallback = tts.getDefaultVoice(); } catch (Exception ignored) {}
+            String defaultName = fallback == null ? null : fallback.getName();
+            Set<Voice> installed = null;
+            try { installed = tts.getVoices(); } catch (Exception ignored) {}
+            if (installed != null) {
+                for (Voice voice : installed) {
+                    JSObject item = new JSObject();
+                    item.put("id", voice.getName());
+                    item.put("label", voice.getName());
+                    item.put("language", voice.getLocale().toLanguageTag());
+                    item.put("is_default", voice.getName().equals(defaultName));
+                    voices.put(item);
+                }
+            }
+            JSObject result = new JSObject();
+            result.put("voices", voices);
+            call.resolve(result);
+        }, call);
+    }
+
+    @PluginMethod
+    public void setVoice(final PluginCall call) {
+        applyVoice(call.getString("voice"));
+        withTts(() -> call.resolve(), call);
+    }
+
+    @PluginMethod
+    public void setRate(final PluginCall call) {
+        applyRate(call.getDouble("rate"));
+        withTts(() -> call.resolve(), call);
+    }
+
+    // The engine is started once and kept: every method here needs it, and the first
+    // one to need it pays for it.
+    private void withTts(final Runnable ready, final PluginCall call) {
+        if (tts != null) {
+            ready.run();
+            return;
+        }
+        tts = new TextToSpeech(getContext(), status -> {
+            if (status != TextToSpeech.SUCCESS) {
+                tts = null;
+                pending = null;
+                pendingText = null;
+                if (call != null) call.reject("Android text-to-speech could not start.");
+                return;
+            }
+            tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                @Override public void onStart(String id) {}
+                @Override public void onDone(String id) { finish(); }
+                @Override public void onError(String id) { fail("Android text-to-speech failed."); }
+                @Override public void onError(String id, int code) { fail("Android text-to-speech failed (" + code + ")."); }
+            });
+            ready.run();
+        });
+    }
+
+    private void applyVoice(String name) {
+        if (name != null) voiceName = name.isEmpty() ? null : name;
+        selectVoice();
+    }
+
+    private void applyRate(Double asked) {
+        if (asked != null && asked > 0) rate = asked.floatValue();
+        if (tts != null) tts.setSpeechRate(rate);
+    }
+
+    // A voice the phone no longer has is not an error - an OS update may have taken it
+    // away, and the reply is still spoken in whatever the engine calls its default.
+    private void selectVoice() {
+        if (tts == null || voiceName == null) return;
+        Set<Voice> installed;
+        try { installed = tts.getVoices(); } catch (Exception ignored) { return; }
+        if (installed == null) return;
+        for (Voice voice : installed) {
+            if (voiceName.equals(voice.getName())) {
+                tts.setVoice(voice);
+                return;
+            }
+        }
+    }
+
     private void speakPending() {
         if (pending == null || tts == null) return;
+        selectVoice();
+        tts.setSpeechRate(rate);
         if (tts.speak(pendingText, TextToSpeech.QUEUE_FLUSH, null, "vis") == TextToSpeech.ERROR) {
             fail("Android text-to-speech rejected the text.");
         }

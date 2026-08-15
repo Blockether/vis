@@ -32,6 +32,13 @@ vi.mock("@capacitor/core", () => ({
     isNativePlatform: () => true,
     isPluginAvailable: () => true,
   },
+  // The settings dialog now reaches the device's speech engine, which registers a
+  // Capacitor plugin at import time.
+  registerPlugin: () => ({
+    speak: () => Promise.resolve(),
+    stop: () => Promise.resolve(),
+    getVoices: () => Promise.resolve({ voices: [] }),
+  }),
 }));
 vi.mock("@capacitor/push-notifications", () => ({ PushNotifications: {} }));
 

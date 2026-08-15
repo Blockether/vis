@@ -43,6 +43,7 @@ import type {
   PushDevice,
   PushDeviceInput,
   PushStatus,
+  SpeechJob,
   SpeechVoice,
   SpeechVoices,
   VoiceJob,
@@ -198,6 +199,14 @@ function voiceTimeoutMs(bytes: number): number {
  * them, so a live engine always reaches us.
  */
 const VOICE_STALL_TIMEOUT_MS = 120_000;
+
+/**
+ * A synthesis job is polled, not streamed: the client wants the AUDIO and nothing in
+ * between, so it asks the job resource where it is rather than opening a second SSE
+ * connection for a progress bar nobody renders.
+ */
+const SPEECH_JOB_POLL_MS = 400;
+const SPEECH_JOB_TIMEOUT_MS = 120_000;
 
 /**
  * SSE `event:` name of every frame on a transcription job's stream.
@@ -873,6 +882,108 @@ export class GatewayClient {
       undefined,
       signal,
     );
+  }
+
+  /**
+   * Speak a line ON THE MACHINE and hand back the audio.
+   *
+   * Two answers, one call: a short line comes back AS the bytes in a single round
+   * trip, a long one answers 202 with a job that is followed to its audio here. The
+   * caller only ever wanted the sound, and where the threshold sits is the gateway's
+   * to publish (`features.speech.inline_max_chars`), never this client's to guess.
+   *
+   * `fetch` directly rather than `request`: `request` reads every answer as text, and
+   * a WAV is not text.
+   */
+  async speakText(
+    sid: string,
+    text: string,
+    voice?: string | null,
+    signal?: AbortSignal,
+  ): Promise<Blob> {
+    const base = `/v1/sessions/${encodeURIComponent(sid)}/speech`;
+    const answer = await this.audioFetch("POST", base, {
+      body: JSON.stringify(voice ? { text, voice } : { text }),
+      contentType: "application/json",
+      signal,
+    });
+    if (answer.status !== 202) return await answer.blob();
+    const started = (await answer.json()) as SpeechJob;
+    const finished = await this.awaitSpeechJob(sid, started, signal);
+    const audio = await this.audioFetch(
+      "GET",
+      `${base}/jobs/${encodeURIComponent(finished.id)}/audio`,
+      { signal },
+    );
+    const blob = await audio.blob();
+    // The audio is ours now, so the machine may forget the job. A failure here costs
+    // nothing - finished jobs expire on their own.
+    void this.request(
+      "DELETE",
+      `${base}/jobs/${encodeURIComponent(finished.id)}`,
+      undefined,
+      signal,
+    ).catch(() => undefined);
+    return blob;
+  }
+
+  /** One request whose answer is BYTES: no text read, no JSON parse, errors still named. */
+  private async audioFetch(
+    method: string,
+    path: string,
+    options: { body?: BodyInit; contentType?: string; signal?: AbortSignal },
+  ): Promise<Response> {
+    const headers = this.headers();
+    if (options.contentType) headers.set("Content-Type", options.contentType);
+    let res: Response;
+    try {
+      res = await fetch(this.base + path, {
+        method,
+        headers,
+        body: options.body,
+        signal: options.signal,
+      });
+    } catch (e) {
+      throw new GatewayError(0, `network error: ${(e as Error).message}`);
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      let message = `HTTP ${res.status}`;
+      try {
+        const parsed = JSON.parse(body) as {
+          error?: string | { message?: string };
+        };
+        const named =
+          typeof parsed.error === "string" ? parsed.error : parsed.error?.message;
+        if (named) message = named;
+      } catch {
+        if (body) message = body;
+      }
+      throw new GatewayError(res.status, message);
+    }
+    return res;
+  }
+
+  /** Follow one synthesis job to its end, or say why it will never get there. */
+  private async awaitSpeechJob(
+    sid: string,
+    job: SpeechJob,
+    signal?: AbortSignal,
+  ): Promise<SpeechJob> {
+    const path = `/v1/sessions/${encodeURIComponent(sid)}/speech/jobs/${encodeURIComponent(job.id)}`;
+    const deadline = Date.now() + SPEECH_JOB_TIMEOUT_MS;
+    let latest = job;
+    while (!latest.is_done) {
+      if (Date.now() > deadline) {
+        throw new GatewayError(0, "the machine did not finish speaking in time");
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, SPEECH_JOB_POLL_MS),
+      );
+      latest = await this.request<SpeechJob>("GET", path, undefined, signal);
+    }
+    if (latest.error) throw new GatewayError(0, latest.error);
+    return latest;
   }
 
   /**

@@ -2631,6 +2631,21 @@ export function SessionScreen({
     };
   }, [client, sid, connected]);
 
+  // WHICH machine speaks, for as long as this session is the one on screen.
+  //
+  // The router in `speech.ts` is device-global and has no idea which conversation is
+  // open, so the screen that does hands it a speaker and takes it back on the way out.
+  // Nothing here decides WHETHER the machine speaks - that is the reader's stored
+  // choice - and a machine that cannot speak right now falls back to this device, which
+  // is why the notice goes to the composer rather than to a thrown error.
+  useEffect(() => {
+    speechOutput.setGateway(
+      { speak: (text, voiceId) => client.speakText(sid, text, voiceId) },
+      setComposerNotice,
+    );
+    return () => speechOutput.setGateway(null);
+  }, [client, sid]);
+
   useEffect(() => {
     if (!voiceSupported || voiceModel?.status !== "downloading") return;
     let inflight = false;

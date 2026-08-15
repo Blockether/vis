@@ -1485,7 +1485,9 @@ describe("where a new session starts", () => {
   });
 
   it("picks every setting with the one ChoiceCell, spelled once", () => {
-    expect(settingsSource.match(/<ChoiceCell/g)?.length).toBe(2);
+    // Every segmented choice the dialog offers - theme, page size, where a reply is
+    // spoken, which voice speaks it - is the SAME cell.
+    expect(settingsSource.match(/<ChoiceCell/g)?.length).toBeGreaterThanOrEqual(2);
     // The cell moved into the vocabulary; the dialog no longer owns a copy.
     expect(settingsSource.match(/function ChoiceCell\(/g)?.length).toBe(undefined);
     expect(uiSource.match(/function ChoiceCell\(/g)?.length).toBe(1);

@@ -400,8 +400,8 @@ GPL-3 phonemizer everybody already has costs us nothing to require and would cos
 **Unknowns.**
 - Recorded clips instead of synthesized ones: the three that ship are Piper output, which is public domain but is still a
   synthetic voice imitating a synthetic voice. A recording made for the purpose would be better material for the clone.
-- The Companion's own upload screen — the route and the CLI exist, so what remains is the app: pick a recording, name it,
-  hear it, delete it.
+- The Companion's own upload screen — SHIPPED in Phase 6's turn: Settings lists a machine's voices, uploads a
+  recording with name, language and transcript, and forgets one behind a confirm row.
 - Does the espeak-free native still serve Parakeet and pocket-tts unchanged, and is a Piper voice then simply
   unavailable on it — one binary with a smaller catalogue rather than two builds to ship?
 
@@ -417,24 +417,35 @@ installed on the phone. Without this phase everything above is a capability nobo
 and voice are device-local settings.
 
 **Acceptance criteria.**
-- `apps/vis-companion/src/lib/speech.ts` — an output router over `off | device | gateway`, keeping
-  `speechOutput.speak(text)` unchanged for `SessionScreen.tsx:2871` and `ChatContent.tsx:2202`.
-- `apps/vis-companion/src/lib/speech-voices.ts` — device voices from `speechSynthesis.getVoices()`
-  (Siri voices through WKWebView on iOS) and from `NativeSpeech.getVoices` on Android; gateway
-  voices from `features.speech`.
-- `apps/vis-companion/scripts/android-prepare.mjs:556-604` — `getVoices`, `setVoice` and `setRate`
-  added to the generated `NativeSpeechPlugin`, idempotently; generated `android/` untouched.
-- `apps/vis-companion/src/screens/SettingsScreen.tsx` — a **Spoken replies** control (Off / This
-  device / Gateway) and a voice list, built only from the closed `ui.tsx` vocabulary; read
-  `doc("companion-ui")` first.
-- Test that proves it done: `lib/speech.test.ts` covers routing, voice selection and the fallback
-  when the gateway engine answers `unavailable`, plus a settings layout test; `npm run lint` and
+- DONE. `apps/vis-companion/src/lib/speech.ts` is an output router over `off | device | gateway`,
+  and `speechOutput.speak(text)` is unchanged for every call site: the choice is a stored
+  preference, not an argument.
+- DONE. `apps/vis-companion/src/lib/speech-voices.ts` reads the device's own voices — the Android
+  plugin's `getVoices`, else `speechSynthesis.getVoices()` (the Siri voices WKWebView already
+  carries), waiting out the empty first answer every web engine gives. A machine's voices come
+  from `GET /v1/speech/voices`, which the Voices band already lists.
+- DONE. `apps/vis-companion/scripts/android-prepare.mjs` — the generated `NativeSpeechPlugin`
+  gained `getVoices`, `setVoice` and `setRate`, a shared `withTts` starter, and voice + rate on
+  `speak`; `android/` is still generated and untouched.
+- DONE. `apps/vis-companion/src/screens/SettingsScreen.tsx` — a **Spoken replies** band in the
+  Application column (Off / This device / The machine, then speed and the device's voices) and the
+  machine's voice picked in that machine's own Voices band, both built from `ChoiceCell` alone.
+- DONE. `SessionScreen.tsx` hands the router a speaker for as long as a session is on screen
+  (`client.speakText(sid, …)`) and takes it back on the way out.
+- Test that proves it done: `src/lib/speech.test.ts` (silence when off, the machine's audio played
+  and not re-said here, the fallback to this device with one notice), `src/lib/gateway.test.ts`
+  (`speakText` inline, the 202 job followed to its audio and forgotten, a named refusal) and
+  `src/screens/SettingsScreen.spokenReplies.test.tsx` (the three cells, the router actually
+  silenced, the device's real voice list). 1201 tests, `npm run lint`, `npm run typecheck` and
   `npm run build` green.
 
-**Unknowns.**
-- With the gateway engine selected and the gateway unreachable, does the app fall back to the
-  device voice silently or stay quiet and show the composer notice?
-- Is the choice per machine (a row in `components/Machines`) or once per device?
+**Unknowns.** Both are decided.
+- With the machine selected and unreachable, the app FALLS BACK to the device voice and says why
+  once through the composer notice. Staying quiet would lose the reply itself, which is the one
+  thing the reader asked for; the notice is what keeps the fallback honest.
+- The choice is per DEVICE, not per machine: the speaker belongs to the phone. The machine's voice
+  is stored as a bare id and resolved against whichever machine answers, so an id that machine does
+  not have speaks in its engine's default rather than falling silent.
 
 ---
 
@@ -672,6 +683,13 @@ untouched, capabilities say `voice.enabled false` and `speech.is_enabled false`,
 transcription, synthesis and all three voice routes — answers 501 with the reason instead of failing. Vis is an agent
 that CAN speak, not one that needs to.
 
+Phase 6 makes that reachable from the app. `speech.ts` is now a router: `off` is silence, `device`
+is the phone's own engine, `gateway` sends the line to the machine that answered and plays what
+comes back — and a machine that cannot speak right now costs the reader nothing, because the device
+says it instead and the composer says why once. The choice is the device's (it owns the speaker),
+the machine's voice is picked in that machine's Voices band, and Android's generated plugin can
+finally enumerate and select voices instead of speaking in one.
+
 And the credits are not prose. `THIRD_PARTY_MODELS.md` at the repository root is `manifest.edn` rendered by
 `attribution/markdown`: one summary table, then a section per entry with its licence, attribution, notice, voices, install
 directory and every source in the order Vis tries them, plus the espeak-ng paragraph the `:needs-espeak-ng` flag earns.
@@ -710,8 +728,7 @@ Three decisions the plan takes, so they are not re-litigated in review:
 
 TODO, in order:
 
-1. **Phase 6** — engine and voice pickers in the companion (Settings already imports and forgets voices), Android voice enumeration.
-2. **Phase 7** — the rest of the Piper catalogue and Kokoro, licensed one voice at a time.
+1. **Phase 7** — the rest of the Piper catalogue and Kokoro, licensed one voice at a time.
 
 **Lineage.** This plan supersedes *"Let a session speak to the other sessions in its tree"*, which
 was **ACCEPTED** and unstarted; it is preserved verbatim at `git show b3130f92a:PLAN.md` and nothing

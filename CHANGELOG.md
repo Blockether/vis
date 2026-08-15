@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 - Credit every model the voice extension can install in `THIRD_PARTY_MODELS.md`, generated from the manifest
+- Choose where a reply is spoken — off, this device, or the machine that answered — and in which voice, with the phone falling back to its own voice when the machine cannot speak
 
 ### Changed
 - Commits are `type(scope): summary` with a body of at most six WHY lines and a mandatory `Vis-Session: vis_session_id#<uuid>` trailer

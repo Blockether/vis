@@ -577,6 +577,41 @@ export interface SpeechVoices {
 }
 
 /**
+ * WHERE a reply is spoken. App-local, like the theme: a machine is never asked and
+ * never told, because the device doing the listening is the only thing that can
+ * answer it.
+ */
+export type SpeechRoute = "off" | "device" | "gateway";
+
+/** The whole spoken-output choice this device made. */
+export interface SpeechPrefs {
+  route: SpeechRoute;
+  /** A `voiceURI` on the web, an engine voice name on Android; `null` is "the default". */
+  deviceVoice: string | null;
+  /**
+   * A voice id from the MACHINE's catalogue. Stored per device on purpose: an id the
+   * machine in front of you does not have speaks in the engine's default rather than
+   * silencing the reply.
+   */
+  gatewayVoice: string | null;
+  rate: number;
+}
+
+/**
+ * A synthesis job, for the lines too long to answer in one round trip. Its phases are
+ * the speaking direction's own, so `phase` is whatever the gateway published in
+ * `features.speech.phases` rather than a transcription phase.
+ */
+export interface SpeechJob {
+  id: string;
+  engine?: string;
+  phase: string;
+  progress: number;
+  is_done: boolean;
+  error?: string;
+}
+
+/**
  * Where a transcription IS.
  *
  * `uploading` is the CLIENT's own phase (bytes still in flight); everything from

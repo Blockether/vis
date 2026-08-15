@@ -21,6 +21,8 @@ import type {
   McpServer,
   McpServerInput,
   McpTestResult,
+  SpeechPrefs,
+  SpeechRoute,
   SpeechVoice,
   SpeechVoices,
 } from "../lib/types";
@@ -58,12 +60,23 @@ import {
 } from "../lib/relay";
 import {
   DEFAULT_SESSION_PAGE_SIZE,
+  DEFAULT_SPEECH_RATE,
+  DEFAULT_SPEECH_ROUTE,
+  SPEECH_RATES,
+  SPEECH_ROUTES,
   getGatewayNotify,
   getSessionsPerPage,
   getThemePref,
+  getSpeechPrefs,
   setSessionsPerPage,
+  setSpeechDeviceVoice,
+  setSpeechGatewayVoice,
+  setSpeechRate,
+  setSpeechRoute,
   setThemePref,
 } from "../lib/storage";
+import { speechOutput } from "../lib/speech";
+import { deviceVoices, type DeviceVoice } from "../lib/speech-voices";
 import {
   DEFAULT_THEME,
   THEMES,
@@ -942,6 +955,10 @@ function VoicesPanel({ client }: { client: GatewayClient }) {
   const [says, setSays] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
+  // Which of THIS machine's voices this device asks for. Device-local, like every other
+  // audio choice, and stored by id: a machine that no longer has it speaks in its own
+  // default rather than falling silent.
+  const [prefs, setPrefs] = useState<SpeechPrefs | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(
@@ -974,6 +991,23 @@ function VoicesPanel({ client }: { client: GatewayClient }) {
     void load(controller.signal);
     return () => controller.abort();
   }, [load]);
+
+  useEffect(() => {
+    let isLive = true;
+    void speechOutput.settings().then((current) => {
+      if (isLive) setPrefs(current);
+    });
+    return () => {
+      isLive = false;
+    };
+  }, []);
+
+  async function chooseVoice(id: string | null) {
+    await setSpeechGatewayVoice(id);
+    const next = await getSpeechPrefs();
+    speechOutput.apply(next);
+    setPrefs(next);
+  }
 
   function chooseClip(file: File | null) {
     setClip(file);
@@ -1059,25 +1093,41 @@ function VoicesPanel({ client }: { client: GatewayClient }) {
           </p>
         )}
 
+        {voices.length > 0 && (
+          <>
+            <p className="font-mono text-chip text-dialog-hint">
+              A reply this device sends here is spoken in the voice marked ●. Whether
+              replies are spoken at all is in Application → Spoken replies.
+            </p>
+            <div className="border border-dialog-edge bg-panel-2">
+              <ChoiceCell
+                title="Engine default"
+                sub="whatever this machine picks"
+                isSelected={prefs?.gatewayVoice == null}
+                onClick={() => void chooseVoice(null)}
+              />
+            </div>
+          </>
+        )}
+
         {voices.map((voice) => (
           <div
             key={voice.id}
             className="border border-dialog-edge bg-panel-2"
           >
-            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-2">
-              <div className="min-w-0">
-                <p className="truncate font-mono text-ui font-bold text-white">
-                  {voice.label ?? voice.id}
-                </p>
-                <p className="truncate font-mono text-chip text-dialog-hint">
-                  {[
-                    voice.language,
-                    voice.is_imported ? "imported here" : "ships with the engine",
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </p>
-              </div>
+            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 pr-3">
+              <ChoiceCell
+                className="min-w-0"
+                title={voice.label ?? voice.id}
+                sub={[
+                  voice.language,
+                  voice.is_imported ? "imported here" : "ships with the engine",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+                isSelected={prefs?.gatewayVoice === voice.id}
+                onClick={() => void chooseVoice(voice.id)}
+              />
               {voice.is_imported && confirming !== voice.id && (
                 <Button
                   variant="secondary"
@@ -1205,6 +1255,148 @@ function FormLabel({
  * this copy of Vis, or the machine — and every band under it belongs to that owner.
  * It is the sentence the two dialogs used to spend a whole header band saying.
  */
+/** The three answers to "where is a reply spoken", in the order the band offers them. */
+const SPEECH_ROUTE_FACES: Record<SpeechRoute, { title: string; sub: string }> = {
+  off: { title: "Off", sub: "answers stay on the page" },
+  device: { title: "This device", sub: "the phone reads them" },
+  gateway: { title: "The machine", sub: "its own voice speaks" },
+};
+
+/** What each speed sounds like, so the number is not the only thing on the cell. */
+const SPEECH_RATE_WORDS: Record<string, string> = {
+  "0.85": "unhurried",
+  "1": "natural",
+  "1.2": "brisk",
+};
+
+/**
+ * WHERE A REPLY IS SPOKEN, and in which voice.
+ *
+ * This device is the only thing that can answer it - it owns the speaker - so the whole
+ * band lives in the Application column and nothing here is ever sent to a gateway. Three
+ * choices, and each is a real one: `Off` is SILENCE, not a broken feature; `This device`
+ * is the phone's own engine, which works with no gateway reachable at all; `The machine`
+ * sends the line to whichever machine answered it and plays what comes back, which is the
+ * only way to hear a voice that was cloned from a recording.
+ *
+ * A machine that cannot speak right now does not cost the reader the reply: the router in
+ * `speech.ts` falls back to this device and says so once. WHICH of a machine's voices to
+ * ask for is picked in that machine's own Voices band, beside the catalogue it belongs to.
+ */
+export function SpokenRepliesPanel() {
+  const [prefs, setPrefs] = useState<SpeechPrefs | null>(null);
+  const [voices, setVoices] = useState<DeviceVoice[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isLive = true;
+    void speechOutput.settings().then((current) => {
+      if (isLive) setPrefs(current);
+    });
+    void deviceVoices()
+      .then((list) => {
+        if (isLive) setVoices(list);
+      })
+      .catch(() => {
+        if (isLive) setVoices([]);
+      });
+    return () => {
+      isLive = false;
+    };
+  }, []);
+
+  async function save(change: () => Promise<void>) {
+    try {
+      await change();
+      const next = await getSpeechPrefs();
+      // The router reads its settings once per app run, so the next reply obeys this
+      // without a reload.
+      speechOutput.apply(next);
+      setPrefs(next);
+      setErr(null);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
+  const route = prefs?.route ?? DEFAULT_SPEECH_ROUTE;
+  const rate = prefs?.rate ?? DEFAULT_SPEECH_RATE;
+  const deviceList = voices ?? [];
+
+  return (
+    <SettingsPanel
+      title="Spoken replies"
+      description="Whether an answer is read out loud, and by what. Which voice a machine uses is picked in that machine's own Voices band."
+      meta={SPEECH_ROUTE_FACES[route].sub}
+    >
+      <div className="space-y-2 p-3">
+        {err && <Banner kind="err">{err}</Banner>}
+
+        <div className="grid grid-cols-1 gap-px bg-dialog-edge min-[420px]:grid-cols-3">
+          {SPEECH_ROUTES.map((choice) => (
+            <ChoiceCell
+              key={choice}
+              title={SPEECH_ROUTE_FACES[choice].title}
+              sub={SPEECH_ROUTE_FACES[choice].sub}
+              isSelected={route === choice}
+              onClick={() => void save(() => setSpeechRoute(choice))}
+            />
+          ))}
+        </div>
+
+        {route === "device" && (
+          <>
+            <div className="grid grid-cols-1 gap-px bg-dialog-edge min-[420px]:grid-cols-3">
+              {SPEECH_RATES.map((choice) => (
+                <ChoiceCell
+                  key={choice}
+                  title={`${choice}×`}
+                  sub={SPEECH_RATE_WORDS[String(choice)] ?? "speed"}
+                  isSelected={rate === choice}
+                  onClick={() => void save(() => setSpeechRate(choice))}
+                />
+              ))}
+            </div>
+
+            {voices === null && (
+              <p className="py-2 text-center font-mono text-meta text-dialog-hint">
+                Asking this device what it can speak in…
+              </p>
+            )}
+            {voices !== null && deviceList.length === 0 && (
+              <p className="py-2 text-center font-mono text-meta text-dialog-hint">
+                This device has no speech engine installed, so nothing can be read out
+                loud here.
+              </p>
+            )}
+            {deviceList.length > 0 && (
+              <div className="grid max-h-64 grid-cols-1 gap-px overflow-y-auto bg-dialog-edge">
+                <ChoiceCell
+                  title="System default"
+                  sub="whatever this device prefers"
+                  isSelected={prefs?.deviceVoice == null}
+                  onClick={() => void save(() => setSpeechDeviceVoice(null))}
+                />
+                {deviceList.map((voice) => (
+                  <ChoiceCell
+                    key={voice.id}
+                    title={voice.label}
+                    sub={[voice.language, voice.isDefault ? "device default" : null]
+                      .filter(Boolean)
+                      .join(" · ")}
+                    isSelected={prefs?.deviceVoice === voice.id}
+                    onClick={() => void save(() => setSpeechDeviceVoice(voice.id))}
+                  />
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </SettingsPanel>
+  );
+}
+
 function SettingsColumn({
   title,
   description,
@@ -1518,6 +1710,8 @@ export function SettingsDialog({
                 ))}
               </div>
             </SettingsPanel>
+
+            <SpokenRepliesPanel />
           </SettingsColumn>
 
         </div>

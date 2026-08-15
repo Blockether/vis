@@ -341,3 +341,85 @@ describe('GatewayClient imported voices', () => {
     expect(fetchMock.mock.calls[1]?.[1]?.method).toBe('DELETE');
   });
 });
+
+// A reply spoken by the machine that answered it: the caller wants the AUDIO, and a
+// long line's job is plumbing the client hides.
+describe('GatewayClient speakText', () => {
+  it('answers with the audio bytes a short line returns, never a text read', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([82, 73, 70, 70]), {
+        headers: { 'Content-Type': 'audio/wav' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const mod = await import('./gateway');
+
+    const audio = await new mod.GatewayClient(conn).speakText(
+      'session-1',
+      'Say this out loud',
+      'kristin',
+    );
+
+    expect(audio.size).toBe(4);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://gateway.example.com:7890/v1/sessions/session-1/speech');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({
+      text: 'Say this out loud',
+      voice: 'kristin',
+    });
+  });
+
+  it('follows a 202 job to its audio and forgets the job afterwards', async () => {
+    const seen: string[] = [];
+    const fetchMock = vi.fn().mockImplementation((url: string, init: RequestInit) => {
+      seen.push(`${init.method} ${url.replace('http://gateway.example.com:7890', '')}`);
+      if (url.endsWith('/speech') && init.method === 'POST') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ id: 'job-1', phase: 'queued', progress: 0, is_done: false }), {
+            status: 202,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+      }
+      if (url.endsWith('/audio')) {
+        return Promise.resolve(new Response(new Uint8Array([1, 2, 3])));
+      }
+      if (init.method === 'DELETE') return Promise.resolve(new Response(null, { status: 204 }));
+      return Promise.resolve(
+        new Response(JSON.stringify({ id: 'job-1', phase: 'spoken', progress: 1, is_done: true }), {
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const mod = await import('./gateway');
+
+    const audio = await new mod.GatewayClient(conn).speakText('session-1', 'A long answer');
+
+    expect(audio.size).toBe(3);
+    expect(seen).toEqual([
+      'POST /v1/sessions/session-1/speech',
+      'GET /v1/sessions/session-1/speech/jobs/job-1',
+      'GET /v1/sessions/session-1/speech/jobs/job-1/audio',
+      'DELETE /v1/sessions/session-1/speech/jobs/job-1',
+    ]);
+  });
+
+  it('names what the machine refused instead of a bare status', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: 'no speech engine is registered' }), {
+          status: 501,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+    const mod = await import('./gateway');
+
+    await expect(
+      new mod.GatewayClient(conn).speakText('session-1', 'Anything'),
+    ).rejects.toThrow('no speech engine is registered');
+  });
+});

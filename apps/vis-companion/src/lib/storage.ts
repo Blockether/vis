@@ -6,7 +6,12 @@
 
 import { Preferences } from "@capacitor/preferences";
 import { bridged } from "./bridge";
-import type { GatewayConn, ThemePref } from "./types";
+import type {
+  GatewayConn,
+  SpeechPrefs,
+  SpeechRoute,
+  ThemePref,
+} from "./types";
 
 const CONNS_KEY = "vis.connections";
 const ACTIVE_KEY = "vis.activeConnection";
@@ -240,6 +245,68 @@ export function subscribeSessionsPerPage(
   return () => {
     pageSizeListeners.delete(listener);
   };
+}
+
+// ── Spoken replies ───────────────────────────────────────────────────────
+//
+// App-local, like the theme, and for the same reason: this is an AUDIO OUTPUT
+// choice, and the device with the speaker is the only one that can answer it.
+// Nothing here is ever sent to a gateway. The gateway voice is kept as a bare id
+// and resolved against whichever machine the open session runs on - an id that
+// machine does not have speaks in the engine's default instead of silencing the
+// reply.
+
+const SPEECH_ROUTE_KEY = "vis.speech.route";
+const SPEECH_DEVICE_VOICE_KEY = "vis.speech.deviceVoice";
+const SPEECH_GATEWAY_VOICE_KEY = "vis.speech.gatewayVoice";
+const SPEECH_RATE_KEY = "vis.speech.rate";
+
+export const SPEECH_ROUTES: readonly SpeechRoute[] = ["off", "device", "gateway"];
+/** What Vis did before there was a choice: the phone says the answer out loud. */
+export const DEFAULT_SPEECH_ROUTE: SpeechRoute = "device";
+export const SPEECH_RATES: readonly number[] = [0.85, 1, 1.2];
+export const DEFAULT_SPEECH_RATE = 1;
+
+function normalizeRoute(raw: string | null): SpeechRoute {
+  const value = raw?.trim() as SpeechRoute | undefined;
+  return value && SPEECH_ROUTES.includes(value) ? value : DEFAULT_SPEECH_ROUTE;
+}
+
+function normalizeRate(raw: string | null): number {
+  const value = Number(raw);
+  return SPEECH_RATES.includes(value) ? value : DEFAULT_SPEECH_RATE;
+}
+
+export async function getSpeechPrefs(): Promise<SpeechPrefs> {
+  const [route, deviceVoice, gatewayVoice, rate] = await Promise.all([
+    getRaw(SPEECH_ROUTE_KEY),
+    getRaw(SPEECH_DEVICE_VOICE_KEY),
+    getRaw(SPEECH_GATEWAY_VOICE_KEY),
+    getRaw(SPEECH_RATE_KEY),
+  ]);
+  return {
+    route: normalizeRoute(route),
+    deviceVoice: deviceVoice?.trim() || null,
+    gatewayVoice: gatewayVoice?.trim() || null,
+    rate: normalizeRate(rate),
+  };
+}
+
+export async function setSpeechRoute(route: SpeechRoute): Promise<void> {
+  await setRaw(SPEECH_ROUTE_KEY, normalizeRoute(route));
+}
+
+/** `null` is "whatever the engine calls its default", and it is a real choice. */
+export async function setSpeechDeviceVoice(id: string | null): Promise<void> {
+  await setRaw(SPEECH_DEVICE_VOICE_KEY, id ?? "");
+}
+
+export async function setSpeechGatewayVoice(id: string | null): Promise<void> {
+  await setRaw(SPEECH_GATEWAY_VOICE_KEY, id ?? "");
+}
+
+export async function setSpeechRate(rate: number): Promise<void> {
+  await setRaw(SPEECH_RATE_KEY, String(normalizeRate(String(rate))));
 }
 
 const SUBSCRIPTIONS_KEY = "vis.sessionSubscriptions";
