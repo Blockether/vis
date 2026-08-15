@@ -337,8 +337,8 @@ GPL-3 phonemizer everybody already has costs us nothing to require and would cos
 | espeak-ng is a package everywhere | Homebrew, MacPorts, apt, dnf, pacman; the tables are read from a directory at run time, never linked into anything Vis builds |
 
 **Acceptance criteria.**
-- DONE. The `voice-assets-pack` release is an ASSETS release and nothing else: `sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2`,
-  Vis' own `pocket-tts-int8.tar.bz2` (96,353,153 bytes, three reference clips inside) and `SHA256SUMS.txt`. The old release, its
+- DONE. The `voice-assets-pack` release is an ASSETS release and nothing else: `parakeet-onnx.tar.bz2`,
+  Vis' own `pocket-tts-onnx.tar.bz2` (96 MB, three reference clips inside) and `SHA256SUMS.txt`. The old release, its
   stray `vis-agent-linux-*` binaries and its tag are gone, and the new tag started no workflow.
 - DONE. `release.yml` and `native-release.yml` trigger on `v[0-9]*` and gate their publish steps on the same pattern, so
   an asset tag can never start a product release again. The macOS arm64 job runs on the repository's OWN Apple-silicon
@@ -650,7 +650,7 @@ Parakeet reads the shipped bundle's speech back word for word.
 `bin/make-voice-clips` speaks ~10 seconds of neutral prose through the three PUBLIC-DOMAIN Piper voices, levels each to
 -3 dBFS and writes 24 kHz mono WAVs with their transcripts, and `bin/export-pocket-tts --voices <dir>` bundles them
 (`--from <bundle>` repacks an existing export, so a clip set costs no token and no weights). Kristin, Cori and John ship
-inside `pocket-tts-int8.tar.bz2` with `:clip-text`, and every clip is in `:requires` — a bundle that promised a voice it
+inside `pocket-tts-onnx.tar.bz2` with `:clip-text`, and every clip is in `:requires` — a bundle that promised a voice it
 did not carry would report itself ready and fail at the first sentence.
 
 The same fact makes "add a voice" an UPLOAD. `voices.clj` stores a brought clip under `VIS_VOICES_DIR` or `~/.vis/voices`

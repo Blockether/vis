@@ -27,7 +27,7 @@
 #   bin/make-voice-clips --only kristin
 #
 # Then, to put them in the bundle without re-exporting the weights:
-#   bin/export-pocket-tts --from dist/voice-assets/pocket-tts-int8.tar.bz2 \
+#   bin/export-pocket-tts --from dist/voice-assets/pocket-tts-onnx.tar.bz2 \
 #                         --voices dist/voice-clips
 #
 # Requires: uv, ffmpeg, tar, curl. No Hugging Face token, no gated weights.
@@ -187,5 +187,5 @@ cat <<EOF
 
 Put them in the bundle without re-exporting the weights:
 
-    bin/export-pocket-tts --from dist/voice-assets/pocket-tts-int8.tar.bz2 --voices ${out_dir}
+    bin/export-pocket-tts --from dist/voice-assets/pocket-tts-onnx.tar.bz2 --voices ${out_dir}
 EOF

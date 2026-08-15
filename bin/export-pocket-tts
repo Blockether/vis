@@ -42,14 +42,14 @@
 #
 # Adding clips to a bundle this script already made needs NO token and no
 # weights - it unpacks, adds, re-checks and re-packages:
-#   bin/export-pocket-tts --from dist/voice-assets/pocket-tts-int8.tar.bz2 \
+#   bin/export-pocket-tts --from dist/voice-assets/pocket-tts-onnx.tar.bz2 \
 #                         --voices dist/voice-clips
 #
 # `bin/make-voice-clips` is what records those clips, and says why only some
 # voices may be recorded at all.
 #
 # Then, deliberately and only when asked:
-#   gh release upload voice-assets-pack <out>/pocket-tts-int8.tar.bz2 --repo Blockether/vis
+#   gh release upload voice-assets-pack <out>/pocket-tts-onnx.tar.bz2 --repo Blockether/vis
 #
 # Requires: uv, tar, bzip2. ~10 GB of disk and a few minutes.
 
@@ -306,7 +306,7 @@ Vis exports these weights itself rather than mirroring a ready-made bundle;
 \`bin/export-pocket-tts\` says why in its header. Attribution belongs to Kyutai.
 EOF
 
-archive="${out_dir}/pocket-tts-int8.tar.bz2"
+archive="${out_dir}/pocket-tts-onnx.tar.bz2"
 echo "==> packaging ${archive}"
 tar -cjf "$archive" -C "$work_dir" "$(basename "$stage")"
 
