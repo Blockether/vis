@@ -4254,6 +4254,95 @@
           (expect (= :ext.foundation.editing/invalid-rg-spec (:type (ex-data err))))))))
 
 (defdescribe
+  rg-exclude-globs-test
+  "`exclude` is `include`'s complement on the CONTENT axis: globs matched against
+   the repo-relative path AND the bare file name, blank-tolerant exactly like
+   `include`, and OUTRANKING `include` when both match the same file."
+  (let
+    [coerce-rg
+     (private-fn "coerce-rg-spec")
+
+     coerce-find
+     (private-fn "coerce-find-spec")
+
+     grep
+     (private-fn "rg-search")]
+
+    (it "coerce-rg-spec parses :exclude exactly like :include"
+        (expect (= [] (:exclude (coerce-rg {"query" ["x"]}))))
+        (expect (= ["*_test.clj"] (:exclude (coerce-rg {"query" ["x"] "exclude" "*_test.clj"}))))
+        (expect (= ["**/a.clj" "**/b.clj"]
+                   (:exclude (coerce-rg {"query" ["x"] "exclude" ["**/a.clj" "**/b.clj"]}))))
+        ;; the stringified-array shape LLMs write survives here too
+        (expect (= ["**/a.clj" "**/b.clj"]
+                   (:exclude (coerce-rg {"query" ["x"] "exclude" "[\"**/a.clj\", \"**/b.clj\"]"}))))
+        (expect (= [] (:exclude (coerce-rg {"query" ["x"] "exclude" ""}))))
+        (expect (= ["**/*.clj"] (:exclude (coerce-rg {"query" ["x"] "exclude" ["" "**/*.clj"]})))))
+    (it "a non-string exclude is refused, like a non-string include"
+        (let [err (try (coerce-rg {"query" ["x"] "exclude" [42]}) (catch Exception e e))]
+          (expect (= :ext.foundation.editing/invalid-rg-spec (:type (ex-data err))))))
+    (it "coerce-find-spec takes exclude as a first-class key, and names it when misspelled"
+        (expect (map? (coerce-find [{"query" "x" "exclude" ["**/*_test.clj"]}])))
+        (expect (string/includes? (ex-message (try (coerce-find [{"query" "x" "exlude" ["a"]}])
+                                                   nil
+                                                   (catch clojure.lang.ExceptionInfo e e)))
+                                  "exclude")))
+    (it "rg-search skips every file an exclude glob matches"
+        (let
+          [_
+           (write-temp! "rgexclude/a.clj" "needle in source\n")
+
+           _
+           (write-temp! "rgexclude/a_test.clj" "needle in test\n")
+
+           out
+           (grep
+             {"query" ["needle"] "paths" [(temp-dir-path "rgexclude")] "exclude" ["*_test.clj"]})]
+
+          (expect (= ["needle in source"] (mapv :text (:hits out))))))
+    (it "exclude WINS over include when both globs match the file"
+        (let
+          [_
+           (write-temp! "rgexcwins/a.clj" "needle in source\n")
+
+           _
+           (write-temp! "rgexcwins/a_test.clj" "needle in test\n")
+
+           out
+           (grep {"query" ["needle"]
+                  "paths" [(temp-dir-path "rgexcwins")]
+                  "include" ["*.clj"]
+                  "exclude" ["*_test.clj"]})]
+
+          (expect (= ["needle in source"] (mapv :text (:hits out))))))
+    (it "an exclude glob matches the relative PATH, not only the file name"
+        (let
+          [_
+           (write-temp! "rgexcdir/src/a.clj" "needle in source\n")
+
+           _
+           (write-temp! "rgexcdir/test/a.clj" "needle in test\n")
+
+           out
+           (grep
+             {"query" ["needle"] "paths" [(temp-dir-path "rgexcdir")] "exclude" ["**/test/**"]})]
+
+          (expect (= ["needle in source"] (mapv :text (:hits out))))))
+    (it "grep hands exclude through to the content sweep"
+        (let
+          [_
+           (write-temp! "rgexcgrep/a.clj" "needle in source\n")
+
+           _
+           (write-temp! "rgexcgrep/a_test.clj" "needle in test\n")
+
+           out
+           (:result
+             ((grep-data-fn)
+               {"query" "needle" "paths" [(temp-dir-path "rgexcgrep")] "exclude" ["*_test.clj"]}))]
+
+          (expect (= 1 (get out "hit_count")))))))
+(defdescribe
   find-relevance-filter-test
   "Regression: fff's native matcher returns a full page of loose subsequence
    matches with no score (query \"lmstudio\" alone hit 108/489 unrelated paths).

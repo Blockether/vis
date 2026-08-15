@@ -1762,20 +1762,21 @@
            {:type :ext.foundation.editing/invalid-find-args :expected '([spec-map]) :got args})))
 
      allowed-keys
-     #{"query" "paths" "path" "limit" "offset" "include" "context" "is_hidden" "is_regex"}
+     #{"query" "paths" "path" "limit" "offset" "include" "exclude" "context" "is_hidden" "is_regex"}
 
      unknown-keys
      (seq (remove allowed-keys (keys spec)))]
 
     (when unknown-keys
-      (throw (ex-info
-               (str
-                 "find spec has unknown keys: "
-                 (str/join ", " (map str unknown-keys))
-                 ". Allowed: query, paths, limit, offset, include, context, is_hidden, is_regex.")
-               {:type :ext.foundation.editing/invalid-find-args
-                :unknown (vec unknown-keys)
-                :allowed (vec (sort allowed-keys))})))
+      (throw
+        (ex-info
+          (str
+            "find spec has unknown keys: "
+            (str/join ", " (map str unknown-keys))
+            ". Allowed: query, paths, limit, offset, include, exclude, context, is_hidden, is_regex.")
+          {:type :ext.foundation.editing/invalid-find-args
+           :unknown (vec unknown-keys)
+           :allowed (vec (sort allowed-keys))})))
     (let
       [raw-query
        (get spec "query")
@@ -2198,6 +2199,9 @@
       (contains? spec "include")
       (assoc "include" (get spec "include"))
 
+      (contains? spec "exclude")
+      (assoc "exclude" (get spec "exclude"))
+
       (contains? spec "is_hidden")
       (assoc "is_hidden" (get spec "is_hidden"))
 
@@ -2502,6 +2506,7 @@
      await grep({\"query\": \"grep-tool\"})
      await grep({\"query\": \"channel_tui render\", \"paths\": [\"src\"], \"limit\": 20})
      await grep({\"query\": [\"TODO\", \"FIXME\"], \"include\": [\"**/*.clj\"], \"context\": 2})
+     await grep({\"query\": \"defn grep\", \"exclude\": [\"**/*_test.clj\"]})
      await grep({\"query\": \"defn-? +grep-data\", \"is_regex\": True})
 
    ONE options map is the WHOLE call surface — kwargs
@@ -2509,6 +2514,12 @@
    query and no second positional argument.
 
    CONTENT matching is smart-case literal substring; a query list is OR.
+   `include` and `exclude` bound WHICH FILES the CONTENT sweep reads — globs
+   matched against each file's repo-relative path AND its bare name, with
+   `**/` matching at any depth including the root. `exclude` WINS: a file
+   matching both is not searched, so `include: [\"**/*.clj\"]` with
+   `exclude: [\"**/*_test.clj\"]` reads every Clojure source but its tests.
+   Both are CONTENT-axis filters; the fuzzy NAME list is unaffected.
    `is_regex` switches CONTENT matching to REGULAR EXPRESSIONS — every term a
    pattern, a list still OR, the SAME smart-case rule (no uppercase in the
    pattern → case-insensitive) — and turns the fuzzy NAME axis OFF, because a
@@ -2657,7 +2668,7 @@
          (str
            "Search stopped at its " (quot (long rg-search-budget-ms) 1000)
            "s scan budget — these results are PARTIAL, not the whole tree. "
-           "Narrow `paths` to a subdirectory, add `include` globs, or search a more distinctive term.")))]
+           "Narrow `paths` to a subdirectory, add `include`/`exclude` globs, or search a more distinctive term.")))]
 
     out))
 
@@ -2668,6 +2679,7 @@
      await grep({\"query\": \"grep-tool\"})
      await grep({\"query\": \"channel_tui render\", \"paths\": [\"src\"], \"limit\": 20})
      await grep({\"query\": [\"TODO\", \"FIXME\"], \"include\": [\"**/*.clj\"], \"context\": 2})
+     await grep({\"query\": \"defn grep\", \"exclude\": [\"**/*_test.clj\"]})
      await grep({\"query\": \"defn-? +grep-tool\", \"is_regex\": True})
 
    The whole call surface is `grep-data`'s; this is its projection. Line 1 always
@@ -2759,8 +2771,10 @@
    filter the hits in Python for the rare \"both terms\" case).
 
    Optional: `paths` (scope, default \".\"), `include` (globs — only files whose
-   path/name matches), `context` N (lines of context around each hit),
-   `is_files_only` (return the distinct matching file paths, no per-line hits).
+   path/name matches), `exclude` (globs — files whose path/name matches are NOT
+   searched; exclude WINS over include), `context` N (lines of context around
+   each hit), `is_files_only` (return the distinct matching file paths, no
+   per-line hits).
    Unknown keys are ignored so a stray annotation never hard-fails the call."
   [spec]
   (when-not (map? spec)
@@ -2837,28 +2851,35 @@
        ["."]
        (vector-of-strings :paths raw-paths))
 
-     raw-include
-     (get spec "include")
-
      ;; A blank glob filters NOTHING, so `""`, `[""]` and a stray empty entry in
-     ;; a real list all mean exactly what nil/[] mean: no include filter. Refusing
+     ;; a real list all mean exactly what nil/[] mean: no filter at all. Refusing
      ;; the whole search over an empty OPTIONAL filter threw away a caller's call
      ;; for a field that was asking for no restriction in the first place.
+     globs
+     (fn [field raw-globs]
+       (let
+         [raw
+          (parse-stringish-vector raw-globs)
+
+          items
+          (cond (nil? raw) []
+                (string? raw) [raw]
+                (sequential? raw) (vec raw)
+                :else [raw])
+
+          items
+          (into [] (remove #(and (string? %) (str/blank? %))) items)]
+
+         (if (empty? items) [] (vector-of-strings field items))))
+
      include
-     (let
-       [raw
-        (parse-stringish-vector raw-include)
+     (globs :include (get spec "include"))
 
-        items
-        (cond (nil? raw) []
-              (string? raw) [raw]
-              (sequential? raw) (vec raw)
-              :else [raw])
-
-        items
-        (into [] (remove #(and (string? %) (str/blank? %))) items)]
-
-       (if (empty? items) [] (vector-of-strings :include items)))
+     ;; `exclude` is `include`'s complement and OUTRANKS it: a file whose path or
+     ;; name matches an exclude glob is never scanned, even when an include glob
+     ;; matches it too. One call can therefore say "every .clj but the tests".
+     exclude
+     (globs :exclude (get spec "exclude"))
 
      nonneg-int!
      (fn [label v]
@@ -2881,6 +2902,7 @@
     {:needles needles
      :paths paths
      :include (or include [])
+     :exclude (or exclude [])
      :is_hidden (boolean (get spec "is_hidden"))
      :is_regex is_regex
      :limit (let [l (get spec "limit")]
@@ -3051,7 +3073,7 @@
    `r[...]`); only the wire VIEW is bounded by the 64KB per-observation clip."
   [spec]
   (let
-    [{:keys [needles paths include is_hidden is_regex limit offset context is_files_only]}
+    [{:keys [needles paths include exclude is_hidden is_regex limit offset context is_files_only]}
      (coerce-rg-spec spec)
 
      before-ctx
@@ -3072,6 +3094,9 @@
      include-matchers
      (mapv glob-matcher include)
 
+     exclude-matchers
+     (mapv glob-matcher exclude)
+
      match-globs?
      (fn [matchers ^File f]
        (let
@@ -3091,9 +3116,12 @@
                           (or (.matches m rel-path) (.matches m name-path)))
                         matchers))))
 
-     include-file?
+     ;; WHICH FILES the scan may read: `include` narrows, `exclude` subtracts,
+     ;; and exclude WINS — a file matching both globs is not searched.
+     scan-file?
      (fn [^File f]
-       (or (empty? include-matchers) (match-globs? include-matchers f)))
+       (and (or (empty? include-matchers) (match-globs? include-matchers f))
+            (not (and (seq exclude-matchers) (match-globs? exclude-matchers f)))))
 
      search-roots
      (resolve-search-roots paths)
@@ -3127,10 +3155,10 @@
      ;; fff's walker, and `.rgignore` / the `:grep` overlay ride along as fff's own
      ;; ignore overlay — so there is no raw-walk fallback left (that bypass cost 120s on
      ;; this workspace). fff surfaces dotfiles a walk hid by descent, so re-apply the
-     ;; include globs + hidden-below-root guard here.
+     ;; include/exclude globs + hidden-below-root guard here.
      candidates
      (->> (rg-fff-candidate-files roots needles is_regex search-overlay)
-          (filter include-file?)
+          (filter scan-file?)
           (remove (fn [^File f]
                     (and (not is_hidden) (rg-hidden-below-root? roots f)))))
 
@@ -5406,6 +5434,7 @@
        "Literal smart-case content plus fuzzy filenames; use first when location is unknown. "
        "`is_regex: True` runs the query as a REGEX over CONTENT instead (names are not matched). "
        "Hits come back ANCHORED, so a hit is already a `patch` argument. "
+       "`include`/`exclude` globs bound which files the content sweep reads (exclude wins). "
        "`query: \"\"` lists files. Page with `offset`: line 1 names the next call when capped.")
      :before-fn (fs-access-before-fn :grep :dir "file-read" find-arg-paths)
      :tag :observation
