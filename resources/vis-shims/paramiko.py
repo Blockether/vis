@@ -25,6 +25,33 @@ def __vis_install_paramiko__():
     _server_stop = __vis_server_stop__
     _NLB = bytes([10])
 
+    # A dropped SSHClient / Transport / SFTPClient frees NOTHING by itself:
+    # GraalPy does not refcount, so the HOST session -- a live socket, its JSch /
+    # MINA threads and its descriptors -- stays open for the life of the JVM, and
+    # the handle is a plain host id that OUTLIVES its owner. That is the same
+    # problem every handle-holding shim has, and it is solved ONCE, in the
+    # runtime's handle registry (`vis-python/async_runtime.py`): each owner is
+    # held under a weak ref and the resource is closed host-side once nothing can
+    # reach it. `SSHClient.get_transport()` wraps the SAME session in a second
+    # object, so a session dies with the LAST of its owners, never the first.
+    _KIND_SESS = "paramiko.session"
+    _KIND_SFTP = "paramiko.sftp"
+    _KIND_SERVER = "paramiko.server"
+
+    def _rt(name):
+        # Resolved at CALL time in the sandbox globals, with the builtins mirror
+        # (`__vis_pin_runtime__`) as its second door.
+        fn = globals().get(name)
+        if fn is None:
+            fn = getattr(_bi, name, None)
+        if fn is None:
+            raise OSError("vis: the sandbox handle registry is missing " + str(name))
+        return fn
+
+    _rt("__vis_handle_kind__")(_KIND_SESS, lambda h: _call(_close, h))
+    _rt("__vis_handle_kind__")(_KIND_SFTP, lambda h: _call(_sftp_close, h))
+    _rt("__vis_handle_kind__")(_KIND_SERVER, lambda h: _call(_server_stop, h))
+
     def _b64d(s):
         if s is None:
             return b""
@@ -501,6 +528,7 @@ def __vis_install_paramiko__():
         def __init__(self, handle):
             self._h = handle
             self._cwd = None
+            _rt("__vis_own__")(self, _KIND_SFTP, handle)
 
         @classmethod
         def from_transport(cls, transport, **kw):
@@ -631,6 +659,7 @@ def __vis_install_paramiko__():
             return self._adjust(path)
 
         def close(self):
+            _rt("__vis_forget__")(_KIND_SFTP, self._h)
             try:
                 _call(_sftp_close, self._h)
             except Exception:
@@ -647,6 +676,10 @@ def __vis_install_paramiko__():
         def __init__(self, sock=None, sess=None):
             self._sock = sock
             self._sess = sess
+            if sess is not None:
+                # `SSHClient.get_transport()` hands over a session this object did
+                # not open: one more OWNER of that handle, not a second handle.
+                _rt("__vis_own__")(self, _KIND_SESS, sess)
             self._server = None
             self._server_keys = []
             self._subsystem_handlers = {}
@@ -709,6 +742,7 @@ def __vis_install_paramiko__():
 
                 info = _call(_server_start, _auth_pw, _forward, _auth_none)
                 self._server_handle = info.get("handle")
+                _rt("__vis_own__")(self, _KIND_SERVER, self._server_handle)
                 relay = _socketmod.create_connection(
                     ("127.0.0.1", int(info.get("port")))
                 )
@@ -749,6 +783,7 @@ def __vis_install_paramiko__():
                         pass
                     h = getattr(self, "_server_handle", None)
                     if h is not None:
+                        _rt("__vis_forget__")(_KIND_SERVER, h)
                         try:
                             _call(_server_stop, h)
                         except Exception:
@@ -810,11 +845,13 @@ def __vis_install_paramiko__():
                     "auth_none": True,
                 },
             )
+            _rt("__vis_own__")(self, _KIND_SESS, self._sess)
             return None
 
         def close(self):
             self._server_started = False
             if getattr(self, "_server_handle", None) is not None:
+                _rt("__vis_forget__")(_KIND_SERVER, self._server_handle)
                 try:
                     _call(_server_stop, self._server_handle)
                 except Exception:
@@ -827,6 +864,7 @@ def __vis_install_paramiko__():
                     pass
                 self._relay = None
             if self._sess is not None:
+                _rt("__vis_forget__")(_KIND_SESS, self._sess)
                 try:
                     _call(_close, self._sess)
                 except Exception:
@@ -912,6 +950,7 @@ def __vis_install_paramiko__():
                 "compress": bool(compress),
             }
             self._sess = _call(_connect, opts)
+            _rt("__vis_own__")(self, _KIND_SESS, self._sess)
 
         def exec_command(
             self, command, bufsize=-1, timeout=None, get_pty=False, environment=None
@@ -949,6 +988,7 @@ def __vis_install_paramiko__():
 
         def close(self):
             if self._sess is not None:
+                _rt("__vis_forget__")(_KIND_SESS, self._sess)
                 try:
                     _call(_close, self._sess)
                 except Exception:

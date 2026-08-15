@@ -1,5 +1,5 @@
 def __vis_install_sqlite3__():
-    import sys, types, weakref
+    import sys, types
 
     _bi = sys.modules["builtins"]
     _connect = __vis_sqlite_connect__
@@ -62,27 +62,31 @@ def __vis_install_sqlite3__():
             _raise(payload)
         return payload
 
-    # A dropped Connection is NOT closed: GraalPy does not refcount, so the HOST
-    # connection stays open for the whole session and keeps its descriptor
-    # (measured: 14 leaked descriptors per 15 dropped `connect()`s, invisible to
-    # the runtime's own registry because no `open` was ever involved). The handle
-    # is a plain host id, so unlike the Python object it OUTLIVES its owner: hold
-    # it under a WEAK ref and close it host-side once nothing can reach it.
-    _live = {}
+    # A dropped Connection frees NOTHING by itself: GraalPy does not refcount, so
+    # the HOST connection stays open for the whole session and keeps its
+    # descriptor (measured: 14 leaked descriptors per 15 dropped `connect()`s,
+    # invisible to the runtime's descriptor registry because no `open` was ever
+    # involved). The handle is a plain host id, so unlike the Python object it
+    # OUTLIVES its owner -- which is the same problem every handle-holding shim
+    # has, and it is solved ONCE, in the runtime's handle registry
+    # (`vis-python/async_runtime.py`): it holds each owner under a weak ref and
+    # closes the connection host-side once nothing can reach it, on its own
+    # boundary schedule. This shim only declares the kind and names the owner.
+    _KIND = "sqlite3.Connection"
 
-    def _reap():
-        for h in list(_live):
-            r = _live.get(h)
-            if r is None or r() is not None:
-                continue
-            _live.pop(h, None)
-            try:
-                _close(h)
-            except Exception:
-                pass  # best-effort: a broken handle must never break the block
-        return len(_live)
+    def _rt(name):
+        # Resolved at CALL time in the sandbox globals, with the builtins mirror
+        # (`__vis_pin_runtime__`) as its second door.
+        fn = globals().get(name)
+        if fn is None:
+            fn = getattr(_bi, name, None)
+        if fn is None:
+            raise OperationalError(
+                "vis: the sandbox handle registry is missing " + str(name)
+            )
+        return fn
 
-    _reap.__vis_sqlite3_reaper__ = True
+    _rt("__vis_handle_kind__")(_KIND, lambda h: _call(_close, h))
 
     def _decode_cell(v):
         if v is None:
@@ -232,9 +236,8 @@ def __vis_install_sqlite3__():
 
     class Connection:
         def __init__(self, database):
-            _reap()
             self._h = _call(_connect, database)
-            _live[self._h] = weakref.ref(self)
+            _rt("__vis_own__")(self, _KIND, self._h)
             self.row_factory = None
             self.text_factory = str
             self.isolation_level = ""
@@ -258,7 +261,9 @@ def __vis_install_sqlite3__():
             _call(_rollback, self._h)
 
         def close(self):
-            _live.pop(self._h, None)
+            # Untrack first: this closes the connection ITSELF, so a failure belongs
+            # to the caller and not to a best-effort sweep.
+            _rt("__vis_forget__")(_KIND, self._h)
             _call(_close, self._h)
 
         @property
@@ -388,14 +393,6 @@ def __vis_install_sqlite3__():
     sys.modules["sqlite3"] = mod
     sys.modules["sqlite3.dbapi2"] = mod
     _bi.sqlite3 = mod
-
-    # Reclaim dropped connections on the runtime's own schedule (every tool-call
-    # boundary and every block end), not only when the block opens another one.
-    _reapers = getattr(_bi, "__vis_fd_reapers__", None)
-    if _reapers is not None and not any(
-        getattr(f, "__vis_sqlite3_reaper__", False) for f in _reapers
-    ):
-        _reapers.append(_reap)
 
 
 __vis_install_sqlite3__()

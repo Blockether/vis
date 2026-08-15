@@ -138,20 +138,15 @@ def __vis_fd_drop__(__vis_fd__, __vis_id__):
         return 0
 
 
-__vis_fd_reapers__ = __vis_survivor__("__vis_fd_reapers__", list)
-
-
 def __vis_run_reapers__():
-    # Descriptors this module never opened. A shim (`sqlite3`) hands the block a
-    # Python object wrapping a HOST handle, and dropping that object leaks the host
-    # connection and its descriptor — measured 14 per 15 dropped `sqlite3.connect()`
-    # — because nothing here can see it. A shim registers one cheap callable here
-    # and reclaims its own on the same schedule; a reaper must never raise.
-    for __vis_reaper__ in list(__vis_fd_reapers__):
-        try:
-            __vis_reaper__()
-        except Exception:
-            pass
+    # The boundary hook for every reclamation that is NOT a descriptor: the host
+    # handles shims handed this block (`__vis_own__`) are freed here — at the end
+    # of a block and at every tool call — so what a finished block dropped does
+    # not wait for the next one to allocate. It must never raise.
+    try:
+        __vis_handle_reap__()
+    except Exception:
+        pass
 
 
 def __vis_reclaim_fds__(force=False):
@@ -209,6 +204,207 @@ def __vis_fd_admit__():
         " `Path(p).read_text()`), or close the handles you keep open."
         " VIS_PY_MAX_OPEN_FILES raises the ceiling.",
     )
+
+
+# ── HOST-HANDLE OWNERSHIP: the same non-refcounting fact, one level out from
+# descriptors. A shim hands the block a small Python wrapper around a HOST id —
+# a PIL raster (an int[], 4 bytes per pixel, ~12 MB for one phone screenshot),
+# an SSH session, an SQLite connection — while the resource itself lives in a
+# per-JVM registry keyed by that id. Dropping the wrapper frees NOTHING: no
+# `__del__` runs, the id is a plain int that outlives its owner, and the host
+# cannot see that the last Python reference died (measured: 20 dropped
+# `Image.new`s = 20 live rasters after `gc.collect()`; 15 dropped
+# `sqlite3.connect()`s = 14 leaked descriptors). Every shim used to invent its
+# own weak-ref table, its own sweep policy and its own reaper, so a shim that
+# forgot leaked for the life of the process. This is that machinery ONCE: a shim
+# declares how its kind is freed (`__vis_handle_kind__`) and names each owner
+# (`__vis_own__`); the runtime frees a handle when no owner can be reached any
+# more — on the reaper schedule (tool-call boundary, block end), under
+# allocation pressure, and eagerly when the shim itself closes or replaces one.
+# A handle may have SEVERAL owners (PIL's `exif_transpose(in_place=True)` hands
+# two Images one raster), so it dies with the LAST of them, never the first.
+__vis_handle_freers__ = __vis_survivor__("__vis_handle_freers__", dict)
+__vis_handles__ = __vis_survivor__("__vis_handles__", dict)
+__vis_handle_state__ = __vis_survivor__(
+    "__vis_handle_state__",
+    lambda: {
+        "live_bytes": 0,
+        "new_bytes": 0,
+        "new_owners": 0,
+        "sweeping": False,
+        "owned_since_sweep": False,
+    },
+)
+# Sweep after this many freshly owned bytes or handles; collect only when what is
+# still pinned crosses the budget — a `gc.collect()` costs ~270ms, so it is the
+# fallback here exactly as it is for descriptors.
+__vis_handle_sweep_bytes__ = 32 * 1024 * 1024
+__vis_handle_sweep_owners__ = 64
+__vis_handle_collect_bytes__ = 96 * 1024 * 1024
+__vis_handle_collect_owners__ = 128
+# What a block may leave pinned across a boundary before that boundary pays for a
+# collection.
+__vis_handle_boundary_bytes__ = 32 * 1024 * 1024
+
+
+def __vis_handle_kind__(__vis_kind__, __vis_free__):
+    # Declared ONCE per shim install: `__vis_free__(key)` releases one handle of
+    # this kind host-side. A reinstalled shim rebinds it, because the old
+    # callable closes over the old module's host bridge.
+    __vis_handle_freers__[__vis_kind__] = __vis_free__
+    __vis_handles__.setdefault(__vis_kind__, {})
+
+
+def __vis_own__(__vis_owner__, __vis_kind__, __vis_key__, __vis_nbytes__=0):
+    # Name one more OWNER of a host handle. `__vis_nbytes__` is what the host
+    # holds for it (0 when the cost is a socket or a connection rather than
+    # memory); it only ever drives WHEN the sweep runs.
+    __vis_map__ = __vis_handles__.setdefault(__vis_kind__, {})
+    __vis_e__ = __vis_map__.get(__vis_key__)
+    if __vis_e__ is None:
+        __vis_n__ = max(0, int(__vis_nbytes__))
+        __vis_map__[__vis_key__] = [__vis_n__, [__vis_weakref__.ref(__vis_owner__)]]
+        __vis_handle_state__["live_bytes"] += __vis_n__
+        __vis_handle_state__["new_bytes"] += __vis_n__
+        __vis_handle_state__["new_owners"] += 1
+        __vis_handle_state__["owned_since_sweep"] = True
+        __vis_handle_admit__()
+    else:
+        __vis_e__[1].append(__vis_weakref__.ref(__vis_owner__))
+
+
+def __vis_forget__(__vis_kind__, __vis_key__):
+    # Stop tracking a handle WITHOUT freeing it: the caller is freeing it itself
+    # (an explicit `close()`, where an error belongs to the caller), or the host
+    # id was replaced by an in-place op.
+    __vis_e__ = __vis_handles__.get(__vis_kind__, {}).pop(__vis_key__, None)
+    if __vis_e__ is not None:
+        __vis_handle_state__["live_bytes"] -= __vis_e__[0]
+
+
+def __vis_free_handle__(__vis_kind__, __vis_key__):
+    # Untrack and release host-side. Best-effort by contract: this runs from
+    # sweeps and reapers, where a stale handle must never break the block.
+    __vis_forget__(__vis_kind__, __vis_key__)
+    __vis_free__ = __vis_handle_freers__.get(__vis_kind__)
+    if __vis_free__ is None:
+        return False
+    try:
+        __vis_free__(__vis_key__)
+        return True
+    except Exception:
+        return False
+
+
+def __vis_disown__(__vis_owner__, __vis_kind__, __vis_key__):
+    # Drop ONE owner, and free the handle when no other owner can still reach it.
+    # This is the EAGER path — `close()`, and an in-place op that replaces a
+    # handle — so neither waits for a sweep. Answers whether it was freed.
+    __vis_e__ = __vis_handles__.get(__vis_kind__, {}).get(__vis_key__)
+    if __vis_e__ is None:
+        return False
+    __vis_keep__ = []
+    for __vis_ref__ in __vis_e__[1]:
+        __vis_other__ = __vis_ref__()
+        if __vis_other__ is not None and __vis_other__ is not __vis_owner__:
+            __vis_keep__.append(__vis_ref__)
+    if __vis_keep__:
+        __vis_e__[1] = __vis_keep__
+        return False
+    return __vis_free_handle__(__vis_kind__, __vis_key__)
+
+
+def __vis_reclaim_handles__(__vis_force__=False):
+    # Free every handle whose owners are ALL unreachable; answers how many.
+    # Only a collection clears GraalPy's weak refs, so a forced pass collects
+    # first; the cheap pass frees whatever an ordinary JVM GC already cleared.
+    if __vis_handle_state__["sweeping"]:
+        return 0
+    __vis_handle_state__["sweeping"] = True
+    try:
+        if __vis_force__:
+            __vis_gc__.collect()
+            __vis_handle_state__["owned_since_sweep"] = False
+        __vis_handle_state__["new_bytes"] = 0
+        __vis_handle_state__["new_owners"] = 0
+        __vis_freed__ = 0
+        for __vis_kind__ in list(__vis_handles__):
+            __vis_map__ = __vis_handles__.get(__vis_kind__) or {}
+            for __vis_key__ in list(__vis_map__):
+                __vis_e__ = __vis_map__.get(__vis_key__)
+                if __vis_e__ is None:
+                    continue
+                if any(__vis_ref__() is not None for __vis_ref__ in __vis_e__[1]):
+                    continue
+                if __vis_free_handle__(__vis_kind__, __vis_key__):
+                    __vis_freed__ += 1
+        return __vis_freed__
+    finally:
+        __vis_handle_state__["sweeping"] = False
+
+
+def __vis_handle_pinned__():
+    # How many handles the registry still holds, across every kind.
+    __vis_pinned__ = 0
+    for __vis_kind__ in list(__vis_handles__):
+        __vis_pinned__ += len(__vis_handles__.get(__vis_kind__) or {})
+    return __vis_pinned__
+
+
+def __vis_handle_relieve__():
+    # The IN-BLOCK policy. Cheap pass first — it frees whatever an ordinary JVM
+    # GC already cleared — and a collection only when what is still pinned is
+    # over budget. A kind whose cost is a socket or a connection reports no bytes
+    # at all, so the byte budget can never fire for it: for those, COUNT is the
+    # only pressure there is (200 dropped `sqlite3.connect()`s inside one block
+    # are 200 host connections and their descriptors, with nothing to show for it
+    # in bytes).
+    __vis_reclaim_handles__(False)
+    if __vis_handle_state__["live_bytes"] >= __vis_handle_collect_bytes__:
+        __vis_reclaim_handles__(True)
+    elif __vis_handle_pinned__() >= __vis_handle_collect_owners__:
+        __vis_reclaim_handles__(True)
+
+
+def __vis_handle_reap__():
+    # The BOUNDARY policy (block end, every tool call), where the in-block one is
+    # not enough: a block that finishes holding 50 MB of dropped rasters is under
+    # no allocation pressure at all, and nothing would free them until the NEXT
+    # block happened to allocate. Nothing is running here, so a collection costs
+    # latency no statement is waiting on — but it is still ~270ms, so it is paid
+    # only when something was owned since the last one (a boundary that follows a
+    # boundary is free) and what is pinned is worth collecting for.
+    if not __vis_handle_state__["owned_since_sweep"]:
+        return
+    __vis_reclaim_handles__(False)
+    if (
+        __vis_handle_state__["live_bytes"] >= __vis_handle_boundary_bytes__
+        or __vis_handle_pinned__() >= __vis_handle_sweep_owners__
+    ):
+        __vis_reclaim_handles__(True)
+
+
+def __vis_handle_admit__():
+    # Runs when a shim owns a new handle. Under the mark it is two int compares.
+    if (
+        __vis_handle_state__["new_bytes"] < __vis_handle_sweep_bytes__
+        and __vis_handle_state__["new_owners"] < __vis_handle_sweep_owners__
+    ):
+        return
+    __vis_handle_relieve__()
+
+
+def __vis_handle_census__():
+    # What each kind still pins: `{kind: {"count": n, "bytes": b}}`. The seam the
+    # lifetime tests assert on, and the first thing to print when a sandbox grows.
+    __vis_out__ = {}
+    for __vis_kind__ in list(__vis_handles__):
+        __vis_map__ = __vis_handles__.get(__vis_kind__) or {}
+        __vis_out__[__vis_kind__] = {
+            "count": len(__vis_map__),
+            "bytes": sum(__vis_e__[0] for __vis_e__ in list(__vis_map__.values())),
+        }
+    return __vis_out__
 
 
 def __vis_open__(*__vis_a__, **__vis_kw__):
