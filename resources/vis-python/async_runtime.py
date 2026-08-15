@@ -1666,7 +1666,7 @@ def __vis_stamp_tool__(fn, nm):
         except Exception:
             pass
     params = (g.get("__vis_sigs__") or {}).get(nm)
-    if params and getattr(fn, "__wrapped__", None) is None:
+    if params is not None and getattr(fn, "__wrapped__", None) is None:
         proto = __vis_tool_proto__(nm, params)
         if proto is not None:
             fn.__wrapped__ = proto
