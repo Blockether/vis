@@ -568,6 +568,10 @@
 
 (defdelegate db-set-session-project! [db-info session-id project-id])
 
+;; The human's star on a session soul. Backend-owned: the gateway is the ONE
+;; place a star lives, so every client of it reads the same answer.
+(defdelegate db-set-session-favorite! [db-info session-id is-favorite])
+
 (defdelegate db-reorder-project-sessions! [db-info project-id session-ids])
 
 (defdelegate db-adopt-and-reorder-project-sessions! [db-info project-id session-ids])

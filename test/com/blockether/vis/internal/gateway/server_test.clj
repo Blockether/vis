@@ -2792,3 +2792,53 @@
                         (is (str/includes?
                               (get body "error")
                               "libsherpa-onnx-jni.dylib is not on this machine"))))))))))))))
+
+;; Regression, user report: the star was kept in each DEVICE's own storage, so one
+;; screen showed a session starred while another showed it plain, and no answer from
+;; the gateway could settle which was true.
+(deftest the-star-is-set-on-the-gateway-never-on-the-device
+  (let
+    [sid
+     (str (random-uuid))
+
+     asked
+     (atom [])
+
+     favorite-setter
+     (fn [rank]
+       (fn [_sid favorite?]
+         (swap! asked conj favorite?)
+         {"id" sid "favorite_rank" (when favorite? rank)}))
+
+     patch-session
+     (fn [body]
+       ((rv 'patch-session-handler)
+         (merge {:request-method :patch :path-params {:sid sid}} (json-body body))))]
+
+    (testing "starring answers the soul carrying the rank the gateway allocated"
+      (with-redefs-fn {#'state/set-favorite! (favorite-setter 7)}
+        (fn []
+          (let [response (patch-session {:is_favorite true})]
+            (is (= 200 (:status response)))
+            (is (= 7 (get (wire/parse-json (:body response)) "favorite_rank")))
+            (is (= [true] @asked))))))
+    (testing "unstarring is the same route, and the rank comes back empty"
+      (reset! asked [])
+      (with-redefs-fn {#'state/set-favorite! (favorite-setter 7)}
+        (fn []
+          (let [response (patch-session {:is_favorite false})]
+            (is (= 200 (:status response)))
+            (is (nil? (get (wire/parse-json (:body response)) "favorite_rank")))
+            (is (= [false] @asked))))))
+    (testing "the star is read before a title, so a body carrying both never renames"
+      (reset! asked [])
+      (with-redefs-fn {#'state/set-favorite! (favorite-setter 1)
+                       #'state/set-title! (fn [& _]
+                                            (throw (ex-info "renamed instead of starred" {})))}
+        (fn []
+          (is (= 200 (:status (patch-session {:is_favorite true :title "new name"}))))
+          (is (= [true] @asked)))))
+    (testing "a session this gateway does not know is a 404, never a silent star"
+      (with-redefs-fn {#'state/set-favorite! (constantly nil)}
+        (fn []
+          (is (= 404 (:status (patch-session {:is_favorite true})))))))))

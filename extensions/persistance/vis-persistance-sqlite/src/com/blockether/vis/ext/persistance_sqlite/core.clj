@@ -1157,7 +1157,11 @@
              :created-at (->date (:created_at soul))
              :owner-id (:owner_id soul)
              :project-id (->uuid (:project_id soul))
-             :project-position (:project_position soul)}
+             :project-position (:project_position soul)
+             ;; The human's STAR, off the `:*` soul row already read: every list
+             ;; row carries it without a second query per session (nil =
+             ;; unstarred). Backend-owned, so two clients cannot disagree.
+             :favorite-rank (:favorite_rank soul)}
             (:llm_root_provider state)
             (assoc :provider (->kw-back (:llm_root_provider state)))
 
@@ -1217,11 +1221,12 @@
            :owner-id (:owner_id row)
            :project-id (->uuid (:project_id row))
            :project-position (:project_position row)
-           :project-name (:project_name row)})
+           :project-name (:project_name row)
+           :favorite-rank (:favorite_rank row)})
         (query! db-info
                 {:select [:cs.id :cs.channel :cs.external_id :cs.created_at :cs.owner_id
-                          :cs.project_id :cs.project_position [:p.name :project_name]
-                          [:s.title :state_title] :s.version
+                          :cs.project_id :cs.project_position :cs.favorite_rank
+                          [:p.name :project_name] [:s.title :state_title] :s.version
                           [{:select [[[:count :*]]]
                             :from [[:session_state :child]]
                             :where [:and [:= :child.session_soul_id :cs.id]
@@ -2651,6 +2656,48 @@
                  :where [:= :id (->ref session-id)]}))
     nil))
 
+;; =============================================================================
+;; The human's star (session_soul.favorite_rank)
+;; =============================================================================
+
+(defn db-set-session-favorite!
+  "Star (`true`) or unstar (`false`) the soul behind `session-id`. Returns the
+   rank the session now holds - a long while starred, nil once it is not.
+
+   The star is a RANK, not a boolean, because the clients pin starred sessions
+   to the top of the list and that band needs a TOTAL order: two stars sharing a
+   wall-clock millisecond would tie, and a tie is exactly how a deterministic
+   order dies. The rank is allocated MAX+1 INSIDE the write transaction, so two
+   devices starring at the same moment still get two different ranks. Ranks are
+   only ever compared, so the gaps unstarring leaves behind cost nothing.
+
+   Starring an ALREADY starred soul keeps its rank: the star is a state the
+   human sets, not an event, so a retried request or a second tap racing the
+   first must not reshuffle a band nobody touched."
+  [db-info session-id is-favorite]
+  (when (and (ds db-info) session-id)
+    (sqlite-write-tx!
+      db-info
+      (fn [tx-info]
+        (let
+          [id
+           (->ref session-id)
+
+           cur
+           (:favorite_rank
+             (query-one! tx-info {:select [:favorite_rank] :from :session_soul :where [:= :id id]}))
+
+           rank
+           (cond (not is-favorite) nil
+                 (some? cur) (long cur)
+                 :else (inc (long (or (:maxrank (query-one! tx-info
+                                                            {:select [[[:max :favorite_rank]
+                                                                       :maxrank]]
+                                                             :from :session_soul}))
+                                      0))))]
+
+          (execute! tx-info {:update :session_soul :set {:favorite_rank rank} :where [:= :id id]})
+          rank)))))
 ;; =============================================================================
 ;; Turn - session_turn_soul + session_turn_state
 ;; =============================================================================

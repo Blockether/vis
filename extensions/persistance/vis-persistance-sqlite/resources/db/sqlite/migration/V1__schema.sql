@@ -95,7 +95,14 @@ CREATE TABLE session_soul (
 
   -- Manual order of this soul within its project (the movable TAB order, V7).
   -- Held gap-free & unique per project by idx_project_position.
-  project_position  INTEGER NOT NULL DEFAULT 0
+  project_position  INTEGER NOT NULL DEFAULT 0,
+
+  -- The human's STAR, owned HERE and nowhere else: every client of this gateway
+  -- reads one truth instead of each device keeping its own copy. A RANK, not a
+  -- boolean — allocated MAX()+1 — so the pinned band has a total order that no
+  -- wall-clock tie can break. The numbers are only ever compared, never shown,
+  -- so the gaps unstarring leaves behind cost nothing. NULL = unstarred.
+  favorite_rank     INTEGER
 );
 
 CREATE INDEX idx_session_soul_parent ON session_soul(parent_state_id)
@@ -129,6 +136,11 @@ CREATE INDEX idx_session_soul_project ON session_soul(project_id, project_positi
 CREATE UNIQUE INDEX idx_project_position
   ON session_soul(project_id, project_position)
   WHERE project_id IS NOT NULL;
+
+-- Starred souls only. The next star's rank is MAX(favorite_rank)+1, which this
+-- partial index answers with one lookup instead of a scan of every session.
+CREATE INDEX idx_session_soul_favorite ON session_soul(favorite_rank)
+  WHERE favorite_rank IS NOT NULL;
 
 -- Cross-channel session list: its predicates match this partial index exactly,
 -- and its order avoids a transient sort of every claimed top-level session.

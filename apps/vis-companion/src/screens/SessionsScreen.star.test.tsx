@@ -122,6 +122,34 @@ describe("starring a session", () => {
     ).not.toBeNull();
   });
 
+  // Regression, user report (paraphrased: the star is in two states at once): the
+  // mark was kept in THIS DEVICE's storage, so the machine never heard about it —
+  // one screen showed a session starred, another showed it plain, and no answer the
+  // gateway could give would settle which was true. The star is its fact now.
+  it("tells the gateway, and wears the rank the gateway answers with", async () => {
+    const view = renderSessionsScreen({ machines });
+    restore = view.restore;
+    await screen.findByText("Older session");
+    const cell = () => screen.getByRole("group", { name: "Older session actions" });
+    const patched = () => view.requests.filter((request) => request.method === "PATCH");
+
+    await userEvent.click(cell().querySelector('button[aria-label="Star"]')!);
+
+    expect(patched().map((request) => [request.path, request.body])).toEqual([
+      ["/v1/sessions/older", { is_favorite: true }],
+    ]);
+    // The mark the row wears is the rank that came BACK — there is no local copy of
+    // the tap left over to disagree with it.
+    expect(await screen.findByRole("button", { name: "Unstar" })).toBeTruthy();
+
+    await userEvent.click(cell().querySelector('button[aria-label="Unstar"]')!);
+
+    expect(patched().map((request) => request.body)).toEqual([
+      { is_favorite: true },
+      { is_favorite: false },
+    ]);
+    expect(cell().querySelector('button[aria-label="Star"]')).not.toBeNull();
+  });
   // Regression, user report on iOS ("when I click the star on some other row, first I
   // don't see the star automatically, only after I do slide once again ... there is
   // some mismatch with the state", with the cell painted over its own old caption):

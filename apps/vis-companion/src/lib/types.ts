@@ -48,6 +48,12 @@ export interface Session {
   project_id?: string | null;
   project_name?: string | null;
   project_position?: number | null;
+  /**
+   * The human's STAR, owned by the GATEWAY: the order this session was starred in,
+   * or null when it is not starred. A RANK — compare it, never show it — and the
+   * ONE place the mark lives, so no two clients of a machine can disagree about it.
+   */
+  favorite_rank?: number | null;
   status?: "idle" | "running" | "suspended" | string;
   /** Canonical gateway liveness; older gateways are inferred from status. */
   live?: boolean;

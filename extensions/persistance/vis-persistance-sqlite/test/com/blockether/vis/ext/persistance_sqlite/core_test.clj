@@ -3138,6 +3138,44 @@
         (persistance/db-set-session-model-pref! s (str sid) nil nil)
         (expect (nil? (:model-pref (persistance/db-get-session s sid)))))))
 
+;; Regression, user report: the star lived in each DEVICE's own storage, so the same
+;; session could show a star on one screen and none on another, and no answer from
+;; the gateway could settle which was true. The soul owns the star now.
+(defdescribe
+  the-star-is-a-rank-on-the-session-soul-test
+  "A star is a HUMAN's decision, and the gateway keeps it: it rides the
+   `session_soul` row `db-get-session` already reads, and it is a RANK rather than a
+   flag because the clients pin starred sessions into a band that needs a TOTAL
+   order - two stars sharing a millisecond would tie."
+  (it "allocates a rank per star, holds it while starred, and clears it on unstar"
+      (let
+        [s
+         (h/store)
+
+         a
+         (h/store-session! s {:channel :api :title "first"})
+
+         b
+         (h/store-session! s {:channel :api :title "second"})]
+
+        (expect (nil? (:favorite-rank (persistance/db-get-session s a))))
+        (expect (= 1 (persistance/db-set-session-favorite! s (str a) true)))
+        (expect (= 2 (persistance/db-set-session-favorite! s (str b) true)))
+        (expect (= 1 (:favorite-rank (persistance/db-get-session s a))))
+        (expect (= 2 (:favorite-rank (persistance/db-get-session s b))))
+        ;; Starring what is ALREADY starred is not a re-star: a retried request or a
+        ;; second tap racing the first must not reshuffle a band nobody touched.
+        (expect (= 1 (persistance/db-set-session-favorite! s (str a) true)))
+        ;; The LIST carries it too, so a client ranks its rows without a query each.
+        (expect (= {(str a) 1 (str b) 2}
+                   (into {}
+                         (map (juxt (comp str :id) :favorite-rank))
+                         (persistance/db-list-sessions s :all))))
+        (expect (nil? (persistance/db-set-session-favorite! s (str a) false)))
+        (expect (nil? (:favorite-rank (persistance/db-get-session s a))))
+        ;; The gap unstarring leaves behind costs nothing: ranks are only compared,
+        ;; and the next star still lands last.
+        (expect (= 3 (persistance/db-set-session-favorite! s (str a) true))))))
 (defdescribe
   usage-model-survives-an-unstamped-turn-test
   "A turn row is stamped with provider/model only when the turn FINISHES, so the

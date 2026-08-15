@@ -4348,6 +4348,12 @@
                                str)
            :project_name (:project-name session)
            :project_position (:project-position session)
+           ;; The human's STAR, and the ONE place it lives: the GATEWAY owns it,
+           ;; so every client listing this session reads the same mark instead of
+           ;; each device holding its own copy. A RANK - compare it, never show
+           ;; it - and null when the session is not starred. Always PRESENT, so a
+           ;; client merging this row onto a cached one sees a star taken away.
+           :favorite_rank (:favorite-rank session)
            :status (cond current-turn-id "running"
                          (= "suspended" (:status last-turn)) "suspended"
                          :else "idle")
@@ -4803,6 +4809,13 @@
   (teardown-session-async! sid))
 
 (defn set-title! [sid title] (when (lp/by-id sid) (lp/set-title! sid title) (soul sid)))
+
+(defn set-favorite!
+  "Star (`true`) or unstar (`false`) `sid`. Returns the refreshed soul (its
+   `favorite_rank` is the rank the gateway allocated), or nil when no such
+   session exists."
+  [sid is-favorite]
+  (when (lp/by-id sid) (lp/set-favorite! sid is-favorite) (soul sid)))
 
 (defn- broadcast-title-event!
   "Append a `session.title_updated` event for `sid` (stored, so a cursor

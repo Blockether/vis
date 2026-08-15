@@ -77,7 +77,7 @@ import {
   type DraftMessageStore,
 } from '../lib/draft-messages';
 import type { PendingAttachment } from '../lib/attachments';
-import { favoriteKey, forgetFavorites, toggleFavorite, useFavorites } from '../lib/favorites';
+import { favoriteRank, isFavorite, nextFavoriteRank } from '../lib/favorites';
 import {
   groupByWorkDir,
   draftsRead,
@@ -412,8 +412,6 @@ export function SessionsScreen({
   // what you wrote, and a way to throw it away — instead of being hidden with
   // the words locked inside it.
   const draftMessages = useDraftMessages();
-  // Stars outrank every heuristic below, so the list repaints when one moves.
-  const favorites = useFavorites();
 
   // A session this device has never met is NOT unread: seed it at the turn count
   // it arrived with, so only answers that land AFTER this point raise a badge.
@@ -438,6 +436,36 @@ export function SessionsScreen({
     [],
   );
 
+  // The star belongs to the GATEWAY, and this is the one place that asks it to move.
+  // The row is repainted first so the mark lands in the SAME commit as the tap, the
+  // PATCH follows, and the row the gateway echoes replaces the guess. A star this
+  // device could not deliver goes back: a screen must never keep saying something
+  // the machine never heard.
+  const toggleStar = useCallback(
+    (session: Session, conn: GatewayConn) => {
+      const key = machineKey(conn);
+      const api = clientFor(conn);
+      const before = favoriteRank(session);
+      const starring = before === null;
+      const withRank = (rank: number | null) => (machine: FleetMachine) =>
+        machine.sessions
+          ? {
+              ...machine,
+              sessions: machine.sessions.map((row) =>
+                row.id === session.id ? { ...row, favorite_rank: rank } : row,
+              ),
+            }
+          : machine;
+      patchMachine(key, (machine) =>
+        withRank(starring ? nextFavoriteRank(machine.sessions ?? []) : null)(machine),
+      );
+      void api
+        .setSessionFavorite(session.id, starring)
+        .then((row) => patchMachine(key, withRank(favoriteRank(row))))
+        .catch(() => patchMachine(key, withRank(before)));
+    },
+    [patchMachine],
+  );
   // ONE machine's list. Machines load independently on purpose: a gateway that is
   // asleep must not keep the machines next to it off the screen, and its failure
   // drops that machine out of the fleet view instead of taking the whole list down.
@@ -873,7 +901,6 @@ export function SessionsScreen({
     return inScope.map((machine) => {
       const base = clientFor(machine.conn).base;
       const draftFor = (session: Session) => draftMessages[draftMessageKey(base, session.id)];
-      const rankFor = (session: Session) => favorites[favoriteKey(base, session.id)] ?? null;
       // Server-side transcript hits this machine had not paged in are part of the
       // list a query filters: without them search only finds what is on screen.
       const hits = needle ? (searchHits.get(machineKey(machine.conn)) ?? []) : [];
@@ -889,7 +916,7 @@ export function SessionsScreen({
       const sessions = withSearchHits(machine.sessions ?? [], hits).filter((session) => {
         const listed = sessionIsListed(session, {
           hasDraftMessage: draftMessageHasUnsent(draftFor(session)),
-          isFavorite: rankFor(session) !== null,
+          isFavorite: isFavorite(session),
         });
         if (!listed) return false;
         return (
@@ -912,12 +939,12 @@ export function SessionsScreen({
       return {
         machine,
         sessions: sessionOrder(ranked, {
-          favoriteRank: rankFor,
+          favoriteRank,
           hasDraftMessage: (session) => draftMessageHasUnsent(draftFor(session)),
         }),
       };
     });
-  }, [inScope, searchNeedle, matches, searchPlaces, searchHits, draftMessages, favorites]);
+  }, [inScope, searchNeedle, matches, searchPlaces, searchHits, draftMessages]);
 
   // A filter is a FLEET question: it runs on every machine in scope, so the header
   // reports what came back and from how many of them.
@@ -1264,11 +1291,10 @@ export function SessionsScreen({
     const api = clientFor(rowAction.conn);
     const key = machineKey(rowAction.conn);
     // The words that made a row dirty die with it: a draft message kept under a
-    // session id that no longer exists is unreachable forever, and a star on a
-    // session nobody can open is the same litter.
+    // session id that no longer exists is unreachable forever. The star needs no
+    // sweep of its own — it lived on the session the gateway just deleted.
     const forgetDrafts = (ids: string[]) => {
       for (const sid of ids) clearDraftMessage(draftMessageKey(api.base, sid));
-      forgetFavorites(ids.map((sid) => favoriteKey(api.base, sid)));
       if (ids.length > 0) void flushDraftMessages();
     };
     // A finished row action is not news to go and FETCH. The gateway has already
@@ -1798,6 +1824,7 @@ export function SessionsScreen({
                           onOpen={onOpen}
                           onRename={startRename}
                           onDelete={startDelete}
+                          onToggleStar={toggleStar}
                           pendingDeleteId={
                             rowAction?.mode === 'delete' && machineKey(rowAction.conn) === key
                               ? rowAction.session.id
@@ -2144,6 +2171,7 @@ const ProjectGroup = memo(function ProjectGroup({
   onOpen,
   onRename,
   onDelete,
+  onToggleStar,
   pendingDeleteId,
   deleteBusy,
   deleteError,
@@ -2164,6 +2192,7 @@ const ProjectGroup = memo(function ProjectGroup({
   onOpen: Props['onOpen'];
   onRename: (session: Session, conn: GatewayConn) => void;
   onDelete: (session: Session, conn: GatewayConn) => void;
+  onToggleStar: (session: Session, conn: GatewayConn) => void;
   /** The row of THIS machine that is currently asking to be deleted, if any. */
   pendingDeleteId: string | null;
   deleteBusy: boolean;
@@ -2187,6 +2216,10 @@ const ProjectGroup = memo(function ProjectGroup({
   // memoized row does not re-render on every paint of its parent.
   const renameRow = useCallback((session: Session) => onRename(session, conn), [onRename, conn]);
   const deleteRow = useCallback((session: Session) => onDelete(session, conn), [onDelete, conn]);
+  const starRow = useCallback(
+    (session: Session) => onToggleStar(session, conn),
+    [onToggleStar, conn],
+  );
 
   // A project is WALKED, page by page, and every page is cut from the rows this
   // screen already paints: `projectPage` owns that arithmetic and the reason it
@@ -2215,14 +2248,13 @@ const ProjectGroup = memo(function ProjectGroup({
   // until the session was opened and closed again.
   // The group FOLLOWS the row it moved — the page the row lands on is the page
   // shown, and the row is brought back under the eye that starred it.
-  const favorites = useFavorites();
   const starredHere = useMemo(() => {
     const marked = new Set<string>();
     for (const session of sessions) {
-      if (favoriteKey(base, session.id) in favorites) marked.add(session.id);
+      if (isFavorite(session)) marked.add(session.id);
     }
     return marked;
-  }, [sessions, favorites, base]);
+  }, [sessions]);
   const wasStarred = useRef(starredHere);
   const rowsRef = useRef<HTMLDivElement>(null);
   const following = useRef<string | null>(null);
@@ -2318,6 +2350,7 @@ const ProjectGroup = memo(function ProjectGroup({
               onOpen={onOpen}
               onRename={renameRow}
               onDelete={deleteRow}
+              onToggleStar={starRow}
               isConfirmingDelete={pendingDeleteId === session.id}
               deleteBusy={deleteBusy}
               deleteError={pendingDeleteId === session.id ? deleteError : null}
@@ -2347,6 +2380,7 @@ const SessionRow = memo(function SessionRow({
   onOpen,
   onRename,
   onDelete,
+  onToggleStar,
   isConfirmingDelete,
   deleteBusy,
   deleteError,
@@ -2362,6 +2396,7 @@ const SessionRow = memo(function SessionRow({
   onOpen: Props['onOpen'];
   onRename: (session: Session) => void;
   onDelete: (session: Session) => void;
+  onToggleStar: (session: Session) => void;
   /** This row IS the confirm: it asks in place instead of behind a dialog. */
   isConfirmingDelete: boolean;
   deleteBusy: boolean;
@@ -2410,13 +2445,14 @@ const SessionRow = memo(function SessionRow({
     setStatsMounted(true);
     setStatsOpen((open) => !open);
   }, []);
-  const favorites = useFavorites();
-  const starKey = favoriteKey(clientFor(conn).base, session.id);
-  const isStarred = starKey in favorites;
+  // The star is the GATEWAY's, and the row is holding the only copy of it there is:
+  // `favorite_rank`, straight off this session. No device-side store can disagree
+  // with it — which is what used to leave one screen starred and another plain.
+  const isStarred = isFavorite(session);
   // Where the row GOES when this flips — the pinned band at the top of the project,
   // on page one — belongs to the group that pages it, so `ProjectGroup` owns the
   // follow. This is only the mark and the strip's verb.
-  const toggleStar = useCallback(() => toggleFavorite(starKey), [starKey]);
+  const toggleStar = useCallback(() => onToggleStar(session), [onToggleStar, session]);
   // A draft is a per-session clone of the project; the row says so instead of
   // the list inventing a project for it.
   const draftName = isDraftWorkspace(session) ? session.workspace?.label?.trim() : '';

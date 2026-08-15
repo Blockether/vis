@@ -2442,28 +2442,48 @@ export class GatewayClient {
   }
 
   /**
-   * Rename a session. The gateway echoes the updated meta row, which is written
-   * back into BOTH snapshots so the list and the session header repaint from
-   * cache with the new title instead of the stale one.
+   * Write a row the gateway just echoed into BOTH snapshots, so the list and the
+   * session header repaint from cache with what it says instead of the stale row.
    */
-  async renameSession(sid: string, title: string): Promise<Session> {
-    const row = await this.request<Session>(
-      "PATCH",
-      `/v1/sessions/${encodeURIComponent(sid)}`,
-      { title },
-    );
+  private absorbSessionRow(sid: string, row: Session): Session {
     const merged = reconcileRow(this.cachedSession(sid), row);
     writeSnapshot(this.snapshotKey("session", sid), merged);
     const rows = this.cachedSessions();
     if (rows) {
       writeSnapshot(
         this.snapshotKey("sessions"),
-        rows.map((entry) =>
-          entry.id === sid ? reconcileRow(entry, row) : entry,
-        ),
+        rows.map((entry) => (entry.id === sid ? reconcileRow(entry, row) : entry)),
       );
     }
     return merged;
+  }
+
+  /** Rename a session. The gateway echoes the updated meta row. */
+  async renameSession(sid: string, title: string): Promise<Session> {
+    return this.absorbSessionRow(
+      sid,
+      await this.request<Session>(
+        "PATCH",
+        `/v1/sessions/${encodeURIComponent(sid)}`,
+        { title },
+      ),
+    );
+  }
+
+  /**
+   * Star or unstar a session. The star is the GATEWAY's fact, not this device's:
+   * the reply carries the `favorite_rank` it allocated, every other client of the
+   * machine reads the same one, and nothing local is kept that could disagree.
+   */
+  async setSessionFavorite(sid: string, isFavorite: boolean): Promise<Session> {
+    return this.absorbSessionRow(
+      sid,
+      await this.request<Session>(
+        "PATCH",
+        `/v1/sessions/${encodeURIComponent(sid)}`,
+        { is_favorite: isFavorite },
+      ),
+    );
   }
 
   /**

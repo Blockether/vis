@@ -1794,8 +1794,9 @@
       (session-404 (get-in request [:path-params :sid])))))
 
 (defn- patch-session-handler
-  "PATCH /v1/sessions/:sid — rename (`{title}`) OR change project membership
-   (`{project_id}`, null to remove from project). Membership takes precedence."
+  "PATCH /v1/sessions/:sid - star (`{is_favorite}`), rename (`{title}`) OR change
+   project membership (`{project_id}`, null to remove from project). The star is
+   checked first, then membership."
   [request]
   (let
     [sid
@@ -1805,6 +1806,14 @@
      (body-json request)]
 
     (cond (not sid) (session-404 (get-in request [:path-params :sid]))
+          ;; The star is a STATE the human sets, not an event: the request carries
+          ;; the intent (`is_favorite`) and the soul that comes back carries the
+          ;; `favorite_rank` the gateway allocated for it. Backend-owned, so the
+          ;; other devices on this gateway see the same star without being told.
+          (contains? body "is_favorite")
+          (if-let [soul (state/set-favorite! sid (boolean (get body "is_favorite")))]
+            (json-response soul)
+            (session-404 (get-in request [:path-params :sid])))
           (contains? body "project_id") (if-let
                                           [soul (state/assign-project! sid
                                                                        (some-> (get body

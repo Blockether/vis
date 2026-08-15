@@ -11311,7 +11311,8 @@
      :owner-id (:owner-id session)
      :project-id (:project-id session)
      :project-name (:project-name session)
-     :project-position (:project-position session)}))
+     :project-position (:project-position session)
+     :favorite-rank (:favorite-rank session)}))
 
 (defn by-channel
   [channel]
@@ -11324,7 +11325,8 @@
            :owner-id (:owner-id c)
            :project-id (:project-id c)
            :project-name (:project-name c)
-           :project-position (:project-position c)})
+           :project-position (:project-position c)
+           :favorite-rank (:favorite-rank c)})
         (persistance/db-list-sessions (db-info) channel)))
 
 ;; --- Projects (cross-channel) + movable project sessions + ownership (V6/V7) ---
@@ -11384,6 +11386,12 @@
   "Assign the session soul to `project-id` (nil clears / removes from project)."
   [session-id project-id]
   (persistance/db-set-session-project! (db-info) session-id project-id))
+
+(defn set-favorite!
+  "Star (`true`) or unstar (`false`) the session soul. Returns the rank it now
+   holds, or nil once it is unstarred."
+  [session-id is-favorite]
+  (persistance/db-set-session-favorite! (db-info) session-id is-favorite))
 
 (defn reorder-project-sessions!
   "Atomically adopt any loose named session into `project-id`, then persist the

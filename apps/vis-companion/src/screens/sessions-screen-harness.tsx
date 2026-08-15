@@ -93,8 +93,14 @@ export function renderSessionsScreen({
     token: "t",
     label: machine.label ?? `machine-${index + 1}`,
   }));
+  // Each mount gets its OWN copy of the fixture rows. A PATCH lands on the gateway's
+  // own row — that is where a star lives — so one test's star must never leak into
+  // the next through a shared fixture.
   const byOrigin = new Map(
-    conns.map((conn, index) => [new URL(conn.url).origin, machines[index]]),
+    conns.map((conn, index) => [
+      new URL(conn.url).origin,
+      { ...machines[index], sessions: machines[index].sessions?.map((row) => ({ ...row })) },
+    ]),
   );
   /** Reads per gateway, so `heals` can answer the retry it was given. */
   const reads = new Map<string, number>();
@@ -141,6 +147,25 @@ export function renderSessionsScreen({
     if (machine.down && !(machine.heals && seen > 1)) throw new TypeError("Failed to fetch");
     if (machine.routes && url.pathname in machine.routes)
       return answer(machine.routes[url.pathname]);
+    // PATCH /v1/sessions/:sid — the gateway OWNS what this changes: it applies the
+    // star (or the rename) to its own row, echoes the row back, and every later list
+    // read from this machine tells the same story.
+    const one = /^\/v1\/sessions\/([^/]+)$/.exec(url.pathname);
+    if (one && (init?.method ?? "GET") === "PATCH") {
+      const rows = machine.sessions ?? [];
+      const index = rows.findIndex((row) => row.id === decodeURIComponent(one[1]));
+      if (index < 0) return answer({});
+      const body = (sent ? JSON.parse(sent) : {}) as Record<string, unknown>;
+      const ranks = rows
+        .map((row) => (typeof row.favorite_rank === "number" ? row.favorite_rank : 0))
+        .concat(0);
+      const row = { ...rows[index] };
+      if ("is_favorite" in body)
+        row.favorite_rank = body.is_favorite ? Math.max(...ranks) + 1 : null;
+      if (typeof body.title === "string") row.title = body.title;
+      rows[index] = row;
+      return answer(row);
+    }
     if (url.pathname === "/v1/sessions") {
       // The create answers a session with an id, the way the gateway's 201 does:
       // without one the screen has nothing to open.
