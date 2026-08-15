@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 
-import { renderSessionScreen } from "./session-screen-harness";
+import { renderSessionScreen, sessionFixture } from "./session-screen-harness";
 import type { SseEvent } from "../lib/types";
 
 function deferred<T>() {
@@ -123,5 +123,73 @@ describe("a finished turn handed to its persisted row", () => {
     // that prose-free row as the replacement.
     await linger(600);
     expect(screen.queryByText("THE FINAL ANSWER")).not.toBeNull();
+  });
+});
+
+// Regression, reported from an iPhone: "the stream finished, the answer is
+// ready, but it is not showing — I have to go back to the session list and
+// reopen the session". The terminal frame was lost with the suspended socket,
+// so only the 5 s reconcile could retire the bubble — and it judged coverage
+// ONLY on the tick that fetched a transcript page. The tick that did fetch was
+// vetoed by a registry that still named the turn as current, every later tick
+// revalidated to "nothing moved" and never asked again, and the stale bubble
+// sat on top of the persisted answer until the screen was remounted.
+describe("a handover the registry vetoed once", () => {
+  const bubble = {
+    id: "gw-9",
+    request: "explain the failure",
+    answer: "",
+    iterations: [{ position: 0, thinking: "weighing it up" }],
+    startedAt: Date.now(),
+    status: "running" as const,
+  };
+  const answered = {
+    id: "engine-row-9",
+    user_request: "explain the failure",
+    status: "done",
+    created_at: Date.now(),
+    content: [{ id: "b9", type: "prose", markdown: "THE FINAL ANSWER" }],
+    iterations: [{ position: 0, thinking: "weighing it up" }],
+  };
+
+  it("retires the bubble on a later tick, with no new transcript page", async () => {
+    let registryLive = true;
+    let reads = 0;
+    renderSessionScreen({
+      client: {
+        cachedLiveTurn: () => ({ turn: bubble, seq: 5 }),
+        cachedTranscript: () => [],
+        session: () =>
+          Promise.resolve(
+            sessionFixture(
+              registryLive
+                ? { live: true, current_turn_id: "gw-9" }
+                : { live: false },
+            ),
+          ),
+        // The transcript moves exactly once; every later revalidation answers
+        // `null`, the way a session that has stopped moving does.
+        transcriptIfMoved: () => {
+          reads += 1;
+          return Promise.resolve(reads === 1 ? [answered] : null);
+        },
+        transcript: () => Promise.resolve([answered]),
+      },
+    });
+
+    expect(await screen.findByText("explain the failure")).toBeInTheDocument();
+
+    // Wake once while the registry still claims the turn: the page lands, the
+    // handover is vetoed.
+    window.dispatchEvent(new Event("online"));
+    await linger(500);
+    registryLive = false;
+    // …and again, now that the gateway agrees the turn is over.
+    window.dispatchEvent(new Event("online"));
+    await waitFor(() =>
+      expect(document.querySelector('[data-live="true"]')).toBeNull(),
+    );
+    expect(screen.getByText("THE FINAL ANSWER")).toBeInTheDocument();
+    expect(screen.getAllByText("explain the failure")).toHaveLength(1);
   });
 });

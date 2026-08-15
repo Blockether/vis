@@ -2285,16 +2285,25 @@ export function SessionScreen({
         nextTurns = null;
       }
       if (cancelled) return;
-      // The ENGINE's witness, taken from the rows this tick just read: a persisted
+      // The ENGINE's witness, taken from the rows on screen right now: a persisted
       // `running` row outlives any registry hiccup (see `inFlightRow`). Every
       // verdict below that used to trust `gatewayLive` alone now needs both to
       // agree before it retires work the user is watching.
-      const persistedRunning = inFlightRow(nextTurns ?? turnsRef.current);
+      const rowsNow = nextTurns ?? turnsRef.current;
+      const persistedRunning = inFlightRow(rowsNow);
       // Decided and applied BEFORE the queue round-trip below: with the clear
       // sitting after another await, the settled transcript row and the live
       // bubble both painted for that window (the same turn twice).
+      //
+      // Measured against the rows we HOLD, not only the ones this tick fetched.
+      // A revalidation answers `null` for a transcript that did not move, so a
+      // handover judged only inside `if (nextTurns)` got exactly ONE chance: if
+      // the verdict that tick was "still running" (the registry lags the
+      // terminal frame by a moment, or the read failed), nothing ever asked
+      // again and the stale bubble stayed on screen — hiding the persisted
+      // answer behind it — until the session was closed and reopened.
       const landedRow = liveTurnSettledRow(
-        nextTurns,
+        rowsNow,
         preLiveTurnIdsRef.current,
         liveId,
         liveStartedAt,
@@ -2306,36 +2315,36 @@ export function SessionScreen({
       if (nextTurns) {
         setTurns(nextTurns);
         setTurnsFresh(true);
-        // Only the very bubble this coverage verdict is about — a turn started
-        // since the read must keep streaming.
-        //
-        // And never against the turn the GATEWAY says it is running right now: the
-        // transcript verdict is a heuristic (an id that never matches plus a 60 s
-        // created_at window), and right after a queued row drains, the PREVIOUS
-        // turn's freshly persisted row falls inside that window. One tick then
-        // retired a live bubble mid-stream. The registry row is not a heuristic.
-        // The persisted row counts too: while it is still `running` the turn is
-        // demonstrably alive, whatever the registry currently believes.
-        const stillRunningThis =
-          liveId !== "" &&
-          ((gatewayLive && (next.current_turn_id ?? "") === liveId) ||
-            (persistedRunning !== null && rowId(persistedRunning) === liveId));
-        if (
-          landedRow &&
-          !stillRunningThis &&
-          (liveTurnRef.current?.id ?? "") === liveId
-        ) {
-          setRunning(false);
-          // Same batch as the rows themselves: the row that takes the bubble's
-          // place must MOUNT knowing it inherits a painted trace.
-          setHandedOverRowId(rowId(landedRow));
-          setLiveTurn(null);
-          liveTurnRef.current = null;
-        }
         // Turns that arrived while the app was away are exactly why the reader
         // came back. Pin AFTER they render, or the wake's pin lands on the old
         // height and the new tail sits below the fold.
         if (resumePinRef.current) requestAnimationFrame(() => pinToEnd());
+      }
+      // Only the very bubble this coverage verdict is about — a turn started
+      // since the read must keep streaming.
+      //
+      // And never against the turn the GATEWAY says it is running right now: the
+      // transcript verdict is a heuristic (an id that never matches plus a 60 s
+      // created_at window), and right after a queued row drains, the PREVIOUS
+      // turn's freshly persisted row falls inside that window. One tick then
+      // retired a live bubble mid-stream. The registry row is not a heuristic.
+      // The persisted row counts too: while it is still `running` the turn is
+      // demonstrably alive, whatever the registry currently believes.
+      const stillRunningThis =
+        liveId !== "" &&
+        ((gatewayLive && (next.current_turn_id ?? "") === liveId) ||
+          (persistedRunning !== null && rowId(persistedRunning) === liveId));
+      if (
+        landedRow &&
+        !stillRunningThis &&
+        (liveTurnRef.current?.id ?? "") === liveId
+      ) {
+        setRunning(false);
+        // Same batch as the rows themselves: the row that takes the bubble's
+        // place must MOUNT knowing it inherits a painted trace.
+        setHandedOverRowId(rowId(landedRow));
+        setLiveTurn(null);
+        liveTurnRef.current = null;
       }
       // Same reconcile for the queue: a `turn.queued`/`.deleted` frame dropped
       // by a suspended stream would otherwise leave the tray lying until the
