@@ -1010,6 +1010,12 @@
                            (.asString ^Value (.getArrayElement e 0))
                            (if (.isString v) (.asString v) (str v))))))))))
 
+(def ^:private ^:const apropos-limit
+  "How many documents `apropos` answers for a described ask. Terms are ORed, so
+   a six-word question touches half the corpus and everything past the first
+   handful is noise the caller reads and pays for."
+  25)
+
 (defn- sandbox-corpus
   "The whole corpus as `doc-corpus` entries, read LIVE off the globals so a
    per-turn extension activation is searchable the moment it binds:
@@ -1106,13 +1112,24 @@
               [query
                (if (pos? (alength args)) (.asString ^Value (aget args 0)) "")
 
+               ;; A described ask matches half the corpus once terms are ORed, and
+               ;; rows past the first handful are noise the caller reads and pays
+               ;; for. The EMPTY query is a LISTING, not a search: it stays whole.
+               described?
+               (seq (str/trim query))
+
                ;; Underscore-prefixed handles (`_shell_logs`, the deferred
                ;; transports) are PRIVATE: `doc(name)` still states their result
                ;; contract, but no listing advertises them.
+               public
+               (remove #(str/starts-with? (str (:name %)) "_"))
+
                hits
                (into []
-                     (remove #(str/starts-with? (str (:name %)) "_"))
-                     (doc-corpus/search (sandbox-corpus g names) query))]
+                     (if described? (comp public (take apropos-limit)) public)
+                     (doc-corpus/search (sandbox-corpus g names)
+                                        query
+                                        (when described? {:limit (+ (long apropos-limit) 8)})))]
 
               ;; Return a REAL native Python dict {name -> gist} in RANK order by
               ;; zipping two parallel arrays guest-side — no ProxyHashMap crosses
@@ -1163,7 +1180,7 @@
     (set-python-binding-doc!
       ctx
       'apropos
-      "apropos(query='') -> {name: gist}. FULL-TEXT SEARCH over every document this session can reach — every function's contract, every skill's whole SKILL.md, every Vis documentation page, every MCP tool's description. Ask in words: terms are ORed and ranked by BM25 relevance over name, first line and body, so a whole question answers the document that covers most of it and a word nothing carries costs nothing. A query that IS a handle wins that handle; a typo is spell-corrected. Each hit comes back as its one-line gist. `apropos('')` is everything. Read one whole with `doc(name)`.")
+      "apropos(query='') -> {name: gist}. FULL-TEXT SEARCH over every document this session can reach — every function's contract, every skill's whole SKILL.md, every Vis documentation page, every MCP tool's description. Ask in words: terms are ORed and ranked by BM25 relevance over name, first line and body, so a whole question answers the document that covers most of it and a word nothing carries costs nothing. A query that IS a handle wins that handle; a typo is spell-corrected, a prefix completed. Ranked best-first and capped at 25 — a described ask matches half the corpus, so read down, not around. Each hit comes back as its one-line gist. `apropos('')` is everything, unranked and uncapped. Read one whole with `doc(name)`.")
     (set-python-binding-doc!
       ctx
       'doc

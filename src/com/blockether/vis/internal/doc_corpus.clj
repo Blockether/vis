@@ -121,22 +121,43 @@
 ;; =============================================================================
 
 (defonce ^:private sources
-  ;; `[[id f] ...]` in registration order, so precedence is readable rather than
-  ;; hash-ordered: the FIRST source to claim a name keeps it.
+  ;; `[[id {:stamp f :entries g}] ...]` in registration order, so precedence is
+  ;; readable rather than hash-ordered: the FIRST source to claim a name keeps
+  ;; it.
   (atom []))
 
+(defonce ^:private corpus-cache
+  ;; `{:stamps [[id stamp] …] :entries [...]}`. Building the corpus re-reads
+  ;; every documentation page, every SKILL.md and every cached MCP listing;
+  ;; asking each source for its STAMP is a counter or a stat pass. Same stamps,
+  ;; same entries — and the identical vector, so the ranker's own index cache
+  ;; hits too.
+  (atom nil))
+
 (defn register-source!
-  "Register `f` — a 0-arity returning a coll of `:vis.doc/entry` — under `id`.
+  "Register `entries-fn` — a 0-arity returning a coll of `:vis.doc/entry` —
+   under `id`, guarded by `stamp-fn`.
+
+   `stamp-fn` is a 0-arity answering a CHEAP value that changes exactly when
+   this source's entries would: a generation counter, a stat mark, a count.
+   `entries` re-runs NO source while every stamp is unchanged, so a stamp that
+   lies pins a stale corpus and a stamp that costs as much as the source itself
+   buys nothing. `(constantly ::always)` is not a stamp — it is a source that
+   refuses to be cached, and it must earn that.
+
    Re-registering an `id` replaces it IN PLACE, so a reloaded namespace never
    duplicates its own entries."
-  [id f]
-  (swap! sources (fn [ss]
-                   (if (some (comp #{id} first) ss)
-                     (mapv (fn [[k v]]
-                             (if (= k id) [k f] [k v]))
-                           ss)
-                     (conj ss [id f]))))
-  id)
+  [id stamp-fn entries-fn]
+  (let [src {:stamp stamp-fn :entries entries-fn}]
+    (swap! sources (fn [ss]
+                     (if (some (comp #{id} first) ss)
+                       (mapv (fn [[k v]]
+                               (if (= k id) [k src] [k v]))
+                             ss)
+                       (conj ss [id src]))))
+    ;; A replaced source may answer differently under an unchanged stamp.
+    (reset! corpus-cache nil)
+    id))
 
 (defn- documentation-page-entries
   "Every embedded `vis-docs` page as an entry. Re-collected per call (the pages
@@ -174,8 +195,10 @@
                    :text (str (when (seq (str description)) (str description "\n\n")) body)})))
         (discovery/skills)))
 
-(register-source! :documentation-pages #'documentation-page-entries)
-(register-source! :skills #'skill-entries)
+;; The stamps: a documentation page and a SKILL.md are files, and both layers
+;; already answer a generation that ticks only when they were re-read.
+(register-source! :documentation-pages #(docs/generation) #'documentation-page-entries)
+(register-source! :skills #(discovery/generation) #'skill-entries)
 
 (defn- dedupe-by-name
   "Transducer keeping the FIRST entry for each name."
@@ -190,21 +213,44 @@
 (defn entries
   "The whole corpus, in registration order, deduplicated by name (first wins).
    A source that throws contributes nothing — discovery must never be the reason
-   an env fails to build."
+   an env fails to build.
+
+   Memoized on the sources' stamps: while every stamp is unchanged this answers
+   the IDENTICAL vector without re-running a single source."
   []
   (let
-    [raw (into []
-               (mapcat (fn [[_id f]]
-                         (try (f) (catch Throwable _ nil))))
-               @sources)]
-    (into []
-          (comp (filter #(and (seq (str (:name %))) (some? (:text %))))
-                (map (fn [e]
-                       (cond-> {:name (str (:name e)) :text (str (:text e))}
-                         (seq (str (:call e)))
-                         (assoc :call (str (:call e))))))
-                (dedupe-by-name))
-          raw)))
+    [ss
+     @sources
+
+     stamps
+     (mapv (fn [[id {:keys [stamp]}]]
+             [id (try (stamp) (catch Throwable _ ::unstamped))])
+           ss)
+
+     cached
+     @corpus-cache]
+
+    (if (and cached (= stamps (:stamps cached)))
+      (:entries cached)
+      (let
+        [raw
+         (into []
+               (mapcat (fn [[_id {:keys [entries]}]]
+                         (try (entries) (catch Throwable _ nil))))
+               ss)
+
+         built
+         (into []
+               (comp (filter #(and (seq (str (:name %))) (some? (:text %))))
+                     (map (fn [e]
+                            (cond-> {:name (str (:name e)) :text (str (:text e))}
+                              (seq (str (:call e)))
+                              (assoc :call (str (:call e))))))
+                     (dedupe-by-name))
+               raw)]
+
+        (reset! corpus-cache {:stamps stamps :entries built})
+        built))))
 
 ;; =============================================================================
 ;; Search — one call into the BM25F ranker
@@ -234,9 +280,11 @@
 
    The ranker owns the scoring, the index and its cache (`bm25`); this maps the
    corpus onto its fields and nothing else, so the index of an unchanged corpus
-   is reused across calls and across threads."
-  [es query]
-  (bm25/search (ranked-docs es) query))
+   is reused across calls and across threads. `opts` is `bm25/search`'s —
+   `:limit` for a bounded answer, the scoring knobs for a caller that needs
+   different weights."
+  ([es query] (bm25/search (ranked-docs es) query))
+  ([es query opts] (bm25/search (ranked-docs es) query opts)))
 
 ;; =============================================================================
 ;; The curated index — `doc()` with no argument
@@ -296,7 +344,7 @@
   "What `doc(target)` answers when nothing carries that handle: the closest hits
    for the SAME string, so a near-miss costs one call instead of two."
   [es target]
-  (let [near (take 5 (search es (str target)))]
+  (let [near (search es (str target) {:limit 5})]
     (if (seq near)
       (str (pr-str (str target))
            " is not a handle. Closest documents:\n\n"

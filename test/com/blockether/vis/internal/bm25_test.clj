@@ -1,7 +1,8 @@
 (ns com.blockether.vis.internal.bm25-test
   "The ranker itself: ORed terms priced by IDF, a shared immutable index, a
    memoized build and a typo rescue that stays off the hot path."
-  (:require [com.blockether.vis.internal.bm25 :as bm25]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.bm25 :as bm25]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- docs
@@ -115,3 +116,110 @@
                      (range 16)))]
 
         (expect (= 1 (count (distinct (map #(System/identityHashCode %) built))))))))
+
+(defn- doc*
+  "One document, body defaulting to the gist."
+  ([nm gist] (doc* nm gist gist))
+  ([nm gist body] {:name nm :gist gist :body body :value {:name nm}}))
+
+(defdescribe
+  stemming-test
+  "`run tests` and `run test` shared no document, so one query word's plural
+   decided whether the tool page was found at all."
+  (it "answers the same document for a plural and a singular ask"
+      (let
+        [ds [(doc* "run_tests" "Run the test suite." "Select tests by paths only.")
+             (doc* "shell" "Run a program." "Start a process and read its logs.")]]
+        (expect (= "run_tests" (:name (first (bm25/search ds "run tests")))))
+        (expect (= "run_tests" (:name (first (bm25/search ds "run test")))))))
+  (it "folds the plural of a handle, never the handle itself"
+      (expect (= ["run" "test"] (vec (bm25/terms "run tests"))))
+      (expect (= "run_tests" (bm25/normalized-handle "run_tests")))))
+
+(defdescribe
+  unicode-tokenization-test
+  "Tokens were `[A-Za-z0-9]+`, so an accented or non-Latin ask tokenized to
+   NOTHING and fell into the typo rescue, which answered confident noise."
+  (it "reads a non-ASCII word as a word"
+      (let
+        [ds [(doc* "zapytanie" "Wyszukiwanie dokumentów po treści.")
+             (doc* "patch" "Edit a file by address.")]]
+        (expect (= "zapytanie" (:name (first (bm25/search ds "dokumentów")))))
+        (expect (= "zapytanie" (:name (first (bm25/search ds "wyszukiwanie")))))))
+  (it "answers nothing for a non-Latin ask no document covers"
+      (expect (empty? (bm25/search (docs) "wyszukiwanie dokumentów")))))
+
+(defdescribe
+  prefix-and-typo-test
+  "A term nothing carries was only ever spell-corrected, so an interactively
+   typed PREFIX answered the wrong document — or, at distance 1 from two
+   handles, the shorter one."
+  (it "completes a prefix of at least three characters"
+      (expect (= "struct_patch" (:name (first (bm25/search (docs) "struc"))))))
+  (it "prefers the same-length correction to a shorter neighbour"
+      (let [ds [(doc* "patch" "Edit a file by address.") (doc* "path" "A filesystem path.")]]
+        (expect (= "patch" (:name (first (bm25/search ds "pathc")))))))
+  (it "leaves a term alone when a document carries it"
+      (expect (= "patch" (:name (first (bm25/search (docs) "patch")))))))
+
+(defdescribe
+  handle-bonus-test
+  "The exact-name bonus was whole-query only: one extra word and the handle
+   lost outright, which made `patch anchors` a ranking cliff."
+  (it "keeps the handle first when the ask carries more than the handle"
+      (expect (= "patch" (:name (first (bm25/search (docs) "patch anchors")))))
+      (expect (= "run_tests" (:name (first (bm25/search (docs) "run_tests for a var"))))))
+  (it "does not hand the bonus to a document the ask only mentions"
+      (let
+        [ds [(doc* "prose" "Everything" (str/join " " (repeat 200 "patch tests file")))
+             (doc* "patch" "Edit a file by address.")]]
+        (expect (= "patch" (:name (first (bm25/search ds "patch"))))))))
+
+(defdescribe
+  limit-test
+  "`rank` scored, kept and sorted EVERY positive document, so a ten-row answer
+   still cost a full sort of the corpus."
+  (it "answers exactly the requested number, in the same order"
+      (let [all (names (bm25/search (docs) "file patch tests"))]
+        (expect (= 2 (count (bm25/search (docs) "file patch tests" {:limit 2}))))
+        (expect (= (vec (take 2 all)) (names (bm25/search (docs) "file patch tests" {:limit 2}))))))
+  (it "treats a limit past the end as no limit"
+      (expect (= (names (bm25/search (docs) "patch"))
+                 (names (bm25/search (docs) "patch" {:limit 99}))))))
+
+(defdescribe
+  opts-test
+  "Weights were private constants, so a second consumer could not retune the
+   ranker without editing it."
+  (it "scores with the caller's weights"
+      (let
+        [ds [(doc* "zeta" "A short contract." "It takes one argument.")
+             (doc* "alpha" "Mentions zeta a lot." "zeta zeta zeta zeta zeta")]]
+        (expect (= "zeta" (:name (first (bm25/search ds "zeta")))))
+        (expect
+          (= "alpha"
+             (:name (first
+                      (bm25/search ds "zeta" {:field-weights [0.0 3.0 1.0] :handle-bonus 0.0})))))))
+  (it "indexes the same documents once per distinct option map"
+      (expect (identical? (bm25/cached-index (docs) {:k1 2.0})
+                          (bm25/cached-index (docs) {:k1 2.0})))
+      (expect (not (identical? (bm25/cached-index (docs)) (bm25/cached-index (docs) {:k1 2.0}))))))
+
+(defdescribe
+  index-eviction-test
+  "The cache cleared WHOLESALE at capacity, so one odd corpus threw away every
+   warm index."
+  (it "evicts the least recently used index and keeps the newest"
+      (let
+        [ds-n
+         (fn [n]
+           [(doc* (str "doc" n) (str "Document number " n))])
+
+         first-ix
+         (bm25/cached-index (ds-n 0))
+
+         newer
+         (mapv #(bm25/cached-index (ds-n (inc %))) (range 8))]
+
+        (expect (identical? (last newer) (bm25/cached-index (ds-n 8))))
+        (expect (not (identical? first-ix (bm25/cached-index (ds-n 0))))))))

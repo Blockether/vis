@@ -439,6 +439,18 @@
           (expect (str/includes? out "patch=True"))
           (expect (str/includes? out "typo=True"))
           (expect (str/includes? out "none=0"))))
+    ;; Regression: ORing the terms made a described ask match half the corpus,
+    ;; so a six-word question answered ~80 rows of mostly noise. A described
+    ;; ask is capped and ranked; the EMPTY query is a listing and stays whole.
+    (it "caps a described ask but never the empty listing"
+        (let
+          [out (run (str "hits = apropos('how do I replace lines in a file')\n"
+                         "print('capped='+str(len(hits) <= 25))\n"
+                         "print('first='+list(hits)[0])\n"
+                         "print('all='+str(len(apropos('')) > 25))"))]
+          (expect (str/includes? out "capped=True"))
+          (expect (str/includes? out "first=patch"))
+          (expect (str/includes? out "all=True"))))
     (it "never turns a bound loop variable into a document"
         (let
           [out (run (str "x = 3\nday_set = {'a'}\n" "a = apropos('')\n"
@@ -1021,23 +1033,24 @@
 
 ;; Regression: a documentation slug must never shadow a bound function — the
 ;; corpus is seeded with `setdefault`, so the callable contract wins its name.
-(defdescribe a-page-never-shadows-a-function-test
-             (it "keeps the function's own contract when a document claims its name"
-                 (try (doc-corpus/register-source! ::collision
-                                                   (fn []
-                                                     [{:name "ls" :text "PAGE THAT MUST LOSE"}]))
-                      (let
-                        [ctx
-                         (:python-context (ep/create-python-context (ext/builtin-sandbox-bindings
-                                                                      (fn []
-                                                                        nil))))
+(defdescribe
+  a-page-never-shadows-a-function-test
+  (it "keeps the function's own contract when a document claims its name"
+      (try (doc-corpus/register-source! ::collision
+                                        (constantly :once)
+                                        (fn []
+                                          [{:name "ls" :text "PAGE THAT MUST LOSE"}]))
+           (let
+             [ctx
+              (:python-context (ep/create-python-context (ext/builtin-sandbox-bindings (fn []
+                                                                                         nil))))
 
-                         out
-                         (str (:stdout (ep/run-python-block ctx "print(doc('ls'))")))]
+              out
+              (str (:stdout (ep/run-python-block ctx "print(doc('ls'))")))]
 
-                        (expect (not (str/includes? out "PAGE THAT MUST LOSE")))
-                        (expect (str/includes? out "ls")))
-                      (finally (doc-corpus/register-source! ::collision (constantly []))))))
+             (expect (not (str/includes? out "PAGE THAT MUST LOSE")))
+             (expect (str/includes? out "ls")))
+           (finally (doc-corpus/register-source! ::collision (constantly :gone) (constantly []))))))
 
 (defdescribe
   block-source-introspection-test

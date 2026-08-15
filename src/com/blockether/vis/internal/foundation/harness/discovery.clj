@@ -528,6 +528,7 @@
       c
       (let
         [fresh {:marker m
+                :generation (inc (long (:generation c 0)))
                 :agents (vec (discover-agents))
                 :skills (vec (discover-skills))
                 :commands (vec (discover-commands))}]
@@ -540,6 +541,14 @@
   []
   (reset! cache {})
   (select-keys (ensure!) [:agents :skills :commands]))
+
+(defn generation
+  "How many times THIS workspace's agents, skills and commands have actually
+   been re-read. A cheap freshness token — it costs the stat pass `ensure!`
+   already pays and changes exactly when the discovered set would, which is
+   what lets the doc corpus memoize entries built from `skills`."
+  []
+  (:generation (ensure!)))
 
 (defn agents [] (:agents (ensure!)))
 

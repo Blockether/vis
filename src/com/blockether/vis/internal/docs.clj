@@ -118,18 +118,36 @@
   ^URL [^URL manifest-url ^String file]
   (URL. (str/replace (.toString manifest-url) #"vis-docs\.edn$" file)))
 
-(defn collect
-  "Discover every vis-docs manifest on the classpath →
-   {:site {…} :pages [{:slug :title :section :blurb :order :md :html :toc} …]}, sorted
-   by (section, order, title); slug \"index\" is always first."
+(defn- manifest-urls
+  "Every `vis-docs` manifest on the classpath, in classloader order."
+  []
+  (let [^Enumeration urls (.getResources (classloader) manifest-resource)]
+    (loop [acc []]
+      (if (.hasMoreElements urls) (recur (conj acc ^URL (.nextElement urls))) acc))))
+
+(defn- url-mark
+  "A cheap freshness mark for one resource: its address, timestamp and length.
+   A `file:` URL costs one stat; a `jar:`/`resource:` URL inside a built image
+   answers a constant, which is exactly right — those bytes cannot change."
+  [^URL u]
+  (try (let [c (.openConnection u)]
+         [(.toString u) (.getLastModified c) (.getContentLengthLong c)])
+       (catch Throwable _ [(.toString u) 0 -1])))
+
+(defn- page-marks
+  "Marks for a KNOWN page list. The fast path: no manifest is read, the pages
+   are stat'ed, never slurped."
+  [urls]
+  (mapv url-mark urls))
+
+(defn- collect*
+  "Read and render every page, and answer the page URLs alongside so the next
+   freshness check is a stat pass. Expensive: a slurp and a markdown render per
+   page, which is why `collect` guards it with `url-mark`."
   []
   (let
-    [^Enumeration urls
-     (.getResources (classloader) manifest-resource)
-
-     manifests
-     (loop [acc []]
-       (if (.hasMoreElements urls) (recur (conj acc ^URL (.nextElement urls))) acc))
+    [page-urls
+     (atom [])
 
      site
      (atom {:title "Vis" :tagline "" :repo nil})
@@ -142,7 +160,9 @@
                      (swap! site merge s))
                    (keep (fn [{:keys [file title section order blurb]}]
                            (when-let
-                             [md (try (slurp (sibling-url mu file)) (catch Exception _ nil))]
+                             [md (let [u (sibling-url mu file)]
+                                   (swap! page-urls conj u)
+                                   (try (slurp u) (catch Exception _ nil)))]
                              (let [[html toc] (anchors+toc (md->html md))]
                                {:slug (str/replace file #"\.md$" "")
                                 :title (or title (first-h1 md) file)
@@ -153,7 +173,7 @@
                                 :html html
                                 :toc toc})))
                          (:pages m))))
-               manifests))
+               (manifest-urls)))
 
      ;; Sections appear in the order of their lowest page `:order`, not
      ;; alphabetically — so manifest `:order` controls sidebar section
@@ -168,7 +188,58 @@
      (sort-by (juxt #(if (= "index" (:slug %)) 0 1) #(get sec-order (:section %) 100) :order :title)
               pages)]
 
-    {:site @site :pages (vec ordered)}))
+    {:result {:site @site :pages (vec ordered)} :page-urls @page-urls}))
+
+(defonce ^:private page-cache
+  ;; `{:marks … :generation n :result {…}}`. Rendering 16 pages costs ~8 ms and
+  ;; the docs site did it on EVERY request while the doc corpus did it on every
+  ;; rebuild; a stat pass costs ~0.2 ms and keeps the dev edit-refresh loop.
+  (atom nil))
+
+(defn- ensure-pages!
+  "The freshness gate. Two stages, cheapest first: the manifests are stat'ed,
+   and only if THEY changed is one re-read to learn the page list. An unchanged
+   tree costs one stat per manifest plus one per page."
+  []
+  (let
+    [manifests
+     (mapv url-mark (manifest-urls))
+
+     cached
+     @page-cache
+
+     fresh?
+     (and cached
+          (= manifests (:manifests cached))
+          (= (page-marks (:page-urls cached)) (:pages cached)))]
+
+    (if fresh?
+      cached
+      (swap! page-cache (fn [prev]
+                          (let [{:keys [result page-urls]} (collect*)]
+                            {:manifests manifests
+                             :page-urls page-urls
+                             :pages (page-marks page-urls)
+                             :generation (inc (long (:generation prev 0)))
+                             :result result}))))))
+
+(defn collect
+  "Discover every vis-docs manifest on the classpath →
+   {:site {…} :pages [{:slug :title :section :blurb :order :md :html :toc} …]}, sorted
+   by (section, order, title); slug \"index\" is always first.
+
+   Memoized on a stat pass over the manifests and their pages, so an edit under
+   `resources/vis-docs` still shows on the next call and an unchanged tree
+   costs no re-render."
+  []
+  (:result (ensure-pages!)))
+
+(defn generation
+  "How many times the pages have actually been re-read. A CHEAP freshness
+   token: it changes exactly when `collect` would answer something new, which
+   is what lets the doc corpus memoize its own entries."
+  []
+  (:generation (ensure-pages!)))
 
 ;; ---------------------------------------------------------------------------
 ;; theme (VIS palette) — enterprise docs layout
@@ -623,15 +694,9 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
 ;; live serving — Ring handler for the gateway `:gateway.slot/http-routes` slot.
 ;; ---------------------------------------------------------------------------
 
-(def ^:private site-cache (delay (collect)))
-
-(def ^:dynamic *live-reload?*
-  "When true, `handle` re-`collect`s the docs (re-reads the markdown from the
-   classpath) on EVERY request, so editing `resources/vis-docs/*.md` during
-   development shows on a browser refresh — no gateway restart. Cheap (a handful
-   of small markdown files) and docs traffic is tiny. Bind false to serve the
-   frozen `site-cache` snapshot if you ever want it."
-  true)
+;; `collect` is memoized on a stat pass, so the handler simply calls it: an
+;; edit under `resources/vis-docs` shows on the next refresh and an unchanged
+;; tree costs no re-render.
 
 (defn- gzip-bytes
   ^bytes [^String s]
@@ -643,7 +708,7 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
 (defn- ok-html
   "HTML response, gzipped when the client advertises support (the inline CSS
    makes the doc ~12 KB; gzip ~4×). Assets are already immutable-cached; the
-   doc is intentionally NOT cache-tagged so live-reload edits show on refresh."
+   doc is intentionally NOT cache-tagged so a docs edit shows on refresh."
   ([body] (ok-html body nil))
   ([body accept-encoding]
    (let [gz? (and accept-encoding (str/includes? (str/lower-case accept-encoding) "gzip"))]
@@ -673,7 +738,7 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
   [{:keys [uri headers] :or {uri ""}}]
   (let
     [{:keys [pages] :as site-data}
-     (if *live-reload?* (collect) @site-cache)
+     (collect)
 
      path
      (-> uri

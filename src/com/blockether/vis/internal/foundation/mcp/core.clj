@@ -1000,7 +1000,19 @@
                     cached))))
         (visible-servers nil)))
 
-(doc-corpus/register-source! :mcp-tools #'doc-corpus-entries)
+(defn- doc-corpus-stamp
+  "Which servers are visible and how many tools each has ALREADY listed. Cheap
+   and RPC-free, exactly like the entries it guards: a listing that lands later
+   changes a count, and the corpus rebuilds then."
+  []
+  (mapv (fn [[server _spec]]
+          [server
+           (count (or (some-> (:tools (conn-of server))
+                              deref)
+                      []))])
+        (visible-servers nil)))
+
+(doc-corpus/register-source! :mcp-tools #'doc-corpus-stamp #'doc-corpus-entries)
 
 (defn- call-failed-err
   "Turn anything thrown below this point into a typed refusal. A tool call

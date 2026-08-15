@@ -44,3 +44,15 @@
                    (expect (= "/docs/skills" (get-in resp [:headers "location"])))))
              (it "an unknown .md path still falls through as nil"
                  (expect (nil? (docs/handle {:uri "/docs/nope-zzz.md" :headers {}})))))
+
+(defdescribe
+  collect-memoization-test
+  "Every docs request and every corpus rebuild re-read and re-rendered all 16
+   pages, so serving `/docs` and asking `apropos` a question both paid ~8 ms of
+   markdown rendering that nothing had invalidated."
+  (it "answers the identical site while no page has changed"
+      (expect (identical? (docs/collect) (docs/collect))))
+  (it "does not tick its generation for an unchanged tree"
+      (let [g (docs/generation)]
+        (docs/collect)
+        (expect (= g (docs/generation))))))

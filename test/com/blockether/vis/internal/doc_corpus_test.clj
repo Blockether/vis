@@ -168,3 +168,52 @@
                    (count (filter (fn [[re _]]
                                     (re-find re offender))
                                   refused-call-shapes)))))))
+
+(defdescribe
+  stamped-sources-test
+  "Every `apropos` and every `doc` rebuilt the whole corpus — re-reading every
+   documentation page and every SKILL.md — because a source could only be asked
+   for its ENTRIES. Now it is asked for a cheap stamp first."
+  (it "answers the identical corpus while no source has changed"
+      (expect (identical? (dc/entries) (dc/entries))))
+  (it "does not run a source whose stamp is unchanged"
+      (let [runs (atom 0)]
+        (try (dc/register-source! ::stamped
+                                  (constantly :v1)
+                                  (fn []
+                                    (swap! runs inc)
+                                    [{:name "stamped-doc" :text "A document behind a stamp."}]))
+             (dc/entries)
+             (dc/entries)
+             (dc/entries)
+             (expect (= 1 @runs))
+             (finally (dc/register-source! ::stamped (constantly :gone) (constantly []))))))
+  (it "re-runs a source the moment its stamp changes"
+      (let
+        [stamp
+         (atom :v1)
+
+         runs
+         (atom 0)]
+
+        (try (dc/register-source! ::restamped
+                                  (fn []
+                                    @stamp)
+                                  (fn []
+                                    (swap! runs inc)
+                                    [{:name (str "restamped-" (name @stamp))
+                                      :text "Behind a stamp."}]))
+             (dc/entries)
+             (expect (some (comp #{"restamped-v1"} :name) (dc/entries)))
+             (reset! stamp :v2)
+             (expect (some (comp #{"restamped-v2"} :name) (dc/entries)))
+             (expect (= 2 @runs))
+             (finally (dc/register-source! ::restamped (constantly :gone) (constantly []))))))
+  (it "keeps a source that cannot be stamped out of the way of the others"
+      (try (dc/register-source! ::throwing
+                                (fn []
+                                  (throw (ex-info "no stamp" {})))
+                                (fn []
+                                  (throw (ex-info "no entries" {}))))
+           (expect (seq (dc/entries)))
+           (finally (dc/register-source! ::throwing (constantly :gone) (constantly []))))))
