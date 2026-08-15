@@ -33,6 +33,7 @@ import {
   flushDraftMessages,
   hydrateDraftMessages,
   peekDraftMessage,
+  type DraftMessage,
   subscribe,
   writeDraftMessage,
 } from './draft-messages';
@@ -64,16 +65,28 @@ describe('draft message subscribers', () => {
     expect(seen).toHaveLength(2);
   });
 
-  it('publishes a NEW store object per change so a snapshot reader re-renders', async () => {
-    const snapshots: unknown[] = [];
+  // Regression, reported from the phone ("writing in the input of the companion
+  // app hangs for half a second, many times, on iOS"): every keystroke woke the
+  // sessions list, which stays mounted behind the open transcript, and it re-ran
+  // its fleet-wide filter and sort per character for a screen nobody can see.
+  // A reader outside the composer learns that a row turned dirty, and learns the
+  // words when they are persisted — never once per character in between.
+  it('wakes a reader when the row turns dirty and when the words land, not per keystroke', async () => {
+    const snapshots: DraftMessage[] = [];
     const stop = subscribe(() => {
       snapshots.push(peekDraftMessage(key));
     });
+    writeDraftMessage(key, { text: 'o' });
+    writeDraftMessage(key, { text: 'on' });
     writeDraftMessage(key, { text: 'one' });
-    writeDraftMessage(key, { text: 'two' });
+    expect(snapshots).toHaveLength(1);
+
+    await flushDraftMessages();
     stop();
     expect(snapshots).toHaveLength(2);
+    // Each wake carries a NEW object, or a memoised row would not repaint.
     expect(snapshots[0]).not.toBe(snapshots[1]);
+    expect(snapshots[1].text).toBe('one');
   });
 });
 

@@ -14,6 +14,13 @@
 // debounced (typing must not hit the disk per keystroke) and flushed on every
 // way out of the app — visibility change, pagehide, unload.
 //
+// A reader OUTSIDE the composer — the sessions list, which stays mounted behind
+// the open transcript — is woken when a session STARTS or STOPS holding unsent
+// work, and again whenever the words are persisted (every pause in typing, and
+// every way out of the screen). It is never woken per keystroke: its answer is
+// fleet-wide, so a character re-ran the filter and the sort of every machine
+// and re-rendered every project group for a screen nobody is looking at.
+//
 // The staged BYTES are a SECOND key, written only when the staged set itself
 // changes. A photo is megabytes of base64; re-serializing it into localStorage
 // and across the native bridge into UserDefaults every time typing paused stalled
@@ -85,8 +92,9 @@ let dirty = false;
 let storedBytes = '';
 
 // Readers outside the composer — the sessions list asks which empty rows are
-// still holding unsent words. They read a SNAPSHOT, replaced on every change,
-// because the store itself is mutated in place and its identity never moves.
+// still holding unsent words. They read a SNAPSHOT, replaced whenever they are
+// woken (see the notification contract above), because the store itself is
+// mutated in place and its identity never moves.
 let snapshot: DraftMessageStore = {};
 const listeners = new Set<() => void>();
 
@@ -238,6 +246,10 @@ export function writeDraftMessage(
   },
 ): void {
   const current = (store ??= {});
+  // What a reader outside this composer renders: is this session holding unsent
+  // work? Compared across the write below, it is the only thing a keystroke can
+  // tell them that they did not already know.
+  const held = draftMessageHasUnsent(current[key]);
   const text = message.text;
   const pastes = Array.from(message.pastes ?? []).filter(
     (paste) => text.includes(paste.token) && paste.content.length <= MAX_PASTE_CHARS,
@@ -267,7 +279,7 @@ export function writeDraftMessage(
   }
   dirty = true;
   schedule();
-  announce();
+  if (draftMessageHasUnsent(current[key]) !== held) announce();
 }
 
 function sameKeys(a: string[], b: string[]): boolean {
@@ -388,6 +400,10 @@ function push(key: string, value: string): Promise<void> {
  * `localStorage` and the native bridge into `UserDefaults` at every pause in
  * typing bought a payload byte-identical to the one already on disk — and cost
  * the composer a visible stall on the phone every time.
+ *
+ * This is also where the WORDS reach a reader outside the composer: persisting
+ * is the one moment they are settled — every pause in typing, and every way out
+ * of the screen — so the sessions list is woken here rather than per keystroke.
  */
 export async function flushDraftMessages(): Promise<void> {
   if (writeTimer) {
@@ -397,6 +413,7 @@ export async function flushDraftMessages(): Promise<void> {
   if (!dirty || !store) return;
   dirty = false;
   store = prune(store);
+  announce();
   const { messages, bytes, signature } = persistable(store);
   const words = JSON.stringify(messages);
   // Bytes FIRST: a kill between the two writes may then orphan bytes — harmless,

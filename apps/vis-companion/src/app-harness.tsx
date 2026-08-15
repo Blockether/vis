@@ -83,8 +83,31 @@ export function renderApp({ machines = [{}] as AppMachine[] } = {}) {
         id: byOrigin.get(url.origin) ? conns.find((one) => new URL(one.url).origin === url.origin)?.id : undefined,
         protocol,
       });
+    // A capabilities answer a session screen can actually mount against: it
+    // reads `features` on its first frame, so a gateway without one is not a
+    // gateway this app runs on.
     if (url.pathname === "/v1/capabilities")
-      return answer({ version: 1, protocol, compatibility: { is_compatible: true } });
+      return answer({
+        version: 1,
+        protocol,
+        compatibility: { is_compatible: true },
+        features: {
+          chat: { enabled: true },
+          attachments: {
+            enabled: true,
+            transport: "inline-base64",
+            media_types: ["image/png"],
+            max_files: 4,
+            max_file_bytes: 1_000_000,
+          },
+          voice: {
+            enabled: false,
+            transport: "audio/wav",
+            transcription: "gateway-local",
+            model: { state: "absent" },
+          },
+        },
+      });
     return answer({});
   }) as typeof fetch;
 
