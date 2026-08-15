@@ -622,7 +622,7 @@
 
 (def ^:private TITLE_LIMIT
   ;; One line on a lock screen, and the lead words are all that survive a
-  ;; collapsed stack — so a long session title is clipped rather than allowed to
+  ;; collapsed stack — so a long question is clipped rather than allowed to
   ;; push the alert's point off the end.
   64)
 
@@ -690,9 +690,12 @@
    for YOU\": a turn parked on an unanswered dialog produces no terminal event,
    so without this the phone stays silent until the request times out.
 
-   The demand rides in the TITLE, which stays legible when the stack collapses
-   and when the body is truncated; the body then spends its whole budget on the
-   question itself instead of re-stating that something is waiting."
+   The title carries the DEMAND and then the question itself, because the title
+   is what survives a collapsed stack and a truncated body. The session title is
+   deliberately NOT here: it is minted from whatever opened the session, so on a
+   lock screen it reads as noise standing where the question belongs. Which
+   session is parked still rides in `thread-id`, and the tap still lands on it
+   through `data`."
   [sid event]
   (let
     [request
@@ -702,23 +705,13 @@
      (not-empty (str (get request "title")))
 
      description
-     (not-empty (str (get request "description")))
+     (not-empty (str (get request "description")))]
 
-     described
-     (@describe-session sid nil)
-
-     session-title
-     (not-empty (str (:title described)))]
-
-    {:title (clip (if session-title (str "Action needed — " session-title) "Action needed")
-                  TITLE_LIMIT)
-     ;; The request in the caller's own words. A request that carries only a
-     ;; description must not lose it to a generic placeholder.
-     :body (clip (or (when (and asked description) (str asked ": " description))
-                     asked
-                     description
-                     "Vis is waiting on your answer.")
-                 BODY_LIMIT)
+    {:title (clip (if asked (str "Action needed — " asked) "Action needed") TITLE_LIMIT)
+     ;; The detail UNDER the question, in the caller's own words — never the
+     ;; question again, which the title already carries. A request that labelled
+     ;; only its description must not lose it to a generic placeholder.
+     :body (clip (or description "Vis is waiting on your answer.") BODY_LIMIT)
      :thread-id (str sid)
      ;; Its own collapse lane: an input request must not be swallowed by the
      ;; session's last turn banner.
