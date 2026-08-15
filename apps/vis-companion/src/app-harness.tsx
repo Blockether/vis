@@ -5,7 +5,9 @@
 // those gateways — so seeding one key and holding that one seam is the whole
 // setup. Each mount gets a fresh gateway ORIGIN: the gateway client cache and
 // its snapshots are keyed by URL, and a reused one lets a previous test's rows
-// paint the next test's first frame.
+// paint the next test's first frame — so a test that is ABOUT addresses (the
+// durability order lives in `lib/endpoints`, which reads the HOST) names its
+// own `url`/`alts` and owns the reuse it takes on.
 import { render } from "@testing-library/react";
 
 import { App } from "./App";
@@ -17,20 +19,40 @@ export interface AppMachine {
   sessions?: Session[];
   /** Extra routes, by pathname: whatever they return is the JSON body. */
   routes?: Record<string, unknown>;
+  /** The saved address, when the test needs a real LAN/tailnet shape. */
+  url?: string;
+  /** Every other address the SAME gateway answers on, as the app saved them. */
+  alts?: string[];
+  /** This device was told to use `url` BY NAME. */
+  pinned?: boolean;
 }
 
 let origins = 0;
 
-export function renderApp({ machines = [{}] as AppMachine[] } = {}) {
-  const conns: GatewayConn[] = machines.map((machine, index) => ({
-    url: `http://app-gateway-${++origins}.example.com`,
-    token: "t",
-    id: `app-gateway-${origins}`,
-    label: machine.label ?? `machine-${index + 1}`,
-  }));
-  const byOrigin = new Map(
-    conns.map((conn, index) => [new URL(conn.url).origin, machines[index]]),
-  );
+export function renderApp({
+  machines = [{}] as AppMachine[],
+  /** Addresses that answer nothing at all — a LAN address from another network. */
+  unreachable = [] as string[],
+} = {}) {
+  const conns: GatewayConn[] = machines.map((machine, index) => {
+    const id = `app-gateway-${++origins}`;
+    return {
+      url: machine.url ?? `http://${id}.example.com`,
+      token: "t",
+      id,
+      label: machine.label ?? `machine-${index + 1}`,
+      ...(machine.alts ? { alts: machine.alts } : {}),
+      ...(machine.pinned ? { pinned: true } : {}),
+    };
+  });
+  // Every address of a machine answers AS that machine: one gateway on the LAN
+  // and on the tailnet is one row, not two.
+  const byOrigin = new Map<string, { machine: AppMachine; conn: GatewayConn }>();
+  conns.forEach((conn, index) => {
+    for (const address of [conn.url, ...(conn.alts ?? [])])
+      byOrigin.set(new URL(address).origin, { machine: machines[index]!, conn });
+  });
+  const dead = new Set(unreachable.map((address) => new URL(address).origin));
   // Both mirrors: the sync read is plain web storage, the async one comes back
   // through Capacitor Preferences, whose web implementation prefixes its keys.
   for (const prefix of ["", "CapacitorStorage."]) {
@@ -60,8 +82,12 @@ export function renderApp({ machines = [{}] as AppMachine[] } = {}) {
           ? input.href
           : input.url,
     );
-    const machine = byOrigin.get(url.origin);
-    if (!machine) return answer({});
+    // An address that answers NOTHING fails the way a dead LAN address does:
+    // a network error, never a status, so failover has to see it as one.
+    if (dead.has(url.origin)) throw new TypeError("Failed to fetch");
+    const entry = byOrigin.get(url.origin);
+    if (!entry) return answer({});
+    const machine = entry.machine;
     if (machine.routes && url.pathname in machine.routes)
       return answer(machine.routes[url.pathname]);
     if (url.pathname === "/v1/sessions") {
@@ -80,7 +106,7 @@ export function renderApp({ machines = [{}] as AppMachine[] } = {}) {
     if (url.pathname === "/healthz")
       return answer({
         status: "ok",
-        id: byOrigin.get(url.origin) ? conns.find((one) => new URL(one.url).origin === url.origin)?.id : undefined,
+        id: entry.conn.id,
         protocol,
       });
     // A capabilities answer a session screen can actually mount against: it

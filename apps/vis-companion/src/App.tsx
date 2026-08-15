@@ -688,11 +688,15 @@ export function App() {
       // A machine the user renamed keeps its name across an address switch; an
       // auto-derived host label follows the address it describes.
       const named = Boolean(activeLabel) && activeLabel !== hostOf(activeUrl);
-      await switchConnectionUrl(
-        activeUrl,
-        chosen,
-        named ? {} : { label: hostOf(chosen) },
-      );
+      // THE PIN DOES NOT TRAVEL. It records the address a human picked BY NAME,
+      // and this move is the app's own: carrying it would leave the row saying
+      // `Pinned` about an address nobody chose, and would freeze the app there —
+      // a pin outranks the durability order, so no better address is taken
+      // afterwards either. A pin the app could not honour is released here.
+      await switchConnectionUrl(activeUrl, chosen, {
+        pinned: false,
+        ...(named ? {} : { label: hostOf(chosen) }),
+      });
       if (cancelled) return;
       setOffline(null);
       await refresh();
