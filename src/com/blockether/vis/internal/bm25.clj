@@ -539,6 +539,37 @@
       (when-let [bucket (get vocab-by-head (.charAt term 0))]
         (or (complete-prefix bucket term) (nearest bucket term))))))
 
+(defn- resolve-query
+  "Every query term the corpus can answer, in query order, deduplicated by what
+   it RESOLVED to and carrying that resolution: `{:term \"pathc\" :as \"patch\"
+   :idf 3.4}`. A reader renders the correction (`pathc` -> `patch`) and orders
+   an excerpt by `:idf`, so a hit can show WHY it came back instead of only how
+   high it scored."
+  [{:keys [postings] :as ix} raw]
+  (loop
+    [ts
+     (seq raw)
+
+     seen
+     #{}
+
+     out
+     []]
+
+    (if-not ts
+      out
+      (let
+        [t
+         (first ts)
+
+         r
+         (resolve-term ix t)]
+
+        (if (or (nil? r) (contains? seen r))
+          (recur (next ts) seen out)
+          (recur (next ts)
+                 (conj seen r)
+                 (conj out {:term t :as r :idf (double (:idf (get postings r) 0.0))})))))))
 (defn- accumulate!
   "Add one term's contribution to every document that carries it. Walks the
    term's postings, so an unrelated document is never touched."
@@ -631,7 +662,12 @@
   "Rank `ix`'s documents against `query`, best first. Answers the documents'
    `:value` payloads with a `:score`, ties broken on `:name` so the order is
    stable. `:limit` keeps only the top k. A blank query is not a failure, it is
-   \"everything\": every document in name order, scored 0."
+   \"everything\": every document in name order, scored 0.
+
+   The answer carries the RESOLVED query terms as metadata
+   (`{:terms [{:term :as :idf}]}`), because prefix completion and spell
+   correction happen in here: a reader that wants to show WHY a document
+   came back cannot re-derive them from the query string."
   ([ix query] (rank ix query nil))
   ([ix query {:keys [limit]}]
    (let
@@ -645,16 +681,17 @@
       (when limit (long limit))]
 
      (if (empty? raw)
-       (cond->>
-         (sort-by :name
-                  (map (fn [d]
-                         (assoc (:value d) :score 0.0))
-                       docs))
-         limit
-         (take limit)
+       (with-meta (cond->>
+                    (sort-by :name
+                             (map (fn [d]
+                                    (assoc (:value d) :score 0.0))
+                                  docs))
+                    limit
+                    (take limit)
 
-         :always
-         vec)
+                    :always
+                    vec)
+         {:terms []})
        (let
          [nd
           (count docs)
@@ -674,8 +711,11 @@
           postings
           (:postings ix)
 
+          resolved
+          (resolve-query ix raw)
+
           hit
-          (into #{} (keep #(resolve-term ix %)) raw)]
+          (into #{} (map :as) resolved)]
 
          (doseq [t hit]
            (when-let [p (get postings t)]
@@ -687,12 +727,14 @@
                                (let [s (aget scores (int i))]
                                  (when (pos? s) (assoc (:value (nth docs i)) :score s)))))
                        (range nd))]
-           (if (and limit (> (count hits) (long limit)))
-             (top-k hits limit)
-             (vec (sort-by (juxt (comp - :score) :name) hits)))))))))
+           (with-meta (if (and limit (> (count hits) (long limit)))
+                        (top-k hits limit)
+                        (vec (sort-by (juxt (comp - :score) :name) hits)))
+             {:terms resolved})))))))
 
 (defn search
   "Index `docs` (memoized) and rank them against `query`. `opts` retunes the
-   scoring (see `default-opts`) and carries `:limit`."
+   scoring (see `default-opts`) and carries `:limit`. `rank`'s resolved-term
+   metadata rides along."
   ([docs query] (search docs query nil))
   ([docs query opts] (rank (cached-index docs (dissoc opts :limit)) query opts)))

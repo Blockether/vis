@@ -9,9 +9,10 @@
 
 (defdescribe
   entry-shape-test
-  "ONE record for every document, whatever seeded it: `name` + `text`, and `call`
-   only when there is something to call. No `kind`, no `group` — a taxonomy the
-   model cannot act on is a field on every row."
+  "ONE record for every document, whatever seeded it: `name` + `text`, a `kind`
+   from the closed vocabulary — what the document IS, which is how a reader
+   decides whether to CALL it or read it — and `call` only when there is
+   something to call."
   (it "carries exactly the specified keys"
       (let [es (dc/entries)]
         (expect (seq es))
@@ -20,7 +21,8 @@
           (expect (not (str/blank? (:name e))))
           (expect (string? (:text e)))
           (expect (not (str/blank? (:text e))))
-          (expect (empty? (dissoc e :name :text :call)))))))
+          (expect (contains? dc/kinds (:kind e)) (str (:name e) " carries no kind"))
+          (expect (empty? (dissoc e :name :text :call :kind)))))))
 
 (defdescribe
   every-entry-has-a-usable-first-line-test
@@ -217,3 +219,73 @@
                                   (throw (ex-info "no entries" {}))))
            (expect (seq (dc/entries)))
            (finally (dc/register-source! ::throwing (constantly :gone) (constantly []))))))
+
+(def ^:private deep-doc
+  "A document whose answer is nowhere near its first line — the shape that made
+   a one-line gist useless: a skill, a documentation page, a long contract."
+  (str "Automate a browser end to end with the spel command line.\n\n"
+       (str/join "\n" (repeat 40 "Filler prose about unrelated matters."))
+       "\nCapture a screenshot of the page before asserting.\n"
+       (str/join "\n" (repeat 40 "More filler that says nothing."))
+       "\nThe screenshot lands beside the report.\n"))
+
+(defn- term "One resolved query term, as `bm25/rank` hands them over." [t] {:term t :as t :idf 3.0})
+
+(defdescribe
+  preview-test
+  "What a search row SHOWS. The body is never in it — `doc(name)` answers that
+   whole — so the excerpt has to prove the document is worth opening: its own
+   opening, the region the query landed in, and a fragment from deeper down."
+  (it "shows the opening, the matched region and a fragment from further down"
+      (let
+        [{:keys [gist at hit]}
+         (dc/preview deep-doc [(term "screenshot")])
+
+         wanted
+         (inc (count (take-while #(not (str/includes? % "Capture")) (str/split-lines deep-doc))))]
+
+        (expect (str/starts-with? gist "Automate a browser end to end"))
+        (expect (str/includes? gist "Capture a screenshot"))
+        (expect (str/includes? gist "lands beside the report"))
+        (expect (= wanted at) "`at` must be the line the matched region starts on")
+        (expect (= ["screenshot"] hit))))
+  (it "answers `at` 0 when the opening already held the match"
+      (let
+        [text
+         "Run pack tests; prefer the smallest target: a file or a directory."
+
+         {:keys [gist at]}
+         (dc/preview text [(term "tests")])]
+
+        (expect (zero? at))
+        (expect (= text gist))))
+  (it "takes the line under a breadcrumb opening, which says nothing alone"
+      (let
+        [{:keys [gist]}
+         (dc/preview
+           "Drafts \u00b7 Using Vis\n\nIsolated workspaces for speculative changes.\n\n# Drafts\n"
+           nil)]
+        (expect (str/starts-with? gist "Drafts \u00b7 Using Vis \u2014 Isolated workspaces"))))
+  (it "answers the opening alone when nothing was asked"
+      (let [{:keys [gist at hit]} (dc/preview deep-doc nil)]
+        (expect (= "Automate a browser end to end with the spel command line." gist))
+        (expect (zero? at))
+        (expect (= [] hit))))
+  (it "renders a correction, so a rewritten query is never silent"
+      (expect (= ["pathc\u2192patch"]
+                 (:hit (dc/preview "Apply every anchored edit for one file: patch(path, edits)."
+                                   [{:term "pathc" :as "patch" :idf 3.0}])))))
+  (it "stays bounded whatever the document weighs"
+      (let [huge (apply str (repeat 4000 "screenshot everything everywhere all the time. "))]
+        (expect (<= (count (:gist (dc/preview huge [(term "screenshot")]))) 300))))
+  (it "never re-shows what the opening already printed"
+      (let
+        [text
+         (str "Apply EVERY anchored edit for one file in a single atomic write, "
+              "in prose or in code, with patch(path, edits).\n\n"
+              "Every anchor resolves against ONE read.")
+
+         {:keys [gist]}
+         (dc/preview text [(term "anchor")])]
+
+        (expect (< (count (re-seq #"anchored edit" gist)) 2)))))

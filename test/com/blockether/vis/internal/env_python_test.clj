@@ -416,8 +416,8 @@
           (expect (re-find #"grep=True" out))
           (expect (re-find #"struct_patch=True" out))))
     ;; `apropos` is FULL TEXT now: a query that appears in no NAME at all still
-    ;; answers, and rank is the "where did it match" answer — an exact name first,
-    ;; a body-only hit last.
+    ;; answers, and every row carries WHERE it matched — a bounded excerpt of the
+    ;; document and the line the matched region starts on.
     (it "apropos searches the whole document, not just the name"
         (let
           [out (run (str "print('skeleton='+str('struct_index' in apropos('skeleton')))\n"
@@ -445,12 +445,35 @@
     (it "caps a described ask but never the empty listing"
         (let
           [out (run (str "hits = apropos('how do I replace lines in a file')\n"
-                         "print('capped='+str(len(hits) <= 25))\n"
+                         "print('capped='+str(len(hits) <= 10))\n"
                          "print('first='+list(hits)[0])\n"
                          "print('all='+str(len(apropos('')) > 25))"))]
           (expect (str/includes? out "capped=True"))
           (expect (str/includes? out "first=patch"))
           (expect (str/includes? out "all=True"))))
+    ;; Regression: a row was a bare gist string, so a 70 KB skill answered with
+    ;; its title and nothing about the ask, and an undocumented `def` of the
+    ;; model's own ranked beside real contracts with nothing to tell them apart.
+    (it "answers each hit with its kind, a bounded excerpt and where it matched"
+        (let
+          [out (run (str
+                      "def killers():\n" "    return 1\n"
+                      "hits = apropos('how do I replace lines in a file')\n" "row = hits['patch']\n"
+                      "print('keys='+','.join(sorted(row)))\n" "print('kind='+row['kind'])\n"
+                      "print('bounded='+str(max(len(h['gist']) for h in hits.values()) <= 300))\n"
+                      "print('excerpt='+str('…' in row['gist']))\n"
+                      "print('hit='+str(len(row['hit']) > 0))\n"
+                      "print('at='+str(isinstance(row['at'], int)))\n"
+                      "print('searched='+str('killers' in hits))\n"
+                      "print('listed='+apropos('')['killers']['kind'])"))]
+          (expect (str/includes? out "keys=at,gist,hit,kind"))
+          (expect (str/includes? out "kind=tool"))
+          (expect (str/includes? out "bounded=True"))
+          (expect (str/includes? out "excerpt=True"))
+          (expect (str/includes? out "hit=True"))
+          (expect (str/includes? out "at=True"))
+          (expect (str/includes? out "searched=False"))
+          (expect (str/includes? out "listed=local"))))
     (it "never turns a bound loop variable into a document"
         (let
           [out (run (str "x = 3\nday_set = {'a'}\n" "a = apropos('')\n"
@@ -466,7 +489,7 @@
           (expect (str/includes? out "doc(target) -> str"))
           (expect (str/includes? out "A skill is one of these documents and nothing more"))))
     (it "gather exposes its concurrency contract through apropos and doc"
-        (let [out (run (str "print(apropos('gather')['gather'])\n" "print(doc('gather'))"))]
+        (let [out (run (str "print(apropos('gather')['gather']['gist'])\n" "print(doc('gather'))"))]
           (expect (str/includes? out "gather(*awaitables) -> list"))
           (expect (str/includes? out "independent deferred tool calls"))
           (expect (str/includes? out "results preserve input order"))
@@ -478,7 +501,7 @@
     (it "fold_session documents what a fold keeps and what it drops"
         (ep/set-python-binding! ctx 'fold-session identity)
         (let
-          [out (run (str "print(apropos('fold_session')['fold_session'])\n"
+          [out (run (str "print(apropos('fold_session')['fold_session']['gist'])\n"
                          "print(doc('fold_session'))"))]
           (expect (str/includes? out "fold_session(key, gist=None) -> str"))
           (expect (str/includes? out "The key is a STRING"))

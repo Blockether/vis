@@ -49,15 +49,27 @@
 (s/def :vis.doc/name string?)
 (s/def :vis.doc/text string?)
 (s/def :vis.doc/call (s/nilable string?))
-(s/def :vis.doc/entry (s/keys :req-un [:vis.doc/name :vis.doc/text] :opt-un [:vis.doc/call]))
+(def kinds
+  "The closed vocabulary of `:kind` — what a document IS, which is how a reader
+   decides what to DO with it: `tool` a callable verb's contract, `shim` an
+   importable sandbox module, `page` a Vis documentation page, `skill` a whole
+   `SKILL.md`, `mcp` an MCP server's tool, `local` a callable this session
+   defined that carries no contract at all. A source that invents a kind is a
+   bug, not a new category."
+  #{"tool" "shim" "page" "skill" "mcp" "local"})
+
+(s/def :vis.doc/kind kinds)
+(s/def :vis.doc/entry
+  (s/keys :req-un [:vis.doc/name :vis.doc/text] :opt-un [:vis.doc/call :vis.doc/kind]))
 (s/def :vis.doc/entries (s/coll-of :vis.doc/entry :kind vector?))
 (s/def :vis.doc/result
   (s/or :index (s/keys :req-un [:vis.doc/entries])
         :entry :vis.doc/entry))
 
-;; `apropos` = the same records, ranked. Rank IS the "where did it match"
-;; answer: a name hit outranks a body hit, so a per-hit field set would only
-;; restate the order.
+;; `apropos` = the same records, ranked. The rank ORDER is one answer and the
+;; `preview` of each hit is the other: a row shows where the query landed in
+;; that document and how deep, so a reader never opens a 70 KB skill to find
+;; out it was matched once in a table.
 (s/def :vis.apropos/score number?)
 (s/def :vis.apropos/hit (s/merge :vis.doc/entry (s/keys :req-un [:vis.apropos/score])))
 (s/def :vis.apropos/result (s/coll-of :vis.apropos/hit :kind vector?))
@@ -105,6 +117,240 @@
            (> (count line) (long max-len)) (str (subs line 0 (dec (long max-len))) "…")
            :else line))))
 
+
+(def ^:private ^:const preview-head-len
+  "Characters of the document's own opening. Long enough for a contract's first
+   clause, short enough that ten rows stay scannable."
+  110)
+
+(def ^:private ^:const preview-mid-len 90)
+(def ^:private ^:const preview-tail-len 60)
+
+(def ^:private ^:const preview-lead-in
+  "Characters of lead-in before a match. Enough to know which sentence the
+   window cut into, not so much that the match itself is the tail of the row."
+  35)
+
+(def ^:private ^:const preview-tail-lead 12)
+
+(def ^:private ^:const preview-tail-gap
+  "How far below the matched region a second match must sit to be worth showing:
+   closer than this it is the same passage twice."
+  400)
+
+(def ^:private ^:const preview-short-head
+  "An opening this short is a breadcrumb (`Drafts · Using Vis`), not a
+   summary — the line under it carries the meaning, so take both."
+  45)
+
+(def ^:private ^:const preview-hit-terms 3)
+
+(defn- collapse
+  "One line: every whitespace run becomes a single space and markdown scaffolding
+   is trimmed off the ends, so a window cut out of a table or a bullet reads as
+   prose."
+  ^String [^String s]
+  (-> s
+      (str/replace #"\s+" " ")
+      (str/replace #"^[\s#*`|>_-]+" "")
+      (str/replace #"[\s|]+$" "")
+      str/trim))
+
+(defn- clip
+  "`s` capped at `n` characters, cut at a word boundary when that keeps most of
+   it, marked with an ellipsis when anything was dropped."
+  ^String [^String s ^long n]
+  (if (<= (count s) n)
+    s
+    (let
+      [cut
+       (subs s 0 n)
+
+       sp
+       (.lastIndexOf cut " ")]
+
+      (str (if (> sp (long (* 0.6 n))) (subs cut 0 sp) cut) "…"))))
+
+(defn- word-start?
+  "Is offset `i` the start of a word — nothing alphanumeric to its left? Matching
+   mid-word would put `cat` inside `concatenate`."
+  [^String s ^long i]
+  (or (zero? i) (not (Character/isLetterOrDigit (.charAt s (dec i))))))
+
+(defn- find-term
+  "First word-start offset of `term` in `low` at or after `from`, or -1."
+  ^long [^String low ^String term ^long from]
+  (loop [i (.indexOf low term (int from))]
+    (cond (neg? i) -1
+          (word-start? low i) i
+          :else (recur (.indexOf low term (int (inc i)))))))
+
+(defn- last-term
+  "Last word-start offset of `term` in `low`, or -1."
+  ^long [^String low ^String term]
+  (loop [i (.lastIndexOf low term)]
+    (cond (neg? i) -1
+          (word-start? low i) i
+          :else (recur (.lastIndexOf low term (int (dec i)))))))
+
+(defn- line-of
+  "The 1-based line `pos` falls on."
+  ^long [^String s ^long pos]
+  (loop
+    [from
+     0
+
+     line
+     1]
+
+    (let [j (.indexOf s "\n" (int from))]
+      (if (or (neg? j) (>= j pos)) line (recur (inc j) (inc line))))))
+
+(defn- word-window
+  "The text around `pos`, widened to whole words: `back` characters of lead-in
+   and `fwd` after it, never reaching back before `floor` — so a window never
+   re-shows what the caller already printed. A match is worth more forwards than
+   backwards, which is why the two spans differ."
+  ^String [^String s pos back fwd floor]
+  (let
+    [p
+     (long pos)
+
+     fl
+     (long floor)
+
+     n
+     (.length s)
+
+     lo
+     (loop [i (max fl (- p (long back)))]
+       (if (and (> i fl) (Character/isLetterOrDigit (.charAt s (dec i)))) (recur (dec i)) i))
+
+     hi
+     (loop [i (min n (+ p (long fwd)))]
+       (if (and (< i n) (Character/isLetterOrDigit (.charAt s i))) (recur (inc i)) i))]
+
+    (collapse (subs s lo hi))))
+
+(defn- opening
+  "`[rendered-head raw-end]` — the document's first non-blank line, plus the next
+   one when the first is only a breadcrumb."
+  [^String s ^long start]
+  (let
+    [n
+     (.length s)
+
+     eol
+     (let [j (.indexOf s "\n" (int start))]
+       (if (neg? j) n j))
+
+     head
+     (collapse (subs s start eol))]
+
+    (if (or (>= (long (count head)) (long preview-short-head)) (>= (long eol) n))
+      [head eol]
+      (let
+        [nxt
+         (loop [i (inc eol)]
+           (if (and (< i n) (Character/isWhitespace (.charAt s i))) (recur (inc i)) i))
+
+         eol2
+         (let [j (.indexOf s "\n" (int nxt))]
+           (if (neg? j) n j))
+
+         more
+         (collapse (subs s nxt eol2))]
+
+        (if (str/blank? more) [head eol] [(str head " — " more) eol2])))))
+
+(defn preview
+  "A BOUNDED excerpt of one document for the terms that matched it — what a
+   search row shows instead of the body, which `doc(name)` answers whole.
+
+   Three parts, joined by ellipses: the document's own OPENING (its first line,
+   plus the line under it when the first is a breadcrumb), the best MATCHED
+   region below what the opening already showed, and — when the terms recur far
+   deeper — a fragment from DOWN the document, which is what separates a page
+   that is about the query from one that mentions it once.
+
+   `terms` is `bm25/rank`'s resolved-term metadata; the rarest term (highest
+   `:idf`) picks the window, and `:hit` names the terms that landed, rendering a
+   correction as `pathc→patch` so a rewritten query is never silent.
+
+   Answers `{:gist :at :hit}`. `:at` is the 1-based LINE the matched region
+   starts on — 0 when the opening already held the match — so a 70 KB skill can
+   be read from where it answers."
+  ([text] (preview text nil))
+  ([text terms]
+   (let
+     [s
+      (str text)
+
+      n
+      (.length s)
+
+      start
+      (loop [i 0]
+        (if (and (< i n) (Character/isWhitespace (.charAt s i))) (recur (inc i)) i))
+
+      [raw-head head-end]
+      (opening s start)
+
+      head
+      (clip (str/replace raw-head #"^#+\s*" "") preview-head-len)
+
+      ;; Where the rendered opening stops in the RAW text: a window may never
+      ;; reach back into it.
+      shown
+      (min (long head-end) (+ (long start) (long (count head))))
+
+      low
+      (str/lower-case s)
+
+      found
+      (into []
+            (comp (filter #(>= (count (str (:as %))) 3))
+                  (keep (fn [{:keys [as] :as t}]
+                          (let [f (find-term low (str as) 0)]
+                            (when-not (neg? f)
+                              (assoc t
+                                :below (find-term low (str as) shown)
+                                :last (last-term low (str as))))))))
+            (sort-by (comp - :idf) terms))
+
+      ;; A term the corpus almost never uses says what the document is; one it
+      ;; uses everywhere ("file", "the") would put the window on noise.
+      strong
+      (if-let [top (when (seq found) (apply max (map :idf found)))]
+        (or (seq (filter #(>= (double (:idf %)) (* 0.5 (double top))) found)) found)
+        [])
+
+      mpos
+      (let [bs (remove neg? (map :below strong))]
+        (when (seq bs) (apply min bs)))
+
+      deepest
+      (when mpos (apply max (map :last strong)))
+
+      mid
+      (when mpos (clip (word-window s mpos preview-lead-in preview-mid-len shown) preview-mid-len))
+
+      tail
+      (when (and deepest (> (long deepest) (+ (long mpos) (long preview-tail-gap))))
+        (clip (word-window s
+                           deepest
+                           preview-tail-lead
+                           preview-tail-len
+                           (+ (long mpos) (long preview-mid-len)))
+              preview-tail-len))]
+
+     {:gist (str/join " … " (remove str/blank? [head mid tail]))
+      :at (if mpos (line-of s mpos) 0)
+      :hit (into []
+                 (comp (take preview-hit-terms)
+                       (map (fn [{:keys [term as]}]
+                              (if (= (str term) (str as)) (str as) (str term "→" as)))))
+                 strong)})))
 (defn normalize-name
   "Coerce a caller's target to a comparable handle: unwrap the map/kwargs shape,
    trim, drop a trailing `.md` (pages cross-link by filename), lower-case. This
@@ -168,6 +414,7 @@
         (keep (fn [{:keys [slug title section blurb md]}]
                 (when (and (seq (str slug)) (seq (str md)))
                   {:name (str slug)
+                   :kind "page"
                    ;; The TITLE is the first line, unheaded: `entry-text` already
                    ;; prints `# <slug>`, and two headings in a row read as a
                    ;; mistake rather than as a document.
@@ -192,6 +439,7 @@
         (keep (fn [{:keys [name description body]}]
                 (when (seq (str name))
                   {:name (str name)
+                   :kind "skill"
                    :text (str (when (seq (str description)) (str description "\n\n")) body)})))
         (discovery/skills)))
 
@@ -244,6 +492,9 @@
                (comp (filter #(and (seq (str (:name %))) (some? (:text %))))
                      (map (fn [e]
                             (cond-> {:name (str (:name e)) :text (str (:text e))}
+                              (contains? kinds (:kind e))
+                              (assoc :kind (:kind e))
+
                               (seq (str (:call e)))
                               (assoc :call (str (:call e))))))
                      (dedupe-by-name))

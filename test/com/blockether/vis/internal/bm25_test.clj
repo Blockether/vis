@@ -223,3 +223,19 @@
 
         (expect (identical? (last newer) (bm25/cached-index (ds-n 8))))
         (expect (not (identical? first-ix (bm25/cached-index (ds-n 0))))))))
+
+(defdescribe
+  resolved-terms-meta-test
+  "Prefix completion and spell correction happen INSIDE the ranker, so a reader
+   cannot re-derive what the query became. The answer carries the resolution."
+  (it "names what each term resolved to, and prices it"
+      (let [terms (:terms (meta (bm25/search (docs) "pathc")))]
+        (expect (= [{:term "pathc" :as "patch"}] (mapv #(select-keys % [:term :as]) terms)))
+        (expect (every? #(pos? (double (:idf %))) terms))))
+  (it "keeps a term that needed no rescue as itself"
+      (expect (= [["patch" "patch"]]
+                 (mapv (juxt :term :as) (:terms (meta (bm25/search (docs) "patch")))))))
+  (it "drops a term no document can answer"
+      (expect (empty? (:terms (meta (bm25/search (docs) "zzqqxk"))))))
+  (it "carries an empty term list for a blank query, so the shape never varies"
+      (expect (= [] (:terms (meta (bm25/search (docs) "")))))))

@@ -1012,9 +1012,27 @@
 
 (def ^:private ^:const apropos-limit
   "How many documents `apropos` answers for a described ask. Terms are ORed, so
-   a six-word question touches half the corpus and everything past the first
-   handful is noise the caller reads and pays for."
-  25)
+   a six-word question touches half the corpus; every measured ask answered
+   inside the first four rows, and each row now carries an excerpt rather than
+   a bare line, so the tail is paid for twice over."
+  10)
+
+(defn- seed-py-map!
+  "Merge `m` into the sandbox dict `dict-name` with `setdefault` semantics — the
+   FIRST source to claim a key keeps it, the same precedence rule `__vis_docs__`
+   uses. Marshalled as JSON and parsed with the auto-imported `json` module, so
+   no ProxyHashMap crosses the boundary. Best-effort: a registry hiccup must
+   never break context creation."
+  [^Context ctx ^Value g ^String dict-name m]
+  (when (seq m)
+    (try (.putMember g "__vis_seed_json__" (json/write-json-str m))
+         (.eval ctx
+                "python"
+                (str "_vis_seed = globals().setdefault('" dict-name
+                     "', {})\n" "for _k, _v in json.loads(__vis_seed_json__).items():\n"
+                     "    _vis_seed.setdefault(_k, _v)\n" "del _vis_seed, _k, _v"))
+         (.putMember g "__vis_seed_json__" nil)
+         (catch Throwable _ nil))))
 
 (defn- sandbox-corpus
   "The whole corpus as `doc-corpus` entries, read LIVE off the globals so a
@@ -1022,22 +1040,34 @@
    `__vis_docs__` holds one document per handle (function contracts seeded from
    the extension registry, plus every documentation page, skill and MCP tool),
    `__vis_calls__` holds the expression that uses the handles which are not
-   themselves Python names. A bound function with no registered document still
-   appears — by name, with an empty gist — because a callable the model can
-   type must never be invisible."
+   themselves Python names, and `__vis_kinds__` labels the ones a source
+   CLASSIFIED (page, skill, mcp, shim).
+
+   The two kinds nobody labels are derived here: a documented handle is a
+   `tool`, and a callable with no document at all is `local` — the model's own
+   `def`. A bound function with no registered document still appears, because a
+   callable the model can type must never be invisible; labelling it `local`
+   is what stops it being read as a contract."
   [^Value g names-fn]
   (let
     [docs
      (value->str-map (.getMember g "__vis_docs__"))
 
      calls
-     (value->str-map (.getMember g "__vis_calls__"))]
+     (value->str-map (.getMember g "__vis_calls__"))
+
+     kinds
+     (value->str-map (.getMember g "__vis_kinds__"))]
 
     (into []
           (map (fn [nm]
-                 (cond-> {:name nm :text (get docs nm "")}
-                   (seq (str (get calls nm)))
-                   (assoc :call (get calls nm)))))
+                 (let [text (get docs nm "")]
+                   (cond->
+                     {:name nm
+                      :text text
+                      :kind (or (get kinds nm) (if (str/blank? text) "local" "tool"))}
+                     (seq (str (get calls nm)))
+                     (assoc :call (get calls nm))))))
           (distinct (concat (names-fn) (sort (keys docs)))))))
 
 (defn- install-introspection!
@@ -1124,23 +1154,55 @@
                public
                (remove #(str/starts-with? (str (:name %)) "_"))
 
-               hits
-               (into []
-                     (if described? (comp public (take apropos-limit)) public)
-                     (doc-corpus/search (sandbox-corpus g names)
-                                        query
-                                        (when described? {:limit (+ (long apropos-limit) 8)})))]
+               ;; An undocumented callable — the model's own `def`, a stdlib name
+               ;; that leaked into the globals — is a NAME and nothing else. It stays
+               ;; in the LISTING, because a callable the model can type must never be
+               ;; invisible, but it is not in the corpus a described ask searches: it
+               ;; has no text to answer with, and its handle (`vars`, `where`, `hits`)
+               ;; is a common English word that would win rows off real contracts.
+               corpus
+               (cond->> (sandbox-corpus g names)
+                 described?
+                 (into [] (remove #(str/blank? (str (:text %))))))
 
-              ;; Return a REAL native Python dict {name -> gist} in RANK order by
-              ;; zipping two parallel arrays guest-side — no ProxyHashMap crosses
-              ;; the boundary, so `list()/in/sorted/set/**` all behave natively.
+               ranked
+               (doc-corpus/search corpus
+                                  query
+                                  (when described? {:limit (+ (long apropos-limit) 8)}))
+
+               ;; The RESOLVED terms — what a prefix completed to, what a typo was
+               ;; corrected to — ride on the ranking's metadata, which the
+               ;; transducer below would drop.
+               terms
+               (:terms (meta ranked))
+
+               hits
+               (into [] (if described? (comp public (take apropos-limit)) public) ranked)
+
+               shown
+               (mapv #(doc-corpus/preview (:text %) terms) hits)]
+
+              ;; Return a REAL native Python dict {name -> {kind, gist, at, hit}}
+              ;; in RANK order by zipping parallel arrays guest-side — no
+              ;; ProxyHashMap crosses the boundary, so `list()/in/sorted/set/**`
+              ;; all behave natively.
               (.putMember g "__vis_apropos_names__" (->py (mapv :name hits)))
-              (.putMember g "__vis_apropos_gists__" (->py (mapv #(doc-corpus/gist (:text %)) hits)))
+              (.putMember g "__vis_apropos_kinds__" (->py (mapv #(str (:kind % "tool")) hits)))
+              (.putMember g "__vis_apropos_gists__" (->py (mapv :gist shown)))
+              (.putMember g "__vis_apropos_ats__" (->py (mapv :at shown)))
+              (.putMember g "__vis_apropos_hits__" (->py (mapv #(str/join " " (:hit %)) shown)))
               (try (.eval ctx
                           "python"
-                          "dict(zip(list(__vis_apropos_names__), list(__vis_apropos_gists__)))")
+                          (str
+                            "dict(zip(list(__vis_apropos_names__), "
+                            "[{'kind': _k, 'gist': _g, 'at': _a, 'hit': _h} for _k, _g, _a, _h in "
+                            "zip(list(__vis_apropos_kinds__), list(__vis_apropos_gists__), "
+                            "list(__vis_apropos_ats__), list(__vis_apropos_hits__))]))"))
                    (finally (.putMember g "__vis_apropos_names__" nil)
-                            (.putMember g "__vis_apropos_gists__" nil)))))))
+                            (.putMember g "__vis_apropos_kinds__" nil)
+                            (.putMember g "__vis_apropos_gists__" nil)
+                            (.putMember g "__vis_apropos_ats__" nil)
+                            (.putMember g "__vis_apropos_hits__" nil)))))))
     (.putMember g
                 "doc"
                 (reify
@@ -1180,7 +1242,7 @@
     (set-python-binding-doc!
       ctx
       'apropos
-      "apropos(query='') -> {name: gist}. FULL-TEXT SEARCH over every document this session can reach — every function's contract, every skill's whole SKILL.md, every Vis documentation page, every MCP tool's description. Ask in words: terms are ORed and ranked by BM25 relevance over name, first line and body, so a whole question answers the document that covers most of it and a word nothing carries costs nothing. A query that IS a handle wins that handle; a typo is spell-corrected, a prefix completed. Ranked best-first and capped at 25 — a described ask matches half the corpus, so read down, not around. Each hit comes back as its one-line gist. `apropos('')` is everything, unranked and uncapped. Read one whole with `doc(name)`.")
+      "apropos(query='') -> {name: {kind, gist, at, hit}}. FULL-TEXT SEARCH over every document this session can reach — every function's contract, every skill's whole SKILL.md, every Vis documentation page, every MCP tool's description. Ask in words: terms are ORed and ranked by BM25 relevance over name, first line and body, so a whole question answers the document that covers most of it and a word nothing carries costs nothing. A query that IS a handle wins that handle; a typo is spell-corrected and a prefix completed, and `hit` names the terms that landed, showing any rewrite (`pathc→patch`). `kind` is what the document IS — tool · shim · page · skill · mcp · local (a callable this session defined, which carries no contract). `gist` is a BOUNDED excerpt, never the body: the document's opening, the region your terms landed in, and a fragment from deeper down; `at` is the line that region starts on, so a long document is read from where it answers. Ranked best-first and capped at 10 — a described ask matches half the corpus, so read down, not around. `apropos('')` is every name, unranked and uncapped. Read one whole with `doc(name)`.")
     (set-python-binding-doc!
       ctx
       'doc
@@ -2104,7 +2166,14 @@
                  (str "_vis_docs = globals().setdefault('__vis_docs__', {})\n"
                       "for _k, _v in json.loads(__vis_docs_json__).items():\n"
                       "    _vis_docs.setdefault(_k, _v)\n" "del _vis_docs, _k, _v"))
-          (.putMember g "__vis_docs_json__" nil)))
+          (.putMember g "__vis_docs_json__" nil))
+        (seed-py-map! ctx
+                      g
+                      "__vis_kinds__"
+                      (into {}
+                            (map (fn [n]
+                                   [n "shim"]))
+                            names)))
       (catch Throwable _ nil))
     ;; DOCUMENTS: every skill's whole `SKILL.md`, every Vis documentation page and
     ;; every MCP tool description join the SAME `__vis_docs__` dict the function
@@ -2137,6 +2206,12 @@
          (into {}
                (keep (fn [e]
                        (when (:call e) [(:name e) (:call e)])))
+               es)
+
+         kinds
+         (into {}
+               (keep (fn [e]
+                       (when (:kind e) [(:name e) (:kind e)])))
                es)]
 
         (when (seq docs)
@@ -2152,7 +2227,8 @@
           (.eval ctx
                  "python"
                  "globals().setdefault('__vis_calls__', {}).update(json.loads(__vis_calls_json__))")
-          (.putMember g "__vis_calls_json__" nil)))
+          (.putMember g "__vis_calls_json__" nil))
+        (seed-py-map! ctx g "__vis_kinds__" kinds))
       (catch Throwable _ nil))
     ;; ASYNC-BY-DEFAULT runtime: install the trampoline + `gather`, then DEFER
     ;; every tool binding (so `await grep(x)` / `gather(grep(x), grep(y))` work).
