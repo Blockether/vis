@@ -70,18 +70,29 @@
   "BM25F: terms are ORed and priced by IDF, so a description ranks rather
               than filters, and only a query nothing carries answers nothing."
   (let
-    [es [{:name "grep" :text "Search file CONTENT and names.\n\nRipgrep-backed."}
-         {:name "cat" :text "Read files.\n\nReturns anchors for patching."}
-         {:name "patch"
-          :text (str "Anchored edits: replace lines in a file.\n\n"
-                     "Uses the anchors cat returned. Every edit is "
-                     "{\"from_anchor\": a, \"to_anchor\": b, \"replace\": text}.")}
-         ;; A long prose document — the shape that used to win every
-         ;; natural-language query by containing all of its words.
-         {:name "prose-page"
-          :text (str "A long page of workflow narrative.\n\n"
-                     (str/join " "
-                               (repeat 200 "how do I open a file in the session and read it")))}]]
+    [es
+     [{:name "grep" :text "Search file CONTENT and names.\n\nRipgrep-backed."}
+      {:name "cat" :text "Read files.\n\nReturns anchors for patching."}
+      {:name "patch"
+       :text (str "Anchored edits: replace lines in a file.\n\n"
+                  "Uses the anchors cat returned. Every edit is "
+                  "{\"from_anchor\": a, \"to_anchor\": b, \"replace\": text}.")}
+      ;; A long prose document — the shape that used to win every
+      ;; natural-language query by containing all of its words.
+      {:name "prose-page"
+       :text (str "A long page of workflow narrative.\n\n"
+                  (str/join " " (repeat 200 "how do I open a file in the session and read it")))}
+      ;; Four documents priced every term alike — `replace` and `how` shared one
+      ;; IDF — so a natural-language ask could only be told apart by the field a
+      ;; term sat in. A corpus that uses the common words more than once prices
+      ;; them, which is what IDF is for.
+      {:name "shell"
+       :text
+       "Run a command.\n\nHow do I run a command in the session and read its log? A shell answers a handle."}
+      {:name "ls"
+       :text "Map a directory.\n\nHow do I open a directory and read what is in it, file by file?"}
+      {:name "read_session"
+       :text "Read a session.\n\nHow do I read another session, and what does it hold in it?"}]]
     (it "ranks an exact handle first, whatever the bodies say"
         ;; "cat" IS a name and is also a word inside `patch`'s body.
         (expect (= "cat" (:name (first (dc/search es "cat")))))
@@ -105,7 +116,8 @@
         (expect (= "patch" (:name (first (dc/search es "pathc")))))
         (expect (empty? (dc/search es "kubernetes helm rollout"))))
     (it "answers a blank query with the whole corpus in name order"
-        (expect (= ["cat" "grep" "patch" "prose-page"] (mapv :name (dc/search es "")))))))
+        (expect (= ["cat" "grep" "ls" "patch" "prose-page" "read_session" "shell"]
+                   (mapv :name (dc/search es "")))))))
 
 (defdescribe
   every-document-answers-its-own-name-test

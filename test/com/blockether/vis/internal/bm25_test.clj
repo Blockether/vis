@@ -239,3 +239,65 @@
       (expect (empty? (:terms (meta (bm25/search (docs) "zzqqxk"))))))
   (it "carries an empty term list for a blank query, so the shape never varies"
       (expect (= [] (:terms (meta (bm25/search (docs) "")))))))
+
+(defn- patch-page
+  "The `patch` contract, with `lead` — a structural line such as a rendered call
+   signature — moved ABOVE its opening line, exactly as one would arrive. The
+   prose never changes, so what a ranking loses is one line's worth of evidence."
+  ([] (patch-page nil))
+  ([lead]
+   (let
+     [prose (str "Edit a file by ADDRESS. Every edit for one file goes in one call: from_anchor, "
+                 "to_anchor and replace. An empty replace deletes the addressed lines. The call "
+                 "answers a status line with the path, the edit count and the lines before and "
+                 "after. Address a region by the anchor a read printed, never by retyping the "
+                 "text you replace. One call carries every edit for that file, so two calls on "
+                 "one file are a mistake.")]
+     (into [{:name "patch"
+             :gist (or lead "Edit a file by ADDRESS.")
+             :body (if lead (str lead " " prose) prose)
+             :value {:name "patch"}}]
+           (rest (docs))))))
+
+;; Regression: the three fields were scored as three independent BM25s and summed,
+;; so each saturated at its own weight and ONE line could hold 61% of a document's
+;; score. A call line rendered above `patch`'s opening line — its prose untouched —
+;; dropped it from rank 1 to rank 19 for `how do I replace lines in a file`.
+(defdescribe
+  field-saturation-test
+  "The three fields saturate TOGETHER, over one weighted pseudo-frequency, so an
+   opening line is evidence and never the verdict."
+  (it "keeps a document's score when a structural line takes over its first line"
+      (let
+        [q
+         "edit one file by address in a single call"
+
+         score-of
+         (fn [ds]
+           (double (:score (first (filter #(= "patch" (:name %)) (bm25/search ds q))))))]
+
+        (expect (= "patch"
+                   (:name (first (bm25/search (patch-page "patch(path, edits) -> status") q)))))
+        (expect (> (/ (score-of (patch-page "patch(path, edits) -> status"))
+                      (score-of (patch-page)))
+                   0.9))))
+  (it
+    "answers the body that covers the ask over the line that mentions it once"
+    (let
+      [ds
+       [{:name "one-liner"
+         :gist "Replace lines in a file."
+         :body (str "Replace lines in a file. "
+                    (apply str
+                      (repeat
+                        24
+                        "It is about something else entirely and never returns to the subject. ")))
+         :value {:name "one-liner"}}
+        {:name "worker"
+         :gist "A tool page."
+         :body
+         (str "A tool page. "
+              (apply str
+                (repeat 12 "Replace the lines of a file, then replace more lines in that file. ")))
+         :value {:name "worker"}}]]
+      (expect (= "worker" (:name (first (bm25/search ds "replace lines in a file"))))))))

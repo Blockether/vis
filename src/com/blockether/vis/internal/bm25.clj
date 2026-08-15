@@ -13,8 +13,14 @@
      document that covers most of it.
    - **IDF, never a stoplist.** `how`, `do` and `a` sit in nearly every
      document, so they price themselves at ~0 and no word list can go stale.
-   - **Length-normalized bodies (`b` 1.0).** Without it a 70 KB skill outranks
-     a 350 B contract by containing every word.
+   - **One saturation, not one per field.** A field's weight goes INSIDE the
+     term's saturation, so an opening line adds bounded evidence instead of
+     outscoring the body. Scoring the three fields separately and summing let ONE
+     line hold 61% of a document's score: rewriting that line alone dropped
+     `patch` from rank 1 to rank 19 for `how do I replace lines in a file`, while
+     the body still said everything it had said.
+   - **Length-normalized fields (body `b` 1.0).** Without it a 70 KB skill
+     outranks a 350 B contract by containing every word.
    - **A covered handle wins.** A document whose whole handle appears in the
      query takes a bonus scaled by how much of the query that handle is, so
      `patch` answers `patch` outright and still leads `patch anchors`.
@@ -60,14 +66,19 @@
    the index (`:field-b` decides its precomputed norms) and are part of its
    cache key, so two weightings never share one index.
 
-   - `:k1`           term-frequency saturation; the textbook 1.2.
-   - `:field-weights` name / gist / body. A name hit is worth much more.
+   - `:k1`           saturation of the WEIGHTED pseudo-frequency, not of a raw
+                     term count: the field weights are summed INSIDE it, so it
+                     lives on their scale and the textbook 1.2 would saturate a
+                     single name hit outright. Weights and `k1` scale together —
+                     only their ratio ranks.
+   - `:field-weights` name / gist / body: what ONE occurrence in each field is
+                     worth, per unit of that field's length, before saturation.
    - `:field-b`      length-normalization strength per field. The body is FULLY
                      normalized (1.0) — that is what stops a 70 KB skill from
                      outranking a 350 B contract.
    - `:handle-bonus` full bonus for a document whose handle the query covers
                      completely; scaled down by how little of the query it is."
-  {:k1 1.2 :field-weights [8.0 3.0 1.0] :field-b [0.75 0.75 1.0] :handle-bonus 100.0})
+  {:k1 8.0 :field-weights [12.0 6.0 1.0] :field-b [0.75 0.75 1.0] :handle-bonus 100.0})
 
 (def ^:private ^:const field-count
   "Slots per document: name, gist, body. Every flat array is strided by it."
@@ -207,7 +218,7 @@
 (defn index
   "Everything BM25F needs about `docs`, computed once: per-term postings, the
    folded handle of every document, the vocabulary bucketed by first letter and
-   the precomputed `k1 * norm` denominator for every document and field.
+   the precomputed length norm `B` of every document and field.
    `opts` overrides `default-opts` and is carried on the index itself."
   ([docs] (index docs nil))
   ([docs opts]
@@ -263,7 +274,7 @@
                                     a))]
 
                  (aset tf f (+ 1.0 (aget tf f)))))))))
-     (let [kn (double-array (* (max 1 nd) (long field-count)))]
+     (let [bn (double-array (* (max 1 nd) (long field-count)))]
        (dotimes [f (long field-count)]
          (let
            [total
@@ -276,12 +287,12 @@
             b (aget bs f)]
 
            (dotimes [i nd]
-             (aset kn
+             (aset bn
                    (+ (* i (long field-count)) f)
-                   (* k1 (+ (- 1.0 b) (* b (/ (aget lens (+ (* i (long field-count)) f)) avg))))))))
+                   (+ (- 1.0 b) (* b (/ (aget lens (+ (* i (long field-count)) f)) avg)))))))
        {:docs docs
         :n nd
-        :kn kn
+        :bn bn
         :k1 k1
         :weights weights
         :handle-bonus (double (:handle-bonus o))
@@ -571,9 +582,16 @@
                  (conj seen r)
                  (conj out {:term t :as r :idf (double (:idf (get postings r) 0.0))})))))))
 (defn- accumulate!
-  "Add one term's contribution to every document that carries it. Walks the
-   term's postings, so an unrelated document is never touched."
-  [^doubles scores ^doubles kn ^doubles weights k1 posting]
+  "Add one term's contribution to every document that carries it — BM25F proper:
+   the term's occurrences in the three fields become ONE weighted, length-normalized
+   pseudo-frequency, and the saturation applies to that sum, ONCE.
+
+   Saturating each field on its own and summing the three is the wrong way round:
+   every field then saturates at its own weight, so ONE occurrence in a one-line
+   field outweighs any amount of body evidence and rewriting that line alone costs
+   a document most of its score. Walks the term's postings, so an unrelated
+   document is never touched."
+  [^doubles scores ^doubles bn ^doubles weights k1 posting]
   (let
     [k1
      (double k1)
@@ -591,21 +609,22 @@
       (let
         [id (aget ids p)
          base (* p (long field-count))
-         dbase (* id (long field-count))]
+         dbase (* id (long field-count))
+         ;; A field the term misses adds nothing, so the divisor is never zero:
+         ;; a field with an occurrence has a length.
+         ptf (loop
+               [f 0
+                acc 0.0]
 
-        (loop
-          [f 0
-           acc 0.0]
+               (if (= f (long field-count))
+                 acc
+                 (let [tf (aget tfs (+ base f))]
+                   (recur (inc f)
+                          (if (zero? tf)
+                            acc
+                            (+ acc (/ (* (aget weights f) tf) (aget bn (+ dbase f)))))))))]
 
-          (if (= f (long field-count))
-            (aset scores id (+ (aget scores id) (* w acc)))
-            (let [tf (aget tfs (+ base f))]
-              (recur (inc f)
-                     (if (zero? tf)
-                       acc
-                       (+ acc
-                          (* (aget weights f)
-                             (/ (* tf (+ k1 1.0)) (+ tf (aget kn (+ dbase f))))))))))))))
+        (aset scores id (+ (aget scores id) (* w (/ (* ptf (+ k1 1.0)) (+ k1 ptf))))))))
   scores)
 
 (defn- add-handle-bonus!
@@ -699,8 +718,8 @@
           scores
           (double-array (max 1 nd))
 
-          ^doubles kn
-          (:kn ix)
+          ^doubles bn
+          (:bn ix)
 
           ^doubles weights
           (:weights ix)
@@ -719,7 +738,7 @@
 
          (doseq [t hit]
            (when-let [p (get postings t)]
-             (accumulate! scores kn weights k1 p)))
+             (accumulate! scores bn weights k1 p)))
          (add-handle-bonus! scores (:handle-toks ix) (:handle-ids ix) (:handle-bonus ix) hit)
          (let
            [hits (into []

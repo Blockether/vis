@@ -24,9 +24,10 @@
    caller cannot omit.
 
    How a verb is CALLED is STRUCTURE, never text: `call` and `params` are printed
-   above the document and are not part of it, because the first line of `text` is
-   a scored field — a tool whose text opened with its own signature stopped
-   matching the words its prose is written in.
+   above the document and are not part of it. The first line is what `apropos`
+   PREVIEWS and a scored field besides, so a tool whose text opened with its own
+   signature previewed as a signature and stopped matching the words its prose is
+   written in.
 
    There is no stored `gist`. Two texts for one entry are two places to
    drift, invisibly, because nothing reads both at once: `gist` is a RENDERING
@@ -518,8 +519,9 @@
 
 (defn- ranked-docs
   "The corpus as the ranker's three fields, carrying the entry itself as the
-   payload. The gist line is deliberately scored twice — once cheaply inside
-   the body, once at its own weight."
+   payload. The opening line is a field of its own AND part of the body: the
+   ranker saturates the three together (`bm25/default-opts`), so it counts as
+   extra evidence and never as the whole of a document's score."
   [es]
   (mapv (fn [e]
           (let [t (str (:text e))]
