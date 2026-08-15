@@ -515,9 +515,11 @@ routes move off the session to `/v1/voice/model` and `/v1/speech/model`, where t
   the binary speaks a sentence to a WAV, reads its own recording back with Parakeet and must hear it, speaks
   again through the pocket-tts export Vis publishes, and lists its voices — the JNI, the ONNX Runtime natives
   and the model resources are exercised where only a native image can fail.
-- DONE. The extension's `reachability-metadata.json` hands the JNI EVERY type of sherpa's API jar, and
-  `sherpa_test.clj` compares that file with the jar it ships against — so a version bump cannot silently drop a
-  type and leave an image that links but cannot speak.
+- DONE. The extension's `reachability-metadata.json` hands the JNI EVERY type of sherpa's API jar plus the one
+  class of ours it calls BACK into, and `sherpa_test.clj` compares that file with the jar it ships against — so a
+  version bump cannot silently drop a type and leave an image that links but cannot speak. The progress callback
+  is a `deftype` for that reason: a `reify` answers to a name the compiler invents anew every build, which no
+  metadata can register, so the image printed its config and then died inside the first callback.
 - Test that proves it done: `voice_test.clj` (a builtin that failed to load is tried again; "no engine" names
   which kind of nothing it is), `server_test.clj` (the 501 `:reasons` block, both model routes machine-level),
   the extension's `sherpa_test.clj` / `engine_test.clj` / `input_test.clj`, and in the app
@@ -525,7 +527,11 @@ routes move off the session to `/v1/voice/model` and `/v1/speech/model`, where t
   sentence a refusal carries.
 
 **Unknowns.** None left. The native suite is a separate alias by design (`clojure -M:test-native`), so the
-round trip costs a twenty-minute build only when someone asks for one.
+round trip costs a twenty-minute build only when someone asks for one. Asked and settled along the way: whether
+the voice boundary could be `java.lang.foreign` instead of JNI. It cannot, and the reason lives in `sherpa.clj`'s
+docstring — the library Vis ships exports 133 `Java_*` entry points and not one `SherpaOnnx*` C symbol, sherpa's
+C API is a different per-platform artifact under no Maven coordinate, and its header declares 156 functions over
+86 structs whose layouts we would own from then on. Vis keeps FFM where it owns the boundary (`foundation/pty`).
 
 ---
 
