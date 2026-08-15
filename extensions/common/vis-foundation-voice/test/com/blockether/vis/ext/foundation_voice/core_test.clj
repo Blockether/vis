@@ -4,15 +4,28 @@
 
 (defdescribe
   voice-config-test
-  (it "mounts voice model commands under vis-agent extension voice"
+  (it "mounts voice model and voice-import commands under vis-agent extension voice"
       (let
-        [cli (-> voice/voice-extension
-                 :ext/cli
-                 first)]
+        [cli
+         (-> voice/voice-extension
+             :ext/cli
+             first)
+
+         by-name
+         (into {} (map (juxt :cmd/name identity)) (:cmd/subcommands cli))]
+
         (expect (= "voice" (:cmd/name cli)))
-        (expect (= ["models"] (mapv :cmd/name (:cmd/subcommands cli))))
+        (expect (= ["models" "voices" "import" "forget"] (mapv :cmd/name (:cmd/subcommands cli))))
         (expect (= ["status" "download" "licenses"]
-                   (mapv :cmd/name (:cmd/subcommands (first (:cmd/subcommands cli))))))))
+                   (mapv :cmd/name (:cmd/subcommands (get by-name "models")))))
+        ;; a recording is the whole of "add a voice", so the clip is POSITIONAL and
+        ;; everything that merely describes it is optional
+        (expect (= ["file" "name" "lang" "text"] (mapv :name (:cmd/args (get by-name "import")))))
+        (expect (= [:positional :flag :flag :flag] (mapv :kind (:cmd/args (get by-name "import")))))
+        (expect (true? (:required (first (:cmd/args (get by-name "import"))))))
+        (expect (= ["name"] (mapv :name (:cmd/args (get by-name "forget")))))
+        ;; every leaf runs something: a subcommand that only prints help is a dead end
+        (expect (every? #(or (:cmd/run-fn %) (seq (:cmd/subcommands %))) (:cmd/subcommands cli)))))
   (it "downloads what Vis fetches by itself unless an opt-in model is NAMED"
       ;; pocket-tts ships as an engine without its weights: neither `--all` nor
       ;; a bare `download` may accept its terms for the user.

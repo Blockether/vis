@@ -655,3 +655,67 @@
                           (is (= "failed" (:phase job)))
                           (is (= 60 (:progress job)))
                           (is (= "the decoder died" (:error job)))))))
+
+;; =============================================================================
+;; A voice can be BROUGHT: the engine that clones learns one from a recording
+;; =============================================================================
+
+(defn- cloning-engine
+  "A speaking engine that learns a voice from a recording, as a local cloning model
+   does: the clip IS the voice, so an import lands in the same catalogue a caller
+   picks from."
+  [store]
+  (assoc (speaker-engine :cloner)
+    :voices (fn []
+              (vec (vals @store)))
+    :import-voice (fn [{:keys [path voice-name language text]}]
+                    (let
+                      [voice {:id (.replace (.toLowerCase (str voice-name)) " " "-")
+                              :label voice-name
+                              :language language
+                              :clip path
+                              :clip-text text
+                              :is-imported true}]
+                      (swap! store assoc (:id voice) voice)
+                      voice))
+    :forget-voice (fn [id]
+                    (let [had? (contains? @store id)]
+                      (swap! store dissoc id)
+                      had?))))
+
+(deftest a-voice-can-be-brought-instead-of-shipped
+  ;; A cloning engine's catalogue is not fixed at build time. A surface that offers
+  ;; "add a voice" has to know THAT it may, hand over a recording, see what it became
+  ;; and be able to take it back - and an engine that cannot clone must refuse by
+  ;; name instead of accepting the upload and doing nothing with it.
+  (let [store (atom {})]
+    (with-only-engines!
+      {:synthesize [(cloning-engine store)]}
+      (fn []
+        (let [engine (first (voice/engines :synthesize))]
+          (testing "the capability is advertised, so nothing offers what cannot work"
+            (is (= {:id "cloner" :label "cloner" :is-voice-import true}
+                   (voice/public-engine engine)))
+            (is (true? (:is-voice-import (first (:engines (voice/engines-info :synthesize)))))))
+          (testing "the recording becomes a voice in the catalogue a caller picks from"
+            (is (= {:id "my-own" :label "My Own" :language "en-GB" :is-imported true}
+                   (voice/import-voice! engine
+                                        {:path "/tmp/clip.wav"
+                                         :voice-name "My Own"
+                                         :language "en-GB"
+                                         :text "what the clip says"})))
+            (is (= [{:id "my-own" :label "My Own" :language "en-GB" :is-imported true}]
+                   (voice/voices engine)))
+            ;; which file backs a voice stays the engine's business
+            (is (not-any? :clip (voice/voices engine))))
+          (testing "forgetting twice is the same outcome, never an error"
+            (is (true? (voice/forget-voice! engine "my-own")))
+            (is (empty? (voice/voices engine)))
+            (is (false? (voice/forget-voice! engine "my-own"))))))))
+  (testing "an engine that cannot learn a voice refuses by name"
+    (let [plain (speaker-engine :pocket-tts)]
+      (is (nil? (:is-voice-import (voice/public-engine plain))))
+      (is (= "pocket-tts cannot learn a voice from a recording"
+             (refusal #(voice/import-voice! plain {:path "/tmp/clip.wav" :voice-name "Mine"}))))
+      (is (= "pocket-tts does not keep voices of its own"
+             (refusal #(voice/forget-voice! plain "mine")))))))

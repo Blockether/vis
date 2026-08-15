@@ -8,8 +8,10 @@
    cloning a clip but arrives only when its owner asks for it. Every surface —
    the gateway, the TUI, the companion — sees the same
    `{:id :label :synthesize :voices :model-state :start-download}` and needs to
-   know neither fact."
+   know neither fact. pocket-tts declares two more, because a voice it can speak
+   in is a RECORDING: importing one is the same act on every surface."
   (:require [com.blockether.vis.ext.foundation-voice.tts :as tts]
+            [com.blockether.vis.ext.foundation-voice.voices :as voices]
             [com.blockether.vis.internal.voice :as voice]))
 
 (set! *warn-on-reflection* true)
@@ -35,5 +37,9 @@
                            :label "Pocket TTS (local)"
                            :synthesize #(tts/synthesize! :pocket-tts %)
                            :voices tts/pocket-voices
+                           ;; A pocket voice IS a reference clip, so this engine
+                           ;; can learn one from any recording somebody has.
+                           :import-voice voices/import!
+                           :forget-voice voices/forget!
                            :model-state #(tts/model-state :pocket-tts)
                            :start-download #(tts/start-download! :pocket-tts)}))

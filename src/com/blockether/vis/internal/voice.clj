@@ -183,6 +183,10 @@
         "engine :label must be a string"
         (and (contains? engine :voices) (not (ifn? (:voices engine))))
         "engine :voices must be a function"
+        (and (contains? engine :import-voice) (not (ifn? (:import-voice engine))))
+        "engine :import-voice must be a function"
+        (and (contains? engine :forget-voice) (not (ifn? (:forget-voice engine))))
+        "engine :forget-voice must be a function"
         :else nil))
 
 (defn register-engine!
@@ -193,7 +197,13 @@
    returns the audio FILE it wrote — a path, or a map carrying `:audio-path` plus the
    facts a player needs (`:media-type`, `:sample-rate`, `:duration-ms`).
    `:on-progress` takes `{:phase :progress}` (either key optional, `:progress` 0..100)
-   and is how the human sees where the work is."
+   and is how the human sees where the work is.
+
+   A speaking engine that CLONES a recording may also declare `:import-voice`
+   (`{:path :voice-name :language :text}` -> the voice it became) and
+   `:forget-voice` (id -> true when one was deleted). Declaring them is what makes
+   \"add a voice\" appear on every surface at once; declaring neither is a refusal
+   the gateway reports by name instead of a button that does nothing."
   [direction engine]
   (when-let [reason (engine-error direction engine)]
     (throw (ex-info
@@ -298,9 +308,13 @@
                        :available (mapv :id (engines direction))}))))
 
 (defn public-engine
-  "One engine in the shape every surface reports."
+  "One engine in the shape every surface reports. `:is-voice-import` is a
+   CAPABILITY, not a preference: it is the app's answer to whether it may offer
+   \"add a voice\" at all."
   [engine]
-  {:id (name (:id engine)) :label (:label engine)})
+  (cond-> {:id (name (:id engine)) :label (:label engine)}
+    (:import-voice engine)
+    (assoc :is-voice-import true)))
 
 (defn readiness
   "What an engine says about its ability to work RIGHT NOW, in the shape the wire
@@ -330,14 +344,21 @@
 (defn public-voice
   "One voice in the shape every surface reports: the id a caller sends back, a human
    label, and the language it speaks. A voice a user has to install DELIBERATELY says so,
-   so a picker can mark it instead of discovering the refusal after somebody chose it."
+   so a picker can mark it instead of discovering the refusal after somebody chose it.
+
+   `:is-imported` marks a voice that came from a recording somebody handed to Vis
+   rather than one that shipped: the surface offering \"add a voice\" is the one that
+   has to offer \"remove it\" too."
   [voice]
   (cond-> {:id (name (:id voice)) :label (or (not-empty (str (:label voice))) (name (:id voice)))}
     (:language voice)
     (assoc :language (name (:language voice)))
 
     (:is-opt-in voice)
-    (assoc :is-opt-in true)))
+    (assoc :is-opt-in true)
+
+    (:is-imported voice)
+    (assoc :is-imported true)))
 
 (defn voices
   "The voices `engine` can speak in, in the shape every surface reports. An engine with
@@ -348,6 +369,31 @@
   (if-let [f (:voices engine)]
     (mapv public-voice (f))
     []))
+(defn import-voice!
+  "Hand `engine` a recording and get back the voice it became, in the shape every
+   surface reports. `clip` is `{:path :voice-name :language :text}`, where `:text` is
+   the clip's own transcript when the caller knows it.
+
+   An engine that cannot learn a voice REFUSES BY NAME rather than silently doing
+   nothing: cloning is a property of the engine, and a caller that asked the wrong one
+   deserves to be told which one it asked."
+  [engine clip]
+  (if-let [f (:import-voice engine)]
+    (public-voice (f clip))
+    (throw (ex-info (str (or (:label engine) (name (:id engine)))
+                         " cannot learn a voice from a recording")
+                    {:type :vis/voice-import-unsupported :engine (name (:id engine))}))))
+
+(defn forget-voice!
+  "Delete an imported voice by id. True when there was one to delete, false when the
+   engine never had it - a caller deleting a voice twice is not an error."
+  [engine id]
+  (if-let [f (:forget-voice engine)]
+    (boolean (f id))
+    (throw (ex-info (str (or (:label engine) (name (:id engine)))
+                         " does not keep voices of its own")
+                    {:type :vis/voice-import-unsupported :engine (name (:id engine))}))))
+
 (defn engines-info
   "One direction's engine catalogue as capabilities data: what exists and what is
    selected. A SPEAKING engine also carries the voices a caller may name, so

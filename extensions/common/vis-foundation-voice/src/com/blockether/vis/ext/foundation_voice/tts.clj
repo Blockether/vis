@@ -9,8 +9,9 @@
                   and no phoneme tables: each comes from its publisher, and
                   a machine without espeak-ng is told so instead of failing.
      :pocket-tts  a voice is a reference CLIP the model clones, so the catalogue
-                  is a directory of WAVs. Opt-in until Vis exports the original
-                  CC BY 4.0 weights itself — see the manifest entry for why.
+                  is a WAV per voice: the clips the bundle ships and the ones
+                  somebody imported through `voices.clj`. Opt-in for its size,
+                  not its licence - Vis exports those weights itself.
 
    Which assets exist, where they come from and what they are licensed under is
    `assets.clj`'s question; this namespace only asks for them by id."
@@ -18,6 +19,7 @@
             [clojure.string :as str]
             [com.blockether.vis.ext.foundation-voice.assets :as assets]
             [com.blockether.vis.ext.foundation-voice.sherpa :as sherpa]
+            [com.blockether.vis.ext.foundation-voice.voices :as voices]
             [com.blockether.vis.internal.paths :as paths])
   (:import [com.k2fsa.sherpa.onnx GeneratedAudio GenerationConfig OfflineTts OfflineTtsCallback
             OfflineTtsConfig OfflineTtsModelConfig OfflineTtsPocketModelConfig
@@ -113,11 +115,36 @@
 
 (defn piper-voices [] (mapv :voice (piper-assets)))
 
-(defn pocket-voices
-  "The reference clips the bundle carries, without the path: which file backs a
-   voice is nobody else's business."
+(defn pocket-voice-catalogue
+  "The pocket catalogue with each clip resolved to an absolute path: the clips
+   the bundle ships first, then the imported ones. An import with the same id
+   WINS - somebody who names their own recording after a shipped voice meant
+   their own recording."
   []
-  (mapv #(dissoc % :clip) (:voices (pocket-asset))))
+  (let
+    [entry
+     (pocket-asset)
+
+     dir
+     (assets/install-dir entry)
+
+     bundled
+     (mapv #(assoc % :clip (str (io/file dir (str (:clip %))))) (:voices entry))
+
+     mine
+     (voices/imported)
+
+     shadowed
+     (set (map :id mine))]
+
+    (into (filterv #(not (shadowed (:id %))) bundled) mine)))
+
+(defn pocket-voices
+  "The voices pocket-tts can speak in - the clips the bundle carries and the
+   ones somebody imported - without the path: which file backs a voice is
+   nobody else's business."
+  []
+  (mapv #(dissoc % :clip) (pocket-voice-catalogue)))
 
 (defn- named-voice
   [voices voice-id]
@@ -138,9 +165,11 @@
 
 (defn- no-reference-clips!
   "A pocket voice IS a reference clip, so an empty catalogue is not an unknown
-   voice - it is a bundle with no voice in it at all."
+   voice - it is a bundle with no voice in it and nothing imported either."
   [entry]
-  (throw (ex-info (str "The " (:id entry) " bundle carries no reference clip to speak with")
+  (throw (ex-info (str "The " (:id entry)
+                       " bundle carries no reference clip to speak with."
+                       " Import one: vis-agent extension voice import <clip.wav> --name <name>")
                   {:type :voice-tts/no-reference-clips
                    :family :pocket-tts
                    :asset-id (:id entry)
@@ -398,7 +427,7 @@
     gen))
 
 (defn- pocket-generation-config
-  ^GenerationConfig [clip-path]
+  ^GenerationConfig [clip-path clip-text]
   (let
     [reader
      (WaveReader. ^String clip-path)
@@ -408,6 +437,10 @@
 
     (.setReferenceAudio gen (.getSamples reader))
     (.setReferenceSampleRate gen (.getSampleRate reader))
+    ;; The clip's own transcript when the catalogue knows it: pocket-tts is
+    ;; given the reference audio AND what it says, and a clone that is not
+    ;; guessing at the words tracks the voice far more closely.
+    (.setReferenceText gen (str clip-text))
     (.setNumSteps gen (int 5))
     (.setExtra gen {"temperature" "0.7" "chunk_size" "15"})
     gen))
@@ -470,18 +503,17 @@
 
         :pocket-tts
         (let
-          [entry
-           (pocket-asset)
+          [catalogue
+           (pocket-voice-catalogue)
 
            _
-           (when (empty? (:voices entry)) (no-reference-clips! entry))
+           (when (empty? catalogue) (no-reference-clips! (pocket-asset)))
 
            voice
-           (or (named-voice (:voices entry) voice-id)
-               (unknown-voice! :pocket-tts voice-id (:voices entry)))
+           (or (named-voice catalogue voice-id) (unknown-voice! :pocket-tts voice-id catalogue))
 
            clip
-           (io/file dir (:clip voice))]
+           (io/file (str (:clip voice)))]
 
           (when-not (.isFile clip)
             (throw (ex-info (str "Reference clip is missing: " (:clip voice))
@@ -490,6 +522,6 @@
                              :voice-id (name (:id voice))
                              :path (str clip)})))
           (generate! (loaded-tts [:pocket-tts dir] #(pocket-config dir))
-                     (pocket-generation-config (str clip))
+                     (pocket-generation-config (str clip) (:clip-text voice))
                      spoken
                      report))))))

@@ -214,4 +214,20 @@
                                    "https://github.com/Blockether/vis/releases/download/")
                                  (:id entry))))
                      (when-not (:is-redistributed entry) (expect (empty? pack) (:id entry)))))
-                 (expect (empty? (filter #(= "espeak-ng-data" (:id %)) (assets/manifest))))))
+                 (expect (empty? (filter #(= "espeak-ng-data" (:id %)) (assets/manifest)))))
+             (it "requires every reference clip it says it ships"
+                 ;; A bundle that promises a voice it does not carry is worse than one
+                 ;; with no voice at all: the install reports itself ready and the
+                 ;; first synthesis is what discovers the clip was never there.
+                 (doseq
+                   [entry
+                    (assets/manifest)
+
+                    voice
+                    (:voices entry)]
+
+                   (expect (some? (:clip voice)) (:id entry))
+                   (expect (str/starts-with? (:clip voice) "voices/") (:id entry))
+                   (expect (contains? (set (:requires entry)) (:clip voice)) (:id entry))
+                   ;; the transcript rides along, because the clone is given the words
+                   (expect (seq (:clip-text voice)) (:id entry)))))

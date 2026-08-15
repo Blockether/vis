@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+# Record the reference clips a pocket voice IS, from the only voices Vis is
+# allowed to publish: the public-domain Piper voices in the model manifest.
+#
+# WHY THIS EXISTS (licence, not preference):
+#   * pocket-tts clones a REFERENCE CLIP instead of selecting a baked speaker,
+#     so a "voice" in that engine is a WAV file and nothing else. Kyutai's own
+#     clips are not ours to hand on, so the assets pack carries clips Vis makes.
+#   * Bryce Beattie released the Kristin, Cori and John Piper voices into the
+#     PUBLIC DOMAIN, trained from scratch on public-domain LibriVox recordings.
+#     Audio those models speak carries no licence forward, so a clip generated
+#     here is ours to publish - the credit is kept anyway, in the manifest.
+#   * RyanSpeech (CC BY-NC-SA 4.0) is deliberately absent: NonCommercial binds
+#     the distributor, and this output ships inside a release asset.
+#
+# WHAT MAKES A GOOD CLIP (this is why the sentences read the way they do):
+#   pocket-tts imitates the clip. Ten seconds or so of ordinary prose, an even
+#   pace, no proper nouns and no unusual words, so what the model copies is the
+#   VOICE and not a performance. The text is written beside the audio and ends
+#   up in the manifest as `:clip-text`: sherpa passes it to the model as the
+#   transcript of the reference, which is what makes the clone track the voice
+#   instead of guessing at it.
+#
+# Usage:
+#   bin/make-voice-clips                     # dist/voice-clips
+#   bin/make-voice-clips --out /tmp/clips
+#   bin/make-voice-clips --only kristin
+#
+# Then, to put them in the bundle without re-exporting the weights:
+#   bin/export-pocket-tts --from dist/voice-assets/pocket-tts-int8.tar.bz2 \
+#                         --voices dist/voice-clips
+#
+# Requires: uv, ffmpeg, tar, curl. No Hugging Face token, no gated weights.
+
+set -euo pipefail
+
+SHERPA_VERSION="1.13.5" # only for generating; never shipped
+PYTHON_VERSION="3.12"
+CLIP_RATE=24000 # what the Mimi encoder wants; sherpa resamples anything else
+UPSTREAM="https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models"
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+out_dir="${repo_root}/dist/voice-clips"
+work_dir=""
+only=""
+keep_work=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --out) out_dir="$2"; shift 2 ;;
+    --work) work_dir="$2"; shift 2 ;;
+    --only) only="$2"; shift 2 ;;
+    --keep-work) keep_work=1; shift ;;
+    -h|--help) sed -n '2,31p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+for tool in uv ffmpeg tar curl; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "missing required tool: $tool" >&2; exit 1; }
+done
+
+if [[ -z "$work_dir" ]]; then
+  work_dir="$(mktemp -d "${TMPDIR:-/tmp}/vis-voice-clips.XXXXXX")"
+fi
+mkdir -p "$work_dir" "$out_dir"
+cleanup() {
+  if [[ "$keep_work" -eq 0 && -d "$work_dir" ]]; then rm -rf "$work_dir"; fi
+}
+trap cleanup EXIT
+
+digest_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
+
+# id|label|language|gender|bundle|model|sha256|text
+# The sha256 is the upstream archive's, and it is verified: a clip is only
+# public domain because of WHICH model spoke it.
+voice_rows() {
+  cat <<'ROWS'
+kristin|Kristin (en-US)|en-US|female|vits-piper-en_US-kristin-medium|en_US-kristin-medium.onnx|c2206f572df2956c50b1ae3367eebce3853c663e890cba8048cd62b1e4dbe6c7|This is a reference recording, read at an ordinary pace. Nothing in it is difficult to say, and that is the point: what should carry is the sound of the voice, not the words it happens to be reading.
+cori|Cori (en-GB)|en-GB|female|vits-piper-en_GB-cori-medium|en_GB-cori-medium.onnx|49c9a5361bbdd95d7ca9687c4de11e5908481f65e7c7c368960df79949fdac2b|A short paragraph, read aloud without hurry, with the pauses left where they fall. Ten seconds of plain speech is enough to hear how a voice moves from one sentence into the next.
+john|John (en-US)|en-US|male|vits-piper-en_US-john-medium|en_US-john-medium.onnx|d90362cfa48e429d3096f644785184446145b6e38216f2eaf4c0601b8aad5a36|Reading quietly for a few seconds, plainly and at a steady pace. The manner matters more than the meaning here: where the breath lands, how a sentence turns, and what an unhurried voice sounds like.
+ROWS
+}
+
+echo "==> work  ${work_dir}"
+echo "==> out   ${out_dir}"
+echo "==> voice models: public domain (Bryce Beattie), via ${UPSTREAM}"
+
+echo "==> creating the environment (python ${PYTHON_VERSION})"
+uv venv --quiet --python "$PYTHON_VERSION" "${work_dir}/venv"
+# shellcheck disable=SC1091
+source "${work_dir}/venv/bin/activate"
+# numpy is not a sherpa-onnx dependency; the levelling below needs it.
+uv pip install --quiet "sherpa-onnx==${SHERPA_VERSION}" numpy
+
+made=0
+while IFS='|' read -r id label language gender bundle model sha text; do
+  [[ -z "$id" ]] && continue
+  [[ -n "$only" && "$only" != "$id" ]] && continue
+
+  archive="${work_dir}/${bundle}.tar.bz2"
+  if [[ ! -f "$archive" ]]; then
+    echo "==> fetching ${bundle}"
+    curl -fsSL "${UPSTREAM}/${bundle}.tar.bz2" -o "$archive"
+  fi
+  actual="$(digest_of "$archive")"
+  if [[ "$actual" != "$sha" ]]; then
+    echo "${bundle}: expected sha256 ${sha}, got ${actual}" >&2
+    exit 1
+  fi
+  tar -xjf "$archive" -C "$work_dir"
+
+  raw="${work_dir}/${id}-raw.wav"
+  echo "==> speaking ${id}"
+  python - "${work_dir}/${bundle}" "$model" "$raw" "$text" <<'PY'
+import sys
+import wave
+
+import numpy as np
+import sherpa_onnx as so
+
+bundle, model, out, text = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+tts = so.OfflineTts(
+    so.OfflineTtsConfig(
+        model=so.OfflineTtsModelConfig(
+            vits=so.OfflineTtsVitsModelConfig(model=f"{bundle}/{model}",
+                                              tokens=f"{bundle}/tokens.txt",
+                                              data_dir=f"{bundle}/espeak-ng-data"),
+            num_threads=4)))
+audio = tts.generate(text, sid=0, speed=1.0)
+samples = np.asarray(audio.samples, dtype=np.float32)
+peak = float(np.abs(samples).max())
+if peak < 0.05:
+    raise SystemExit(f"{model} produced silence")
+# -3 dBFS: the clip is what the model imitates, so it is levelled before it is
+# ever heard, and every clip in the pack is levelled the same way.
+samples = samples / peak * 0.7
+with wave.open(out, "wb") as w:
+    w.setnchannels(1)
+    w.setsampwidth(2)
+    w.setframerate(audio.sample_rate)
+    w.writeframes((samples * 32767).astype(np.int16).tobytes())
+print(f"    {len(samples) / audio.sample_rate:.2f}s at {audio.sample_rate} Hz")
+PY
+
+  clip="${out_dir}/${id}.wav"
+  ffmpeg -v error -y -i "$raw" -ac 1 -ar "$CLIP_RATE" -c:a pcm_s16le "$clip"
+  printf '%s\n' "$text" > "${out_dir}/${id}.txt"
+  echo "    ${clip} ($(wc -c < "$clip" | tr -d ' ') bytes, $(digest_of "$clip"))"
+  made=$((made + 1))
+done < <(voice_rows)
+
+if [[ "$made" -eq 0 ]]; then
+  echo "no clips made (--only ${only} matched nothing)" >&2
+  exit 1
+fi
+
+# The catalogue Vis reads is the manifest, not the archive, so the snippet is
+# written next to the clips: paste it into the pocket entry's `:voices`.
+snippet="${out_dir}/voices.edn"
+{
+  echo ":voices"
+  echo "["
+  while IFS='|' read -r id label language gender bundle model sha text; do
+    [[ -z "$id" ]] && continue
+    [[ -n "$only" && "$only" != "$id" ]] && continue
+    echo " {:id \"${id}\""
+    echo "  :label \"${label}\""
+    echo "  :language \"${language}\""
+    echo "  :gender :${gender}"
+    echo "  :clip \"voices/${id}.wav\""
+    echo "  :clip-text \"${text}\"}"
+  done < <(voice_rows)
+  echo "]"
+} > "$snippet"
+
+cat <<EOF
+
+==> ${made} clip(s) in ${out_dir}
+    manifest snippet: ${snippet}
+
+Put them in the bundle without re-exporting the weights:
+
+    bin/export-pocket-tts --from dist/voice-assets/pocket-tts-int8.tar.bz2 --voices ${out_dir}
+EOF

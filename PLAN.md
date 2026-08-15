@@ -338,8 +338,8 @@ GPL-3 phonemizer everybody already has costs us nothing to require and would cos
 
 **Acceptance criteria.**
 - DONE. The `voice-assets-pack` release is an ASSETS release and nothing else: `sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2`,
-  Vis' own `pocket-tts-int8.tar.bz2` (95,154,203 bytes) and `SHA256SUMS.txt`. The old release, its stray `vis-agent-linux-*`
-  binaries and its tag are gone, and the new tag started no workflow.
+  Vis' own `pocket-tts-int8.tar.bz2` (96,353,153 bytes, three reference clips inside) and `SHA256SUMS.txt`. The old release, its
+  stray `vis-agent-linux-*` binaries and its tag are gone, and the new tag started no workflow.
 - DONE. `release.yml` and `native-release.yml` trigger on `v[0-9]*` and gate their publish steps on the same pattern, so
   an asset tag can never start a product release again. The macOS arm64 job runs on the repository's OWN Apple-silicon
   runner (label `vis-macos-arm64`, overridable by the `VIS_MACOS_ARM64_RUNNER` variable) because no hosted macOS runner
@@ -357,11 +357,21 @@ GPL-3 phonemizer everybody already has costs us nothing to require and would cos
   digest to paste into the manifest. The HF token is a build-time credential that reaches no user and lives in no file in
   this tree.
 - DONE. `pocket-tts-int8` is now ours: `:is-commercial-ok true`, `:is-redistributed true`, a `:pack` source, `:attribution`
-  naming Kyutai and Vis' own export instead of a third party's. It stays `:is-opt-in` for a reason that is no longer
-  licensing — a pocket voice IS a reference clip, the bundle carries none, and `synthesize!` refuses with
-  `:voice-tts/no-reference-clips` rather than pretending the user named a voice that does not exist.
-- Reference clips of our own: a pocket voice is a WAV, so Vis can generate one (public-domain Piper output or a recording
-  we make) and `bin/export-pocket-tts --voices <dir>` bundles it. Until then the catalogue is empty by policy.
+  naming Kyutai and Vis' own export instead of a third party's. It stays `:is-opt-in` only because it is a 96 MB download for an
+  engine that is not the default speaker — the licence reason is gone and so is the missing-voice reason.
+- DONE. Vis makes its own reference clips. `bin/make-voice-clips` speaks ~10 s of neutral prose through the three PUBLIC-DOMAIN
+  Piper voices (Bryce Beattie's Kristin, Cori and John, sha256-verified from k2-fsa), levels each to -3 dBFS and writes 24 kHz
+  mono `voices/<id>.wav` plus its transcript; `bin/export-pocket-tts --voices <dir>` bundles them, and `--from <bundle>` repacks
+  an existing export without needing the weights or a token again. The manifest carries all three with `:clip-text`, and every
+  clip is in `:requires`, so an install that predates them counts as incomplete instead of reporting a voice it cannot speak in.
+- DONE. A voice can be BROUGHT, not just shipped. `voices.clj` is the imported-clip store (`VIS_VOICES_DIR` or `~/.vis/voices`:
+  decode, downmix to one channel, trim to 30 s, 16-bit WAV, an `<id>.edn` sidecar, ffmpeg only for what Vis cannot decode);
+  the pocket engine declares `:import-voice`/`:forget-voice`; the host seam is `voice/import-voice!` and `voice/forget-voice!`
+  with `:is-voice-import` advertised in `/v1/capabilities`; the gateway serves `POST|GET /v1/sessions/:sid/speech/voices` and
+  `DELETE /v1/sessions/:sid/speech/voices/:voice-id`; and the CLI is `vis-agent extension voice voices|import <clip.wav>
+  --name --lang --text|forget <name>`. One store, so a clip imported from the terminal is a voice the app can speak in.
+- PROVEN on this machine through the JVM path: all three shipped clips synthesized (~4.7 s of audio each) and Parakeet
+  transcribed every one of them back verbatim, and an imported clip cloned and spoke the same way.
 - `THIRD_PARTY_MODELS.md` generated FROM the manifest, so the file cannot drift from what ships.
 - The natives stay upstream's. `sherpa.clj/jar-url` fetches them from JitPack, and sherpa's VITS path phonemizes through
   espeak-ng compiled INTO that library — `nm` finds 10 `espeak_*` symbols and its data paths in the shipped
@@ -377,8 +387,10 @@ GPL-3 phonemizer everybody already has costs us nothing to require and would cos
   `:voice-tts/espeak-ng-missing` without touching the network.
 
 **Unknowns.**
-- Which reference clips ship as pocket voices? The model clones a recording, so the catalogue needs redistributable
-  audio — a public-domain or CC BY recording, or one we record ourselves — not the third-party bundle's clips.
+- Recorded clips instead of synthesized ones: the three that ship are Piper output, which is public domain but is still a
+  synthetic voice imitating a synthetic voice. A recording made for the purpose would be better material for the clone.
+- The Companion's own upload screen — the route and the CLI exist, so what remains is the app: pick a recording, name it,
+  hear it, delete it.
 - Does the espeak-free native still serve Parakeet and pocket-tts unchanged, and is a Piper voice then simply
   unavailable on it — one binary with a smaller catalogue rather than two builds to ship?
 
@@ -591,7 +603,7 @@ real sentence spoken end to end — the pack release does not exist yet, so the 
 fell through to upstream exactly as designed, installing `en_US-kristin-medium` and writing 197 KB of RIFF/WAVE at
 22 050 Hz, 4.5 seconds long.
 
-**Phase 5 — IN FLIGHT**, in the commit that carries this line. Two corrections and one export.
+**Phase 5 — IN FLIGHT**, in the commit that carries this line. Two corrections, one export, and voices of our own.
 
 The `voice-assets-pack` release is now an ASSETS release and nothing else: Parakeet plus `SHA256SUMS.txt`. The
 previous one is deleted, and with it two `vis-agent-linux-*` binaries that CI attached by accident — the tag
@@ -625,9 +637,22 @@ sherpa reads that bundle as noise — which is why the script now ends in a
 round trip, cloning a clip and requiring the audio to last as long as the sentence does before it packages anything.
 Parakeet reads the shipped bundle's speech back word for word.
 
-What pocket still lacks is a VOICE. A pocket voice is a reference clip, Kyutai's clips are not ours to hand on, and the
-catalogue is empty by policy until Vis has clips it may publish — generated from a public-domain voice or recorded here
-— which `bin/export-pocket-tts --voices <dir>` then bundles.
+**And now it has voices — ours, and anyone's.** A pocket voice is a reference clip and nothing else, so Vis makes its own:
+`bin/make-voice-clips` speaks ~10 seconds of neutral prose through the three PUBLIC-DOMAIN Piper voices, levels each to
+-3 dBFS and writes 24 kHz mono WAVs with their transcripts, and `bin/export-pocket-tts --voices <dir>` bundles them
+(`--from <bundle>` repacks an existing export, so a clip set costs no token and no weights). Kristin, Cori and John ship
+inside `pocket-tts-int8.tar.bz2` with `:clip-text`, and every clip is in `:requires` — a bundle that promised a voice it
+did not carry would report itself ready and fail at the first sentence.
+
+The same fact makes "add a voice" an UPLOAD. `voices.clj` stores a brought clip under `VIS_VOICES_DIR` or `~/.vis/voices`
+— decoded, mixed to one channel, trimmed to 30 seconds, written as 16-bit WAV beside an `<id>.edn` sidecar, with ffmpeg
+used only for containers Vis cannot decode itself. The pocket engine declares `:import-voice`/`:forget-voice`, so
+`/v1/capabilities` advertises `is_voice_import`, the gateway serves `POST|GET /v1/sessions/:sid/speech/voices` and
+`DELETE …/speech/voices/:voice-id`, and the terminal has `vis-agent extension voice import <clip.wav> --name --lang
+--text`. One store behind all of them: a clip imported from the CLI is a voice the app can speak in, an imported id
+shadows a shipped one, and the clip's transcript is passed to the model as reference text. Proven on this machine —
+each shipped clip synthesized and transcribed back verbatim by our own Parakeet, and an imported clip did the same.
+
 **Settled before Phase 1**, from public sources and with no code involved:
 
 - The `kyutai/pocket-tts` gate is `auto` and its only condition is a prohibited-use statement, so

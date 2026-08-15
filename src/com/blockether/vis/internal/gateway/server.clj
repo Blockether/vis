@@ -387,6 +387,7 @@
 
   Ring hands back a VECTOR when a param repeats (`?limit=1&limit=2`), so read the
   LAST value — a duplicated param is a client bug, not a ClassCastException.
+
   Range policy belongs to the caller: 0 and negatives come back as themselves."
   [request k]
   (let [v (get-in request [:query-params k])]
@@ -395,6 +396,16 @@
             str/trim
             not-empty
             parse-long)))
+
+(defn- query-str
+  "Trimmed string value of query param `k`, or nil when it is absent or blank.
+   Same duplicate-param rule as [[query-long]]: the LAST value wins."
+  [request k]
+  (let [v (get-in request [:query-params k])]
+    (some-> (if (sequential? v) (last v) v)
+            str
+            str/trim
+            not-empty)))
 
 (defn- path-tid [request] (get-in request [:path-params :tid]))
 
@@ -3233,6 +3244,71 @@
                                "Cache-Control" "no-store"}
                      :body f})))))
 
+;; =============================================================================
+;; Speech voices - the ones somebody brings, not the ones that shipped
+;; =============================================================================
+
+(defn- voice-import-failure
+  "The refusal an import deserves: 409 when the selected engine cannot learn a voice at
+   all (a fact about the engine, which the client should report rather than retry), 400
+   when the RECORDING is the problem and the caller can fix it, 500 only for neither."
+  [^Throwable t]
+  (let [kind (:type (ex-data t))]
+    (cond (= :vis/voice-import-unsupported kind)
+          (json-response 409 {:error (ex-message t) :engine (:engine (ex-data t))})
+          (= "voice-tts"
+             (some-> kind
+                     namespace))
+          (json-response 400 {:error (ex-message t) :reason (name kind)})
+          :else (do (tel/log! {:level :error :id ::voice-import-failed :data {:error (str t)}})
+                    (json-response 500 {:error (voice/error-message t)})))))
+
+(defn- speech-voices-handler
+  "GET  /v1/sessions/:sid/speech/voices - every voice the speaking engine can use, plus
+         whether it can learn another one.
+   POST the same path - the body is a RECORDING, described by `?name=`, `?lang=` and
+         `?text=` (the clip's own transcript). Answers 201 with the voice it became.
+
+   A cloning voice IS a reference clip, so \"create a voice\" is an upload and nothing
+   else. Deliberately NOT gated on model readiness: the clip is stored on disk and needs
+   no model, so a voice can be added while the bundle is still downloading."
+  [request]
+  (or (when (= :post (:request-method request)) (speech-disabled-response))
+      (with-speech-engine
+        request
+        (fn [_sid engine]
+          (if-not (= :post (:request-method request))
+            (json-response 200 {:engine (voice/public-engine engine) :voices (voice/voices engine)})
+            (let [tmp (java.io.File/createTempFile "vis-voice-clip" ".upload")]
+              (try (with-open
+                     [in ^java.io.InputStream (:body request)
+                      out (io/output-stream tmp)]
+
+                     (io/copy in out))
+                   (json-response 201
+                                  {:voice (voice/import-voice! engine
+                                                               {:path (str tmp)
+                                                                :voice-name (query-str request
+                                                                                       "name")
+                                                                :language (query-str request "lang")
+                                                                :text (query-str request "text")})})
+                   (catch Throwable t (voice-import-failure t))
+                   (finally (.delete tmp)))))))))
+
+(defn- speech-voice-handler
+  "DELETE /v1/sessions/:sid/speech/voices/:voice-id - forget an imported voice.
+
+   404 when the engine has no such imported voice: a client that deleted a voice it
+   could still see is looking at a stale catalogue, and that is worth being told."
+  [request]
+  (or (speech-disabled-response)
+      (with-speech-engine request
+                          (fn [_sid engine]
+                            (try (if (voice/forget-voice! engine
+                                                          (get-in request [:path-params :voice-id]))
+                                   (json-response 200 {:is-forgotten true})
+                                   (json-response 404 {:error "no imported voice with that id"}))
+                                 (catch Throwable t (voice-import-failure t)))))))
 (def ^:private JOB_QUEUE_CAP
   "Per-connection queue of job states. A transcription or a synthesis reports a handful
    of percentages per second at most, so anything the writer cannot keep up with is a
@@ -3660,6 +3736,8 @@
         [(sid-route "/voice/jobs/:job-id/events") {:get voice-job-events-handler}]
         [(sid-route "/speech") {:post speech-handler}]
         [(sid-route "/speech/model") {:get speech-model-handler :post speech-model-handler}]
+        [(sid-route "/speech/voices") {:get speech-voices-handler :post speech-voices-handler}]
+        [(sid-route "/speech/voices/:voice-id") {:delete speech-voice-handler}]
         [(sid-route "/speech/jobs/:job-id") {:get speech-job-handler :delete speech-job-handler}]
         [(sid-route "/speech/jobs/:job-id/events") {:get speech-job-events-handler}]
         [(sid-route "/speech/jobs/:job-id/audio") {:get speech-job-audio-handler}]

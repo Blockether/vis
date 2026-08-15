@@ -27,6 +27,10 @@
   [sym & args]
   (apply (ext-var "com.blockether.vis.ext.foundation-voice.assets" sym) args))
 
+(defn- voices-call!
+  [sym & args]
+  (apply (ext-var "com.blockether.vis.ext.foundation-voice.voices" sym) args))
+
 (defn- parakeet-status [] {:installed? (boolean (asr-call! 'model-installed?))})
 
 (defn- speech-status
@@ -221,6 +225,65 @@
       (download-family! family voice)))
   (print-status!))
 
+(defn- voice-line
+  [voice]
+  (str "  "
+       (:id voice)
+       (when-let [language (:language voice)]
+         (str " [" language "]"))
+       (when (:is-imported voice) " (imported)")
+       "  "
+       (:label voice)))
+
+(defn- voice-list-command
+  "Every voice this machine can speak in, by family, and which of them came from
+   a recording somebody imported rather than one that shipped."
+  [_parsed _residual]
+  (vis/init-cli!)
+  (doseq
+    [[family voices] [[:piper (tts-call! 'piper-voices)] [:pocket-tts (tts-call! 'pocket-voices)]]]
+    (cli-out! (name family))
+    (if (seq voices)
+      (doseq [voice voices]
+        (cli-out! (voice-line voice)))
+      (cli-out! "  (none)"))
+    (cli-out! "")))
+
+(defn- voice-import-command
+  "A pocket voice IS a reference clip, so importing a recording is the whole of
+   \"add a voice\" - no training, no account, nothing leaves the machine."
+  [parsed residual]
+  (vis/init-cli!)
+  (let [path (or (get parsed "file") (first residual))]
+    (try
+      (let
+        [voice (voices-call! 'import!
+                             {:path path
+                              :voice-name (or (get parsed "name") path)
+                              :language (get parsed "lang")
+                              :text (get parsed "text")})]
+        (cli-out!
+          (str "imported " (:id voice) " (" (:seconds voice) "s at " (:sample-rate voice) " Hz)"))
+        (cli-out! (str "  " (:clip voice)))
+        (when-not (:clip-text voice)
+          (cli-out! (str "  no transcript: --text \"<what the clip says>\" makes the clone"
+                         " track the voice far more closely"))))
+      (catch clojure.lang.ExceptionInfo e (cli-out! (ex-message e))))))
+
+(defn- voice-forget-command
+  [parsed residual]
+  (vis/init-cli!)
+  (let
+    [named
+     (or (get parsed "name") (first residual))
+
+     id
+     (voices-call! 'voice-id named)]
+
+    (if (and id (voices-call! 'forget! id))
+      (cli-out! (str "forgot " id))
+      (cli-out! (str "no imported voice named " (pr-str named))))))
+
 (def voice-extension
   (vis/extension
     {:ext/name "foundation-voice"
@@ -271,7 +334,41 @@
           {:cmd/name "licenses"
            :cmd/doc "Show what each voice model is licensed under and who to credit."
            :cmd/usage "vis-agent extension voice models licenses"
-           :cmd/run-fn #'voice-models-licenses-command}]}]}]
+           :cmd/run-fn #'voice-models-licenses-command}]}
+        {:cmd/name "voices"
+         :cmd/doc "List the voices this machine can speak in."
+         :cmd/usage "vis-agent extension voice voices"
+         :cmd/run-fn #'voice-list-command}
+        {:cmd/name "import"
+         :cmd/doc "Turn a recording into a voice pocket-tts can speak in."
+         :cmd/usage
+         "vis-agent extension voice import <clip.wav> --name NAME [--lang en] [--text \"…\"]"
+         :cmd/args
+         [{:name "file"
+           :kind :positional
+           :type :string
+           :required true
+           :doc "The recording to learn the voice from (WAV; anything else needs ffmpeg)."}
+          {:name "name" :kind :flag :type :string :doc "What to call it; the id is made from this."}
+          {:name "lang"
+           :kind :flag
+           :type :string
+           :doc "Language tag the clip speaks, e.g. en or en-GB."}
+          {:name "text"
+           :kind :flag
+           :type :string
+           :doc
+           "What the clip says. Optional, and worth giving: the clone tracks the voice better."}]
+         :cmd/run-fn #'voice-import-command}
+        {:cmd/name "forget"
+         :cmd/doc "Delete a voice imported with `voice import`."
+         :cmd/usage "vis-agent extension voice forget <name>"
+         :cmd/args [{:name "name"
+                     :kind :positional
+                     :type :string
+                     :required true
+                     :doc "The imported voice to delete."}]
+         :cmd/run-fn #'voice-forget-command}]}]
      ;; Declarative slash registration: the TUI renders /voice via the
      ;; engine slash registry, toggling recording through
      ;; input/toggle-recording!.

@@ -40,6 +40,14 @@
 #   HF_TOKEN=… bin/export-pocket-tts --voices ~/clips      # reference clips to bundle
 #   HF_TOKEN=… bin/export-pocket-tts --out /tmp/pack --keep-work
 #
+# Adding clips to a bundle this script already made needs NO token and no
+# weights - it unpacks, adds, re-checks and re-packages:
+#   bin/export-pocket-tts --from dist/voice-assets/pocket-tts-int8.tar.bz2 \
+#                         --voices dist/voice-clips
+#
+# `bin/make-voice-clips` is what records those clips, and says why only some
+# voices may be recorded at all.
+#
 # Then, deliberately and only when asked:
 #   gh release upload voice-assets-pack <out>/pocket-tts-int8.tar.bz2 --repo Blockether/vis
 #
@@ -60,6 +68,7 @@ exporter="${repo_root}/scripts/pocket-tts-onnx"
 out_dir="${repo_root}/dist/voice-assets"
 work_dir=""
 voices_dir=""
+from_bundle=""
 keep_work=0
 do_check=1
 
@@ -68,15 +77,16 @@ while [[ $# -gt 0 ]]; do
     --out) out_dir="$2"; shift 2 ;;
     --work) work_dir="$2"; shift 2 ;;
     --voices) voices_dir="$2"; shift 2 ;;
+    --from) from_bundle="$2"; shift 2 ;;
     --keep-work) keep_work=1; shift ;;
     --no-check) do_check=0; shift ;;
-    -h|--help) sed -n '2,46p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,54p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
 token="${HF_TOKEN:-${HUGGING_FACE_HUB_TOKEN:-}}"
-if [[ -z "$token" ]]; then
+if [[ -z "$token" && -z "$from_bundle" ]]; then
   cat >&2 <<'EOF'
 No Hugging Face token.
 
@@ -86,7 +96,7 @@ No Hugging Face token.
       HF_TOKEN=hf_… bin/export-pocket-tts
 
   This credential is used ONCE, here, to fetch CC BY 4.0 weights. It is not
-  needed to USE anything this script produces.
+  needed to USE anything this script produces, and --from needs none of it.
 EOF
   exit 1
 fi
@@ -106,22 +116,44 @@ trap cleanup EXIT
 
 echo "==> work    ${work_dir}"
 echo "==> out     ${out_dir}"
-echo "==> weights ${WEIGHTS_REPO} ${VARIANT} (CC BY 4.0)"
-echo "==> export  scripts/pocket-tts-onnx (MIT) on pocket-tts ${POCKET_TTS_VERSION}"
+if [[ -n "$from_bundle" ]]; then
+  echo "==> source  ${from_bundle} (re-packaged, not re-exported)"
+else
+  echo "==> weights ${WEIGHTS_REPO} ${VARIANT} (CC BY 4.0)"
+  echo "==> export  scripts/pocket-tts-onnx (MIT) on pocket-tts ${POCKET_TTS_VERSION}"
+fi
 
 echo "==> creating the export environment (python ${PYTHON_VERSION})"
 uv venv --quiet --python "$PYTHON_VERSION" "${work_dir}/venv"
 # shellcheck disable=SC1091
 source "${work_dir}/venv/bin/activate"
-# pocket-tts brings torch, beartype, safetensors and the rest of the model's own
-# dependencies; onnx/onnxruntime/onnxscript are the export and quantization side.
-# pyyaml is named because pocket_tts.utils.config imports it without declaring it.
-uv pip install --quiet "pocket-tts==${POCKET_TTS_VERSION}" onnx onnxruntime onnxscript pyyaml
+stage="${work_dir}/sherpa-onnx-pocket-tts-int8"
+rm -rf "$stage"
+mkdir -p "$stage"
 
-weights_dir="${work_dir}/weights"
-echo "==> fetching the weights"
-HF_TOKEN="$token" HUGGING_FACE_HUB_TOKEN="$token" \
-  python - "$WEIGHTS_REPO" "$VARIANT" "$weights_dir" <<'PY'
+if [[ -n "$from_bundle" ]]; then
+  # Re-packaging a bundle this script already made: no weights, no token, no
+  # export. Adding a voice must not depend on a gated download staying gated in
+  # the same way a year from now.
+  echo "==> unpacking ${from_bundle}"
+  tar -xjf "$from_bundle" -C "$work_dir"
+  for required in lm_main.int8.onnx lm_flow.int8.onnx encoder.onnx \
+    decoder.int8.onnx text_conditioner.onnx vocab.json token_scores.json; do
+    if [[ ! -f "${stage}/${required}" ]]; then
+      echo "${from_bundle} is not a pocket-tts bundle: no ${required}" >&2
+      exit 1
+    fi
+  done
+else
+  # pocket-tts brings torch, beartype, safetensors and the rest of the model's own
+  # dependencies; onnx/onnxruntime/onnxscript are the export and quantization side.
+  # pyyaml is named because pocket_tts.utils.config imports it without declaring it.
+  uv pip install --quiet "pocket-tts==${POCKET_TTS_VERSION}" onnx onnxruntime onnxscript pyyaml
+
+  weights_dir="${work_dir}/weights"
+  echo "==> fetching the weights"
+  HF_TOKEN="$token" HUGGING_FACE_HUB_TOKEN="$token" \
+    python - "$WEIGHTS_REPO" "$VARIANT" "$weights_dir" <<'PY'
 import sys
 
 from huggingface_hub import hf_hub_download
@@ -130,37 +162,34 @@ repo, variant, target = sys.argv[1], sys.argv[2], sys.argv[3]
 for name in (f"tts_{variant}.safetensors", "tokenizer.model"):
     print("   ", hf_hub_download(repo_id=repo, filename=name, local_dir=target))
 PY
-weights="${weights_dir}/tts_${VARIANT}.safetensors"
+  weights="${weights_dir}/tts_${VARIANT}.safetensors"
 
-onnx_dir="${work_dir}/onnx"
-mkdir -p "$onnx_dir"
-echo "==> exporting ${VARIANT} (this is the slow part)"
-python "${exporter}/export_mimi_and_conditioner.py" --output_dir "$onnx_dir" --weights_path "$weights"
-python "${exporter}/export_flow_lm.py" --output_dir "$onnx_dir" --weights_path "$weights"
-python "${exporter}/quantize.py" --input_dir "$onnx_dir" --output_dir "$onnx_dir"
+  onnx_dir="${work_dir}/onnx"
+  mkdir -p "$onnx_dir"
+  echo "==> exporting ${VARIANT} (this is the slow part)"
+  python "${exporter}/export_mimi_and_conditioner.py" --output_dir "$onnx_dir" --weights_path "$weights"
+  python "${exporter}/export_flow_lm.py" --output_dir "$onnx_dir" --weights_path "$weights"
+  python "${exporter}/quantize.py" --input_dir "$onnx_dir" --output_dir "$onnx_dir"
 
-# sherpa-onnx reads seven files under names of its own. Everything else the
-# export wrote is either a duplicate precision or runtime metadata its C++
-# loader does not read, and shipping it would only make the archive bigger.
-stage="${work_dir}/sherpa-onnx-pocket-tts-int8"
-rm -rf "$stage"
-mkdir -p "$stage"
-copy_as() {
-  local from="${onnx_dir}/$1" to="${stage}/$2"
-  [[ -f "$from" ]] || { echo "the export did not produce $1" >&2; exit 1; }
-  cp "$from" "$to"
-}
-copy_as flow_lm_main_int8.onnx  lm_main.int8.onnx
-copy_as flow_lm_flow_int8.onnx  lm_flow.int8.onnx
-copy_as mimi_encoder.onnx       encoder.onnx
-copy_as mimi_decoder_int8.onnx  decoder.int8.onnx
-copy_as text_conditioner.onnx   text_conditioner.onnx
+  # sherpa-onnx reads seven files under names of its own. Everything else the
+  # export wrote is either a duplicate precision or runtime metadata its C++
+  # loader does not read, and shipping it would only make the archive bigger.
+  copy_as() {
+    local from="${onnx_dir}/$1" to="${stage}/$2"
+    [[ -f "$from" ]] || { echo "the export did not produce $1" >&2; exit 1; }
+    cp "$from" "$to"
+  }
+  copy_as flow_lm_main_int8.onnx  lm_main.int8.onnx
+  copy_as flow_lm_flow_int8.onnx  lm_flow.int8.onnx
+  copy_as mimi_encoder.onnx       encoder.onnx
+  copy_as mimi_decoder_int8.onnx  decoder.int8.onnx
+  copy_as text_conditioner.onnx   text_conditioner.onnx
 
-# sherpa's C++ tokenizer reads plain JSON instead of linking sentencepiece, so
-# the vocabulary is flattened here (the same transformation as
-# k2-fsa/sherpa-onnx scripts/pocket-tts/convert_tokenizer.py, Apache-2.0).
-echo "==> flattening the tokenizer"
-python - "${weights_dir}/tokenizer.model" "$stage" <<'PY'
+  # sherpa's C++ tokenizer reads plain JSON instead of linking sentencepiece, so
+  # the vocabulary is flattened here (the same transformation as
+  # k2-fsa/sherpa-onnx scripts/pocket-tts/convert_tokenizer.py, Apache-2.0).
+  echo "==> flattening the tokenizer"
+  python - "${weights_dir}/tokenizer.model" "$stage" <<'PY'
 import json
 import sys
 
@@ -174,14 +203,20 @@ for name, data in (("vocab.json", vocab), ("token_scores.json", scores)):
     with open(f"{stage}/{name}", "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 PY
+fi
 
 # A pocket voice IS a reference clip the model clones, so the bundle carries its
-# own. Each clip keeps whatever licence its recording has - only clips that may
-# be redistributed belong here.
+# own under voices/, each with the transcript sherpa passes to the model as the
+# reference text. Only clips that may be redistributed belong here -
+# `bin/make-voice-clips` records the ones Vis is allowed to publish.
 if [[ -n "$voices_dir" ]]; then
-  mkdir -p "${stage}/test_wavs"
-  cp "${voices_dir}"/*.wav "${stage}/test_wavs/"
-  echo "==> bundled $(find "${stage}/test_wavs" -name '*.wav' | wc -l | tr -d ' ') reference clips"
+  mkdir -p "${stage}/voices"
+  cp "${voices_dir}"/*.wav "${stage}/voices/"
+  for clip in "${stage}/voices"/*.wav; do
+    transcript="${voices_dir}/$(basename "${clip%.wav}").txt"
+    [[ -f "$transcript" ]] && cp "$transcript" "${stage}/voices/"
+  done
+  echo "==> bundled $(find "${stage}/voices" -name '*.wav' | wc -l | tr -d ' ') reference clips"
 fi
 
 # The export is only worth publishing if sherpa can speak with it. A bundle
@@ -190,11 +225,18 @@ fi
 # sentence, and require the audio to last as long as the sentence does.
 if [[ "$do_check" -eq 1 ]]; then
   echo "==> checking the bundle through sherpa-onnx ${SHERPA_VERSION}"
-  uv pip install --quiet "sherpa-onnx==${SHERPA_VERSION}"
+  # numpy reads the clip and measures the answer; the export path gets it
+  # from torch, and --from installs neither.
+  uv pip install --quiet "sherpa-onnx==${SHERPA_VERSION}" numpy
   check_wav="${work_dir}/check.wav"
   check_text=""
-  if [[ -n "$voices_dir" ]]; then
-    check_wav="$(find "${stage}/test_wavs" -name '*.wav' | head -1)"
+  bundled_clip="$(find "${stage}/voices" -name '*.wav' 2>/dev/null | head -1 || true)"
+  if [[ -n "$bundled_clip" ]]; then
+    # Check with a clip the bundle SHIPS and the transcript beside it: exactly
+    # what a caller does, rather than a clip nobody will ever hear.
+    check_wav="$bundled_clip"
+    transcript="${bundled_clip%.wav}.txt"
+    if [[ -f "$transcript" ]]; then check_text="$(cat "$transcript")"; fi
   elif [[ "$(uname)" == "Darwin" ]]; then
     check_text="The quick brown fox jumps over the lazy dog, and the voice you hear is only a reference clip."
     say -v Samantha --data-format=LEI16@24000 -o "$check_wav" \
@@ -244,7 +286,10 @@ This bundle is an adaptation of Kyutai's model: their published weights,
 converted to ONNX and quantized to int8 by \`bin/export-pocket-tts\`. It is
 distributed under the same CC BY 4.0 terms, with attribution to Kyutai.
 
-Reference clips under test_wavs/, when present, carry their own licences.
+Reference clips under voices/, when present, are public domain: they are
+generated by \`bin/make-voice-clips\` from public-domain Piper voices (Bryce
+Beattie, https://brycebeattie.com/files/tts/) and carry no further terms. The
+transcript beside each clip is the reference text the model is given.
 EOF
 
 cat > "${stage}/README.md" <<EOF
