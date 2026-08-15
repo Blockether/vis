@@ -1,17 +1,29 @@
 {
   "comment": [
     "sherpa-onnx reaches its own Java API through JNI, BY NAME: GetFieldID(\"model\") on a config",
-    "object, FindClass(\"com/k2fsa/sherpa/onnx/WaveData\") to hand a decoded recording back.",
-    "native-image keeps no name it cannot see used, so an image that compiles and links still",
-    "failed at the first spoken or transcribed word with \"Failed to get field ID for 'model'\".",
-    "Every type of the API jar is a data holder the C++ side reads or writes, so the whole",
-    "package is registered here rather than the handful one code path happens to touch.",
-    "sherpa_test.clj fails when the jar carries a type this file does not, so bumping sherpa",
-    "cannot silently drop one.",
-    "The one type here that is NOT sherpa's is the callback sherpa calls back into: the JNI looks",
-    "it up with GetMethodID on OUR class, so it is a deftype with a stable name instead of a reify",
-    "whose name every build invents anew - the image linked, printed its config and then died in",
-    "the first progress callback."
+    "object, FindClass(\"com/k2fsa/sherpa/onnx/WaveData\") to hand a decoded recording back,",
+    "GetMethodID(\"invoke\") on the progress callback we pass in. native-image keeps no name it",
+    "cannot see used, so an image that compiles and links still failed at the first spoken word.",
+    "",
+    "Every type of the API jar is a data holder the C++ side reads or writes, so the whole package",
+    "is registered rather than the handful one code path happens to touch; sherpa_test.clj fails",
+    "when the jar carries a type this file does not, so bumping sherpa cannot silently drop one.",
+    "",
+    "The MEMBERS under a type are the ones the C++ really looks up, captured with the tracing agent",
+    "over all three paths (piper, pocket-tts, parakeet). A type alone is NOT enough: JNI resolves a",
+    "field or a method, and one that is registered only as part of `allDeclared*` is not there to be",
+    "called - the image read an empty model path and then died inside the JNI trampoline instead of",
+    "throwing. Re-capture with -agentlib:native-image-agent after changing what we hand sherpa.",
+    "",
+    "A member is named by its name and parameter types, which cannot tell a covariant method",
+    "from the synthetic BRIDGE beside it - and the bridge is the one JNI asks for by signature",
+    "(`next()Ljava/lang/Object;` on LinkedEntryIterator). A class that carries one is registered",
+    "whole with `allDeclaredMethods`; sherpa_test.clj fails when a member entry hides a bridge.",
+    "",
+    "Two names here are not sherpa's. `GenerationCallback` is OURS - a deftype, because a reify's",
+    "class name is invented anew by every build and no metadata can name it. The JDK entries are what",
+    "sherpa's C++ asks for when it walks `GenerationConfig.extra` (a LinkedHashMap: ONE stable class,",
+    "where a Clojure map changes class with its size) and unwraps the Integer a callback returns."
   ],
   "reflection": [
     {
@@ -19,7 +31,15 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "invoke",
+          "parameterTypes": [
+            "float[]"
+          ]
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.AudioEvent",
@@ -152,7 +172,18 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "dither"
+        },
+        {
+          "name": "featureDim"
+        },
+        {
+          "name": "sampleRate"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.FeatureConfig$1",
@@ -173,21 +204,64 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "float[]",
+            "int"
+          ]
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.GenerationConfig",
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "extra"
+        },
+        {
+          "name": "numSteps"
+        },
+        {
+          "name": "referenceAudio"
+        },
+        {
+          "name": "referenceSampleRate"
+        },
+        {
+          "name": "referenceText"
+        },
+        {
+          "name": "sid"
+        },
+        {
+          "name": "silenceScale"
+        },
+        {
+          "name": "speed"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.HomophoneReplacerConfig",
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "lexicon"
+        },
+        {
+          "name": "ruleFsts"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.HomophoneReplacerConfig$1",
@@ -257,7 +331,24 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "decoder"
+        },
+        {
+          "name": "encoder"
+        },
+        {
+          "name": "srcLang"
+        },
+        {
+          "name": "tgtLang"
+        },
+        {
+          "name": "usePnc"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineCanaryModelConfig$1",
@@ -278,7 +369,24 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "decoder"
+        },
+        {
+          "name": "encoder"
+        },
+        {
+          "name": "language"
+        },
+        {
+          "name": "useItn"
+        },
+        {
+          "name": "usePunct"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineCohereTranscribeModelConfig$1",
@@ -348,7 +456,12 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "model"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineDolphinModelConfig$1",
@@ -369,7 +482,12 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "model"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineFireRedAsrCtcModelConfig$1",
@@ -390,7 +508,15 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "decoder"
+        },
+        {
+          "name": "encoder"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineFireRedAsrModelConfig$1",
@@ -411,7 +537,48 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "embedding"
+        },
+        {
+          "name": "encoderAdaptor"
+        },
+        {
+          "name": "hotwords"
+        },
+        {
+          "name": "itn"
+        },
+        {
+          "name": "language"
+        },
+        {
+          "name": "llm"
+        },
+        {
+          "name": "maxNewTokens"
+        },
+        {
+          "name": "seed"
+        },
+        {
+          "name": "systemPrompt"
+        },
+        {
+          "name": "temperature"
+        },
+        {
+          "name": "tokenizer"
+        },
+        {
+          "name": "topP"
+        },
+        {
+          "name": "userPrompt"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineFunAsrNanoModelConfig$1",
@@ -432,7 +599,12 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "model"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineMedAsrCtcModelConfig$1",
@@ -453,7 +625,84 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "bpeVocab"
+        },
+        {
+          "name": "canary"
+        },
+        {
+          "name": "cohereTranscribe"
+        },
+        {
+          "name": "debug"
+        },
+        {
+          "name": "dolphin"
+        },
+        {
+          "name": "fireRedAsr"
+        },
+        {
+          "name": "fireRedAsrCtc"
+        },
+        {
+          "name": "funasrNano"
+        },
+        {
+          "name": "medasr"
+        },
+        {
+          "name": "modelType"
+        },
+        {
+          "name": "modelingUnit"
+        },
+        {
+          "name": "moonshine"
+        },
+        {
+          "name": "nemo"
+        },
+        {
+          "name": "numThreads"
+        },
+        {
+          "name": "omnilingual"
+        },
+        {
+          "name": "paraformer"
+        },
+        {
+          "name": "provider"
+        },
+        {
+          "name": "qwen3Asr"
+        },
+        {
+          "name": "senseVoice"
+        },
+        {
+          "name": "teleSpeech"
+        },
+        {
+          "name": "tokens"
+        },
+        {
+          "name": "transducer"
+        },
+        {
+          "name": "wenetCtc"
+        },
+        {
+          "name": "whisper"
+        },
+        {
+          "name": "zipformerCtc"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineModelConfig$1",
@@ -474,7 +723,24 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "cachedDecoder"
+        },
+        {
+          "name": "encoder"
+        },
+        {
+          "name": "mergedDecoder"
+        },
+        {
+          "name": "preprocessor"
+        },
+        {
+          "name": "uncachedDecoder"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineMoonshineModelConfig$1",
@@ -495,7 +761,12 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "model"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineNemoEncDecCtcModelConfig$1",
@@ -516,7 +787,12 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "model"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineOmnilingualAsrCtcModelConfig$1",
@@ -537,7 +813,15 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "model"
+        },
+        {
+          "name": "qnnConfig"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineParaformerModelConfig$1",
@@ -607,7 +891,39 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "convFrontend"
+        },
+        {
+          "name": "decoder"
+        },
+        {
+          "name": "encoder"
+        },
+        {
+          "name": "hotwords"
+        },
+        {
+          "name": "maxNewTokens"
+        },
+        {
+          "name": "maxTotalLen"
+        },
+        {
+          "name": "seed"
+        },
+        {
+          "name": "temperature"
+        },
+        {
+          "name": "tokenizer"
+        },
+        {
+          "name": "topP"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineQwen3AsrModelConfig$1",
@@ -635,7 +951,39 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "blankPenalty"
+        },
+        {
+          "name": "decodingMethod"
+        },
+        {
+          "name": "featConfig"
+        },
+        {
+          "name": "hotwordsFile"
+        },
+        {
+          "name": "hotwordsScore"
+        },
+        {
+          "name": "hr"
+        },
+        {
+          "name": "maxActivePaths"
+        },
+        {
+          "name": "modelConfig"
+        },
+        {
+          "name": "ruleFars"
+        },
+        {
+          "name": "ruleFsts"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineRecognizerConfig$1",
@@ -656,14 +1004,42 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.String",
+            "java.lang.String[]",
+            "float[]",
+            "java.lang.String",
+            "java.lang.String",
+            "java.lang.String",
+            "float[]"
+          ]
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig",
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "language"
+        },
+        {
+          "name": "model"
+        },
+        {
+          "name": "qnnConfig"
+        },
+        {
+          "name": "useInverseTextNormalization"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig$1",
@@ -866,7 +1242,21 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "decoder"
+        },
+        {
+          "name": "encoder"
+        },
+        {
+          "name": "joiner"
+        },
+        {
+          "name": "qnnConfig"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineTransducerModelConfig$1",
@@ -901,7 +1291,24 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "maxNumSentences"
+        },
+        {
+          "name": "model"
+        },
+        {
+          "name": "ruleFars"
+        },
+        {
+          "name": "ruleFsts"
+        },
+        {
+          "name": "silenceScale"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineTtsConfig$1",
@@ -922,7 +1329,24 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "dataDir"
+        },
+        {
+          "name": "lengthScale"
+        },
+        {
+          "name": "model"
+        },
+        {
+          "name": "tokens"
+        },
+        {
+          "name": "voices"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineTtsKittenModelConfig$1",
@@ -943,7 +1367,30 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "dataDir"
+        },
+        {
+          "name": "lang"
+        },
+        {
+          "name": "lengthScale"
+        },
+        {
+          "name": "lexicon"
+        },
+        {
+          "name": "model"
+        },
+        {
+          "name": "tokens"
+        },
+        {
+          "name": "voices"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineTtsKokoroModelConfig$1",
@@ -964,7 +1411,30 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "acousticModel"
+        },
+        {
+          "name": "dataDir"
+        },
+        {
+          "name": "lengthScale"
+        },
+        {
+          "name": "lexicon"
+        },
+        {
+          "name": "noiseScale"
+        },
+        {
+          "name": "tokens"
+        },
+        {
+          "name": "vocoder"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineTtsMatchaModelConfig$1",
@@ -985,7 +1455,39 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "debug"
+        },
+        {
+          "name": "kitten"
+        },
+        {
+          "name": "kokoro"
+        },
+        {
+          "name": "matcha"
+        },
+        {
+          "name": "numThreads"
+        },
+        {
+          "name": "pocket"
+        },
+        {
+          "name": "provider"
+        },
+        {
+          "name": "supertonic"
+        },
+        {
+          "name": "vits"
+        },
+        {
+          "name": "zipvoice"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineTtsModelConfig$1",
@@ -1006,7 +1508,33 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "decoder"
+        },
+        {
+          "name": "encoder"
+        },
+        {
+          "name": "lmFlow"
+        },
+        {
+          "name": "lmMain"
+        },
+        {
+          "name": "textConditioner"
+        },
+        {
+          "name": "tokenScoresJson"
+        },
+        {
+          "name": "vocabJson"
+        },
+        {
+          "name": "voiceEmbeddingCacheCapacity"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineTtsPocketModelConfig$1",
@@ -1027,7 +1555,30 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "durationPredictor"
+        },
+        {
+          "name": "textEncoder"
+        },
+        {
+          "name": "ttsJson"
+        },
+        {
+          "name": "unicodeIndexer"
+        },
+        {
+          "name": "vectorEstimator"
+        },
+        {
+          "name": "vocoder"
+        },
+        {
+          "name": "voiceStyle"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineTtsSupertonicModelConfig$1",
@@ -1048,7 +1599,30 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "dataDir"
+        },
+        {
+          "name": "lengthScale"
+        },
+        {
+          "name": "lexicon"
+        },
+        {
+          "name": "model"
+        },
+        {
+          "name": "noiseScale"
+        },
+        {
+          "name": "noiseScaleW"
+        },
+        {
+          "name": "tokens"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig$1",
@@ -1069,7 +1643,39 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "dataDir"
+        },
+        {
+          "name": "decoder"
+        },
+        {
+          "name": "encoder"
+        },
+        {
+          "name": "featScale"
+        },
+        {
+          "name": "guidanceScale"
+        },
+        {
+          "name": "lexicon"
+        },
+        {
+          "name": "tShift"
+        },
+        {
+          "name": "targetRms"
+        },
+        {
+          "name": "tokens"
+        },
+        {
+          "name": "vocoder"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineTtsZipVoiceModelConfig$1",
@@ -1090,7 +1696,12 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "model"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineWenetCtcModelConfig$1",
@@ -1111,7 +1722,30 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "decoder"
+        },
+        {
+          "name": "enableSegmentTimestamps"
+        },
+        {
+          "name": "enableTokenTimestamps"
+        },
+        {
+          "name": "encoder"
+        },
+        {
+          "name": "language"
+        },
+        {
+          "name": "tailPaddings"
+        },
+        {
+          "name": "task"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineWhisperModelConfig$1",
@@ -1153,7 +1787,15 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "model"
+        },
+        {
+          "name": "qnnConfig"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.OfflineZipformerCtcModelConfig$1",
@@ -1461,7 +2103,18 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "backendLib"
+        },
+        {
+          "name": "contextBinary"
+        },
+        {
+          "name": "systemLib"
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.QnnConfig$1",
@@ -1650,7 +2303,16 @@
       "allDeclaredConstructors": true,
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
-      "jniAccessible": true
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "float[]",
+            "int"
+          ]
+        }
+      ]
     },
     {
       "type": "com.k2fsa.sherpa.onnx.WaveReader",
@@ -1665,6 +2327,156 @@
       "allDeclaredFields": true,
       "allDeclaredMethods": true,
       "jniAccessible": true
+    },
+    {
+      "type": "java.lang.Boolean",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "getBoolean",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        },
+        {
+          "name": "parseBoolean",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "java.lang.Exception",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        }
+      ],
+      "jniAccessible": true
+    },
+    {
+      "type": "java.lang.Integer",
+      "methods": [
+        {
+          "name": "intValue",
+          "parameterTypes": []
+        }
+      ],
+      "jniAccessible": true,
+      "fields": [
+        {
+          "name": "MAX_VALUE"
+        }
+      ]
+    },
+    {
+      "type": "java.lang.NullPointerException",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        }
+      ],
+      "jniAccessible": true
+    },
+    {
+      "type": "java.lang.RuntimeException",
+      "methods": [
+        {
+          "name": "<init>",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        }
+      ],
+      "jniAccessible": true
+    },
+    {
+      "type": "java.lang.String",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "getBytes",
+          "parameterTypes": [
+            "java.lang.String"
+          ]
+        }
+      ]
+    },
+    {
+      "type": "java.util.LinkedHashMap",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "entrySet",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "java.util.LinkedHashMap$Entry",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "getKey",
+          "parameterTypes": []
+        },
+        {
+          "name": "getValue",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "java.util.LinkedHashMap$LinkedEntryIterator",
+      "allDeclaredMethods": true,
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "next",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "java.util.LinkedHashMap$LinkedEntrySet",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "iterator",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "java.util.LinkedHashMap$LinkedHashIterator",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "hasNext",
+          "parameterTypes": []
+        }
+      ]
+    },
+    {
+      "type": "java.util.Map$Entry",
+      "jniAccessible": true,
+      "methods": [
+        {
+          "name": "getKey",
+          "parameterTypes": []
+        },
+        {
+          "name": "getValue",
+          "parameterTypes": []
+        }
+      ]
     }
   ]
 }

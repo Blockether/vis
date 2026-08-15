@@ -229,3 +229,23 @@
                  ;; pocket-tts does not phonemize, so espeak has nothing to do with it.
                  (with-redefs [tts/espeak-data-dir (constantly nil)]
                    (expect (not= :failed (:state (tts/model-state :pocket-tts)))))))
+
+;; Regression, user report: the SHIPPED BINARY died on the first pocket-tts word
+;; while the same code spoke from a JVM. sherpa reads `GenerationConfig.extra`
+;; from C++ through the map's CONCRETE class - `entrySet`, `iterator`, `hasNext`,
+;; `next`, `getKey`, `getValue` - and a Clojure map is one class with eight keys
+;; and another with nine, so no metadata entry can name the walk.
+(defdescribe
+  pocket-generation-config-test
+  (it "hands sherpa a map of ONE class, and the clip's own words with it"
+      (let [clip (java.io.File/createTempFile "vis-pocket-clip-" ".wav")]
+        (try (#'voices/write-wav! clip (short-array 24000) 24000)
+             (let
+               [gen (#'tts/pocket-generation-config (.getAbsolutePath clip) "what the clip says")]
+               (expect (instance? java.util.LinkedHashMap (.getExtra gen))
+                       (str "sherpa walks this map through JNI, so its class must be one the"
+                            " metadata can name; got "
+                            (class (.getExtra gen))))
+               (expect (= {"temperature" "0.7" "chunk_size" "15"} (into {} (.getExtra gen))))
+               (expect (= "what the clip says" (.getReferenceText gen))))
+             (finally (.delete clip))))))

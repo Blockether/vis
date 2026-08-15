@@ -520,6 +520,10 @@ routes move off the session to `/v1/voice/model` and `/v1/speech/model`, where t
   version bump cannot silently drop a type and leave an image that links but cannot speak. The progress callback
   is a `deftype` for that reason: a `reify` answers to a name the compiler invents anew every build, which no
   metadata can register, so the image printed its config and then died inside the first callback.
+- DONE. The generation options ride to sherpa in a `java.util.LinkedHashMap`. The C++ walks that map from
+  outside by the CONCRETE class of every step, and a Clojure map answers to a different class at every size;
+  the last step it takes, `next()Ljava/lang/Object;`, is a synthetic bridge that no member entry can name, so
+  that one class is registered whole. `sherpa_test.clj` fails when any member entry hides a bridge.
 - Test that proves it done: `voice_test.clj` (a builtin that failed to load is tried again; "no engine" names
   which kind of nothing it is), `server_test.clj` (the 501 `:reasons` block, both model routes machine-level),
   the extension's `sherpa_test.clj` / `engine_test.clj` / `input_test.clj`, and in the app

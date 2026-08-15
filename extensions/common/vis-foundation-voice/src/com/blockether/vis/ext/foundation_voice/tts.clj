@@ -25,6 +25,7 @@
             OfflineTtsConfig OfflineTtsModelConfig OfflineTtsPocketModelConfig
             OfflineTtsVitsModelConfig WaveReader]
            [java.io File]
+           [java.util LinkedHashMap]
            [java.util.concurrent.atomic AtomicLong]))
 
 ;; Reflective interop is FATAL in the native image (needs metadata per call
@@ -449,7 +450,14 @@
     ;; guessing at the words tracks the voice far more closely.
     (.setReferenceText gen (str clip-text))
     (.setNumSteps gen (int 5))
-    (.setExtra gen {"temperature" "0.7" "chunk_size" "15"})
+    ;; sherpa reads this map FROM C++: `GetObjectClass` on the instance, then
+    ;; `entrySet`, `iterator`, `hasNext`, `next`, `getKey`, `getValue` on
+    ;; whatever CONCRETE class it finds. A Clojure map answers to a class that
+    ;; changes with its size (`PersistentArrayMap`, then `PersistentHashMap`),
+    ;; so no metadata can register the walk - the native image called an
+    ;; uncompiled `entrySet` and died inside the JNI trampoline. One JDK class,
+    ;; registered in reachability-metadata.json, is the whole fix.
+    (.setExtra gen (doto (LinkedHashMap.) (.put "temperature" "0.7") (.put "chunk_size" "15")))
     gen))
 
 (defn- ensure-assets!

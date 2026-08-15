@@ -201,19 +201,116 @@
 
         (expect (get known callback) (str callback " is not registered for JNI"))
         (expect (:jniAccessible (get known callback)))
-        (expect (:allDeclaredMethods (get known callback)))))
+        (expect (:allDeclaredMethods (get known callback)))
+        (expect (some #(= "invoke" (:name %)) (:methods (get known callback)))
+                "the method sherpa asks for by name has to be named here too")))
   (it "asks for the members the JNI looks up, not merely for the class"
-      ;; A type registered without its FIELDS is the failure the user hit: the
-      ;; class exists in the image and `GetFieldID` still finds nothing.
+      ;; A type registered without its MEMBERS is the failure the user hit: the
+      ;; class is in the image and `GetFieldID` still finds nothing, so the model
+      ;; path arrives EMPTY and what follows is a segfault rather than a message.
+      ;; These lists came from a tracing agent run over all three paths.
       (let
-        [thin (remove (fn [[_ e]]
-                        (and (:jniAccessible e)
-                             (:allDeclaredFields e)
-                             (:allDeclaredMethods e)
-                             (:allDeclaredConstructors e)))
-                (registered))]
+        [known
+         (registered)
+
+         thin
+         (remove (fn [[type-name e]]
+                   (or (not (sherpa-type? type-name))
+                       (and (:jniAccessible e)
+                            (:allDeclaredFields e)
+                            (:allDeclaredMethods e)
+                            (:allDeclaredConstructors e))))
+           known)
+
+         fields
+         (fn [type-name]
+           (into #{} (map :name) (:fields (get known type-name))))]
+
         (expect (empty? thin)
-                (str "registered too thinly to speak through: " (pr-str (mapv key thin))))))
+                (str "registered too thinly to speak through: " (pr-str (mapv key thin))))
+        (expect (contains? (fields "com.k2fsa.sherpa.onnx.OfflineTtsModelConfig") "pocket")
+                "the pocket-tts config is read off this field, by that name")
+        (expect (set/subset? #{"lmFlow" "lmMain" "encoder" "decoder" "textConditioner" "vocabJson"
+                               "tokenScoresJson"}
+                             (fields "com.k2fsa.sherpa.onnx.OfflineTtsPocketModelConfig"))
+                "every pocket-tts model path is read field by field")
+        (expect (set/subset? #{"model" "tokens" "dataDir"}
+                             (fields "com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig")))
+        (expect (set/subset? #{"referenceAudio" "referenceText" "extra"}
+                             (fields "com.k2fsa.sherpa.onnx.GenerationConfig")))))
+  (it "hands the JNI every class of the walk sherpa makes through `extra`"
+      ;; sherpa iterates that map FROM C++ by the concrete class it finds: the
+      ;; map, the entry set it answers with, the iterator, the entry. `tts` hands
+      ;; it a LinkedHashMap because those four names are the same at any size.
+      (let
+        [known
+         (registered)
+
+         member
+         (fn [type-name method]
+           (some #(= method (:name %)) (:methods (get known type-name))))]
+
+        (expect (member "java.util.LinkedHashMap" "entrySet"))
+        (expect (member "java.util.LinkedHashMap$LinkedEntrySet" "iterator"))
+        (expect (member "java.util.LinkedHashMap$LinkedHashIterator" "hasNext"))
+        (expect (member "java.util.LinkedHashMap$LinkedEntryIterator" "next"))
+        (expect (member "java.util.LinkedHashMap$Entry" "getKey"))
+        (expect (member "java.util.LinkedHashMap$Entry" "getValue"))))
+  (it "registers a whole class when the name the JNI asks for belongs to a bridge"
+      ;; Regression, the same segfault one step further in: sherpa asks the iterator
+      ;; for `next` with the signature ()Ljava/lang/Object;, and on LinkedEntryIterator
+      ;; that is the BRIDGE the compiler writes beside the covariant ()Ljava/util/Map$Entry;.
+      ;; A member entry names a method by name and parameter types, which resolves to the
+      ;; covariant one alone, so GetMethodID answered null - and sherpa calls it anyway.
+      (let
+        [known
+         (registered)
+
+         hidden-bridges
+         (fn [[type-name entry]]
+           (when-not (:allDeclaredMethods entry)
+             (when-let [^Class c (try (Class/forName type-name) (catch Throwable _ nil))]
+               (for
+                 [{member :name argument-types :parameterTypes} (:methods entry)
+                  :let [same-shape (filter (fn [^java.lang.reflect.Method m]
+                                             (and (= member (.getName m))
+                                                  (= (count argument-types)
+                                                     (alength (.getParameterTypes m)))))
+                                           (.getDeclaredMethods c))]
+                  :when (some (fn [^java.lang.reflect.Method m]
+                                (.isBridge m))
+                              same-shape)]
+
+                 (str type-name "." member)))))
+
+         hidden
+         (vec (mapcat hidden-bridges known))]
+
+        (expect (empty? hidden)
+                (str "the JNI can ask for a bridge this file cannot name - register the whole"
+                     " class with allDeclaredMethods: "
+                     hidden))))
+  (it "hands the JNI the JDK names sherpa's C++ asks for without checking"
+      ;; Regression, same report: the callback returns an Integer and sherpa
+      ;; calls `intValue` on it through a method id it never tests for null, so
+      ;; an unregistered `java.lang.Integer` is not an error message but a
+      ;; segfault inside the JNI call trampoline. `String` is the array a
+      ;; transcript comes back in, and the throwables are how it reports.
+      (let
+        [known
+         (registered)
+
+         member
+         (fn [type-name method]
+           (some #(= method (:name %)) (:methods (get known type-name))))]
+
+        (expect (member "java.lang.Integer" "intValue")
+                "Integer.intValue is what the progress callback's answer is read with")
+        (expect (:jniAccessible (get known "java.lang.String")))
+        (doseq
+          [thrown ["java.lang.Exception" "java.lang.NullPointerException"
+                   "java.lang.RuntimeException"]]
+          (expect (member thrown "<init>") (str thrown " cannot be thrown from the JNI")))))
   (it "names the two the JNI asked for first"
       (let [known (registered)]
         (expect (get known "com.k2fsa.sherpa.onnx.OfflineTtsConfig"))

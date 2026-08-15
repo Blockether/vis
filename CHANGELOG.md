@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - Voice no longer needs Vis restarted to work again: an engine that failed to load is tried on the next use, a failed model download can be retried, and a recording that threw never blocks the next one
-- The installed binary can speak and listen at all — sherpa reads its own Java API through JNI by name, and the native image now keeps every one of those names, including the class it calls back into while it speaks
+- The installed binary can speak and listen at all — sherpa reads its own Java API through JNI by name, so the native image now keeps every one of those names: the class it calls back into while it speaks, and every step of the walk it makes through the generation options
 
 ## [v0.1.38] - 2026-08-14
 
