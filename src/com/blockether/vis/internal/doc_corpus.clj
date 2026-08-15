@@ -197,45 +197,213 @@
           raw)))
 
 ;; =============================================================================
-;; Search — ranked full text, terms ANDed
+;; Search — BM25F over three fields
 ;; =============================================================================
 
-(def ^:private name-hit 100.0)
-(def ^:private name-part-hit 50.0)
-(def ^:private gist-hit 10.0)
-(def ^:private body-hit 1.0)
+(def ^:private ^:const k1
+  "BM25 term-frequency saturation. The textbook value; nothing in a corpus of
+   contracts and skills repeats a term often enough to want another."
+  1.2)
 
-(defn- term-score
-  [nm gst txt term]
-  (cond (= nm term) name-hit
-        (str/includes? nm term) name-part-hit
-        (str/includes? gst term) gist-hit
-        (str/includes? txt term) body-hit
-        :else 0.0))
+(def ^:private ^:const exact-name-bonus
+  "Flat bonus when the whole query normalizes to a document's own handle.
+   `apropos(\"patch\")` must answer `patch` first whatever the bodies say, and a
+   flat term-independent bonus does that without letting a long name win a
+   natural-language query the way a per-term name boost does."
+  100.0)
+
+(def ^:private fields
+  "The three fields BM25F scores, with their weight and their length
+   normalization. A name hit is worth much more than a body hit, but the body is
+   FULLY length-normalized (`b` 1.0): without it a 70 KB skill outranks a 350 B
+   tool contract on a natural-language query simply by containing every word."
+  [{:key :name :weight 8.0 :b 0.75} {:key :gist :weight 3.0 :b 0.75}
+   {:key :body :weight 1.0 :b 1.0}])
+
+(defn- tokens
+  "Split `s` into comparable terms: camelCase and snake_case both break apart
+   (`from_anchor` and `fromAnchor` are `from` + `anchor`), everything
+   non-alphanumeric is a separator, and the result is lower-case. There is NO
+   stoplist — `how`, `do` and `a` sit in nearly every document, so IDF prices
+   them at ~0 by itself and no hand-maintained word list can go stale."
+  [s]
+  (into []
+        (map str/lower-case)
+        (re-seq #"[A-Za-z0-9]+" (str/replace (str s) #"([a-z0-9])([A-Z])" "$1 $2"))))
+
+(defn- normalized-handle
+  "A name or a whole query as ONE comparable string, so `from_anchor`,
+   `fromAnchor` and `from anchor` all name the same handle."
+  [s]
+  (str/join "_" (tokens s)))
+
+(defn- edit-distance
+  "Damerau-Levenshtein (optimal string alignment) — a transposition costs ONE,
+   because `pathc` and `aprpos` are how a name is actually mistyped. Used only to
+   rescue a term NO document contains, so it never runs on the hot path of a
+   query that already matched."
+  ^long [^String a ^String b]
+  (let
+    [m
+     (count a)
+
+     n
+     (count b)]
+
+    (loop
+      [i
+       1
+
+       pprev
+       nil
+
+       prev
+       (vec (range (inc n)))]
+
+      (if (> i m)
+        (long (peek prev))
+        (let
+          [row (loop
+                 [j 1
+                  row [i]]
+
+                 (if (> j n)
+                   row
+                   (let
+                     [cost (if (= (.charAt a (dec i)) (.charAt b (dec j))) 0 1)
+                      v (min (inc (long (nth row (dec j))))
+                             (inc (long (nth prev j)))
+                             (+ (long (nth prev (dec j))) cost))
+                      v (if (and pprev
+                                 (> i 1)
+                                 (> j 1)
+                                 (= (.charAt a (dec i)) (.charAt b (- j 2)))
+                                 (= (.charAt a (- i 2)) (.charAt b (dec j))))
+                          (min v (inc (long (nth pprev (- j 2)))))
+                          v)]
+
+                     (recur (inc j) (conj row v)))))]
+          (recur (inc i) prev row))))))
+
+(defn- doc-fields
+  "The three token streams of one entry. The body is the WHOLE text — the gist
+   line is deliberately counted twice, once cheaply and once at its own weight."
+  [{:keys [name text]}]
+  (let [t (str text)]
+    {:name (tokens name) :gist (tokens (gist t)) :body (tokens t)}))
+
+(defn- index
+  "Everything BM25F needs about `es`, built once per query: per-field term
+   frequencies and lengths, the document frequency of every term, and the mean
+   length of every field."
+  [es]
+  (let
+    [docs
+     (into []
+           (map (fn [e]
+                  (let [f (doc-fields e)]
+                    {:entry e
+                     :handle (normalized-handle (:name e))
+                     :tf (update-vals f frequencies)
+                     :len (update-vals f count)
+                     :terms (set (mapcat val f))})))
+           es)
+
+     n
+     (max 1 (count docs))]
+
+    {:docs docs
+     :n n
+     :df (frequencies (mapcat :terms docs))
+     :avg (into {}
+                (map (fn [{:keys [key]}]
+                       [key (/ (double (reduce + (map #(get-in % [:len key] 0) docs))) n)]))
+                fields)}))
+
+(defn- idf
+  "Probabilistic IDF. A term in every document is worth ~0, which is the whole
+   reason this needs no stoplist."
+  ^double [^long n ^long df]
+  (Math/log (+ 1.0 (/ (+ (- (double n) (double df)) 0.5) (+ (double df) 0.5)))))
+
+(defn- resolve-term
+  "A term NO document contains is a probable typo: answer the closest term in the
+   vocabulary within one edit per three characters, or `nil` to drop it. Short
+   terms are never rescued — every one-edit neighbour of a four-letter word is
+   another real word."
+  [{:keys [df]} term]
+  (cond (contains? df term) term
+        (< (count term) 4) nil
+        :else (let
+                [budget
+                 (if (>= (count term) 6) 2 1)
+
+                 [best d]
+                 (reduce (fn [[bt bd] cand]
+                           (let [d (edit-distance term cand)]
+                             (if (< d (long bd)) [cand d] [bt bd])))
+                         [nil (inc budget)]
+                         (keys df))]
+
+                (when (<= (long d) budget) best))))
+
+(defn- bm25f
+  "One document's score for `terms`: the weighted, length-normalized sum over the
+   three fields. OR by construction — a term that missed contributes nothing
+   instead of discarding the document."
+  ^double [{:keys [n df avg]} doc terms]
+  (reduce (fn [^double acc term]
+            (let [d (long (get df term 0))]
+              (if (zero? d)
+                acc
+                (+ acc
+                   (* (idf n d)
+                      (double (reduce (fn [^double a {:keys [key ^double weight ^double b]}]
+                                        (let [tf (double (get-in doc [:tf key term] 0))]
+                                          (if (zero? tf)
+                                            a
+                                            (let
+                                              [len (double (get-in doc [:len key] 0))
+                                               av (double (max 1.0e-9 (double (get avg key 1.0))))
+                                               norm (+ (- 1.0 b) (* b (/ len av)))
+                                               sat (double k1)]
+
+                                              (+ a
+                                                 (* weight
+                                                    (/ (* tf (+ sat 1.0)) (+ tf (* sat norm)))))))))
+                                      0.0
+                                      fields)))))))
+          0.0
+          terms))
 
 (defn search
-  "Rank `es` against `query`: whitespace-separated terms are ANDed, and every
-   term scores where it hit — an exact name beats a name substring beats the
-   first line beats the body. Ties break on name, so the order is stable.
+  "Rank `es` against `query` with BM25F over three fields — name, first line,
+   whole body. Terms are ORed and priced by IDF, so a query is a description
+   rather than a conjunction: a six-word natural-language ask answers the
+   document that covers most of it, and a word no document carries costs
+   nothing instead of emptying the result. A query that IS a handle wins that
+   handle outright, and a term nothing contains is spell-corrected against the
+   vocabulary before it is dropped. Ties break on name, so the order is stable.
 
    A blank query is not a failure, it is \"everything\": the whole corpus, in
    name order."
   [es query]
-  (let
-    [terms (into [] (remove str/blank?) (str/split (str/lower-case (str/trim (str query))) #"\s+"))]
-    (if (empty? terms)
+  (let [raw (tokens query)]
+    (if (empty? raw)
       (vec (sort-by :name (map #(assoc % :score 0.0) es)))
-      (->> es
-           (keep (fn [{:keys [name text] :as e}]
-                   (let
-                     [nm (str/lower-case (str name))
-                      txt (str/lower-case (str text))
-                      gst (str/lower-case (gist text))
-                      scores (mapv #(term-score nm gst txt %) terms)]
+      (let
+        [ix (index es)
+         terms (into [] (keep #(resolve-term ix %)) raw)
+         handle (str/join "_" raw)]
 
-                     (when (every? pos? scores) (assoc e :score (reduce + scores))))))
-           (sort-by (juxt (comp - :score) :name))
-           vec))))
+        (->> (:docs ix)
+             (keep (fn [{:keys [entry] :as d}]
+                     (let
+                       [s (+ (bm25f ix d terms)
+                             (double (if (= handle (:handle d)) exact-name-bonus 0.0)))]
+                       (when (pos? s) (assoc entry :score s)))))
+             (sort-by (juxt (comp - :score) :name))
+             vec)))))
 
 ;; =============================================================================
 ;; The curated index — `doc()` with no argument

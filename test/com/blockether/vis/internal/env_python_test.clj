@@ -424,12 +424,29 @@
                          "print('names='+','.join(list(apropos('struct_patch'))[:1]))"))]
           (expect (str/includes? out "skeleton=True"))
           (expect (str/includes? out "names=struct_patch"))))
-    (it "apropos ANDs its terms"
+    ;; Regression: `apropos` ANDed its terms, so a six-word ask that several
+    ;; documents partly covered answered `{}` — the query shape a model
+    ;; naturally types dead-ended, and one-letter loop variables became
+    ;; documents whose NAME scored an exact hit.
+    (it "ranks a description instead of filtering on every term"
         (let
-          [out (run (str "wide = len(apropos('file'))\n" "narrow = len(apropos('file skeleton'))\n"
-                         "print('wide='+str(wide), 'narrow='+str(narrow),"
-                         " 'shrinks='+str(narrow < wide))"))]
-          (expect (str/includes? out "shrinks=True"))))
+          [out (run (str "hits = apropos('patch from_anchor to_anchor replace edits schema')\n"
+                         "print('any='+str(len(hits) > 0))\n"
+                         "print('patch='+str('patch' in hits))\n"
+                         "print('typo='+str('struct_patch' in apropos('strcut_patch')))\n"
+                         "print('none='+str(len(apropos('zzqqxk plorbfnat'))))"))]
+          (expect (str/includes? out "any=True"))
+          (expect (str/includes? out "patch=True"))
+          (expect (str/includes? out "typo=True"))
+          (expect (str/includes? out "none=0"))))
+    (it "never turns a bound loop variable into a document"
+        (let
+          [out (run (str "x = 3\nday_set = {'a'}\n" "a = apropos('')\n"
+                         "print('x='+str('x' in a), 'day_set='+str('day_set' in a),"
+                         " 'grep='+str('grep' in a))"))]
+          (expect (str/includes? out "x=False"))
+          (expect (str/includes? out "day_set=False"))
+          (expect (str/includes? out "grep=True"))))
     (it "apropos and doc describe their own callable contracts"
         (let [out (run (str "print(doc('apropos'))\n" "print(doc('doc'))"))]
           (expect (str/includes? out "apropos(query='')"))

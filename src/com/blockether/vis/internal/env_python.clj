@@ -1074,12 +1074,25 @@
                       (range (.getArraySize d)))))
             (catch Throwable _ nil)))
 
+     ;; A global that is not CALLABLE is not a tool: the model's own loop
+     ;; variables (`x`, `qs`, `day_set`) are globals too, and each one used to
+     ;; become a document whose NAME scores an exact hit — one-letter noise
+     ;; hijacking every natural-language query. Data the prompt teaches keeps
+     ;; its page through `__vis_docs__`, which is merged in separately, so this
+     ;; filter drops only the undocumented, uncallable leftovers of a block.
+     callable?
+     (fn [^String n]
+       (try (let [v (.getMember g n)]
+              (boolean (and v (not (.isNull v)) (.canExecute v))))
+            (catch Throwable _ false)))
+
      names
      (fn []
        (sort (distinct (concat (filter (fn [n]
                                          (and (not (str/starts-with? n "_"))
                                               (not (contains? builtin-names n))
-                                              (not (contains? non-tool-names n))))
+                                              (not (contains? non-tool-names n))
+                                              (callable? n)))
                                        (map str (seq (.getMemberKeys g))))
                                (shim-names)))))]
 
@@ -1150,7 +1163,7 @@
     (set-python-binding-doc!
       ctx
       'apropos
-      "apropos(query='') -> {name: gist}. FULL-TEXT SEARCH over every document this session can reach — every function's contract, every skill's whole SKILL.md, every Vis documentation page, every MCP tool's description. Whitespace-separated terms are ANDed; hits come back in RANK order (an exact name, then a name substring, then the first line, then the body), each as its one-line gist. `apropos('')` is everything. Read one whole with `doc(name)`.")
+      "apropos(query='') -> {name: gist}. FULL-TEXT SEARCH over every document this session can reach — every function's contract, every skill's whole SKILL.md, every Vis documentation page, every MCP tool's description. Ask in words: terms are ORed and ranked by BM25 relevance over name, first line and body, so a whole question answers the document that covers most of it and a word nothing carries costs nothing. A query that IS a handle wins that handle; a typo is spell-corrected. Each hit comes back as its one-line gist. `apropos('')` is everything. Read one whole with `doc(name)`.")
     (set-python-binding-doc!
       ctx
       'doc

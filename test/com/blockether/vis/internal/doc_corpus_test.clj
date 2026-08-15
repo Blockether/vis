@@ -63,22 +63,58 @@
         (expect (not (str/includes? src "harness.core")))
         (expect (not (str/includes? src "harness-core"))))))
 
-(defdescribe search-test
-             "Rank IS the \"where did it match\" answer, and terms are ANDed."
-             (let
-               [es [{:name "grep" :text "Search file CONTENT and names.\n\nRipgrep-backed."}
-                    {:name "cat" :text "Read files.\n\nReturns anchors for patching."}
-                    {:name "patch" :text "Anchored edits.\n\nUses the anchors cat returned."}]]
-               (it "ranks an exact name above a body hit"
-                   ;; "cat" IS a name and is also a word inside `patch`'s body.
-                   (expect (= ["cat" "patch"] (mapv :name (dc/search es "cat"))))
-                   (expect (= ["grep"] (mapv :name (dc/search es "grep"))))
-                   (expect (= ["cat" "patch"] (mapv :name (dc/search es "anchors")))))
-               (it "ANDs every term"
-                   (expect (= ["cat"] (mapv :name (dc/search es "read anchors"))))
-                   (expect (empty? (dc/search es "read ripgrep"))))
-               (it "answers a blank query with the whole corpus in name order"
-                   (expect (= ["cat" "grep" "patch"] (mapv :name (dc/search es "")))))))
+(defdescribe
+  search-test
+  "BM25F: terms are ORed and priced by IDF, so a description ranks rather
+              than filters, and only a query nothing carries answers nothing."
+  (let
+    [es [{:name "grep" :text "Search file CONTENT and names.\n\nRipgrep-backed."}
+         {:name "cat" :text "Read files.\n\nReturns anchors for patching."}
+         {:name "patch"
+          :text (str "Anchored edits: replace lines in a file.\n\n"
+                     "Uses the anchors cat returned. Every edit is "
+                     "{\"from_anchor\": a, \"to_anchor\": b, \"replace\": text}.")}
+         ;; A long prose document — the shape that used to win every
+         ;; natural-language query by containing all of its words.
+         {:name "prose-page"
+          :text (str "A long page of workflow narrative.\n\n"
+                     (str/join " "
+                               (repeat 200 "how do I open a file in the session and read it")))}]]
+    (it "ranks an exact handle first, whatever the bodies say"
+        ;; "cat" IS a name and is also a word inside `patch`'s body.
+        (expect (= "cat" (:name (first (dc/search es "cat")))))
+        (expect (= ["grep"] (mapv :name (dc/search es "grep"))))
+        ;; A handle typed in any casing/separator style is the same ask.
+        (expect (= "patch" (:name (first (dc/search es "Patch"))))))
+    (it "keeps a document that covers only part of the query"
+        ;; Regression: `every? pos?` used to discard the entry before
+        ;; scoring, so three matching terms out of six answered nothing.
+        (let [hits (mapv :name (dc/search es "patch from_anchor to_anchor replace edits schema"))]
+          (expect (seq hits))
+          (expect (= "patch" (first hits)))))
+    (it "does not let a long document win a natural-language query"
+        ;; Regression: without full body length normalization the long
+        ;; prose page outranked the short contract that actually answers.
+        (expect (= "patch" (:name (first (dc/search es "how do I replace lines in a file"))))))
+    (it "splits snake_case and camelCase into the same terms"
+        (expect (= "patch" (:name (first (dc/search es "from anchor to anchor")))))
+        (expect (= "patch" (:name (first (dc/search es "fromAnchor"))))))
+    (it "rescues a typo, and only a typo"
+        (expect (= "patch" (:name (first (dc/search es "pathc")))))
+        (expect (empty? (dc/search es "kubernetes helm rollout"))))
+    (it "answers a blank query with the whole corpus in name order"
+        (expect (= ["cat" "grep" "patch" "prose-page"] (mapv :name (dc/search es "")))))))
+
+(defdescribe
+  every-document-answers-its-own-name-test
+  "The floor no ranking change may cross: asking for a handle by name must
+              return that document first, over the whole real corpus."
+  (it "returns itself first for every corpus name"
+      (let [es (dc/entries)]
+        (expect (seq es))
+        (doseq [e es]
+          (expect (= (:name e) (:name (first (dc/search es (:name e)))))
+                  (str (:name e) " does not answer its own name first"))))))
 
 (defdescribe index-text-test
              "`doc()` is CURATED: a hand-ordered short list that names where the rest is."
