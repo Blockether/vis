@@ -53,7 +53,7 @@
  ;; OUR export, and nobody else's. Kyutai's weights are plain CC BY 4.0, so
  ;; commercial use and redistribution of an adaptation are both permitted with
  ;; attribution - but the ready-made ONNX bundle k2-fsa publishes is a THIRD
- ;; PARTY's (KevinAHM/pocket-tts-onnx), and the README inside that archive says
+ ;; PARTY's export, and the README inside that archive says
  ;; in as many words "It is for non-commercial" while the LICENSE it sits beside
  ;; is CC BY 4.0. We did not write either sentence and cannot resolve them, so
  ;; Vis mirrors neither: `bin/export-pocket-tts` exports Kyutai's own checkpoint
@@ -83,10 +83,10 @@
   :is-opt-in true
   :is-redistributed true
   :sources
-  [{:bytes 95154203
+  [{:bytes 95153312
     :host :pack
     :kind :archive
-    :sha256 "e97f8b4e00e807f7d6496311fad71848356101cff13d497478beb05d1d0013af"
+    :sha256 "1627f186f5cf2e72f275e78573246fe5264b1dce9c3944067a29c311f770c5c1"
     :url
     "https://github.com/Blockether/vis/releases/download/voice-assets-pack/pocket-tts-int8.tar.bz2"}]}
  {:attribution

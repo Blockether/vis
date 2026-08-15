@@ -58,7 +58,7 @@ espeak-ng (GPL-3.0-or-later)**.
 | What a pocket "voice" is | `NumSpeakers() == 1`; `GetVoiceEmbedding` caches by an **audio hash** — a voice is a reference clip, not a baked speaker id |
 | Model artifacts (`tts-models`, 642 assets) | `sherpa-onnx-pocket-tts-int8-2026-01-26` 98.3 MB, fp32 168.1 MB; kokoro int8 multi-lang 147.0 MB; supertonic int8 84.7 MB; `vits-piper-*` 67-116 MB per voice |
 | Licenses (HF API `cardData.license`) | `kyutai/pocket-tts` cc-by-4.0, **gated (auto)**; `hexgrad/Kokoro-82M` apache-2.0; `rhasspy/piper-voices` mit (repo-level); `Supertone/supertonic` **openrail**; `nvidia/parakeet-tdt-0.6b-v3` cc-by-4.0 |
-| Upstream's own pocket tokenizer script | `scripts/pocket-tts/README.md` converts `tokenizer.model` fetched from the third-party `KevinAHM/pocket-tts-onnx` export |
+| Upstream's own pocket tokenizer script | `scripts/pocket-tts/README.md` converts `tokenizer.model` fetched from a third party's ready-made ONNX export — the same file ships inside Kyutai's own weights |
 | `kyutai/pocket-tts` gate (read without an account) | `gated: "auto"` — instant grant. Its whole condition is a **prohibited-use statement** (no impersonation without consent, no deception, no harassment or privacy invasion) plus a contact form (company, `Work/Studies/Fun`). **No commercial restriction and no extra licence term** — the licence stays CC BY 4.0 |
 | Reference implementation licence | `kyutai-labs/pocket-tts` is **MIT**. Only the weights are CC BY 4.0, so our own ONNX export is written against permissive code |
 | pocket-tts is multilingual | 12 checkpoints: `english`, `english_2026-01`, `english_2026-04`, `french_24l`, `german{,_24l}`, `italian{,_24l}`, `portuguese{,_24l}`, `spanish{,_24l}` — each a `model.safetensors` + `tokenizer.model` plus the same 26 voice embeddings |
@@ -94,7 +94,7 @@ platforms beyond the five the native artifacts cover.
   maintainer answered issue #143 by pointing at JitPack.
 - **Vendor the jars in the repo** — four platforms of native blobs in git to avoid one
   `:mvn/repos` line.
-- **Take `KevinAHM/pocket-tts-onnx` as the model** — a third-party derivative whose own terms are
+- **Take a ready-made third-party pocket ONNX bundle as the model** — a derivative whose own terms are
   not stated; converting from the CC BY 4.0 originals keeps the provenance one hop and the
   attribution correct. Its `tokenizer.model` is only what upstream's script reads, and the same
   file exists in the original weights.
@@ -331,8 +331,8 @@ GPL-3 phonemizer everybody already has costs us nothing to require and would cos
 | The ungated weights cannot voice anything | `kyutai/pocket-tts-without-voice-cloning` is byte-identical to the gated repo EXCEPT every `mimi.encoder.*` tensor is ZEROED (its own `remove_voice_cloning_and_push.py` does it), and sherpa's `GetVoiceEmbedding` runs that encoder over the reference clip |
 | A pocket voice IS a reference clip | `csrc/offline-tts-pocket-impl.h` requires `reference_audio` + `reference_sample_rate`; `NumSpeakers()` is 1 |
 | No mirror substitutes for the gate | seven third-party copies checked; none matches the gated repo's digests. Our own export therefore needs an HF token ONCE, at build time |
-| The exporter is MIT, pinned to the revision sherpa can read | `KevinAHM/pocket-tts-onnx-export@29ec97e`, `python export.py --quantize`, checkpoint `b6369a24`. Its newest commit `b25d4a7` retargets the 2026-04 checkpoint and writes the Mimi encoder at opset 18 with latents `[1, frames, 1024]`; sherpa-onnx reads the transposed layout, so that bundle loads, runs and speaks noise |
-| The export is proven by our own ASR before it ships | Parakeet transcribed the `b25d4a7` bundle's speech as `""` (0.6 s of audio for a 46-character sentence) and the pinned bundle's as "Local speech now runs entirely on this machine, with no account and no network." verbatim. `bin/export-pocket-tts` runs that clone-speak-listen round trip and refuses to package a bundle that fails it |
+| The export layer is MIT, vendored, and pinned by content | `scripts/pocket-tts-onnx/` in this repository, run against Kyutai's own `pocket-tts 1.0.3` package on checkpoint `b6369a24`. A later revision of that layer retargets the 2026-04 checkpoint and writes the Mimi encoder at opset 18 with latents `[1, frames, 1024]`; sherpa-onnx reads the transposed layout, so that bundle loads, runs and speaks noise |
+| The export is proven by our own ASR before it ships | Parakeet transcribed the newer layout's speech as `""` (0.6 s of audio for a 46-character sentence) and the vendored layer's as "Local speech now runs entirely on this machine, with no account and no network." verbatim. `bin/export-pocket-tts` runs that clone-speak-listen round trip and refuses to package a bundle that fails it |
 | Seven files reach sherpa | `flow_lm_main_int8`→`lm_main.int8.onnx`, `flow_lm_flow_int8`→`lm_flow.int8.onnx`, `mimi_encoder`→`encoder.onnx`, `mimi_decoder_int8`→`decoder.int8.onnx`, `text_conditioner.onnx`, plus `vocab.json`/`token_scores.json` flattened from `tokenizer.model` |
 | espeak-ng is a package everywhere | Homebrew, MacPorts, apt, dnf, pacman; the tables are read from a directory at run time, never linked into anything Vis builds |
 
@@ -350,8 +350,9 @@ GPL-3 phonemizer everybody already has costs us nothing to require and would cos
   speak; and doctor's `::espeak` line names the command for the platform it is refusing on.
 - DONE. No voice is mirrored. Kristin, Cori, John and Ryan are `:is-redistributed false` with upstream and Hugging Face
   sources only, and `assets_test.clj` fails on any entry that gains a `:pack` source without being ours to host.
-- DONE. `bin/export-pocket-tts` is Vis' own export from Kyutai's CC BY 4.0 weights: pinned exporter, `uv` environment, the
-  seven-file sherpa layout, the tokenizer flattened exactly as k2-fsa's `convert_tokenizer.py` does (both JSON files come
+- DONE. `bin/export-pocket-tts` is Vis' own export from Kyutai's CC BY 4.0 weights: the MIT export layer vendored into
+  `scripts/pocket-tts-onnx`, a `uv` environment on Kyutai's own `pocket-tts` package, the seven-file sherpa layout, the
+  tokenizer flattened exactly as k2-fsa's `convert_tokenizer.py` does (both JSON files come
   out byte-identical to the published bundle's), a LICENSE and README naming Kyutai, the sherpa round-trip check, and the
   digest to paste into the manifest. The HF token is a build-time credential that reaches no user and lives in no file in
   this tree.
@@ -611,14 +612,16 @@ No tables, no Piper, and nobody downloads 63 MB to find that out.
 published it, and `assets_test.clj` now fails the manifest if any entry gains a `:pack` source without being ours to
 host — redistributable, commercial-safe, not a voice, and on a Blockether release URL.
 
-**The export is ours now.** `bin/export-pocket-tts` runs the MIT exporter over Kyutai's CC BY 4.0 weights and assembles
-the seven files sherpa reads, with the tokenizer flattened to JSON — both files come out byte-identical to the published
-bundle's — and a LICENSE naming Kyutai. It needs a Hugging Face token ONCE, at build time: the ungated
+**The export is ours now.** `bin/export-pocket-tts` runs the MIT export layer vendored in `scripts/pocket-tts-onnx`
+over Kyutai's CC BY 4.0 weights and assembles the seven files sherpa reads, with the tokenizer flattened to JSON — both
+files come out byte-identical to the published bundle's — and a LICENSE naming Kyutai. It needs a Hugging Face token
+ONCE, at build time: the ungated
 `pocket-tts-without-voice-cloning` repo has every `mimi.encoder.*` tensor zeroed, and that encoder is exactly what turns
 a reference clip into a voice, so an export from it could not speak in anyone's voice. No third-party mirror matches the
 gated digests either. The token reaches no user and lives in no file in this tree; what it produces needs no account at
-all. The exporter is pinned at `29ec97e`, NOT at its newest commit: `b25d4a7` retargets the 2026-04 checkpoint and emits
-the Mimi encoder with transposed latents, and sherpa reads that bundle as noise — which is why the script now ends in a
+all. That layer is vendored into this repository and pinned by content rather than cloned at build time, and it is NOT
+the newest one: a later revision retargets the 2026-04 checkpoint and emits the Mimi encoder with transposed latents, and
+sherpa reads that bundle as noise — which is why the script now ends in a
 round trip, cloning a clip and requiring the audio to last as long as the sentence does before it packages anything.
 Parakeet reads the shipped bundle's speech back word for word.
 

@@ -1,10 +1,14 @@
 # ruff configuration for the Python that ships INSIDE vis.
 #
-# The only Python in this repository is the sandbox shim layer
+# The Python that ships INSIDE vis is the sandbox shim layer
 # (`resources/vis-shims/*.py`), the runtime helper bodies slurped into the model
 # sandbox (`resources/vis-python/*.py`) — both embedded into the native image —
 # plus the Python language pack's fixtures. It runs on GraalPy, which is
 # CPython 3.11 compatible — hence `target-version`.
+#
+# `scripts/pocket-tts-onnx/*.py` ships in nothing: it is the vendored ONNX export
+# layer `bin/export-pocket-tts` runs on a build machine, and it is pinned BY
+# CONTENT — reformatting it would break the only guarantee it carries.
 #
 # This file is what `format_code` / `lint_code` for Python discover: the packs
 # call ruff IN-PROCESS (com.blockether/ruff) and let ruff resolve the nearest
@@ -58,6 +62,15 @@ ignore = [
   "B904", "B905", "F841", "UP", "C4",
 ]
 
+# The vendored pocket-tts export layer is pinned by content: it is the tooling
+# that produced a published artifact, so a style edit here would silently change
+# what a re-export reproduces. Its shape is deliberate — imports come AFTER the
+# monkeypatches they depend on (E402/I001), and tracing wrappers keep upstream
+# signatures (B006/B905). Real breakage (E9/F6/F7/F82) still fails here.
+"scripts/pocket-tts-onnx/**/*.py" = [
+  "E402", "E701", "I001", "W291", "W293", "F401", "F541", "F841",
+  "B006", "B007", "B905", "C408",
+]
 [format]
 quote-style = "double"
 indent-style = "space"

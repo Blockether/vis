@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Export Kyutai's pocket-tts to the ONNX bundle sherpa-onnx loads — from the
-# ORIGINAL weights, so the artifact Vis publishes is Vis' own.
+# ORIGINAL weights, with tooling this repository owns, so the artifact Vis
+# publishes is Vis' own.
 #
 # WHY this exists (licence, not preference):
 #   * Kyutai publishes pocket-tts under CC BY 4.0. Commercial use and
@@ -11,18 +12,23 @@
 #     the LICENSE beside it is plain CC BY 4.0. Nobody here can resolve someone
 #     else's contradiction, so Vis does not mirror that file: it exports the
 #     weights itself and ships the result under CC BY 4.0 with attribution.
-#   * The exporter (KevinAHM/pocket-tts-onnx-export) is MIT. Its CODE is fine to
-#     run; it was only that repo's published ARTIFACT that carried terms we
-#     could not restate.
 #
-# WHY THIS REVISION, not the exporter's newest (measured, not preferred):
-#   the newest commit b25d4a7 retargets the exporter at the 2026-04 checkpoint
-#   and writes the Mimi encoder at opset 18 with latents shaped
-#   [1, frames, 1024]. sherpa-onnx reads the transposed layout this revision
-#   emits, so the newer bundle loads and runs and produces noise — Parakeet
-#   transcribed its speech as an empty string, where the bundle from this
-#   revision came back verbatim. `--check` below is that round trip; keep it
-#   green before moving the pin.
+# WHERE THE EXPORT CODE LIVES:
+#   scripts/pocket-tts-onnx/ — the ONNX export layer, MIT, vendored into this
+#   repository and pinned by content rather than fetched from a network at
+#   build time. It runs against Kyutai's OWN package (`pocket-tts` on PyPI),
+#   which is where every model module comes from; the layer only wraps those
+#   modules so torch can trace them, and quantizes what comes out. Vendored so
+#   the build pulls no code it has not pinned, the revision cannot move under a
+#   release, and the graphs are ours to fix.
+#
+# WHY THIS EXPORT AND NOT A NEWER ONE (measured, not preferred):
+#   a later revision of that layer retargets the 2026-04 checkpoint and writes
+#   the Mimi encoder at opset 18 with latents shaped [1, frames, 1024].
+#   sherpa-onnx reads the transposed layout the vendored one emits, so the newer
+#   bundle loads and runs and produces noise — Parakeet transcribed its speech
+#   as an empty string, where this bundle came back verbatim. `--check` below is
+#   that round trip; keep it green before changing anything under scripts/.
 #
 # The Hugging Face token is a BUILD-TIME credential and never reaches a user:
 # kyutai/pocket-tts is gated (auto-approve), so fetching the weights needs an
@@ -37,20 +43,20 @@
 # Then, deliberately and only when asked:
 #   gh release upload voice-assets-pack <out>/pocket-tts-int8.tar.bz2 --repo Blockether/vis
 #
-# Requires: uv, git, tar, bzip2. ~10 GB of disk and a few minutes.
+# Requires: uv, tar, bzip2. ~10 GB of disk and a few minutes.
 
 set -euo pipefail
 
-# Pinned deliberately: an export is only reproducible if the exporter is. Bump
-# this, re-export, and publish the new digest — never float the branch.
-EXPORT_REPO="https://github.com/KevinAHM/pocket-tts-onnx-export"
-EXPORT_REV="29ec97e4ed71ffd95e0e8f394638c1e2cbe825c9"
+# The model code the export traces. Pinned: an export is only reproducible if
+# the modules it wraps are. Bump this, re-export, and publish the new digest.
+POCKET_TTS_VERSION="1.0.3"
 WEIGHTS_REPO="kyutai/pocket-tts"
-VARIANT="b6369a24" # the checkpoint this revision exports: tts_b6369a24.safetensors
+VARIANT="b6369a24" # the checkpoint exported here: tts_b6369a24.safetensors
 PYTHON_VERSION="3.12"
 SHERPA_VERSION="1.13.5" # only for --check; never shipped
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exporter="${repo_root}/scripts/pocket-tts-onnx"
 out_dir="${repo_root}/dist/voice-assets"
 work_dir=""
 voices_dir=""
@@ -64,7 +70,7 @@ while [[ $# -gt 0 ]]; do
     --voices) voices_dir="$2"; shift 2 ;;
     --keep-work) keep_work=1; shift ;;
     --no-check) do_check=0; shift ;;
-    -h|--help) sed -n '2,42p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,46p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -85,7 +91,7 @@ EOF
   exit 1
 fi
 
-for tool in uv git tar; do
+for tool in uv tar; do
   command -v "$tool" >/dev/null 2>&1 || { echo "missing required tool: $tool" >&2; exit 1; }
 done
 
@@ -101,39 +107,47 @@ trap cleanup EXIT
 echo "==> work    ${work_dir}"
 echo "==> out     ${out_dir}"
 echo "==> weights ${WEIGHTS_REPO} ${VARIANT} (CC BY 4.0)"
-echo "==> export  ${EXPORT_REPO}@${EXPORT_REV} (MIT)"
-
-exporter="${work_dir}/pocket-tts-onnx-export"
-if [[ ! -d "$exporter" ]]; then
-  git clone --quiet "$EXPORT_REPO" "$exporter"
-fi
-git -C "$exporter" -c advice.detachedHead=false checkout --quiet "$EXPORT_REV"
+echo "==> export  scripts/pocket-tts-onnx (MIT) on pocket-tts ${POCKET_TTS_VERSION}"
 
 echo "==> creating the export environment (python ${PYTHON_VERSION})"
 uv venv --quiet --python "$PYTHON_VERSION" "${work_dir}/venv"
 # shellcheck disable=SC1091
 source "${work_dir}/venv/bin/activate"
-uv pip install --quiet -r "${exporter}/requirements.txt"
-# The pinned exporter's requirements.txt misses two modules its own vendored
-# pocket_tts imports at load time (utils/utils.py -> requests, utils/config.py
-# -> yaml). Named here rather than patched upstream, so the pin stays honest.
-uv pip install --quiet requests pyyaml
+# pocket-tts brings torch, beartype, safetensors and the rest of the model's own
+# dependencies; onnx/onnxruntime/onnxscript are the export and quantization side.
+# pyyaml is named because pocket_tts.utils.config imports it without declaring it.
+uv pip install --quiet "pocket-tts==${POCKET_TTS_VERSION}" onnx onnxruntime onnxscript pyyaml
 
+weights_dir="${work_dir}/weights"
+echo "==> fetching the weights"
+HF_TOKEN="$token" HUGGING_FACE_HUB_TOKEN="$token" \
+  python - "$WEIGHTS_REPO" "$VARIANT" "$weights_dir" <<'PY'
+import sys
+
+from huggingface_hub import hf_hub_download
+
+repo, variant, target = sys.argv[1], sys.argv[2], sys.argv[3]
+for name in (f"tts_{variant}.safetensors", "tokenizer.model"):
+    print("   ", hf_hub_download(repo_id=repo, filename=name, local_dir=target))
+PY
+weights="${weights_dir}/tts_${VARIANT}.safetensors"
+
+onnx_dir="${work_dir}/onnx"
+mkdir -p "$onnx_dir"
 echo "==> exporting ${VARIANT} (this is the slow part)"
-(cd "$exporter" && HF_TOKEN="$token" HUGGING_FACE_HUB_TOKEN="$token" python export.py --quantize)
-
-bundle="${exporter}/onnx"
-[[ -d "$bundle" ]] || { echo "the exporter wrote no bundle at ${bundle}" >&2; exit 1; }
+python "${exporter}/export_mimi_and_conditioner.py" --output_dir "$onnx_dir" --weights_path "$weights"
+python "${exporter}/export_flow_lm.py" --output_dir "$onnx_dir" --weights_path "$weights"
+python "${exporter}/quantize.py" --input_dir "$onnx_dir" --output_dir "$onnx_dir"
 
 # sherpa-onnx reads seven files under names of its own. Everything else the
-# exporter wrote is either a duplicate precision or runtime metadata its C++
+# export wrote is either a duplicate precision or runtime metadata its C++
 # loader does not read, and shipping it would only make the archive bigger.
 stage="${work_dir}/sherpa-onnx-pocket-tts-int8"
 rm -rf "$stage"
 mkdir -p "$stage"
 copy_as() {
-  local from="${bundle}/$1" to="${stage}/$2"
-  [[ -f "$from" ]] || { echo "the exporter did not produce $1" >&2; exit 1; }
+  local from="${onnx_dir}/$1" to="${stage}/$2"
+  [[ -f "$from" ]] || { echo "the export did not produce $1" >&2; exit 1; }
   cp "$from" "$to"
 }
 copy_as flow_lm_main_int8.onnx  lm_main.int8.onnx
@@ -146,7 +160,7 @@ copy_as text_conditioner.onnx   text_conditioner.onnx
 # the vocabulary is flattened here (the same transformation as
 # k2-fsa/sherpa-onnx scripts/pocket-tts/convert_tokenizer.py, Apache-2.0).
 echo "==> flattening the tokenizer"
-python - "${exporter}/weights/tokenizer.model" "$stage" <<'PY'
+python - "${weights_dir}/tokenizer.model" "$stage" <<'PY'
 import json
 import sys
 
@@ -226,9 +240,9 @@ Weights: https://huggingface.co/${WEIGHTS_REPO}
 Licence: Creative Commons Attribution 4.0 International (CC BY 4.0)
          https://creativecommons.org/licenses/by/4.0/
 
-This bundle is an adaptation of Kyutai's model, produced by
-${EXPORT_REPO} at ${EXPORT_REV} (MIT) and repacked for sherpa-onnx.
-It is distributed under the same CC BY 4.0 terms, with attribution to Kyutai.
+This bundle is an adaptation of Kyutai's model: their published weights,
+converted to ONNX and quantized to int8 by \`bin/export-pocket-tts\`. It is
+distributed under the same CC BY 4.0 terms, with attribution to Kyutai.
 
 Reference clips under test_wavs/, when present, carry their own licences.
 EOF
@@ -239,11 +253,11 @@ cat > "${stage}/README.md" <<EOF
 | | |
 |---|---|
 | weights | [${WEIGHTS_REPO}](https://huggingface.co/${WEIGHTS_REPO}) — CC BY 4.0, checkpoint \`${VARIANT}\` |
-| exporter | ${EXPORT_REPO} @ \`${EXPORT_REV}\` (MIT) |
+| model code | \`pocket-tts ${POCKET_TTS_VERSION}\`, Kyutai's own package |
 | exported | $(date -u +%Y-%m-%d) |
 | reproduce | \`bin/export-pocket-tts\` |
 
-Vis exports these weights itself rather than mirroring a third party's bundle;
+Vis exports these weights itself rather than mirroring a ready-made bundle;
 \`bin/export-pocket-tts\` says why in its header. Attribution belongs to Kyutai.
 EOF
 
