@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Commits are `type(scope): summary` with a body of at most six WHY lines and a mandatory `Vis-Session: vis_session_id#<uuid>` trailer
+
 ## [v0.1.38] - 2026-08-14
 
 ### Changed

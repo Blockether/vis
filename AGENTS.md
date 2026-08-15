@@ -47,6 +47,14 @@ Reproduce from the report's own steps first; if it does not reproduce, that IS t
 - Ready work is **committed and pushed to `main` in the same session without being asked again** — finished features must never be left sitting in the working tree. No scratch, notes or report files in a commit. Never pass `--no-verify`; the hooks are the gate.
 - **Push to `main` is the only automatic remote action.** Tags, releases, store submissions, force pushes and history rewrites still require an explicit request.
 
+### Commit messages
+
+One conventional line, a body only where the WHY is missing, and the session that made it — enforced by `test/com/blockether/vis/commit_convention_test.clj` for every commit after 2026-08-15T17:00Z.
+
+- **Subject** — `type(scope): imperative summary` under 72 chars, no trailing period. Type is one of `feat fix docs refactor perf test build ci chore revert`; scope is the one-word area (`gateway`, `companion`, `tui`, `cli`, `docs`, `release`).
+- **Body** — optional, at most six non-blank lines, and only the WHY: constraint, trigger, trade-off. The diff already says WHAT; never narrate it.
+- **Trailer** — always `Vis-Session: vis_session_id#<uuid>`, the marked session id (`src/com/blockether/vis/internal/header.clj`) of the work that produced the commit, so any commit traces back to its conversation.
+
 ## Toolchain: GraalVM CE 25.1.3 is locked
 
 `.graalvm-version` is the sole source of truth and carries the full rationale — read it before touching the pin. `GRAAL_PIN_LOCKED`, `GRAAL_MAX_VERSION`, `GRAAL_VERSION` stay equal at **25.1.3**; `bin/require-graalvm`, `build.clj`, the setup action and the pin test enforce it, so do not hardcode the JDK version elsewhere. **Community Edition, never Oracle GraalVM** (Truffle/SVM and the pinned jars must match) and **never 25.2.x** (native-image's points-to analysis does not converge in memory). A deliberate lift changes both keys, tag/assets/digests, `.sdkmanrc` and the `deps.edn` `org.graalvm.*` pins, and requires a green `clojure -T:build native` first. Set up with `bin/require-graalvm --install`, `sdk env` or `eval "$(bin/require-graalvm --export)"`; native builds set their own `-J-Xmx`/`-J-Xms` (~12 GiB live set), and on a constrained runner `VIS_NATIVE_EXTRA_ARGS='-J-Xmx6g -J-Xms2g' clojure -T:build native` wins. **Only `apps/vis-companion`'s Android Gradle differs: stock JDK 21, never GraalVM.**

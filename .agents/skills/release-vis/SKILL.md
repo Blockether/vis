@@ -1,6 +1,6 @@
 ---
 name: release-vis
-description: Cut a full Vis release: bump VIS_VERSION, mirror it into the companion, commit the Release vX.Y.Z bump, push main, then push the annotated vX.Y.Z tag that ships Clojars packages, the GitHub Release, the native distributions, and both app stores. Use when asked to release Vis, publish a new version, or bump the product version — the CLI/native/gateway path, not an app-only rebuild.
+description: Cut a full Vis release: bump VIS_VERSION, mirror it into the companion, commit the `chore(release): vX.Y.Z` bump, push main, then push the annotated vX.Y.Z tag that ships Clojars packages, the GitHub Release, the native distributions, and both app stores. Use when asked to release Vis, publish a new version, or bump the product version — the CLI/native/gateway path, not an app-only rebuild.
 version: "1.0.0"
 license: Apache-2.0
 compatibility: agents
@@ -46,7 +46,7 @@ For an app-only fix under the version that is already out, use
 3. **Mirror it**: `cd apps/vis-companion && npm run sync:version`. That is
    `scripts/version.mjs`; it stamps `package.json` and `package-lock.json`. Never
    hand-edit either version field, and never override a store's marketing version.
-4. **Commit exactly those three files** with subject `Release vX.Y.Z`
+4. **Commit exactly those three files** with subject `chore(release): vX.Y.Z`
    (`VIS_VERSION`, `apps/vis-companion/package.json`,
    `apps/vis-companion/package-lock.json`). Hooks stay on: never `--no-verify`.
 5. **Push main**: `git push origin main`. The tag must point at a commit that is
