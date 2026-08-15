@@ -85,7 +85,18 @@
   [h]
   (get @registry (long h)))
 
-(defn- entry [h] (flush-draws! h) (raw-entry h))
+(defn- entry
+  "The registry entry for a LIVE handle, its drawing flushed. A handle with no
+   entry was closed -- or freed once the last Python `Image` holding it became
+   unreachable -- and the Java NPE that escaped from its missing raster named
+   nothing the caller could act on."
+  [h]
+  (flush-draws! h)
+  (or (raw-entry h)
+      (throw (IllegalArgumentException.
+               (str "PIL image handle " (long h)
+                    " is not live: it was closed, or freed after the last reference"
+                    " to it was dropped")))))
 
 (defn- free-img!
   [h]

@@ -12,7 +12,7 @@
 
 
 def __vis_install_pil__():
-    import sys, types, base64, math, struct
+    import sys, types, base64, math, struct, gc, weakref
 
     def _H(name, *args):
         if _draw_queue:
@@ -20,6 +20,17 @@ def __vis_install_pil__():
         fn = globals().get(name)
         if fn is None:
             raise OSError("vis: the PIL host backend is not bound in this sandbox")
+        ok, value = _cross(fn, name, args)
+        if not ok and _out_of_memory(value) and _sweep(True):
+            # The heap an image op exhausts is mostly rasters whose Python owners
+            # are already unreachable, which the host cannot see. Freeing them and
+            # retrying ONCE beats handing the block an error it cannot act on.
+            ok, value = _cross(fn, name, args)
+        if ok:
+            return value
+        raise OSError(str(value))
+
+    def _cross(fn, name, args):
         try:
             env = fn(*args)
         except (KeyboardInterrupt, SystemExit):
@@ -32,20 +43,121 @@ def __vis_install_pil__():
             # untranslated they escape every `except Exception:` a caller writes.
             raise OSError("vis: PIL host call " + str(name) + " failed: " + str(_e))
         try:
-            ok, value = env[0], env[1]
+            return env[0], env[1]
         except (KeyboardInterrupt, SystemExit):
             raise
         except BaseException:
             raise OSError("vis: PIL host call " + str(name) + " returned no result")
-        if not ok:
-            raise OSError(str(value))
-        return value
+
+    def _out_of_memory(value):
+        text = str(value)
+        return (
+            "OutOfMemory" in text or "Java heap space" in text or "GC overhead" in text
+        )
 
     def _lst(x):
         try:
             return list(x)
         except Exception:
             return x
+
+    # -- host raster ownership -------------------------------------------------
+    # A dropped Image was NOT freed: GraalPy does not refcount, so the host raster
+    # -- a packed int[], 4 bytes per pixel, ~12 MB for one phone screenshot -- sat
+    # in the per-JVM registry for the life of the process (measured: 20 handles
+    # still live after 20 dropped `Image.new`s and a `gc.collect()`), and a loop
+    # over a directory of screenshots walked the sandbox into `Java heap space`.
+    # The handle is a plain host id, so unlike the Python object it OUTLIVES its
+    # owner: hold EVERY owner of a handle under a weak ref -- `_set` and
+    # `exif_transpose(in_place=True)` let two Images share one -- and free the
+    # raster host-side once none of them can be reached. Only a collection clears
+    # those refs, so the sweep that matters collects first; `_set` and `close`
+    # free their replaced handle without waiting for one.
+    _live = {}
+    _live_bytes = [0]
+    _new_bytes = [0]
+    _sweeping = [False]
+    _SWEEP_BYTES = 32 * 1024 * 1024
+    _COLLECT_ABOVE = 96 * 1024 * 1024
+
+    def _own(image):
+        handle = image._handle
+        slot = _live.get(handle)
+        if slot is None:
+            nbytes = max(0, int(image._w) * int(image._h) * 4)
+            _live[handle] = [nbytes, [weakref.ref(image)]]
+            _live_bytes[0] += nbytes
+            _new_bytes[0] += nbytes
+        else:
+            slot[1].append(weakref.ref(image))
+        if _new_bytes[0] >= _SWEEP_BYTES:
+            _relieve()
+
+    def _forget(handle):
+        slot = _live.pop(handle, None)
+        if slot is not None:
+            _live_bytes[0] -= slot[0]
+
+    def _free(handle):
+        _forget(handle)
+        try:
+            _H("__vis_pil_free__", handle)
+        except Exception:
+            pass  # best-effort: a dead handle must never break the block
+
+    def _disown(image, handle):
+        # True once no reachable Image holds `handle` any more: the caller frees it.
+        slot = _live.get(handle)
+        if slot is None:
+            return False
+        keep = []
+        for owner_ref in slot[1]:
+            owner = owner_ref()
+            if owner is not None and owner is not image:
+                keep.append(owner_ref)
+        if not keep:
+            return True
+        slot[1] = keep
+        return False
+
+    def _sweep(collect=False):
+        # Free every raster whose owners are all unreachable; answers how many.
+        if _sweeping[0]:
+            return 0
+        _sweeping[0] = True
+        try:
+            if collect:
+                gc.collect()
+            _new_bytes[0] = 0
+            freed = 0
+            for handle in list(_live):
+                slot = _live.get(handle)
+                if slot is None or any(r() is not None for r in slot[1]):
+                    continue
+                _free(handle)
+                freed += 1
+            return freed
+        finally:
+            _sweeping[0] = False
+
+    def _relieve():
+        # Cheap pass first -- it frees whatever a collection has already cleared.
+        # Only pay for a collection when the rasters this block is still pinning
+        # are over budget, exactly as `__vis_fd_admit__` does for descriptors.
+        _sweep(False)
+        if _live_bytes[0] >= _COLLECT_ABOVE:
+            _sweep(True)
+
+    def _reap():
+        # The runtime calls this on ITS schedule (every tool-call boundary and every
+        # block end), so what a finished block dropped does not wait for the next
+        # block to allocate. A reaper must never raise.
+        try:
+            _relieve()
+        except Exception:
+            pass
+
+    _reap.__vis_pil_reaper__ = True
 
     # -- ImageDraw batching --------------------------------------------------
     # Crossing to the host dominates a draw: marshalling ONE nested list+dict
@@ -337,6 +449,7 @@ def __vis_install_pil__():
             self._n_frames = 1
             self._delays = []
             self._exif = None
+            _own(self)
 
         @property
         def size(self):
@@ -367,22 +480,31 @@ def __vis_install_pil__():
 
         def _set(self, meta):
             m = _lst(meta)
+            previous = self._handle
             self._handle, self._w, self._h, self.mode = (
                 int(m[0]),
                 int(m[1]),
                 int(m[2]),
                 str(m[3]),
             )
+            if self._handle != previous:
+                # An in-place op (`thumbnail`, `putdata`, `putpalette`, `putalpha`,
+                # `frombytes`) REPLACES the raster: the old one is unreachable from
+                # Python the moment this returns, so free it now rather than pin it
+                # for as long as this image lives.
+                _own(self)
+                if _disown(self, previous):
+                    _free(previous)
             return self
 
         def copy(self):
             return _wrap(_H("__vis_pil_copy__", self._handle))
 
         def close(self):
-            try:
-                _H("__vis_pil_free__", self._handle)
-            except Exception:
-                pass
+            # Idempotent, and never frees a raster another Image still holds.
+            handle = self._handle
+            if _disown(self, handle):
+                _free(handle)
 
         def load(self):
             img = self
@@ -2522,6 +2644,24 @@ def __vis_install_pil__():
         _b.ImagePalette = ImagePalette
         _b.ImageTransform = ImageTransform
         _b.ImageMorph = ImageMorph
+    except Exception:
+        pass
+
+    # Reclaim dropped images on the runtime's own schedule (every tool-call
+    # boundary and every block end), not only when this block makes another one.
+    # `__vis_fd_reapers__` is a sandbox GLOBAL (`vis-python/async_runtime.py`),
+    # the same scope `_H` resolves the host bridge from -- not a builtins
+    # attribute -- so look there first.
+    try:
+        import builtins as _bi
+
+        _reapers = globals().get("__vis_fd_reapers__")
+        if not isinstance(_reapers, list):
+            _reapers = getattr(_bi, "__vis_fd_reapers__", None)
+        if isinstance(_reapers, list) and not any(
+            getattr(f, "__vis_pil_reaper__", False) for f in _reapers
+        ):
+            _reapers.append(_reap)
     except Exception:
         pass
 

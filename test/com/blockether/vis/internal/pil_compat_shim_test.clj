@@ -5,6 +5,7 @@
    the host com.blockether/imaging renderer. All image ops delegate across the
    boundary to the host `__vis_pil_*` callables, keeping the pixels on the JVM."
   (:require [clojure.repl :as repl]
+            [clojure.string :as str]
             [com.blockether.imaging :as im]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
@@ -15,6 +16,17 @@
            [org.graalvm.polyglot Context]))
 
 (defn- ev [^Context c code] (ep/->clj (.eval c "python" code)))
+
+(defn- live-raster?
+  "Does the host registry still hold this handle's raster? The registry is what
+   the Java heap actually pays for; the Python `Image` is a handle wrapper."
+  [h]
+  (contains? (deref @#'shim-pil/registry) (long h)))
+
+(defn- live-rasters
+  "How many rasters the host registry is holding right now."
+  ^long []
+  (count (deref @#'shim-pil/registry)))
 
 (defmacro with-python-context
   [& body]
@@ -745,3 +757,82 @@
                                            "q = im.quantize(colors=8, method=Image.MEDIANCUT, "
                                            "dither=Image.Dither.NONE)\n"
                                            "q.mode == 'P' and len(q.getpalette()) >= 3")))))))
+
+;; Regression, report 5075808e (the iOS screenshot session): every dropped `Image`
+;; left its host raster -- a packed int[], 4 bytes per pixel, ~12 MB for one phone
+;; screenshot -- in the per-JVM registry FOREVER. GraalPy does not refcount, so
+;; only an explicit `close()` ever freed one, and an in-place op such as
+;; `thumbnail` replaced a raster while still pinning the one it replaced. A loop
+;; over a directory of screenshots therefore ended in `OSError: Java heap space`,
+;; and `del im` + `gc.collect()` changed nothing.
+(defdescribe
+  pil-raster-lifetime-test
+  (it "frees the raster of a dropped image once nothing can reach it"
+      (with-python-context (let
+                             [handles (ev python-context
+                                          (str "from PIL import Image\n" "import gc\n"
+                                               "hs = []\n" "for _ in range(8):\n"
+                                               "    im = Image.new('RGB',(64,64))\n"
+                                               "    hs.append(im._handle)\n"
+                                               "    del im\n" "gc.collect()\n"
+                                               "__vis_run_reapers__()\n" "hs"))]
+                             (expect (= 8 (count handles)))
+                             (expect (= [] (filterv #(live-raster? %) handles))))))
+  (it "sweeps INSIDE a block, so a loop over big images cannot fill the heap"
+      ;; The reported failure exhausted the heap inside ONE block, where the
+      ;; runtime's boundary reaper never gets a turn -- so allocating an
+      ;; image is itself what sweeps. 80 dropped 4 MiB rasters are 320 MiB
+      ;; the block can never reach again.
+      (with-python-context (let
+                             [before
+                              (live-rasters)
+
+                              done
+                              (ev python-context
+                                  (str "from PIL import Image\n"
+                                       "for _ in range(80):\n"
+                                       "    im = Image.new('RGB',(1024,1024))\n"
+                                       "    del im\n" "'done'"))
+
+                              grown
+                              (- (live-rasters) before)]
+
+                             (expect (= "done" done))
+                             (expect (> 32 grown)))))
+  (it "frees the raster an in-place op replaced, without waiting for a collection"
+      (with-python-context (let
+                             [[before after]
+                              (ev python-context
+                                  (str "from PIL import Image\n"
+                                       "im = Image.new('RGB',(64,64))\n" "before = im._handle\n"
+                                       "im.thumbnail((8,8))\n" "[before, im._handle]"))]
+                             (expect (not= before after))
+                             (expect (not (live-raster? before)))
+                             (expect (live-raster? after)))))
+  (it "keeps a raster two images share until the last of them lets it go"
+      ;; `ImageOps.exif_transpose(im, in_place=True)` hands one handle to two
+      ;; Images: freeing on the first drop would leave the other reading a
+      ;; raster that is gone.
+      (with-python-context (let
+                             [shared (ev python-context
+                                         (str "from PIL import Image\n"
+                                              "a = Image.new('RGB',(16,16))\n"
+                                              "b = Image.new('RGB',(16,16))\n"
+                                              "b._set([a._handle, a._w, a._h, a.mode])\n"
+                                              "a.close()\n" "b._handle"))]
+                             (expect (live-raster? shared))
+                             (expect (= [0 0 0] (ev python-context "list(b.getpixel((0,0)))")))
+                             (ev python-context "b.close()")
+                             (expect (not (live-raster? shared)))
+                             ;; closing twice is a no-op, never a second free
+                             (expect (= "ok" (ev python-context "b.close()\n'ok'"))))))
+  (it "names a closed image instead of leaking a Java null-pointer message"
+      (with-python-context (let
+                             [msg (ev python-context
+                                      (str "from PIL import Image\n"
+                                           "im = Image.new('RGB',(4,4))\n" "im.close()\n"
+                                           "try:\n" "    im.getpixel((0,0))\n"
+                                           "    msg = 'NO ERROR'\n" "except OSError as e:\n"
+                                           "    msg = str(e)\n" "msg"))]
+                             (expect (str/includes? msg "is not live"))
+                             (expect (not (str/includes? msg "Cannot invoke")))))))
