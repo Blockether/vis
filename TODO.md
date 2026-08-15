@@ -124,7 +124,7 @@ never every global), and a test pinning the 8 queries above plus the two empty-a
 
 ## 2. `doc(name)` must state required arguments, not only the result shape
 
-**Status:** open — decision needed
+**Status:** open — decision needed, and NEXT (re-measured live t14, still real)
 **Cost observed:** ~10 iterations in `d4664dc1`; one-off repaired since.
 
 08-13 `doc("patch")` was 510 B and described the RESULT only, never the required edit keys.
@@ -136,13 +136,24 @@ Today it is 790 B and shows the call shape — but that was a hand repair of one
 - B. Generate the argument block from the verb's own schema so it cannot drift.
 - C. Leave as-is (documented convention only).
 
-**Decision:** _pending_
+**Live re-measure (t14, this sandbox, 35 tool callables):**
+- **17 of 35 pages never show a single call** — `run_tests`, `lint_code`, `format_code`, `repl*`,
+  `search*`, `struct_index`, `struct_patch`, `find`, `find_files`, `download_*`. `run_tests`' page
+  never names `language`, which the harness prompt has to teach instead.
+- **14 of 35 answer `(*a, **k)` to `inspect.signature`** — `grep`, `doc`, `apropos`, `fold_session`,
+  `lint_code`, `struct_nodes`, `struct_patch`, `monorepo`, `languages`, `repositories`, `find*`.
+- **4 are blank on BOTH doors**: `find`, `find_files`, `lint_code`, `struct_patch`.
+- The data for B already exists and nothing renders it: `vis/symbol` carries `:call`
+  (`{:pos ["path" "edits"]}`, `{:lead-opt "language" :rest :always}`) and a corpus entry already
+  has a `:call` slot (`doc_corpus.clj:16,498`) that the page never prints.
+
+**Decision:** _pending_ (B, generated from `:call`, is the only one that cannot drift)
 
 ---
 
 ## 3. Arm the context budget instead of only publishing it
 
-**Status:** open — decision needed
+**Status:** closed by the engine — verify, do not rebuild
 **Cost observed:** the single highest-leverage number in the audit.
 
 `fold_session` returns a turn to a ~57 k floor every time it fires (8 folds in one 744-iteration
@@ -156,7 +167,13 @@ for exactly this.
 - B. Inject the turn's own live number into long turns (the agent never reads it unprompted).
 - C. Both: publish the number in-band AND arm the nudge.
 
-**Decision:** _pending_
+**Runtime check (t14):** both halves already ship. `ctx_engine/over-budget-hint` (there since
+`e08f42912`, 2026-07-24) escalates at 75% / 90% of `auto_compress_above` and names `fold_session`,
+the settled boundary and the evidence to keep; `session_utilization` carries the live in-band line
+(`context 5% · saved …`) every iteration. The audit's 0 reads were a BEHAVIOUR gap, not a missing
+surface — nothing left to build here.
+
+**Decision:** C, already shipped — item closed.
 
 ---
 
@@ -232,4 +249,118 @@ different notions of how to render a `grep` result inside one session, so no anc
 
 **Ordering:** 1 is the only one that is measurably costing anything today; 2+3 are the only ones that can produce a WRONG answer. 4-10 are correctness-neutral polish.
 
-**Decision:** _pending_
+**Decision: fix all ten (t10). DONE — shipped, tested, lint clean.**
+
+| # | How it was fixed | Where |
+|---|---|---|
+| 1 | `register-source!` takes a **stamp** — a cheap 0-arity freshness token — and `entries` memoizes the whole corpus under the stamp vector, answering the IDENTICAL vector while nothing changed. Stamps: `docs/generation` (new), `discovery/generation` (new), MCP visible-servers + cached tool counts (no RPC). `docs/collect` itself is memoized on a two-stage stat pass (manifest marks, then page marks), which retired `site-cache` + `*live-reload?*`. | `doc_corpus.clj`, `docs.clj`, `discovery.clj`, `foundation/mcp/core.clj` |
+| 2 | Rescue searches only the term's own **first-letter bucket**, pre-filters on length before the DP, bails on a row that already exceeds budget, and stops at the first distance-1 hit. | `bm25.clj` `nearest` |
+| 3 | Rescue answers only a **real** correction: budget 1 under 7 chars / 2 above, same-length preferred. A query no document covers answers `[]`. | `bm25.clj` `resolve-term` |
+| 4 | A term nothing carries is **completed as a prefix** (>= 3 chars, shortest completion) before it is spell-corrected. | `bm25.clj` `complete-prefix` |
+| 5 | `terms` = tokens + a plural fold (Porter 1a subset), applied to the index AND the query; the handle stays unstemmed. | `bm25.clj` `stem` |
+| 6 | Tokenization is `Character/isLetterOrDigit` + camelCase, no regex — every script tokenizes. | `bm25.clj` `tokens` |
+| 7 | `:limit` on `rank`/`search`, served by a bounded `PriorityQueue`. `apropos` caps a described ask at **25** (the empty listing stays whole): a six-word ask used to answer ~80 of 146 documents. | `bm25.clj` `top-k`, `env_python.clj` |
+| 8 | The whole-query bonus became a **handle-subset** bonus: any document whose handle tokens are all in the resolved query scores `bonus * (handle-tokens / query-terms)`. `patch anchors` -> `patch` #1. | `bm25.clj` `add-handle-bonus!` |
+| 9 | True **LRU**: an `AtomicLong` clock per entry, evicting only the least-recently-used one at capacity. Options are part of the key. | `bm25.clj` `evict-lru!` |
+| 10 | `default-opts` is public — `:k1`, `:field-weights`, `:field-b`, `:handle-bonus` — merged into every index and part of the cache key; `doc-corpus/search` passes an opts map through. | `bm25.clj`, `doc_corpus.clj` |
+
+**Measured, same 146-document sandbox corpus / 27-document JVM corpus:**
+
+| | before | after |
+|---|---|---|
+| `dc/entries` (per `apropos`/`doc`) | 12.9 ms | **1.9 ms** |
+| `docs/collect` (also per `/docs` request) | 8.38 ms | **0.37 ms** |
+| index build (only on a real change) | 17.1 ms | **9.1 ms** |
+| rank, warm | 0.032 ms | 0.030 ms |
+| typo `pathc` | 0.164 ms | **0.023 ms** |
+| four-nonsense-word query | 4.90 ms | **0.159 ms** |
+| rows for a six-word ask | ~80 | **25** |
+
+**Verified:** `bm25_test` + `doc_corpus_test` + `docs_test` + `env_python_test` + `discovery_test` + `mcp/core_test` = **195 pass**, `lint_code` clean, `format_code` run. A real bug was found by the new tests and fixed: `evict-lru!` called `val` on a Clojure vector, so ANY cache eviction threw.
+
+
+---
+
+## Item 8 — the DATA `apropos` eats and answers (measured t11, fresh JVM over the real 146-doc dump)
+
+Engine is fine; the corpus rows and the payload are the weak part.
+
+**Input** — 146 documents from the sandbox source: 101 with text (383 KB), **45 name-only**.
+Median 449 B, but the 8 largest (skills + pages) are 250 KB = 65 % of the bytes.
+Document as the ranker sees it: `name` (w 8) / `gist` = first non-blank line (w 3) / `body` (w 1).
+
+**Output** — `{name: gist}`, rank order, cap 25. Listing 101 rows = **27 675 B**; a described ask = **4.2–9.3 KB**;
+the row actually wanted is **2.4–23 %** of it.
+
+**Retrieval quality (good, keep):** self-rank by own first line 91/101 at #1, 100/101 top-3, 101/101 top-10.
+Right answer #1 in 8 of 9 realistic asks; the miss is `take a screenshot of a website` → `impeccable` #1, `spel` #3.
+
+**Defects, all in the data:**
+
+1. **Gist is unbounded.** median 190 B, p90 519 B, max **1857 B** (`anydoc`'s row IS its whole document);
+   22 of 101 rows > 400 B. Cap at 140 chars: listing 27.7 → **12.7 KB**, per-query 7.5 → **3.1 KB**.
+   *Decision: _pending_*
+2. **13 pages ship a breadcrumb as their gist** (`Drafts · Using Vis`) while line 3 holds the real description
+   (`Isolated workspaces for speculative changes: create, apply, park, resume…`). Measured: readability win,
+   ranking-neutral, and on one query slightly WORSE (`reporting-bugs` overtakes `patch` — its description carries
+   "file"). So take it for the text, not for the ranking. *Decision: _pending_*
+3. **25 rows where 1–5 matter.** Cutting at 30 % of the top score keeps 1/3/5/5/13 rows for 5 of 6 asks
+   (168 B–4.5 KB) but fails on the all-common-words ask (26 rows, flat decay). Hard cap 8 → ~1 KB, and the answer
+   was in the top 4 in every ask measured. *Decision: _pending_*
+4. **Name-only rows survive the cause-3 fix.** A `def` in a block is callable, so the agent's own helpers
+   (`all_blocks`, `killers`, `rank_p`, …) stay documents with an EMPTY gist — ~30 of them here, and `defs()`
+   already lists them. *Decision: _pending_*
+
+**Live warning:** the running gateway predates `84b53c5d8` — its `apropos` still ANDs (`patch from_anchor …` → `{}`),
+does not spell-correct (`pathc` → `{}`), carries 198 junk globals, and its own `doc('apropos')` still says
+"terms are ANDed". On-disk source and tests are the new engine; a gateway restart picks it up.
+
+---
+
+## Item 8 — DECIDED and SHIPPED (t12): a hit is a ROW, not a gist
+
+`apropos(query)` answers `{name: {kind, gist, at, hit}}`. One decision covers all four defects: the row
+describes the MATCH, and the body is never in it because `doc(name)` answers one whole.
+
+| field | what it is | why |
+|---|---|---|
+| `kind` | closed vocabulary `tool` · `shim` · `page` · `skill` · `mcp` · `local` | what the document IS decides what to DO with it — call it or read it. Defect 4. |
+| `gist` | up to 3 bounded parts joined by ` … `: the document's OPENING (its first line, plus the line under it when the first is a breadcrumb), the MATCHED region below what the opening showed, and a fragment from DEEPER down when a strong term recurs 400+ chars later | Defects 1 + 2 at once: bounded, and a breadcrumb page finally says what it is |
+| `at` | 1-based line the matched region starts on, 0 when the opening held the match | a 70 KB skill is read from where it answers |
+| `hit` | up to 3 resolved terms, a rewrite rendered `pathc→patch` | the ranker completes prefixes and corrects typos; silent rewriting was a documented iteration sink |
+
+**Decision 1 (unbounded gist): SHIPPED.** `doc-corpus/preview` — opening 110 chars, match window 90 (lead-in 35),
+tail 60 (lead-in 12). Rows are 110–300 chars whatever the document weighs.
+
+**Decision 2 (breadcrumb pages): SHIPPED, in the PREVIEW, not the data.** An opening under 45 chars takes the next
+non-blank line with it (`Drafts · Using Vis — Isolated workspaces for speculative changes.`). Page text is
+untouched, so ranking is unchanged — which t11 measured as the safer half of the trade.
+
+**Decision 3 (25 rows): SHIPPED as 10, not 8.** Every measured ask answered inside the first four rows; 10 leaves
+slack for a query the corpus covers broadly. `apropos('')` is a LISTING and stays whole and uncapped.
+
+**Decision 4 (name-only rows): SHIPPED as `kind: "local"` + not searchable.** An undocumented callable has no text
+to answer with, and its handle (`vars`, `where`, `hits`) is a common English word that won rows off real contracts
+— `vars` ranked #2 for "run tests for one clojure var". A described ask now searches only documented entries; the
+listing still shows every callable, labelled `local`, so nothing the model can type is invisible.
+
+**Measured (146-doc dump, fresh JVM):**
+
+| ask | before `{name: gist}` cap 25 | after `{name: row}` cap 10 |
+|---|---|---|
+| how do I replace lines in a file | 7 905 B | **2 730 B** |
+| run tests for one clojure var | 7 147 B | **3 301 B** |
+| read a pdf into markdown | 9 465 B | **2 431 B** |
+| fold old steps to save context | 9 405 B | **2 846 B** |
+| search other conversations by title | 4 833 B | **2 334 B** |
+| patch from_anchor to_anchor replace edits schema | 8 837 B | **2 940 B** |
+| `apropos('')` listing, 146 rows | 28 512 B | **18 667 B** |
+
+~3× smaller *and* it carries the excerpt, the line and the matched terms. Search + preview for 10 rows: 0.92 ms
+warm (rank itself is 0.03 ms; the rest is lower-casing bodies for the windows).
+
+**Shipped in:** `src/com/blockether/vis/internal/doc_corpus.clj` (`preview`, `kinds`), `bm25.clj` (`rank` answers
+its resolved terms as metadata), `env_python.clj` (row assembly, `apropos-limit` 25 → 10, `local` filter,
+`__vis_kinds__` seeding), `foundation/mcp/core.clj` (`:kind "mcp"`), `resources/vis-docs/token-optimization.md`.
+Tests: `bm25_test` (resolved-term metadata), `doc_corpus_test` (preview: 3 parts, `at`, breadcrumb, bounds,
+correction), `env_python_test` (row shape end-to-end, `local` excluded from a described ask, listed in the listing).
