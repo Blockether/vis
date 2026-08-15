@@ -521,7 +521,12 @@
   "The corpus as the ranker's three fields, carrying the entry itself as the
    payload. The opening line is a field of its own AND part of the body: the
    ranker saturates the three together (`bm25/default-opts`), so it counts as
-   extra evidence and never as the whole of a document's score."
+   extra evidence and never as the whole of a document's score.
+
+   The field is the FIRST LINE, breadcrumb and all: a measured attempt to rank
+   the breadcrumb-plus-next-line `opening` instead lost 2 of 51 asks (MRR .898
+   → .872), because lengthening one field spends its length normalization on
+   pages while every tool's one-line description keeps its own."
   [es]
   (mapv (fn [e]
           (let [t (str (:text e))]

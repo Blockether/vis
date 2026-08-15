@@ -5364,7 +5364,8 @@
        "No map, no keys. Clipped windows say so on the last line and name the call that continues them.")
      :description
      (str
-       "Read one file's region as patch-ready `line:hash` text — the read that produces the address "
+       "SHOW the lines of one file — read, view or display any window of any text file, and the "
+       "region comes back as patch-ready `line:hash` text: the read that produces the address "
        "`patch` spends. `cat(path)`, `cat(path, start)`, `cat(path, start, end)`; `start`/`end` "
        "are line numbers or anchors, and a NEGATIVE line counts from the end (-1 is the last line), "
        "so `cat(path, -50)` is the tail 50 lines and `cat(path, -50, -30)` the window between them. "
@@ -5410,15 +5411,16 @@
      :active-fn structural-supported?
      :description
      (str
+       "WHAT A FILE DEFINES — every function, class, method, var and test defined in it, with "
+       "signature, doc gist and the line range each one occupies, for one file or a whole directory, "
+       "without reading a single body. The outline you read BEFORE opening code. "
        "ONE options map is the whole call — `struct_index({\"paths\": [\"src/foo.clj\", \"src\"]})`. "
        "`paths` (ALWAYS a list of files or directories) is REQUIRED and is the only selector; `ranges` "
        "scopes the read (shared, or per entry as `{\"path\", \"ranges\"}`) and boolean `include_occurrences` "
        "traces each definition's uses. No other key is accepted. "
        "Skeleton of supported source before bodies: imports, definitions, signatures, doc gists, and "
        "line ranges for `struct_nodes`/`struct_patch`.")
-     :params [{:name "paths" :required? true}
-              {:name "ranges"}
-              {:name "include_occurrences"}]
+     :params [{:name "paths" :required? true} {:name "ranges"} {:name "include_occurrences"}]
      :call {:pos ["options"] :rest :always}
      :before-fn (fs-access-before-fn :struct_index :file "file-read" read-arg-paths)
      :tag :observation
@@ -5436,6 +5438,9 @@
        "anchor straight to `patch`.")
      :description
      (str
+       "FIND WHERE something is — the codebase-wide search that answers `where is X`, `who calls this "
+       "function`, `which file defines this class`, `every usage of this symbol`. Scans the whole repo, "
+       "or only the paths you name. "
        "ONE options map is the whole call — `grep({\"query\": q, \"paths\": [\"src\"]})`, or that "
        "same map as kwargs; never a positional query. "
        "Literal smart-case content plus fuzzy filenames; use first when location is unknown. "
@@ -5443,15 +5448,8 @@
        "Hits come back ANCHORED, so a hit is already a `patch` argument. "
        "`include`/`exclude` globs bound which files the content sweep reads (exclude wins). "
        "`query: \"\"` lists files. Page with `offset`: line 1 names the next call when capped.")
-     :params [{:name "query"}
-              {:name "paths"}
-              {:name "include"}
-              {:name "exclude"}
-              {:name "is_regex"}
-              {:name "context"}
-              {:name "limit"}
-              {:name "offset"}
-              {:name "is_hidden"}]
+     :params [{:name "query"} {:name "paths"} {:name "include"} {:name "exclude"} {:name "is_regex"}
+              {:name "context"} {:name "limit"} {:name "offset"} {:name "is_hidden"}]
      :call {:pos ["options"] :rest :always}
      :before-fn (fs-access-before-fn :grep :dir "file-read" find-arg-paths)
      :tag :observation
@@ -5893,6 +5891,9 @@
      :active-fn structural-supported?
      :description
      (str
+       "RENAME, replace, move, delete or add a DEFINITION BY NAME — the syntax-aware edit of code: "
+       "rename an identifier throughout a file, swap a function body, insert a new definition, write "
+       "or update a docstring. "
        "Structurally edit supported code: definition by NAME (`target`) or node by "
        "`at`/`line`. Renames, docs, moves, `append_child`. Writes re-parse: code that will not parse "
        "is REFUSED; a delimiter you OMITTED is put back where the code this call replaced had it, the line "
@@ -5903,13 +5904,8 @@
        "`struct_patch({\"path\": p, \"op\": \"replace\", \"target\": \"my-fn\", \"code\": src})`; "
        "`path` is REQUIRED and a locator says WHERE — `target` names a definition, `at`/`line` a node; "
        "`op` defaults to `replace`. In an `edits` batch the top-level keys are every entry's defaults.")
-     :params [{:name "path" :required? true}
-              {:name "op"}
-              {:name "target"}
-              {:name "code"}
-              {:name "at"}
-              {:name "nav"}
-              {:name "line"}
+     :params [{:name "path" :required? true} {:name "op"} {:name "target"} {:name "code"}
+              {:name "at"} {:name "nav"} {:name "line"}
               {:name "kind" :note "disambiguates same-named defs"}
               {:name "match" :note "the sub-expression replace_node swaps"}
               {:name "anchor" :note "the def move_before/move_after lands beside"}
@@ -6110,15 +6106,14 @@
        "Misses add `error`/`reason`; other fields nil.")
      :active-fn structural-supported?
      :description
-     (str "ONE options map is the whole call — `struct_nodes({\"path\": p, \"line\": n})` or "
-          "`struct_nodes({\"nodes\": [...]})`; never a positional path. "
-          "Read nested tree-sitter node SOURCE and navigate when a named definition is too coarse. "
-          "`path` (or a `nodes` list) is REQUIRED; `at`/`nav`/`line` place the cursor.")
-     :params [{:name "path" :required? true :note "or one per `nodes` entry"}
-              {:name "nodes"}
-              {:name "line"}
-              {:name "at"}
-              {:name "nav"}]
+     (str
+       "READ THE SOURCE of a function body or any nested expression, verbatim — the code itself, "
+       "when a whole named definition is too coarse. `struct_index` names the line; this reads it. "
+       "ONE options map is the whole call — `struct_nodes({\"path\": p, \"line\": n})` or "
+       "`struct_nodes({\"nodes\": [...]})`; never a positional path. "
+       "`path` (or a `nodes` list) is REQUIRED; `at`/`nav`/`line` place the cursor.")
+     :params [{:name "path" :required? true :note "or one per `nodes` entry"} {:name "nodes"}
+              {:name "line"} {:name "at"} {:name "nav"}]
      :call {:pos ["options"] :rest :always}
      :before-fn (fs-access-before-fn :struct_nodes :file "file-read" nodes-arg-paths)
      :tag :observation

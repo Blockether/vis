@@ -125,13 +125,36 @@
 (defdescribe
   stemming-test
   "`run tests` and `run test` shared no document, so one query word's plural
-   decided whether the tool page was found at all."
+   decided whether the tool page was found at all — and `formatting the source
+   code` shared none with a page that says `format`, until the fold covered
+   TENSE as well as number."
   (it "answers the same document for a plural and a singular ask"
       (let
         [ds [(doc* "run_tests" "Run the test suite." "Select tests by paths only.")
              (doc* "shell" "Run a program." "Start a process and read its logs.")]]
         (expect (= "run_tests" (:name (first (bm25/search ds "run tests")))))
         (expect (= "run_tests" (:name (first (bm25/search ds "run test")))))))
+  ;; A gerund or a past tense shared no term with a page written in the present:
+  ;; `formatting the source code` and `format_code` had nothing in common, and 10
+  ;; of 14 such asks answered the wrong tool.
+  (it "answers the same document for a gerund, a past tense and a plain ask"
+      (let
+        [ds
+         [(doc* "format_code" "Format source code." "Formats a file or a whole project in place.")
+          (doc* "list_sessions" "List past sessions." "Lists every session, newest first.")]]
+        (expect (= "format_code" (:name (first (bm25/search ds "formatting the source code")))))
+        (expect (= "format_code" (:name (first (bm25/search ds "formatted a file")))))
+        (expect (= "list_sessions" (:name (first (bm25/search ds "listing my past sessions")))))))
+  (it "folds a tense onto ONE term, index and query alike"
+      (expect (= ["defin"] (vec (bm25/terms "define"))))
+      (expect (= ["defin"] (vec (bm25/terms "defines"))))
+      (expect (= ["defin"] (vec (bm25/terms "defined"))))
+      (expect (= ["run"] (vec (bm25/terms "running"))))
+      (expect (= ["use"] (vec (bm25/terms "used")))))
+  (it "never cuts a technical word down to a vowel-less stump"
+      (expect (= ["string"] (vec (bm25/terms "string"))))
+      (expect (= ["bring"] (vec (bm25/terms "bring"))))
+      (expect (= ["read"] (vec (bm25/terms "read")))))
   (it "folds the plural of a handle, never the handle itself"
       (expect (= ["run" "test"] (vec (bm25/terms "run tests"))))
       (expect (= "run_tests" (bm25/normalized-handle "run_tests")))))
