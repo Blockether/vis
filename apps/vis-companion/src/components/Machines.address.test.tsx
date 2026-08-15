@@ -82,17 +82,20 @@ const rowsOf = (menu: ReturnType<typeof within>) =>
   menu.getAllByRole('menuitem').map((item: HTMLElement) => (item.textContent ?? '').trim());
 
 describe('binding a machine to one of its addresses', () => {
-  it('makes the address line itself the control, and only where there is a choice', () => {
+  it('offers the address as the row\'s own verb, and only where there is a choice', () => {
     fleet();
 
-    // The line that SHOWS the binding is the line that changes it — no second list,
-    // and no verb standing in the row's trailing cell.
-    const line = screen.getByRole('button', { name: 'Bind tower to a different address' });
-    expect(line.textContent).toContain(LAN);
+    // Regression, user report ("what for I need this bottom row? for changing address
+    // we should have the address icon after swipe"): every machine row carried a
+    // SECOND line under it repeating the address the row's own name already said,
+    // with a chevron on it. The route is a verb in the row's slide now.
+    const verb = screen.getByRole('button', { name: 'Bind tower to a different address' });
+    expect(verb.textContent).toContain('Address');
+    expect(screen.queryByText(LAN)).toBeNull();
 
-    // One address and no pin is simply "the address": the line stays text.
+    // One address and no pin is simply "the address": no verb at all.
     expect(screen.queryByRole('button', { name: /^Bind nas/ })).toBeNull();
-    expect(screen.getByText(nas.url)).toBeTruthy();
+    expect(screen.queryByText(nas.url)).toBeNull();
   });
 
   it('offers every address this device knows, most durable first', async () => {
@@ -134,11 +137,10 @@ describe('binding a machine to one of its addresses', () => {
     cleanup();
 
     const bound = fleet([{ ...tower, pinned: true }]);
-    // A pinned machine says so on its own line, and the last row of its menu is the
-    // way back to letting this device follow the durability order.
-    expect(
-      screen.getByRole('button', { name: 'Bind tower to a different address' }).textContent,
-    ).toContain('Pinned');
+    // A pinned machine says so on its own row, beside `Primary` and `Current`, and
+    // the last row of its menu is the way back to letting this device follow the
+    // durability order.
+    expect(screen.getByText('Pinned')).toBeTruthy();
     const pinned = await openAddresses('tower');
     expect(rowsOf(pinned.menu).at(-1)).toBe(
       'AutomaticFollow the most durable address that answers',

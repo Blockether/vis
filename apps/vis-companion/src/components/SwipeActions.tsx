@@ -26,7 +26,12 @@ export interface SwipeAction {
    * it becomes the background and takes its own foreground.
    */
   tone?: 'neutral' | 'accent' | 'danger';
-  onSelect: () => void;
+  /**
+   * Run the verb. The cell that was pressed comes with it, so a verb that opens a
+   * menu can hang it under the thing the thumb actually touched — the row's own
+   * strip is gone by the time the menu paints.
+   */
+  onSelect: (anchor: HTMLElement) => void;
 }
 
 /**
@@ -224,9 +229,10 @@ export function SwipeActions({
                   ? 'border-accent/40 bg-accent/15 text-accent-ink hover:bg-accent hover:text-accent-foreground'
                   : 'border-dialog-edge bg-panel-2 text-accent-ink hover:bg-hover'
             }`}
-            onClick={() => {
+            onClick={(event) => {
+              const anchor = event.currentTarget;
               close();
-              action.onSelect();
+              action.onSelect(anchor);
             }}
           >
             <span aria-hidden="true">{action.icon}</span>

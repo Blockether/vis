@@ -326,6 +326,17 @@ export function SortIcon({
 }
 
 /**
+ * WHERE a machine answers: a globe, because the choice this opens is a ROUTE —
+ * tailnet, LAN or loopback — and not a name or a rank.
+ */
+export function AddressIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <path d="M12 4a8 8 0 1 0 0 16a8 8 0 1 0 0 -16M4 12h16M12 4c2.2 2.2 3.2 5 3.2 8s-1 5.8 -3.2 8c-2.2 -2.2 -3.2 -5 -3.2 -8s1 -5.8 3.2 -8" />
+    </Icon>
+  );
+}
+/**
  * A project: a folder, drawn with the same flat corners as the rest of this set
  * rather than the rounded folder every icon set ships. A project in this app IS a
  * directory on a machine, so the shape is not decoration — it is the one mark that

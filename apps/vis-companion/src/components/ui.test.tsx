@@ -2817,14 +2817,14 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(settingsSource).not.toContain("Automatic: this device prefers");
     expect(settingsSource).not.toContain("Pinned: this device always uses");
 
-    // The address a machine is bound to stands under its name, and that line IS the
-    // control that changes it — the app's one row, opening the app's one menu.
+    // The route a machine takes is asked for in the row's own slide, beside its other
+    // verbs — the app's one strip, opening the app's one menu.
     expect(machinesSource).toContain("Bind ${name} to a different address");
     expect(machinesSource).toContain("<AddressMenu");
     expect(machinesSource).toContain("<MenuItem");
-    // Only where there is a choice: one address is a line of text, not a control
-    // that opens a menu with one row in it.
-    expect(machinesSource).toContain("bindable ? (");
+    expect(machinesSource).toContain("<AddressIcon");
+    // Only where there is a choice: one address and no pin carries no verb at all.
+    expect(machinesSource).toContain("if (bindable)");
     // And no paragraph came back with it: what makes an address durable is said in
     // the menu, on the row it belongs to.
     expect(machinesSource).not.toContain("description=");

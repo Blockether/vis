@@ -15,7 +15,7 @@ import { onWake } from '../lib/wake';
 import { warm } from '../lib/warm';
 import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
 import { Banner, Button, ConfirmRow, Input, ListRow, Spinner } from './ui';
-import { ChevronIcon, PencilIcon, SortIcon, StarIcon, TrashIcon } from './icons';
+import { AddressIcon, ChevronIcon, PencilIcon, SortIcon, StarIcon, TrashIcon } from './icons';
 import { SwipeActions, type SwipeAction } from './SwipeActions';
 import { MENU_WIDTH, Menu, MenuHeading, MenuItem } from './Menu';
 
@@ -286,8 +286,8 @@ function addressesOf(conn: GatewayConn): string[] {
 
 /**
  * Is there anything to choose between? One address and no pin is simply "the
- * address", and a dropdown holding a single row is noise, so that row's second
- * line stays plain text.
+ * address", and a dropdown holding a single row is noise, so that machine's row
+ * carries no `Address` verb at all.
  */
 function canBind(conn: GatewayConn): boolean {
   return addressesOf(conn).length > 1 || Boolean(conn.pinned);
@@ -379,7 +379,7 @@ function ReachDot({ state }: { state: AddressReach }) {
 }
 
 /**
- * THE DROPDOWN THE ADDRESS LINE OPENS: every address this device knows for one
+ * THE DROPDOWN THE ROW'S `Address` VERB OPENS: every address this device knows for one
  * machine, the reach that makes each of them durable, which one is in use, which
  * one is not answering — and, while a choice is pinned, the way back to letting
  * this device pick.
@@ -453,6 +453,14 @@ function AddressMenu({
  * with nothing standing beside it. Rename still edits IN the row and Forget still
  * asks IN it, so neither verb opens a surface over the list it acts on.
  *
+ * A ROW IS ONE LINE. The address had a second line under it — the URL, its
+ * failure reason, `Pinned`, and a chevron that opened the address dropdown — and
+ * it repeated the name above it, because an unnamed machine already wears its
+ * own host. Where a route can be CHOSEN, that choice is now the row's `Address`
+ * verb in the same slide the other verbs live in; the pin is a mark beside
+ * `Primary` and `Current`, and why a machine is not answering rides the verdict
+ * cell it belongs to.
+ *
  * A verb exists here only when its handler does, so `ConnectScreen`'s list —
  * where a row is a place to GO, not a thing to manage — stays exactly as it was.
  */
@@ -486,7 +494,7 @@ export function MachineRows({
   /**
    * Bind this machine to one of the addresses it answers on. Present only where a
    * machine can be MANAGED, so `ConnectScreen`'s list — where a row is a place to
-   * go — keeps its address as plain text.
+   * go — carries no `Address` verb.
    */
   onSelectAddress?: (conn: GatewayConn, url: string, pinned: boolean) => void | Promise<void>;
 }) {
@@ -528,7 +536,7 @@ export function MachineRows({
     if (next !== (conn.label ?? undefined)) void onRename?.(conn, next);
   }
 
-  /** Hang this machine's addresses under the line the press came from. */
+  /** Hang this machine's addresses under the cell the press came from. */
   function openAddresses(conn: GatewayConn, anchor: HTMLElement) {
     const at = menuPosition(anchor.getBoundingClientRect(), MENU_WIDTH);
     if (at) setBinding({ url: conn.url, at });
@@ -589,6 +597,8 @@ export function MachineRows({
         // `ConnectScreen`'s list carries none and never slides; the rank verb is
         // missing from the machine that already holds the rank.
         const isReading = conn.url === selectedUrl;
+        // Is there a route to CHOOSE? One address and no pin is simply "the address".
+        const bindable = Boolean(onSelectAddress) && canBind(conn);
         const actions: SwipeAction[] = [];
         if (onMakePrimary && conn.url !== primaryUrl)
           actions.push({
@@ -609,6 +619,14 @@ export function MachineRows({
             icon: <PencilIcon className="size-4" />,
             onSelect: () => startRename(conn),
           });
+        if (bindable)
+          actions.push({
+            key: 'address',
+            label: 'Address',
+            name: `Bind ${name} to a different address`,
+            icon: <AddressIcon className="size-4" />,
+            onSelect: (anchor) => openAddresses(conn, anchor),
+          });
         if (onForget)
           actions.push({
             key: 'forget',
@@ -619,28 +637,10 @@ export function MachineRows({
             onSelect: () => setForgetting(conn.url),
           });
 
-        // A ROW IS TWO LINES, and the second one is the BINDING: the address this
-        // device talks to, why it is not answering when it is not, and — while there
-        // is more than one route to choose from — the control that changes it.
-        const bindable = Boolean(onSelectAddress) && canBind(conn);
-        const addressLine = (
-          <>
-            <span className="block truncate font-mono text-chip text-dialog-hint">{conn.url}</span>
-            {hv.why && hv.state !== 'online' && (
-              <span className="min-w-0 truncate font-mono text-chip text-dialog-hint">{hv.why}</span>
-            )}
-            {conn.pinned && (
-              <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
-                Pinned
-              </span>
-            )}
-          </>
-        );
-
         return (
           <SwipeActions key={conn.url} label={name} actions={actions}>
-            {/* The selected paper belongs to the WHOLE row, both lines of it: the
-                machine being read is one slab, not a lit name over an unlit address. */}
+            {/* The selected paper belongs to the whole row: the machine being read
+                is one slab. */}
             <div className={`min-w-0 ${isReading ? 'bg-panel-2' : ''}`}>
               <ListRow
                 isSelected={isReading}
@@ -668,8 +668,16 @@ export function MachineRows({
                       Current
                     </span>
                   )}
+                  {conn.pinned && (
+                    <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
+                      Pinned
+                    </span>
+                  )}
                 </span>
-                <span className={`shrink-0 font-mono text-chip font-bold uppercase tracking-wider ${hv.textClass}`}>
+                <span
+                  className={`shrink-0 font-mono text-chip font-bold uppercase tracking-wider ${hv.textClass}`}
+                  title={hv.why ?? hv.label}
+                >
                   {hv.state === 'online'
                     ? (hv.ms != null ? `${hv.ms}ms` : '')
                     : hv.label}
@@ -684,20 +692,6 @@ export function MachineRows({
                 )}
                 {actionLabel && <ChevronIcon className="size-3 text-dialog-hint" aria-hidden />}
               </ListRow>
-              {bindable ? (
-                <ListRow
-                  aria-label={`Bind ${name} to a different address`}
-                  className="gap-2"
-                  onClick={(event) => openAddresses(conn, event.currentTarget)}
-                >
-                  {addressLine}
-                  <ChevronIcon className="size-3 shrink-0 text-dialog-hint" aria-hidden />
-                </ListRow>
-              ) : (
-                <div className="flex min-h-12 min-w-0 items-center gap-2 px-3 py-2">
-                  {addressLine}
-                </div>
-              )}
             </div>
           </SwipeActions>
         );
