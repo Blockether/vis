@@ -2717,8 +2717,17 @@
              (get-in (match-by-path router "/v1/speech/voices") [:data :post :handler])))
       (is (= @(rv 'speech-voice-handler)
              (get-in (match-by-path router "/v1/speech/voices/mine") [:data :delete :handler]))))
+    (testing "and which model each direction uses is a fact about the machine too"
+      ;; A gateway with no session open still has to answer "is the model here yet" - the
+      ;; settings screen asks before any conversation exists.
+      (is (= @(rv 'voice-model-handler)
+             (get-in (match-by-path router "/v1/voice/model") [:data :get :handler])))
+      (is (= @(rv 'speech-model-handler)
+             (get-in (match-by-path router "/v1/speech/model") [:data :get :handler]))))
     (testing "and nothing serves them under a session"
-      (is (nil? (match-by-path router (str "/v1/sessions/" (random-uuid) "/speech/voices")))))))
+      (is (nil? (match-by-path router (str "/v1/sessions/" (random-uuid) "/speech/voices"))))
+      (is (nil? (match-by-path router (str "/v1/sessions/" (random-uuid) "/voice/model"))))
+      (is (nil? (match-by-path router (str "/v1/sessions/" (random-uuid) "/speech/model")))))))
 
 (deftest neither-speaking-nor-listening-is-required-to-run-vis
   ;; Vis is an agent that CAN speak, not one that needs to. Speech and transcription are
@@ -2737,8 +2746,7 @@
         :query-params {"name" "Mine"}
         :body (java.io.ByteArrayInputStream. (byte-array 0))}]
       ['speech-voice-handler {:request-method :delete :path-params {:voice-id "mine"}}]
-      ['speech-model-handler {:request-method :get :path-params {:sid sid}}]
-      ['voice-model-handler {:request-method :get :path-params {:sid sid}}]
+      ['speech-model-handler {:request-method :get}] ['voice-model-handler {:request-method :get}]
       ['speech-handler
        (merge {:request-method :post :path-params {:sid sid}} (json-body {:text "hello"}))]]]
 
@@ -2767,4 +2775,20 @@
                       (is (= 501 (:status response)) (str handler))
                       (is (str/includes? (get (wire/parse-json (:body response)) "error")
                                          "engine is registered")
-                          (str handler)))))))))))))
+                          (str handler)))))
+                (testing "and a builtin engine that FAILED to load is named, not hidden"
+                  ;; "None is registered" is a fact about the process; "the runtime could not be
+                  ;; linked" is something a human can act on. A build that CARRIES an engine
+                  ;; which failed is not the same machine as one that carries none.
+                  (with-redefs-fn {#'voice/builtin-load-failures
+                                   (constantly {"com.example.engine"
+                                                "libsherpa-onnx-jni.dylib is not on this machine"})}
+                    (fn []
+                      (let
+                        [body (wire/parse-json (:body ((rv 'voice-model-handler)
+                                                        {:request-method :get})))]
+                        (is (= ["libsherpa-onnx-jni.dylib is not on this machine"]
+                               (get body "reasons")))
+                        (is (str/includes?
+                              (get body "error")
+                              "libsherpa-onnx-jni.dylib is not on this machine"))))))))))))))

@@ -10,7 +10,8 @@
    `{:id :label :synthesize :voices :model-state :start-download}` and needs to
    know neither fact. pocket-tts declares two more, because a voice it can speak
    in is a RECORDING: importing one is the same act on every surface."
-  (:require [com.blockether.vis.ext.foundation-voice.tts :as tts]
+  (:require [com.blockether.vis.ext.foundation-voice.sherpa :as sherpa]
+            [com.blockether.vis.ext.foundation-voice.tts :as tts]
             [com.blockether.vis.ext.foundation-voice.voices :as voices]
             [com.blockether.vis.internal.voice :as voice]))
 
@@ -28,14 +29,16 @@
   (voice/register-engine! :synthesize
                           {:id piper-engine-id
                            :label "Piper (local)"
-                           :synthesize #(tts/synthesize! :piper %)
+                           :synthesize #(sherpa/call-native (fn []
+                                                              (tts/synthesize! :piper %)))
                            :voices tts/piper-voices
                            :model-state #(tts/model-state :piper)
                            :start-download #(tts/start-download! :piper)})
   (voice/register-engine! :synthesize
                           {:id pocket-engine-id
                            :label "Pocket TTS (local)"
-                           :synthesize #(tts/synthesize! :pocket-tts %)
+                           :synthesize #(sherpa/call-native (fn []
+                                                              (tts/synthesize! :pocket-tts %)))
                            :voices tts/pocket-voices
                            ;; A pocket voice IS a reference clip, so this engine
                            ;; can learn one from any recording somebody has.

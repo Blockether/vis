@@ -476,10 +476,64 @@ per-voice reading. Without this phase the catalogue is three voices in two accen
 
 ---
 
+## Phase 8 — Nothing that needs a restart: say what is wrong, and prove both directions in the shipped binary
+
+**Rationale.** A user reported that `C-x v` and the app's microphone kept failing *after* the ASR model was
+installed, and that the only cure anyone found was restarting Vis. Three causes, all of them "the process
+remembers a failure forever": `internal/voice.clj` loaded its builtin engines behind a one-shot latch that was
+set BEFORE any registration ran and swallowed the throw, so one transient failure left the process with no
+engine at all; `engine.clj` threw on the ASR model's `:failed` state, which is sticky until a new download
+starts, so every later recording repeated a stale message; and `input.clj` left `:recorder` set when
+`recorder/start!` or `stop!` threw, so the next attempt said "already running". Nothing on any screen said
+which half was broken, whether a download had died, or that an engine had failed to load — so the only move
+left was a restart.
+
+The shipped binary had a fourth cause of its own, and no JVM test can see it: sherpa-onnx reaches its own Java
+API through JNI BY NAME — `GetFieldID("model")` on a config, `FindClass("com/k2fsa/sherpa/onnx/WaveData")` for a
+decoded recording — and native-image keeps no name it cannot see used. `target/vis` therefore compiled, linked,
+listed its voices, and then failed at the first spoken or transcribed word with "Failed to get field ID for
+'model'". No restart could cure that one; only a rebuilt image could.
+
+**Data.** None new. The 501 body gains `:reasons` (what failed to load, by namespace), and the two model
+routes move off the session to `/v1/voice/model` and `/v1/speech/model`, where the voices already are.
+
+**Acceptance criteria.**
+- DONE. A builtin engine that fails to load is TRIED AGAIN on the next resolve, and only `:registered` and
+  `:absent` are remembered; `voice/builtin-load-failures` names what failed, and "no … engine is registered"
+  carries those reasons in its message and in `ex-data`.
+- DONE. `await-model!` retries one download after a `:failed` state instead of throwing at it, and
+  `sherpa/call-native` turns a native failure into `:voice/native-unavailable` with a `:remediation` — the one
+  case where restarting Vis IS the answer says so, because a JNI class whose static init failed can never load
+  again in that JVM.
+- DONE. The TUI clears its recorder state on any throw from `start!`/`stop!`, so a failed recording never
+  blocks the next one, and the notice carries the remediation.
+- DONE. `SettingsScreen.tsx` — a **Speech engines** band reports both directions: state word, download
+  percent, engine id, the reasons a 501 carries, a failure banner, and one button that retries. It polls
+  itself only while bytes are moving, and renders nothing on a machine that carries no voice engine and has
+  nothing to report.
+- DONE. `test-native/com/blockether/vis/native_binary_test.clj` proves BOTH directions in the linked image:
+  the binary speaks a sentence to a WAV, reads its own recording back with Parakeet and must hear it, speaks
+  again through the pocket-tts export Vis publishes, and lists its voices — the JNI, the ONNX Runtime natives
+  and the model resources are exercised where only a native image can fail.
+- DONE. The extension's `reachability-metadata.json` hands the JNI EVERY type of sherpa's API jar, and
+  `sherpa_test.clj` compares that file with the jar it ships against — so a version bump cannot silently drop a
+  type and leave an image that links but cannot speak.
+- Test that proves it done: `voice_test.clj` (a builtin that failed to load is tried again; "no engine" names
+  which kind of nothing it is), `server_test.clj` (the 501 `:reasons` block, both model routes machine-level),
+  the extension's `sherpa_test.clj` / `engine_test.clj` / `input_test.clj`, and in the app
+  `SettingsScreen.voiceEngines.test.tsx` plus the `gateway.test.ts` cases for the session-less routes and the
+  sentence a refusal carries.
+
+**Unknowns.** None left. The native suite is a separate alias by design (`clojure -M:test-native`), so the
+round trip costs a twenty-minute build only when someone asks for one.
+
+---
+
 ## State of the plan
 
 **ACCEPTED** — Phases 1, 2, 3, 4 and 5 have landed. The pack carries only what Vis makes or may mirror, espeak-ng
-belongs to the system, and the credits are a render of the manifest. Phase 6 is next.
+belongs to the system, the credits are a render of the manifest, the app chooses where a reply is spoken, and
+voice recovers from its own failures instead of asking for a restart. Phase 7 is the only one left.
 
 **Phase 1 — DONE**, `f99eaee39`, refined by the commit that carries this line.
 `vis-foundation-voice` resolves `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm v1.13.5` from
@@ -683,12 +737,28 @@ untouched, capabilities say `voice.enabled false` and `speech.is_enabled false`,
 transcription, synthesis and all three voice routes — answers 501 with the reason instead of failing. Vis is an agent
 that CAN speak, not one that needs to.
 
-Phase 6 makes that reachable from the app. `speech.ts` is now a router: `off` is silence, `device`
+**Phase 6 — DONE**, `13e72b9a5`. It makes that reachable from the app. `speech.ts` is now a router: `off` is silence, `device`
 is the phone's own engine, `gateway` sends the line to the machine that answered and plays what
 comes back — and a machine that cannot speak right now costs the reader nothing, because the device
 says it instead and the composer says why once. The choice is the device's (it owns the speaker),
 the machine's voice is picked in that machine's Voices band, and Android's generated plugin can
 finally enumerate and select voices instead of speaking in one.
+
+**Phase 8 — DONE**, the commit that carries this line. The report was "voice fails after the model is
+installed, and only restarting Vis fixes it", and it was three separate memories of one failure: a one-shot
+latch that made a single load error permanent for the process, a sticky `:failed` download state that every
+later recording re-threw, and a recorder handle the TUI never cleared when starting or stopping it threw. All
+three now recover by themselves, and the one failure that genuinely needs a restart — a JNI class whose static
+init already failed, which can never load again in that JVM — SAYS so. What could not be seen can be: the 501
+carries the reasons an engine failed to load, the model routes hang off the machine beside the voices, and a
+**Speech engines** band reports both directions with their download percent, their engine id, the reason for a
+failure and one button that retries it. Proven in the linked binary, not only on the JVM: `clojure
+-M:test-native` has `target/vis` speak a sentence to a WAV, read its own recording back with Parakeet word for
+word, speak again through the pocket-tts export, and list its voices. That suite paid for itself on its first
+run: the binary could do none of it. sherpa reaches its own Java API through JNI by name, native-image had kept
+none of those names, and every image built before this commit answered "Failed to get field ID for 'model'" the
+moment it was asked to speak — while the JVM, where every other test runs, was fine. The extension now hands the
+JNI sherpa's whole API through `reachability-metadata.json`, and a test compares that file with the jar itself.
 
 And the credits are not prose. `THIRD_PARTY_MODELS.md` at the repository root is `manifest.edn` rendered by
 `attribution/markdown`: one summary table, then a section per entry with its licence, attribution, notice, voices, install

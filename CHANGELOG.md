@@ -10,9 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - Credit every model the voice extension can install in `THIRD_PARTY_MODELS.md`, generated from the manifest
 - Choose where a reply is spoken — off, this device, or the machine that answered — and in which voice, with the phone falling back to its own voice when the machine cannot speak
+- Settings reports whether this machine can listen and speak: how far a model download has got, which engine is answering, why one is missing, and one button that retries
+- `vis-agent extension voice say "<text>"` and `vis-agent extension voice transcribe <clip.wav>` — the two one-line checks that a machine's voice works
 
 ### Changed
 - Commits are `type(scope): summary` with a body of at most six WHY lines and a mandatory `Vis-Session: vis_session_id#<uuid>` trailer
+- `/v1/voice/model` and `/v1/speech/model` hang off the machine, beside its voices, instead of off a session
+
+### Fixed
+- Voice no longer needs Vis restarted to work again: an engine that failed to load is tried on the next use, a failed model download can be retried, and a recording that threw never blocks the next one
+- The installed binary can speak and listen at all — sherpa reads its own Java API through JNI by name, and the native image now keeps every one of those names instead of failing at the first word
 
 ## [v0.1.38] - 2026-08-14
 

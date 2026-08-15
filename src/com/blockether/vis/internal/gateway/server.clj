@@ -2686,8 +2686,17 @@
                        {:status "unavailable"
                         :error (str "unknown " noun " engine: " (name id))
                         :engines (mapv voice/public-engine (voice/engines direction))})
-        (json-response 501
-                       {:status "unavailable" :error (str "no " noun " engine is registered")})))))
+        ;; A build that carries an engine which FAILED to load is not the same
+        ;; machine as one that carries none, and a human can only act on the
+        ;; difference if the answer says which it is.
+        (let [reasons (vec (vals (voice/builtin-load-failures)))]
+          (json-response
+            501
+            (cond-> {:status "unavailable" :error (str "no " noun " engine is registered")}
+              (seq reasons)
+              (assoc :error
+                (str "no " noun " engine is registered - " (str/join "; " reasons)) :reasons
+                reasons))))))))
 
 (defn- with-direction-engine
   "[[with-engine]] for the routes whose work belongs to a SESSION: 404 first when nobody
@@ -3018,22 +3027,25 @@
                 (= "WAVE" (String. head 8 4 "US-ASCII")))))))
 
 (defn- model-handler
-  "GET  /v1/sessions/:sid/{voice,speech}/model — the selected engine's readiness (clients
-         poll this before recording, or before asking for a spoken reply).
+  "GET  /v1/{voice,speech}/model — the selected engine's readiness (clients poll this
+         before recording, or before asking for a spoken reply).
    POST the same path — ask the engine to prepare itself (a local model starts
          downloading; idempotent, returns immediately).
    JSON: {:status \"ready|downloading|failed|absent|unavailable\" :progress 0..100?
-   :error \"…\" :engine \"…\"}. An engine that needs no preparation is simply ready."
+   :error \"…\" :engine \"…\"}. An engine that needs no preparation is simply ready.
+
+   Session-less, like `/speech/voices`: whether a model is on disk is a fact about the
+   MACHINE, so a settings screen with no conversation open can still show it and start
+   the download."
   [direction request]
-  (with-direction-engine direction
-                         request
-                         (fn [_sid engine]
-                           (json-response 200
-                                          (assoc (voice-state->json
-                                                   (if (= :post (:request-method request))
-                                                     (voice/prepare! engine)
-                                                     (voice/readiness engine)))
-                                            :engine (name (:id engine)))))))
+  (with-engine direction
+               request
+               (fn [engine]
+                 (json-response 200
+                                (assoc (voice-state->json (if (= :post (:request-method request))
+                                                            (voice/prepare! engine)
+                                                            (voice/readiness engine)))
+                                  :engine (name (:id engine)))))))
 
 (defn- voice-model-handler [request] (model-handler :transcribe request))
 
@@ -3728,6 +3740,11 @@
         ["/providers/:provider-id/logout" {:post provider-logout-handler}]
         ["/speech/voices" {:get speech-voices-handler :post speech-voices-handler}]
         ["/speech/voices/:voice-id" {:delete speech-voice-handler}]
+        ;; Whether a model is on disk is a fact about the MACHINE, not about a
+        ;; conversation, so a settings screen with nothing open can read it and
+        ;; start the download.
+        ["/voice/model" {:get voice-model-handler :post voice-model-handler}]
+        ["/speech/model" {:get speech-model-handler :post speech-model-handler}]
         ["/router" {:get router-handler :patch router-default-handler}]
         ["/clients" {:post client-register-handler}]
         ["/clients/:cid" {:delete client-release-handler}] ["/admin/status" {:get status-handler}]
@@ -3748,11 +3765,9 @@
         [(sid-route "/human-input/:request-id/actions/submit") {:post submit-human-input-handler}]
         [(sid-route "/human-input/:request-id/actions/cancel") {:post cancel-human-input-handler}]
         [(sid-route "/events") {:get events-handler}] [(sid-route "/voice") {:post voice-handler}]
-        [(sid-route "/voice/model") {:get voice-model-handler :post voice-model-handler}]
         [(sid-route "/voice/jobs/:job-id") {:get voice-job-handler :delete voice-job-handler}]
         [(sid-route "/voice/jobs/:job-id/events") {:get voice-job-events-handler}]
         [(sid-route "/speech") {:post speech-handler}]
-        [(sid-route "/speech/model") {:get speech-model-handler :post speech-model-handler}]
         [(sid-route "/speech/jobs/:job-id") {:get speech-job-handler :delete speech-job-handler}]
         [(sid-route "/speech/jobs/:job-id/events") {:get speech-job-events-handler}]
         [(sid-route "/speech/jobs/:job-id/audio") {:get speech-job-audio-handler}]

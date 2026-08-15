@@ -381,6 +381,19 @@ export interface VoiceModelState {
   /** What the 'downloading' status is actually doing right now. */
   phase?: "downloading" | "extracting";
   error?: string;
+  /** Which engine answered — a machine can have more than one registered. */
+  engine?: string;
+}
+
+/**
+ * The body a direction with NO engine answers with (501). `reasons` is the difference
+ * between a machine that never carried a voice engine and one whose engine FAILED to
+ * load — the second is something a human can fix, so it is never flattened into
+ * "unavailable".
+ */
+export interface VoiceEngineAbsence {
+  error?: string;
+  reasons?: string[];
 }
 
 export interface GatewayAttachment {

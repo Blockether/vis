@@ -1,4 +1,1670 @@
 {
-  "reflection": [],
-  "resources": []
+  "comment": [
+    "sherpa-onnx reaches its own Java API through JNI, BY NAME: GetFieldID(\"model\") on a config",
+    "object, FindClass(\"com/k2fsa/sherpa/onnx/WaveData\") to hand a decoded recording back.",
+    "native-image keeps no name it cannot see used, so an image that compiles and links still",
+    "failed at the first spoken or transcribed word with \"Failed to get field ID for 'model'\".",
+    "Every type of the API jar is a data holder the C++ side reads or writes, so the whole",
+    "package is registered here rather than the handful one code path happens to touch.",
+    "sherpa_test.clj fails when the jar carries a type this file does not, so bumping sherpa",
+    "cannot silently drop one.",
+    "The one type here that is NOT sherpa's is the callback sherpa calls back into: the JNI looks",
+    "it up with GetMethodID on OUR class, so it is a deftype with a stable name instead of a reify",
+    "whose name every build invents anew - the image linked, printed its config and then died in",
+    "the first progress callback."
+  ],
+  "reflection": [
+    {
+      "type": "com.blockether.vis.ext.foundation_voice.tts.GenerationCallback",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.AudioEvent",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.AudioTagging",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.AudioTaggingConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.AudioTaggingConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.AudioTaggingConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.AudioTaggingModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.AudioTaggingModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.AudioTaggingModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.DenoisedAudio",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.EndpointConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.EndpointConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.EndpointConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.EndpointRule",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.EndpointRule$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.EndpointRule$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.FastClusteringConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.FastClusteringConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.FastClusteringConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.FeatureConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.FeatureConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.FeatureConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.GeneratedAudio",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.GenerationConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.HomophoneReplacerConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.HomophoneReplacerConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.HomophoneReplacerConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.KeywordSpotter",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.KeywordSpotterConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.KeywordSpotterConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.KeywordSpotterConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.KeywordSpotterResult",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.LibraryLoader",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.LibraryUtils",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineCanaryModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineCanaryModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineCanaryModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineCohereTranscribeModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineCohereTranscribeModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineCohereTranscribeModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineDiacritization",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineDiacritizationConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineDiacritizationConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineDiacritizationConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineDiacritizationModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineDiacritizationModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineDiacritizationModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineDolphinModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineDolphinModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineDolphinModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineFireRedAsrCtcModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineFireRedAsrCtcModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineFireRedAsrCtcModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineFireRedAsrModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineFireRedAsrModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineFireRedAsrModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineFunAsrNanoModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineFunAsrNanoModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineFunAsrNanoModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineMedAsrCtcModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineMedAsrCtcModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineMedAsrCtcModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineMoonshineModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineMoonshineModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineMoonshineModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineNemoEncDecCtcModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineNemoEncDecCtcModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineNemoEncDecCtcModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineOmnilingualAsrCtcModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineOmnilingualAsrCtcModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineOmnilingualAsrCtcModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineParaformerModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineParaformerModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineParaformerModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflinePunctuation",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflinePunctuationConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflinePunctuationConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflinePunctuationConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflinePunctuationModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflinePunctuationModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflinePunctuationModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineQwen3AsrModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineQwen3AsrModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineQwen3AsrModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineRecognizer",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineRecognizerConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineRecognizerConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineRecognizerConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineRecognizerResult",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeakerDiarization",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeakerDiarizationCallback",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeakerDiarizationConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeakerDiarizationConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeakerDiarizationConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeakerDiarizationSegment",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationPyannoteModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationPyannoteModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationPyannoteModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeechDenoiser",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeechDenoiserConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeechDenoiserConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeechDenoiserConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeechDenoiserDpdfNetModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeechDenoiserDpdfNetModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeechDenoiserDpdfNetModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeechDenoiserGtcrnModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeechDenoiserGtcrnModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeechDenoiserGtcrnModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeechDenoiserModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeechDenoiserModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineSpeechDenoiserModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineStream",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTransducerModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTransducerModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTransducerModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTts",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsCallback",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsKittenModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsKittenModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsKittenModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsKokoroModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsKokoroModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsKokoroModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsMatchaModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsMatchaModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsMatchaModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsPocketModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsPocketModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsPocketModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsSupertonicModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsSupertonicModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsSupertonicModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsZipVoiceModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsZipVoiceModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineTtsZipVoiceModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineWenetCtcModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineWenetCtcModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineWenetCtcModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineWhisperModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineWhisperModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineWhisperModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineZipformerAudioTaggingModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineZipformerAudioTaggingModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineZipformerAudioTaggingModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineZipformerCtcModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineZipformerCtcModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OfflineZipformerCtcModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineCtcFstDecoderConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineCtcFstDecoderConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineCtcFstDecoderConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineLMConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineLMConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineLMConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineNeMoCtcModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineNeMoCtcModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineNeMoCtcModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineParaformerModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineParaformerModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineParaformerModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlinePunctuation",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlinePunctuationConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlinePunctuationConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlinePunctuationConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlinePunctuationModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlinePunctuationModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlinePunctuationModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineRecognizer",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineRecognizerConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineRecognizerConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineRecognizerConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineRecognizerResult",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineSpeechDenoiser",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineSpeechDenoiserConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineSpeechDenoiserConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineSpeechDenoiserConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineStream",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineToneCtcModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineToneCtcModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineToneCtcModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineZipformer2CtcModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineZipformer2CtcModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.OnlineZipformer2CtcModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.QnnConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.QnnConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.QnnConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.SileroVadModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.SileroVadModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.SileroVadModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractor",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractorConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractorConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractorConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.SpeakerEmbeddingManager",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.SpeechSegment",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.SpokenLanguageIdentification",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.SpokenLanguageIdentificationConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.SpokenLanguageIdentificationConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.SpokenLanguageIdentificationConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.SpokenLanguageIdentificationWhisperConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.SpokenLanguageIdentificationWhisperConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.SpokenLanguageIdentificationWhisperConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.TenVadModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.TenVadModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.TenVadModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.Vad",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.VadModelConfig",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.VadModelConfig$1",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.VadModelConfig$Builder",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.VersionInfo",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.WaveData",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.WaveReader",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    },
+    {
+      "type": "com.k2fsa.sherpa.onnx.WaveWriter",
+      "allDeclaredConstructors": true,
+      "allDeclaredFields": true,
+      "allDeclaredMethods": true,
+      "jniAccessible": true
+    }
+  ]
 }

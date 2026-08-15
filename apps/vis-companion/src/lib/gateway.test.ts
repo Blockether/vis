@@ -423,3 +423,53 @@ describe('GatewayClient speakText', () => {
     ).rejects.toThrow('no speech engine is registered');
   });
 });
+
+// Regression, user report: the model was installed and voice still failed, and the app
+// only ever showed "HTTP 501" — the sentence the gateway wrote never reached the screen.
+describe('GatewayClient voice engines', () => {
+  it('asks the MACHINE about each direction, with no session in the path', async () => {
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ status: 'ready', engine: 'parakeet-local' })),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const mod = await import('./gateway');
+    const client = new mod.GatewayClient(conn);
+
+    expect((await client.voiceModel()).status).toBe('ready');
+    await client.speechModel(true);
+
+    const calls = fetchMock.mock.calls.map((call: unknown[]) => {
+      const init = call[1] as RequestInit | undefined;
+      return `${init?.method ?? 'GET'} ${String(call[0])}`;
+    });
+    expect(calls).toEqual([
+      'GET http://gateway.example.com:7890/v1/voice/model',
+      'POST http://gateway.example.com:7890/v1/speech/model',
+    ]);
+    expect(calls.some((call: string) => call.includes('/sessions/'))).toBe(false);
+  });
+
+  it('carries the refusal the gateway wrote, and what failed to load with it', async () => {
+    const reasons = ['com.blockether.vis.ext.foundation-voice: UnsatisfiedLinkError'];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            error: 'no voice transcription engine is registered - ' + reasons[0],
+            reasons,
+          }),
+          { status: 501 },
+        ),
+      ),
+    );
+    const mod = await import('./gateway');
+
+    await expect(new mod.GatewayClient(conn).voiceModel()).rejects.toMatchObject({
+      status: 501,
+      message: 'no voice transcription engine is registered - ' + reasons[0],
+    });
+  });
+});

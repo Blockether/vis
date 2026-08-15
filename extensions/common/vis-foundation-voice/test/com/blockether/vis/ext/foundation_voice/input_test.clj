@@ -401,3 +401,59 @@
              (finally (vcore/unregister-engine! :transcribe :test-progress)
                       (doseq [e before]
                         (vcore/register-engine! :transcribe e)))))))
+
+
+;; Regression, user report: once voice failed, Ctrl+B answered "Voice recording is already
+;; running" for the rest of the session and Vis had to be restarted. A recorder that threw on
+;; start - or on stop - left `:recorder` set, and nothing ever cleared it.
+(defdescribe
+  voice-recovers-from-its-own-failures-test
+  (it "a microphone that refuses is reported, and the NEXT recording still starts"
+      (let
+        [events
+         (atom [])
+
+         starts
+         (atom 0)]
+
+        (reset! voice/state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
+        (try (with-redefs
+               [recorder/start!
+                (fn []
+                  (swap! starts inc)
+                  (if (= 1 @starts)
+                    (throw (ex-info "no input device"
+                                    {:remediation "Grant Vis access to the microphone."}))
+                    {:started-at-ms 1000}))
+
+                vis/publish-channel-event!
+                (fn [_ event]
+                  (swap! events conj event))]
+
+               (voice/start-recording! {})
+               (expect (nil? (:recorder @voice/state)) "nothing is left running")
+               (expect (some #(str/includes? (str (:text %)) "no input device") @events))
+               (expect (some #(str/includes? (str (:text %)) "Grant Vis access to the microphone.")
+                             @events)
+                       "the remediation the failure carried reaches the human")
+               (voice/start-recording! {})
+               (expect (= 2 @starts) "the keystroke works again without restarting Vis")
+               (expect (some? (:recorder @voice/state))))
+             (finally (reset! voice/state
+                        {:recorder nil :ticker nil :transcribing? false :workspace-id nil})))))
+  (it "a recorder that cannot be closed still ends the recording"
+      (let [events (atom [])]
+        (reset! voice/state
+          {:recorder {:started-at-ms 1000} :ticker nil :transcribing? false :workspace-id nil})
+        (try (with-redefs
+               [recorder/stop! (fn [_]
+                                 (throw (ex-info "the recorder exited 1" {})))
+                vis/publish-channel-event! (fn [_ event]
+                                             (swap! events conj event))]
+
+               (voice/stop-and-transcribe! {})
+               (expect (nil? (:recorder @voice/state)))
+               (expect (false? (:transcribing? @voice/state)))
+               (expect (some #(str/includes? (str (:text %)) "the recorder exited 1") @events)))
+             (finally (reset! voice/state
+                        {:recorder nil :ticker nil :transcribing? false :workspace-id nil}))))))

@@ -400,3 +400,126 @@
                                 "the keyless provider authenticated with a credential of its own"))
                       (finally (.stop server 0) (delete-tree! dir))))))
 
+;; ── voice: the two directions, in the linked image ───────────────────────────
+
+(defn- plain-words
+  "Lowercase words only. A transcript differs from what was spoken by punctuation
+   and casing long before it differs by a word."
+  [s]
+  (->> (str/split (str/lower-case (str s)) #"[^a-z0-9]+")
+       (remove str/blank?)
+       (str/join " ")))
+
+(defn- wav-facts
+  "What a WAV header claims, read by hand: `nil` when the file is not one."
+  [^File f]
+  (when (and (.isFile f) (> (.length f) 44))
+    (let [header (byte-array 44)]
+      (with-open [in (io/input-stream f)]
+        (.read in header))
+      (let
+        [tag (fn [from]
+               (String. header from 4 StandardCharsets/US_ASCII))
+         u32 (fn [from]
+               (reduce (fn [acc i]
+                         (+ acc
+                            (bit-shift-left (bit-and (long (aget header (+ from i))) 0xff)
+                                            (* 8 i))))
+                       0
+                       (range 4)))]
+
+        (when (and (= "RIFF" (tag 0)) (= "WAVE" (tag 8)))
+          {:sample-rate (u32 24) :bytes (.length f)})))))
+
+(def ^:private spoken-sentence
+  "Plain words on purpose: this sentence is spoken by one engine and read back by
+   another, and a rare word would test the vocabulary rather than the image."
+  "Local speech now runs entirely on this machine, with no account and no network.")
+
+(defdescribe
+  native-binary-speaks-and-listens-test
+  ;; sherpa-onnx reaches ONNX Runtime through JNI, and the model files are found
+  ;; through resources the image has to carry: every one of those is a
+  ;; native-image failure that compiles cleanly and only appears when audio is
+  ;; actually generated. The JVM suite cannot see any of it.
+  ;;
+  ;; Regression, user report: with the models already installed, voice failed
+  ;; anyway and the only cure anyone found was restarting Vis. A round trip
+  ;; through the SHIPPED binary is the check that would have caught it.
+  ;;
+  ;; A machine without the models downloads them here (~63 MB for the voice,
+  ;; ~487 MB for ASR) - deliberately, because fetching, verifying and unpacking
+  ;; an archive is native code too, and no other test runs it inside the image.
+  (it
+    "speaks a sentence and reads its own recording back"
+    (let
+      [dir
+       (temp-dir "vis-native-voice")
+
+       wav
+       (io/file dir "spoken.wav")
+
+       bin
+       (.getAbsolutePath (require-binary))
+
+       said
+       (run-binary dir
+                   [bin "extension" "voice" "say" spoken-sentence "--out" (.getAbsolutePath wav)]
+                   900)]
+
+      (try
+        (expect (= 0 (:exit said)) (:output said))
+        (expect
+          (nil?
+            (re-find
+              #"ClassNotFoundException|NoClassDefFoundError|UnsatisfiedLinkError|NoSuchMethodError"
+              (:output said)))
+          (:output said))
+        (let [facts (wav-facts wav)]
+          (expect facts (str "no WAV at " (.getAbsolutePath wav) ":\n" (:output said)))
+          (expect (<= 8000 (long (:sample-rate facts)) 48000)
+                  (str "implausible sample rate: " facts))
+          (expect (> (long (:bytes facts)) 20000)
+                  (str "the binary wrote a WAV with nothing in it: " facts)))
+        (let
+          [heard (run-binary dir [bin "extension" "voice" "transcribe" (.getAbsolutePath wav)] 900)]
+          (expect (= 0 (:exit heard)) (:output heard))
+          (expect (str/includes? (plain-words (:output heard)) (plain-words spoken-sentence))
+                  (str "the binary did not hear what it had just said:\n" (:output heard))))
+        (finally (delete-tree! dir)))))
+  (it "speaks with the pocket-tts export Vis publishes itself"
+      ;; The Piper path above is sherpa's VITS engine; pocket-tts is OUR ONNX
+      ;; export driven through a different config class, with a reference clip
+      ;; read from the installed bundle. Only one of the two proves the other.
+      (let
+        [dir
+         (temp-dir "vis-native-pocket")
+
+         wav
+         (io/file dir "pocket.wav")
+
+         said
+         (run-binary dir
+                     [(.getAbsolutePath (require-binary)) "extension" "voice" "say"
+                      "The bundle we ship is the ONNX export itself." "--pocket-tts" "--out"
+                      (.getAbsolutePath wav)]
+                     900)]
+
+        (try (expect (= 0 (:exit said)) (:output said))
+             (let [facts (wav-facts wav)]
+               (expect facts (str "no WAV at " (.getAbsolutePath wav) ":\n" (:output said)))
+               (expect (= 24000 (long (:sample-rate facts)))
+                       (str "pocket-tts speaks at 24 kHz; got " facts)))
+             (finally (delete-tree! dir)))))
+  (it "lists the voices this machine can speak in without loading a model"
+      (let
+        [dir
+         (temp-dir "vis-native-voices")
+
+         {:keys [exit output]}
+         (run-binary dir [(.getAbsolutePath (require-binary)) "extension" "voice" "voices"] 120)]
+
+        (try (expect (= 0 exit) output)
+             (expect (str/includes? output "piper") output)
+             (expect (str/includes? output "pocket-tts") output)
+             (finally (delete-tree! dir))))))

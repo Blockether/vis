@@ -15,7 +15,8 @@
          (into {} (map (juxt :cmd/name identity)) (:cmd/subcommands cli))]
 
         (expect (= "voice" (:cmd/name cli)))
-        (expect (= ["models" "voices" "import" "forget"] (mapv :cmd/name (:cmd/subcommands cli))))
+        (expect (= ["models" "voices" "import" "forget" "say" "transcribe"]
+                   (mapv :cmd/name (:cmd/subcommands cli))))
         (expect (= ["status" "download" "licenses"]
                    (mapv :cmd/name (:cmd/subcommands (get by-name "models")))))
         ;; a recording is the whole of "add a voice", so the clip is POSITIONAL and
@@ -24,6 +25,12 @@
         (expect (= [:positional :flag :flag :flag] (mapv :kind (:cmd/args (get by-name "import")))))
         (expect (true? (:required (first (:cmd/args (get by-name "import"))))))
         (expect (= ["name"] (mapv :name (:cmd/args (get by-name "forget")))))
+        ;; `say` and `transcribe` are the two one-line checks a human runs when voice
+        ;; "does nothing": speak a line, then read that recording back.
+        (expect (= ["text" "voice" "pocket-tts" "out"]
+                   (mapv :name (:cmd/args (get by-name "say")))))
+        (expect (= [:positional :flag :flag :flag] (mapv :kind (:cmd/args (get by-name "say")))))
+        (expect (= ["file"] (mapv :name (:cmd/args (get by-name "transcribe")))))
         ;; every leaf runs something: a subcommand that only prints help is a dead end
         (expect (every? #(or (:cmd/run-fn %) (seq (:cmd/subcommands %))) (:cmd/subcommands cli)))))
   (it "downloads what Vis fetches by itself unless an opt-in model is NAMED"

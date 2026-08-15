@@ -370,18 +370,25 @@
    the audio is written."
   15.0)
 
-(defn- generation-callback
-  ^OfflineTtsCallback [^AtomicLong produced ^long sample-rate ^double expected-seconds report]
-  (reify
-    OfflineTtsCallback
-      (invoke [_ samples]
-        (let [done (.addAndGet produced (alength ^floats samples))]
-          (report {:phase :synthesizing
-                   :progress (min 99
-                                  (long (* 100.0
-                                           (/ (/ (double done) (double (max 1 sample-rate)))
-                                              (max 0.1 expected-seconds)))))}))
-        (Integer/valueOf 1))))
+(deftype
+  ;; NAMED on purpose, and registered for JNI in reachability-metadata.json.
+  ;; sherpa calls this back FROM C++: GetObjectClass on the instance, then
+  ;; GetMethodID "invoke" "([F)Ljava/lang/Integer;". A `reify` answers to a
+  ;; name the compiler invents (`tts$generation_callback$reify__97523`), which
+  ;; no metadata can register and every build changes - so the JVM spoke and
+  ;; the native image crashed inside the first callback. A deftype has a stable
+  ;; class name, and `sherpa-test` fails if the metadata stops carrying it.
+  GenerationCallback
+  [^AtomicLong produced ^long sample-rate ^double expected-seconds report]
+  OfflineTtsCallback
+    (invoke [_ samples]
+      (let [done (.addAndGet produced (alength ^floats samples))]
+        (report {:phase :synthesizing
+                 :progress (min 99
+                                (long (* 100.0
+                                         (/ (/ (double done) (double (max 1 sample-rate)))
+                                            (max 0.1 expected-seconds)))))}))
+      (Integer/valueOf 1)))
 
 (defn- generate!
   [^OfflineTts tts ^GenerationConfig gen ^String text report]
@@ -393,7 +400,7 @@
      (AtomicLong. 0)
 
      ^OfflineTtsCallback callback
-     (generation-callback produced
+     (GenerationCallback. produced
                           sample-rate
                           (/ (double (count text)) (double chars-per-second))
                           report)

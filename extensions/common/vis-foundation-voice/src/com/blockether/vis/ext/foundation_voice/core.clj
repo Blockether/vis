@@ -1,6 +1,7 @@
 (ns com.blockether.vis.ext.foundation-voice.core
   "Local voice: Parakeet ASR in, Piper or pocket-tts speech out."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.core :as vis]))
 
 (defn- cli-out! [s] (.println ^java.io.PrintStream vis/original-stdout (str s)))
@@ -290,6 +291,53 @@
       (cli-out! (str "forgot " id))
       (cli-out! (str "no imported voice named " (pr-str named))))))
 
+(defn- speech-failure!
+  "Says WHY speaking or listening failed and what the machine has to do about it,
+   then leaves a non-zero status behind - a check that fails quietly is worse than
+   no check at all."
+  [^Throwable e]
+  (cli-out! (ex-message e))
+  (when-let [remediation (:remediation (ex-data e))]
+    (cli-out! (str "  " remediation)))
+  (System/exit 1))
+
+(defn- voice-say-command
+  "Speak one line on THIS machine and say where the audio landed: the shortest
+   whole-path proof that the speaking half works here - model, native runtime,
+   voice and encoder, end to end."
+  [parsed residual]
+  (vis/init-cli!)
+  (let
+    [text
+     (str/trim (str (or (get parsed "text") (str/join " " residual))))
+
+     family
+     (if (get parsed "pocket-tts") :pocket-tts :piper)]
+
+    (try (let
+           [spoken
+            (tts-call! 'synthesize! family {:text text :voice-id (get parsed "voice")})
+
+            ^java.io.File out
+            (some-> (get parsed "out")
+                    io/file)]
+
+           (when out
+             (io/copy (io/file (:audio-path spoken)) out)
+             (io/delete-file (io/file (:audio-path spoken)) true))
+           (cli-out! (str "spoke " (:duration-ms spoken) " ms at " (:sample-rate spoken) " Hz"))
+           (cli-out! (str "  " (if out (.getAbsolutePath out) (:audio-path spoken)))))
+         (catch Throwable e (speech-failure! e)))))
+
+(defn- voice-transcribe-command
+  "Read a recording back as text with the local ASR model - the listening half of
+   the same proof, and the command to run when the microphone \"does nothing\"."
+  [parsed residual]
+  (vis/init-cli!)
+  (let [path (or (get parsed "file") (first residual))]
+    (try (cli-out! (str/trim (str (asr-call! 'transcribe-file! path))))
+         (catch Throwable e (speech-failure! e)))))
+
 (def voice-extension
   (vis/extension
     {:ext/name "foundation-voice"
@@ -378,7 +426,32 @@
                      :type :string
                      :required true
                      :doc "The imported voice to delete."}]
-         :cmd/run-fn #'voice-forget-command}]}]
+         :cmd/run-fn #'voice-forget-command}
+        {:cmd/name "say"
+         :cmd/doc "Speak a line on this machine, to prove that it can."
+         :cmd/usage
+         "vis-agent extension voice say \"<text>\" [--voice ID] [--pocket-tts] [--out FILE.wav]"
+         :cmd/args
+         [{:name "text" :kind :positional :type :string :required true :doc "What to say."}
+          {:name "voice" :kind :flag :type :string :doc "Which voice; see `voice voices`."}
+          {:name "pocket-tts"
+           :kind :flag
+           :type :boolean
+           :doc "Speak with pocket-tts instead of Piper."}
+          {:name "out"
+           :kind :flag
+           :type :string
+           :doc "Where to write the WAV. A temporary file otherwise."}]
+         :cmd/run-fn #'voice-say-command}
+        {:cmd/name "transcribe"
+         :cmd/doc "Read a recording back as text with the local ASR model."
+         :cmd/usage "vis-agent extension voice transcribe <clip.wav>"
+         :cmd/args [{:name "file"
+                     :kind :positional
+                     :type :string
+                     :required true
+                     :doc "The WAV to read back."}]
+         :cmd/run-fn #'voice-transcribe-command}]}]
      ;; Declarative slash registration: the TUI renders /voice via the
      ;; engine slash registry, toggling recording through
      ;; input/toggle-recording!.

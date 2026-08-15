@@ -8,6 +8,7 @@
    `voice/register-engine!` with its own `:transcribe`, and zero lines change
    anywhere else."
   (:require [com.blockether.vis.ext.foundation-voice.asr :as asr]
+            [com.blockether.vis.ext.foundation-voice.sherpa :as sherpa]
             [com.blockether.vis.internal.voice :as voice]))
 
 (set! *warn-on-reflection* true)
@@ -19,23 +20,33 @@
 (defn- await-model!
   "Block until the model is installed, reporting the DOWNLOAD as `:preparing`
    progress. The transfer is a real part of \"how long until my text arrives\", so
-   it is reported rather than hidden behind a silent multi-minute stall."
-  [report]
-  (loop []
+   it is reported rather than hidden behind a silent multi-minute stall.
 
+   Regression: a failed transfer used to be a VERDICT. `model-state` holds the
+   failure until something starts a new download, and this loop threw the moment
+   it saw one - so a single dropped connection made every later recording fail
+   with the same stale message until Vis was restarted. A failure now buys one
+   fresh attempt; only the second one is reported."
+  [report]
+  (loop [retried? false]
     (let [{:keys [state progress error]} (asr/model-state)]
       (case state
         :ready
         nil
 
         :failed
-        (throw (ex-info (str "Voice model download failed: " (or error "unknown error"))
-                        {:type :voice-asr/model-download-failed :error error}))
+        (if retried?
+          (throw (ex-info (str "Voice model download failed: " (or error "unknown error"))
+                          {:type :voice-asr/model-download-failed :error error}))
+          (do (report {:phase :preparing :progress 0})
+              (asr/start-download!)
+              (Thread/sleep (long model-poll-ms))
+              (recur true)))
 
         (do (report {:phase :preparing :progress (or progress 0)})
             (asr/start-download!)
             (Thread/sleep (long model-poll-ms))
-            (recur))))))
+            (recur retried?))))))
 
 (defn- clean-text
   "Parakeet's stutter/filler cleanup lives beside the TUI input that grew it;
@@ -56,7 +67,8 @@
     [report (fn [m]
               (when on-progress (try (on-progress m) (catch Throwable _ nil))))]
     (await-model! report)
-    (clean-text (asr/transcribe-file! (asr/model-dir) audio-path {:on-progress on-progress}))))
+    (sherpa/call-native
+      #(clean-text (asr/transcribe-file! (asr/model-dir) audio-path {:on-progress on-progress})))))
 
 (defn register!
   "Idempotent — [[voice/register-engine!]] replaces by id. `:model-state` and

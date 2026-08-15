@@ -2608,7 +2608,7 @@ export function SessionScreen({
         setVoiceModel(next.features.voice.model);
       } catch {
         try {
-          const model = await client.voiceModel(sid, false, controller.signal);
+          const model = await client.voiceModel(false, controller.signal);
           if (!active) return;
           // An ANSWER of `unavailable` is the gateway saying it has no voice
           // extension — that one is authoritative and does hide the mic.
@@ -2655,7 +2655,7 @@ export function SessionScreen({
       if (inflight || document.visibilityState === "hidden") return;
       inflight = true;
       void client
-        .voiceModel(sid)
+        .voiceModel()
         .then(setVoiceModel)
         .catch(() => undefined)
         .finally(() => {
@@ -4128,7 +4128,7 @@ export function SessionScreen({
       if (model?.status !== "ready") {
         let reachable = true;
         try {
-          model = await client.voiceModel(sid, true);
+          model = await client.voiceModel(true);
           setVoiceModel(model);
         } catch {
           reachable = false;

@@ -24,7 +24,18 @@
    evicts, so a pinned digest would eventually break every user rather than
    catch anything. Integrity comes from the transfer being length-checked
    (`files/download!`), from the install being atomic, and from the loaded
-   library having to answer `version` — which `sherpa-native-test` asserts."
+   library having to answer `version` — which `sherpa-native-test` asserts.
+
+   JNI and not `java.lang.foreign`, because the choice is upstream's and not
+   ours: the library Vis ships, `libsherpa-onnx-jni`, exports 133 `Java_*` entry
+   points and NOT ONE `SherpaOnnx*` C symbol, so a Panama downcall has nothing
+   to bind to. sherpa's C API is a different artifact — per-platform `-shared`
+   tarballs on GitHub releases, under no Maven coordinate — and its header
+   declares 156 functions over 86 structs whose layouts we would own from then
+   on, where drifting from a bump corrupts memory silently instead of failing by
+   name. Vis does use FFM where it owns the boundary — `internal/foundation/pty`
+   is downcalls and no JNI — so here the image registers the API jar's types for
+   JNI instead (`reachability-metadata.json`, pinned by `sherpa-test`)."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
@@ -221,3 +232,55 @@
   []
   (or @provisioned
       (locking provisioned (or @provisioned (reset! provisioned (provision! (platform-token)))))))
+
+(defn native-error?
+  "True when `t` is the JVM refusing to LINK sherpa, at any depth: the library is
+   missing, or a class that already met a missing library is permanently
+   unusable. The walk STOPS at the end of the cause chain - a shallow failure must
+   not become a NullPointerException out of the very code that explains it."
+  [t]
+  (boolean (some (fn [^Throwable x]
+                   (or (instance? UnsatisfiedLinkError x)
+                       (instance? NoClassDefFoundError x)
+                       (instance? ExceptionInInitializerError x)))
+                 (take 8
+                       (take-while some?
+                                   (iterate (fn [^Throwable x]
+                                              (.getCause x))
+                                            t))))))
+
+(defn native-failure
+  "Turn a linker failure into an ex-info a HUMAN can act on.
+
+   A class whose static initializer already failed can NEVER load again in the
+   same process - the JVM caches that verdict - so an engine that met a missing
+   library once keeps answering `NoClassDefFoundError` however much is downloaded
+   afterwards. That is exactly the reported \"voice only works after restarting
+   Vis\", so in that state the message SAYS to restart instead of repeating a
+   linker error nobody can act on."
+  [^Throwable t]
+  (let [restart? (native-error? t)]
+    (ex-info (if restart?
+               (str "The voice runtime could not be linked into this running process"
+                    " - restart Vis and try again ("
+                    (or (ex-message t) (str t))
+                    ").")
+               (str "The voice runtime is unavailable: " (or (ex-message t) (str t))))
+             {:type :voice/native-unavailable
+              :is-restart-required restart?
+              :platform (platform-token)
+              :remediation (if restart?
+                             "Restart Vis - this JVM can no longer load the library."
+                             (str "Check the network, or point "
+                                  native-dir-env
+                                  " at a directory holding sherpa-onnx-jni and onnxruntime."))}
+             t)))
+
+(defn call-native
+  "Run `f` with the native runtime provisioned, reporting a linker failure -
+   here or inside sherpa's own loader - as [[native-failure]] rather than as a
+   stack trace. Every engine entry point goes through this, so no surface has to
+   know what a JNI is to tell a human what to do."
+  [f]
+  (try (ensure-native!) (catch Throwable t (throw (native-failure t))))
+  (try (f) (catch Throwable t (throw (if (native-error? t) (native-failure t) t)))))

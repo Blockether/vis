@@ -8,7 +8,8 @@
    store, so nothing may be invented by a surface. The two directions share that
    machinery and NOTHING else: listening can never answer with the engine chosen for
    speaking."
-  (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.voice :as voice]))
 
@@ -719,3 +720,80 @@
              (refusal #(voice/import-voice! plain {:path "/tmp/clip.wav" :voice-name "Mine"}))))
       (is (= "pocket-tts does not keep voices of its own"
              (refusal #(voice/forget-voice! plain "mine")))))))
+
+
+;; Regression, user report: after one failure every surface answered "no engine is registered"
+;; until Vis was restarted. ONE latch guarded the whole builtin load loop and was set BEFORE
+;; any `register!` ran, so a transient failure - a native library still downloading, a model
+;; directory half written - was permanent for the life of the process.
+(deftest a-builtin-that-failed-to-load-is-tried-again
+  (let
+    [remembered
+     @#'voice/builtins*
+
+     before
+     @remembered
+
+     tries
+     (atom 0)
+
+     outcome
+     (atom {:error "the voice runtime is still downloading"})]
+
+    (try (reset! remembered {})
+         (with-redefs-fn {#'voice/builtin-engine-nses ["com.example.late-engine"]
+                          #'voice/load-builtin! (fn [_]
+                                                  (swap! tries inc)
+                                                  @outcome)}
+           (fn []
+             (#'voice/load-builtins!)
+             (is (= 1 @tries))
+             (is (= {"com.example.late-engine" "the voice runtime is still downloading"}
+                    (voice/builtin-load-failures))
+                 "the reason is kept to be REPORTED, never as a verdict")
+             (#'voice/load-builtins!)
+             (is (= 2 @tries) "the very next call tries again")
+             (reset! outcome :registered)
+             (#'voice/load-builtins!)
+             (is (= 3 @tries))
+             (is (empty? (voice/builtin-load-failures)))
+             (#'voice/load-builtins!)
+             (is (= 3 @tries) "success IS remembered, so nothing resolves a namespace per call")))
+         (finally (reset! remembered before)))))
+
+(deftest no-engine-says-which-kind-of-nothing-it-is
+  ;; "None is registered" is a fact about the process; "the library could not be linked" is
+  ;; something a human can act on. A build that CARRIES an engine which failed to load is not
+  ;; the same machine as one that carries none, and the refusal has to tell them apart.
+  (let
+    [remembered
+     @#'voice/builtins*
+
+     before
+     @remembered]
+
+    (try (with-only-engines!
+           {}
+           (fn []
+             (with-redefs-fn {#'voice/builtin-engine-nses []}
+               (fn []
+                 (reset! remembered {"com.blockether.vis.ext.foundation-voice.engine"
+                                     {:error "libsherpa-onnx-jni.dylib is not on this machine"}})
+                 (let
+                   [thrown (try (voice/resolve-engine :transcribe nil)
+                                nil
+                                (catch clojure.lang.ExceptionInfo e e))]
+                   (is (some? thrown))
+                   (is (str/includes? (ex-message thrown)
+                                      "libsherpa-onnx-jni.dylib is not on this machine"))
+                   (is (= {"com.blockether.vis.ext.foundation-voice.engine"
+                           "libsherpa-onnx-jni.dylib is not on this machine"}
+                          (:failures (ex-data thrown)))))
+                 (reset! remembered {})
+                 (let
+                   [thrown (try (voice/resolve-engine :transcribe nil)
+                                nil
+                                (catch clojure.lang.ExceptionInfo e e))]
+                   (is (= "No voice transcription engine is registered" (ex-message thrown))
+                       "and a build that simply has none says only that"))))))
+         (finally (reset! remembered before)))))

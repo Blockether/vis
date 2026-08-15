@@ -696,9 +696,16 @@ export class GatewayClient {
         }
       }
       if (!res.ok) {
+        // The gateway writes its refusal as a SENTENCE (`{error: "no voice transcription
+        // engine is registered - …"}`); reading only `error.message` turned every one of
+        // them into "HTTP 501" on screen, which told the reader nothing they could act on.
+        const problem = parsed as {
+          error?: string | { message?: string };
+        };
         const msg =
-          (parsed as { error?: { message?: string } })?.error?.message ??
-          `HTTP ${res.status}`;
+          (typeof problem?.error === "string"
+            ? problem.error
+            : problem?.error?.message) ?? `HTTP ${res.status}`;
         throw new GatewayError(res.status, msg, parsed);
       }
       return {
@@ -822,14 +829,29 @@ export class GatewayClient {
     };
   }
 
-  voiceModel(
-    sid: string,
-    start = false,
-    signal?: AbortSignal,
-  ): Promise<VoiceModelState> {
+  // ── Engines: whether this MACHINE can listen and speak ──────────
+  //
+  // Session-less, like the voices below: a model on disk is a fact about the machine, so
+  // settings can ask - and start the download - before any conversation exists.
+
+  /**
+   * Whether the listening engine is ready, still downloading (with how far it has got), or
+   * failed and why. `start` POSTs instead: prepare the engine, which begins the download.
+   */
+  voiceModel(start = false, signal?: AbortSignal): Promise<VoiceModelState> {
     return this.request<VoiceModelState>(
       start ? "POST" : "GET",
-      `/v1/sessions/${encodeURIComponent(sid)}/voice/model`,
+      "/v1/voice/model",
+      undefined,
+      signal,
+    );
+  }
+
+  /** [[voiceModel]] for the speaking direction. */
+  speechModel(start = false, signal?: AbortSignal): Promise<VoiceModelState> {
+    return this.request<VoiceModelState>(
+      start ? "POST" : "GET",
+      "/v1/speech/model",
       undefined,
       signal,
     );

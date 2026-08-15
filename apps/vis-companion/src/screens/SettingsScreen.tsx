@@ -25,6 +25,8 @@ import type {
   SpeechRoute,
   SpeechVoice,
   SpeechVoices,
+  VoiceEngineAbsence,
+  VoiceModelState,
 } from "../lib/types";
 import {
   acquirePushToken,
@@ -236,6 +238,10 @@ function GatewayPanels({
           )}
 
           {!unreachable && !unauthorized && <McpServersPanel client={client} />}
+
+          {!unreachable && !unauthorized && (
+            <VoiceEnginesPanel client={client} />
+          )}
 
           {!unreachable && !unauthorized && <VoicesPanel client={client} />}
 
@@ -1223,6 +1229,237 @@ function VoicesPanel({ client }: { client: GatewayClient }) {
     </SettingsPanel>
   );
 }
+
+/** How far one engine has got, in the fewest words that are still true. */
+const ENGINE_POLL_MS = 1200;
+
+type EngineReading = {
+  state: VoiceModelState | null;
+  /** Set when the direction has NO engine at all — 501, with whatever failed to load. */
+  absence: VoiceEngineAbsence | null;
+  error: string | null;
+};
+
+function engineWord(reading: EngineReading | null): string {
+  if (reading === null) return "checking…";
+  if (reading.absence) return "not installed";
+  if (reading.error) return "cannot be read";
+  switch (reading.state?.status) {
+    case "ready":
+      return "ready";
+    case "downloading":
+      return reading.state.phase === "extracting" ? "unpacking" : "downloading";
+    case "failed":
+      return "failed";
+    case "absent":
+      return "not downloaded yet";
+    default:
+      return "unavailable";
+  }
+}
+
+/**
+ * ONE direction's readiness, as a row: what it is doing, which engine is doing it, and the
+ * one verb that can change it. Presentational on purpose — the panel owns every read, so a
+ * download is polled once for both rows instead of twice.
+ */
+function EngineRow({
+  title,
+  hint,
+  reading,
+  isBusy,
+  onPrepare,
+}: {
+  title: string;
+  hint: string;
+  reading: EngineReading | null;
+  isBusy: boolean;
+  onPrepare: () => void;
+}) {
+  const state = reading?.state ?? null;
+  const percent =
+    typeof state?.progress === "number" ? Math.round(state.progress) : null;
+  const word = engineWord(reading);
+  const canPrepare =
+    reading !== null &&
+    !reading.absence &&
+    (state?.status === "absent" || state?.status === "failed" || !!reading.error);
+
+  return (
+    <div className="space-y-2 border border-dialog-edge bg-panel-2 p-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <p className="font-mono text-ui text-white">{title}</p>
+        <p className="font-mono text-meta text-dialog-hint">
+          {word}
+          {percent !== null && state?.status === "downloading"
+            ? ` ${percent}%`
+            : ""}
+          {state?.engine ? ` · ${state.engine}` : ""}
+        </p>
+      </div>
+      <p className="font-mono text-chip text-dialog-hint">{hint}</p>
+
+      {/* A machine that never carried a voice engine and one whose engine FAILED to load
+          are different machines, and only the second is something a human can fix. */}
+      {reading?.absence && (
+        <p className="font-mono text-chip text-dialog-hint">
+          {reading.absence.reasons?.length
+            ? reading.absence.reasons.join(" · ")
+            : "This machine has no engine for this direction installed."}
+        </p>
+      )}
+
+      {state?.status === "failed" && state.error && (
+        <Banner kind="err">{state.error}</Banner>
+      )}
+      {reading?.error && <Banner kind="err">{reading.error}</Banner>}
+
+      {canPrepare && (
+        <Button variant="primary" disabled={isBusy} onClick={onPrepare}>
+          {isBusy
+            ? "Asking…"
+            : state?.status === "absent"
+              ? "Download the model"
+              : "Try again"}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * WHETHER this machine can listen and speak, and what it is doing about it.
+ *
+ * Regression, user report: with the model already installed, voice still failed and the only
+ * cure anyone found was restarting Vis — while no screen said which half was broken, whether
+ * a download had died, or that the engine had failed to load at all. Both directions report
+ * themselves here, the panel polls itself while bytes are moving, and a failure carries the
+ * reason plus the one button that retries it.
+ */
+export function VoiceEnginesPanel({ client }: { client: GatewayClient }) {
+  const [listening, setListening] = useState<EngineReading | null>(null);
+  const [speaking, setSpeaking] = useState<EngineReading | null>(null);
+  const [busy, setBusy] = useState<"listen" | "speak" | null>(null);
+
+  const readOne = useCallback(
+    async (
+      ask: (start: boolean, signal?: AbortSignal) => Promise<VoiceModelState>,
+      signal?: AbortSignal,
+    ): Promise<EngineReading> => {
+      try {
+        return { state: await ask(false, signal), absence: null, error: null };
+      } catch (e) {
+        if (e instanceof GatewayError && e.status === 501) {
+          return {
+            state: null,
+            absence: {
+              error: e.message,
+              reasons: (e.body as VoiceEngineAbsence | undefined)?.reasons,
+            },
+            error: null,
+          };
+        }
+        return { state: null, absence: null, error: (e as Error).message };
+      }
+    },
+    [],
+  );
+
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      const [heard, spoken] = await Promise.all([
+        readOne((start, sig) => client.voiceModel(start, sig), signal),
+        readOne((start, sig) => client.speechModel(start, sig), signal),
+      ]);
+      if (signal?.aborted) return;
+      setListening(heard);
+      setSpeaking(spoken);
+    },
+    [client, readOne],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
+
+  // A download is the one state where a screen that never refreshes is a screen that lies.
+  const isMoving =
+    listening?.state?.status === "downloading" ||
+    speaking?.state?.status === "downloading";
+  useEffect(() => {
+    if (!isMoving) return;
+    const timer = window.setInterval(() => {
+      void load();
+    }, ENGINE_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [isMoving, load]);
+
+  async function prepare(which: "listen" | "speak") {
+    setBusy(which);
+    try {
+      const state =
+        which === "listen"
+          ? await client.voiceModel(true)
+          : await client.speechModel(true);
+      const reading: EngineReading = { state, absence: null, error: null };
+      if (which === "listen") setListening(reading);
+      else setSpeaking(reading);
+    } catch (e) {
+      const failed: EngineReading = {
+        state: null,
+        absence: null,
+        error: (e as Error).message,
+      };
+      if (which === "listen") setListening(failed);
+      else setSpeaking(failed);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // An ordinary Vis carries no voice extension at all, and a panel that only ever says so is
+  // clutter. One that has something to REPORT — a model to fetch, a download in flight, an
+  // engine that failed to load — is the whole point.
+  const isSilentMachine =
+    listening?.absence != null &&
+    speaking?.absence != null &&
+    !listening.absence.reasons?.length &&
+    !speaking.absence.reasons?.length;
+  if (isSilentMachine) return null;
+
+  const meta =
+    listening === null || speaking === null
+      ? "checking…"
+      : `${engineWord(listening)} · ${engineWord(speaking)}`;
+
+  return (
+    <SettingsPanel
+      title="Speech engines"
+      description="Whether this machine can listen and speak right now. Models are downloaded once, on the machine, and nothing here leaves it."
+      meta={meta}
+    >
+      <div className="space-y-2 p-3">
+        <EngineRow
+          title="Listening"
+          hint="Turns a recording into text — the microphone in the composer, and Ctrl+B in the terminal."
+          reading={listening}
+          isBusy={busy === "listen"}
+          onPrepare={() => void prepare("listen")}
+        />
+        <EngineRow
+          title="Speaking"
+          hint="Reads a reply out loud when this device asks the machine to."
+          reading={speaking}
+          isBusy={busy === "speak"}
+          onPrepare={() => void prepare("speak")}
+        />
+      </div>
+    </SettingsPanel>
+  );
+}
+
 function FormLabel({
   label,
   hint,

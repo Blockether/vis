@@ -168,7 +168,9 @@
 
 (defonce ^:private engines* (atom {}))
 (defonce ^:private default-engine* (atom {}))
-(defonce ^:private builtins-loaded* (atom false))
+;; What each builtin engine namespace did the last time it was tried:
+;; `:registered`, `:absent`, or `{:error "…"}`.
+(defonce ^:private builtins* (atom {}))
 
 (defn engine-error
   "nil when `engine` is usable in `direction`, else the one-line reason. The direction is
@@ -247,14 +249,58 @@
           not-empty
           keyword))
 
+(defn- builtin-absent?
+  "True when `t` says this namespace is simply NOT IN THIS BUILD - a jar nobody
+   assembled - rather than a namespace that failed while loading. Clojure reports
+   both as a `FileNotFoundException`, so the file it names must be the
+   namespace's own before absence is believed."
+  [ns-name t]
+  (and (instance? java.io.FileNotFoundException t)
+       (str/includes? (str (ex-message t))
+                      (-> (str ns-name)
+                          (str/replace "-" "_")
+                          (str/replace "." "/")))))
+
+(defn- load-builtin!
+  "Load ONE builtin engine namespace and run its `register!`. `:registered` when it
+   did, `:absent` when this build has no such namespace, else the reason it failed
+   - remembered only to be REPORTED, never to stop the next attempt."
+  [ns-name]
+  (try (if-let [register! (requiring-resolve (symbol ns-name "register!"))]
+         (do (register!) :registered)
+         {:error (str ns-name " carries no register! fn")})
+       (catch Throwable t (if (builtin-absent? ns-name t) :absent {:error (error-message t)}))))
+
 (defn- load-builtins!
+  "Register every builtin engine this build carries, RETRYING whichever failed.
+
+   Regression, issue: one latch guarded the whole loop and was set BEFORE any
+   `register!` ran, so a single transient failure - a native library still
+   downloading, a model directory half written, a class that lost a race - was
+   PERMANENT. Every surface answered \"no engine\" for the rest of the process and
+   the only cure anyone found was restarting Vis. Success and ABSENCE are
+   remembered (a build without the extension must not pay a `requiring-resolve`
+   per call); a failure never is."
   []
-  (when (compare-and-set! builtins-loaded* false true)
-    (doseq [ns-name builtin-engine-nses]
-      (try (when-let [register! (requiring-resolve (symbol ns-name "register!"))]
-             (register!))
-           (catch Throwable _ nil))))
+  (doseq
+    [ns-name
+     builtin-engine-nses
+
+     :when (not (#{:registered :absent} (get @builtins* ns-name)))]
+
+    (swap! builtins* assoc ns-name (load-builtin! ns-name)))
   nil)
+
+(defn builtin-load-failures
+  "Why a builtin engine namespace did not register, by namespace - empty when each
+   one registered or is simply absent from this build. A surface with no engine
+   says THIS instead of \"unavailable\": the reason is the whole difference between
+   a human who installs what is missing and one who restarts and hopes."
+  []
+  (into {}
+        (keep (fn [[ns-name state]]
+                (when (map? state) [ns-name (:error state)])))
+        @builtins*))
 
 (defn engines
   "Every engine registered for `direction`, in registration order."
@@ -296,16 +342,22 @@
 
 (defn resolve-engine
   "The `direction` engine for an explicit `id` (nil = the default). Throws with the ids
-   that DO exist, so a typo in `VIS_SPEECH_ENGINE` reads as a typo."
+   that DO exist, so a typo in `VIS_SPEECH_ENGINE` reads as a typo - and with the
+   REASON when an engine this build carries failed to load, because \"none is
+   registered\" is a fact about the process, not advice a human can follow."
   [direction id]
   (or (if id (engine direction id) (default-engine direction))
-      (throw (ex-info (if id
-                        (str "Unknown " (direction-nouns direction) " engine: " (name id))
-                        (str "No " (direction-nouns direction) " engine is registered"))
-                      {:type :vis/voice-engine-unavailable
-                       :direction direction
-                       :engine-id id
-                       :available (mapv :id (engines direction))}))))
+      (let [failures (builtin-load-failures)]
+        (throw (ex-info (cond id (str "Unknown " (direction-nouns direction) " engine: " (name id))
+                              (seq failures) (str "No " (direction-nouns direction)
+                                                  " engine is registered - "
+                                                  (str/join "; " (vals failures)))
+                              :else (str "No " (direction-nouns direction) " engine is registered"))
+                        {:type :vis/voice-engine-unavailable
+                         :direction direction
+                         :engine-id id
+                         :failures failures
+                         :available (mapv :id (engines direction))})))))
 
 (defn public-engine
   "One engine in the shape every surface reports. `:is-voice-import` is a
