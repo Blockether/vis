@@ -129,7 +129,8 @@
    `FileOutputStream` survives the rename with a stale fd), hence `prefix` —
    GraalPy's polyglot log takes its own.
 
-   Growth is bounded by `foundation.housekeeping/sweep-logs!`, which prunes
-   `~/.vis/logs` by age; the rolling handler bounds each live file."
+   Growth is bounded by `foundation.housekeeping/sweep-stale!`, which prunes
+   `~/.vis/logs` by age — including the per-command `shell` subdirectories; the
+   rolling handler bounds each live file."
   (^String [] (log-file "vis"))
   (^String [prefix] (str (ensure-logs-dir!) "/" prefix "-" (process-id) ".log")))

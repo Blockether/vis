@@ -125,6 +125,15 @@
   (not-empty (vec (some-> sink
                           deref))))
 
+(def
+  ^:dynamic
+  ^{:doc
+    "Test seam for the display cache directory. `nil` (production) resolves to
+                 `~/.vis/cache/display`, the location `housekeeping/sweep-stale!` bounds by age
+                 — a fixed contract, not a configurable."}
+  *display-home*
+  nil)
+
 (defn display-cache-file
   "Durable, content-addressed host file backing ONE inline `vis-image` display
    fence: `~/.vis/cache/display/<prefix><sha256-16>.<ext>`.
@@ -138,13 +147,17 @@
    DB-owned via `record-attachment!`.
 
    Content-addressed: the same figure written twice reuses one file, the name is
-   stable across restarts, and an existing file is never rewritten."
+   stable across restarts, and an existing file is never rewritten — only
+   re-stamped, because `housekeeping/sweep-stale!` ages this directory out and a
+   picture rendered again today is not a month-old one."
   ^java.io.File [^String prefix ^String ext ^bytes bs]
   (let
     [dir
-     (doto (java.io.File. (java.io.File. (java.io.File. (System/getProperty "user.home") ".vis")
-                                         "cache")
-                          "display")
+     (doto (if *display-home*
+             (java.io.File. ^String *display-home*)
+             (java.io.File. (java.io.File. (java.io.File. (System/getProperty "user.home") ".vis")
+                                           "cache")
+                            "display"))
        (.mkdirs))
 
      digest
@@ -156,7 +169,11 @@
      f
      (java.io.File. dir (str prefix digest "." ext))]
 
-    (when-not (.isFile f)
+    (if (.isFile f)
+      ;; Reuse. `housekeeping/sweep-stale!` judges a cache file by its mtime, so
+      ;; a picture rendered AGAIN today must not age out on the day its content
+      ;; was first written.
+      (.setLastModified f (System/currentTimeMillis))
       (java.nio.file.Files/write (.toPath f)
                                  bs
                                  ^"[Ljava.nio.file.OpenOption;"

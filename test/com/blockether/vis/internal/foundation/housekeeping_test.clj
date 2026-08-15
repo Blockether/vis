@@ -1,15 +1,18 @@
 (ns com.blockether.vis.internal.foundation.housekeeping-test
-  "Stale-state accounting for `~/.vis/drafts` and `~/.vis/gateway/events`.
+  "Stale-state accounting for `~/.vis/drafts`, `~/.vis/gateway/events` and the
+   directories `sweep-stale!` deletes on its own.
 
    Everything here runs against throwaway directories bound through
-   `workspace/*drafts-home*` and `housekeeping/*events-home*`; no test may
-   read — let alone delete — anything under the real `~/.vis`."
+   `workspace/*drafts-home*`, `housekeeping/*events-home*` and — for every
+   sweep test, ALL THREE at once via `with-homes` — `*logs-home*`,
+   `*cache-home*` and `*rewind-home*`; no test may read, let alone delete,
+   anything under the real `~/.vis`."
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
             [com.blockether.vis.internal.workspace :as workspace]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.io File]
-           [java.nio.file Files]
+           [java.nio.file Files LinkOption]
            [java.nio.file.attribute FileAttribute]))
 
 ;; ---------------------------------------------------------------------------
@@ -239,62 +242,166 @@
                  (expect (= "2.5 GB" (housekeeping/format-bytes (long (* 2.5 1024 1024 1024)))))))
 
 ;; ---------------------------------------------------------------------------
-;; sweep-logs! — the one self-deleting surface
+;; sweep-stale! — the self-deleting surface
 ;; ---------------------------------------------------------------------------
 
-(defdescribe sweep-logs-test
-             (it "keeps the retention window at three weeks"
-                 (expect (= 21 housekeeping/default-log-retention-days)))
-             (it "deletes only files older than the retention window"
-                 (let [logs (tmp-dir "vis-hk-logs")]
-                   (touch! logs "vis-nrepl-fresh.log" 1 "fresh")
-                   (touch! logs "vis-nrepl-edge.log" 20 "edge")
-                   (touch! logs "vis-nrepl-old.log" 22 "old-content")
-                   (touch! logs "vis-nrepl-ancient.log" 400 "ancient")
-                   (binding [housekeeping/*logs-home* (.getPath logs)]
-                     (let [report (housekeeping/sweep-logs! nil)]
-                       (expect (= 4 (:file-count report)))
-                       (expect (= 2 (:deleted report)))
-                       (expect (= (+ (count "old-content") (count "ancient")) (:bytes report)))
-                       (expect (= #{"vis-nrepl-fresh.log" "vis-nrepl-edge.log"}
-                                  (set (map #(.getName ^File %) (.listFiles logs)))))))))
-             (it "honours an explicit :days window"
-                 (let [logs (tmp-dir "vis-hk-logs-days")]
-                   (touch! logs "a.log" 5 "a")
-                   (touch! logs "b.log" 30 "b")
-                   (binding [housekeeping/*logs-home* (.getPath logs)]
-                     (expect (= 2 (:deleted (housekeeping/sweep-logs! {:days 1}))))
-                     (expect (zero? (count (.listFiles logs)))))))
-             (it "leaves subdirectories alone however stale they are"
-                 (let
-                   [logs
-                    (tmp-dir "vis-hk-logs-dir")
+(defn- target
+  "The one target report named `id` inside a `sweep-stale!` result."
+  [report id]
+  (first (filter #(= id (:id %)) (:targets report))))
 
-                    nested
-                    (touch! logs (str "keep-me" File/separator "inner.log") 90 "x")
+(defn- with-homes
+  "Call `f` with ALL THREE sweep seams pointed at throwaway directories. A test
+   that bound only the seam it cares about would leave the other targets
+   resolving to the operator's real `~/.vis` — and this sweep deletes."
+  [{:keys [logs cache rewind]} f]
+  (binding
+    [housekeeping/*logs-home*
+     (.getPath ^File (or logs (tmp-dir "vis-hk-idle-logs")))
 
-                    dir
-                    (.getParentFile nested)]
+     housekeeping/*cache-home*
+     (.getPath ^File (or cache (tmp-dir "vis-hk-idle-cache")))
 
-                   (.setLastModified dir (- (System/currentTimeMillis) (* 90 day-ms)))
-                   (binding [housekeeping/*logs-home* (.getPath logs)]
-                     (expect (zero? (:deleted (housekeeping/sweep-logs! nil))))
-                     (expect (.isDirectory dir))
-                     (expect (.exists nested)))))
-             (it "degrades to zero work when the logs directory does not exist"
-                 (let [missing (io/file (tmp-dir "vis-hk-logs-none") "nope")]
-                   (binding [housekeeping/*logs-home* (.getPath missing)]
-                     (let [report (housekeeping/sweep-logs! nil)]
-                       (expect (zero? (:file-count report)))
-                       (expect (zero? (:deleted report)))
-                       (expect (zero? (:bytes report)))))))
-             (it "sweeps off-thread with the caller's bindings conveyed"
-                 (let [logs (tmp-dir "vis-hk-logs-async")]
-                   (touch! logs "old.log" 60 "old")
-                   (touch! logs "new.log" 1 "new")
-                   (binding [housekeeping/*logs-home* (.getPath logs)]
-                     ;; `bound-fn*` in `sweep-logs-async!` is what keeps this temp-dir
-                     ;; binding visible to the sweeper thread; without it the thread would
-                     ;; fall back to the root binding and sweep the REAL `~/.vis/logs`.
-                     (.join ^Thread (housekeeping/sweep-logs-async! nil) 5000))
-                   (expect (= ["new.log"] (mapv #(.getName ^File %) (.listFiles logs)))))))
+     housekeeping/*rewind-home*
+     (.getPath ^File (or rewind (tmp-dir "vis-hk-idle-rewind")))]
+
+    (f)))
+
+(defdescribe
+  sweep-stale-test
+  (it "keeps three weeks for logs and rewind stores, a month for the display caches"
+      (expect (= 21 housekeeping/default-log-retention-days))
+      (expect (= 30 housekeeping/default-cache-retention-days))
+      (expect (= 21 housekeeping/default-rewind-retention-days))
+      (expect (= (* 512 1024 1024) housekeeping/default-cache-budget-bytes)))
+  (it "deletes only log files older than the retention window"
+      (let [logs (tmp-dir "vis-hk-logs")]
+        (touch! logs "vis-nrepl-fresh.log" 1 "fresh")
+        (touch! logs "vis-nrepl-edge.log" 20 "edge")
+        (touch! logs "vis-nrepl-old.log" 22 "old-content")
+        (touch! logs "vis-nrepl-ancient.log" 400 "ancient")
+        (let [report (target (with-homes {:logs logs} #(housekeeping/sweep-stale! nil)) :logs)]
+          (expect (= 4 (:file-count report)))
+          (expect (= 2 (:deleted report)))
+          (expect (= (+ (count "old-content") (count "ancient")) (:bytes report)))
+          (expect (= #{"vis-nrepl-fresh.log" "vis-nrepl-edge.log"}
+                     (set (map #(.getName ^File %) (.listFiles logs))))))))
+  ;; Regression: the sweep looked at the TOP LEVEL of `~/.vis/logs` only and
+  ;; explicitly left subdirectories alone, so every log `shell` ever wrote --
+  ;; `logs/shell/<run>/<id>.log`, one directory per command -- was immortal. A
+  ;; single week of them outweighed everything the sweep could see.
+  (it "deletes stale logs inside the per-command shell directories and prunes the ones it empties"
+      (let
+        [logs
+         (tmp-dir "vis-hk-logs-nested")
+
+         stale
+         (touch! logs (str "shell" File/separator "run-1" File/separator "npm-test.log") 90 "x")
+
+         fresh
+         (touch! logs (str "shell" File/separator "run-2" File/separator "npm-build.log") 1 "y")
+
+         report
+         (target (with-homes {:logs logs} #(housekeeping/sweep-stale! nil)) :logs)]
+
+        (expect (= 2 (:file-count report)))
+        (expect (= 1 (:deleted report)))
+        (expect (= 1 (:dirs-removed report)))
+        (expect (not (.exists stale)))
+        (expect (not (.exists (.getParentFile stale))))
+        (expect (.exists fresh))
+        (expect (.isDirectory logs))))
+  (it "honours an explicit :days window"
+      (let [logs (tmp-dir "vis-hk-logs-days")]
+        (touch! logs "a.log" 5 "a")
+        (touch! logs "b.log" 30 "b")
+        (expect (= 2
+                   (:deleted (target (with-homes {:logs logs}
+                                                 #(housekeeping/sweep-stale! {:days 1}))
+                                     :logs))))
+        (expect (zero? (count (.listFiles logs))))))
+  (it "never follows or deletes a symlink, so a link out of the root costs nothing"
+      (let
+        [logs
+         (tmp-dir "vis-hk-logs-link")
+
+         outside
+         (touch! (tmp-dir "vis-hk-outside") "keep.txt" 400 "keep")
+
+         link
+         (io/file logs "ancient-link.log")]
+
+        (Files/createSymbolicLink (.toPath link) (.toPath outside) (make-array FileAttribute 0))
+        (with-homes {:logs logs} #(housekeeping/sweep-stale! nil))
+        (expect (.exists outside))
+        (expect (Files/exists (.toPath link) (into-array LinkOption [LinkOption/NOFOLLOW_LINKS])))))
+  (it "deletes display-cache pictures past a month and keeps the recent ones"
+      (let [cache (tmp-dir "vis-hk-cache")]
+        (touch! cache (str "display" File/separator "fig-old.png") 40 "old")
+        (touch! cache (str "display" File/separator "fig-new.png") 3 "new")
+        (let [report (target (with-homes {:cache cache} #(housekeeping/sweep-stale! nil)) :display)]
+          (expect (= 1 (:deleted report)))
+          (expect (= ["fig-new.png"]
+                     (mapv #(.getName ^File %) (.listFiles (io/file cache "display"))))))))
+  (it "sweeps the terminal-image cache by the same rule as the figure cache"
+      (let [cache (tmp-dir "vis-hk-cache-tui")]
+        (touch! cache (str "tui-attachments" File/separator "old.png") 45 "old")
+        (touch! cache (str "tui-attachments" File/separator "new.png") 2 "new")
+        (let
+          [report (target (with-homes {:cache cache} #(housekeeping/sweep-stale! nil))
+                          :tui-attachments)]
+          (expect (= 1 (:deleted report)))
+          (expect (= ["new.png"]
+                     (mapv #(.getName ^File %) (.listFiles (io/file cache "tui-attachments"))))))))
+  (it "drops the oldest pictures first when a cache is over its byte budget"
+      (let [cache (tmp-dir "vis-hk-cache-budget")]
+        (touch! cache (str "display" File/separator "fig-1.png") 9 "aaaaa")
+        (touch! cache (str "display" File/separator "fig-2.png") 6 "bbbbb")
+        (touch! cache (str "display" File/separator "fig-3.png") 3 "ccccc")
+        (let
+          [report (target (with-homes {:cache cache}
+                                      #(housekeeping/sweep-stale! {:budget-bytes 10}))
+                          :display)]
+          (expect (= 1 (:over-budget-deleted report)))
+          (expect (= 5 (:bytes report)))
+          (expect (= #{"fig-2.png" "fig-3.png"}
+                     (set (map #(.getName ^File %) (.listFiles (io/file cache "display")))))))))
+  (it
+    "deletes a whole rewind store once its newest file has aged out, and leaves a live one whole"
+    (let
+      [rewind
+       (tmp-dir "vis-hk-rewind")
+
+       dead
+       (touch! rewind (str "dead-session" File/separator "journal.ndjson") 30 "{}")
+
+       live
+       (touch! rewind (str "live-session" File/separator "journal.ndjson") 30 "{}")
+
+       blob
+       (touch! rewind (str "live-session" File/separator "objects" File/separator "blob") 1 "fresh")
+
+       report
+       (target (with-homes {:rewind rewind} #(housekeeping/sweep-stale! nil)) :rewind)]
+
+      (expect (= 2 (:file-count report)))
+      (expect (= 1 (:deleted report)))
+      (expect (not (.exists (.getParentFile dead))))
+      (expect (.exists live))
+      (expect (.exists blob))))
+  (it "degrades to zero work when none of the directories exist"
+      (let
+        [report (with-homes {:logs (io/file (tmp-dir "vis-hk-none") "nope")}
+                            #(housekeeping/sweep-stale! nil))]
+        (expect (zero? (:deleted report)))
+        (expect (zero? (:bytes report)))
+        (expect (= [:logs :display :tui-attachments :rewind] (mapv :id (:targets report))))))
+  (it "sweeps off-thread with the caller's bindings conveyed"
+      (let [logs (tmp-dir "vis-hk-logs-async")]
+        (touch! logs "old.log" 60 "old")
+        (touch! logs "new.log" 1 "new")
+        ;; `bound-fn*` in `sweep-stale-async!` is what keeps these temp-dir
+        ;; bindings visible to the sweeper thread; without it the thread would
+        ;; fall back to the root bindings and sweep the REAL `~/.vis`.
+        (with-homes {:logs logs} #(.join ^Thread (housekeeping/sweep-stale-async! nil) 5000))
+        (expect (= ["new.log"] (mapv #(.getName ^File %) (.listFiles logs)))))))

@@ -4851,10 +4851,12 @@
       ;; spam - the user only sees logs when they pass --debug / --verbose / -v
       ;; (or set VIS_DEBUG=1).
       (timed-startup! measure? "configure-logging" #(configure-logging! args))
-      ;; Stale-log sweep: `~/.vis/logs` gains a file per nrepl/JFR start and
-      ;; nothing ever removed one. Off-thread and best-effort — see
-      ;; `housekeeping/sweep-logs!` for the retention window and guards.
-      (try (housekeeping/sweep-logs-async!) (catch Throwable _ nil))
+      ;; Stale-state sweep: `~/.vis/logs` gains a file per nrepl/JFR start and a
+      ;; directory per `shell` command, the display caches a file per rendered
+      ;; picture, `~/.vis/rewind` a store per session — and nothing ever removed
+      ;; one. Off-thread and best-effort — see `housekeeping/sweep-stale!` for
+      ;; the windows and the guards.
+      (try (housekeeping/sweep-stale-async!) (catch Throwable _ nil))
       (cond (version-request? args) (println (str "vis-agent " (vis-version)))
             (root-help-request? args) (println (commandline/render-tree (root-command)))
             (fast-help-dispatched? measure? args) nil

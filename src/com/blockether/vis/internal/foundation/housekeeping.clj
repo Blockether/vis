@@ -1,18 +1,23 @@
 (ns com.blockether.vis.internal.foundation.housekeeping
-  "Stale-state accounting for the two Vis-owned directories that grow without
-   bound: the drafts store (`~/.vis/drafts`) and the gateway journals
-   (`~/.vis/gateway/events`).
+  "Retention for the Vis-owned directories that grow without bound — the two
+   nobody may delete for you, and the four that delete themselves.
 
-   Both are legitimately unbounded by design. A draft clone is a full copy of a
-   trunk and survives until someone applies or abandons it, so a machine that
-   drafts daily and never abandons accumulates gigabytes of dead clones. Gateway
-   journals self-sweep inside the tailer loop (`gateway.bus/sweep!`), but only
-   while a daemon is actually running — journals from crashed or never-restarted
-   daemons stay forever.
+   ADVISORY (`scan` observes, `purge!` acts, `vis-agent doctor` renders): the
+   drafts store (`~/.vis/drafts`) and the gateway journals
+   (`~/.vis/gateway/events`). A draft clone is a full copy of a trunk and
+   survives until someone applies or abandons it, so a machine that drafts daily
+   and never abandons accumulates gigabytes of dead clones. Gateway journals
+   self-sweep inside the tailer loop (`gateway.bus/sweep!`), but only while a
+   daemon is actually running — journals from crashed or never-restarted daemons
+   stay forever. Both hold recoverable work, so nothing here deletes them on its
+   own: `scan` is pure observation (no mutation, never throws) and `purge!` is
+   the explicit operator action behind `vis-agent doctor --purge`.
 
-   Neither is an error, so nothing here deletes on its own: `scan` is pure
-   observation (no mutation, never throws) that `vis-agent doctor` renders, and
-   `purge!` is the explicit operator action behind `vis-agent doctor --purge`.
+   SELF-DELETING (`sweep-stale!`, once per process at startup): diagnostic logs,
+   the display caches and the rewind stores. Those are DERIVED — a log of a
+   process that exited, a picture whose bytes are already DB-owned, the
+   pre-image of an edit nobody will rewind a month later — so they carry a
+   window instead of a report. `sweep-targets` is the one list of them.
 
    `purge!` routes deletions through `workspace/abandon!` for live draft rows so
    the DB transition, hooks, and backend root release all happen exactly as they
@@ -139,15 +144,19 @@
   (try (Files/exists (.toPath f) (into-array LinkOption [])) (catch Throwable _ false)))
 
 ;; ---------------------------------------------------------------------------
-;; Diagnostic logs
+;; The self-deleting sweep
 ;;
-;; UNLIKE drafts and journals this one deletes on its own. A log file carries no
-;; recoverable work: `~/.vis/logs` is a dedicated write-only sink (nrepl session
-;; logs, JFR dumps) whose entries are never referenced again once the process
-;; that wrote them is gone, and it grows one file per REPL start forever —
-;; hundreds of mostly-empty files accumulate within weeks. Nothing bounded it,
-;; because the Telemere rolling handler only bounds the CURRENT process's
-;; `~/.vis/logs/vis-<pid>.log`, and every exited process leaves its own behind.
+;; UNLIKE drafts and journals, everything below is DERIVED and nothing anyone
+;; can recover from: a diagnostic log of a process that exited, a picture whose
+;; bytes are already DB-owned, the pre-image of an edit nobody will rewind a
+;; month later. Each of these directories gains an entry per shell command, per
+;; rendered figure, per edited file — forever — so each one needs a window, and
+;; `sweep-targets` is the ONE place that lists them.
+;;
+;; `~/.vis/logs` used to be swept at its TOP LEVEL only, which is precisely
+;; where the shell logs are not: `shell` writes `logs/shell/<run>/<id>.log`, one
+;; directory per command, and a single week of those outweighed everything the
+;; sweep could see.
 ;; ---------------------------------------------------------------------------
 
 (def default-log-retention-days
@@ -155,6 +164,25 @@
    than any plausible debugging window (a bug reported on Friday is still
    readable the Monday after next), short enough that the directory stays
    navigable and a `grep` over it does not walk a year of dead sessions."
+  21)
+
+(def default-cache-retention-days
+  "Age past which a rendered display artifact is deleted. Longer than the log
+   window because these files are what a terminal repaints HISTORY from: the
+   bytes themselves are DB-owned, but a bubble scrolled back to weeks later
+   repaints from its cache file or not at all."
+  30)
+
+(def default-cache-budget-bytes
+  "Bytes one display cache may still hold once the age pass is done. Age alone
+   does not bound an afternoon that renders thousands of figures, so the newest
+   files up to this budget survive and the oldest go first."
+  (* 512 1024 1024))
+
+(def default-rewind-retention-days
+  "Age past which a whole rewind store is deleted, judged by its NEWEST file. A
+   conversation still being rewound appends to its journal on every edit, so a
+   store untouched for three weeks belongs to one nobody will undo."
   21)
 
 (def
@@ -166,93 +194,233 @@
   *logs-home*
   nil)
 
-(defn- logs-dir
-  ^File []
-  (io/file (or *logs-home* (io/file (System/getProperty "user.home") ".vis" "logs"))))
+(def
+  ^:dynamic
+  ^{:doc
+    "Test seam for the display cache root. `nil` (production) resolves to
+                 `~/.vis/cache`, mirroring `foundation.mpl-capture/display-cache-file` and the
+                 TUI channel's terminal-image cache."}
+  *cache-home*
+  nil)
 
-(defn sweep-logs!
-  "Delete every stale regular file directly under `~/.vis/logs`. Returns
-   `{:root :days :cutoff-ms :file-count :deleted :bytes}` — `:deleted` counts
-   files actually removed and `:bytes` the space reclaimed.
+(def
+  ^:dynamic
+  ^{:doc
+    "Test seam for the rewind store root. `nil` (production) resolves to
+                 `~/.vis/rewind`, mirroring `foundation.rewind/*store-root*`."}
+  *rewind-home*
+  nil)
 
-   Never throws and never recurses: only immediate children are considered, only
-   regular files (a symlink or subdirectory is left alone), and every candidate
-   is re-checked with `under?` against the canonical logs root so a hostile
-   symlinked entry cannot walk the delete out of the directory.
+(defn- home-dir
+  "`~/.vis/<segs…>` unless a test seam overrides the whole root."
+  ^File [^String override segs]
+  (if override (io/file override) (apply io/file (System/getProperty "user.home") ".vis" segs)))
 
-   Options: `:days` (defaults to `default-log-retention-days`) and `:now-ms` for
-   tests."
-  ([] (sweep-logs! nil))
-  ([{:keys [days now-ms]}]
+(defn- logs-dir ^File [] (home-dir *logs-home* ["logs"]))
+
+(defn- cache-dir ^File [^String sub] (io/file (home-dir *cache-home* ["cache"]) sub))
+
+(defn- rewind-dir ^File [] (home-dir *rewind-home* ["rewind"]))
+
+(defn- delete-quietly!
+  "Delete one path, answering true when this call removed it. A directory that
+   is not empty, or a file another process already took, is not an error here."
+  [^Path p]
+  (try (Files/deleteIfExists p) (catch Throwable _ false)))
+
+(defn- sweep-files!
+  "Delete every regular file under `root` older than `cutoff`, then every
+   directory those deletions emptied — `root` itself excepted. Symlinks are
+   never followed (`walkFileTree` does not by default) and every candidate is
+   re-checked with `under?` against `canon`, so a hostile link cannot walk the
+   delete out of the tree. Returns `{:file-count :deleted :bytes :dirs-removed}`."
+  [^File root ^String canon ^long cutoff]
+  (let
+    [files
+     (java.util.concurrent.atomic.AtomicLong. 0)
+
+     deleted
+     (java.util.concurrent.atomic.AtomicLong. 0)
+
+     bytes
+     (java.util.concurrent.atomic.AtomicLong. 0)
+
+     dirs
+     (java.util.concurrent.atomic.AtomicLong. 0)]
+
+    (try (Files/walkFileTree (.toPath root)
+                             (proxy [SimpleFileVisitor] []
+                               (visitFile [^Path p ^BasicFileAttributes attrs]
+                                 (when (.isRegularFile attrs)
+                                   (.incrementAndGet files)
+                                   (let [size (.size attrs)]
+                                     (when (and (< (.toMillis (.lastModifiedTime attrs)) cutoff)
+                                                (under? canon (canonical (.toFile p)))
+                                                (delete-quietly! p))
+                                       (.incrementAndGet deleted)
+                                       (.addAndGet bytes size))))
+                                 FileVisitResult/CONTINUE)
+                               (visitFileFailed [_p _e] FileVisitResult/CONTINUE)
+                               (postVisitDirectory [^Path p _e]
+                                 (when (and (not= (.toFile p) root)
+                                            (under? canon (canonical (.toFile p)))
+                                            (delete-quietly! p))
+                                   (.incrementAndGet dirs))
+                                 FileVisitResult/CONTINUE)))
+         (catch Throwable _ nil))
+    {:file-count (.get files)
+     :deleted (.get deleted)
+     :bytes (.get bytes)
+     :dirs-removed (.get dirs)}))
+
+(defn- trim-to-budget!
+  "Delete the OLDEST immediate children of `root` until it holds at most
+   `budget` bytes. The age pass cannot bound a single afternoon that renders
+   thousands of pictures; this does. Returns `{:deleted :bytes}`."
+  [^File root ^String canon ^long budget]
+  (let
+    [entries
+     (->> (or (.listFiles root) (make-array File 0))
+          (filter (fn [^File f]
+                    (and (.isFile f) (not (Files/isSymbolicLink (.toPath f))))))
+          (map (fn [^File f]
+                 {:file f :ms (.lastModified f) :size (.length f)}))
+          (sort-by :ms)
+          vec)
+
+     total
+     (reduce + 0 (map :size entries))]
+
+    (:report (reduce (fn [acc {:keys [^File file ^long size]}]
+                       (if (<= (long (:held acc)) budget)
+                         (reduced acc)
+                         (if (and (under? canon (canonical file)) (delete-quietly! (.toPath file)))
+                           (-> acc
+                               (update :held - size)
+                               (update-in [:report :deleted] inc)
+                               (update-in [:report :bytes] + size))
+                           acc)))
+                     {:held total :report {:deleted 0 :bytes 0}}
+                     entries))))
+
+(defn- sweep-stores!
+  "Delete every immediate child DIRECTORY of `root` whose newest file predates
+   `cutoff` — a whole per-session store at a time, judged the way `scan` judges
+   an orphan draft, because a live session touches its journal constantly.
+   Returns `{:file-count :deleted :bytes :dirs-removed}`."
+  [^File root ^String canon ^long cutoff]
+  (let
+    [stores (->> (or (.listFiles root) (make-array File 0))
+                 (filter (fn [^File f]
+                           (and (.isDirectory f) (not (.startsWith (.getName f) ".")))))
+                 vec)]
+    (reduce (fn [acc ^File d]
+              (let [{:keys [bytes newest-ms]} (tree-stats d)]
+                (if (and (< (long newest-ms) cutoff)
+                         (under? canon (canonical d))
+                         (pos? (delete-tree! d)))
+                  (-> acc
+                      (update :deleted inc)
+                      (update :dirs-removed inc)
+                      (update :bytes + (long bytes)))
+                  acc)))
+            {:file-count (count stores) :deleted 0 :bytes 0 :dirs-removed 0}
+            stores)))
+
+(def ^:private sweep-targets
+  "Every directory Vis fills on its own that holds nothing anyone can recover —
+   the one list, so a new producer is bounded by being added here rather than by
+   a second sweep somewhere else.
+
+   `:mode` `:files` deletes stale FILES anywhere below the root and then the
+   directories they emptied; `:stores` deletes a whole per-session subtree at a
+   time. `:budget-bytes` additionally caps what survives the age pass."
+  [{:id :logs :mode :files :dir logs-dir :retention-days default-log-retention-days}
+   {:id :display
+    :mode :files
+    :dir #(cache-dir "display")
+    :retention-days default-cache-retention-days
+    :budget-bytes default-cache-budget-bytes}
+   {:id :tui-attachments
+    :mode :files
+    :dir #(cache-dir "tui-attachments")
+    :retention-days default-cache-retention-days
+    :budget-bytes default-cache-budget-bytes}
+   {:id :rewind :mode :stores :dir rewind-dir :retention-days default-rewind-retention-days}])
+
+(defn sweep-stale!
+  "Delete the aged-out derived state of every `sweep-targets` entry. Returns
+   `{:targets [{:id :root :days :cutoff-ms :file-count :deleted :bytes
+   :dirs-removed :over-budget-deleted}…] :deleted :bytes}` — `:deleted` counts
+   entries actually removed and `:bytes` the space reclaimed.
+
+   Never throws: a missing directory is zero work, and a permission-denied
+   subtree is skipped rather than allowed to take startup down.
+
+   Options, all for tests: `:days` (overrides every target's window),
+   `:budget-bytes` (overrides every byte budget) and `:now-ms`."
+  ([] (sweep-stale! nil))
+  ([{:keys [days now-ms] budget-override :budget-bytes}]
    (let
-     [days
-      (long (or days default-log-retention-days))
-
-      now
+     [now
       (long (or now-ms (System/currentTimeMillis)))
 
-      cutoff
-      (- now (* days (long day-ms)))
+      reports
+      (mapv
+        (fn [{:keys [id mode dir retention-days budget-bytes]}]
+          (let
+            [^File d
+             (dir)
 
-      dir
-      (logs-dir)
+             window
+             (long (or days retention-days))
 
-      root
-      (canonical dir)
+             cutoff
+             (- now (* window (long day-ms)))
 
-      files
-      (try (when (.isDirectory dir) (vec (or (.listFiles dir) (make-array File 0))))
-           (catch Throwable _ nil))
+             base
+             {:id id :root (canonical d) :days window :cutoff-ms cutoff}]
 
-      result
-      (reduce (fn [acc ^File f]
-                (try (let
-                       [p
-                        (.toPath f)
+            (if-not (.isDirectory d)
+              (merge base {:file-count 0 :deleted 0 :bytes 0 :dirs-removed 0})
+              (let
+                [canon
+                 (canonical d)
 
-                        regular?
-                        (Files/isRegularFile p (into-array LinkOption []))
+                 swept
+                 (if (= :stores mode) (sweep-stores! d canon cutoff) (sweep-files! d canon cutoff))
 
-                        link?
-                        (Files/isSymbolicLink p)
+                 trimmed
+                 (when budget-bytes
+                   (trim-to-budget! d canon (long (or budget-override budget-bytes))))]
 
-                        size
-                        (.length f)]
+                (merge base
+                       swept
+                       (when trimmed
+                         {:deleted (+ (long (:deleted swept)) (long (:deleted trimmed)))
+                          :bytes (+ (long (:bytes swept)) (long (:bytes trimmed)))
+                          :over-budget-deleted (:deleted trimmed)}))))))
+        sweep-targets)]
 
-                       (if (and regular?
-                                (not link?)
-                                (< (.lastModified f) cutoff)
-                                (under? root (canonical f))
-                                (Files/deleteIfExists p))
-                         (-> acc
-                             (update :deleted inc)
-                             (update :bytes + size))
-                         acc))
-                     (catch Throwable _ acc)))
-              {:deleted 0 :bytes 0}
-              files)]
+     {:targets reports
+      :deleted (reduce + 0 (map :deleted reports))
+      :bytes (reduce + 0 (map :bytes reports))})))
 
-     (assoc result
-       :root root
-       :days days
-       :cutoff-ms cutoff
-       :file-count (count files)))))
-
-(defn sweep-logs-async!
-  "Fire-and-forget `sweep-logs!` on a lowest-priority daemon thread. Called once
-   per process at startup: hundreds of `File` stats are trivial but they are
+(defn sweep-stale-async!
+  "Fire-and-forget `sweep-stale!` on a lowest-priority daemon thread. Called once
+   per process at startup: a few thousand `File` stats are trivial but they are
    still disk I/O on the path to first paint, and a sweep that loses the race
-   with a short-lived `vis-agent --version` simply runs on the next start. Returns the
-   thread.
+   with a short-lived `vis-agent --version` simply runs on the next start.
+   Returns the thread.
 
-   The body is a `bound-fn` so `*logs-home*` CONVEYS: a new thread otherwise
-   sees only root bindings, which would make a test's temp-dir binding silently
-   sweep the operator's real `~/.vis/logs`. Production binds nothing, so the
+   The body is a `bound-fn` so the three home seams CONVEY: a new thread
+   otherwise sees only root bindings, which would make a test's temp-dir binding
+   silently sweep the operator's real `~/.vis`. Production binds nothing, so the
    conveyance is free."
-  ([] (sweep-logs-async! nil))
+  ([] (sweep-stale-async! nil))
   ([opts]
-   (doto (Thread. ^Runnable (bound-fn* #(try (sweep-logs! opts) (catch Throwable _ nil)))
-                  "vis-log-sweep")
+   (doto (Thread. ^Runnable (bound-fn* #(try (sweep-stale! opts) (catch Throwable _ nil)))
+                  "vis-stale-sweep")
      (.setDaemon true)
      (.setPriority Thread/MIN_PRIORITY)
      (.start))))

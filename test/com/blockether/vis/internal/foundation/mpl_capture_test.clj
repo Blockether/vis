@@ -96,3 +96,43 @@
                                          ["bundle.js.map" "{\"version\":3}"]
                                          ["dist.tsbuildinfo" "{}"] ["app.jar.sha256" "deadbeef"]
                                          ["notes.md" "# what the run found\n"]]))))))
+
+
+(defdescribe display-cache-file-test
+             (it "writes one content-addressed file and reuses it for identical bytes"
+                 (let
+                   [dir
+                    (.toFile (java.nio.file.Files/createTempDirectory
+                               "vis-mpl-display"
+                               (make-array java.nio.file.attribute.FileAttribute 0)))
+
+                    [a b]
+                    (binding [cap/*display-home* (.getPath dir)]
+                      [(cap/display-cache-file "fig-" "png" (.getBytes "picture"))
+                       (cap/display-cache-file "fig-" "png" (.getBytes "picture"))])]
+
+                   (expect (= (.getPath a) (.getPath b)))
+                   (expect (= 1 (count (.listFiles dir))))
+                   (expect (= "picture" (slurp a)))))
+             ;; Regression: a reused cache file kept the stamp of its FIRST render, so
+             ;; `housekeeping/sweep-stale!` would age out a picture that had been rendered
+             ;; again this morning because its content was first seen a month ago.
+             (it "re-stamps the file it reuses, so its age is the last render and not the first"
+                 (let
+                   [dir
+                    (.toFile (java.nio.file.Files/createTempDirectory
+                               "vis-mpl-display-age"
+                               (make-array java.nio.file.attribute.FileAttribute 0)))
+
+                    bs
+                    (.getBytes "picture")
+
+                    old
+                    (- (System/currentTimeMillis) (* 40 86400000))]
+
+                   (binding [cap/*display-home* (.getPath dir)]
+                     (let [first-render (cap/display-cache-file "fig-" "png" bs)]
+                       (.setLastModified first-render old)
+                       (let [again (cap/display-cache-file "fig-" "png" bs)]
+                         (expect (= (.getPath first-render) (.getPath again)))
+                         (expect (< old (.lastModified again)))))))))
