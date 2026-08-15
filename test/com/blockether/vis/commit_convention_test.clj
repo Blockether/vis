@@ -9,8 +9,10 @@
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private enforced-since
-  "Committer-date cutoff: the first commit this convention covers."
-  "2026-08-15T17:00:00+00:00")
+  "Committer-date cutoff: the first commit this convention covers. It moved
+   the day the trailer dropped its `vis_session_id#` marker: commits before
+   it speak the marked form, and one format is enforced here, never two."
+  "2026-08-15T20:00:00+00:00")
 
 (def ^:private max-subject-chars 72)
 
@@ -22,13 +24,13 @@
   #"(feat|fix|docs|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9./-]+\))?!?: \S.*")
 
 (def ^:private session-trailer-re
-  "The marked form `header.clj` puts on the clipboard — a bare UUID says
-   nothing about what it names."
-  #"Vis-Session: vis_session_id#[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
+  "The bare session id. The `Vis-Session:` key already says what the value
+   names, so the clipboard marker (`header.clj`) has no work to do here."
+  #"Vis-Session: [0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 
 (def ^:private bot-author-re #"(?i)\[bot\]")
 
-(def ^:private sample-trailer "Vis-Session: vis_session_id#123e4567-e89b-12d3-a456-426614174000")
+(def ^:private sample-trailer "Vis-Session: 123e4567-e89b-12d3-a456-426614174000")
 
 (defn- git
   [& args]
@@ -85,7 +87,7 @@
           (str hash " — body over " max-body-lines " lines: keep only the WHY, the diff says WHAT"))
 
         (not (re-matches session-trailer-re trailer))
-        (conj (str hash " — last line must be `Vis-Session: vis_session_id#<uuid>`"))))))
+        (conj (str hash " — last line must be `Vis-Session: <uuid>`"))))))
 
 (def ^:private rule-cases
   "A message and the fragments its problems must mention."
@@ -100,7 +102,8 @@
    [(str "fix(companion): keep the heading row when the notch pushes it down\n\n"
          "One.\nTwo.\nThree.\nFour.\nFive.\nSix.\nSeven.\n\n"
          sample-trailer) ["body over"]] ["chore: bump deps\n" ["Vis-Session"]]
-   [(str "feat(api): add the voices route.\n\n" sample-trailer) ["period"]]
+   [(str "chore: bump deps\n\n" "Vis-Session: vis_session_id#123e4567-e89b-12d3-a456-426614174000")
+    ["Vis-Session"]] [(str "feat(api): add the voices route.\n\n" sample-trailer) ["period"]]
    [(str
       "refactor(tui): a subject that runs well past seventy-two characters and proves the length cap fires\n\n"
       sample-trailer) ["chars"]]])

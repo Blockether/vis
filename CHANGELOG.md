@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `vis-agent extension voice say "<text>"` and `vis-agent extension voice transcribe <clip.wav>` — the two one-line checks that a machine's voice works
 
 ### Changed
-- Commits are `type(scope): summary` with a body of at most six WHY lines and a mandatory `Vis-Session: vis_session_id#<uuid>` trailer
+- Commits are `type(scope): summary` with a body of at most six WHY lines and a mandatory `Vis-Session: <uuid>` trailer
 - `/v1/voice/model` and `/v1/speech/model` hang off the machine, beside its voices, instead of off a session
 
 ### Fixed

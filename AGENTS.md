@@ -49,11 +49,11 @@ Reproduce from the report's own steps first; if it does not reproduce, that IS t
 
 ### Commit messages
 
-One conventional line, a body only where the WHY is missing, and the session that made it — enforced by `test/com/blockether/vis/commit_convention_test.clj` for every commit after 2026-08-15T17:00Z.
+One conventional line, a body only where the WHY is missing, and the session that made it — enforced by `test/com/blockether/vis/commit_convention_test.clj` for every commit after 2026-08-15T20:00Z.
 
 - **Subject** — `type(scope): imperative summary` under 72 chars, no trailing period. Type is one of `feat fix docs refactor perf test build ci chore revert`; scope is the one-word area (`gateway`, `companion`, `tui`, `cli`, `docs`, `release`).
 - **Body** — optional, at most six non-blank lines, and only the WHY: constraint, trigger, trade-off. The diff already says WHAT; never narrate it.
-- **Trailer** — always `Vis-Session: vis_session_id#<uuid>`, the marked session id (`src/com/blockether/vis/internal/header.clj`) of the work that produced the commit, so any commit traces back to its conversation.
+- **Trailer** — always `Vis-Session: <uuid>`, the bare session id of the work that produced the commit, so any commit traces back to its conversation. The key already names the value: the marked `vis_session_id#<uuid>` clipboard form (`src/com/blockether/vis/internal/header.clj`) is refused here.
 
 ## Toolchain: GraalVM CE 25.1.3 is locked
 
