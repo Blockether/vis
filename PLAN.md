@@ -381,7 +381,9 @@ GPL-3 phonemizer everybody already has costs us nothing to require and would cos
   and all six voice routes answer 501 with the reason — no 500 and nothing thrown.
 - PROVEN on this machine through the JVM path: all three shipped clips synthesized (~4.7 s of audio each) and Parakeet
   transcribed every one of them back verbatim, and an imported clip cloned and spoke the same way.
-- `THIRD_PARTY_MODELS.md` generated FROM the manifest, so the file cannot drift from what ships.
+- DONE. `THIRD_PARTY_MODELS.md` is GENERATED from the manifest — `attribution/markdown` renders every entry's licence,
+  attribution, notice, voices and each source it may be fetched from, `vis-agent extension voice models licenses --markdown`
+  reprints it, and `assets_test.clj` fails with the regenerate command the moment the file and the manifest disagree.
 - The natives stay upstream's. `sherpa.clj/jar-url` fetches them from JitPack, and sherpa's VITS path phonemizes through
   espeak-ng compiled INTO that library — `nm` finds 10 `espeak_*` symbols and its data paths in the shipped
   `libsherpa-onnx-jni` — so the jar is GPL-3 object code and Vis never re-hosts it. The image is the open question, not
@@ -465,8 +467,8 @@ per-voice reading. Without this phase the catalogue is three voices in two accen
 
 ## State of the plan
 
-**ACCEPTED** — Phases 1, 2, 3 and 4 have landed. Phase 5 is in flight: the assets-only pack is rebuilt and
-espeak-ng now belongs to the system.
+**ACCEPTED** — Phases 1, 2, 3, 4 and 5 have landed. The pack carries only what Vis makes or may mirror, espeak-ng
+belongs to the system, and the credits are a render of the manifest. Phase 6 is next.
 
 **Phase 1 — DONE**, `f99eaee39`, refined by the commit that carries this line.
 `vis-foundation-voice` resolves `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm v1.13.5` from
@@ -612,7 +614,8 @@ real sentence spoken end to end — the pack release does not exist yet, so the 
 fell through to upstream exactly as designed, installing `en_US-kristin-medium` and writing 197 KB of RIFF/WAVE at
 22 050 Hz, 4.5 seconds long.
 
-**Phase 5 — IN FLIGHT**, in the commit that carries this line. Two corrections, one export, and voices of our own.
+**Phase 5 — DONE**, completed by the commit that carries this line. Two corrections, one export, voices of our own, and
+credits that cannot drift.
 
 The `voice-assets-pack` release is now an ASSETS release and nothing else: Parakeet plus `SHA256SUMS.txt`. The
 previous one is deleted, and with it two `vis-agent-linux-*` binaries that CI attached by accident — the tag
@@ -669,6 +672,11 @@ untouched, capabilities say `voice.enabled false` and `speech.is_enabled false`,
 transcription, synthesis and all three voice routes — answers 501 with the reason instead of failing. Vis is an agent
 that CAN speak, not one that needs to.
 
+And the credits are not prose. `THIRD_PARTY_MODELS.md` at the repository root is `manifest.edn` rendered by
+`attribution/markdown`: one summary table, then a section per entry with its licence, attribution, notice, voices, install
+directory and every source in the order Vis tries them, plus the espeak-ng paragraph the `:needs-espeak-ng` flag earns.
+The file is never edited — `vis-agent extension voice models licenses --markdown` writes it and a test fails when it and
+the manifest disagree, so a model can never be credited to the wrong project by a document nobody re-read.
 **Settled before Phase 1**, from public sources and with no code involved:
 
 - The `kyutai/pocket-tts` gate is `auto` and its only condition is a prohibited-use statement, so
@@ -702,9 +710,8 @@ Three decisions the plan takes, so they are not re-litigated in review:
 
 TODO, in order:
 
-1. **Phase 5** — `THIRD_PARTY_MODELS.md` generated FROM the manifest.
-2. **Phase 6** — engine and voice pickers in the companion (Settings already imports and forgets voices), Android voice enumeration.
-3. **Phase 7** — the rest of the Piper catalogue and Kokoro, licensed one voice at a time.
+1. **Phase 6** — engine and voice pickers in the companion (Settings already imports and forgets voices), Android voice enumeration.
+2. **Phase 7** — the rest of the Piper catalogue and Kokoro, licensed one voice at a time.
 
 **Lineage.** This plan supersedes *"Let a session speak to the other sessions in its tree"*, which
 was **ACCEPTED** and unstarted; it is preserved verbatim at `git show b3130f92a:PLAN.md` and nothing

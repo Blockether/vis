@@ -2,6 +2,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.ext.foundation-voice.assets :as assets]
+            [com.blockether.vis.ext.foundation-voice.attribution :as attribution]
             [com.blockether.vis.ext.foundation-voice.files :as files]
             [lazytest.core :refer [defdescribe it expect]])
   (:import [java.io File FileOutputStream]
@@ -231,3 +232,44 @@
                    (expect (contains? (set (:requires entry)) (:clip voice)) (:id entry))
                    ;; the transcript rides along, because the clone is given the words
                    (expect (seq (:clip-text voice)) (:id entry)))))
+
+
+(defn- repo-document
+  "The generated document at the repository root, found by walking up from the
+   working directory so the test does not care where the runner starts."
+  ^File []
+  (loop [dir (.getAbsoluteFile (io/file "."))]
+    (when dir
+      (let [candidate (io/file dir attribution/document-name)]
+        (if (.isFile candidate) candidate (recur (.getParentFile dir)))))))
+
+(defdescribe
+  third-party-models-test
+  (it "keeps THIRD_PARTY_MODELS.md exactly what the manifest renders to"
+      ;; The document a reader checks the credits in and the manifest
+      ;; the installer obeys are ONE artifact. Editing either alone is
+      ;; how a shipped model ends up credited to the wrong project.
+      (let [document (repo-document)]
+        (expect (some? document) (str attribution/document-name " is missing from the repository"))
+        (expect (= (attribution/markdown) (slurp document))
+                (str attribution/document-name
+                     " no longer matches the manifest - regenerate it: "
+                     attribution/regenerate-command))))
+  (it "credits every entry it renders, and hides no source"
+      ;; Equality with the file only proves the two agree; this proves
+      ;; the render still carries what attribution IS - who made it,
+      ;; under what terms, and every place the bytes come from.
+      (let [rendered (attribution/markdown)]
+        (doseq [entry (assets/manifest)]
+          (expect (str/includes? rendered (:id entry)) (:id entry))
+          (expect (str/includes? rendered (:attribution entry)) (:id entry))
+          (expect (str/includes? rendered (:license entry)) (:id entry))
+          (expect (str/includes? rendered (:source-url entry)) (:id entry))
+          (when (:notice entry) (expect (str/includes? rendered (:notice entry)) (:id entry)))
+          (when (:is-opt-in entry) (expect (str/includes? rendered "Opt-in") (:id entry)))
+          (doseq
+            [source (:sources entry)
+             :let [url (:url source)]
+             :when url]
+
+            (expect (str/includes? rendered url) (:id entry)))))))

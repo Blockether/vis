@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Credit every model the voice extension can install in `THIRD_PARTY_MODELS.md`, generated from the manifest
+
 ### Changed
 - Commits are `type(scope): summary` with a body of at most six WHY lines and a mandatory `Vis-Session: vis_session_id#<uuid>` trailer
 

@@ -69,3 +69,6 @@ vis-agent update            # move the command and its runtime to the newest
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE).
+
+The models the voice extension can install are third parties' work and keep their own terms — every one of them is
+credited in [THIRD_PARTY_MODELS.md](THIRD_PARTY_MODELS.md), which is generated from the manifest the installer reads.

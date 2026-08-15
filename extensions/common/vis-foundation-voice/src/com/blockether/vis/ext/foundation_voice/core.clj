@@ -31,6 +31,9 @@
   [sym & args]
   (apply (ext-var "com.blockether.vis.ext.foundation-voice.voices" sym) args))
 
+(defn- attribution-call!
+  [sym & args]
+  (apply (ext-var "com.blockether.vis.ext.foundation-voice.attribution" sym) args))
 (defn- parakeet-status [] {:installed? (boolean (asr-call! 'model-installed?))})
 
 (defn- speech-status
@@ -189,15 +192,18 @@
 
 (defn- voice-models-licenses-command
   "What Vis puts on your machine and under what terms, without reading the
-   manifest: the answer to \"may I ship this?\"."
-  [_parsed _residual]
+   manifest: the answer to \"may I ship this?\". `--markdown` prints
+   `THIRD_PARTY_MODELS.md` itself - the same manifest, rendered."
+  [parsed _residual]
   (vis/init-cli!)
-  (doseq [asset (:assets (model-status))]
-    (cli-out! (str (:id asset) "  [" (:license asset) "]"))
-    (cli-out! (str "  " (:attribution asset)))
-    (when (:notice asset) (cli-out! (str "  Note: " (:notice asset))))
-    (cli-out! (str "  " (:dir asset)))
-    (cli-out! "")))
+  (if (get parsed "markdown")
+    (cli-out! (str/trimr (attribution-call! 'markdown)))
+    (doseq [asset (:assets (model-status))]
+      (cli-out! (str (:id asset) "  [" (:license asset) "]"))
+      (cli-out! (str "  " (:attribution asset)))
+      (when (:notice asset) (cli-out! (str "  Note: " (:notice asset))))
+      (cli-out! (str "  " (:dir asset)))
+      (cli-out! ""))))
 
 (defn- download-families
   "Which families the flags asked for. `--all` and a bare `download` both mean
@@ -333,7 +339,11 @@
            :cmd/run-fn #'voice-models-download-command}
           {:cmd/name "licenses"
            :cmd/doc "Show what each voice model is licensed under and who to credit."
-           :cmd/usage "vis-agent extension voice models licenses"
+           :cmd/usage "vis-agent extension voice models licenses [--markdown]"
+           :cmd/args [{:name "markdown"
+                       :kind :flag
+                       :type :boolean
+                       :doc "Print THIRD_PARTY_MODELS.md, this manifest rendered."}]
            :cmd/run-fn #'voice-models-licenses-command}]}
         {:cmd/name "voices"
          :cmd/doc "List the voices this machine can speak in."
