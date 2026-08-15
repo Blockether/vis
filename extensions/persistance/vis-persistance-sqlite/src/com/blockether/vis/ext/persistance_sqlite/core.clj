@@ -211,7 +211,8 @@
 ;; that opens a NEW physical SQLite connection on every
 ;; `getConnection()` - it does NOT pool. We replace it with HikariCP:
 ;; an underlying `SQLiteDataSource` configured via `SQLiteConfig`
-;; (WAL, NORMAL sync, FK enforcement, 30s busy timeout) is wrapped
+;; (WAL with a bounded `-wal` sidecar, NORMAL sync, FK enforcement,
+;; 30s busy timeout) is wrapped
 ;; in a `HikariDataSource` with a small fixed pool. SQLite WAL allows
 ;; N readers + 1 writer, so 5 connections give read concurrency
 ;; without amplifying writer contention. The pool keeps physical
@@ -222,12 +223,27 @@
 ;; deterministically.
 ;; =============================================================================
 
+(def ^:private wal-size-limit-bytes
+  "Cap on the `-wal` sidecar file, in bytes (16 MiB).
+
+   SQLite's default `journal_size_limit` is -1: a checkpoint hands the WAL pages
+   back to the database but NEVER gives the FILE back, so one oversized
+   transaction leaves the sidecar at its high-water mark for the life of the
+   store. Measured on a developer machine: a 112.5 MB `vis.db-wal` holding 156
+   live frames (624 KB) — 99% of the file was space nothing could reclaim.
+
+   With a limit set, SQLite truncates the sidecar back to it on the first commit
+   after a checkpoint resets the WAL. 16 MiB is 4x the 1000-page (~4 MB)
+   autocheckpoint threshold, so steady-state writes never reach it and only a
+   burst — a large attachment row — pays a single truncate."
+  (* 16 1024 1024))
+
 (defn- raw-sqlite-datasource
   "Build a configured xerial `SQLiteDataSource` (the plain non-pooled
    one). All pragmas (`journal_mode=WAL`, `synchronous=NORMAL`,
-   `transaction_mode=IMMEDIATE`, `foreign_keys=ON`,
-   `busy_timeout=30000`) are set on the `SQLiteConfig` so every
-   Hikari-handed connection inherits them.
+   `transaction_mode=IMMEDIATE`, `foreign_keys=ON`, `busy_timeout=30000`,
+   `journal_size_limit=`[[wal-size-limit-bytes]]) are set on the
+   `SQLiteConfig`, so every Hikari-handed connection inherits them.
 
    The returned object is what we hand to Hikari as its underlying
    DataSource; callers should NOT call `getConnection` on this directly."
@@ -239,7 +255,8 @@
        (.setSynchronous SQLiteConfig$SynchronousMode/NORMAL)
        (.setTransactionMode SQLiteConfig$TransactionMode/IMMEDIATE)
        (.enforceForeignKeys true)
-       (.setBusyTimeout 30000))
+       (.setBusyTimeout 30000)
+       (.setJournalSizeLimit (int wal-size-limit-bytes)))
 
      ds
      (SQLiteDataSource. cfg)]

@@ -3475,3 +3475,49 @@
         (expect (= "vis-store://bucket/key" (:storage_uri cols)))
         (expect (nil? (:bytes cols)))
         (expect (= 999999 (:size_bytes cols))))))
+
+
+(defdescribe
+  wal-size-limit-test
+  ;; Regression: `journal_size_limit` sat at SQLite's default -1, so a checkpoint
+  ;; returned the WAL's PAGES but never its FILE — one oversized transaction
+  ;; pinned the `-wal` sidecar at its high-water mark for the life of the store
+  ;; (measured on a developer machine: 112.5 MB of file holding 624 KB of frames).
+  (it
+    "truncates the -wal sidecar back to the limit after an oversized transaction"
+    (let
+      [root
+       (fs/create-temp-dir)
+
+       dir
+       (str (fs/path root "store"))
+
+       s
+       (vis/db-create-connection! dir)
+
+       limit
+       (long (private-core-fn "wal-size-limit-bytes"))
+
+       wal
+       (fs/path dir "vis.db-wal")
+
+       chunk
+       (* 256 1024)
+
+       blob
+       (byte-array chunk (byte 7))]
+
+      (try (jdbc/execute! (:datasource s) ["CREATE TABLE churn (id INTEGER PRIMARY KEY, b BLOB)"])
+           ;; ONE transaction: SQLite cannot checkpoint mid-transaction, so the
+           ;; sidecar HAS to grow past the limit before anything can trim it.
+           (with-open [c (jdbc/get-connection (:datasource s))]
+             (jdbc/execute! c ["BEGIN IMMEDIATE"])
+             (dotimes [_ (+ 8 (quot limit chunk))]
+               (jdbc/execute! c ["INSERT INTO churn (b) VALUES (?)" blob]))
+             (jdbc/execute! c ["COMMIT"]))
+           (expect (< limit (fs/size wal)))
+           (jdbc/execute! (:datasource s) ["PRAGMA wal_checkpoint(PASSIVE)"])
+           ;; The commit that WRAPS the WAL is where SQLite applies the limit.
+           (jdbc/execute! (:datasource s) ["INSERT INTO churn (b) VALUES (?)" (byte-array 16)])
+           (expect (>= limit (fs/size wal)))
+           (finally (vis/db-dispose-connection! s) (fs/delete-tree root))))))
