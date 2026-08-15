@@ -12,11 +12,15 @@ import { PEN_COLORS, flattenAnnotations, type PenToken } from "../lib/annotate";
 import { copyImage, shareImage, shareVerb } from "../lib/image-share";
 import {
   NO_TRANSFORM,
+  FIT_SCALE,
   clampTransform,
   panFrom,
   panTransform,
   pinchFrom,
   pinchTransform,
+  swipeFrom,
+  swipeShift,
+  swipeStep,
   transformCss,
   zoomLabel,
   wheelFactor,
@@ -34,7 +38,6 @@ import {
   type AnnotationSurface,
 } from "./AnnotationLayer";
 import { Button, DialogHeader } from "./ui";
-import { ChevronIcon } from "./icons";
 import { useGalleryStep, type GalleryPicture } from "../lib/gallery";
 import { useStickyOverlay } from "../lib/sticky-overlay";
 
@@ -187,6 +190,7 @@ export function ImageViewer({
   const transformRef = useRef<Transform>({ ...NO_TRANSFORM });
   const pointersRef = useRef(new Map<number, Point>());
   const gestureRef = useRef<Gesture>(null);
+  const shiftRef = useRef(0);
   const [drawing, setDrawing] = useState(false);
   const [penColor, setPenColor] = useState<PenToken>(PEN_COLORS[0].token);
   const [strokeCount, setStrokeCount] = useState(0);
@@ -230,20 +234,42 @@ export function ImageViewer({
 
   // The transform is written to style rather than to state: a pinch that
   // re-rendered React on every frame would stutter on exactly the devices that
-  // pinch.
-  const applyTransform = useCallback((next: Transform) => {
-    const transform = clampTransform(next);
-    transformRef.current = transform;
-    if (transformedRef.current) {
-      transformedRef.current.style.transform = transformCss(transform);
-    }
-    if (zoomLabelRef.current)
-      zoomLabelRef.current.textContent = zoomLabel(transform);
+  // pinch. A live swipe rides the same one property — the zoom and pan the
+  // picture is at, plus however far a finger has carried it toward its
+  // neighbour — so both are painted together instead of overwriting each other.
+  const paint = useCallback(() => {
+    const node = transformedRef.current;
+    if (!node) return;
+    const css = transformCss(transformRef.current);
+    node.style.transform = shiftRef.current
+      ? `translate3d(${shiftRef.current}px, 0, 0) ${css}`
+      : css;
   }, []);
+
+  const applyTransform = useCallback(
+    (next: Transform) => {
+      const transform = clampTransform(next);
+      transformRef.current = transform;
+      paint();
+      if (zoomLabelRef.current)
+        zoomLabelRef.current.textContent = zoomLabel(transform);
+    },
+    [paint],
+  );
+
+  /** How far a live swipe has dragged the picture; 0 puts it back in its frame. */
+  const slide = useCallback(
+    (shift: number) => {
+      shiftRef.current = shift;
+      paint();
+    },
+    [paint],
+  );
 
   const resetTransform = useCallback(() => {
     pointersRef.current.clear();
     gestureRef.current = null;
+    shiftRef.current = 0;
     applyTransform({ ...NO_TRANSFORM });
   }, [applyTransform]);
 
@@ -324,9 +350,17 @@ export function ImageViewer({
     // pinch. Only a finger on the glass suspends it.
     if (transformedRef.current)
       transformedRef.current.style.transitionDuration = "0ms";
+    // A picture that is not zoomed in has nothing to pan, so the finger's whole
+    // travel means the NEIGHBOURING picture instead — the gallery is walked by
+    // swiping it, which is why no pair of arrows is left on the toolbar. A second
+    // finger is a pinch, so whatever the first one had dragged goes back first.
+    if (pinching) slide(0);
+    const isSwiping = gallery !== null && transformRef.current.scale <= FIT_SCALE;
     gestureRef.current = pinching
       ? pinchFrom(a, b, transformRef.current)
-      : panFrom(event.pointerId, point, transformRef.current);
+      : isSwiping
+        ? swipeFrom(event.pointerId, point)
+        : panFrom(event.pointerId, point, transformRef.current);
   }
 
   function moveGesture(event: ReactPointerEvent<HTMLDivElement>) {
@@ -342,6 +376,17 @@ export function ImageViewer({
       return;
     }
     if (!gesture) return;
+    if (gesture.kind === "swipe" && gesture.pointerId === event.pointerId) {
+      event.preventDefault();
+      slide(
+        swipeShift(
+          gesture,
+          { x: event.clientX, y: event.clientY },
+          { back: step > 0, forward: step < (gallery?.length ?? 1) - 1 },
+        ),
+      );
+      return;
+    }
     const [a, b] = [...pointersRef.current.values()];
     if (gesture.kind === "pinch" && a && b) {
       event.preventDefault();
@@ -359,8 +404,24 @@ export function ImageViewer({
   }
 
   function endGesture(event: ReactPointerEvent<HTMLDivElement>) {
+    const swipe = gestureRef.current;
     pointersRef.current.delete(event.pointerId);
     if (drawing) annotationRef.current?.endStroke();
+    if (swipe?.kind === "swipe" && swipe.pointerId === event.pointerId) {
+      // Let go with the transition back on, so a swipe that never reached its
+      // neighbour GLIDES home instead of snapping there.
+      if (transformedRef.current)
+        transformedRef.current.style.transitionDuration = "";
+      slide(0);
+      // A CANCELLED pointer is the system taking the touch away — a call, a
+      // notification, the edge of the screen — and never a reader's decision, so
+      // the picture goes home and the gallery stays where it was.
+      const direction =
+        event.type === "pointercancel"
+          ? 0
+          : swipeStep(swipe, { x: event.clientX, y: event.clientY });
+      if (direction) stepTo(step + direction);
+    }
     // Lifting one finger of a pinch continues as a pan from where the other one
     // is, instead of jumping the picture on the next move — unless the pen is
     // out, where the remaining finger belongs to the stroke, never a pan.
@@ -656,33 +717,6 @@ export function ImageViewer({
             </Button>
           </div>
 
-          {gallery && (
-            <div
-              className="flex shrink-0 items-center gap-2"
-              aria-label="Gallery controls"
-            >
-              <Button
-                variant="secondary"
-                onClick={() => stepTo(step - 1)}
-                disabled={drawing || step === 0}
-                aria-label="Previous image"
-              >
-                <ChevronIcon back className="size-3" />
-              </Button>
-              <span className="shrink-0 font-mono text-chip text-dialog-hint">
-                {step + 1} / {gallery.length}
-              </span>
-              <Button
-                variant="secondary"
-                onClick={() => stepTo(step + 1)}
-                disabled={drawing || step === gallery.length - 1}
-                aria-label="Next image"
-              >
-                <ChevronIcon className="size-3" />
-              </Button>
-            </div>
-          )}
-
           <Button
             variant={drawing ? "primary" : "secondary"}
             onClick={() => {
@@ -788,7 +822,7 @@ export function ImageViewer({
                 ? "Draw on the image, then use the edit in your message."
                 : "Draw on the image, then copy or share it."
               : gallery
-                ? `${step + 1} of ${gallery.length} · press ← and → for the next image.`
+                ? `${step + 1} of ${gallery.length} · swipe for the next image, or press ← and →.`
                 : "Pinch, scroll, or double-click to zoom, then Trim to keep just that.")}
         </div>
       </div>

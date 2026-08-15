@@ -517,6 +517,32 @@ describe("a gallery in the viewer", () => {
     act(() => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key }));
     });
+  const stage = () =>
+    document.querySelector<HTMLElement>('[role="dialog"] .transform-gpu');
+  const finger = (type: string, x: number, y = 300) => {
+    const glass = document.querySelector<HTMLDivElement>(
+      '[role="dialog"] .cursor-grab',
+    );
+    if (!glass) throw new Error("viewer surface not found");
+    act(() => {
+      glass.dispatchEvent(
+        new PointerEvent(type, {
+          pointerId: 7,
+          isPrimary: true,
+          clientX: x,
+          clientY: y,
+          bubbles: true,
+        }),
+      );
+    });
+  };
+  // A finger down at 200 and lifted at `to`: left of it is the next picture.
+  const swipe = (to: number) => {
+    Element.prototype.setPointerCapture = vi.fn();
+    finger("pointerdown", 200);
+    finger("pointermove", to);
+    finger("pointerup", to);
+  };
 
   it("walks to the next and previous picture with the arrow keys", () => {
     open(1);
@@ -532,43 +558,79 @@ describe("a gallery in the viewer", () => {
     expect(shownSrc()).toBe("blob:one");
   });
 
-  it("walks with its own two buttons, for a reader with no keyboard", () => {
+  // Regression, user report ("in the application we should not have the left right
+  // … on iOS and android we should have swipes working"): the gallery was walked
+  // only from a pair of chevrons on the toolbar, and dragging the picture — the one
+  // gesture a phone offers — did nothing at all.
+  it("walks the gallery with a swipe, and keeps no arrows to press instead", () => {
     open(0);
-    act(() => control("Next image").click());
+    expect(document.querySelector('[aria-label="Next image"]')).toBeNull();
+    expect(document.querySelector('[aria-label="Previous image"]')).toBeNull();
+
+    swipe(60);
     expect(title()).toBe("two.png");
-    act(() => control("Previous image").click());
+    expect(shownSrc()).toBe("blob:two");
+    swipe(340);
     expect(title()).toBe("one.png");
+  });
+
+  // A gesture that moves nothing until it fires reads as a dead screen, so the
+  // picture travels with the finger — and comes back when the drag stops short.
+  it("carries the picture with the finger, and puts it back if it stopped short", () => {
+    open(1);
+    Element.prototype.setPointerCapture = vi.fn();
+    finger("pointerdown", 200);
+    finger("pointermove", 170);
+    expect(stage()?.style.transform).toContain("translate3d(-30px, 0, 0)");
+
+    finger("pointerup", 170);
+    expect(stage()?.style.transform).not.toContain("-30px");
+    expect(title()).toBe("two.png");
+  });
+
+  // A pointer the SYSTEM takes away — a call, a notification, the edge gesture —
+  // is not a reader asking for the next picture.
+  it("keeps the picture it was on when the touch is cancelled", () => {
+    open(0);
+    Element.prototype.setPointerCapture = vi.fn();
+    finger("pointerdown", 200);
+    finger("pointermove", 40);
+    finger("pointercancel", 40);
+    expect(title()).toBe("one.png");
+    expect(stage()?.style.transform).not.toContain("-160px");
   });
 
   it("stops at both ends instead of wrapping", () => {
     open(0);
     press("ArrowLeft");
+    swipe(340);
     expect(title()).toBe("one.png");
-    expect(control("Previous image").disabled).toBe(true);
 
     press("ArrowRight");
     press("ArrowRight");
     press("ArrowRight");
     expect(title()).toBe("three.png");
-    expect(control("Next image").disabled).toBe(true);
+    swipe(60);
+    expect(title()).toBe("three.png");
   });
 
   it("says where the reader stands and how to move", () => {
     open(0);
-    expect(
-      document.querySelector('[aria-label="Gallery controls"]')?.textContent,
-    ).toContain("1 / 3");
-    expect(document.querySelector('[aria-live="polite"]')?.textContent).toContain(
-      "press ← and →",
-    );
+    const hint = document.querySelector('[aria-live="polite"]')?.textContent;
+    expect(hint).toContain("1 of 3");
+    expect(hint).toContain("swipe");
   });
 
-  // A viewer with nowhere to step must not offer to step.
-  it("offers no stepper to a picture that is alone", () => {
+  // A viewer with nowhere to step must not step: a lone picture sliding under the
+  // thumb would be reporting a gallery that is not there.
+  it("does not swipe a picture that is alone", () => {
     open(0, [pictures[0]]);
+    swipe(60);
+    expect(title()).toBe("one.png");
+    expect(stage()?.style.transform).not.toContain("translate3d(-140px");
     expect(
-      document.querySelector('[aria-label="Gallery controls"]'),
-    ).toBeNull();
+      document.querySelector('[aria-live="polite"]')?.textContent,
+    ).not.toContain("of 1");
   });
 });
 
@@ -593,8 +655,8 @@ describe("the grid is the gallery", () => {
 
     act(() => control("Open pic-0.png full screen").click());
     expect(
-      document.querySelector('[aria-label="Gallery controls"]')?.textContent,
-    ).toContain("1 / 2");
+      document.querySelector('[aria-live="polite"]')?.textContent,
+    ).toContain("1 of 2");
 
     act(() => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight" }));
@@ -627,7 +689,15 @@ describe("the grid is the gallery", () => {
     );
 
     act(() => control("Open edit-0.png full screen").click());
-    expect(document.querySelector('[aria-label="Gallery controls"]')).toBeNull();
+    expect(
+      document.querySelector('[aria-live="polite"]')?.textContent,
+    ).not.toContain("of 2");
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight" }));
+    });
+    expect(document.querySelector('[role="dialog"] h2')?.textContent).toBe(
+      "edit-0.png",
+    );
   });
 });
 

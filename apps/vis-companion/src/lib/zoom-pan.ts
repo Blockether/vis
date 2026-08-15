@@ -36,7 +36,12 @@ export type PanGesture = {
   start: Point;
   transform: Transform;
 };
-export type Gesture = PanGesture | PinchGesture | null;
+export type SwipeGesture = {
+  kind: "swipe";
+  pointerId: number;
+  start: Point;
+};
+export type Gesture = PanGesture | PinchGesture | SwipeGesture | null;
 
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -174,6 +179,52 @@ export function panFrom(
   transform: Transform,
 ): PanGesture {
   return { kind: "pan", pointerId, start, transform: { ...transform } };
+}
+
+/**
+ * How far a finger carries a FITTED picture sideways before it means the
+ * neighbouring one: short enough for a thumb on a phone, long enough that a
+ * double tap or a crooked lift is never mistaken for a swipe.
+ */
+export const SWIPE_TRAVEL = 56;
+
+/** At either end the picture only creeps: there is nothing to bring in. */
+export const SWIPE_RESISTANCE = 4;
+
+/** The gesture one live pointer starts on a picture that is already fitted. */
+export function swipeFrom(pointerId: number, start: Point): SwipeGesture {
+  return { kind: "swipe", pointerId, start };
+}
+
+/**
+ * How far the picture follows a swiping finger.
+ *
+ * A drag steeper than it is wide is not a swipe, so a thumb sliding down a tall
+ * picture never drags the gallery sideways; and at the ends the picture RESISTS,
+ * which is how glass says "nothing that way" now that no disabled arrow says it.
+ */
+export function swipeShift(
+  gesture: SwipeGesture,
+  point: Point,
+  neighbours: { back: boolean; forward: boolean },
+): number {
+  const shift = point.x - gesture.start.x;
+  if (Math.abs(shift) <= Math.abs(point.y - gesture.start.y)) return 0;
+  return (shift < 0 ? neighbours.forward : neighbours.back)
+    ? shift
+    : shift / SWIPE_RESISTANCE;
+}
+
+/**
+ * Which neighbour a finished swipe asked for: -1 the previous picture, 1 the
+ * next, 0 a drag that never became a swipe. Dragging LEFT pushes this picture
+ * off screen, which brings the NEXT one in.
+ */
+export function swipeStep(gesture: SwipeGesture, point: Point): -1 | 0 | 1 {
+  const shift = point.x - gesture.start.x;
+  if (Math.abs(shift) < SWIPE_TRAVEL) return 0;
+  if (Math.abs(shift) <= Math.abs(point.y - gesture.start.y)) return 0;
+  return shift < 0 ? 1 : -1;
 }
 
 /** GPU-composited: a transform is written to style, never re-rendered through React. */

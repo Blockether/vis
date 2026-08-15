@@ -16,6 +16,10 @@ import {
   WHEEL_STEP_LIMIT,
   partPixels,
   visiblePart,
+  SWIPE_TRAVEL,
+  swipeFrom,
+  swipeShift,
+  swipeStep,
 } from "./zoom-pan";
 
 // The viewer's geometry, stated without a screen: pinching a phone used to be
@@ -235,5 +239,44 @@ describe("trim to view", () => {
       width: 1,
       height: 100,
     });
+  });
+});
+
+// Regression, user report ("in the application we should not have the left right
+// … on iOS and android we should have swipes working"): a gallery could only be
+// walked from two arrow buttons on the toolbar, so on glass the one gesture a
+// reader actually makes moved nothing.
+describe("a swipe through a gallery", () => {
+  const swipe = swipeFrom(1, { x: 200, y: 300 });
+  const both = { back: true, forward: true };
+
+  it("asks for the next picture when the finger pushes this one off to the left", () => {
+    expect(swipeStep(swipe, { x: 200 - SWIPE_TRAVEL, y: 300 })).toBe(1);
+    expect(swipeStep(swipe, { x: 200 + SWIPE_TRAVEL, y: 300 })).toBe(-1);
+  });
+
+  it("ignores a drag that stopped short, and one steeper than it is wide", () => {
+    expect(swipeStep(swipe, { x: 200 - SWIPE_TRAVEL + 1, y: 300 })).toBe(0);
+    expect(swipeStep(swipe, { x: 100, y: 420 })).toBe(0);
+  });
+
+  it("follows the finger exactly while there is a neighbour to bring in", () => {
+    expect(swipeShift(swipe, { x: 160, y: 306 }, both)).toBe(-40);
+    expect(swipeShift(swipe, { x: 240, y: 306 }, both)).toBe(40);
+  });
+
+  // The ends of a gallery are told by the picture refusing to travel, now that no
+  // greyed-out arrow is there to say it.
+  it("resists at the ends, where nothing can come in", () => {
+    expect(
+      swipeShift(swipe, { x: 160, y: 300 }, { back: true, forward: false }),
+    ).toBe(-10);
+    expect(
+      swipeShift(swipe, { x: 240, y: 300 }, { back: false, forward: true }),
+    ).toBe(10);
+  });
+
+  it("stays still under a finger sliding down the picture", () => {
+    expect(swipeShift(swipe, { x: 210, y: 400 }, both)).toBe(0);
   });
 });
