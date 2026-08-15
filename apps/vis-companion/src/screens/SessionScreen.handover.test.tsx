@@ -193,3 +193,51 @@ describe("a handover the registry vetoed once", () => {
     expect(screen.getAllByText("explain the failure")).toHaveLength(1);
   });
 });
+
+// Regression, same report, the half the fix above did not reach: "I write a
+// message on a NEW session and all I get back is the label Vis — no progress,
+// no answer, nothing — until I go back to the session list and open the session
+// again." The first POST of a session is the slowest one it will ever make, and
+// a reconcile lands while it is still on the wire: the 5 s tick, or — on a phone
+// — the wake an `online` burst fires the moment the radio settles. The registry
+// answers "idle", truthfully, because nothing has asked it to run a turn yet,
+// and that answer retired the bubble the composer had just painted. Frozen with
+// nothing in it, that bubble IS the bare "Vis": `AssistantMessage` prints no
+// phase, no clock and no placeholder for a `completed` turn, and every delta
+// that arrives afterwards lands in a turn that has stopped running.
+describe("a message whose POST is still on the wire", () => {
+  it("survives a reconcile against a registry not yet asked to run it", async () => {
+    const idle = sessionFixture({ status: "idle", live: false });
+    const posted = deferred<unknown>();
+
+    renderSessionScreen({
+      session: idle,
+      client: {
+        // Every read this reconcile makes answers the way a gateway holding no
+        // turn answers — because at this instant it holds none.
+        session: () => Promise.resolve(idle),
+        transcript: () => Promise.resolve([]),
+        transcriptIfMoved: () => Promise.resolve([]),
+        submitTurn: () => posted.promise,
+      },
+      subscriptions: {
+        subscribeConnection: (on: (connected: boolean) => void) => {
+          on(true);
+          return () => {};
+        },
+      },
+    });
+
+    const box = await screen.findByLabelText("Message Vis");
+    fireEvent.change(box, { target: { value: "run the tests" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByText("run the tests")).toBeInTheDocument();
+    expect(live()).toMatch(/Vis is/);
+
+    window.dispatchEvent(new Event("online"));
+    await linger(400);
+
+    // Still saying what it is doing. A rail that says only "Vis" is the bug.
+    expect(live()).toMatch(/Vis is/);
+  });
+});

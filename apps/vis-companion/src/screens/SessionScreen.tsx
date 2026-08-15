@@ -1535,6 +1535,16 @@ export function SessionScreen({
     client.rememberSentAttachments(sid, turnId, sent);
   };
   const runningRef = useRef(false);
+  // How many submits are ON THE WIRE. The reconcile below asks the registry
+  // whether this session is running a turn, and a POST that has not been
+  // answered yet has not made it run one: "idle" from a read that overlapped a
+  // submit describes the session as it was BEFORE the message was sent.
+  // Retiring the bubble on that verdict paints a turn about to start as one
+  // already finished — and a retired bubble with nothing in it is a bare "Vis",
+  // no phase, no clock, no trace, until the screen is reopened. The first turn
+  // of a new session is the slowest POST this screen ever makes, which is where
+  // it was reported from.
+  const submitsInFlightRef = useRef(0);
   const turnsRef = useRef<TranscriptTurn[]>([]);
   // Ids of every transcript row that existed BEFORE the current live turn — the
   // baseline `liveTurnSettledRow` measures "a new settled row landed" against.
@@ -2251,6 +2261,7 @@ export function SessionScreen({
       const liveBefore = liveTurnRef.current;
       const liveIdBefore = liveBefore?.id ?? "";
       const runningBefore = runningRef.current;
+      const submitBefore = submitsInFlightRef.current > 0;
       let next: Session;
       try {
         next = await client.session(sid);
@@ -2366,8 +2377,17 @@ export function SessionScreen({
         (runningRef.current && runningBefore);
       // `persistedRunning` vetoes this: "idle" from a registry that lost the turn
       // is not idleness, and freezing the ticker there is the same wrong answer in
-      // a quieter costume.
-      if (!covered && !gatewayLive && !persistedRunning && showsWork) {
+      // a quieter costume. A submit still on the wire vetoes it from the other
+      // end — sampled before this tick's read, or answered after it, the registry
+      // was never asked about the turn the composer is holding.
+      const submitPending = submitBefore || submitsInFlightRef.current > 0;
+      if (
+        !covered &&
+        !gatewayLive &&
+        !persistedRunning &&
+        !submitPending &&
+        showsWork
+      ) {
         setRunning(false);
         // The gateway is idle but its answer is NOT in the transcript yet (the
         // engine row lags, or the read failed). Stop the ticker — never delete
@@ -4282,6 +4302,7 @@ export function SessionScreen({
     // schedule, for the same reason one frame is not enough.
     pinToEnd();
 
+    submitsInFlightRef.current += 1;
     try {
       const submitted = await client.submitTurn(sid, request, {
         displayRequest,
@@ -4313,11 +4334,20 @@ export function SessionScreen({
           return next;
         });
       } else {
+        // The gateway has ACCEPTED this turn, which overrules any verdict a
+        // reconcile reached while the POST was still on the wire. Only OUR
+        // bubble is put back on its feet — the one with no id; a bubble that
+        // already carries one was seeded by a gateway frame and owns its status.
+        const unacknowledged = !liveTurnRef.current?.id;
         setLiveTurn((turn) => {
-          const next = turn ? { ...turn, id: submittedId } : turn;
+          if (!turn) return turn;
+          const next: LiveTurn = turn.id
+            ? { ...turn, id: submittedId }
+            : { ...turn, id: submittedId, status: "running" };
           liveTurnRef.current = next;
           return next;
         });
+        if (unacknowledged) setRunning(true);
       }
     } catch (cause) {
       setRunning(false);
@@ -4330,6 +4360,8 @@ export function SessionScreen({
       );
       setError((cause as Error).message);
       requestAnimationFrame(() => composerRef.current?.focus());
+    } finally {
+      submitsInFlightRef.current -= 1;
     }
   }
 
