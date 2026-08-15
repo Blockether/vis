@@ -1373,9 +1373,16 @@ export function Modal({
   size?: 'full' | 'fit' | 'wide';
   children: ReactNode;
 }) {
+  // The native iOS keyboard pins this shell, rather than the layout viewport, to
+  // the visible glass. A body portal would keep the layout viewport's height and
+  // leave a bottom sheet (including focused fields) underneath the keyboard.
+  const portalHost =
+    document.querySelector<HTMLElement>('[data-viewport-shell]') ?? document.body;
+  const position = portalHost === document.body ? 'fixed' : 'absolute';
+
   return createPortal(
     <div
-      className={`fixed inset-0 z-50 flex justify-center bg-ink/85 backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pt-[max(1rem,env(safe-area-inset-top))] ${
+      className={`${position} inset-0 z-50 flex justify-center bg-ink/85 backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:pb-[max(1rem,env(safe-area-inset-bottom))] sm:pl-[max(1rem,env(safe-area-inset-left))] sm:pr-[max(1rem,env(safe-area-inset-right))] sm:pt-[max(1rem,env(safe-area-inset-top))] ${
         size === 'fit' ? 'items-end' : 'items-stretch'
       }`}
       role="presentation"
@@ -1407,7 +1414,7 @@ export function Modal({
         <IsFitSheet.Provider value={size === 'fit'}>{children}</IsFitSheet.Provider>
       </div>
     </div>,
-    document.body,
+    portalHost,
   );
 }
 

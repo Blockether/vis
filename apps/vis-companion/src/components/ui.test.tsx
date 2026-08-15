@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import uiSource from "./ui.tsx?raw";
+import appSource from "../App.tsx?raw";
 import storageSource from "../lib/storage.ts?raw";
 import sessionsListSource from "../screens/SessionsScreen.tsx?raw";
 import gatewaySource from "../lib/gateway.ts?raw";
@@ -1225,7 +1226,7 @@ describe("Modal and DialogFrame as a phone sheet", () => {
   const source = uiSource;
 
   it("lets the sheet take the whole glass on a phone and centres it from sm: up", () => {
-    expect(source).toContain("fixed inset-0 z-50 flex justify-center bg-ink/85");
+    expect(source).toContain("${position} inset-0 z-50 flex justify-center bg-ink/85");
     expect(source).toContain("'items-end' : 'items-stretch'");
     expect(source).toContain("sm:items-center");
     // No padding at all on the phone: a sheet touches all four edges.
@@ -1936,6 +1937,16 @@ describe("Modal, fit", () => {
 
   it("is what the rename/delete question opens in", () => {
     expect(sessionsListSource).toContain('<Modal size="fit" onDismiss={closeRowAction}>');
+  });
+
+  // Regression, user report (rename field hidden under the iOS keyboard): the native
+  // keyboard pins only the app shell to its visible height. A body portal remains as
+  // tall as the glass and leaves a bottom sheet underneath the keyboard.
+  it("keeps the sheet inside the viewport-pinned app shell", () => {
+    expect(appSource).toContain("data-viewport-shell");
+    expect(uiSource).toContain("document.querySelector<HTMLElement>('[data-viewport-shell]')");
+    expect(uiSource).toContain("portalHost === document.body ? 'fixed' : 'absolute'");
+    expect(uiSource).toContain("portalHost,\n  );");
   });
 
   // Regression, user report ("cannot we make it less height, like it goes from

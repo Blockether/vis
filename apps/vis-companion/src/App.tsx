@@ -1213,6 +1213,7 @@ export function Shell({ children }: { children: ReactNode }) {
   return (
     <div
       ref={shellRef}
+      data-viewport-shell
       className="isolate absolute inset-0 flex h-full min-h-0 flex-col overflow-hidden bg-ink text-body"
     >
       {children}
