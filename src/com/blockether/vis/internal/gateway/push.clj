@@ -620,6 +620,12 @@
   ;; never read, and a huge alert payload only risks APNs' 4KB limit.
   180)
 
+(def ^:private TITLE_LIMIT
+  ;; One line on a lock screen, and the lead words are all that survive a
+  ;; collapsed stack — so a long session title is clipped rather than allowed to
+  ;; push the alert's point off the end.
+  64)
+
 (defn- clip
   [^String s ^long limit]
   (if (<= (count s) limit)
@@ -682,24 +688,36 @@
 (defn- human-input-notification
   "Alert for a run BLOCKED on a human. The only push that says \"vis is waiting
    for YOU\": a turn parked on an unanswered dialog produces no terminal event,
-   so without this the phone stays silent until the request times out."
+   so without this the phone stays silent until the request times out.
+
+   The demand rides in the TITLE, which stays legible when the stack collapses
+   and when the body is truncated; the body then spends its whole budget on the
+   question itself instead of re-stating that something is waiting."
   [sid event]
   (let
     [request
      (get event "request")
 
      asked
-     (or (not-empty (str (get request "title"))) "Input needed")
+     (not-empty (str (get request "title")))
 
      description
      (not-empty (str (get request "description")))
 
      described
-     (@describe-session sid nil)]
+     (@describe-session sid nil)
 
-    {:title (or (not-empty (str (:title described))) "Vis")
-     :body (clip (str "Waiting for your input \u2014 "
-                      (if description (str asked ": " description) asked))
+     session-title
+     (not-empty (str (:title described)))]
+
+    {:title (clip (if session-title (str "Action needed — " session-title) "Action needed")
+                  TITLE_LIMIT)
+     ;; The request in the caller's own words. A request that carries only a
+     ;; description must not lose it to a generic placeholder.
+     :body (clip (or (when (and asked description) (str asked ": " description))
+                     asked
+                     description
+                     "Vis is waiting on your answer.")
                  BODY_LIMIT)
      :thread-id (str sid)
      ;; Its own collapse lane: an input request must not be swallowed by the

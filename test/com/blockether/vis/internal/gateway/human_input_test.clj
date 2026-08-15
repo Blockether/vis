@@ -12,7 +12,6 @@
    bridge at the same time — is
    `com.blockether.vis.ext.channel-tui.human-input-cross-channel-test`."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
             [com.blockether.vis.internal.gateway.human-input :as gw-hi]
             [com.blockether.vis.internal.gateway.push :as push]
             [com.blockether.vis.internal.gateway.state :as state]
@@ -156,19 +155,40 @@
             (is (empty? (events-of seen "human_input.request" rid)))))))))
 
 (deftest push-alerts-a-parked-run-test
-  (testing "a blocked run pushes on its own collapse lane"
-    (let
-      [n (#'push/human-input-notification
-          "sid-9"
-          {"type" "human_input.request"
-           "request" {"id" "req-1" "title" "API key" "description" "production"}})]
-      (is (= "sid-9" (:thread-id n)))
-      (is (= "sid-9:human-input" (:collapse-id n)))
-      (is (str/includes? (:body n) "API key"))
-      (is (str/includes? (:body n) "production"))
-      (is (= "human_input.request" (get-in n [:data :type])))
-      (is (= "req-1" (get-in n [:data :request_id])))
-      (is (= "sid-9" (get-in n [:data :session_id]))))))
+  (let [prev @@#'push/describe-session]
+    (try (push/set-session-describer! (fn [_sid _tid]
+                                        {:title "Ship the parser"}))
+         (testing "the title demands action and names the session; the body is the question"
+           (let
+             [n (#'push/human-input-notification
+                 "sid-9"
+                 {"type" "human_input.request"
+                  "request" {"id" "req-1" "title" "API key" "description" "production"}})]
+             (is (= "Action needed — Ship the parser" (:title n)))
+             (is (= "API key: production" (:body n)))
+             (is (= "sid-9" (:thread-id n)))
+             (is (= "sid-9:human-input" (:collapse-id n)))
+             (is (= "human_input.request" (get-in n [:data :type])))
+             (is (= "req-1" (get-in n [:data :request_id])))
+             (is (= "sid-9" (get-in n [:data :session_id])))))
+         (testing "a request carrying only a description still says what it wants"
+           (let
+             [n (#'push/human-input-notification
+                 "sid-9"
+                 {"type" "human_input.request"
+                  "request" {"id" "req-2" "description" "Approve the deploy"}})]
+             (is (= "Approve the deploy" (:body n)))))
+         (testing
+           "with no session title and an unlabelled request it is still a demand, never blank"
+           (do (push/set-session-describer! (fn [_sid _tid]
+                                              nil))
+               (let
+                 [n (#'push/human-input-notification
+                     "sid-9"
+                     {"type" "human_input.request" "request" {"id" "req-3"}})]
+                 (is (= "Action needed" (:title n)))
+                 (is (= "Vis is waiting on your answer." (:body n))))))
+         (finally (push/set-session-describer! prev)))))
 
 ;; =============================================================================
 ;; The endpoints the phone actually calls
