@@ -9,6 +9,7 @@ The live runtime is the source of truth, and it answers exactly two questions. `
 ```python
 apropos("skeleton")      # full text: the word need not be in any name
 apropos("wire contract") # ask in words: terms are ORed and ranked by relevance
+apropos()                # the listing: every reachable name, {kind, gist}
 doc("patch")             # one function's whole contract
 doc("gateway")           # a Vis documentation page, by slug
 doc("spel")              # a skill, whole — reading it is the whole of using it
@@ -17,7 +18,7 @@ doc()                    # the curated index: the verbs a session starts from
 
 Rank is relevance, not a filter: BM25 over the handle, the first line and the body, with terms ORed and priced by how rare they are — so a whole question ranks the document that covers most of it, a query that IS a handle wins that handle, and a mistyped name is spell-corrected. `doc` states the raw-result shape for bare sandbox verbs too (`doc("resource_stop")`), which nothing else describes.
 
-Each hit answers a ROW, not the document: `{kind, gist, at, hit}` — what it IS (`tool` · `shim` · `page` · `skill` · `mcp` · `local`), a bounded excerpt built from the document's opening, the region your terms landed in and a fragment from deeper down, the LINE that region starts on, and the terms that matched (a correction shows as `pathc→patch`). The body is never in a search result — `doc(name)` answers one whole, and `at` says where to start reading it.
+Each hit answers a ROW, not the document: `{kind, gist, at, hit}` — what it IS (`tool` · `shim` · `page` · `skill` · `mcp` · `local`), a bounded excerpt built from the document's opening, the region your terms landed in and a fragment from deeper down, the LINE that region starts on, and the terms that matched (a correction shows as `pathc→patch`). The body is never in a search result — `doc(name)` answers one whole, and `at` says where to start reading it. Bare `apropos()` LISTS instead of searching: every reachable name in name order, uncapped, each row just `{kind, gist}`, because `at` and `hit` only mean something relative to a query.
 
 Use them before inventing a name or a call shape. They read the live registry and the live document corpus, so an extension appears the moment it binds and a copied catalog cannot go stale.
 

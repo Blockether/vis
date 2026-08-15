@@ -12,16 +12,16 @@
 
      {:name \"grep\"          ;; the only handle
       :text \"...\"           ;; the whole document; its FIRST LINE is the gist
+      :kind \"tool\"          ;; what it IS, out of the closed `kinds` vocabulary
       :call \"grep({\"query\": …})\"} ;; the python that USES it; absent = prose
 
-   There is no `kind` and no `group`. A taxonomy is not actionable: what a hit
-   actually needs is the expression that uses it, so `call` is the field and it
-   spells the vocabulary out — a function answers `grep({\"query\": …})`, an MCP tool
-   answers `mcp__call(\"server\", \"tool\", {…})`, and a skill or a documentation
-   page answers NOTHING, because a missing `call` is exactly \"this is prose,
+   `kind` says what a reader should DO with a hit; `call` spells the vocabulary
+   out — a function answers `grep({\"query\": …})`, an MCP tool answers
+   `mcp__call(\"server\", \"tool\", {…})`, and a skill or a documentation page
+   answers NOTHING, because a missing `call` is exactly \"this is prose,
    read it\".
 
-   There is no stored `gist` either. Two texts for one entry are two places to
+   There is no stored `gist`. Two texts for one entry are two places to
    drift, invisibly, because nothing reads both at once: `gist` is a RENDERING
    of the first line, so the index prints first lines and `doc` prints the whole
    thing from the SAME string.

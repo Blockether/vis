@@ -474,6 +474,20 @@
           (expect (str/includes? out "at=True"))
           (expect (str/includes? out "searched=False"))
           (expect (str/includes? out "listed=local"))))
+    ;; Regression: the bare call already answered the whole listing, but in the
+    ;; SEARCH row's shape — `at: 0` and `hit: ''` repeated on every reachable
+    ;; name, two keys that say nothing without a query to be relative to.
+    (it "answers the bare call with the whole listing, in the listing's own shape"
+        (let
+          [out (run (str "bare = apropos()\n" "empty = apropos('')\n"
+                         "print('same='+str(list(bare) == list(empty)))\n"
+                         "print('keys='+','.join(sorted(bare['grep'])))\n"
+                         "print('ordered='+str(list(bare) == sorted(bare)))\n"
+                         "print('gist='+str(len(bare['grep']['gist']) > 0))"))]
+          (expect (str/includes? out "same=True"))
+          (expect (str/includes? out "keys=gist,kind"))
+          (expect (str/includes? out "ordered=True"))
+          (expect (str/includes? out "gist=True"))))
     (it "never turns a bound loop variable into a document"
         (let
           [out (run (str "x = 3\nday_set = {'a'}\n" "a = apropos('')\n"
