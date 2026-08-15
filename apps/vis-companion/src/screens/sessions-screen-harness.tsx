@@ -77,12 +77,15 @@ export function renderSessionsScreen({
   onQuery = () => {},
   onOpen = () => {},
   onUnreachable,
+  isVisible = true,
 }: {
   machines?: MachineFixture[];
   query?: string;
   onQuery?: (next: string) => void;
   onOpen?: (conn: GatewayConn, sid: string, fresh?: boolean) => void;
   onUnreachable?: (message: string | null) => void;
+  /** Mounted but off the glass, the way the shell parks it behind a session. */
+  isVisible?: boolean;
 } = {}) {
   const requests: FleetRequest[] = [];
   const conns: GatewayConn[] = machines.map((machine, index) => ({
@@ -151,9 +154,12 @@ export function renderSessionsScreen({
     return answer({});
   }) as typeof fetch;
 
-  const screen = (next: string) => (
+  let shownQuery = query;
+  let shownVisible = isVisible;
+  const screen = (next: string, visible: boolean) => (
     <SessionsScreen
       conns={conns}
+      isVisible={visible}
       query={next}
       onQuery={onQuery}
       subscriptions={null}
@@ -161,7 +167,7 @@ export function renderSessionsScreen({
       onUnreachable={onUnreachable}
     />
   );
-  const view = render(screen(query));
+  const view = render(screen(query, isVisible));
 
   return {
     ...view,
@@ -180,7 +186,13 @@ export function renderSessionsScreen({
     },
     /** Hand the list a new filter, the way the app bar's field does. */
     setQuery(next: string) {
-      view.rerender(screen(next));
+      shownQuery = next;
+      view.rerender(screen(next, shownVisible));
+    },
+    /** Park the list behind a session, or bring it back — mounted either way. */
+    setVisible(next: boolean) {
+      shownVisible = next;
+      view.rerender(screen(shownQuery, next));
     },
     /** Put the real `fetch` back; every test that mounts must call this. */
     restore() {

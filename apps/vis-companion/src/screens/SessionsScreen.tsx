@@ -274,6 +274,13 @@ interface Props {
   /** No machine is answering at all — the shell decides what to show instead. */
   onUnreachable?: (message: string | null) => void;
   onOpen: (conn: GatewayConn, sid: string, fresh?: boolean) => void | Promise<void>;
+  /**
+   * Whether this screen is the one on the glass. It stays MOUNTED behind an open
+   * transcript — its rows, scope, scroll position and expanded projects are the
+   * reader's own frame — and everything below reads this to keep fleet-wide work
+   * off a screen nobody can see.
+   */
+  isVisible: boolean;
 }
 
 export function SessionsScreen({
@@ -283,6 +290,7 @@ export function SessionsScreen({
   subscriptions,
   onUnreachable,
   onOpen,
+  isVisible,
 }: Props) {
   // A machine OWNS its projects: every row belongs to exactly one gateway, and a
   // project only exists inside the machine it lives on. The fleet is therefore
@@ -580,7 +588,14 @@ export function SessionsScreen({
     setMachines((current) => hydrateMachines(connsRef.current, current));
   }, [fleetKey]);
 
+  // Behind an open transcript this screen is mounted but invisible, and a list
+  // nobody can see must not do fleet-wide work: this poll refetched every machine
+  // every 10s and re-ran the filter and the sort of the whole fleet — under the
+  // composer the reader was typing in. Becoming visible re-runs the effect, whose
+  // first act is a full load, so the rows are fresh the moment they are back on
+  // the glass.
   useEffect(() => {
+    if (!isVisible) return;
     const controller = new AbortController();
     const refreshLiveStates = () => {
       if (document.visibilityState === 'visible') void load(controller.signal, true);
@@ -605,10 +620,13 @@ export function SessionsScreen({
       stopWake();
     };
     // A connection identity change should preserve the existing frame until its data arrives.
-  }, [fleetKey, load]);
+  }, [fleetKey, isVisible, load]);
 
   useEffect(() => {
-    if (!subscriptions) return;
+    // Same rule as the poll above: a lifecycle event cannot move a list nobody is
+    // looking at, and the load on becoming visible answers with the gateway's
+    // canonical order anyway.
+    if (!subscriptions || !isVisible) return;
     let refreshTimer: number | null = null;
     const unsubscribe = subscriptions.subscribeFleet((event) => {
       if (!SESSION_LIST_EVENTS.has(event.type)) return;
@@ -620,7 +638,7 @@ export function SessionsScreen({
       unsubscribe();
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     };
-  }, [load, subscriptions]);
+  }, [isVisible, load, subscriptions]);
 
   useLayoutEffect(() => {
     const anchor = refreshAnchorRef.current;
