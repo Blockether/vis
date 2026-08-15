@@ -6,9 +6,10 @@ import argparse
 import hashlib
 import json
 import sys
-from datetime import datetime, timezone
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 HERE = Path(__file__).resolve().parent
 
@@ -195,7 +196,7 @@ def build_subset(
         "name": subset_name,
         "description": f"Generated {mode} Senior SWE-Bench subset with {len(selected)} task(s).",
         "generated_by": "dev/benches/senior_swe_bench/make_subset.py",
-        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "mode": mode,
         "selection": {
             "max_tasks": max_tasks,

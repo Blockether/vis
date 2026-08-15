@@ -41,7 +41,7 @@ def main() -> int:
 
     total = sum(len(v) for v in by_repo.values())
     selected: list[dict] = []
-    for repo, items in sorted(by_repo.items()):
+    for _repo, items in sorted(by_repo.items()):
         share = max(1, round(len(items) / total * args.n))
         selected.extend(items[:share])
     # Trim or pad to exactly n (deterministic).

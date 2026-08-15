@@ -3,7 +3,6 @@ import json
 import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("render_trace_transcript", ROOT / "render_trace_transcript.py")
 renderer = importlib.util.module_from_spec(spec)

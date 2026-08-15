@@ -27,7 +27,14 @@ Each scenario runs in its own throwaway git repo with the live working-tree sour
 
     VIS_PROVIDER=zai-coding-plan VIS_MODEL=glm-5.2 python3 run.py [scenario-id ...]
 """
-import json, os, subprocess, sys, tempfile, shutil, concurrent.futures, time
+import concurrent.futures
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
 
 HERE     = os.path.dirname(os.path.abspath(__file__))   # <repo>/e2e
 REPO     = os.path.dirname(HERE)
@@ -54,12 +61,18 @@ if os.path.isdir(LANG_ROOT):
 def load_scenarios(pick):
     out = []
     for root in SCENARIO_ROOTS:
-        if not os.path.isdir(root): continue
+        if not os.path.isdir(root):
+            continue
         for sid in sorted(os.listdir(root)):
             meta = os.path.join(root, sid, "scenario.json")
-            if not os.path.isfile(meta): continue
-            if pick and sid not in pick: continue
-            sc = json.load(open(meta)); sc["id"] = sid; sc["_dir"] = os.path.join(root, sid)
+            if not os.path.isfile(meta):
+                continue
+            if pick and sid not in pick:
+                continue
+            with open(meta) as fh:
+                sc = json.load(fh)
+            sc["id"] = sid
+            sc["_dir"] = os.path.join(root, sid)
             out.append(sc)
     return out
 
@@ -95,47 +108,73 @@ def run_one(job):
 
         os.makedirs(TRACES, exist_ok=True)
         tag = sc["id"] + ("__" + model if len(MODELS) > 1 else "")
-        with open(os.path.join(TRACES, tag+".jsonl"), "w") as fh: fh.write(out)
+        with open(os.path.join(TRACES, tag+".jsonl"), "w") as fh:
+            fh.write(out)
 
-        forms=[]; tools=[]; errs=[]; done=False; answer=""
+        forms=[]
+        tools=[]
+        errs=[]
+        done=False
+        answer=""
         for line in out.splitlines():
             line=line.strip()
-            if not line: continue
-            try: o=json.loads(line)
-            except: continue
-            ev=o.get("event"); pl=o.get("payload",{})
+            if not line:
+                continue
+            try:
+                o=json.loads(line)
+            except ValueError:
+                continue
+            ev=o.get("event")
+            pl=o.get("payload",{})
             if ev=="result":
                 a=pl.get("answer")
                 answer=(a.get("answer","") if isinstance(a,dict) else str(a or ""))
-                if a and not pl.get("error"): done=True
+                if a and not pl.get("error"):
+                    done=True
                 continue
             ph=pl.get("phase")
-            if ph=="form-start": forms.append(pl.get("code",""))
+            if ph=="form-start":
+                forms.append(pl.get("code",""))
             elif ph=="tool-start":
                 te=pl.get("tool-event") or {}
                 sym=te.get("symbol") or te.get("op")
-                if sym: tools.append(sym)
+                if sym:
+                    tools.append(sym)
             elif ph=="form-result" and pl.get("error"):
                 e=pl.get("error")
                 errs.append(e.get("message","?") if isinstance(e,dict) else str(e))
-            elif ph=="iteration-final" and pl.get("done?"): done=True
+            elif ph=="iteration-final" and pl.get("done?"):
+                done=True
 
-        correct=True; detail=[]
+        correct=True
+        detail=[]
         for name, subs in (sc.get("want") or {}).items():
-            try: txt=open(os.path.join(work,name)).read()
-            except FileNotFoundError: txt=""
+            try:
+                txt=open(os.path.join(work,name)).read()
+            except FileNotFoundError:
+                txt=""
             for s in subs:
-                if s not in txt: correct=False; detail.append(f"missing {name}:{s!r}")
+                if s not in txt:
+                    correct=False
+                    detail.append(f"missing {name}:{s!r}")
         for name, subs in (sc.get("wantnot") or {}).items():
-            try: txt=open(os.path.join(work,name)).read()
-            except FileNotFoundError: txt=""
+            try:
+                txt=open(os.path.join(work,name)).read()
+            except FileNotFoundError:
+                txt=""
             for s in subs:
-                if s in txt: correct=False; detail.append(f"still present {name}:{s!r}")
+                if s in txt:
+                    correct=False
+                    detail.append(f"still present {name}:{s!r}")
         for s in (sc.get("want_answer") or []):
-            if s not in answer: correct=False; detail.append(f"answer missing {s!r}")
-        toolset=set(t for t in tools if t)
+            if s not in answer:
+                correct=False
+                detail.append(f"answer missing {s!r}")
+        toolset={t for t in tools if t}
         for t in (sc.get("want_tools") or []):
-            if t not in toolset: correct=False; detail.append(f"tool {t!r} not used")
+            if t not in toolset:
+                correct=False
+                detail.append(f"tool {t!r} not used")
 
         used_structural=bool(toolset & STRUCTURAL)
         path=("struct_patch" if "struct_patch" in toolset
@@ -145,10 +184,10 @@ def run_one(job):
                                 else "cat-only"))))
         if path in ("cat-only","??") or errs or not (done and correct):
             detail.append("tools=" + ",".join(f"{t}×{tools.count(t)}" for t in sorted(toolset)))
-        return dict(id=sc["id"], lang=sc["lang"], model=model, converged=done, correct=correct,
-                    errors=len(errs), err_msgs=errs[:2], wall=round(wall,1),
-                    forms=len(forms), used_structural=used_structural,
-                    edit_path=path, detail=detail)
+        return {"id": sc["id"], "lang": sc["lang"], "model": model, "converged": done,
+                "correct": correct, "errors": len(errs), "err_msgs": errs[:2],
+                "wall": round(wall,1), "forms": len(forms),
+                "used_structural": used_structural, "edit_path": path, "detail": detail}
     finally:
         if not os.environ.get("VIS_E2E_KEEP"):
             shutil.rmtree(work, ignore_errors=True)
@@ -158,26 +197,32 @@ def main():
     scs=load_scenarios(pick)
     if not scs:
         print("no scenarios found under " + ", ".join(SCENARIO_ROOTS)
-              + (f" matching {pick}" if pick else "")); sys.exit(2)
+              + (f" matching {pick}" if pick else ""))
+        sys.exit(2)
     jobs=[(sc, m) for sc in scs for m in MODELS]
     print(f"running {len(scs)} scenarios × {len(MODELS)} model(s) {MODELS} on {PROVIDER} "
           f"(workers={WORKERS}, timeout={TIMEOUT}s)\n")
     results=[]
     with concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS) as ex:
-        for r in ex.map(run_one, jobs): results.append(r)
+        for r in ex.map(run_one, jobs):
+            results.append(r)
     results.sort(key=lambda r: (r["id"], r["model"]))
 
     mw=max(8, max((len(m) for m in MODELS), default=8))
     hdr=f"{'scenario':<18}{'model':<{mw}} {'lang':<11}{'conv':<5}{'ok':<4}{'err':<4}{'path':<14}{'forms':<6}{'sec':<6}"
-    print(hdr); print("-"*len(hdr))
+    print(hdr)
+    print("-"*len(hdr))
     nclean=nfast=0
     for r in results:
-        nfast+=r["used_structural"]; nclean+=(r["errors"]==0)
+        nfast+=r["used_structural"]
+        nclean+=(r["errors"]==0)
         print(f"{r['id']:<18}{r['model']:<{mw}} {r['lang']:<11}"
               f"{'✓' if r['converged'] else '✗':<5}{'✓' if r['correct'] else '✗':<4}"
               f"{r['errors']:<4}{r['edit_path']:<14}{r['forms']:<6}{r['wall']:<6}")
-        for d in r["detail"]: print(f"    ! {d}")
-        for e in r["err_msgs"]: print(f"    err: {e[:140]}")
+        for d in r["detail"]:
+            print(f"    ! {d}")
+        for e in r["err_msgs"]:
+            print(f"    err: {e[:140]}")
     n=len(results)
     # CROSS-VALIDATION GATE: a scenario passes only if EVERY model converged,
     # produced correct output, and had no loop/tool errors. `STRUCTURAL(fast)`

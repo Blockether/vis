@@ -184,7 +184,8 @@ def solve(instance: dict) -> dict:
         final_payload = None
         for line in reversed(proc_stdout.splitlines()):
             line = line.strip()
-            if not line: continue
+            if not line:
+                continue
             try:
                 obj = json.loads(line)
                 if isinstance(obj, dict) and (obj.get("phase") == "turn-complete" or "trace" in obj):

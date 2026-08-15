@@ -8,7 +8,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 MAX_BLOCK_CHARS = 24_000
 
 

@@ -7,7 +7,6 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-
 HELPER_MARKER = "# VIS_BENCH_OPENAI_COMPAT_TOOL_CHOICE_START"
 HELPER_END_MARKER = "# VIS_BENCH_OPENAI_COMPAT_TOOL_CHOICE_END"
 HELPER_ANCHOR = "\ndef complete(  # noqa: PLR0913\n"

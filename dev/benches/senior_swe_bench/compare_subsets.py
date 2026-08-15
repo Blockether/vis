@@ -5,11 +5,10 @@ from __future__ import annotations
 import argparse
 import html
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
-
 
 HERE = Path(__file__).resolve().parent
 REPORTS_DIR = HERE / "results" / "reports"
@@ -349,7 +348,7 @@ def build_comparison(
         )
 
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "state": {
             "authoritative": authoritative,
             "data_complete": data_complete,

@@ -17,7 +17,7 @@ def main() -> int:
     p.add_argument("--out", type=Path, required=True)
     a = p.parse_args()
 
-    preds = [json.loads(l) for l in a.predictions.read_text().splitlines() if l.strip()]
+    preds = [json.loads(line) for line in a.predictions.read_text().splitlines() if line.strip()]
 
     # SWE-bench 2.x writes the final report as
     #   <model_name_or_path-with-slashes-replaced>.<run_id>.json

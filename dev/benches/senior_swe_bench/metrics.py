@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 TOKEN_KEYS = [
     "input_tokens",
     "cached_input_tokens",

@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+
 try:
     import tomllib  # Python 3.11+
 except ModuleNotFoundError:  # pragma: no cover - local macOS may still ship 3.9
@@ -86,7 +87,7 @@ def normalize_task(raw: dict[str, Any]) -> dict[str, Any]:
         "repo": metadata.get("repo") or origin.get("repo") or raw.get("repo"),
         "visibility": metadata.get("visibility") or raw.get("visibility"),
         "tags": metadata.get("tags") or raw.get("tags") or [],
-        "verifier_timeout_sec": (((raw.get("verifier") or {}).get("timeout_sec"))),
+        "verifier_timeout_sec": ((raw.get("verifier") or {}).get("timeout_sec")),
         "source": raw.get("source"),
     }
 

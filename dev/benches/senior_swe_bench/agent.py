@@ -10,10 +10,16 @@ from pathlib import Path
 from typing import Any
 
 try:  # Harbor 0.17 public import path for installed agents.
-    from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_template  # type: ignore
+    from harbor.agents.installed.base import (  # type: ignore
+        BaseInstalledAgent,
+        with_prompt_template,
+    )
 except Exception:  # pragma: no cover - exercised only when Harbor is absent locally.
     try:  # Older docs exposed these from harbor.agents.
-        from harbor.agents import BaseInstalledAgent, with_prompt_template  # type: ignore
+        from harbor.agents import (  # type: ignore
+            BaseInstalledAgent,
+            with_prompt_template,
+        )
     except Exception:
 
         class BaseInstalledAgent:  # type: ignore[no-redef]
@@ -250,7 +256,7 @@ def _populate_context(context: Any, stats: dict[str, Any]) -> Any:
     if isinstance(current, dict):
         current.update(metadata)
     elif hasattr(context, "metadata"):
-        setattr(context, "metadata", metadata)
+        context.metadata = metadata
     return context
 
 

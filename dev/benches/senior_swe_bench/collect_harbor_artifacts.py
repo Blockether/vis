@@ -8,7 +8,6 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-
 JOB_FILES = ("result.json", "config.json", "job.log", "lock.json")
 TRIAL_FILES = ("result.json", "config.json", "trial.log", "exception.txt", "lock.json")
 

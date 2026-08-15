@@ -1,7 +1,7 @@
-from pathlib import Path
 import asyncio
 import importlib.util
 import json
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("agent", ROOT / "agent.py")

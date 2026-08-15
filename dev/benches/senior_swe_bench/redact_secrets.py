@@ -8,7 +8,6 @@ import os
 import re
 from pathlib import Path
 
-
 ENV_SECRET = re.compile(
     r"^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*(?:API_KEY|TOKEN|SECRET)\s*=\s*(.*?)\s*$",
     re.MULTILINE,

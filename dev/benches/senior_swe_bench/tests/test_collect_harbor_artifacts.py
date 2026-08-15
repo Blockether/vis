@@ -1,6 +1,6 @@
-from pathlib import Path
 import importlib.util
 import json
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("collect_harbor_artifacts", ROOT / "collect_harbor_artifacts.py")

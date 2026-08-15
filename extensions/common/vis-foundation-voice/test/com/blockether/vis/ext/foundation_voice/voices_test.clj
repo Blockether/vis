@@ -56,7 +56,7 @@
                 (into-array java.nio.file.attribute.FileAttribute [])))]
     (try (with-redefs [voices/voices-dir (constantly dir)]
            (f dir))
-         (finally (doseq [file (reverse (file-seq (io/file dir)))]
+         (finally (doseq [^java.io.File file (reverse (file-seq (io/file dir)))]
                     (.delete file))))))
 
 (defdescribe voice-id-test

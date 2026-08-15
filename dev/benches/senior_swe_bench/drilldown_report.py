@@ -9,7 +9,6 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-
 HERE = Path(__file__).resolve().parent
 RESULTS_DIR = HERE / "results"
 REPORTS_DIR = RESULTS_DIR / "reports"

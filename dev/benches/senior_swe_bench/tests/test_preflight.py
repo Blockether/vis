@@ -1,9 +1,9 @@
-from pathlib import Path
 import hashlib
 import importlib.util
 import json
 import sys
 import tarfile
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("preflight", ROOT / "preflight.py")
