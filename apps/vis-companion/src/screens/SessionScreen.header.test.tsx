@@ -97,3 +97,29 @@ describe("the session id chip", () => {
     );
   });
 });
+
+// Regression, user report from a phone (paraphrased: on iOS the heading's
+// elements stand at a different height than everywhere else, and the boxes of
+// the session screen's chrome change): this band cleared the notch with padding
+// on the SAME box that spells `min-h-13`, and a min-height is a BORDER-BOX
+// minimum — so the inset was subtracted from the band instead of standing over
+// it. Measured at 390px with a 59px top inset the row collapsed to the 46px the
+// title block happened to need, taking `BackButton` — which stretches to that
+// row — from 51px to 46px, while the same header off a notch kept its full
+// height. With the floor gone the heading also FOLLOWED its content, so anything
+// that changed the title block moved the whole band on a phone and nowhere else.
+// `DialogHeader isUnderNotch` clears a notch the same way.
+describe("the session heading under a notch", () => {
+  it("stands the notch strip ABOVE its own row, never out of it", async () => {
+    renderSessionScreen({ session: sessionFixture({ id: "notched" }) });
+
+    const band = (
+      await screen.findByRole("button", { name: "Back to sessions" })
+    ).closest("header")!;
+    const worn = band.className.split(/\s+/).filter(Boolean);
+
+    expect(worn).toContain("min-h-13");
+    expect(worn).toContain("pt-[env(safe-area-inset-top)]");
+    expect(worn).toContain("box-content");
+  });
+});

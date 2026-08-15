@@ -4920,8 +4920,19 @@ export function SessionScreen({
          share/id cluster ran under the bezel and off the visible screen. The
          insets live on the two edge children, not on the header, so the dark
          back-button block and the panel background still reach the physical
-         edge; only their CONTENT is pushed into the safe area. */}
-        <header className="z-10 flex min-h-13 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 pt-[env(safe-area-inset-top)]">
+         edge; only their CONTENT is pushed into the safe area.
+
+         THE NOTCH STRIP STANDS ABOVE THE BAND'S OWN ROW, NEVER INSIDE IT
+         (`box-content`, the way `DialogHeader isUnderNotch` clears it): a
+         `min-h-13` is a BORDER-BOX minimum, so the top inset was SUBTRACTED from
+         the band instead of standing over it. Measured at 390px with a 59px
+         inset, the band's row collapsed to the 46px the title block happened to
+         need instead of the 52px it spells, and `BackButton` — which stretches
+         to that row — came down with it, while the same header off a notch kept
+         its full height. With the floor gone the row also FOLLOWED ITS CONTENT,
+         so anything that changed the title block moved the whole heading on a
+         phone and nowhere else. */}
+        <header className="z-10 flex min-h-13 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 box-content pt-[env(safe-area-inset-top)]">
           <BackButton label="Back to sessions" onClick={onBack} />
           <div className="min-w-0 flex-1 self-center px-3 py-1.5">
             <h1 className="truncate font-mono text-body font-bold text-white">
