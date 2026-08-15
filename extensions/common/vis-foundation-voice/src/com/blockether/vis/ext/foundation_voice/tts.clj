@@ -136,6 +136,15 @@
                    :voice-id voice-id
                    :known (mapv #(name (:id %)) voices)})))
 
+(defn- no-reference-clips!
+  "A pocket voice IS a reference clip, so an empty catalogue is not an unknown
+   voice - it is a bundle with no voice in it at all."
+  [entry]
+  (throw (ex-info (str "The " (:id entry) " bundle carries no reference clip to speak with")
+                  {:type :voice-tts/no-reference-clips
+                   :family :pocket-tts
+                   :asset-id (:id entry)
+                   :notice (:notice entry)})))
 (defn- piper-asset-for
   "The manifest entry whose voice is `voice-id`, or the default when none is
    named."
@@ -461,9 +470,15 @@
 
         :pocket-tts
         (let
-          [voice
-           (or (named-voice (:voices (pocket-asset)) voice-id)
-               (unknown-voice! :pocket-tts voice-id (:voices (pocket-asset))))
+          [entry
+           (pocket-asset)
+
+           _
+           (when (empty? (:voices entry)) (no-reference-clips! entry))
+
+           voice
+           (or (named-voice (:voices entry) voice-id)
+               (unknown-voice! :pocket-tts voice-id (:voices entry)))
 
            clip
            (io/file dir (:clip voice))]

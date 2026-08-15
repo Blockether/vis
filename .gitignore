@@ -109,3 +109,6 @@ own_your_harness.pptx
 # Glob is leading-slash-free so it also covers apps/vis-companion-relay/.wrangler/;
 # the tracked wrangler.jsonc config is unaffected.
 .wrangler/
+
+# Voice assets built by bin/export-pocket-tts — release payloads, never sources.
+/dist/

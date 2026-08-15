@@ -15,46 +15,56 @@
 #     run; it was only that repo's published ARTIFACT that carried terms we
 #     could not restate.
 #
+# WHY THIS REVISION, not the exporter's newest (measured, not preferred):
+#   the newest commit b25d4a7 retargets the exporter at the 2026-04 checkpoint
+#   and writes the Mimi encoder at opset 18 with latents shaped
+#   [1, frames, 1024]. sherpa-onnx reads the transposed layout this revision
+#   emits, so the newer bundle loads and runs and produces noise — Parakeet
+#   transcribed its speech as an empty string, where the bundle from this
+#   revision came back verbatim. `--check` below is that round trip; keep it
+#   green before moving the pin.
+#
 # The Hugging Face token is a BUILD-TIME credential and never reaches a user:
 # kyutai/pocket-tts is gated (auto-approve), so fetching the weights needs an
 # account. Everything this script produces is published in the voice assets
 # release, which needs no account, no token and no Hugging Face at all.
 #
 # Usage:
-#   HF_TOKEN=… bin/export-pocket-tts                       # english, int8, packaged
-#   HF_TOKEN=… bin/export-pocket-tts --language spanish
+#   HF_TOKEN=… bin/export-pocket-tts                       # export, check, package
 #   HF_TOKEN=… bin/export-pocket-tts --voices ~/clips      # reference clips to bundle
-#   bin/export-pocket-tts --out /tmp/pack --keep-work
+#   HF_TOKEN=… bin/export-pocket-tts --out /tmp/pack --keep-work
 #
 # Then, deliberately and only when asked:
 #   gh release upload voice-assets-pack <out>/pocket-tts-int8.tar.bz2 --repo Blockether/vis
 #
-# Requires: uv, git, tar, bzip2. ~10 GB of disk and one CPU-hour of patience.
+# Requires: uv, git, tar, bzip2. ~10 GB of disk and a few minutes.
 
 set -euo pipefail
 
 # Pinned deliberately: an export is only reproducible if the exporter is. Bump
 # this, re-export, and publish the new digest — never float the branch.
 EXPORT_REPO="https://github.com/KevinAHM/pocket-tts-onnx-export"
-EXPORT_REV="b25d4a7da07c5a96d1429102fcd9116f25d7ab5d"
+EXPORT_REV="29ec97e4ed71ffd95e0e8f394638c1e2cbe825c9"
 WEIGHTS_REPO="kyutai/pocket-tts"
-LANGUAGE="english_2026-04"
+VARIANT="b6369a24" # the checkpoint this revision exports: tts_b6369a24.safetensors
 PYTHON_VERSION="3.12"
+SHERPA_VERSION="1.13.5" # only for --check; never shipped
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 out_dir="${repo_root}/dist/voice-assets"
 work_dir=""
 voices_dir=""
 keep_work=0
+do_check=1
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --language) LANGUAGE="$2"; shift 2 ;;
     --out) out_dir="$2"; shift 2 ;;
     --work) work_dir="$2"; shift 2 ;;
     --voices) voices_dir="$2"; shift 2 ;;
     --keep-work) keep_work=1; shift ;;
-    -h|--help) sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --no-check) do_check=0; shift ;;
+    -h|--help) sed -n '2,42p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -90,7 +100,7 @@ trap cleanup EXIT
 
 echo "==> work    ${work_dir}"
 echo "==> out     ${out_dir}"
-echo "==> weights ${WEIGHTS_REPO} (CC BY 4.0)"
+echo "==> weights ${WEIGHTS_REPO} ${VARIANT} (CC BY 4.0)"
 echo "==> export  ${EXPORT_REPO}@${EXPORT_REV} (MIT)"
 
 exporter="${work_dir}/pocket-tts-onnx-export"
@@ -104,15 +114,15 @@ uv venv --quiet --python "$PYTHON_VERSION" "${work_dir}/venv"
 # shellcheck disable=SC1091
 source "${work_dir}/venv/bin/activate"
 uv pip install --quiet -r "${exporter}/requirements.txt"
+# The pinned exporter's requirements.txt misses two modules its own vendored
+# pocket_tts imports at load time (utils/utils.py -> requests, utils/config.py
+# -> yaml). Named here rather than patched upstream, so the pin stays honest.
+uv pip install --quiet requests pyyaml
 
-echo "==> exporting ${LANGUAGE} (this is the hour)"
-(
-  cd "$exporter"
-  HF_TOKEN="$token" HUGGING_FACE_HUB_TOKEN="$token" \
-    python export.py --language "$LANGUAGE" --quantize
-)
+echo "==> exporting ${VARIANT} (this is the slow part)"
+(cd "$exporter" && HF_TOKEN="$token" HUGGING_FACE_HUB_TOKEN="$token" python export.py --quantize)
 
-bundle="${exporter}/pocket-tts-onnx/onnx/${LANGUAGE}"
+bundle="${exporter}/onnx"
 [[ -d "$bundle" ]] || { echo "the exporter wrote no bundle at ${bundle}" >&2; exit 1; }
 
 # sherpa-onnx reads seven files under names of its own. Everything else the
@@ -136,14 +146,14 @@ copy_as text_conditioner.onnx   text_conditioner.onnx
 # the vocabulary is flattened here (the same transformation as
 # k2-fsa/sherpa-onnx scripts/pocket-tts/convert_tokenizer.py, Apache-2.0).
 echo "==> flattening the tokenizer"
-python - "$bundle" "$stage" <<'PY'
+python - "${exporter}/weights/tokenizer.model" "$stage" <<'PY'
 import json
 import sys
 
 import sentencepiece as spm
 
-bundle, stage = sys.argv[1], sys.argv[2]
-sp = spm.SentencePieceProcessor(model_file=f"{bundle}/tokenizer.model")
+model, stage = sys.argv[1], sys.argv[2]
+sp = spm.SentencePieceProcessor(model_file=model)
 vocab = {sp.id_to_piece(i): i for i in range(sp.get_piece_size())}
 scores = {sp.id_to_piece(i): sp.get_score(i) for i in range(sp.get_piece_size())}
 for name, data in (("vocab.json", vocab), ("token_scores.json", scores)):
@@ -158,6 +168,55 @@ if [[ -n "$voices_dir" ]]; then
   mkdir -p "${stage}/test_wavs"
   cp "${voices_dir}"/*.wav "${stage}/test_wavs/"
   echo "==> bundled $(find "${stage}/test_wavs" -name '*.wav' | wc -l | tr -d ' ') reference clips"
+fi
+
+# The export is only worth publishing if sherpa can speak with it. A bundle
+# whose encoder layout sherpa misreads still loads and still returns audio — it
+# just returns noise — so the check is a round trip: clone a clip, say a
+# sentence, and require the audio to last as long as the sentence does.
+if [[ "$do_check" -eq 1 ]]; then
+  echo "==> checking the bundle through sherpa-onnx ${SHERPA_VERSION}"
+  uv pip install --quiet "sherpa-onnx==${SHERPA_VERSION}"
+  check_wav="${work_dir}/check.wav"
+  check_text=""
+  if [[ -n "$voices_dir" ]]; then
+    check_wav="$(find "${stage}/test_wavs" -name '*.wav' | head -1)"
+  elif [[ "$(uname)" == "Darwin" ]]; then
+    check_text="The quick brown fox jumps over the lazy dog, and the voice you hear is only a reference clip."
+    say -v Samantha --data-format=LEI16@24000 -o "$check_wav" \
+      "The quick brown fox jumps over the lazy dog, and the voice you hear is only a reference clip."
+  else
+    echo "no reference clip and no 'say' to record one: skipping the check" >&2
+    check_wav=""
+  fi
+  if [[ -n "$check_wav" ]]; then
+    python - "$stage" "$check_wav" "$check_text" <<'PY'
+import sys
+import wave
+
+import numpy as np
+import sherpa_onnx as so
+
+stage, clip, prompt = sys.argv[1], sys.argv[2], sys.argv[3]
+tts = so.OfflineTts(so.OfflineTtsConfig(model=so.OfflineTtsModelConfig(num_threads=4,
+    pocket=so.OfflineTtsPocketModelConfig(
+        lm_main=f"{stage}/lm_main.int8.onnx", lm_flow=f"{stage}/lm_flow.int8.onnx",
+        encoder=f"{stage}/encoder.onnx", decoder=f"{stage}/decoder.int8.onnx",
+        text_conditioner=f"{stage}/text_conditioner.onnx",
+        vocab_json=f"{stage}/vocab.json", token_scores_json=f"{stage}/token_scores.json"))))
+with wave.open(clip) as w:
+    rate = w.getframerate()
+    samples = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0
+text = "Local speech now runs entirely on this machine, with no account and no network."
+audio = tts.generate(text, prompt_text=prompt, prompt_samples=samples, sample_rate=rate)
+data = np.asarray(audio.samples, dtype=np.float32)
+seconds = len(data) / audio.sample_rate
+level = float(np.sqrt((data ** 2).mean()))
+print(f"    spoke {seconds:.2f}s at {audio.sample_rate} Hz, rms {level:.3f}")
+if seconds < 3.0 or level < 0.01:
+    raise SystemExit(f"the bundle does not speak: {seconds:.2f}s of audio for {len(text)} characters")
+PY
+  fi
 fi
 
 cat > "${stage}/LICENSE" <<EOF
@@ -179,11 +238,10 @@ cat > "${stage}/README.md" <<EOF
 
 | | |
 |---|---|
-| weights | [${WEIGHTS_REPO}](https://huggingface.co/${WEIGHTS_REPO}) — CC BY 4.0 |
-| language bundle | ${LANGUAGE} |
+| weights | [${WEIGHTS_REPO}](https://huggingface.co/${WEIGHTS_REPO}) — CC BY 4.0, checkpoint \`${VARIANT}\` |
 | exporter | ${EXPORT_REPO} @ \`${EXPORT_REV}\` (MIT) |
 | exported | $(date -u +%Y-%m-%d) |
-| reproduce | \`bin/export-pocket-tts --language ${LANGUAGE}\` |
+| reproduce | \`bin/export-pocket-tts\` |
 
 Vis exports these weights itself rather than mirroring a third party's bundle;
 \`bin/export-pocket-tts\` says why in its header. Attribution belongs to Kyutai.

@@ -14,10 +14,27 @@
       (expect (every? :label (tts/piper-voices)))
       (expect (every? :language (tts/piper-voices)))
       (expect (= "kristin" (name (:id (:voice (first (tts/piper-assets))))))))
-  (it "keeps which file backs a pocket voice to itself"
-      (expect (= ["bria" "loona" "hibiki"] (mapv #(name (:id %)) (tts/pocket-voices))))
-      (expect (not-any? :clip (tts/pocket-voices)))
-      (expect (every? :clip (:voices (tts/pocket-asset)))))
+  (it "carries no pocket voice, because a clip is a recording Vis does not own"
+      ;; A pocket voice IS a reference clip. Kyutai's clips are not ours to hand
+      ;; on, so the catalogue is empty until Vis generates clips of its own, and
+      ;; the accessor still refuses to say which file would back one.
+      (expect (empty? (tts/pocket-voices)))
+      (expect (empty? (:voices (tts/pocket-asset))))
+      (expect (not-any? :clip (tts/pocket-voices))))
+  (it "refuses to speak with pocket-tts while it has no clip to clone"
+      ;; An empty catalogue is not an unknown voice: the failure has to name the
+      ;; missing clip, or the user goes looking for a voice id that never existed.
+      (with-redefs
+        [sherpa/ensure-native!
+         (constantly nil)
+
+         assets/installed?
+         (constantly true)]
+
+        (let [data (ex-data-of #(tts/synthesize! :pocket-tts {:text "hello"}))]
+          (expect (= :voice-tts/no-reference-clips (:type data)))
+          (expect (= "pocket-tts-int8" (:asset-id data)))
+          (expect (seq (:notice data))))))
   (it "answers an unknown voice with the ones that exist"
       (let [data (ex-data-of #(#'tts/piper-asset-for "nope"))]
         (expect (= :voice-tts/unknown-voice (:type data)))
@@ -95,8 +112,7 @@
                                         (swap! installed conj (:id entry))
                                         (:install-dir entry))]
 
-                     (expect (= ["sherpa-onnx-pocket-tts-int8-2026-01-26"]
-                                (tts/install-model! :pocket-tts)))
+                     (expect (= ["sherpa-onnx-pocket-tts-int8"] (tts/install-model! :pocket-tts)))
                      (expect (= ["pocket-tts-int8"] @installed)))))
              (it "installs nothing when everything the voice needs is already there"
                  (with-redefs

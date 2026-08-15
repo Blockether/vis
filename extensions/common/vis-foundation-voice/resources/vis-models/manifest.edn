@@ -7,8 +7,8 @@
 ;;              when one is (`:is-token-required true`). Credentials are never
 ;;              carried across the redirect to HF's CDN.
 ;;   :pack      the Vis voice assets release. It carries ONLY what Vis exports
-;;              itself or may mirror outright: the ASR model today, our own
-;;              pocket-tts export next. No voice and no GPL data is ever in it.
+;;              itself or may mirror outright: the ASR model, and Vis' own
+;;              pocket-tts export. No voice and no GPL data is ever in it.
 ;;   :upstream  the project that published the artifact - last as a fallback,
 ;;              and the ONLY source of anything Vis does not host itself.
 ;;
@@ -50,44 +50,45 @@
     :sha256 "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf"
     :url
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2"}]}
- ;; OUR export, or none. Kyutai's weights are plain CC BY 4.0 and redistributable
- ;; - but the ready-made ONNX bundle k2-fsa publishes is a THIRD PARTY's
- ;; (KevinAHM/pocket-tts-onnx), and the README inside that archive says in as
- ;; many words "It is for non-commercial" while the LICENSE it sits beside is CC
- ;; BY 4.0, which permits commercial use. We did not write either sentence and
- ;; cannot resolve them, so Vis will not put its name on that artifact: it ships
- ;; the ENGINE, and this entry stays opt-in until `bin/export-pocket-tts` has
- ;; produced Vis' own export from Kyutai's weights. That export is CC BY 4.0
- ;; with attribution, needs no token, and goes in the pack - at which point this
- ;; entry loses its notice and its opt-in flag.
+ ;; OUR export, and nobody else's. Kyutai's weights are plain CC BY 4.0, so
+ ;; commercial use and redistribution of an adaptation are both permitted with
+ ;; attribution - but the ready-made ONNX bundle k2-fsa publishes is a THIRD
+ ;; PARTY's (KevinAHM/pocket-tts-onnx), and the README inside that archive says
+ ;; in as many words "It is for non-commercial" while the LICENSE it sits beside
+ ;; is CC BY 4.0. We did not write either sentence and cannot resolve them, so
+ ;; Vis mirrors neither: `bin/export-pocket-tts` exports Kyutai's own checkpoint
+ ;; and the pack carries that. The export is proven before it is published - the
+ ;; script clones a clip, speaks a sentence, and Parakeet reads it back.
+ ;;
+ ;; The entry stays opt-in for a reason that is no longer licensing: a pocket
+ ;; voice IS a reference clip, this bundle ships none, and the only clips Vis
+ ;; may publish are the ones it records or generates itself.
  {:id "pocket-tts-int8"
   :engine :pocket-tts
-  :install-dir "sherpa-onnx-pocket-tts-int8-2026-01-26"
+  :install-dir "sherpa-onnx-pocket-tts-int8"
   :requires ["lm_flow.int8.onnx" "lm_main.int8.onnx" "encoder.onnx" "decoder.int8.onnx"
              "text_conditioner.onnx" "vocab.json" "token_scores.json"]
   ;; Pocket clones a REFERENCE CLIP instead of selecting a baked speaker, so a
-  ;; voice is a WAV in the bundle and the catalogue is ours to choose the day we
-  ;; export our own.
-  :voices
-  [{:clip "test_wavs/bria.wav" :id "bria" :label "Bria (en)" :language "en"}
-   {:clip "test_wavs/loona.wav" :id "loona" :label "Loona (en)" :language "en"}
-   {:clip "test_wavs/sample_fr_hibiki_crepes.wav" :id "hibiki" :label "Hibiki (fr)" :language "fr"}]
+  ;; voice is a WAV inside the bundle. Kyutai's clips are not ours to hand on,
+  ;; so this catalogue is empty until Vis has clips of its own - and then
+  ;; `bin/export-pocket-tts --voices <dir>` puts them in the archive.
+  :voices []
   :license "CC-BY-4.0"
   :attribution
-  "pocket-tts by Kyutai (https://huggingface.co/kyutai/pocket-tts), CC BY 4.0. ONNX export by KevinAHM/pocket-tts-onnx (export script MIT), repackaged by k2-fsa/sherpa-onnx. Reference clips from kyutai-labs/delayed-streaming-modeling."
+  "pocket-tts by Kyutai (https://huggingface.co/kyutai/pocket-tts), CC BY 4.0, checkpoint b6369a24. ONNX export by the Vis project (bin/export-pocket-tts), published under the same terms with attribution to Kyutai."
   :source-url "https://huggingface.co/kyutai/pocket-tts"
   :notice
-  "Vis exports Kyutai's CC BY 4.0 weights itself; until that export ships, the only published bundle is a third party's, whose README claims non-commercial use while its LICENSE is CC BY 4.0. Vis never mirrors it and never installs it on its own."
-  :is-commercial-ok false
+  "This bundle carries no reference clips. A pocket voice is a WAV the model clones, and the only clips Vis may publish are ones it records or generates itself, so the engine has nothing to speak with until such a clip ships."
+  :is-commercial-ok true
   :is-opt-in true
-  :is-redistributed false
+  :is-redistributed true
   :sources
-  [{:bytes 98336520
-    :host :upstream
+  [{:bytes 95154203
+    :host :pack
     :kind :archive
-    :sha256 "2f3b88823cbbb9bf0b2477ec8ae7b3fec417b3a87b6bb5f256dba66f2ad967cb"
+    :sha256 "e97f8b4e00e807f7d6496311fad71848356101cff13d497478beb05d1d0013af"
     :url
-    "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2"}]}
+    "https://github.com/Blockether/vis/releases/download/voice-assets-pack/pocket-tts-int8.tar.bz2"}]}
  {:attribution
   "Piper voice en_US-kristin-medium by Bryce Beattie (https://brycebeattie.com/files/tts/), released into the public domain. Trained from scratch on 11.5 hours of public-domain LibriVox recordings. VITS/ONNX export by k2-fsa/sherpa-onnx."
   :engine :piper

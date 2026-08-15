@@ -320,7 +320,7 @@ without weights until Phase 5 exports them.
 host — a Piper voice belongs to its publisher, and espeak-ng's tables are GPL-3 — and the tag `voice-assets-pack`
 MATCHED the `v*` trigger glob on `release.yml` and `native-release.yml`, so publishing an ASSET release started a
 product release and attached two ~196 MB Linux binaries to it. Both are corrected here. The pack becomes exactly
-what Vis makes or may mirror outright: Parakeet today, our own pocket-tts export next. Everything else moves to the
+what Vis makes or may mirror outright: Parakeet, and our own pocket-tts export. Everything else moves to the
 party that owns it — voices to their publishers, espeak-ng to the operating system's package manager, where a
 GPL-3 phonemizer everybody already has costs us nothing to require and would cost us a licence to ship.
 
@@ -331,13 +331,15 @@ GPL-3 phonemizer everybody already has costs us nothing to require and would cos
 | The ungated weights cannot voice anything | `kyutai/pocket-tts-without-voice-cloning` is byte-identical to the gated repo EXCEPT every `mimi.encoder.*` tensor is ZEROED (its own `remove_voice_cloning_and_push.py` does it), and sherpa's `GetVoiceEmbedding` runs that encoder over the reference clip |
 | A pocket voice IS a reference clip | `csrc/offline-tts-pocket-impl.h` requires `reference_audio` + `reference_sample_rate`; `NumSpeakers()` is 1 |
 | No mirror substitutes for the gate | seven third-party copies checked; none matches the gated repo's digests. Our own export therefore needs an HF token ONCE, at build time |
-| The exporter is MIT and pinned | `KevinAHM/pocket-tts-onnx-export@b25d4a7`, `python export.py --language english_2026-04 --quantize` |
+| The exporter is MIT, pinned to the revision sherpa can read | `KevinAHM/pocket-tts-onnx-export@29ec97e`, `python export.py --quantize`, checkpoint `b6369a24`. Its newest commit `b25d4a7` retargets the 2026-04 checkpoint and writes the Mimi encoder at opset 18 with latents `[1, frames, 1024]`; sherpa-onnx reads the transposed layout, so that bundle loads, runs and speaks noise |
+| The export is proven by our own ASR before it ships | Parakeet transcribed the `b25d4a7` bundle's speech as `""` (0.6 s of audio for a 46-character sentence) and the pinned bundle's as "Local speech now runs entirely on this machine, with no account and no network." verbatim. `bin/export-pocket-tts` runs that clone-speak-listen round trip and refuses to package a bundle that fails it |
 | Seven files reach sherpa | `flow_lm_main_int8`→`lm_main.int8.onnx`, `flow_lm_flow_int8`→`lm_flow.int8.onnx`, `mimi_encoder`→`encoder.onnx`, `mimi_decoder_int8`→`decoder.int8.onnx`, `text_conditioner.onnx`, plus `vocab.json`/`token_scores.json` flattened from `tokenizer.model` |
 | espeak-ng is a package everywhere | Homebrew, MacPorts, apt, dnf, pacman; the tables are read from a directory at run time, never linked into anything Vis builds |
 
 **Acceptance criteria.**
-- DONE. The `voice-assets-pack` release is rebuilt as an ASSETS release: `sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2`
-  plus `SHA256SUMS.txt`, and nothing else. The old release, its stray `vis-agent-linux-*` binaries and its tag are gone.
+- DONE. The `voice-assets-pack` release is an ASSETS release and nothing else: `sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2`,
+  Vis' own `pocket-tts-int8.tar.bz2` (95,154,203 bytes) and `SHA256SUMS.txt`. The old release, its stray `vis-agent-linux-*`
+  binaries and its tag are gone, and the new tag started no workflow.
 - DONE. `release.yml` and `native-release.yml` trigger on `v[0-9]*` and gate their publish steps on the same pattern, so
   an asset tag can never start a product release again. The macOS arm64 job runs on the repository's OWN Apple-silicon
   runner (label `vis-macos-arm64`, overridable by the `VIS_MACOS_ARM64_RUNNER` variable) because no hosted macOS runner
@@ -348,11 +350,17 @@ GPL-3 phonemizer everybody already has costs us nothing to require and would cos
   speak; and doctor's `::espeak` line names the command for the platform it is refusing on.
 - DONE. No voice is mirrored. Kristin, Cori, John and Ryan are `:is-redistributed false` with upstream and Hugging Face
   sources only, and `assets_test.clj` fails on any entry that gains a `:pack` source without being ours to host.
-- `bin/export-pocket-tts` — Vis' own export from Kyutai's CC BY 4.0 weights: pinned exporter, `uv` environment, the
-  seven-file sherpa layout, the flattened tokenizer, a LICENSE and README naming Kyutai, and the digest to paste into
-  the manifest. The HF token is a build-time credential that reaches no user and lives in no file in this tree.
-- With that export in the pack, `pocket-tts-int8` flips: `:is-commercial-ok true`, `:is-opt-in` and `:notice` gone, a
-  `:pack` source added, `:attribution` naming Kyutai instead of a third party's export.
+- DONE. `bin/export-pocket-tts` is Vis' own export from Kyutai's CC BY 4.0 weights: pinned exporter, `uv` environment, the
+  seven-file sherpa layout, the tokenizer flattened exactly as k2-fsa's `convert_tokenizer.py` does (both JSON files come
+  out byte-identical to the published bundle's), a LICENSE and README naming Kyutai, the sherpa round-trip check, and the
+  digest to paste into the manifest. The HF token is a build-time credential that reaches no user and lives in no file in
+  this tree.
+- DONE. `pocket-tts-int8` is now ours: `:is-commercial-ok true`, `:is-redistributed true`, a `:pack` source, `:attribution`
+  naming Kyutai and Vis' own export instead of a third party's. It stays `:is-opt-in` for a reason that is no longer
+  licensing — a pocket voice IS a reference clip, the bundle carries none, and `synthesize!` refuses with
+  `:voice-tts/no-reference-clips` rather than pretending the user named a voice that does not exist.
+- Reference clips of our own: a pocket voice is a WAV, so Vis can generate one (public-domain Piper output or a recording
+  we make) and `bin/export-pocket-tts --voices <dir>` bundles it. Until then the catalogue is empty by policy.
 - `THIRD_PARTY_MODELS.md` generated FROM the manifest, so the file cannot drift from what ships.
 - The natives stay upstream's. `sherpa.clj/jar-url` fetches them from JitPack, and sherpa's VITS path phonemizes through
   espeak-ng compiled INTO that library — `nm` finds 10 `espeak_*` symbols and its data paths in the shipped
@@ -603,12 +611,20 @@ No tables, no Piper, and nobody downloads 63 MB to find that out.
 published it, and `assets_test.clj` now fails the manifest if any entry gains a `:pack` source without being ours to
 host — redistributable, commercial-safe, not a voice, and on a Blockether release URL.
 
-What is left is the export. `bin/export-pocket-tts` runs the MIT exporter (pinned at `b25d4a7`) over Kyutai's CC BY 4.0
-weights and assembles the seven files sherpa reads, with the tokenizer flattened to JSON and a LICENSE naming Kyutai. It
-needs a Hugging Face token ONCE, at build time: the ungated `pocket-tts-without-voice-cloning` repo has every
-`mimi.encoder.*` tensor zeroed, and that encoder is exactly what turns a reference clip into a voice, so an export from
-it could not speak in anyone's voice. No third-party mirror matches the gated digests either. The token reaches no user
-and lives in no file in this tree; what it produces needs no account at all.
+**The export is ours now.** `bin/export-pocket-tts` runs the MIT exporter over Kyutai's CC BY 4.0 weights and assembles
+the seven files sherpa reads, with the tokenizer flattened to JSON — both files come out byte-identical to the published
+bundle's — and a LICENSE naming Kyutai. It needs a Hugging Face token ONCE, at build time: the ungated
+`pocket-tts-without-voice-cloning` repo has every `mimi.encoder.*` tensor zeroed, and that encoder is exactly what turns
+a reference clip into a voice, so an export from it could not speak in anyone's voice. No third-party mirror matches the
+gated digests either. The token reaches no user and lives in no file in this tree; what it produces needs no account at
+all. The exporter is pinned at `29ec97e`, NOT at its newest commit: `b25d4a7` retargets the 2026-04 checkpoint and emits
+the Mimi encoder with transposed latents, and sherpa reads that bundle as noise — which is why the script now ends in a
+round trip, cloning a clip and requiring the audio to last as long as the sentence does before it packages anything.
+Parakeet reads the shipped bundle's speech back word for word.
+
+What pocket still lacks is a VOICE. A pocket voice is a reference clip, Kyutai's clips are not ours to hand on, and the
+catalogue is empty by policy until Vis has clips it may publish — generated from a public-domain voice or recorded here
+— which `bin/export-pocket-tts --voices <dir>` then bundles.
 **Settled before Phase 1**, from public sources and with no code involved:
 
 - The `kyutai/pocket-tts` gate is `auto` and its only condition is a prohibited-use statement, so
@@ -635,13 +651,14 @@ Three decisions the plan takes, so they are not re-litigated in review:
 2. **Piper is the first gateway engine, not pocket-tts.** Pocket needs no phonemizer, which is why it was
    chosen first, but the only ready-made export of it travels with a non-commercial claim contradicting its
    own LICENSE. Piper's public-domain voices are ours to ship today; pocket-tts ships as an engine whose
-   weights the user fetches, and becomes redistributable the day we export Kyutai's own weights (Phase 5).
+   weights the user fetches. It became redistributable the day Vis exported Kyutai's own weights (Phase 5); what it still
+   lacks is a reference clip we may publish.
 3. **We host what we redistribute.** Models and natives come from a Vis release with a checksum and
    an SPDX id in one manifest, and a test refuses any artifact that is not in it.
 
 TODO, in order:
 
-1. **Phase 5** — the `voice-assets-pack` release, our own pocket-tts export, `THIRD_PARTY_MODELS.md`.
+1. **Phase 5** — `THIRD_PARTY_MODELS.md` generated FROM the manifest, and reference clips of our own so pocket-tts has a voice.
 2. **Phase 6** — engine and voice pickers in the companion, Android voice enumeration.
 3. **Phase 7** — the rest of the Piper catalogue and Kokoro, licensed one voice at a time.
 
