@@ -1725,6 +1725,49 @@
           ;; limits ride embedded, string-keyed too
           (is (= "ok" (get-in p0 ["limits" "status"]))))))))
 
+;; Regression: the fleet was probed one provider at a time, so /v1/router cost
+;; the SUM of every live auth/limits probe — about a minute on eight providers,
+;; past the companion's 30s request bound, and its Providers screen never left
+;; "Checking provider sign-in…".
+(deftest router-handler-probes-the-fleet-in-parallel
+  (testing "GET /v1/router costs the SLOWEST provider probe, not their sum"
+    (let
+      [fleet
+       (mapv (fn [i]
+               {:id (keyword (str "p" i)) :models [{:name "m"}]})
+             (range 6))
+
+       probe-ms
+       300]
+
+      (with-redefs-fn {#'providers/picker-fleet (constantly fleet)
+                       #'providers/default-selection (constantly nil)
+                       #'providers/fallback-selection (constantly nil)
+                       #'providers/provider-status (fn [_]
+                                                     (Thread/sleep (long probe-ms))
+                                                     {:is-authenticated true :source :auth-file})
+                       #'providers/provider-limits-safe
+                       (constantly {:status :ok :static {} :dynamic {:limits []}})}
+        (fn []
+          (let
+            [t0
+             (System/currentTimeMillis)
+
+             resp
+             ((rv 'router-handler) {})
+
+             elapsed
+             (- (System/currentTimeMillis) t0)
+
+             provs
+             (get (wire/parse-json (:body resp)) "providers")]
+
+            (is (= 200 (:status resp)))
+            ;; every row is present, in fleet order
+            (is (= ["p0" "p1" "p2" "p3" "p4" "p5"] (mapv #(get % "id") provs)))
+            (is (< elapsed (* 3 (long probe-ms)))
+                (str "fleet probed serially: " elapsed "ms"))))))))
+
 (deftest router-default-handler-tags-primary-and-fallback
   (let
     [saved

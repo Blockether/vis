@@ -1189,7 +1189,16 @@
      fallback
      (providers/fallback-selection fleet primary)]
 
-    {:providers (mapv #(router-provider-entry % primary fallback) fleet)}))
+    ;; One row costs a LIVE auth (and limits) probe against that provider —
+    ;; seconds each. Serially, a fleet of eight took ~60s, past the companion's
+    ;; 30s request bound, so the Providers screen sat on "Checking provider
+    ;; sign-in…" forever. Probing the fleet in parallel makes the payload cost
+    ;; the SLOWEST provider instead of their sum; each row already answers a
+    ;; report rather than throwing.
+    {:providers (->> fleet
+                     (mapv (fn [provider]
+                             (future (router-provider-entry provider primary fallback))))
+                     (mapv deref))}))
 
 (defn- router-handler
   "GET /v1/router — the whole provider catalog and both explicit tags."
