@@ -2021,7 +2021,7 @@
                  env
                  "1dff1f5a-76dc-431e-ad2b-97af14c731f1 can you check why TUI title is missing?")]
             @f
-            (expect (= [:zai-coding-plan :openai-codex]
+            (expect (= [:zai-coding-plan :alibaba-coding-plan]
                        (take 2 (get-in @seen [:routing :prefer-providers]))))
             (expect (= "can you check why TUI title is missing?" @(:session-title-atom env)))))
         (finally (lp/dispose-environment! env)))))
