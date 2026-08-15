@@ -18,7 +18,7 @@
 
    Extensions can contribute DYNAMIC templates through
    `register-provider!` — e.g. the harness extension exposes every
-   discovered skill as `/<name>`. File templates win on a name
+   discovered skill as `/skill:<name>`. File templates win on a name
    collision; among providers, registration order wins.
 
    Dispatch: the engine consults `expand` ONLY for slash texts no
@@ -51,10 +51,9 @@
 
 (defn- non-blank
   [s]
-  (let
-    [s (some-> s
-               str
-               str/trim)]
+  (let [s (some-> s
+                  str
+                  str/trim)]
     (when-not (str/blank? s) s)))
 
 ;; =============================================================================
@@ -72,12 +71,11 @@
 
 (defn- parse-template-file
   [scope ^java.io.File f]
-  (try (let
-         [{:keys [meta body]}
-          (parse-frontmatter (slurp f))
+  (try (let [{:keys [meta body]}
+             (parse-frontmatter (slurp f))
 
-          nm
-          (or (non-blank (:name meta)) (non-blank (name-stem (.getName f))))]
+             nm
+             (or (non-blank (:name meta)) (non-blank (name-stem (.getName f))))]
 
          (when (and nm (not (str/blank? body)))
            {:name nm
@@ -150,18 +148,17 @@
    user-global. Caches are isolated by canonical workspace root and marker-checked
    so alternating nested sessions cannot overwrite one another's discovery view."
   []
-  (let
-    [project-dirs
-     (project-prompts-dirs)
+  (let [project-dirs
+        (project-prompts-dirs)
 
-     m
-     (template-marker project-dirs)
+        m
+        (template-marker project-dirs)
 
-     root
-     (:root m)
+        root
+        (:root m)
 
-     c
-     (get @cache root)]
+        c
+        (get @cache root)]
 
     (if (and c (= m (:marker c)))
       (:templates c)
@@ -237,15 +234,14 @@
   [env text]
   (when-let [{:keys [name args]} (parse-invocation text)]
     (when-let [t (first (filter #(= name (:name %)) (templates)))]
-      (let
-        [body (try (if-let [f (:expand-fn t)]
-                     (f env args)
-                     (expand-body (:body t) args))
-                   (catch Throwable ex
-                     (tel/log! {:level :warn
-                                :id ::expand-failed
-                                :data {:template name :error (ex-message ex)}})
-                     nil))]
+      (let [body (try (if-let [f (:expand-fn t)]
+                        (f env args)
+                        (expand-body (:body t) args))
+                      (catch Throwable ex
+                        (tel/log! {:level :warn
+                                   :id ::expand-failed
+                                   :data {:template name :error (ex-message ex)}})
+                        nil))]
         (when (and (string? body) (not (str/blank? body)))
           (cond-> {:name name :text body}
             (:path t)

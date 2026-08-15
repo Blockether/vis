@@ -816,6 +816,14 @@ function mergeSlashCommands(remote: SlashCommand[]): SlashCommand[] {
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function slashCommandMatches(command: SlashCommand, query: string): boolean {
+  const name = command.name.toLowerCase();
+  if (query === "/" && name.startsWith("/skill:")) return false;
+  if (name.startsWith(query)) return true;
+  if (!name.startsWith("/skill:") || !query.startsWith("/")) return false;
+  return name.slice("/skill:".length).startsWith(query.slice(1));
+}
+
 // `@` file-mention trigger, mirroring the TUI (`file_suggest.clj` trigger-regex)
 // VERBATIM: the `@` must begin a word (start of text or right after whitespace),
 // and `@@` escapes to a literal `@`. `head` is the input text up to the caret.
@@ -4515,9 +4523,7 @@ export function SessionScreen({
     !slashText.includes("\n");
   const slashQuery = slashText.toLowerCase();
   const slashMatches = slashOpen
-    ? slashCommands.filter((command) =>
-        command.name.toLowerCase().startsWith(slashQuery),
-      )
+    ? slashCommands.filter((command) => slashCommandMatches(command, slashQuery))
     : [];
   const selectedSlash =
     slashMatches[Math.min(slashIndex, Math.max(0, slashMatches.length - 1))];

@@ -4,28 +4,34 @@
 
 (defdescribe
   slash-command-suggestions-test
-  (let
-    [commands [{:id :new-session :label "New Session"} {:id :new-tab :label "New Tab"}
-               {:id :worktree
-                :label "New Worktree"
-                :args [{:name "branch" :kind :positional :required false}]}
-               {:id :settings :label "Settings"}
-               {:id :voice/toggle-recording
-                :label "Voice: Toggle Recording"
-                :args [{:name "mode" :kind :positional :required false}
-                       {:name "force" :kind :flag :type :boolean :required false}]}
-               {:id :exa/search
-                :label "Exa Search"
-                :args [{:name "query" :kind :positional :required true}
-                       {:name "limit" :kind :flag :type :int :required false}]}]]
+  (let [commands [{:id :new-session :label "New Session"} {:id :new-tab :label "New Tab"}
+                  {:id :worktree
+                   :label "New Worktree"
+                   :args [{:name "branch" :kind :positional :required false}]}
+                  {:id :settings :label "Settings"}
+                  {:id :voice/toggle-recording
+                   :label "Voice: Toggle Recording"
+                   :args [{:name "mode" :kind :positional :required false}
+                          {:name "force" :kind :flag :type :boolean :required false}]}
+                  {:id :exa/search
+                   :label "Exa Search"
+                   :args [{:name "query" :kind :positional :required true}
+                          {:name "limit" :kind :flag :type :int :required false}]}
+                  {:id "skill:create-extension" :label "Create an extension"}]]
     (it "shows menu commands when the prompt starts with slash"
         (expect (= ["new-session" "new-tab" "worktree"]
                    (->> (suggest/suggestions "/" commands {:limit 3})
                         (mapv :slash/name)))))
+    (it "keeps skills out of the initial slash list"
+        (expect (not-any? #(= "skill:create-extension" (:slash/name %))
+                          (suggest/suggestions "/" commands))))
     (it "fuzzy filters slash commands by typed token"
         (expect (= "new-tab" (:slash/name (first (suggest/suggestions "/nt" commands))))))
     (it "filters by full slash command names"
         (expect (= ["new-tab"] (mapv :slash/name (suggest/suggestions "/new-tab" commands)))))
+    (it "finds namespaced skills by their unprefixed name"
+        (expect (= "skill:create-extension"
+                   (:slash/name (first (suggest/suggestions "/create-ext" commands))))))
     (it "renders extension command arguments in usage"
         (expect (= "/exa/search <query> [--limit <limit>]"
                    (:slash/usage (first (suggest/suggestions "/exa" commands))))))

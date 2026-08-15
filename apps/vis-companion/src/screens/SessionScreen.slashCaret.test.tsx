@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { renderSessionScreen } from "./session-screen-harness";
+import { renderSessionScreen, sessionFixture } from "./session-screen-harness";
 
 // Regression, iOS keyboard on slash-command tap: completing a command set the
 // prompt but left the native selection and the caret state where the original
@@ -41,5 +41,31 @@ describe("session-scoped slash discovery", () => {
 
     await waitFor(() => expect(slashes).toHaveBeenCalled());
     expect(slashes.mock.calls[0]?.[0]).toBe("s1");
+  });
+});
+
+// Skills keep their canonical namespace without requiring users to include it
+// when searching the slash palette.
+describe("skill slash search", () => {
+  it("finds a prefixed skill by its unprefixed name", async () => {
+    const user = userEvent.setup();
+    renderSessionScreen({
+      session: sessionFixture({ id: "skill-search" }),
+      client: {
+        slashes: () =>
+          Promise.resolve([
+            { name: "/skill:create-extension", doc: "Create an extension" },
+          ]),
+      },
+    });
+
+    const composer = screen.getByLabelText("Message Vis");
+    await user.type(composer, "/create-ext");
+
+    expect(await screen.findByText("/skill:create-extension")).toBeTruthy();
+
+    await user.clear(composer);
+    await user.type(composer, "/");
+    expect(screen.queryByText("/skill:create-extension")).toBeNull();
   });
 });

@@ -11,7 +11,8 @@ A skill is a **document**, not a verb. Every discovered `SKILL.md` joins the one
 retrieval corpus, so the model finds it with **`apropos(text)`** and reads it
 whole with **`doc(name)`** — the same two verbs that answer for a function
 contract or a Vis documentation page. There is nothing to activate and no
-session state to undo. You can also inject one yourself with **`/<name> [task]`**
+session state to undo. You can also invoke one yourself with
+**`/skill:<name> [task]`**
 (see [Context files & prompts](context-and-prompts.md)).
 
 ## What a skill is
@@ -110,8 +111,8 @@ built in and always available. There is no skills feature toggle.
 ## Invoking a skill yourself
 
 The model picks skills from the prompt listing on its own, but you can force
-one: every skill is also a prompt template named `<name>`, so typing
-`/setup-pre-commit for husky` in any channel expands to
+one: every skill is also a prompt template named `skill:<name>`, so typing
+`/skill:setup-pre-commit for husky` in any channel expands to
 
 ```
 Use the skill "setup-pre-commit" for this task: read it with doc("setup-pre-commit")
@@ -120,13 +121,16 @@ unless its SKILL.md is already in this conversation, then follow it as written.
 Task: for husky
 ```
 
-and runs your task with it. Details in
+and runs your task with it. Skills stay out of the initial `/` list, but remain
+searchable by their unprefixed name: searching for `setup-pre-commit` finds and
+inserts the canonical `/skill:setup-pre-commit` command. Details in
 [Context files & prompts](context-and-prompts.md).
 
 The slash **names** the skill; it never pastes the body. Whether the
 instructions still have to be fetched is the model's call — it is the only
 party that can see whether that text is still in front of it, and `doc(name)`
-prints it whole every time with no session effect. So every `/<name>` expands
+prints it whole every time with no session effect. So every
+`/skill:<name>` expands
 to the same sentence: nothing is remembered between two of them. A skill owned
 by a nested project also gets the sentence naming that project (the turn is
 re-rooted there), and bundled resource paths are listed, because neither is

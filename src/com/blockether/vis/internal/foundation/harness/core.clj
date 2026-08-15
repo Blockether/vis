@@ -13,12 +13,12 @@
      `doc(name)` prints it whole. Reading a skill has no session effect: there
      is nothing to activate, nothing to re-read and no activation receipt.
 
-   - The USER's `/<name>` slash is that same document with a POINTER, never a
+   - The USER's `/skill:<name>` slash is that same document with a POINTER, never a
      copy: it expands to one sentence naming the skill (plus the owning project
      and any bundled resource paths, which the body does not carry) and leaves
      fetching it to the model, which is the only party that knows whether the
      text is still in front of it. No injected body means nothing to remember
-     between two `/<name>`s: every skill surface is stateless.
+     between two `/skill:<name>`s: every skill surface is stateless.
 
    - AGENTS are the layer's one bare verb (bound like cat/rg via
      `:ext.engine/builtin? true`) and an ALIAS to `sub_loop`:
@@ -89,18 +89,18 @@
         owner))))
 
 ;; =============================================================================
-;; /<name> — user-invokable skill templates (pi-style)
+;; /skill:<name> — user-invokable skill templates
 ;; =============================================================================
 
 (defn- skill-template-text
-  "Expanded user-message text for a `/<name> [task]` invocation: the SENTENCE
+  "Expanded user-message text for a `/skill:<name> [task]` invocation: the SENTENCE
    that names the skill, plus the optional task. Nothing else — no copy of the
    `SKILL.md`, no ledger, no receipt.
 
    The slash says WHICH skill governs the task; whether the instructions have
    to be fetched is the model's own call, because only the model knows whether
    that text is still in front of it. `doc(<name>)` prints it whole, every
-   time, with no session effect — so a second `/<name>` is the same sentence as
+   time, with no session effect — so a second `/skill:<name>` is the same sentence as
    the first and needs nothing remembered between them.
 
    A skill owned by a NESTED project also says whose it is: the turn is
@@ -109,12 +109,11 @@
    same reason — the directory a skill's files live in is not derivable from
    the body `doc` prints."
   [s args]
-  (let
-    [note
-     (owner-note (owner-root s))
+  (let [note
+        (owner-note (owner-root s))
 
-     resources
-     (seq (mapv #(str (:dir s) "/" %) (:resources s)))]
+        resources
+        (seq (mapv #(str (:dir s) "/" %) (:resources s)))]
 
     (str "Use the skill \""
          (:name s)
@@ -128,19 +127,18 @@
          (when-not (str/blank? (str args)) (str "\n\nTask: " args)))))
 
 (defn- skill-template-entries
-  "Every discovered skill as one dynamic prompt template named `<name>`. A
+  "Every discovered skill as one dynamic prompt template named `skill:<name>`. A
    repository-local skill carries its owning project root so invocation can run
    relative to that project even when selected from a repository-root session."
   []
   (mapv (fn [s]
-          (cond->
-            {:name (:name s)
-             :description (str "Load skill "
-                               (:name s)
-                               (when-let [d (not-empty (str (:description s)))]
-                                 (str " — " (clip d 140))))
-             :expand-fn (fn [_env args]
-                          (skill-template-text s args))}
+          (cond-> {:name (str "skill:" (:name s))
+                   :description (str "Load skill "
+                                     (:name s)
+                                     (when-let [d (not-empty (str (:description s)))]
+                                       (str " — " (clip d 140))))
+                   :expand-fn (fn [_env args]
+                                (skill-template-text s args))}
             (:project-root s)
             (assoc :project-root (:project-root s))))
         (d/skills)))
@@ -179,26 +177,24 @@
    task. Unknown name → an error dict carrying the available names."
   [env nm prompt]
   (if-let [a (d/agent-by-name nm)]
-    (let
-      [res (lp/sub-loop! env
-                         {:prompt (str prompt)
-                          :subctx {:focus (:name a)}
-                          :models (when (:model a) [(:model a)])
-                          :system-prompt (:body a)})
-       ;; sub_loop derives status from the focus TASK; an agent dispatch seeds
-       ;; none, so a completed child turn carries no status string. Read it
-       ;; from the turn OUTCOME instead: errored → failed, otherwise the turn
-       ;; ran to completion → done.
-       status (or (not-empty (str (:status res))) (if (:error res) "failed" "done"))]
+    (let [res (lp/sub-loop! env
+                            {:prompt (str prompt)
+                             :subctx {:focus (:name a)}
+                             :models (when (:model a) [(:model a)])
+                             :system-prompt (:body a)})
+          ;; sub_loop derives status from the focus TASK; an agent dispatch seeds
+          ;; none, so a completed child turn carries no status string. Read it
+          ;; from the turn OUTCOME instead: errored → failed, otherwise the turn
+          ;; ran to completion → done.
+          status (or (not-empty (str (:status res))) (if (:error res) "failed" "done"))]
 
       ;; Model-facing result crosses the strings-only boundary — build it with
       ;; string keys straight from the (internal, keyword-keyed) sub_loop result.
-      (cond->
-        {"agent" (:name a)
-         "task_id" (:task_id res)
-         "status" status
-         "answer" (:answer res)
-         "changed_files" (vec (:changed_files res))}
+      (cond-> {"agent" (:name a)
+               "task_id" (:task_id res)
+               "status" status
+               "answer" (:answer res)
+               "changed_files" (vec (:changed_files res))}
         (:error res)
         (assoc "error" (:error res))))
     {"error" (str "No agent named " (pr-str (str nm)) ".") "available" (mapv :name (d/agents))}))

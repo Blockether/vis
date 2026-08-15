@@ -85,15 +85,17 @@ turn. Argument handling:
 Registered slash commands (from extensions) always win over templates — a
 template only fires for a `/name` no extension claimed.
 
-## Skill invocations: `/<name>`
+## Skill invocations: `/skill:<name>`
 
 Every discovered [skill](skills.md) is also exposed as a dynamic template
-named `<name>`, so you can name a skill explicitly instead of waiting
-for the model to pick it:
+named `skill:<name>`, so you can name a skill explicitly instead of waiting
+for the model to pick it. Skills stay out of the initial `/` list, while palette
+search indexes the unprefixed skill name: searching for `setup-pre-commit`
+returns the canonical prefixed command.
 
 ```
-/setup-pre-commit          # name the skill, follow its instructions
-/setup-pre-commit for husky  # name it with a task appended
+/skill:setup-pre-commit          # name the skill, follow its instructions
+/skill:setup-pre-commit for husky  # name it with a task appended
 ```
 
 The expansion is a POINTER, not a copy — one sentence in that user message:
@@ -107,7 +109,8 @@ Task: for husky
 
 Fetching is the model's decision, because only the model can see whether that
 text is still in front of it; `doc(name)` prints the whole `SKILL.md` every
-time, with no session effect. Nothing is recorded between two `/<name>`s — they
+time, with no session effect. Nothing is recorded between two
+`/skill:<name>`s — they
 expand identically. Two facts the body itself does not carry are added when
 they apply: the owning project of a nested skill (the turn is re-rooted there)
 and the absolute paths of its bundled resources.
