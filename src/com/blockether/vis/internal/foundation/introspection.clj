@@ -1392,36 +1392,74 @@
 ;; (`session_state`, the fork rows `session_forks` reads) - so the tool that
 ;; reads a conversation is `read_session`.
 (def
-  ^{:doc
-    "await read_session(target=None)  # current session by default; pass an id for another
-String-keyed fields: `session`, `current_turn`, `failures`, `diagnosis`, `session_forks`, `turn_retries`, \"usage\", `transcript`. \"usage\" is compact token/cost/outcome/error/routing; tool rows overlap, so never sum them. Filter `transcript/turns/iterations/blocks` (`code`/`result`) in python_execution; don't dump. Use live `session` for current state. This is the recovery path for raw folded current-session content; it does not undo fold intents or restore them. `target` takes a bare id, a prefix, or the copied `vis_session_id#<uuid>` marker. Find ids via `list_sessions(search=\"…\")`; one row alone is `get_session(id)`."
+  ^{:doc "Developer alias for `foundation-inspect` — the model-facing contract is the
+          symbol's `:description`/`:result` below."
     :arglists '([] [target])}
   read-session
   foundation-inspect)
 
 (def
-  ^{:doc
-    "await get_session(target=None)  # ONE session's descriptor; current session by default
-String-keyed row: `{id,channel,title,turn_count,created_at,modified_at,is_current}`, plus `provider`/`model`/`provider_model` and `last_turn` (`{id,outcome,user_request}`) when known. `target` is an id, an unambiguous prefix, or the copied `vis_session_id#<uuid>` marker. `None` when nothing matches. No transcript - the content is `read_session(id)`, the whole index is `list_sessions()`."
+  ^{:doc "Developer alias for `foundation-get-session` — the model-facing contract is the
+          symbol's `:description`/`:result` below."
     :arglists '([] [target])}
   get-session
   foundation-get-session)
 
 (def
-  ^{:doc
-    "await list_sessions(search=None)  # newest-first conversation index
-String-keyed rows: `{id,channel,title,turn_count,created_at,modified_at}`. `search` is THE session search the TUI and the companion app run: the SERVER ranks title (`rank` 0), request (1), reply (2) and thinking (3) and answers best band first, newest first inside a band - paint that order, never re-sort it. Matched rows add `rank`, `is_in_title`/`is_in_request`/`is_in_reply`/`is_in_thinking` and the `request_snippet`/`reply_snippet` windows. One row: `get_session(id)`. Content: `read_session(id)`. Filter in python_execution; don't stringify or slice blindly."
+  ^{:doc "Developer alias for `foundation-sessions` — the model-facing contract is the
+          symbol's `:description`/`:result` below."
     :arglists '([] [search])}
   list-sessions
   foundation-sessions)
 
-(def read-session-symbol (vis/symbol #'read-session {:inject-env? true :tag :observation}))
+(def read-session-symbol
+  (vis/symbol
+    #'read-session
+    {:inject-env? true
+     :tag :observation
+     :description
+     (str "Read ONE conversation WHOLE — `read_session()` is the current session, "
+          "`read_session(target)` another; `target` takes a bare id, an unambiguous prefix, or the "
+          "copied `vis_session_id#<uuid>` marker. Filter "
+          "`transcript`/`turns`/`iterations`/`blocks` (`code`/`result`) in python_execution instead "
+          "of dumping it, and read current state off the live `session` map. This is the recovery "
+          "path for raw folded content of THIS session — it does not undo a fold intent or restore "
+          "it. Find ids with `list_sessions(search=…)`; one row alone is `get_session(id)`.")
+     :result
+     (str "String-keyed `{session, current_turn, failures, diagnosis, session_forks, turn_retries, "
+          "usage, transcript}`. `usage` is compact token/cost/outcome/error/routing; its tool rows "
+          "OVERLAP, so never sum them.")}))
 
+(def get-session-symbol
+  (vis/symbol
+    #'get-session
+    {:inject-env? true
+     :tag :observation
+     :description
+     (str "ONE session's descriptor — `get_session()` is the current session, `get_session(target)` "
+          "another (an id, an unambiguous prefix, or the copied `vis_session_id#<uuid>` marker). No "
+          "transcript: the content is `read_session(id)`, the whole index `list_sessions()`.")
+     :result
+     (str "String-keyed row `{id, channel, title, turn_count, created_at, modified_at, "
+          "is_current}`, plus `provider`/`model`/`provider_model` and `last_turn` "
+          "(`{id, outcome, user_request}`) when known. None when nothing matches.")}))
 
-(def get-session-symbol (vis/symbol #'get-session {:inject-env? true :tag :observation}))
-
-
-(def list-sessions-symbol (vis/symbol #'list-sessions {:inject-env? true :tag :observation}))
+(def list-sessions-symbol
+  (vis/symbol
+    #'list-sessions
+    {:inject-env? true
+     :tag :observation
+     :description
+     (str "The newest-first conversation INDEX — `list_sessions()`, or `list_sessions(search=…)`, "
+          "which is THE session search the TUI and the companion app run: the SERVER ranks title "
+          "(`rank` 0), request (1), reply (2) and thinking (3), answering best band first and "
+          "newest first inside a band — paint that order, never re-sort it. One row alone is "
+          "`get_session(id)`, its content `read_session(id)`. Filter in python_execution; never "
+          "stringify or slice blindly.")
+     :result
+     (str "String-keyed rows `{id, channel, title, turn_count, created_at, modified_at}`; a matched "
+          "row adds `rank`, `is_in_title`/`is_in_request`/`is_in_reply`/`is_in_thinking` and the "
+          "`request_snippet`/`reply_snippet` windows.")}))
 
 
 (def all-symbols [read-session-symbol get-session-symbol list-sessions-symbol])

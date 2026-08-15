@@ -2,7 +2,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.walk :as walk]
-            [lazytest.core :refer [defdescribe expect it]]
+            [lazytest.core :refer [defdescribe describe expect it]]
             [bridge.api :as br]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.env-python :as boundary]
@@ -26,14 +26,15 @@
 
 (defn- write-yaml!
   [path data]
-  (let [wire (walk/postwalk (fn [node]
-                              (cond (keyword? node) (name node)
-                                    (map? node) (into {}
-                                                      (map (fn [[k v]]
-                                                             [(str/replace (str k) "-" "_") v]))
-                                                      node)
-                                    :else node))
-                            data)]
+  (let
+    [wire (walk/postwalk (fn [node]
+                           (cond (keyword? node) (name node)
+                                 (map? node) (into {}
+                                                   (map (fn [[k v]]
+                                                          [(str/replace (str k) "-" "_") v]))
+                                                   node)
+                                 :else node))
+                         data)]
     (spit path (yamlstar/dump wire))))
 
 (defn- write-policy!
@@ -330,10 +331,19 @@
       (expect (true? (:success? check-result)))
       (expect (= profile-path (get-in (result-of check-result) ["profile_path"])))))
   (it "discovers the .yml fallback used by Bridge 0.3"
-      (let [root (temp-root "bridge-ext-session-yml")
-            child (str root "/project")
-            profile-path (configure-project! root child)
-            yml-path (str child "/.bridge/profile.yml")]
+      (let
+        [root
+         (temp-root "bridge-ext-session-yml")
+
+         child
+         (str root "/project")
+
+         profile-path
+         (configure-project! root child)
+
+         yml-path
+         (str child "/.bridge/profile.yml")]
+
         (expect (.renameTo (io/file profile-path) (io/file yml-path)))
         (expect (= yml-path
                    (get-in (bridge-context root)
@@ -519,38 +529,44 @@
         (bridge/init env)
         (write-policy! root {:enforce? false :rules [{:path-pattern ".bridge/" :access "none"}]})
         (expect (nil? (refusal root "file-write" (str root "/.bridge/profile.yaml"))))))
-  (it "keeps ordinary paths usable and explains malformed Bridge configuration"
-      (let [root (mark-repository! (temp-root "bridge-ext-invalid-config"))
-            profile-path (str root "/.bridge/profile.yaml")]
-        (.mkdirs (io/file root ".bridge"))
-        (write-yaml! profile-path
-                     {:kind "project-profile"
-                      :project-name "invalid"
-                      :root-path ".."
-                      :code-paths []
-                      :docs-paths []
-                      :test-paths []
-                      :artifact-paths {:root ".bridge/ephemeral"
-                                       :evidence ".bridge/ephemeral/evidence"}
-                      :canonical-commands []
-                      :subsystems []
-                      :surprise true})
-        (expect (nil? (refusal root "file-read" (str root "/README.md"))))
-        (expect (str/includes? (refusal root "file-write" profile-path)
-                               "unknown-field at [:surprise]"))
-        (let [result (bridge/profile {:workspace/root root})]
-          (expect (false? (:success? result)))
-          (expect (str/includes? (get-in result [:error :message])
-                                 "unknown-field at [:surprise]"))
-          (expect (= "Update this Bridge configuration to the installed schema, then retry."
-                     (get-in result [:error :hint]))))
-        (let [public-profile (get (extension/wrap-extension bridge/vis-extension
-                                                            {:workspace/root root})
-                                  'profile)
-              error (try (public-profile)
-                         nil
-                         (catch clojure.lang.ExceptionInfo e e))]
-          (expect (str/includes? (ex-message error) "unknown-field at [:surprise]")))))
+  (it
+    "keeps ordinary paths usable and explains malformed Bridge configuration"
+    (let
+      [root
+       (mark-repository! (temp-root "bridge-ext-invalid-config"))
+
+       profile-path
+       (str root "/.bridge/profile.yaml")]
+
+      (.mkdirs (io/file root ".bridge"))
+      (write-yaml! profile-path
+                   {:kind "project-profile"
+                    :project-name "invalid"
+                    :root-path ".."
+                    :code-paths []
+                    :docs-paths []
+                    :test-paths []
+                    :artifact-paths {:root ".bridge/ephemeral"
+                                     :evidence ".bridge/ephemeral/evidence"}
+                    :canonical-commands []
+                    :subsystems []
+                    :surprise true})
+      (expect (nil? (refusal root "file-read" (str root "/README.md"))))
+      (expect (str/includes? (refusal root "file-write" profile-path)
+                             "unknown-field at [:surprise]"))
+      (let [result (bridge/profile {:workspace/root root})]
+        (expect (false? (:success? result)))
+        (expect (str/includes? (get-in result [:error :message]) "unknown-field at [:surprise]"))
+        (expect (= "Update this Bridge configuration to the installed schema, then retry."
+                   (get-in result [:error :hint]))))
+      (let
+        [public-profile
+         (get (extension/wrap-extension bridge/vis-extension {:workspace/root root}) 'profile)
+
+         error
+         (try (public-profile) nil (catch clojure.lang.ExceptionInfo e e))]
+
+        (expect (str/includes? (ex-message error) "unknown-field at [:surprise]")))))
   (it "an enforced :none rule refuses the read and the write with the policy's own reason"
       (let
         [root
@@ -782,3 +798,44 @@
       (expect (= "unit" (get-in r ["next_action" "evidence_id"])))
       (expect (empty? (get-in r ["evidence_receipts"])))
       (expect (= "unit-tests" (get-in r ["required_obligations" 0 "evidence_kind"]))))))
+
+;; Every model-facing page is RENDERED from the symbol entry: the call line from
+;; the signature, the `Keys:` line from `:params`, the prose from `:description`
+;; and `Raw result:` from `:result`. A symbol that declares none of them ships a
+;; page that cannot teach its own call, which is how Bridge tool read before this test.
+(defdescribe
+  bridge-symbol-doc-test
+  (describe "every Bridge tool page"
+            (it "renders a call signature"
+                (doseq [entry bridge/bridge-symbols]
+                  (expect (string? (extension/symbol-signature entry))
+                          (str (:ext.symbol/symbol entry) " renders no call signature"))))
+            (it "carries a model-facing description and a result contract"
+                (doseq
+                  [entry
+                   bridge/bridge-symbols
+
+                   :let [{:ext.symbol/keys [description result symbol]}
+                         entry]]
+
+                  (expect (not (str/blank? description)) (str symbol " has no :description"))
+                  (expect (not (str/blank? result)) (str symbol " has no :result"))
+                  ;; The call line is STRUCTURE, never prose — a hand-written one goes stale.
+                  (expect (not (str/includes? description "await "))
+                          (str symbol " hand-writes its call"))))
+            (it "names every option key it reads, with a note"
+                (doseq
+                  [entry
+                   bridge/bridge-symbols
+
+                   :let [params
+                         (:ext.symbol/params entry)
+
+                         line
+                         (extension/symbol-keys-line entry)]]
+
+                  (expect (seq params) (str (:ext.symbol/symbol entry) " declares no :params"))
+                  (doseq [{param-name :name param-note :note} params]
+                    (expect (re-matches #"[a-z][a-z0-9_]*" param-name) param-name)
+                    (expect (not (str/blank? param-note)) param-name)
+                    (expect (str/includes? line param-name) param-name))))))

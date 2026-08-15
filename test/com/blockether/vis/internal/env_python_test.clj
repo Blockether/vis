@@ -404,6 +404,39 @@
                          "    d = doc(n)\n" "    if ('is not a handle' in d) or (not d.strip()):\n"
                          "        bad.append(n)\n" "print('BAD='+json.dumps(bad))"))]
           (expect (re-find #"BAD=\[\]" out))))
+    ;; The CALL LINE is the one thing prose cannot supply: which parameters the
+    ;; verb takes, which are required, in what order. `doc(name)` renders it from
+    ;; the DECLARED signature, so a page can never drift from the contract — and
+    ;; no verb may answer with the async trampoline's own `(*a, **k)` instead.
+    (it "every wired sandbox verb's page opens with its own call line"
+        (let
+          [out (run (str "import json\nbad=[]\n"
+                         "for n in [" (str/join ", " (map pr-str native))
+                         "]:\n" "    if (n + '(') not in doc(n).splitlines()[2]:\n"
+                         "        bad.append(n)\n" "print('NOCALL='+json.dumps(bad))"))]
+          (expect (re-find #"NOCALL=\[\]" out))))
+    ;; Regression, doc quality: a tool page carried prose alone — nothing named the
+    ;; parameters, and an options-dict verb stated its REQUIRED keys nowhere
+    ;; `doc(name)` could reach, so the contract was learned from refusals. Both
+    ;; lines are rendered from the DECLARATION above the document; putting them
+    ;; INSIDE the text instead cost `patch` fourteen ranks on its own ask, because
+    ;; a document's first line is one of the three scored fields.
+    (it "opens every tool page with its call line and names its required keys once"
+        (let
+          [out (run (str "import json\n"
+                         "rows = apropos()\n" "bad = []\n"
+                         "keyed = []\n" "for n, v in rows.items():\n"
+                         "    if v['kind'] != 'tool': continue\n" "    L = doc(n).splitlines()\n"
+                         "    if len(L) < 3 or (n + '(') not in L[2]: bad.append(n)\n"
+                         "    if len(L) > 3 and L[3].startswith('Keys:'): keyed.append(n)\n"
+                         "print('NOCALL='+json.dumps(bad))\n"
+                         "print('KEYED='+str(len(keyed) > 8))\n"
+                         "print('REQUIRED='+str('Keys: paths (REQUIRED)' in doc('struct_index')))\n"
+                         "print('ONCE='+str(doc('patch').count('patch(path, edits)')))"))]
+          (expect (re-find #"NOCALL=\[\]" out))
+          (expect (str/includes? out "KEYED=True"))
+          (expect (str/includes? out "REQUIRED=True"))
+          (expect (str/includes? out "ONCE=1"))))
     (it "apropos('') lists real tools but not builtins or the asyncio shim"
         (let
           [out (run (str "a=apropos('')\n" "print('asyncio='+str('asyncio' in a),"

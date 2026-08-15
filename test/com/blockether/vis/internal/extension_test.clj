@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.extension-test
-  (:require [com.blockether.vis.internal.extension :as extension]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.loop :as vis-loop]
             [com.blockether.vis.internal.prompt :as prompt]
             [com.blockether.vis.internal.workspace :as workspace]
@@ -494,7 +495,125 @@
       (expect (nil? (extension/symbol-signature #:ext.symbol{:fn sample-channel-fn
                                                              :inject-env? true
                                                              :arglists '([env & args])}))))
+  (it "answers the EMPTY parameter list for a tool that takes nothing"
+      ;; `languages()`. nil here would leave the sandbox reporting the async
+      ;; trampoline's `(*a, **k)` — arguments the tool actually refuses.
+      (expect (= ""
+                 (extension/symbol-signature #:ext.symbol{:fn sample-channel-fn :arglists '([])})))
+      (expect (= ""
+                 (extension/symbol-signature
+                   #:ext.symbol{:fn sample-channel-fn :inject-env? true :arglists '([env])}))))
   (it "signs the live registry's positional tools"
       (let [sigs (extension/sandbox-symbol-signatures)]
         (expect (= "language=None, **kwargs" (get sigs 'run_tests)))
-        (expect (= "command, opts=None, **kwargs" (get sigs 'shell))))))
+        (expect (= "command, opts=None, **kwargs" (get sigs 'shell)))
+        (expect (= "" (get sigs 'languages)))
+        (expect (= "options, **kwargs" (get sigs 'grep)))))
+  ;; THE INVARIANT: prose can describe a verb, but only its parameter list says
+  ;; what it takes, which of it is required and in what order. A tool that
+  ;; declares neither a `:call` shape nor named arglists ships a documented
+  ;; handle nobody can call from its own page.
+  (it "every documented engine-bound tool declares its parameters"
+      (let
+        [sigs
+         (extension/sandbox-symbol-signatures)
+
+         unsigned
+         (vec (sort (remove #(contains? sigs %) (keys (extension/sandbox-symbol-docs)))))]
+
+        (expect (= [] unsigned) (str "tools with no declared parameters: " unsigned)))))
+
+(defn- live-tool-entries
+  "Every engine-bound tool entry a live session sees, minus the raw helpers, the
+   hidden ones, and the `_`-prefixed transports (`_shell_wait` is reached through
+   the shell HANDLE, never typed, and `apropos` filters it out of discovery)."
+  []
+  ;; Reading the docs table loads the built-in extensions, so the walk below sees
+  ;; the same registry a live session does.
+  (extension/sandbox-symbol-docs)
+  (into []
+        (comp (mapcat extension/ext-symbols)
+              (filter :ext.symbol/fn)
+              (remove :ext.symbol/raw?)
+              (remove :ext.symbol/hidden?)
+              (remove (fn [entry]
+                        (str/starts-with? (str (:ext.symbol/symbol entry)) "_"))))
+        (extension/registered-extensions)))
+
+(defn- options-dict-entry?
+  "The tool's whole contract lives INSIDE an options dict: its `:call` shape either
+   appends the remaining keys (`:rest`) or takes one lone `\"options\"` positional,
+   so the Python signature it reports can name none of them."
+  [entry]
+  (let [shape (:ext.symbol/call entry)]
+    (and (map? shape) (or (some? (:rest shape)) (= ["options"] (:pos shape))))))
+
+;; Regression, doc quality: a tool page used to be prose alone — 17 of the bound
+;; tools never showed a single call, and an options-dict tool stated its required
+;; keys nowhere `doc(name)` could reach, so the model learned them from refusals.
+;; Regression, ranking: the first fix PREPENDED both lines to the document TEXT,
+;; whose first line is one of the three scored BM25F fields — `patch` fell from
+;; first to fifteenth for "how do I replace lines in a file" because its opening
+;; line stopped being prose. The call line and the keys line are STRUCTURE:
+;; `doc-corpus/entry-text` prints them above the document, never inside it.
+(defdescribe
+  symbol-doc-page-test
+  (it "declares a signature for every tool, so its page can open with a call line"
+      (let [entries (live-tool-entries)]
+        (expect (< 20 (count entries)))
+        (doseq [entry entries]
+          (let [sym (:ext.symbol/symbol entry)]
+            (expect (string? (extension/symbol-doc-text entry)) (str sym " has no doc text"))
+            (expect (string? (extension/symbol-signature entry))
+                    (str sym " declares no signature — its page cannot show a call"))))))
+  (it "keeps the document itself PROSE, opening on no signature and no keys line"
+      (doseq [entry (live-tool-entries)]
+        (let
+          [text (str (extension/symbol-doc-text entry))
+           nm (or (:ext.symbol/name entry) (str/replace (str (:ext.symbol/symbol entry)) "-" "_"))
+           first-line (first (str/split-lines text))]
+
+          (expect (not (str/starts-with? first-line (str nm "("))) first-line)
+          (expect (not (str/starts-with? first-line "Keys:")) first-line))))
+  (it "documents every tool with BOTH a description and a raw-result contract"
+      ;; The implementation docstring is developer documentation: a model-facing
+      ;; page states what the verb does AND the exact shape Python receives.
+      (doseq [entry (live-tool-entries)]
+        (let [sym (:ext.symbol/symbol entry)]
+          (expect (string? (:ext.symbol/description entry)) (str sym " declares no :description"))
+          (expect (string? (:ext.symbol/result entry)) (str sym " declares no :result")))))
+  (it "declares the key vocabulary of every options-dict tool"
+      (let [dict-entries (filter options-dict-entry? (live-tool-entries))]
+        (expect (seq dict-entries))
+        (doseq [entry dict-entries]
+          (let
+            [sym (:ext.symbol/symbol entry)
+             names (mapv :name (:ext.symbol/params entry))]
+
+            (expect (seq names) (str sym " declares no :params — its keys are invisible"))
+            (expect (= (distinct names) (seq names)) (str sym " repeats a key: " names))
+            (doseq [n names]
+              (expect (re-matches #"[a-z][a-z0-9_]*" n) (str sym " key " n)))))))
+  (it "renders the keys line in declared order, marking what cannot be omitted"
+      (expect (= "Keys: paths (REQUIRED) · at (REQUIRED — or a node line) · ranges"
+                 (extension/symbol-keys-line
+                   #:ext.symbol{:symbol 'probe
+                                :fn sample-channel-fn
+                                :call {:pos ["options"] :rest :always}
+                                :params [{:name "paths" :required? true}
+                                         {:name "at" :required? true :note "or a node line"}
+                                         {:name "ranges"}]
+                                :description "What it does."
+                                :result "Rows."}))))
+  (it "ships the keys line to the sandbox next to the signature, not inside the doc"
+      (let
+        [ks
+         (extension/sandbox-symbol-keys)
+
+         docs
+         (extension/sandbox-symbol-docs)]
+
+        (expect (str/starts-with? (str (get ks 'struct_index)) "Keys: paths (REQUIRED)")
+                (str (get ks 'struct_index)))
+        (expect (not (str/includes? (str (get docs 'struct_index)) "Keys: paths (REQUIRED)")))
+        (expect (every? #(str/starts-with? (str %) "Keys: ") (vals ks))))))

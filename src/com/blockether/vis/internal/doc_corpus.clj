@@ -13,13 +13,20 @@
      {:name \"grep\"          ;; the only handle
       :text \"...\"           ;; the whole document; its FIRST LINE is the gist
       :kind \"tool\"          ;; what it IS, out of the closed `kinds` vocabulary
-      :call \"grep({\"query\": …})\"} ;; the python that USES it; absent = prose
+      :call \"grep({\"query\": …})\" ;; the python that USES it; absent = prose
+      :params \"Keys: query (REQUIRED) · paths\"} ;; its options-dict vocabulary
 
    `kind` says what a reader should DO with a hit; `call` spells the vocabulary
    out — a function answers `grep({\"query\": …})`, an MCP tool answers
    `mcp__call(\"server\", \"tool\", {…})`, and a skill or a documentation page
    answers NOTHING, because a missing `call` is exactly \"this is prose,
-   read it\".
+   read it\". `params` names the keys of a dict-shaped verb and marks the ones a
+   caller cannot omit.
+
+   How a verb is CALLED is STRUCTURE, never text: `call` and `params` are printed
+   above the document and are not part of it, because the first line of `text` is
+   a scored field — a tool whose text opened with its own signature stopped
+   matching the words its prose is written in.
 
    There is no stored `gist`. Two texts for one entry are two places to
    drift, invisibly, because nothing reads both at once: `gist` is a RENDERING
@@ -49,6 +56,7 @@
 (s/def :vis.doc/name string?)
 (s/def :vis.doc/text string?)
 (s/def :vis.doc/call (s/nilable string?))
+(s/def :vis.doc/params (s/nilable string?))
 (def kinds
   "The closed vocabulary of `:kind` — what a document IS, which is how a reader
    decides what to DO with it: `tool` a callable verb's contract, `shim` an
@@ -60,7 +68,8 @@
 
 (s/def :vis.doc/kind kinds)
 (s/def :vis.doc/entry
-  (s/keys :req-un [:vis.doc/name :vis.doc/text] :opt-un [:vis.doc/call :vis.doc/kind]))
+  (s/keys :req-un [:vis.doc/name :vis.doc/text]
+          :opt-un [:vis.doc/call :vis.doc/params :vis.doc/kind]))
 (s/def :vis.doc/entries (s/coll-of :vis.doc/entry :kind vector?))
 (s/def :vis.doc/result
   (s/or :index (s/keys :req-un [:vis.doc/entries])
@@ -558,14 +567,16 @@
 
 (defn entry-text
   "What `doc(target)` answers for one entry: the handle, the expression that
-   uses it when there is one, then the WHOLE document. `note` is the caller's
-   one-word remark about the handle (`env-python` marks a live callable)."
+   uses it when there is one, the keys that expression's options dict must carry,
+   then the WHOLE document. `note` is the caller's one-word remark about the
+   handle (`env-python` marks a live callable)."
   ([entry] (entry-text entry nil))
-  ([{:keys [name text call]} note]
+  ([{:keys [name text call params]} note]
    (str "# "
         name
-        (when (seq (str note)) (str "  \u00b7  " note))
+        (when (seq (str note)) (str "  ·  " note))
         (when (seq (str call)) (str "\n\n" call))
+        (when (seq (str params)) (str "\n" params))
         "\n\n"
         (str/trim (str text)))))
 

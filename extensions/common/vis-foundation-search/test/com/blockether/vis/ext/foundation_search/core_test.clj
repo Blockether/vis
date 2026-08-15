@@ -640,3 +640,44 @@ const total = add(1, 2);")
                  (let [text (str (:ext.symbol/description search/download-archive-symbol))]
                    (expect (str/includes? text "`repository`"))
                    (expect (str/includes? text "`directory`")))))
+
+;; Every model-facing page is RENDERED from the symbol entry: the call line from
+;; the signature, the `Keys:` line from `:params`, the prose from `:description`
+;; and `Raw result:` from `:result`. A symbol that declares none of them ships a
+;; page that cannot teach its own call, which is how search tool read before this test.
+(defdescribe
+  search-symbol-doc-test
+  (describe "every search tool page"
+            (it "renders a call signature"
+                (doseq [entry search/search-symbols]
+                  (expect (string? (extension/symbol-signature entry))
+                          (str (:ext.symbol/symbol entry) " renders no call signature"))))
+            (it "carries a model-facing description and a result contract"
+                (doseq
+                  [entry
+                   search/search-symbols
+
+                   :let [{:ext.symbol/keys [description result symbol]}
+                         entry]]
+
+                  (expect (not (str/blank? description)) (str symbol " has no :description"))
+                  (expect (not (str/blank? result)) (str symbol " has no :result"))
+                  ;; The call line is STRUCTURE, never prose — a hand-written one goes stale.
+                  (expect (not (str/includes? description "await "))
+                          (str symbol " hand-writes its call"))))
+            (it "names every option key it reads, with a note"
+                (doseq
+                  [entry
+                   search/search-symbols
+
+                   :let [params
+                         (:ext.symbol/params entry)
+
+                         line
+                         (extension/symbol-keys-line entry)]]
+
+                  (expect (seq params) (str (:ext.symbol/symbol entry) " declares no :params"))
+                  (doseq [{param-name :name param-note :note} params]
+                    (expect (re-matches #"[a-z][a-z0-9_]*" param-name) param-name)
+                    (expect (not (str/blank? param-note)) param-name)
+                    (expect (str/includes? line param-name) param-name))))))

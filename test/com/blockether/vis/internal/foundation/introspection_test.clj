@@ -39,54 +39,68 @@
                      (expect (str/includes? message "anchored TEXT"))
                      (expect (str/includes? message ".splitlines()"))))))
 
-(defdescribe introspection-public-surface-test
-             (it
-               "exposes the read, the single descriptor and the index under verb_noun names"
-               (let
-                 [symbols
-                  (set (map :ext.symbol/symbol introspection/all-symbols))
+(defdescribe
+  introspection-public-surface-test
+  (it
+    "exposes the read, the single descriptor and the index under verb_noun names"
+    (let
+      [symbols
+       (set (map :ext.symbol/symbol introspection/all-symbols))
 
-                  read-doc
-                  (:doc (meta #'introspection/read-session))
+       ;; The MODEL-facing contract is the symbol's `:description`/`:result`;
+       ;; the var docstring is a developer alias, and how the verb is CALLED
+       ;; is the declared signature, rendered above the page by
+       ;; `doc-corpus/entry-text` and never repeated inside the prose.
+       entry
+       (fn [sym]
+         (first (filter #(= sym (:ext.symbol/symbol %)) introspection/all-symbols)))
 
-                  get-doc
-                  (:doc (meta #'introspection/get-session))
+       page
+       (fn [sym]
+         (str (:ext.symbol/description (entry sym)) "\n" (:ext.symbol/result (entry sym))))
 
-                  list-doc
-                  (:doc (meta #'introspection/list-sessions))]
+       read-doc
+       (page 'read-session)
 
-                 (expect (= #{'read-session 'get-session 'list-sessions} symbols))
-                 ;; The storage noun is gone from the agent surface: `session_state` is a
-                 ;; DB TABLE, never a tool, and the bare plural `sessions` is not a verb.
-                 (expect (not (contains? symbols 'session-state)))
-                 (expect (not (contains? symbols 'sessions)))
-                 (expect (not (contains? symbols 'session-usage)))
-                 (expect (not (contains? symbols 'session-report-html)))
-                 (expect (str/starts-with?
-                           read-doc
-                           "await read_session(target=None)  # current session by default"))
-                 (expect (str/includes? read-doc "\"usage\""))
-                 (expect (re-find #"tool rows overlap" read-doc))
-                 (expect (re-find #"recovery path for raw folded current-session" read-doc))
-                 (expect (re-find #"does not undo fold intents or restore them" read-doc))
-                 (expect (str/starts-with? get-doc "await get_session(target=None)"))
-                 (expect (str/starts-with? list-doc "await list_sessions(search=None)"))
-                 (expect (re-find #"is_in_title" list-doc))
-                 ;; engine-symbol-* tools were retired in favour of the bare
-                 ;; `doc` / `apropos` engine system calls.
-                 (expect (not (contains? symbols 'engine-symbol-documentation)))
-                 (expect (not (contains? symbols 'engine-symbol-apropos)))
-                 (expect (= 3 (count symbols)))))
-             (it "defaults read_session to the current session when no id is passed"
-                 (let
-                   [inspect-data
-                    @#'introspection/foundation-inspect-data
+       get-doc
+       (page 'get-session)
 
-                    data
-                    (inspect-data {:session-id "current-session" :db-info nil} nil)]
+       list-doc
+       (page 'list-sessions)]
 
-                   (expect (= "current-session" (:session-id data)))
-                   (expect (contains? data :usage)))))
+      (expect (= #{'read-session 'get-session 'list-sessions} symbols))
+      ;; The storage noun is gone from the agent surface: `session_state` is a
+      ;; DB TABLE, never a tool, and the bare plural `sessions` is not a verb.
+      (expect (not (contains? symbols 'session-state)))
+      (expect (not (contains? symbols 'sessions)))
+      (expect (not (contains? symbols 'session-usage)))
+      (expect (not (contains? symbols 'session-report-html)))
+      (expect (= "target=None, **kwargs" (extension/symbol-signature (entry 'read-session))))
+      (expect (= "target=None, **kwargs" (extension/symbol-signature (entry 'get-session))))
+      (expect (= "search=None, **kwargs" (extension/symbol-signature (entry 'list-sessions))))
+      (expect (str/includes? read-doc "`read_session()` is the current session"))
+      (expect (str/includes? read-doc "usage"))
+      (expect (re-find #"tool rows OVERLAP" read-doc))
+      (expect (re-find #"recovery path for raw folded content" read-doc))
+      (expect (re-find #"does not undo a fold intent or restore it" read-doc))
+      (expect (str/includes? get-doc "`get_session()` is the current session"))
+      (expect (str/includes? list-doc "list_sessions(search="))
+      (expect (re-find #"is_in_title" list-doc))
+      ;; engine-symbol-* tools were retired in favour of the bare
+      ;; `doc` / `apropos` engine system calls.
+      (expect (not (contains? symbols 'engine-symbol-documentation)))
+      (expect (not (contains? symbols 'engine-symbol-apropos)))
+      (expect (= 3 (count symbols)))))
+  (it "defaults read_session to the current session when no id is passed"
+      (let
+        [inspect-data
+         @#'introspection/foundation-inspect-data
+
+         data
+         (inspect-data {:session-id "current-session" :db-info nil} nil)]
+
+        (expect (= "current-session" (:session-id data)))
+        (expect (contains? data :usage)))))
 
 (defdescribe
   session-usage-ledger-test

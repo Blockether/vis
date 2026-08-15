@@ -1174,7 +1174,7 @@ The rules:
 - **Return an envelope.** `extension/success {:result value}` on success; on failure either throw (`ex-info` is converted for you) or return `extension/failure {:result nil :error {:message "…" :hint "…"}}`. The model sees only the `:result` payload — map keys convert kebab→snake automatically — and failures surface as normal Python exceptions.
 - Envelope constructors live in `com.blockether.vis.internal.extension` (`success` / `failure`); the spec/registration API is `com.blockether.vis.core` (aliased `vis`).
 
-Useful `vis/symbol` opts beyond `:symbol` and `:tag`: `:before-fn` (e.g. inject the turn's `env` as the first argument), `:hidden?` (bind but don't advertise), and `:description` — one compact paragraph that REPLACES the docstring in `doc(name)` when the docstring is a developer note rather than the model's contract.
+Useful `vis/symbol` opts beyond `:symbol` and `:tag`: `:before-fn` (e.g. inject the turn's `env` as the first argument), `:hidden?` (bind but don't advertise), `:description` — one compact paragraph that REPLACES the docstring in `doc(name)` when the docstring is a developer note rather than the model's contract — and `:params`, the options-dict vocabulary (below).
 
 ### One tool, and it is `python_execution`
 
@@ -1189,7 +1189,11 @@ What follows from that:
 | --- | --- | --- |
 | Function docstring (or `:description`) | Compact routing, preconditions, side effects, result semantics, and the exact arguments | Anything the signature already says twice |
 | `:result` | The raw-result contract, appended by `doc(name)` as `Raw result: …` | Workflow prose already in the description |
+| `:params` | One entry per key of the options dict: `{:name "paths" :required? true :note "…"}`, rendered as the page's `Keys: paths (REQUIRED) · …` line | Positional arguments — the call line already names those |
+| `:call` | The keyword→positional shape when the model's call differs from the implementation's arglists (`{:pos ["repository"] :opt-pos ["opts"] :rest :always}`) | A shape that contradicts a real arity |
 | `:ext/prompt-fn` | Dynamic availability, routing, or catalogs only | Signatures, example calls, or anything `doc(name)` already answers |
+
+The call line and the `Keys:` line are STRUCTURE: `doc(name)` renders both from the entry, and `apropos` ranks the document's first line, so a hand-written `await my_tool(…)` inside the prose both goes stale and displaces the sentence that should rank.
 
 A model finds a symbol with `apropos(text)` — full-text over every docstring,
 documentation page, skill body and MCP tool description — and reads its contract

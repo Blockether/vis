@@ -449,13 +449,29 @@
 ;; Exact raw return contract for the value Python receives; `doc(name)` appends it
 ;; exactly once.
 (s/def :ext.symbol/result non-blank-string?)
+(s/def :ext.symbol.param/name non-blank-string?)
+(s/def :ext.symbol.param/required? boolean?)
+;; Six words at most: the ONE thing the key's name does not already say
+;; ("or one per `nodes` entry"), never a second description.
+(s/def :ext.symbol.param/note non-blank-string?)
+;; The OPTIONS-DICT key vocabulary, in the order a caller should think about it:
+;; `[{:name "paths" :required? true} {:name "ranges"} …]`. A tool whose `:call`
+;; shape ends in a dict has its WHOLE contract inside that dict, where a Python
+;; signature can say no more than `**kwargs` — so this is the only place
+;; requiredness is machine-readable, and `doc(name)` renders it as the `Keys:`
+;; line. Names are the WIRE keys, spelled exactly as the model types them.
+(s/def :ext.symbol/params
+  (s/and (s/every (s/keys :req-un [:ext.symbol.param/name]
+                          :opt-un [:ext.symbol.param/required? :ext.symbol.param/note])
+                  :kind vector?)
+         seq))
 (s/def ::fn-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/fn :ext.symbol/doc :ext.symbol/arglists]
           :opt [:ext.symbol/raw? :ext.symbol/hidden? :ext.symbol/tag :ext.symbol/batch-hint
                 :ext.symbol/before-fn :ext.symbol/active-fn :ext.symbol/inject-env?
                 :ext.symbol/after-fn :ext.symbol/on-error-fn :ext.symbol/ticker-fn
                 :ext.symbol/source :ext.symbol/name :ext.symbol/call :ext.symbol/description
-                :ext.symbol/result]))
+                :ext.symbol/result :ext.symbol/params]))
 
 (s/def ::val-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/val :ext.symbol/doc] :opt [:ext.symbol/source]))
@@ -1135,6 +1151,11 @@
        (:result opts)
        (assoc :ext.symbol/result (:result opts))
 
+       ;; :params — the options-dict key vocabulary rendered as `doc`'s `Keys:`
+       ;; line. See the `:ext.symbol/params` spec above.
+       (:params opts)
+       (assoc :ext.symbol/params (vec (:params opts)))
+
        ;; :active-fn (fn [env] -> bool) — dynamic per-symbol activation gate.
        (:active-fn opts)
        (assoc :ext.symbol/active-fn (:active-fn opts))
@@ -1187,6 +1208,10 @@
      :raw?        - true for plain composable helpers.
      :tag         - REQUIRED `:observation | :mutation` for observed
                     tools (unless `:raw? true`).
+     :params      - options-dict key vocabulary `[{:name \"paths\" :required? true}
+                    {:name \"ranges\"}]`, rendered by `doc(name)`. REQUIRED of every
+                    tool whose call ends in an options dict — a `**kwargs`
+                    signature states nothing a caller can act on.
      :before-fn :after-fn :on-error-fn :ticker-fn
 
    Observed tool functions return canonical internal envelope maps. The
@@ -3356,29 +3381,6 @@
       (merge-manifest-entry! id entry))
     (count (mapcat :nses (vals manifests)))))
 
-(defn symbol-doc-text
-  "Model-facing doc text for ONE symbol ENTRY: its compact `:description` (falling
-   back to the implementation docstring), then the raw-result contract whenever the
-   entry declares one. Returns nil without prose. This is the single source
-   `doc(name)` answers from."
-  [entry]
-  (let
-    [prose
-     (or (:ext.symbol/description entry) (:ext.symbol/doc entry))
-
-     ;; The raw-result contract belongs to EVERY doc-bearing symbol: a sandbox verb
-     ;; is called from Python with nothing in front of it, so `doc(name)` is the only
-     ;; place its result keys are ever stated.
-     result
-     (:ext.symbol/result entry)
-
-     text
-     (cond-> prose
-       (and (string? prose) result)
-       (str "\n\nRaw result: " result))]
-
-    (when (and (string? text) (not (str/blank? text))) text)))
-
 (defn- python-param-name
   "One declared parameter as a PYTHON identifier: kebab-case becomes snake_case
    and Clojure's marks (`?`, `!`, `*`) are dropped. nil when nothing legal
@@ -3422,8 +3424,10 @@
    `*args`, and `**kwargs` is always accepted because GraalPy folds keywords
    into exactly the trailing dict positional such a tool receives as its options
    map. `env` leads the arglist of an env-injected impl and is dropped: the host
-   passes it, never the model. nil when the arglists carry no names at all
-   (`[[& args]]`) — the wrapper's own `(*a, **k)` already says that much."
+   passes it, never the model. A tool that takes NOTHING answers the EMPTY
+   parameter list, which is a fact and not a missing one. nil only when the
+   arglists carry no names at all (`[[& args]]`) — the wrapper's own `(*a, **k)`
+   already says that much."
   [arglists inject-env?]
   (let
     [lists
@@ -3444,18 +3448,25 @@
      required
      (when (seq fixed) (apply min (map count fixed)))
 
+     variadic?
+     (boolean (some (fn [al]
+                      (some #(= '& %) al))
+                    lists))
+
      named
      (mapv python-param-name longest)]
 
-    (when (and (seq named) (every? some? named))
+    (cond
+      ;; `languages()` — declared with no parameters at all. "" is what renders
+      ;; that; nil would leave the sandbox reporting the async trampoline's own
+      ;; `(*a, **k)`, promising arguments the tool refuses.
+      (and (seq lists) (empty? named) (not variadic?)) ""
+      (and (seq named) (every? some? named))
       (str/join ", "
                 (concat (map-indexed (fn [i n]
                                        (if (< (long i) (long required)) n (str n "=None")))
                                      named)
-                        (when (some (fn [al]
-                                      (some #(= '& %) al))
-                                    lists)
-                          ["*args"])
+                        (when variadic? ["*args"])
                         ["**kwargs"])))))
 
 (defn symbol-signature
@@ -3476,6 +3487,56 @@
           (arglists-signature (:ext.symbol/arglists entry)
                               (boolean (:ext.symbol/inject-env? entry)))))))
 
+(defn symbol-keys-line
+  "`Keys: paths (REQUIRED) · ranges` — the options-dict vocabulary from
+   `:ext.symbol/params`, in DECLARED order (authors lead with what a caller cannot
+   omit). The signature of a dict-shaped tool ends in `**kwargs`, which names
+   nothing; this line is where its required keys are stated. nil when the entry
+   declares no params.
+
+   STRUCTURE, never prose: `env-python` ships it to the sandbox as `__vis_keys__`
+   and `doc-corpus/entry-text` prints it under the call line, so it is not part of
+   the document `apropos` ranks — the first line of a document is a scored field,
+   and a tool whose text opened with its own signature stopped matching the words
+   its prose is written in."
+  [entry]
+  (when-let [params (seq (:ext.symbol/params entry))]
+    (str "Keys: "
+         (str/join " · "
+                   (map (fn [{nm :name required? :required? note :note}]
+                          (let
+                            [mark (str/join " — " (remove nil? [(when required? "REQUIRED") note]))]
+                            (cond-> (str nm)
+                              (seq mark)
+                              (str " (" mark ")"))))
+                        params)))))
+
+(defn symbol-doc-text
+  "Model-facing doc text for ONE symbol ENTRY: the compact `:description` (falling
+   back to the implementation docstring), then the raw-result contract whenever the
+   entry declares one. Returns nil without prose — a handle with no description has
+   no page. This is the single source `doc(name)` answers from.
+
+   PROSE ONLY. How the handle is CALLED is structure, not text: `symbol-signature`
+   renders the call line and `symbol-keys-line` the required keys, and
+   `doc-corpus/entry-text` prints both above this document."
+  [entry]
+  (let
+    [prose
+     (or (:ext.symbol/description entry) (:ext.symbol/doc entry))
+
+     ;; The raw-result contract belongs to EVERY doc-bearing symbol: a sandbox
+     ;; verb is called from Python with nothing in front of it, so `doc(name)`
+     ;; is the only place its result keys are ever stated.
+     result
+     (:ext.symbol/result entry)
+
+     text
+     (cond-> prose
+       (and (string? prose) result)
+       (str "\n\nRaw result: " result))]
+
+    (when (and (string? text) (not (str/blank? text))) text)))
 (defn sandbox-symbol-signatures
   "Map `{sandbox-symbol -> python-parameter-list}` for every engine-bound
    callable across the registered extensions, from `symbol-signature`. The
@@ -3502,6 +3563,31 @@
 
           [sym sig])))
 
+(defn sandbox-symbol-keys
+  "Map `{sandbox-symbol -> keys-line}` for every engine-bound callable whose
+   contract lives inside an options dict, from `symbol-keys-line`. The
+   requiredness twin of `sandbox-symbol-signatures`: the signature says HOW the
+   verb is called, this says WHICH keys the dict must carry. Seeded into the
+   sandbox as `__vis_keys__` by `env-python/build-agent-context`, and per turn by
+   aliased extensions through `env-python/set-python-binding-keys!`."
+  []
+  (load-builtin-extensions!)
+  (into {}
+        (for
+          [ext
+           (registered-extensions)
+
+           entry
+           (ext-symbols ext)
+
+           :let [sym
+                 (:ext.symbol/symbol entry)
+
+                 line
+                 (symbol-keys-line entry)]
+           :when (and sym line)]
+
+          [sym line])))
 (defn sandbox-symbol-docs
   "Map `{sandbox-symbol -> doc-text}` for every engine-bound symbol across the
    registered extensions, keyed by the `:ext.symbol/symbol` as it is bound in

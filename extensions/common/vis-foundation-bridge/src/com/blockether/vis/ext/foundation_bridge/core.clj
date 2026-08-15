@@ -362,27 +362,39 @@
 
 (defn- validation-error
   [^Throwable t]
-  (let [{:keys [path validation]} (ex-data t)
-        errors (:errors validation)]
+  (let
+    [{:keys [path validation]}
+     (ex-data t)
+
+     errors
+     (:errors validation)]
+
     (when (seq errors)
-      (let [diagnostic (str/join "; "
-                                 (map (fn [{:keys [type path message]}]
-                                        (str (name type) " at " (pr-str path) ": " message))
-                                      errors))]
+      (let
+        [diagnostic (str/join "; "
+                              (map (fn [{:keys [type path message]}]
+                                     (str (name type) " at " (pr-str path) ": " message))
+                                   errors))]
         {:message (str (or (ex-message t) "Invalid Bridge configuration") ": " diagnostic)
          :hint "Update this Bridge configuration to the installed schema, then retry."
          :details {:path path :errors errors}}))))
 
 (defn- invalid-config-protected-path
   [env project-root throwable]
-  (let [prefix (relative-to-workspace (workspace-root env) project-root)
-        error (validation-error throwable)]
+  (let
+    [prefix
+     (relative-to-workspace (workspace-root env) project-root)
+
+     error
+     (validation-error throwable)]
+
     {:glob (prefixed-glob prefix ".bridge/**")
      :access :none
      :hint (if error
              (str (:message error) ". " (:hint error))
              (str "Bridge configuration is invalid; "
-                  (or (ex-message throwable) "repair it outside Vis") "."))}))
+                  (or (ex-message throwable) "repair it outside Vis")
+                  "."))}))
 
 (defn- bridge-sandbox-rule->protected-path
   [env profile sandbox rule]
@@ -402,18 +414,15 @@
     (->> projects
          (mapcat (fn [{:keys [root profile-path]}]
                    (try (let
-                          [{:keys [profile policy]}
-                           (load-profile+policy env {"profile" profile-path})
-
-                          sandbox
-                          (:bridge-path-sandbox policy)]
+                          [{:keys [profile policy]} (load-profile+policy env
+                                                                         {"profile" profile-path})
+                           sandbox (:bridge-path-sandbox policy)]
 
                           (if (and sandbox (:enforce? sandbox))
                             (keep #(bridge-sandbox-rule->protected-path env profile sandbox %)
                                   (:rules sandbox))
                             []))
-                        (catch Throwable t
-                          [(invalid-config-protected-path env root t)]))))
+                        (catch Throwable t [(invalid-config-protected-path env root t)]))))
          vec)))
 
 (def ^:private sandbox-rules-ttl-ms
@@ -642,7 +651,7 @@
                      :policy-path policy-path)))))
 
 (defn init
-  "`await br_init()` bootstraps Bridge for optional `root`; returns existing config."
+  "Bootstrap Bridge for the active workspace, or for the explicit `root`."
   [env & [opts]]
   (stringify-result
     (bridge-tool :br/init
@@ -682,7 +691,7 @@
                           :next-step {:kind :extension-op :op (tool-call "br/check" [])}})))))))
 
 (defn profile
-  "`await br_profile()` summarizes the active project; accepts `profile`/`policy` paths."
+  "Summarize the active Bridge project from its profile and policy."
   [env & [opts]]
   (stringify-result
     (bridge-tool
@@ -703,7 +712,7 @@
                :policy-loaded? (boolean policy)})))))))
 
 (defn check
-  "`await br_check()` checks the worktree (default), index (`is_index`), or pinned `tree`+`frontier`; `is_approve` approves a clear candidate. Summarize the canonical result; never dump it."
+  "Bridge's check over the worktree, the index, or a pinned tree+frontier."
   [env & [opts]]
   (let
     [opts*
@@ -730,7 +739,7 @@
                         (bridge-check env opts*)))))
 
 (defn list-evidence
-  "`await br_list_evidence()` lists active-profile evidence commands."
+  "List the evidence commands the active profile declares."
   [env & [opts]]
   (stringify-result (bridge-tool
                       :br/list-evidence
@@ -748,7 +757,7 @@
                                :commands (br/list-commands profile)})))))))
 
 (defn run-evidence
-  "`await br_run_evidence(id, opts)` runs one command and records its receipt. Candidate: `is_index` or `tree`+`frontier`; `is_dry_run` previews."
+  "Run ONE evidence command by id and record its receipt."
   [env id & [opts]]
   (stringify-result
     (bridge-tool :br/run-evidence
@@ -776,11 +785,90 @@
 (defn- inject-env [env f args] {:env env :fn f :args (into [env] args)})
 
 (def bridge-symbols
-  [(vis/symbol #'init {:before-fn inject-env :tag :mutation :arglists '([] [opts])})
-   (vis/symbol #'profile {:before-fn inject-env :tag :observation :arglists '([] [opts])})
-   (vis/symbol #'check {:before-fn inject-env :tag :observation :arglists '([] [opts])})
-   (vis/symbol #'list-evidence {:before-fn inject-env :tag :observation :arglists '([] [opts])})
-   (vis/symbol #'run-evidence {:before-fn inject-env :tag :mutation :arglists '([id] [id opts])})])
+  [(vis/symbol
+     #'init
+     {:before-fn inject-env
+      :tag :mutation
+      :arglists '([] [opts])
+      :params
+      [{:name "root"
+        :note
+        "absolute path of the repository to configure; required when the workspace holds several"}]
+      :description (str
+                     "Bootstrap Bridge for this workspace and answer the resulting configuration. "
+                     "An already-configured workspace is reported, never rewritten.")
+      :result
+      (str
+        "String-keyed `{configured, already_configured, workspace_root, profile_path, created, updated}` — "
+        "`created`/`updated` are the files written, `message` says so when it was already configured, and "
+        "`next_step` points at `br_check` when it was not.")})
+   (vis/symbol
+     #'profile
+     {:before-fn inject-env
+      :tag :observation
+      :arglists '([] [opts])
+      :params [{:name "profile" :note "explicit profile.yaml path"}
+               {:name "policy" :note "explicit policy path"}]
+      :description
+      (str
+        "Summarize the active Bridge project — profile identity, policy, and where each was loaded from. "
+        "Read this when you do not know how the workspace is configured.")
+      :result
+      (str
+        "String-keyed `{configured, summary, profile_path, policy_path, policy_loaded}`; an unconfigured "
+        "workspace answers the same envelope with `configured` false and the discovery that explains it.")})
+   (vis/symbol
+     #'check
+     {:before-fn inject-env
+      :tag :observation
+      :arglists '([] [opts])
+      :params [{:name "is_index" :note "check the index instead of the worktree"}
+               {:name "tree" :note "pin the candidate's tree"}
+               {:name "frontier" :note "pin the candidate's frontier"}
+               {:name "is_approve" :note "approve a clear candidate"}
+               {:name "changed_files" :note "restrict the check to these paths"}
+               {:name "profile" :note "explicit profile.yaml path"}
+               {:name "policy" :note "explicit policy path"}]
+      :description
+      (str
+        "Bridge's canonical status for the worktree (default), the index (`is_index`), or a pinned "
+        "`tree`+`frontier`. Summarize the result; never dump it.")
+      :result
+      (str
+        "String-keyed canonical status summary (`summary_version` 2) plus `{configured, profile_path, "
+        "policy_path}`; an unconfigured workspace answers `{status: \"unconfigured\", issue_count: 1, "
+        "changed_files}`.")})
+   (vis/symbol
+     #'list-evidence
+     {:before-fn inject-env
+      :tag :observation
+      :arglists '([] [opts])
+      :params [{:name "profile" :note "explicit profile.yaml path"}
+               {:name "policy" :note "explicit policy path"}]
+      :description
+      "List the evidence commands the active profile declares, with the ids `br_run_evidence` takes."
+      :result
+      (str "String-keyed `{configured, profile_path, commands}`; an unconfigured workspace answers "
+           "`commands: []`.")})
+   (vis/symbol
+     #'run-evidence
+     {:before-fn inject-env
+      :tag :mutation
+      :arglists '([id] [id opts])
+      :params [{:name "is_dry_run" :note "preview the command instead of running it"}
+               {:name "is_index" :note "run against the index instead of the worktree"}
+               {:name "tree" :note "pin the candidate's tree"}
+               {:name "frontier" :note "pin the candidate's frontier"}
+               {:name "out" :note "receipt file path"} {:name "out_dir" :note "receipt directory"}
+               {:name "subject" :note "receipt subject"}
+               {:name "timeout_seconds" :note "per-command timeout"}
+               {:name "profile" :note "explicit profile.yaml path"}
+               {:name "policy" :note "explicit policy path"}]
+      :description
+      (str "Run ONE evidence command by the `id` `br_list_evidence` gave, and record its receipt. "
+           "Name the candidate with `is_index` or `tree`+`frontier`.")
+      :result
+      "String-keyed `{profile_path, result}` where `result` is the receipt Bridge recorded for that command."})])
 
 (defn bridge-prompt
   [env]

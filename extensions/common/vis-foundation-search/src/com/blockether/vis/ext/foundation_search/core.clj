@@ -1723,57 +1723,105 @@
     #'search-web
     {:tag :observation
      :name "search_web"
+     :params [{:name "num_results" :note "citations to ask the provider for"}
+              {:name "type" :note "auto | neural | keyword"}
+              {:name "livecrawl" :note "preferred forces a fresh fetch"}
+              {:name "context_max_characters" :note "cap on excerpt characters per citation"}]
      :description
-     "Search the live web for current facts, external documentation, or research the local project cannot answer. Returns ranked citations with excerpts."}))
+     "Search the live web for current facts, external documentation, or research the local project cannot answer. Returns ranked citations with excerpts."
+     :result
+     (str
+       "String-keyed `{op, query, citations, citation_count, truncated, source, endpoint}`; each "
+       "citation carries `type`/`title`/`url`/`excerpt` plus its source metadata. A failure "
+       "answers the same envelope with `error` on the first citation.")}))
 
 (def code-symbol
   (vis/symbol
     #'search-code
     {:tag :observation
      :name "search_code"
+     :params [{:name "provider" :note "auto (default) | exa | github"}
+              {:name "tokens_num" :note "context tokens per code result"}]
      :description
-     "Search live repositories and technical documentation when the local project and embedded docs are insufficient. Set provider to github to use GitHub Code Search directly."}))
+     "Search live repositories and technical documentation when the local project and embedded docs are insufficient. Set provider to github to use GitHub Code Search directly, which needs a logged-in `gh` CLI."
+     :result
+     (str
+       "String-keyed `{op, query, citations, citation_count, truncated, source, endpoint}`; each "
+       "citation carries `type`/`title`/`url`/`excerpt` plus its source metadata. A failure "
+       "answers the same envelope with `error` on the first citation.")}))
 
 (def download-code-symbol
   (vis/symbol
     #'download-code
     {:tag :observation
      :name "download_code"
+     :params [{:name "ref" :note "branch, tag or sha"}
+              {:name "path" :note "archive prefix to restrict to"}
+              {:name "max_files" :note "default 6, max 20"}
+              {:name "max_bytes" :note "default 51200, max 131072"}]
      :description
-     "Fetch bounded UTF-8 source excerpts from a known public GitHub owner/repo archive. Use after search, not for discovery."}))
+     "Fetch bounded UTF-8 source excerpts from a known public GitHub `owner/repo` archive — use after search, not for discovery. Never writes to disk and caps the compressed download at 10 MiB."
+     :result
+     (str
+       "String-keyed `{op, query, citations, citation_count, truncated, source, endpoint}` where each "
+       "citation is ONE file: its path, URL and a bounded UTF-8 excerpt.")}))
 
 (def download-archive-symbol
   (vis/symbol
     #'download-archive
     {:tag :observation
      :name "download_archive"
+     ;; The 3-arity `[workspace-root repository opts]` is the HOST's; the model
+     ;; calls `download_archive("owner/repo", {…})` and the workspace resolves
+     ;; itself. Without this shape the page taught `workspace_root` first.
+     :call {:pos ["repository"] :opt-pos ["opts"] :rest :always}
+     :params [{:name "ref" :note "branch, tag or sha"}
+              {:name "directory"
+               :note "workspace-relative destination; default downloads/owner-repo-ref"}]
      :description
      (str
        "Download and extract a complete public GitHub repository archive into the workspace: "
        "`repository` (`owner/name`) is required, optional `ref` and a workspace-relative `directory`. "
-       "Returns the saved absolute directory path.")}))
+       "Returns the saved absolute directory path. The archive is capped at 100 MiB compressed, "
+       "1 GiB / 10,000 files extracted, and an existing destination is refused rather than merged.")
+     :result
+     (str
+       "String-keyed `{op, repository, ref, path, files, bytes, archive_bytes, sha256, source}` — "
+       "`path` is the absolute extracted directory. A failure answers `{op, repository, error}`.")}))
 
 (def papers-symbol
   (vis/symbol
     #'search-papers
     {:tag :observation
      :name "search_papers"
+     :params [{:name "num_results" :note "default 10"}
+              {:name "sort" :note "relevance (default) | lastUpdatedDate | submittedDate"}
+              {:name "timeout_ms" :note "default 20000"}]
      :description
-     "Search arXiv for relevant papers. Returns citations with abstracts so claims can be checked against primary research."}))
+     "Search arXiv for relevant papers. Returns citations with abstracts so claims can be checked against primary research."
+     :result
+     (str
+       "String-keyed `{op, query, citations, citation_count, truncated, source}`; a citation is a paper "
+       "(`title`/`url`/`authors`/`published`) whose `excerpt` is the plain-text abstract.")}))
 
 (def search-symbol
   (vis/symbol
     #'search
     {:tag :observation
-     :result
-     (str
-       "String-keyed `{op,query,citations,citation_count,truncated,source,endpoint?}`; citations are "
-       "normalized source objects with title, URL, and available excerpt/metadata.")
      :name "search"
+     :params [{:name "kind" :note "web (default) | code | papers"}
+              {:name "num_results" :note "web, papers"} {:name "type" :note "web"}
+              {:name "livecrawl" :note "web"} {:name "context_max_characters" :note "web"}
+              {:name "tokens_num" :note "code"} {:name "provider" :note "code: auto | exa | github"}
+              {:name "sort" :note "papers"} {:name "timeout_ms" :note "papers"}]
      :description
      (str
        "Search live web, public code/docs, or arXiv papers — `kind` is one of `web`, `code`, `papers`; "
-       "code can use GitHub. Returns ranked citations with excerpts.")}))
+       "code can use GitHub. Returns ranked citations with excerpts.")
+     :result
+     (str
+       "String-keyed `{op,query,citations,citation_count,truncated,source,endpoint?}`; citations are "
+       "normalized source objects with title, URL, and available excerpt/metadata.")}))
 
 (def search-symbols
   [search-symbol web-symbol code-symbol download-code-symbol download-archive-symbol papers-symbol])

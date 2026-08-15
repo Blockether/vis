@@ -109,11 +109,12 @@
    same reason — the directory a skill's files live in is not derivable from
    the body `doc` prints."
   [s args]
-  (let [note
-        (owner-note (owner-root s))
+  (let
+    [note
+     (owner-note (owner-root s))
 
-        resources
-        (seq (mapv #(str (:dir s) "/" %) (:resources s)))]
+     resources
+     (seq (mapv #(str (:dir s) "/" %) (:resources s)))]
 
     (str "Use the skill \""
          (:name s)
@@ -132,13 +133,14 @@
    relative to that project even when selected from a repository-root session."
   []
   (mapv (fn [s]
-          (cond-> {:name (str "skill:" (:name s))
-                   :description (str "Load skill "
-                                     (:name s)
-                                     (when-let [d (not-empty (str (:description s)))]
-                                       (str " — " (clip d 140))))
-                   :expand-fn (fn [_env args]
-                                (skill-template-text s args))}
+          (cond->
+            {:name (str "skill:" (:name s))
+             :description (str "Load skill "
+                               (:name s)
+                               (when-let [d (not-empty (str (:description s)))]
+                                 (str " — " (clip d 140))))
+             :expand-fn (fn [_env args]
+                          (skill-template-text s args))}
             (:project-root s)
             (assoc :project-root (:project-root s))))
         (d/skills)))
@@ -177,24 +179,26 @@
    task. Unknown name → an error dict carrying the available names."
   [env nm prompt]
   (if-let [a (d/agent-by-name nm)]
-    (let [res (lp/sub-loop! env
-                            {:prompt (str prompt)
-                             :subctx {:focus (:name a)}
-                             :models (when (:model a) [(:model a)])
-                             :system-prompt (:body a)})
-          ;; sub_loop derives status from the focus TASK; an agent dispatch seeds
-          ;; none, so a completed child turn carries no status string. Read it
-          ;; from the turn OUTCOME instead: errored → failed, otherwise the turn
-          ;; ran to completion → done.
-          status (or (not-empty (str (:status res))) (if (:error res) "failed" "done"))]
+    (let
+      [res (lp/sub-loop! env
+                         {:prompt (str prompt)
+                          :subctx {:focus (:name a)}
+                          :models (when (:model a) [(:model a)])
+                          :system-prompt (:body a)})
+       ;; sub_loop derives status from the focus TASK; an agent dispatch seeds
+       ;; none, so a completed child turn carries no status string. Read it
+       ;; from the turn OUTCOME instead: errored → failed, otherwise the turn
+       ;; ran to completion → done.
+       status (or (not-empty (str (:status res))) (if (:error res) "failed" "done"))]
 
       ;; Model-facing result crosses the strings-only boundary — build it with
       ;; string keys straight from the (internal, keyword-keyed) sub_loop result.
-      (cond-> {"agent" (:name a)
-               "task_id" (:task_id res)
-               "status" status
-               "answer" (:answer res)
-               "changed_files" (vec (:changed_files res))}
+      (cond->
+        {"agent" (:name a)
+         "task_id" (:task_id res)
+         "status" status
+         "answer" (:answer res)
+         "changed_files" (vec (:changed_files res))}
         (:error res)
         (assoc "error" (:error res))))
     {"error" (str "No agent named " (pr-str (str nm)) ".") "available" (mapv :name (d/agents))}))
@@ -214,6 +218,14 @@
   ;; and handed `env` via :inject-env? — one gating mechanism, no before-fn.
   (vis/symbol #'agent
               {:symbol 'agent
+               :description
+               (str "Run a named HARNESS AGENTS sub-agent in an isolated child loop — "
+                    "`agent(name, prompt)`; its edits merge back into this workspace. An unknown "
+                    "`name` answers the available ones instead of running. An EXPENSIVE full LLM "
+                    "turn: delegate only work a sub-agent can finish on its own.")
+               :result
+               (str "String-keyed `{agent, task_id, status, answer, changed_files}`; an unknown name "
+                    "answers `{error, available}` instead.")
                :active-fn (fn [_env]
                             true)
                :inject-env? true

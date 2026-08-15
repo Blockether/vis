@@ -869,10 +869,11 @@
    from the stamp. Keyed by the SAME py-name(s) `set-python-binding!` binds
    under, so an ALIASED extension binding AFTER context creation (per turn, via
    `sync-active-extension-symbols!`) is covered too, not only the built-ins
-   seeded eagerly in `build-agent-context`. No-op for blank text, and for a
-   helper context with no sandbox or no async preamble."
+    seeded eagerly in `build-agent-context`. An EMPTY string is a value, not a
+    blank: it is how a zero-argument tool declares its parameter list. No-op for
+    a non-string, and for a helper context with no sandbox or no async preamble."
   [python-context sym dict-name text]
-  (when (and python-context (string? text) (not (str/blank? text)))
+  (when (and python-context (string? text))
     (let
       [^Context ctx
        python-context
@@ -897,16 +898,24 @@
    `doc(name)` / `apropos(pat)` read — and that a deferred tool carries as its
    `__doc__`, so `help(tool)` answers the same contract."
   [python-context sym doc]
-  (set-python-binding-meta! python-context sym "__vis_docs__" doc))
+  (when-not (str/blank? doc) (set-python-binding-meta! python-context sym "__vis_docs__" doc)))
 
 (defn set-python-binding-signature!
   "Record `signature` — the Python parameter list from
    `extension/symbol-signature` — for `sym` in the sandbox `__vis_sigs__` dict.
    A deferred tool hangs it off `__wrapped__`, so `inspect.signature(tool)`
-   reports the declared parameters instead of the async trampoline's `(*a, **k)`."
+   reports the declared parameters instead of the async trampoline's `(*a, **k)`.
+   The EMPTY string is meaningful — a tool that takes no arguments at all."
   [python-context sym signature]
   (set-python-binding-meta! python-context sym "__vis_sigs__" signature))
 
+(defn set-python-binding-keys!
+  "Record `keys-line` — the options-dict vocabulary from
+   `extension/symbol-keys-line` — for `sym` in the sandbox `__vis_keys__` dict, so
+   `doc(sym)` states which keys the dict must carry. Structure, not prose: it is
+   printed above the document and never mixed into the text `apropos` ranks."
+  [python-context sym keys-line]
+  (set-python-binding-meta! python-context sym "__vis_keys__" keys-line))
 (def ^:private protected-baseline-names
   "Python globals the agent may CALL but must not rebind. Rebinding a tool or
    parser-helper name would shadow the persistent session substrate."
@@ -1039,9 +1048,10 @@
    per-turn extension activation is searchable the moment it binds:
    `__vis_docs__` holds one document per handle (function contracts seeded from
    the extension registry, plus every documentation page, skill and MCP tool),
-   `__vis_calls__` holds the expression that uses the handles which are not
-   themselves Python names, and `__vis_kinds__` labels the ones a source
-   CLASSIFIED (page, skill, mcp, shim).
+    `__vis_calls__` holds the expression that uses the handles which are not
+    themselves Python names, `__vis_sigs__` the declared parameter list of every
+    callable, and `__vis_kinds__` labels the ones a source
+    CLASSIFIED (page, skill, mcp, shim).
 
    The two kinds nobody labels are derived here: a documented handle is a
    `tool`, and a callable with no document at all is `local` — the model's own
@@ -1056,19 +1066,41 @@
      calls
      (value->str-map (.getMember g "__vis_calls__"))
 
-     kinds
-     (value->str-map (.getMember g "__vis_kinds__"))]
+     sigs
+     (value->str-map (.getMember g "__vis_sigs__"))
 
-    (into []
-          (map (fn [nm]
-                 (let [text (get docs nm "")]
-                   (cond->
-                     {:name nm
-                      :text text
-                      :kind (or (get kinds nm) (if (str/blank? text) "local" "tool"))}
-                     (seq (str (get calls nm)))
-                     (assoc :call (get calls nm))))))
-          (distinct (concat (names-fn) (sort (keys docs)))))))
+     kinds
+     (value->str-map (.getMember g "__vis_kinds__"))
+
+     params
+     (value->str-map (.getMember g "__vis_keys__"))]
+
+    (into
+      []
+      (map
+        (fn [nm]
+          (let
+            [text
+             (get docs nm "")
+
+             ;; The CALL LINE `doc(name)` prints under the handle: the explicit
+             ;; expression when the handle is not a Python name of its own
+             ;; (`mcp__call(...)`), otherwise the DECLARED signature —
+             ;; `patch(path, edits)`. Prose can describe a tool; only the call
+             ;; line says which parameters are required and in what order.
+             call
+             (or (not-empty (str (get calls nm)))
+                 (when-let [sig (get sigs nm)]
+                   (str nm "(" sig ")")))]
+
+            (cond->
+              {:name nm :text text :kind (or (get kinds nm) (if (str/blank? text) "local" "tool"))}
+              (seq (str call))
+              (assoc :call call)
+
+              (seq (str (get params nm)))
+              (assoc :params (str (get params nm)))))))
+      (distinct (concat (names-fn) (sort (keys docs)))))))
 
 (defn- install-introspection!
   "Wire Python `apropos(pat)` and `doc(name)` over the live globals — the
@@ -1267,7 +1299,18 @@
     (set-python-binding-doc!
       ctx
       'fold-session
-      "fold_session(key, gist=None) -> str. Collapse SETTLED steps: prior turns and the current turn only through its last completed iteration; live/future steps cannot fold. The key is a STRING: \"t2/i5\" one step · \"t2\" a whole turn · \"t2/i1-i56\" a range · \"-t2/i56\" everything through it · \"t2/i5-\" everything since it · comma-separate several; a token that is not a step key, or that matches no settled step, is refused by name. Folding changes rendering, not storage; there is no destructive unfold command, and a folded step is not re-readable inline — its GIST is what survives. With introspection on, `s = await read_session()` and filter `['transcript']['turns'][...]['iterations'][...]['blocks']`. A broader newer fold supersedes fully covered breadcrumbs; equal scope keeps newer. Partial overlaps remain separate.")))
+      "fold_session(key, gist=None) -> str. Collapse SETTLED steps: prior turns and the current turn only through its last completed iteration; live/future steps cannot fold. The key is a STRING: \"t2/i5\" one step · \"t2\" a whole turn · \"t2/i1-i56\" a range · \"-t2/i56\" everything through it · \"t2/i5-\" everything since it · comma-separate several; a token that is not a step key, or that matches no settled step, is refused by name. Folding changes rendering, not storage; there is no destructive unfold command, and a folded step is not re-readable inline — its GIST is what survives. With introspection on, `s = await read_session()` and filter `['transcript']['turns'][...]['iterations'][...]['blocks']`. A broader newer fold supersedes fully covered breadcrumbs; equal scope keeps newer. Partial overlaps remain separate.")
+    ;; …and their SIGNATURES. These five are host callables, not deferred tool
+    ;; wrappers, so the extension registry never sees them: this is the only place
+    ;; their parameter list can come from, and without it `doc(name)` would be the
+    ;; one page in the corpus that never shows how to call what it documents.
+    (doseq
+      [[sym signature] {'apropos "query=''"
+                        'doc "target=None"
+                        'gather "*awaitables"
+                        'defs "name=None"
+                        'fold-session "key, gist=None"}]
+      (set-python-binding-signature! ctx sym signature))))
 
 
 (def PROCESS_SURFACE
@@ -2104,7 +2147,14 @@
          ;; `inspect.signature(grep)` / `help(grep)` answer with the contract
          ;; instead of the async trampoline's own `(*a, **k)`.
          py-sigs
-         (by-py-name (extension/sandbox-symbol-signatures))]
+         (by-py-name (extension/sandbox-symbol-signatures))
+
+         ;; The requiredness twin: `__vis_keys__` is the options-dict vocabulary
+         ;; `doc(name)` prints under the call line — which keys the dict must
+         ;; carry, and which it may omit. Structure, so it never enters the
+         ;; document text `apropos` ranks.
+         py-keys
+         (by-py-name (extension/sandbox-symbol-keys))]
 
         (when (seq py-docs)
           (.putMember g "__vis_docs_json__" (json/write-json-str py-docs))
@@ -2117,7 +2167,13 @@
           (.eval ctx
                  "python"
                  "globals().setdefault('__vis_sigs__', {}).update(json.loads(__vis_sigs_json__))")
-          (.putMember g "__vis_sigs_json__" nil)))
+          (.putMember g "__vis_sigs_json__" nil))
+        (when (seq py-keys)
+          (.putMember g "__vis_keys_json__" (json/write-json-str py-keys))
+          (.eval ctx
+                 "python"
+                 "globals().setdefault('__vis_keys__', {}).update(json.loads(__vis_keys_json__))")
+          (.putMember g "__vis_keys_json__" nil)))
       (catch Throwable _ nil))
     ;; POSIX refusal: subprocess / os.system / os.popen point at the `shell`
     ;; tool instead of spawning. Eval'd BEFORE the initial-ns-keys snapshot so

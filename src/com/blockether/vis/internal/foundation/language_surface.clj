@@ -526,9 +526,19 @@
      (str
        "String-keyed `op` result. Code/file: `changed` plus optional `chars,path,formatter,repaired`; "
        "batch: `files,by-cwd,formatters`. No source text.")
-     :description "Format via the active pack."
+     :description
+     (str
+       "Format through the active pack — `format_code({\"paths\": [\"src\"]})`, or "
+       "`format_code(\"python\", {\"code\": src})`. `language` leads the call and is optional: it is "
+       "inferred from the paths and the workspace, and needed only when several packs match. `paths` "
+       "(ALWAYS a list) formats files and directories in place, recursively, and answers per-file "
+       "changes; `code` formats one snippet and answers `changed` + char delta, NEVER the text. Omit "
+       "both to format the pack's default source paths.")
      ;; NAME(language, {payload}) — optional leading `language`, the rest a
      ;; pure options dict (always emitted so the payload stays a map).
+     :params [{:name "language"}
+              {:name "paths"}
+              {:name "code"}]
      :call {:lead-opt "language" :rest :always}
      :inject-env? true
      :tag :mutation}))
@@ -542,7 +552,17 @@
        "String-keyed `op` object: `language`, severity counts, `files,findings,providers,by-cwd`; "
        "stdin adds `snippet`, paths add `targets`. Findings use `file,row,col,level,type,message` "
        "and optional `provider`.")
-     :description "Lint code/paths without edits."
+     :description
+     (str
+       "Lint through the active pack, editing nothing — `lint_code({\"paths\": [\"src\"]})`, or "
+       "`lint_code(\"python\", {\"code\": src})`. `language` leads the call and is optional: it is "
+       "inferred from the paths and the workspace, and needed only when several packs match. `paths` "
+       "(ALWAYS a list) lints disk, `code` lints one snippet, and omitting both lints the pack's "
+       "defaults across the workspace. Answers findings plus severity counts.")
+     :params [{:name "language"}
+              {:name "paths"}
+              {:name "code"}]
+     :call {:lead-opt "language" :rest :always}
      :inject-env? true
      :tag :observation}))
 
@@ -555,7 +575,17 @@
        "String-keyed, stamped with `op`; absent fields mean not applicable. Carries execution metadata, "
        "counts/details, output, timeout, and REPL-recovery diagnostics.")
      :description
-     "Run pack tests; prefer the smallest target: a `paths` entry is a file, a directory, or `<path>::<test-name>` for ONE test; include/exclude narrow by tag."
+     (str
+       "Run the pack's tests — `run_tests({\"paths\": [\"test/foo_test.clj\"]})`, or "
+       "`run_tests(\"python\", {\"paths\": [...]})`. `language` leads the call and is optional "
+       "(inferred from the paths and the workspace). Prefer the smallest target: `paths` is the ONE "
+       "selector and each entry is a file, a directory, or `<path>::<test-name>` for a single test; "
+       "`include`/`exclude` narrow by tag, `cwd` chooses the project. Omit `paths` to run everything.")
+     :params [{:name "language"}
+              {:name "paths"}
+              {:name "include"}
+              {:name "exclude"}
+              {:name "cwd"}]
      :call {:lead-opt "language" :rest :always}
      ;; run_tests can exceed the generic Python eval watchdog; dispatch it
      ;; directly in Clojure so the language pack's own timeout budget wins.
@@ -570,7 +600,17 @@
                "Pack-defined string-keyed object stamped with `op`; fields may be absent. Clojure: "
                "`code,repl,value/values,out,err,status,ns,ms,timed_out,ex,root_ex`; Python/Bun: "
                "`code,ok,out,err,value,data,type,exc`. No UI `transcript` or `content`.")
-     :description "Eval in an `up` project REPL; use `repl` for lifecycle."
+     :description
+     (str
+       "Evaluate `code` in an already-running project REPL — "
+       "`repl_eval({\"language\": \"clojure\", \"code\": \"(+ 1 1)\"})`. `code` is REQUIRED and "
+       "`language` may lead the call; `id`/`repl_id` picks one of several REPLs, `cwd` its project, "
+       "`timeout_ms` its budget. Lifecycle — start, status, stop — is `repl`.")
+     :params [{:name "language"}
+              {:name "code" :required? true}
+              {:name "id" :note "or `repl_id`"}
+              {:name "cwd"}
+              {:name "timeout_ms"}]
      :call {:lead-opt "language" :rest :always}
      ;; repl_eval's own `timeout_ms` can exceed the generic Python eval
      ;; watchdog (DEFAULT_EVAL_TIMEOUT_MS, 120s); dispatch it directly in
@@ -591,10 +631,19 @@
        "`{result,id,message}`.")
      :description
      (str
-       "REPL lifecycle. Nothing lists live REPLs for you: `status` is the only answer — reuse `up`, "
+       "REPL lifecycle — `repl(\"clojure\", {\"op\": \"status\"})`, or `repl({\"language\": ..., "
+       "\"op\": \"start\"})`. `op` is `start` (the default) | `status` | `stop` | `connect`; `cwd` "
+       "chooses the project and `id` the REPL a `stop` ends. "
+       "Nothing lists live REPLs for you: `status` is the only answer — reuse `up`, "
        "recheck `starting`, start when absent/down/failed. There is NO restart op: a wedged REPL is "
        "`stop` then `start`. `status` reports that "
        "directory's state; `stop` ends a managed REPL; `connect` attaches an external REPL by port and only detaches it.")
+     :params [{:name "language"}
+              {:name "op" :note "start | status | stop | connect"}
+              {:name "cwd"}
+              {:name "id" :note "which REPL a stop ends"}
+              {:name "port"}
+              {:name "host"}]
      :call {:lead-opt "language" :rest :always}
      :inject-env? true
      :tag :mutation}))
@@ -603,8 +652,19 @@
   (vis/symbol
     #'connect-repl
     {:symbol 'repl_connect
+     :result
+     (str
+       "String-keyed and stamped with `op` — the shape `repl`'s own `connect` answers: "
+       "`result,id,cwd,status` plus `running,port,host,external,message` when known.")
      :description
-     "Attach an external running REPL; Vis registers it but never owns or kills it, so stop only detaches."
+     (str
+       "Attach an external running REPL — `repl_connect(\"clojure\", {\"port\": 56428})`. `port` is "
+       "REQUIRED; `host` (default localhost) and `cwd` say where it lives. Vis registers it for eval, "
+       "tests and context but never owns or kills it, so stopping it only detaches.")
+     :params [{:name "language"}
+              {:name "port" :required? true}
+              {:name "host"}
+              {:name "cwd"}]
      :call {:lead-opt "language" :rest :always}
      :inject-env? true
      :tag :mutation}))
@@ -613,10 +673,13 @@
   (vis/symbol
     #'repl-stop
     {:symbol 'repl_stop
+     :result "String-keyed `{result, id, message}` stamped with `op`; an external REPL is only detached."
      :description
-     "After verification, stop by exact id the managed REPL you started. External REPLs are only detached, never killed."
-     ;; repl_stop(id) — one positional id. (lint_code intentionally has NO
-     ;; :call: its fn takes the whole input dict, so the generic form fits.)
+     (str
+       "Stop by exact `id` the managed REPL you started, after verification — `repl_stop(id)`. `id` is "
+       "REQUIRED and is the one `repl` answered with. An external REPL attached by `repl_connect` is "
+       "only detached, never killed.")
+     ;; repl_stop(id) — one positional id, unlike the language-led verbs above.
      :call {:pos ["id"]}
      :inject-env? true
      :tag :mutation}))

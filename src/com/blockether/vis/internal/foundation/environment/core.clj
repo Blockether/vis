@@ -182,19 +182,22 @@ Returns {\"shape\": \"polylith\"|\"workspace\"|\"submodules\"|None, \"totals\": 
   (extension/success {:result (wire/->wire result)}))
 
 (defn- repositories-tool
-  "await repositories()
+  "Every git repository under the workspace root with its branch and working-tree
+state — the map of a multi-checkout tree, answered in one call.
 Returns {\"root\", \"count\": N, \"repositories\": [{\"path\", \"branch\", \"is_dirty\": bool, \"is_changes\": bool, \"is_stale\": bool, \"stash_count\": N, ...}], \"is_truncated\": bool}."
   []
   (success-envelope (repositories)))
 
 (defn- languages-tool
-  "await languages()
+  "What this workspace is WRITTEN IN: the primary language plus the whole
+distribution by file and byte count. Takes no arguments — it reads the scan.
 Returns {\"total_files\": N, \"total_bytes\": N, \"primary\": \"clojure\", \"languages\": [{\"language\", \"files\": N, \"bytes\": N, \"files_pct\", \"bytes_pct\"}, ...], \"is_truncated\": bool, \"elapsed_ms\": N}. List sorted by files desc."
   []
   (success-envelope (languages)))
 
 (defn- monorepo-tool
-  "await monorepo()
+  "Whether this workspace is a MONOREPO and of what shape, with the build files
+that prove it.
 Returns {\"shape\": \"polylith\"|\"workspace\"|\"submodules\"|None, \"totals\": {\"clojure\": N, ...}, \"files\": {\"clojure\": [\"path/deps.edn\", ...], ...}, \"is_truncated\": bool}. \"shape\" is None for single-package repos."
   []
   (success-envelope (monorepo)))
@@ -203,25 +206,54 @@ Returns {\"shape\": \"polylith\"|\"workspace\"|\"submodules\"|None, \"totals\": 
   "Register an explicit envelope-returning tool var under a stable `v/` name.
    The public helper vars above stay plain Clojure functions for host callers;
    only the sandbox symbol implementation returns a tool envelope.
-   Every env data symbol is an :observation (pure read); the
+   Every env data symbol is an :observation (pure read) taking NO arguments; the
    inline `:tag` lets `register-extension!` populate the op registry
-   without an out-of-band `vis/register-op!` doseq."
-  [v sym]
-  (vis/symbol v {:symbol sym :tag :observation}))
+   without an out-of-band `vis/register-op!` doseq.
 
-(def repositories-symbol (env-data-symbol #'repositories-tool 'repositories))
+   `description` and `result` are the model-facing pair `doc(name)` renders under
+   the call line — the implementation docstring is developer documentation and
+   never substitutes for either."
+  [v sym description result]
+  (vis/symbol v {:symbol sym
+                 :tag :observation
+                 :description description
+                 :result result}))
 
-(def languages-symbol (env-data-symbol #'languages-tool 'languages))
+(def repositories-symbol
+  (env-data-symbol
+    #'repositories-tool
+    'repositories
+    (str "Every git repository under the workspace root with its branch and working-tree state — "
+         "the map of a multi-checkout tree in ONE call. Takes no arguments.")
+    (str "String-keyed `{root, count, repositories, is_truncated}`; each repository is "
+         "`{path, branch, is_dirty, is_changes, is_stale, stash_count, …}`.")))
 
-(def monorepo-symbol (env-data-symbol #'monorepo-tool 'monorepo))
+(def languages-symbol
+  (env-data-symbol
+    #'languages-tool
+    'languages
+    (str "What this workspace is WRITTEN IN: the primary language plus the whole distribution by "
+         "file and byte count, read off the workspace scan. Takes no arguments.")
+    (str "String-keyed `{total_files, total_bytes, primary, languages, is_truncated, elapsed_ms}`; "
+         "each language is `{language, files, bytes, files_pct, bytes_pct}`, sorted by files desc.")))
+
+(def monorepo-symbol
+  (env-data-symbol
+    #'monorepo-tool
+    'monorepo
+    (str "Whether this workspace is a MONOREPO and of what shape, with the build files that prove "
+         "it. Takes no arguments.")
+    (str "String-keyed `{shape, totals, files, is_truncated}`; `shape` is "
+         "`polylith` | `workspace` | `submodules`, or None for a single-package repo.")))
 
 ;; ---------------------------------------------------------------------------
 ;; Project guidance surface.
 ;; ---------------------------------------------------------------------------
 
 (defn main-agent-instructions
-  "await main_agent_instructions()
-Returns {\"is_found\": True, \"source\", \"path\", \"bytes\": N, \"content\", \"files\"} from AGENTS.md/CLAUDE.md, else {\"is_found\": False}. Check is_found first."
+  "The project's own guidance file — AGENTS.md or CLAUDE.md — whole, with where
+it was found.
+Returns {\"is_found\": True, \"source\", \"path\", \"bytes\": N, \"content\", \"files\"}, else {\"is_found\": False}. Check is_found first."
   []
   (agents/instructions))
 
@@ -232,13 +264,20 @@ Returns {\"is_found\": True, \"source\", \"path\", \"bytes\": N, \"content\", \"
   (vec (vis/extension-load-failures)))
 
 (defn- main-agent-instructions-tool
-  "await main_agent_instructions()
-Returns {\"is_found\": True, \"source\", \"path\", \"bytes\": N, \"content\", \"files\"} from AGENTS.md/CLAUDE.md, else {\"is_found\": False}. Check is_found first."
+  "The project's own guidance file — AGENTS.md or CLAUDE.md — whole, with where
+it was found.
+Returns {\"is_found\": True, \"source\", \"path\", \"bytes\": N, \"content\", \"files\"}, else {\"is_found\": False}. Check is_found first."
   []
   (success-envelope (main-agent-instructions)))
 
 (def main-agent-instructions-symbol
-  (env-data-symbol #'main-agent-instructions-tool 'main-agent-instructions))
+  (env-data-symbol
+    #'main-agent-instructions-tool
+    'main-agent-instructions
+    (str "The project's own guidance file — AGENTS.md or CLAUDE.md — WHOLE, with where it was "
+         "found. Takes no arguments.")
+    (str "String-keyed `{is_found, source, path, bytes, content, files}`; a miss is "
+         "`{is_found: False}`, so check `is_found` first.")))
 
 (def environment-symbols
   [repositories-symbol languages-symbol monorepo-symbol main-agent-instructions-symbol])

@@ -5410,9 +5410,16 @@
      :active-fn structural-supported?
      :description
      (str
+       "ONE options map is the whole call — `struct_index({\"paths\": [\"src/foo.clj\", \"src\"]})`. "
+       "`paths` (ALWAYS a list of files or directories) is REQUIRED and is the only selector; `ranges` "
+       "scopes the read (shared, or per entry as `{\"path\", \"ranges\"}`) and boolean `include_occurrences` "
+       "traces each definition's uses. No other key is accepted. "
        "Skeleton of supported source before bodies: imports, definitions, signatures, doc gists, and "
-       "line ranges for `struct_nodes`/`struct_patch`. `include_occurrences` traces each definition's "
-       "uses.")
+       "line ranges for `struct_nodes`/`struct_patch`.")
+     :params [{:name "paths" :required? true}
+              {:name "ranges"}
+              {:name "include_occurrences"}]
+     :call {:pos ["options"] :rest :always}
      :before-fn (fs-access-before-fn :struct_index :file "file-read" read-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :struct_index :file)}))
@@ -5436,6 +5443,16 @@
        "Hits come back ANCHORED, so a hit is already a `patch` argument. "
        "`include`/`exclude` globs bound which files the content sweep reads (exclude wins). "
        "`query: \"\"` lists files. Page with `offset`: line 1 names the next call when capped.")
+     :params [{:name "query"}
+              {:name "paths"}
+              {:name "include"}
+              {:name "exclude"}
+              {:name "is_regex"}
+              {:name "context"}
+              {:name "limit"}
+              {:name "offset"}
+              {:name "is_hidden"}]
+     :call {:pos ["options"] :rest :always}
      :before-fn (fs-access-before-fn :grep :dir "file-read" find-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :grep :dir)}))
@@ -5882,7 +5899,22 @@
        "it produced is named in `delimiters_repaired`, and one you WROTE is never deleted or "
        "retyped. A batch of `edits` applies in order "
        "and is ATOMIC: an entry that fails rolls the earlier ones back, so every file is left exactly "
-       "as the call found it.")
+       "as the call found it. ONE options map is the whole call — "
+       "`struct_patch({\"path\": p, \"op\": \"replace\", \"target\": \"my-fn\", \"code\": src})`; "
+       "`path` is REQUIRED and a locator says WHERE — `target` names a definition, `at`/`line` a node; "
+       "`op` defaults to `replace`. In an `edits` batch the top-level keys are every entry's defaults.")
+     :params [{:name "path" :required? true}
+              {:name "op"}
+              {:name "target"}
+              {:name "code"}
+              {:name "at"}
+              {:name "nav"}
+              {:name "line"}
+              {:name "kind" :note "disambiguates same-named defs"}
+              {:name "match" :note "the sub-expression replace_node swaps"}
+              {:name "anchor" :note "the def move_before/move_after lands beside"}
+              {:name "edits" :note "a batch; top-level keys are its defaults"}]
+     :call {:pos ["options"] :rest :always}
      :before-fn (plan-gated-before-fn :struct_patch :file struct-arg-paths)
      :tag :mutation
      :on-error-fn (tool-failure-on-error :struct_patch :file)}))
@@ -6080,7 +6112,14 @@
      :description
      (str "ONE options map is the whole call — `struct_nodes({\"path\": p, \"line\": n})` or "
           "`struct_nodes({\"nodes\": [...]})`; never a positional path. "
-          "Read nested tree-sitter node SOURCE and navigate when a named definition is too coarse.")
+          "Read nested tree-sitter node SOURCE and navigate when a named definition is too coarse. "
+          "`path` (or a `nodes` list) is REQUIRED; `at`/`nav`/`line` place the cursor.")
+     :params [{:name "path" :required? true :note "or one per `nodes` entry"}
+              {:name "nodes"}
+              {:name "line"}
+              {:name "at"}
+              {:name "nav"}]
+     :call {:pos ["options"] :rest :always}
      :before-fn (fs-access-before-fn :struct_nodes :file "file-read" nodes-arg-paths)
      :tag :observation
      :on-error-fn (tool-failure-on-error :struct_nodes :file)}))
