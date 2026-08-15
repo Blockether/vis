@@ -245,10 +245,21 @@
    removed from ordinary prose so visual clients never render a duplicate code
    block. Text outside the fence remains the canonical full answer."
   [markdown]
-  (let [markdown (str markdown)
-        [_ speech-text] (re-find speech-fence-pattern markdown)
-        prose-text (str/trim (str/replace-first markdown speech-fence-pattern "\n"))
-        spoken (some-> speech-text str/trim not-empty)]
+  (let
+    [markdown
+     (str markdown)
+
+     [_ speech-text]
+     (re-find speech-fence-pattern markdown)
+
+     prose-text
+     (str/trim (str/replace-first markdown speech-fence-pattern "\n"))
+
+     spoken
+     (some-> speech-text
+             str/trim
+             not-empty)]
+
     (cond-> []
       (not (str/blank? prose-text))
       (conj (prose prose-text))
@@ -269,8 +280,8 @@
           (:answer answer)
           (string? answer) (markdown-content answer)
           (and (map? answer) (string? (:answer answer))) (markdown-content (:answer answer))
-          (and (map? answer) (string? (:answer/text answer)))
-          (markdown-content (:answer/text answer))
+          (and (map? answer) (string? (:answer/text answer))) (markdown-content (:answer/text
+                                                                                  answer))
           :else (throw (ex-info "Final answer must be canonical content or Markdown prose"
                                 {:answer-type (type answer)})))))
 
