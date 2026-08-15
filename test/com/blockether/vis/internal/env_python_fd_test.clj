@@ -18,7 +18,10 @@
             [com.blockether.vis.internal.env-python :as ep]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.sun.management UnixOperatingSystemMXBean]
+           [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.lang.management ManagementFactory OperatingSystemMXBean]
+           [java.net InetSocketAddress]
+           [java.nio.charset StandardCharsets]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -337,3 +340,178 @@
         (expect (nil? (:error r)))
         (expect (= "done" (:result r)))
         (expect (> 6 grown)))))
+(defn- loopback-server
+  "A loopback HTTP server answering every request with `status` and a 5-byte body.
+   The sandbox's HTTP rides a REAL socket, so proving what a response leaves
+   behind needs a real server — and it must be THIS process's, never the network."
+  ^HttpServer [^long status]
+  (let [server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+    (.createContext server
+                    "/"
+                    (reify
+                      HttpHandler
+                        (handle [_ exchange]
+                          (let [body (.getBytes "probe" StandardCharsets/UTF_8)]
+                            (.sendResponseHeaders ^HttpExchange exchange status (alength body))
+                            (with-open [out (.getResponseBody ^HttpExchange exchange)]
+                              (.write out body))))))
+    (.start server)
+    server))
+
+(defn- net-sandbox
+  "A sandbox with the network capability ON — without it `socket.socket()` raises
+   `UnsupportedOperation: socket was excluded` and nothing here can run. `URL`
+   points at `server` when one is given."
+  ([] (net-sandbox nil))
+  ([^HttpServer server]
+   (let
+     [ctx (:python-context (ep/create-python-context {}
+                                                     (fn []
+                                                       [(temp-root)])
+                                                     {:enabled? true}))]
+     (when server
+       (ep/run-python-block
+         ctx
+         (str "URL = "
+              (pr-str (str "http://127.0.0.1:" (.getPort (.getAddress server)) "/probe"))
+              "\n")
+         "t1/i1"))
+     ctx)))
+
+(defn- live-socket-entries
+  "The `__vis_reclaim_fds__(True)` call plus the number of SOCKET entries still
+   tracked after it — the client side only, which is what the sandbox owns."
+  ^String []
+  (str "closed = __vis_reclaim_fds__(True)\n"
+       "kept = len([e for e in __vis_fd_registry__.values()\n"
+       "            if isinstance(e[1], tuple) and e[1][0] == 'vis-socket'])\n"))
+
+(defdescribe
+  sandbox-socket-reclamation-test
+  (it "reclaims the connections a block dropped and leaves the live ones alone"
+      ;; The third door onto a descriptor: a socket is minted by
+      ;; `socket.socket(...)`, never by `open`, so before this it was tracked by
+      ;; nothing at all. Six dropped clients must go; the six accepted peers and
+      ;; the listener the block still holds must not.
+      (let
+        [r (ep/run-python-block
+             (net-sandbox)
+             (str "import gc, socket\n"
+                  "srv = socket.socket()\n" "srv.bind(('127.0.0.1', 0))\n"
+                  "srv.listen(8)\n" "port = srv.getsockname()[1]\n"
+                  "live = []\n" "for _ in range(6):\n"
+                  "    c = socket.create_connection(('127.0.0.1', port), timeout=5)\n"
+                  "    peer, _addr = srv.accept()\n"
+                  "    live.append(peer)\n" "    del c\n"
+                  "gc.collect()\n" "[__vis_reclaim_fds__(True), len(live)]")
+             "t1/i2")]
+        (expect (nil? (:error r)))
+        (expect (= [6 6] (:result r)))))
+  (it "never closes a number another socket has taken over"
+      ;; `fstat` on a socket reports `st_dev == st_ino == 0` — every socket looks
+      ;; like every other one — so the file identity would have closed the JVM's
+      ;; own connections. A socket is identified by its ADDRESS PAIR: a stale
+      ;; entry whose owner is gone must leave the live connection on that number
+      ;; alone.
+      (let
+        [r (ep/run-python-block
+             (net-sandbox)
+             (str "import gc, socket, weakref\n" "srv = socket.socket()\n"
+                  "srv.bind(('127.0.0.1', 0))\n" "srv.listen(4)\n"
+                  "c = socket.create_connection(('127.0.0.1', srv.getsockname()[1]), timeout=5)\n"
+                  "peer, _addr = srv.accept()\n"
+                  "fd = c.fileno()\n" "class Gone:\n"
+                  "    pass\n" "stale = Gone()\n"
+                  "__vis_fd_registry__[fd] = (weakref.ref(stale), ('vis-socket', None, None))\n"
+                  "del stale\n"
+                  "gc.collect()\n" "closed = __vis_reclaim_fds__(True)\n"
+                  "c.sendall(b'ping')\n" "[peer.recv(4).decode(), closed]")
+             "t1/i2")]
+        (expect (nil? (:error r)))
+        (expect (= ["ping" 0] (:result r)))))
+  (it "counts a connection against the ceiling, which never saw one before"
+      ;; The EMFILE ceiling exists so a leak fails HERE, with the message naming
+      ;; the fix, instead of wedging the session later on a `shell` that can no
+      ;; longer fork. It was blind to sockets.
+      (let
+        [r (ep/run-python-block
+             (net-sandbox)
+             (str "import socket\n"
+                  "__vis_fd_max__ = 8\n" "__vis_fd_sweep_at__ = 4\n"
+                  "srv = socket.socket()\n" "srv.bind(('127.0.0.1', 0))\n"
+                  "srv.listen(32)\n" "port = srv.getsockname()[1]\n"
+                  "held = []\n" "err = ''\n"
+                  "try:\n" "    for _ in range(24):\n"
+                  "        held.append(socket.create_connection(('127.0.0.1', port), timeout=5))\n"
+                  "except OSError as e:\n"
+                  "    err = str(e)\n" "[len(held) < 24, 'too many open files' in err]")
+             "t1/i2")]
+        (expect (nil? (:error r)))
+        (expect (= [true true] (:result r)))))
+  (it "leaves no connection behind after HTTP through the `requests` shim"
+      ;; Every HTTP call in the sandbox rides urllib -> http.client -> a socket,
+      ;; and a 4xx used to hand the block a live connection nobody closed: urllib
+      ;; raises `HTTPError`, the shim read its body and dropped it.
+      (let
+        [server
+         (loopback-server 404)
+
+         r
+         (try (ep/run-python-block (net-sandbox server)
+                                   (str
+                                     "import gc, requests\n"
+                                     "codes = [requests.get(URL).status_code for _ in range(12)]\n"
+                                     "gc.collect()\n"
+                                     (live-socket-entries)
+                                     "[codes[0], len(codes), kept]")
+                                   "t1/i2")
+              (finally (.stop server 0)))]
+
+        (expect (nil? (:error r)))
+        (expect (= [404 12 0] (:result r)))))
+  (it "reclaims a response whose body the block never read"
+      ;; The leak in its rawest form (measured on the shipped build: 20 dropped
+      ;; unread responses = +63 process descriptors, untouched by two
+      ;; `gc.collect()`s AND by the block boundary).
+      (let
+        [server
+         (loopback-server 200)
+
+         r
+         (try (ep/run-python-block (net-sandbox server)
+                                   (str "import gc, urllib.request as ur\n"
+                                        "for _ in range(12):\n"
+                                        "    ur.urlopen(URL, timeout=5)\n"
+                                        "gc.collect()\n"
+                                        (live-socket-entries)
+                                        "[closed >= 6, kept]")
+                                   "t1/i2")
+              (finally (.stop server 0)))]
+
+        (expect (nil? (:error r)))
+        (expect (= [true 0] (:result r)))))
+  (it "keeps the socket doors sane across a runtime reinstall"
+      ;; These doors are METHODS on a class the reinstall does not own: capturing
+      ;; `socket.socket.__init__` a second time captures the WRAPPER, and the next
+      ;; socket then recurses until the stack ends. The real methods are survivors
+      ;; for exactly that reason.
+      (let
+        [ctx
+         (net-sandbox)
+
+         _
+         (ep/run-python-block ctx "globals().clear()" "t1/i2")
+
+         r
+         (ep/run-python-block
+           ctx
+           (str "import gc, socket\n"
+                "srv = socket.socket()\n" "srv.bind(('127.0.0.1', 0))\n"
+                "srv.listen(4)\n"
+                "c = socket.create_connection(('127.0.0.1', srv.getsockname()[1]), timeout=5)\n"
+                "tracked = c.fileno() in __vis_fd_registry__\n" "del c\n"
+                "gc.collect()\n" "[tracked, __vis_reclaim_fds__(True)]")
+           "t1/i3")]
+
+        (expect (nil? (:error r)))
+        (expect (= [true 1] (:result r))))))

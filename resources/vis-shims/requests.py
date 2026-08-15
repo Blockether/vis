@@ -882,6 +882,14 @@ def __vis_install_requests_compat__():
                 resp.content = b""
             resp.encoding = _charset(resp.headers) or "utf-8"
             resp.cookies = _parse_set_cookie(src_headers)
+            # A 4xx/5xx is a REAL Response, but the HTTPError urllib raised is
+            # also a LIVE CONNECTION: its socket stays open until someone closes
+            # it, and the sandbox never refcounts the error object away. Close it
+            # here, where the body has already been read.
+            try:
+                e.close()
+            except Exception:
+                pass
             resp.elapsed = _dt.datetime.now() - start
             return resp
         except _ue.URLError as e:

@@ -5,6 +5,7 @@ import gc as __vis_gc__
 import io as __vis_io__
 import linecache as __vis_linecache__
 import os as __vis_os__
+import socket as __vis_socket__
 import time as __vis_time__
 import weakref as __vis_weakref__
 
@@ -120,11 +121,115 @@ def __vis_fd_track__(__vis_h__):
         pass  # unweakrefable handle: nothing we can track, hand it back as-is
 
 
+# ── SOCKETS: the THIRD door onto a descriptor, and the one neither shim above can
+# see. Every HTTP call in the sandbox rides the stdlib `urllib` -> `http.client`
+# -> a real socket (`requests` is pure Python over urllib, and `httpx`/`urllib3`
+# are layers on top of `requests`), so a response whose body is never fully read
+# leaks a CONNECTED descriptor exactly the way a dropped `open()` leaks a file:
+# measured, 20 dropped unread responses = +63 process descriptors, reclaimed by
+# neither two `gc.collect()`s nor the block boundary, and counted by nothing — a
+# socket is minted by `socket.socket(...)`, never by `open`, so the ceiling that
+# exists to keep the session out of EMFILE never saw one.
+#
+# A socket cannot reuse the file identity: `fstat` on one reports
+# `st_dev == st_ino == 0` (measured), so every socket looks like every other one
+# and the recycled-number guard would eventually close the JVM's OWN connections.
+# A socket's identity is its ADDRESS PAIR, `(getsockname(), getpeername())`,
+# captured at every point the sandbox touches it while it is still alive —
+# creation, `connect`, `bind`, and each sweep — because a socket is born ANONYMOUS
+# and only becomes identifiable once it is connected or bound. The number is
+# re-checked after the fact by REBINDING a probe onto it:
+# `socket.socket(fileno=fd)` adopts a descriptor without duplicating it,
+# `detach()` hands it back untouched and `close()` reclaims it (all measured).
+__vis_sock_tag__ = "vis-socket"
+# A depth counter, not a flag: reentrancy here is not hypothetical — the probe is
+# built INSIDE a sweep, and a tracked probe would re-enter admit -> reclaim ->
+# probe without end.
+__vis_sock_hook_off__ = __vis_survivor__("__vis_sock_hook_off__", lambda: [0])
+__vis_real_socket_init__ = __vis_survivor__(
+    "__vis_real_socket_init__", lambda: __vis_socket__.socket.__init__
+)
+__vis_real_socket_connect__ = __vis_survivor__(
+    "__vis_real_socket_connect__", lambda: __vis_socket__.socket.connect
+)
+__vis_real_socket_connect_ex__ = __vis_survivor__(
+    "__vis_real_socket_connect_ex__", lambda: __vis_socket__.socket.connect_ex
+)
+__vis_real_socket_bind__ = __vis_survivor__(
+    "__vis_real_socket_bind__", lambda: __vis_socket__.socket.bind
+)
+
+
+def __vis_sock_id__(__vis_s__):
+    __vis_name__ = None
+    __vis_peer__ = None
+    try:
+        __vis_name__ = __vis_s__.getsockname()
+    except Exception:
+        pass  # unbound, or already closed: that IS part of the identity
+    try:
+        __vis_peer__ = __vis_s__.getpeername()
+    except Exception:
+        pass  # not connected
+    return (__vis_sock_tag__, __vis_name__, __vis_peer__)
+
+
+def __vis_is_sock_id__(__vis_id__):
+    return (
+        isinstance(__vis_id__, tuple)
+        and len(__vis_id__) == 3
+        and __vis_id__[0] == __vis_sock_tag__
+    )
+
+
+def __vis_sock_track__(__vis_s__):
+    # WEAK, like every other entry: tracking a socket must never keep the
+    # connection open.
+    try:
+        __vis_fd__ = __vis_s__.fileno()
+    except Exception:
+        return
+    if not isinstance(__vis_fd__, int) or __vis_fd__ < 0:
+        return
+    try:
+        __vis_fd_registry__[__vis_fd__] = (
+            __vis_weakref__.ref(__vis_s__),
+            __vis_sock_id__(__vis_s__),
+        )
+    except Exception:
+        pass  # unweakrefable socket: nothing we can track
+
+
+def __vis_sock_drop__(__vis_fd__, __vis_id__):
+    # Close ONE unreachable socket, and only while that number still carries the
+    # same address pair: a recycled number belongs to whoever holds it NOW.
+    __vis_sock_hook_off__[0] += 1
+    try:
+        __vis_p__ = __vis_socket__.socket(fileno=__vis_fd__)
+    except Exception:
+        return 0  # already closed, or not a socket any more: hands off
+    finally:
+        __vis_sock_hook_off__[0] -= 1
+    try:
+        if __vis_sock_id__(__vis_p__) == __vis_id__:
+            __vis_p__.close()
+            return 1
+    except Exception:
+        return 0
+    try:
+        __vis_p__.detach()  # somebody else's descriptor: give it back untouched
+    except Exception:
+        pass
+    return 0
+
+
 def __vis_fd_drop__(__vis_fd__, __vis_id__):
     # Close ONE unreachable descriptor, but only while it still is the file we
     # opened: if the number was recycled, `fstat` either fails (already closed)
     # or reports another file, and both mean hands off.
     __vis_fd_registry__.pop(__vis_fd__, None)
+    if __vis_is_sock_id__(__vis_id__):
+        return __vis_sock_drop__(__vis_fd__, __vis_id__)
     try:
         __vis_st__ = __vis_os__.fstat(__vis_fd__)
     except Exception:
@@ -170,6 +275,21 @@ def __vis_reclaim_fds__(force=False):
         if __vis_h__ is None:
             __vis_closed__ += __vis_fd_drop__(__vis_fd__, __vis_e__[1])
             continue
+        if __vis_is_sock_id__(__vis_e__[1]):
+            # A live socket has no `.closed`, and it may have CONNECTED since it
+            # was tracked: refresh the address pair now, while there still is an
+            # object to ask.
+            try:
+                if __vis_h__.fileno() < 0:
+                    __vis_fd_registry__.pop(__vis_fd__, None)
+                else:
+                    __vis_fd_registry__[__vis_fd__] = (
+                        __vis_e__[0],
+                        __vis_sock_id__(__vis_h__),
+                    )
+            except Exception:
+                __vis_fd_registry__.pop(__vis_fd__, None)
+            continue
         try:
             if __vis_h__.closed:
                 __vis_fd_registry__.pop(__vis_fd__, None)
@@ -198,10 +318,11 @@ def __vis_fd_admit__():
         + str(len(__vis_fd_registry__))
         + " handles are open at once and the ceiling is "
         + str(__vis_fd_max__)
-        + ". Sandbox Python does NOT close a file when you drop it, so"
-        " `open(p).read()` in a loop leaks one descriptor per iteration until no"
+        + ". Sandbox Python does NOT close a file or a socket when you drop it,"
+        " so `open(p).read()` in a loop leaks one descriptor per iteration — and"
+        " so does every HTTP response whose body is never read — until no"
         " `shell` process can start at all. Use `with open(p) as f:` (or"
-        " `Path(p).read_text()`), or close the handles you keep open."
+        " `Path(p).read_text()`), and close the sockets and responses you keep."
         " VIS_PY_MAX_OPEN_FILES raises the ceiling.",
     )
 
@@ -483,6 +604,49 @@ def __vis_open_code__(__vis_p__):
 
 __vis_io__.FileIO = __vis_FileIO__
 __vis_io__.open_code = __vis_open_code__
+
+
+# The socket doors. `__init__` catches every socket the sandbox mints — including
+# the `SSLSocket` that `wrap_socket` builds over an already-connected descriptor
+# and the one `accept()` hands back (measured: both pass through here) — and
+# `connect`/`connect_ex`/`bind` re-track it at the moment it stops being
+# anonymous, which is the only moment a socket created and dropped inside ONE
+# block is ever identifiable. Nothing hooks `close`: a closed socket reports
+# `fileno() == -1` and the next sweep drops its entry.
+def __vis_socket_init__(self, *__vis_a__, **__vis_kw__):
+    if __vis_sock_hook_off__[0]:
+        return __vis_real_socket_init__(self, *__vis_a__, **__vis_kw__)
+    __vis_fd_admit__()
+    __vis_r__ = __vis_real_socket_init__(self, *__vis_a__, **__vis_kw__)
+    __vis_sock_track__(self)
+    return __vis_r__
+
+
+def __vis_socket_connect__(self, *__vis_a__, **__vis_kw__):
+    try:
+        return __vis_real_socket_connect__(self, *__vis_a__, **__vis_kw__)
+    finally:
+        __vis_sock_track__(self)
+
+
+def __vis_socket_connect_ex__(self, *__vis_a__, **__vis_kw__):
+    try:
+        return __vis_real_socket_connect_ex__(self, *__vis_a__, **__vis_kw__)
+    finally:
+        __vis_sock_track__(self)
+
+
+def __vis_socket_bind__(self, *__vis_a__, **__vis_kw__):
+    try:
+        return __vis_real_socket_bind__(self, *__vis_a__, **__vis_kw__)
+    finally:
+        __vis_sock_track__(self)
+
+
+__vis_socket__.socket.__init__ = __vis_socket_init__
+__vis_socket__.socket.connect = __vis_socket_connect__
+__vis_socket__.socket.connect_ex = __vis_socket_connect_ex__
+__vis_socket__.socket.bind = __vis_socket_bind__
 
 
 def __vis_count_forms__(src):
