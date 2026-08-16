@@ -2624,13 +2624,57 @@ def __vis_user_defs__():
     return __vis_out__
 
 
+def __vis_def_gist__(text, limit=72):
+    # The one line a LISTING can afford: the docstring's first non-blank line,
+    # whitespace collapsed and bounded. The whole of it stays one `doc(name)`
+    # away — the same push/pull a tool's page gets.
+    for line in str(text or "").splitlines():
+        line = " ".join(line.split())
+        if line:
+            return line if len(line) <= limit else line[: limit - 1].rstrip() + "…"
+    return ""
+
+
+def __vis_def_docs__():
+    # The DOCSTRING of every helper this session defined, keyed by name, and ""
+    # when it has none. The host reads this back as that helper's document: a
+    # documented helper owns a `doc(name)` page and is findable by `apropos`,
+    # while an undocumented one carries an EMPTY document, which is what keeps a
+    # bare handle (`where`, `vars`) out of a described search.
+    import inspect
+
+    out = {}
+    for n, fn in __vis_user_defs__():
+        try:
+            out[n] = (inspect.getdoc(fn) or "").strip()
+        except Exception:
+            out[n] = ""
+    return out
+
+
+def __vis_def_calls__():
+    # The CALL LINE of every helper this session defined — `widen(a, b=2)`. A page
+    # that never shows how to call what it documents is the one page nobody can
+    # act on, so a helper's page opens with its signature like every tool's does.
+    import inspect
+
+    out = {}
+    for n, fn in __vis_user_defs__():
+        try:
+            out[n] = n + str(inspect.signature(fn))
+        except Exception:
+            out[n] = n + "(...)"
+    return out
+
+
 def defs(name=None):
     """The helpers THIS session defined, and their source — plain text.
 
     `defs()` lists every function your blocks defined: name, signature, the
-    block it came from and its length. `defs("name")` returns that one's
-    source, so a helper is REFINED by reading back what it already says
-    instead of being re-pasted from memory.
+    block it came from, its length, and the first line of its DOCSTRING — write
+    one and the listing says what each helper is FOR. `defs("name")` returns
+    that one's source, so a helper is REFINED by reading back what it already
+    says instead of being re-pasted from memory.
 
     A `def` persists for the whole session across turns, and its definitions
     are re-created automatically in a fresh sandbox after a restart — a
@@ -2660,6 +2704,7 @@ def defs(name=None):
             "gateway restart"
         )
     restored = globals().get("__vis_restored_block__")
+    docs = __vis_def_docs__()
     rows = []
     for n, fn in live:
         try:
@@ -2673,15 +2718,41 @@ def defs(name=None):
             size = str(len(inspect.getsourcelines(fn)[0])) + " lines"
         except Exception:
             size = "source unavailable"
-        rows.append((n + sig, where, size))
+        rows.append((n + sig, where, size, __vis_def_gist__(docs.get(n))))
     width = max(len(r[0]) for r in rows)
-    body = "\n".join("  " + r[0].ljust(width) + "  " + r[1] + "  " + r[2] for r in rows)
+    place = max(len(r[1]) for r in rows)
+    span = max(len(r[2]) for r in rows)
+    body = "\n".join(
+        (
+            "  "
+            + r[0].ljust(width)
+            + "  "
+            + r[1].ljust(place)
+            + "  "
+            + r[2].ljust(span)
+            + "  "
+            + r[3]
+        ).rstrip()
+        for r in rows
+    )
     head = (
         str(len(rows))
         + (" definition" if len(rows) == 1 else " definitions")
         + " in this sandbox"
     )
-    return head + "\n" + body + "\n" + 'defs("name") returns one\'s source.'
+    # The nudge belongs where the gap SHOWS: an undocumented helper is a row with
+    # an empty last column, and one line would give it a page.
+    bare = sum(1 for r in rows if not r[3])
+    tail = 'defs("name") returns one\'s source.'
+    if bare:
+        tail += (
+            " "
+            + str(bare)
+            + (" has" if bare == 1 else " have")
+            + " no docstring — one line of it would be the gist above, the whole"
+            + " of it a doc(name) page the next turn can search."
+        )
+    return head + "\n" + body + "\n" + tail
 
 
 def __vis_bound_name__(src):

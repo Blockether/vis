@@ -128,10 +128,15 @@ A definition lives as long as the **session**, and now longer than the **process
 
 ```python
 print(defs())            # 2 definitions in this sandbox
-                         #   hits(needles, *paths, ctx=0)  <prog:7>  4 lines
-                         #   deploy_ok(env)                <prog:9> (restored)  6 lines
+                         #   deploy_ok(env)                <prog:1>  2 lines
+                         #   hits(needles, *paths, ctx=0)  <prog:1>  3 lines  Grep several needles at once
+                         #                                                    and return {path: [lines]}.
+                         # defs("name") returns one's source. 1 has no docstring — one line of it would be
+                         # the gist above, the whole of it a doc(name) page the next turn can search.
 print(defs("hits"))      # its source — edit THAT, never re-paste from memory
 ```
+
+A helper's **docstring is its document** — the only page you write while the session runs. Its first line is the gist `defs()` prints beside the name, the whole of it is what `doc("hits")` answers, and it is the only text `apropos` can match a helper by: an undocumented `def` is still listed by bare `apropos()` as `local` with an empty gist, but no described ask will ever reach it. One line is the difference between a helper the next turn FINDS and one it re-types.
 
 What does **not** persist is anything written into `session`. That map is host-owned and rebuilt from the engine snapshot before every block, so `session["helpers"] = …` succeeds and is gone by the next one — a silent loss, not an error. Keep state in ordinary names — and give a helper its OWN name: a top-level `def cat(...)` or `class grep:` named after a bound tool is refused where it is written, because that definition could only ever shadow the tool inside its own block and would never be persisted or restored.
 

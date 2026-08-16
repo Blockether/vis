@@ -125,7 +125,13 @@
       ;; list, and `patch` edits keyed `from_anchor`/`to_anchor` — a key no release ever had.
       ;; Each is a refused call and a wasted round trip; the literal dicts cost 71 characters
       ;; and land at 6 056.
-      (expect (< (count text) 6100))
+      ;; 6.1k → 6.2k for the one line that makes a helper DESCRIBE itself. §2 already ordered the
+      ;; model to keep helpers and read them back, but 45 of the 146 documents `apropos` could
+      ;; answer were its own `def`s carrying no text at all: an empty gist, a `doc(name)` page
+      ;; that was a bare header, and nothing a described ask could match. A docstring is the whole
+      ;; of that fix — first line to the listing, the rest to the page — and the rule had to name
+      ;; where that line SHOWS UP, or it reads as style advice. It lands at 6 152.
+      (expect (< (count text) 6200))
       (let
         [steps (mapv #(str/index-of text %)
                      ["`grep` locates unknown code" "`struct_index` every known file"
@@ -142,6 +148,9 @@
                 "`patch(path, edits)`" "`[{\"from\": a, \"to\": b, \"replace\": text}]`"]]
         (expect (str/includes? text shape)))
       (expect (str/includes? text "`grep(...)` FIRST"))
+      ;; A helper the model wrote is the only document it can author mid-session, so the rule that
+      ;; orders one has to name what its docstring BECOMES — a gist, a page, and a way to be found.
+      (expect (str/includes? text "One docstring line is its `defs()` gist"))
       ;; The verification rule must name a call the language surface accepts: a lone
       ;; string is the PAYLOAD, not a language, so `run_tests("python")` would run the
       ;; workspace's primary pack instead of the python one.

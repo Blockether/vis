@@ -1019,6 +1019,17 @@
                            (.asString ^Value (.getArrayElement e 0))
                            (if (.isString v) (.asString v) (str v))))))))))
 
+(defn- called-str-map
+  "The dict a ZERO-ARGUMENT sandbox function answers, as a Clojure `{string
+   string}`. `{}` when the bootstrap never bound that name, when it is not
+   callable, or when the call throws — like `value->str-map`, a discovery
+   surface must never be the reason a block fails."
+  [^Value g ^String fn-name]
+  (try (let [^Value f (.getMember g fn-name)]
+         (if (and f (not (.isNull f)) (.canExecute f))
+           (value->str-map (.execute f (object-array 0)))
+           {}))
+       (catch Throwable _ {})))
 (def ^:private ^:const apropos-limit
   "How many documents `apropos` answers for a described ask. Terms are ORed, so
    a six-word question touches half the corpus; every measured ask answered
@@ -1054,10 +1065,13 @@
     CLASSIFIED (page, skill, mcp, shim).
 
    The two kinds nobody labels are derived here: a documented handle is a
-   `tool`, and a callable with no document at all is `local` — the model's own
-   `def`. A bound function with no registered document still appears, because a
-   callable the model can type must never be invisible; labelling it `local`
-   is what stops it being read as a contract."
+   `tool`, and the model's own `def` is `local` — `__vis_def_docs__` names every
+   one of them and answers its DOCSTRING, `__vis_def_calls__` its signature. A
+   helper that documents itself is a document like any other: it owns a
+   `doc(name)` page and a described ask can find it. One that documents nothing
+   stays an EMPTY document — listed, because a callable the model can type must
+   never be invisible, and never searched, because a bare handle (`where`,
+   `vars`) is a common English word that would win rows off real contracts."
   [^Value g names-fn]
   (let
     [docs
@@ -1073,34 +1087,49 @@
      (value->str-map (.getMember g "__vis_kinds__"))
 
      params
-     (value->str-map (.getMember g "__vis_keys__"))]
+     (value->str-map (.getMember g "__vis_keys__"))
 
-    (into
-      []
-      (map
-        (fn [nm]
-          (let
-            [text
-             (get docs nm "")
+     ;; The model's OWN `def`s, read live through the bootstrap: one docstring
+     ;; and one signature per helper, so a documented helper is a page like any
+     ;; tool's and an undocumented one keeps an empty document.
+     def-docs
+     (called-str-map g "__vis_def_docs__")
 
-             ;; The CALL LINE `doc(name)` prints under the handle: the explicit
-             ;; expression when the handle is not a Python name of its own
-             ;; (`mcp__call(...)`), otherwise the DECLARED signature —
-             ;; `patch(path, edits)`. Prose can describe a tool; only the call
-             ;; line says which parameters are required and in what order.
-             call
-             (or (not-empty (str (get calls nm)))
-                 (when-let [sig (get sigs nm)]
-                   (str nm "(" sig ")")))]
+     def-calls
+     (called-str-map g "__vis_def_calls__")]
 
-            (cond->
-              {:name nm :text text :kind (or (get kinds nm) (if (str/blank? text) "local" "tool"))}
-              (seq (str call))
-              (assoc :call call)
+    (into []
+          (map
+            (fn [nm]
+              (let
+                [text
+                 (let [registered (str (get docs nm ""))]
+                   (if (str/blank? registered) (str (get def-docs nm "")) registered))
 
-              (seq (str (get params nm)))
-              (assoc :params (str (get params nm)))))))
-      (distinct (concat (names-fn) (sort (keys docs)))))))
+                 ;; The CALL LINE `doc(name)` prints under the handle: the explicit
+                 ;; expression when the handle is not a Python name of its own
+                 ;; (`mcp__call(...)`), otherwise the DECLARED signature —
+                 ;; `patch(path, edits)`. Prose can describe a tool; only the call
+                 ;; line says which parameters are required and in what order.
+                 call
+                 (or (not-empty (str (get calls nm)))
+                     (when-let [sig (get sigs nm)]
+                       (str nm "(" sig ")"))
+                     (not-empty (str (get def-calls nm))))]
+
+                (cond->
+                  {:name nm
+                   :text text
+                   ;; A REGISTERED document is what makes a handle a tool: a helper
+                   ;; that shadows one keeps the tool's page, and a documented `def`
+                   ;; stays `local` however much it says about itself.
+                   :kind (or (get kinds nm) (if (str/blank? (str (get docs nm))) "local" "tool"))}
+                  (seq (str call))
+                  (assoc :call call)
+
+                  (seq (str (get params nm)))
+                  (assoc :params (str (get params nm)))))))
+          (distinct (concat (names-fn) (sort (keys docs)))))))
 
 (defn- install-introspection!
   "Wire Python `apropos(pat)` and `doc(name)` over the live globals — the
@@ -1186,12 +1215,14 @@
                public
                (remove #(str/starts-with? (str (:name %)) "_"))
 
-               ;; An undocumented callable — the model's own `def`, a stdlib name
-               ;; that leaked into the globals — is a NAME and nothing else. It stays
-               ;; in the LISTING, because a callable the model can type must never be
-               ;; invisible, but it is not in the corpus a described ask searches: it
-               ;; has no text to answer with, and its handle (`vars`, `where`, `hits`)
-               ;; is a common English word that would win rows off real contracts.
+               ;; A callable with NO document — an undocumented `def`, a stdlib
+               ;; name that leaked into the globals — is a NAME and nothing else.
+               ;; It stays in the LISTING, because a callable the model can type
+               ;; must never be invisible, but it is not in the corpus a described
+               ;; ask searches: it has no text to answer with, and its handle
+               ;; (`vars`, `where`, `hits`) is a common English word that would
+               ;; win rows off real contracts. One DOCSTRING is the whole
+               ;; difference — a helper that carries text is searched like a page.
                corpus
                (cond->> (sandbox-corpus g names)
                  described?
@@ -1244,46 +1275,61 @@
                             (.putMember g "__vis_apropos_gists__" nil)
                             (.putMember g "__vis_apropos_ats__" nil)
                             (.putMember g "__vis_apropos_hits__" nil)))))))
-    (.putMember g
-                "doc"
-                (reify
-                  ProxyExecutable
-                    (execute [_ args]
-                      (let
-                        [target
-                         (when (pos? (alength args)) (.asString ^Value (aget args 0)))
+    (.putMember
+      g
+      "doc"
+      (reify
+        ProxyExecutable
+          (execute [_ args]
+            (let
+              [target
+               (when (pos? (alength args)) (.asString ^Value (aget args 0)))
 
-                         es
-                         (sandbox-corpus g names)]
+               es
+               (sandbox-corpus g names)]
 
-                        (if (str/blank? (str target))
-                          (doc-corpus/index-text es)
-                          (let
-                            [wanted
-                             (doc-corpus/normalize-name target)
+              (if (str/blank? (str target))
+                (doc-corpus/index-text es)
+                (let
+                  [wanted
+                   (doc-corpus/normalize-name target)
 
-                             ;; Resolution order is precedence: the exact handle, then the
-                             ;; forgiving one (case, whitespace, a trailing `.md`), so a
-                             ;; function name always wins a documentation slug.
-                             hit
-                             (or (first (filter #(= (str target) (:name %)) es))
-                                 (first (filter #(= wanted (doc-corpus/normalize-name (:name %)))
-                                                es)))
+                   ;; Resolution order is precedence: the exact handle, then the
+                   ;; forgiving one (case, whitespace, a trailing `.md`), so a
+                   ;; function name always wins a documentation slug.
+                   hit
+                   (or (first (filter #(= (str target) (:name %)) es))
+                       (first (filter #(= wanted (doc-corpus/normalize-name (:name %))) es)))
 
-                             m
-                             (when hit (.getMember g ^String (:name hit)))]
+                   m
+                   (when hit (.getMember g ^String (:name hit)))]
 
-                            (if hit
-                              (doc-corpus/entry-text hit
-                                                     (when (and m (not (.isNull m)) (.canExecute m))
-                                                       "callable"))
-                              (doc-corpus/miss-text es target))))))))
+                  (if hit
+                    (let
+                      [note
+                       (when (and m (not (.isNull m)) (.canExecute m)) "callable")
+
+                       page
+                       (doc-corpus/entry-text hit note)]
+
+                      ;; A helper this session defined and never documented has
+                      ;; no page to print — so the page says what would make one.
+                      (if (and (= "local" (str (:kind hit))) (str/blank? (str (:text hit))))
+                        (str page
+                             "This session defined it and it carries no docstring, so there is "
+                             "nothing to print. `defs(\""
+                             (:name hit)
+                             "\")` returns its source; a "
+                             "docstring's first line becomes its `defs()` gist and the whole of it "
+                             "becomes this page — which is also what lets `apropos` find it.")
+                        page))
+                    (doc-corpus/miss-text es target))))))))
     ;; These two helpers are installed by the engine rather than the extension
     ;; registry, so seed their own docs here.
     (set-python-binding-doc!
       ctx
       'apropos
-      "apropos(query='') -> {name: {kind, gist, at, hit}}. FULL-TEXT SEARCH over every document this session can reach — every function's contract, every skill's whole SKILL.md, every Vis documentation page, every MCP tool's description. Ask in words: terms are ORed and ranked by BM25 relevance over name, first line and body, so a whole question answers the document that covers most of it and a word nothing carries costs nothing. A query that IS a handle wins that handle; a typo is spell-corrected and a prefix completed, and `hit` names the terms that landed, showing any rewrite (`pathc→patch`). `kind` is what the document IS — tool · shim · page · skill · mcp · local (a callable this session defined, which carries no contract). `gist` is a BOUNDED excerpt, never the body: the document's opening, the region your terms landed in, and a fragment from deeper down; `at` is the line that region starts on, so a long document is read from where it answers. Ranked best-first and capped at 10 — a described ask matches half the corpus, so read down, not around. Called with NO argument (or an empty one) it LISTS instead of searching: every name this session can reach, in name order, uncapped, each row just {kind, gist} — `at` and `hit` exist only relative to a query. Read one whole with `doc(name)`.")
+      "apropos(query='') -> {name: {kind, gist, at, hit}}. FULL-TEXT SEARCH over every document this session can reach — every function's contract, every skill's whole SKILL.md, every Vis documentation page, every MCP tool's description. Ask in words: terms are ORed and ranked by BM25 relevance over name, first line and body, so a whole question answers the document that covers most of it and a word nothing carries costs nothing. A query that IS a handle wins that handle; a typo is spell-corrected and a prefix completed, and `hit` names the terms that landed, showing any rewrite (`pathc→patch`). `kind` is what the document IS — tool · shim · page · skill · mcp · local (a helper this session defined — its own DOCSTRING is its document, so a documented helper answers a described ask while an undocumented one is listed and never searched). `gist` is a BOUNDED excerpt, never the body: the document's opening, the region your terms landed in, and a fragment from deeper down; `at` is the line that region starts on, so a long document is read from where it answers. Ranked best-first and capped at 10 — a described ask matches half the corpus, so read down, not around. Called with NO argument (or an empty one) it LISTS instead of searching: every name this session can reach, in name order, uncapped, each row just {kind, gist} — `at` and `hit` exist only relative to a query. Read one whole with `doc(name)`.")
     (set-python-binding-doc!
       ctx
       'doc
@@ -1295,7 +1341,7 @@
     (set-python-binding-doc!
       ctx
       'defs
-      "defs(name=None) -> str. The FUNCTIONS this session defined, as text: `defs()` lists each one's name, signature, block and length; `defs(name)` returns that one's source, so a helper is refined by editing what it already says instead of being re-pasted from memory. A `def` outlives the block and the turn, and is re-created in a fresh sandbox after a gateway restart — a restored one is marked `(restored)`. Imported functions and engine internals are never listed. When the same helper recurs across sessions it has outgrown the sandbox: propose a Python extension (`doc(\"extending\")`).")
+      "defs(name=None) -> str. The FUNCTIONS this session defined, as text: `defs()` lists each one's name, signature, block, length and the first line of its DOCSTRING; `defs(name)` returns that one's source, so a helper is refined by editing what it already says instead of being re-pasted from memory. WRITE that docstring: its first line is the gist this listing prints, the whole of it is the helper's own `doc(name)` page, and it is what lets `apropos` find a helper you already wrote — an undocumented one is listed and never searched. A `def` outlives the block and the turn, and is re-created in a fresh sandbox after a gateway restart — a restored one is marked `(restored)`. Imported functions and engine internals are never listed. When the same helper recurs across sessions it has outgrown the sandbox: propose a Python extension (`doc(\"extending\")`).")
     (set-python-binding-doc!
       ctx
       'fold-session

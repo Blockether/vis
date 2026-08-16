@@ -1604,7 +1604,53 @@
         ;; An IMPORTED function is not this session's definition.
         (expect (not (str/includes? listed "dumps")))
         (expect (str/includes? source "def widen(a, b=2):"))
-        (expect (str/includes? missing "refused:")))))
+        (expect (str/includes? missing "refused:"))))
+  ;; A helper the session wrote is a DOCUMENT only when it says something: the docstring is
+  ;; what the listing previews, what `doc(name)` prints and what `apropos` can find — and its
+  ;; absence is what keeps a bare handle (`quiet`, `where`, `vars`) out of a described ask.
+  (it
+    "reads a helper's docstring as its gist, its page and what apropos finds it by"
+    (let
+      [ctx
+       (:python-context (ep/create-python-context {}))
+
+       _
+       (ep/run-python-block
+         ctx
+         "def kebab_to_snake(text):\n    \"\"\"Rewrite a kebab-case identifier as snake_case.\n\n    Splits on the hyphen the way the wire keys do, so a wire name and an\n    engine keyword round-trip.\n    \"\"\"\n    return text.replace('-', '_')\n\ndef quiet(x):\n    return x\n")
+
+       listed
+       (:stdout (ep/run-python-block ctx "print(defs())"))
+
+       page
+       (:stdout (ep/run-python-block ctx "print(doc('kebab_to_snake'))"))
+
+       bare
+       (:stdout (ep/run-python-block ctx "print(doc('quiet'))"))
+
+       found
+       (:stdout
+         (ep/run-python-block
+           ctx
+           "hits = apropos('rewrite a kebab-case identifier')\nprint('first=' + list(hits)[0])\nprint('quiet=' + str('quiet' in hits))\nrows = apropos('')\nprint('kind=' + rows['kebab_to_snake']['kind'])\nprint('gist=' + rows['kebab_to_snake']['gist'])\nprint('listed=' + str('quiet' in rows))\nprint('empty=' + repr(rows['quiet']['gist']))"))]
+
+      ;; The listing previews the first line, and counts what is still missing.
+      (expect (str/includes? listed "Rewrite a kebab-case identifier as snake_case."))
+      (expect (str/includes? listed "1 has no docstring"))
+      ;; The page is the call line and the WHOLE docstring, like any tool's.
+      (expect (str/includes? page "kebab_to_snake(text)"))
+      (expect (str/includes? page "Splits on the hyphen"))
+      ;; An undocumented helper has no page, so the page says what would make one.
+      (expect (str/includes? bare "quiet(x)"))
+      (expect (str/includes? bare "carries no docstring"))
+      ;; Documented: searchable, first for its own words, and still `local`.
+      (expect (str/includes? found "first=kebab_to_snake"))
+      (expect (str/includes? found "kind=local"))
+      (expect (str/includes? found "gist=Rewrite a kebab-case identifier as snake_case."))
+      ;; Undocumented: listed with an empty gist, never in a described ask.
+      (expect (str/includes? found "quiet=False"))
+      (expect (str/includes? found "listed=True"))
+      (expect (str/includes? found "empty=''")))))
 
 (defdescribe tool-shadow-test
              ;; Regression: a helper named after a bound tool was accepted in silence and then

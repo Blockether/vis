@@ -674,9 +674,9 @@
      :result "String-keyed `{result, id, message}` stamped with `op`; an external REPL is only detached."
      :description
      (str
-       "Stop by exact `id` the managed REPL you started, after verification — `repl_stop(id)`. `id` is "
-       "REQUIRED and is the one `repl` answered with. An external REPL attached by `repl_connect` is "
-       "only detached, never killed.")
+        "Stop the managed REPL you started, by the exact `id` `repl` answered with — after verification, "
+        "so nothing is left running. The id is REQUIRED. An external REPL attached by `repl_connect` "
+        "is only detached, never killed.")
      ;; repl_stop(id) — one positional id, unlike the language-led verbs above.
      :call {:pos ["id"]}
      :inject-env? true
