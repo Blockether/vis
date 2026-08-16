@@ -31,7 +31,12 @@ export interface MachineFixture {
   hangs?: boolean;
   /** Answers its list reads, but never answers a search. */
   searchHangs?: boolean;
-  /** Extra routes, by pathname: whatever they return is the JSON body. */
+  /**
+   * Answers its FIRST page and holds every later one until `releasePages`, the way
+   * a machine with more history than one window trickles in behind the machines
+   * beside it.
+   */
+  holdsPages?: boolean;
   routes?: Record<string, unknown>;
 }
 
@@ -115,6 +120,10 @@ export function renderSessionsScreen({
   // the fleet to drain (a create opens its session while the rows are still in
   // flight). Held reads resolve normally the moment `releaseList` runs.
   let held: Promise<void> | null = null;
+  // A machine that answers its first window and holds the rest, so a test can put
+  // a later page on the glass at a moment of its choosing.
+  let heldPages: Promise<void> | null = null;
+  let releasePagesFn: (() => void) | null = null;
   let release: (() => void) | null = null;
 
   const previousFetch = globalThis.fetch;
@@ -172,8 +181,25 @@ export function renderSessionsScreen({
       if ((init?.method ?? "GET") === "POST")
         return answer({ id: `created-${++created}`, channel: "web", title: null });
       if (held) await held;
+      if (machine.holdsPages && Number(url.searchParams.get("offset") ?? 0) > 0) {
+        if (!heldPages)
+          heldPages = new Promise<void>((resolve) => {
+            releasePagesFn = resolve;
+          });
+        await heldPages;
+      }
       const sessions = machine.sessions ?? [];
-      return answer({ sessions, total: sessions.length, has_more: false });
+      // A real gateway answers a WINDOW, and a machine with more history than one
+      // page makes the client come back for the rest — which is what paints a
+      // second machine's rows a beat after the first machine's.
+      const limit = Number(url.searchParams.get("limit") ?? sessions.length);
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      const window = sessions.slice(offset, offset + (limit || sessions.length));
+      return answer({
+        sessions: window,
+        total: sessions.length,
+        has_more: offset + window.length < sessions.length,
+      });
     }
     if (url.pathname === "/v1/sessions/actions/search") return answer({ matches: [] });
     return answer({});
@@ -203,6 +229,12 @@ export function renderSessionsScreen({
       held = new Promise<void>((resolve) => {
         release = resolve;
       });
+    },
+    /** Let every held later page answer. */
+    releasePages() {
+      releasePagesFn?.();
+      heldPages = null;
+      releasePagesFn = null;
     },
     releaseList() {
       held = null;

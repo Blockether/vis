@@ -426,8 +426,23 @@ export function SessionsScreen({
     for (const machine of machines) if (machine.sessions) seedReadMarks(machine.sessions);
   }, [machines]);
 
+  // EVERY change to a machine's rows is anchored first.
+  //
+  // A cold fleet does not arrive at once and cannot: each gateway is its own
+  // round trip, and a machine with more than one page of history patches its rows
+  // again per page (`listSessions`' progressive `onPage`). Every one of those
+  // patches inserts rows ABOVE the sections below it — with two gateways paired,
+  // the first machine's second page pushes the whole second machine down under a
+  // reader who is looking at it, which is the list "jumping by itself" while its
+  // projects load in. A failure does the same in reverse: a machine that stops
+  // answering is drained out of `All`, and its section leaves a hole.
+  //
+  // So the anchor belongs to the MUTATION, not to one caller: the top visible row
+  // is measured here, and the layout effect below puts it back under the top edge.
+  // It no-ops at the top of the list, so a first paint is unaffected.
   const patchMachine = useCallback(
     (key: string, update: (machine: FleetMachine) => FleetMachine) => {
+      refreshAnchorRef.current = topVisibleRow(listRef.current);
       setMachines((current) => {
         const index = current.findIndex((machine) => machineKey(machine.conn) === key);
         // Unpaired while its request was in flight: the answer is not fleet news.
@@ -502,10 +517,6 @@ export function SessionsScreen({
         });
         if (signal?.aborted) return null;
         alive();
-        // Anchor EVERY reload: the 10s poll can reorder rows under a reading
-        // thumb. The layout effect below no-ops at the top of the list, so the
-        // first paint is unaffected.
-        refreshAnchorRef.current = topVisibleRow(listRef.current);
         patchMachine(key, (machine) => ({
           ...machine,
           sessions: reconcileSessions(machine.sessions, next),
