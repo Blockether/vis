@@ -13,6 +13,7 @@
             [com.blockether.vis.ext.language-clojure.paren-repair :as repair]
             [com.blockether.vis.internal.foundation.editing.balance :as balance]
             [com.blockether.vis.internal.foundation.editing.zipper :as zipper]
+            [com.blockether.vis.internal.runtime-settings :as rt]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.nio.file Files)
            (java.nio.file.attribute FileAttribute)))
@@ -476,8 +477,11 @@
 
 
 (defdescribe test-runner-timeout-test
-             (it "defaults run_tests to just under the 5 minute native tool budget"
-                 (expect (= 290000 @#'test-runner/default-test-timeout-ms))))
+             ;; The pack holds no budget of its own: a second literal beside
+             ;; `RUN_TESTS_TIMEOUT_MS` is exactly the drift that knob prevents.
+             (it "runs a suite on the shared ten-minute run_tests budget"
+                 (expect (= (* 10 60 1000) rt/RUN_TESTS_TIMEOUT_MS))
+                 (expect (< rt/RUN_TESTS_TIMEOUT_MS rt/MAX_EVAL_TIMEOUT_MS))))
 
 (defn- with-example-project
   "Run `f` with the PATH of a throwaway workspace holding one test namespace

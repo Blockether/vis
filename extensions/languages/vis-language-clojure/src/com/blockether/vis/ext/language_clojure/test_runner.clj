@@ -20,15 +20,8 @@
             [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
             [com.blockether.vis.internal.test-contract :as contract]
             [com.blockether.vis.internal.foundation.surface-contract :as surface]
-            [com.blockether.vis.internal.extension :as extension]))
-
-(def ^:private default-test-timeout-ms
-  "Default budget for run_tests. The whole test run is parked OUTSIDE the
-   native tool wall (see language-surface `run-tests`), so THIS is the real
-   budget: an nREPL timeout surfaces as a structured test result instead of
-   an opaque harness kill. Must stay well below the outside-wall wedge guard
-   (MAX_EVAL_TIMEOUT_MS, 35 min)."
-  290000)
+            [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.runtime-settings :as rt]))
 
 (def ^{:private true} run-form
   "Code evaled on the target nREPL. Loads each REQUESTED namespace FROM SOURCE
@@ -761,11 +754,12 @@
         (try
           (let
             [r
-             ;; The run is parked outside the native tool wall, so THIS timeout is
-             ;; the real budget — a slow / wedged nREPL surfaces as a real timeout
-             ;; ERROR (with nREPL err/tail) instead of an opaque harness kill.
+             ;; This timeout is the real budget: a direct tool call has no outer
+             ;; wall, and from a Python block `RUN_TESTS_FLOOR_SECS` floors the eval
+             ;; watchdog above it. A slow / wedged nREPL therefore surfaces as a real
+             ;; timeout ERROR (with nREPL err/tail), never an opaque harness kill.
              (nrepl-client/eval!
-               {:host "localhost" :port port :code code :timeout-ms default-test-timeout-ms})
+               {:host "localhost" :port port :code code :timeout-ms rt/RUN_TESTS_TIMEOUT_MS})
              parsed (try (let [x (edn/read-string (get r "value"))]
                            (if (string? x) (edn/read-string x) x))
                          (catch Throwable _ nil))]
@@ -779,7 +773,7 @@
                "ns" ns-disp
                "port" port
                "timed_out" true
-               "error" (str "test run timed out after " default-test-timeout-ms
+               "error" (str "test run timed out after " rt/RUN_TESTS_TIMEOUT_MS
                             "ms — the nREPL never returned. The eval is likely wedged "
                             "(infinite loop, blocked I/O, or a deadlock in the code under "
                             "test); the connection was evicted so a retry reconnects fresh."

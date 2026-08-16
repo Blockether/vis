@@ -15,6 +15,7 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.python-project :as pyproj]
             [com.blockether.vis.internal.python-test-runner :as ptr]
+            [com.blockether.vis.internal.runtime-settings :as rt]
             [com.blockether.vis.internal.test-contract :as contract]))
 
 ;; Activation
@@ -542,7 +543,7 @@
      (future (slurp (.getInputStream p)))
 
      done?
-     (.waitFor p 300 java.util.concurrent.TimeUnit/SECONDS)]
+     (.waitFor p (long rt/RUN_TESTS_TIMEOUT_MS) java.util.concurrent.TimeUnit/MILLISECONDS)]
 
     (when-not done? (.destroyForcibly p))
     (try (let

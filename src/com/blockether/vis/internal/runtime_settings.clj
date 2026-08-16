@@ -158,15 +158,32 @@
    `DEFAULT_SHELL_TIMEOUT_SECS` describes, one spelling further out."
   1800)
 
+(def RUN_TESTS_TIMEOUT_MS
+  "The budget for ONE `run_tests` run, in every pack — ten minutes.
+
+   Declared here because three places must agree on it: the Clojure pack hands it
+   to the nREPL eval that runs the suite, the Python pack waits exactly this long
+   on the project interpreter's pytest, and [[RUN_TESTS_FLOOR_SECS]] floors the
+   eval watchdog above it. Two packs each holding their own literal is the drift
+   this namespace exists to prevent.
+
+   Overrunning it is reported as a STRUCTURED result — a wedged nREPL, a killed
+   pytest process, the output that did arrive — so the number says when we stop
+   believing the suite will finish, never how much work a suite may legitimately
+   do. Five minutes did not cover a cold full-suite run (JVM start, namespace
+   loading, compilation), and such a run died with nothing to show for it.
+
+   Stays under [[MAX_EVAL_TIMEOUT_MS]] minus the widener's grace."
+  (* 10 60 1000))
+
 (def RUN_TESTS_FLOOR_SECS
-  "Floor for an eval that calls `run_tests`. A test run carries its OWN multi-
-   minute budget (the Clojure pack's 290s nREPL deadline) and answers a timeout
-   with a STRUCTURED test result; a direct tool call parks the native wall for
-   exactly that reason. Called from `python_execution` it must not die earlier at
-   the generic eval watchdog and lose the run's result — this floor keeps the
-   block's wall a grace period above the 290s deadline even though the watchdog's
-   own plain default is now the same five minutes."
-  300)
+  "Floor for an eval that calls `run_tests`: the run's OWN budget, in seconds.
+
+   A test run answers its own timeout with a structured test result, and nothing
+   preempts a direct tool call. Called from `python_execution` it must not die
+   earlier at the generic eval watchdog and lose that result, so the widener
+   floors the block's wall here and adds `shell-timeout-eval-grace-ms` on top."
+  (quot (long RUN_TESTS_TIMEOUT_MS) 1000))
 
 (def HTTP_CALL_FLOOR_SECS
   "Floor for an eval that reaches the NETWORK through the HTTP shims (`requests`,

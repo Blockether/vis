@@ -2173,10 +2173,25 @@
                               120000
                               "r = await shell(command=\"x\", timeout_secs=180)")))
                  ;; A test run owns a multi-minute budget and answers timeouts itself.
-                 (expect (= 310000
-                            (eval-timeout-ms-for-code 120000 "r = await run_tests(\"clojure\", namespaces=[\"a.b-test\"])")))
+                 (expect (= (+ (* 1000 rt/RUN_TESTS_FLOOR_SECS) 10000)
+                            (eval-timeout-ms-for-code
+                              120000
+                              "r = await run_tests({\"paths\": [\"test/a_test.clj\"]})")))
                  ;; Prose that merely mentions the word must not widen anything.
                  (expect (= 120000 (eval-timeout-ms-for-code 120000 "print('shell is bounded')"))))
+             (it "keeps the eval wall above a test run's own ten-minute budget"
+                 ;; One run may legitimately take ten minutes — a cold full suite pays
+                 ;; JVM start, namespace loading and compilation before the first
+                 ;; assertion. The run answers its own timeout with a STRUCTURED result,
+                 ;; so the watchdog above it has to fire later than the run's budget or
+                 ;; that result is lost and the block dies on a bare `Timeout`.
+                 (expect (= (* 10 60 1000) rt/RUN_TESTS_TIMEOUT_MS))
+                 (expect (= rt/RUN_TESTS_FLOOR_SECS (quot rt/RUN_TESTS_TIMEOUT_MS 1000)))
+                 (expect (< rt/RUN_TESTS_TIMEOUT_MS
+                            (eval-timeout-ms-for-code
+                              rt/DEFAULT_EVAL_TIMEOUT_MS
+                              "r = await run_tests({\"paths\": [\"test\"]})")))
+                 (expect (< (+ (* 1000 rt/RUN_TESTS_FLOOR_SECS) 10000) rt/MAX_EVAL_TIMEOUT_MS)))
              (it "floors the watchdog above a block that reaches the network"
                  ;; REGRESSION: HTTP was not a bounded-call FAMILY at all. The shims'
                  ;; own per-request default is 30s, a sweep loops over N hosts, and the
