@@ -13,12 +13,12 @@ import vis
 
 def deploy(env):
     """Ship the current build to one environment."""
-    answer = vis.ask("Deploy", [
+    spec = [
         vis.heading("Target"),
-        vis.select("env", ["staging", "prod"], label="Where", default=env,
-                   is_required=True),
+        vis.select("env", ["staging", "prod"], label="Where", default=env),
         vis.password("token", label="Deploy token", is_required=True),
-    ])
+    ]
+    answer = vis.ask("Deploy", spec)
     if not answer:
         return vis.err("cancelled", answer.reason)
     run = vis.shell({"command": "./deploy.sh " + answer["env"]}).wait(600)
