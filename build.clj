@@ -629,21 +629,27 @@
   (read-string (slurp "deps.edn")))
 
 (defn- all-source-roots
-  "Every production src/resources dir on the vis classpath: the repo root plus
-   each `:local/root` extension. AOT covers all of these so every extension ns
-   the runtime manifest scan `require`s is already compiled into the image."
+  "Every production src/resources dir on the vis classpath: the repo root's own
+   `:paths` plus each `:local/root` extension. AOT covers all of these so every
+   extension ns the runtime manifest scan `require`s is already compiled into the
+   image — and every RESOURCE root is copied into the class dir with it.
+
+   The root's roots are read from deps.edn, never spelled out here: `:paths`
+   carries `packages/vis-agent/src` (the distributable `vis` Python module the
+   engine slurps as `vis/__init__.py`), and a hardcoded `[\"src\" \"resources\"]`
+   silently left it out of every image."
   []
   (let
     [deps
-     (:deps (root-deps-edn))
+     (root-deps-edn)
 
      roots
-     (->> deps
+     (->> (:deps deps)
           vals
           (keep :local/root))
 
      dirs
-     (into ["src" "resources"]
+     (into (vec (:paths deps))
            (mapcat (fn [r]
                      [(str r "/src") (str r "/resources")])
                    roots))]

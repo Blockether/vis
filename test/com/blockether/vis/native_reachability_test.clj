@@ -253,3 +253,28 @@
                   "--initialize-at-run-time=com.googlecode.lanterna.terminal.ansi.TTYDeviceControl")
                 (str "build.clj must initialize TTYDeviceControl at RUN time, or the "
                      "binary segfaults on its first TUI frame")))))
+
+
+;; Regression, v0.1.39: the released binary was DEAD — every command aborted with
+;; "Could not locate com/blockether/vis/core__init.class ... on classpath", and
+;; the build that produced it was green. `all-source-roots` copied a hardcoded
+;; ["src" "resources"] into the AOT class dir while the root deps.edn `:paths`
+;; had grown a third entry, `packages/vis-agent/src`. Without it the image had no
+;; `vis/__init__.py`, so `env-python` threw while `com.blockether.vis.core` was
+;; initializing in the BUILDER, poisoning that class for the whole image.
+(defdescribe
+  aot-copies-every-root-classpath-root-test
+  (it "reads the root's AOT source roots from deps.edn, never a hardcoded pair"
+      (let [src (slurp (io/file "build.clj"))]
+        (expect (str/includes? src "(vec (:paths deps))")
+                (str "build.clj's all-source-roots must copy EVERY root :paths entry into "
+                     "the image; a literal list drops the next one that is added"))
+        (expect (not (str/includes? src "(into [\"src\" \"resources\"]"))
+                "the hardcoded root pair is what shipped an image with no vis/__init__.py")))
+  (it "keeps the distributable vis Python module on the classpath it is read from"
+      (let [paths (:paths (edn/read-string (slurp (io/file "deps.edn"))))]
+        (expect (some #{"packages/vis-agent/src"} paths)
+                (str "the engine slurps `vis/__init__.py` off the classpath; its root "
+                     "belongs in deps.edn :paths, which is also what the image copies"))
+        (expect (some? (io/resource "vis/__init__.py"))
+                "vis/__init__.py must resolve as a classpath resource"))))

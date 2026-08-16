@@ -45,6 +45,34 @@
     (edn/read-string (slurp url))
     (do (println "[vis/native-image] WARNING: no" preload-resource "on classpath") [])))
 
+(defn- cause-chain
+  "Every throwable in `t`'s cause chain rendered `Class: message`, outermost
+   first. An `ExceptionInInitializerError` carries NO message of its own, so
+   printing only the outer one — as this Feature used to — reports a build-time
+   class-initialization failure as the word `nil` and loses the reason entirely."
+  [^Throwable t]
+  (->> (iterate (fn [^Throwable c]
+                  (.getCause c))
+                t)
+       (take-while some?)
+       (take 8)
+       (map (fn [^Throwable c]
+              (str (.getName (class c)) ": " (.getMessage c))))))
+
+(defn- absent-namespace?
+  "True when the preload entry simply is not on the IMAGE classpath. The list is
+   scanned off source dirs and dependency jars, so it names build-only libraries
+   (clojure.tools.deps and friends) the image never carries — harmless."
+  [^Throwable t]
+  (boolean (and (instance? java.io.FileNotFoundException t)
+                (some-> (.getMessage t)
+                        (.startsWith "Could not locate")))))
+
+(defn- own-namespace?
+  "Vis' own code, as opposed to a third-party library on the preload list."
+  [ns-str]
+  (.startsWith ^String ns-str "com.blockether."))
+
 ;; gen-class generates a throwing stub for EVERY interface method we don't define
 ;; (it does not inherit the interface's `default` bodies), and native-image calls
 ;; many of them — so we implement the whole Feature lifecycle. Only beforeAnalysis
@@ -73,15 +101,38 @@
      *unchecked-math*
      false]
 
-    (let [nses (preload-namespaces)]
+    (let
+      [nses
+       (preload-namespaces)
+
+       broken
+       (atom [])]
+
       (println "[vis/native-image] pre-initializing" (count nses) "namespaces via require…")
       (doseq [ns-str nses]
         (try (require (symbol ns-str))
              (catch Throwable t
-               ;; a require that can't resolve is harmless here; native-image will
-               ;; surface a real reachability problem on its own if one exists.
-               (println "[vis/native-image]   skipped" ns-str "-" (.getMessage t)))))
-      (println "[vis/native-image] namespace pre-initialization done"))))
+               ;; A build-only library that never reaches the image classpath is
+               ;; harmless. Anything ELSE is a namespace this image cannot serve:
+               ;; the first failure poisons its `__init` class, every later
+               ;; namespace that touches it dies with "Could not initialize
+               ;; class", and the binary reports that only when a user runs it.
+               (if (absent-namespace? t)
+                 (println "[vis/native-image]   skipped" ns-str "-" (.getMessage t))
+                 (do (println "[vis/native-image]   FAILED" ns-str)
+                     (doseq [line (cause-chain t)]
+                       (println "[vis/native-image]     " line))
+                     (when (own-namespace? ns-str) (swap! broken conj ns-str)))))))
+      (println "[vis/native-image] namespace pre-initialization done")
+      ;; Vis' OWN namespace failing to initialize is a DEAD BINARY, not a
+      ;; warning: v0.1.39 shipped that way — every command died with
+      ;; "Could not locate com/blockether/vis/core__init.class" while the build
+      ;; was green, because the builder knew at minute one and said `nil`.
+      (when (seq @broken)
+        (throw (ex-info (str "native image is unusable: " (count @broken)
+                             " Vis namespace(s) failed build-time initialization — " (first
+                                                                                       @broken))
+                        {:namespaces @broken}))))))
 
 ;; remaining lifecycle hooks: no-ops (must exist so gen-class doesn't stub-throw)
 ;; onRegistration(OnRegistrationAccess) arrived in GraalVM 25.1 — without the
