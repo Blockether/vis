@@ -21,6 +21,11 @@
  *   5. notification icon     → res/drawable-<dpi>/ic_stat_vis.png + AndroidManifest meta-data
  *      (Firebase refuses an adaptive icon in the tray, so without it the status bar
  *       shows Android's stock bell instead of the Vis mark)
+ *   6. launch screen         → res/drawable/splash.xml + the launch theme's Android 12+ splash
+ *      colour (Capacitor's scaffold paints its OWN logo, one stretched bitmap per orientation
+ *      and density, and leaves the modern splash to the platform's near-white default)
+ *   7. push channel          → AndroidManifest default_notification_channel_id, the id
+ *      src/lib/push.ts creates (without it Firebase files every alert under "Miscellaneous")
  *
  * Usage:
  *   node scripts/android-prepare.mjs
@@ -101,11 +106,32 @@ const mismatchedLauncherAssets = () =>
     return !existsSync(target) || !readFileSync(source).equals(readFileSync(target));
   });
 
+// Capacitor's scaffold paints its own logo: res/drawable{,-port-*,-land-*}/splash.png, one
+// stretched bitmap per orientation and density. The tracked Vis launch screen is a layer-list
+// (drawable/splash.xml): the app's own background colour with the mark centred at its
+// intrinsic size, which no screen aspect can distort. A leftover splash.png is either a
+// duplicate resource in the same folder (aapt2 refuses to build) or a more specific qualifier
+// that silently wins, so the stock bitmaps have to go.
+const stockSplashBitmaps = () =>
+  existsSync(androidResources)
+    ? readdirSync(androidResources, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && entry.name.startsWith('drawable'))
+        .map((entry) => join(entry.name, 'splash.png'))
+        .filter((relative) => existsSync(join(androidResources, relative)))
+    : [];
+
+const stylesPath = join(androidResources, 'values', 'styles.xml');
+const SPLASH_THEME_ITEM = '<item name="windowSplashScreenBackground">@color/vis_splash</item>';
+const launchThemeOk = () => existsSync(stylesPath) && readFileSync(stylesPath, 'utf8').includes(SPLASH_THEME_ITEM);
+
 if (has('check')) {
   const mismatched = mismatchedLauncherAssets();
   if (mismatched.length) {
     die(`Android launcher assets differ from tracked Vis branding: ${mismatched.join(', ')}`);
   }
+  const stock = stockSplashBitmaps();
+  if (stock.length) die(`Capacitor's stock splash is still in the project: ${stock.join(', ')}`);
+  if (!launchThemeOk()) die('values/styles.xml launch theme has no Vis splash colour for Android 12+');
   console.log('✓ launcher icons match tracked Vis branding');
   process.exit(0);
 }
@@ -342,6 +368,47 @@ for (const [name, resource] of [
 if (manifest !== manifestBefore) writeFileSync(manifestPath, manifest);
 console.log('✓ Android network + microphone permissions');
 console.log('✓ notification icon → @drawable/ic_stat_vis + @color/vis_notification  (Firebase small icon)');
+
+// ── Launch screen ─────────────────────────────────────────────────────────────────────
+//
+// Two different systems paint it. Below Android 12 the launch theme's window background IS
+// the splash, so `@drawable/splash` has to be the whole picture. From Android 12 the platform
+// draws the launcher icon over `windowSplashScreenBackground` and never looks at that
+// drawable again. Capacitor's scaffold sets only the first, to its own logo — so the app
+// opened on somebody else's mark, and on newer phones on the platform's near-white instead of
+// the paper the web layer paints a frame later.
+for (const relative of stockSplashBitmaps()) rmSync(join(androidResources, relative));
+if (!launchThemeOk()) {
+  const styles = readFileSync(stylesPath, 'utf8');
+  const branded = styles.replace(
+    /(<style name="AppTheme\.NoActionBarLaunch"[^>]*>)/,
+    `$1\n        ${SPLASH_THEME_ITEM}\n        <item name="android:windowSplashScreenBackground">@color/vis_splash</item>`,
+  );
+  if (branded === styles) die('values/styles.xml has no AppTheme.NoActionBarLaunch to brand');
+  writeFileSync(stylesPath, branded);
+}
+console.log('✓ launch screen  @drawable/splash → Vis mark on @color/vis_splash  (+ Android 12 splash colour)');
+
+// ── Push notification channel ─────────────────────────────────────────────────────────
+//
+// Android 8+ posts nothing without a channel. Declare none and Firebase invents one:
+// `fcm_fallback_notification_channel`, shown as "Miscellaneous", default importance, no
+// description — so no heads-up banner, and nothing in system settings the reader can aim at.
+// The id is read from the app rather than repeated here: `src/lib/push.ts` creates the
+// channel, this stamps the SAME id as Firebase's default, and there is one truth to change.
+const pushSource = readFileSync(join(root, 'src', 'lib', 'push.ts'), 'utf8');
+const channelId = /PUSH_CHANNEL_ID = '([a-z0-9_]+)'/.exec(pushSource)?.[1];
+if (!channelId) die('src/lib/push.ts no longer exports PUSH_CHANNEL_ID — the manifest default and the channel the app creates must be one id');
+const CHANNEL_META = 'com.google.firebase.messaging.default_notification_channel_id';
+let channelManifest = readFileSync(manifestPath, 'utf8');
+if (!channelManifest.includes(CHANNEL_META)) {
+  channelManifest = channelManifest.replace(
+    /\n(\s*)<\/application>/,
+    `\n$1    <meta-data android:name="${CHANNEL_META}" android:value="${channelId}" />\n$1</application>`,
+  );
+  writeFileSync(manifestPath, channelManifest);
+}
+console.log(`✓ push channel   ${channelId}  (Firebase default; created by src/lib/push.ts)`);
 
 /**
  * 6. System share target.

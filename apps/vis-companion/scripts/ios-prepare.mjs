@@ -24,7 +24,7 @@
  *   node scripts/ios-prepare.mjs
  *   node scripts/ios-prepare.mjs --check   # exit 1 if the project needs preparation
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -44,6 +44,128 @@ const appIconSource = join(root, 'native-assets', 'ios', 'AppIcon-512@2x.png');
 const appIconTarget = join(appDir, 'Assets.xcassets', 'AppIcon.appiconset', 'AppIcon-512@2x.png');
 const appIcon = readFileSync(appIconSource);
 const appIconOk = existsSync(appIconTarget) && readFileSync(appIconTarget).equals(appIcon);
+
+// ── Launch screen ─────────────────────────────────────────────────────────────────────
+//
+// Capacitor's launch screen aspect-fills ONE 2732² image carrying its own logo, so the mark
+// on screen is both the wrong mark and a size that depends on which scale the asset catalog
+// serves the device. The tracked one is the picture the web layer paints a frame later
+// (`App.tsx` `<Splash/>`: the mark at `h-16` = 64 pt on `--bg`), drawn at its intrinsic size
+// on the same colour — so the handover from launch image to first paint moves nothing.
+//
+// It is declared with `UILaunchScreen`, NOT `UILaunchStoryboardName`, because SplashBoard
+// composes a storyboard into one bitmap per orientation and refuses over a budget:
+//   XBLaunchStoryboardErrorDomain Code=6 "Unable to generate launch image"
+//   Estimated size (29900800) is over limit (25000000)
+// measured on an iPhone 17 Pro simulator, whose screen alone exceeds it — the app then
+// launches on BLACK. The same build on an iPhone 17e (a slightly smaller screen) composed
+// fine and showed the mark, and with `UILaunchScreen` both devices show it. The storyboard
+// is still rewritten below: the Xcode target lists it as a resource, so the bundle carries
+// one either way, and it must not be the one with somebody else's logo in it.
+const splashDir = join(appDir, 'Assets.xcassets', 'Splash.imageset');
+const splashImages = [
+  ['Splash-mark.png', 'splash-mark.png'],
+  ['Splash-mark@2x.png', 'splash-mark@2x.png'],
+  ['Splash-mark@3x.png', 'splash-mark@3x.png'],
+];
+const splashContents = `{
+  "images": [
+    {
+      "idiom": "universal",
+      "filename": "splash-mark.png",
+      "scale": "1x"
+    },
+    {
+      "idiom": "universal",
+      "filename": "splash-mark@2x.png",
+      "scale": "2x"
+    },
+    {
+      "idiom": "universal",
+      "filename": "splash-mark@3x.png",
+      "scale": "3x"
+    }
+  ],
+  "info": {
+    "version": 1,
+    "author": "vis"
+  }
+}
+`;
+const splashStale = existsSync(splashDir)
+  ? readdirSync(splashDir).filter((name) => name.startsWith('splash-2732'))
+  : [];
+const splashFilesOk =
+  splashStale.length === 0 &&
+  existsSync(join(splashDir, 'Contents.json')) &&
+  readFileSync(join(splashDir, 'Contents.json'), 'utf8') === splashContents &&
+  splashImages.every(
+    ([source, target]) =>
+      existsSync(join(splashDir, target)) &&
+      readFileSync(join(splashDir, target)).equals(readFileSync(join(root, 'native-assets', 'ios', source))),
+  );
+
+// The colour lives in the asset catalog because `UILaunchScreen` names it there — the one
+// place both halves of the launch screen (colour + mark) can be read by the system without
+// a nib.
+const splashColorDir = join(appDir, 'Assets.xcassets', 'SplashBackground.colorset');
+const splashColorContents = `{
+  "colors": [
+    {
+      "idiom": "universal",
+      "color": {
+        "color-space": "srgb",
+        "components": {
+          "red": "0.98039215686274506",
+          "green": "0.95294117647058818",
+          "blue": "0.92156862745098034",
+          "alpha": "1.000"
+        }
+      }
+    }
+  ],
+  "info": {
+    "version": 1,
+    "author": "vis"
+  }
+}
+`;
+const splashColorOk =
+  existsSync(join(splashColorDir, 'Contents.json')) &&
+  readFileSync(join(splashColorDir, 'Contents.json'), 'utf8') === splashColorContents;
+
+const launchBoard = join(appDir, 'Base.lproj', 'LaunchScreen.storyboard');
+const launchBoardSource = `<?xml version="1.0" encoding="UTF-8"?>
+<document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="17132" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" launchScreen="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="01J-lp-oVM">
+    <device id="retina4_7" orientation="portrait" appearance="light"/>
+    <dependencies>
+        <deployment identifier="iOS"/>
+        <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="17105"/>
+        <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
+    </dependencies>
+    <scenes>
+        <!--View Controller-->
+        <scene sceneID="EHf-IW-A2E">
+            <objects>
+                <viewController id="01J-lp-oVM" sceneMemberID="viewController">
+                    <imageView key="view" userInteractionEnabled="NO" contentMode="center" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="Splash" id="snD-IY-ifK">
+                        <rect key="frame" x="0.0" y="0.0" width="375" height="667"/>
+                        <autoresizingMask key="autoresizingMask"/>
+                        <color key="backgroundColor" red="0.98039215686274506" green="0.95294117647058818" blue="0.92156862745098034" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                    </imageView>
+                </viewController>
+                <placeholder placeholderIdentifier="IBFirstResponder" id="iYj-Kq-Ea1" userLabel="First Responder" sceneMemberID="firstResponder"/>
+            </objects>
+            <point key="canvasLocation" x="53" y="375"/>
+        </scene>
+    </scenes>
+    <resources>
+        <image name="Splash" width="72" height="64"/>
+    </resources>
+</document>
+`;
+const launchBoardOk = existsSync(launchBoard) && readFileSync(launchBoard, 'utf8') === launchBoardSource;
+const splashOk = splashFilesOk && splashColorOk && launchBoardOk;
 
 const die = (msg) => {
   console.error(`\n\u2717 ${msg}\n`);
@@ -157,13 +279,27 @@ const plistEntries = [
 \t\t</dict>
 \t</array>`,
   ],
+  [
+    'UILaunchScreen',
+    `\t<key>UILaunchScreen</key>
+\t<dict>
+\t\t<key>UIColorName</key>
+\t\t<string>SplashBackground</string>
+\t\t<key>UIImageName</key>
+\t\t<string>Splash</string>
+\t</dict>`,
+  ],
 ];
 
 const currentPlist = readFileSync(infoPlist, 'utf8');
+// Capacitor's scaffold points at the storyboard; `UILaunchScreen` only wins once that key is
+// gone, so the removal is part of being prepared rather than a one-off cleanup.
+const launchStoryboardEntry = /[\t ]*<key>UILaunchStoryboardName<\/key>\n[\t ]*<string>[^<]*<\/string>\n/;
+const launchStoryboardStale = launchStoryboardEntry.test(currentPlist);
 const missingPlistEntries = plistEntries.filter(([key]) => !currentPlist.includes(`<key>${key}</key>`));
-const plistOk = missingPlistEntries.length === 0;
-let preparedPlist = currentPlist;
-if (!plistOk) {
+const plistOk = missingPlistEntries.length === 0 && !launchStoryboardStale;
+let preparedPlist = currentPlist.replace(launchStoryboardEntry, '');
+if (missingPlistEntries.length > 0) {
   const at = preparedPlist.lastIndexOf('</dict>');
   if (at < 0) die('Info.plist has no root </dict>');
   const additions = `${missingPlistEntries.map(([, xml]) => xml).join('\n')}\n`;
@@ -996,8 +1132,8 @@ const shareOk = shareFilesOk && projectOk;
 const badgeOk = notifyFilesOk && notifyProjectOk && capConfigOk;
 
 if (check) {
-  if (delegateOk && boardOk && plistOk && appIconOk && shareOk && badgeOk) {
-    console.log('· ios: prepared stock Capacitor host with required app capabilities, branded icon, share extension, Shortcuts and the badge extension');
+  if (delegateOk && boardOk && plistOk && appIconOk && shareOk && badgeOk && splashOk) {
+    console.log('· ios: prepared stock Capacitor host with required app capabilities, branded icon and launch screen, share extension, Shortcuts and the badge extension');
     process.exit(0);
   }
   const missing = missingPlistEntries.map(([key]) => key).join(', ');
@@ -1012,11 +1148,26 @@ if (check) {
             ? 'ios: no share extension / Shortcuts target — run `node scripts/ios-prepare.mjs`'
             : !badgeOk
               ? 'ios: no VisNotify badge extension / VisBadge plugin — run `node scripts/ios-prepare.mjs`'
+              : !splashOk
+                ? 'ios: launch screen still shows Capacitor\'s splash — run `node scripts/ios-prepare.mjs`'
               : `ios: Info.plist is missing ${missing} — run \`node scripts/ios-prepare.mjs\``,
   );
 }
 
 if (!appIconOk) copyFileSync(appIconSource, appIconTarget);
+if (!splashFilesOk) {
+  mkdirSync(splashDir, { recursive: true });
+  for (const name of splashStale) rmSync(join(splashDir, name));
+  for (const [source, target] of splashImages) {
+    copyFileSync(join(root, 'native-assets', 'ios', source), join(splashDir, target));
+  }
+  writeFileSync(join(splashDir, 'Contents.json'), splashContents);
+}
+if (!splashColorOk) {
+  mkdirSync(splashColorDir, { recursive: true });
+  writeFileSync(join(splashColorDir, 'Contents.json'), splashColorContents);
+}
+if (!launchBoardOk) writeFileSync(launchBoard, launchBoardSource);
 
 if (!delegateOk) writeFileSync(delegate, preparedDelegate);
 if (!boardOk) writeFileSync(storyboard, cleanedBoard);
@@ -1046,5 +1197,7 @@ console.log(
   }; ${plistOk ? 'app capabilities already present' : `stamped ${missingPlistEntries.map(([key]) => key).join(', ')}`
   }; ${appIconOk ? 'branded icon already present' : 'stamped branded app icon'}; ${
     shareOk ? 'share extension + Shortcuts already present' : 'stamped VisShare extension + App Intents'
-  }; ${badgeOk ? 'badge extension already present' : 'stamped VisNotify extension + VisBadge plugin'}`,
+  }; ${badgeOk ? 'badge extension already present' : 'stamped VisNotify extension + VisBadge plugin'}; ${
+    splashOk ? 'branded launch screen already present' : 'stamped the Vis launch screen'
+  }`,
 );

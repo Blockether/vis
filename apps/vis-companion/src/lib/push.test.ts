@@ -4,15 +4,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 /** What the OS would answer, and what it was asked to remove. */
 const native = vi.hoisted(() => ({
   isNative: true,
+  platform: 'android',
   delivered: [] as { id: string; tag?: string; data?: Record<string, unknown> }[],
   removed: [] as { id: string; tag?: string }[][],
+  channels: [] as Record<string, unknown>[],
+  refuseChannel: false,
 }));
 
 vi.mock('@capacitor/core', () => ({
   Capacitor: {
     isNativePlatform: () => native.isNative,
     isPluginAvailable: (name: string) => native.isNative && name === 'PushNotifications',
-    getPlatform: () => (native.isNative ? 'android' : 'web'),
+    getPlatform: () => (native.isNative ? native.platform : 'web'),
   },
 }));
 
@@ -21,6 +24,10 @@ vi.mock('@capacitor/push-notifications', () => ({
     getDeliveredNotifications: async () => ({ notifications: native.delivered }),
     removeDeliveredNotifications: async (arg: { notifications: { id: string; tag?: string }[] }) => {
       native.removed.push(arg.notifications);
+    },
+    createChannel: async (channel: Record<string, unknown>) => {
+      if (native.refuseChannel) throw new Error('channel refused');
+      native.channels.push(channel);
     },
   },
 }));
@@ -34,6 +41,9 @@ beforeEach(() => {
   native.isNative = true;
   native.delivered = [];
   native.removed = [];
+  native.platform = 'android';
+  native.channels = [];
+  native.refuseChannel = false;
 });
 
 describe('dropDeliveredPushes', () => {
@@ -84,5 +94,41 @@ describe('dropDeliveredPushes', () => {
 
     expect(await dropDeliveredPushes(() => true)).toBe(0);
     expect(native.removed).toEqual([]);
+  });
+});
+
+describe('ensureAndroidChannel', () => {
+  // Android 8+ posts nothing without a channel, so an app that declares none hands the
+  // decision to Firebase: every alert lands in `fcm_fallback_notification_channel`, shown as
+  // "Miscellaneous" at default importance — no heads-up banner, and nothing in system
+  // settings a reader can turn down without silencing the app.
+  it('creates the answers channel at heads-up importance', async () => {
+    const { ensureAndroidChannel, PUSH_CHANNEL_ID } = await fresh();
+
+    await ensureAndroidChannel();
+
+    expect(native.channels).toHaveLength(1);
+    expect(native.channels[0]).toMatchObject({ id: PUSH_CHANNEL_ID, name: 'Answers', importance: 4 });
+    expect(native.channels[0].description).toBeTruthy();
+  });
+
+  // iOS has no channels at all, and the plugin throws when asked on the web.
+  it.each([
+    ['ios', () => { native.platform = 'ios'; }],
+    ['the web', () => { native.isNative = false; }],
+  ])('does nothing on %s', async (_name, arrange) => {
+    arrange();
+    const { ensureAndroidChannel } = await fresh();
+
+    await ensureAndroidChannel();
+
+    expect(native.channels).toEqual([]);
+  });
+
+  it('never breaks registration when the device refuses the channel', async () => {
+    native.refuseChannel = true;
+    const { ensureAndroidChannel } = await fresh();
+
+    await expect(ensureAndroidChannel()).resolves.toBeUndefined();
   });
 });

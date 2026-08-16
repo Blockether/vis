@@ -64,6 +64,7 @@ import {
   acquirePushToken,
   cachedPushToken,
   deviceRegistration,
+  ensureAndroidChannel,
   isPushSupported,
   onPushTap,
   pushPermission,
@@ -720,6 +721,10 @@ export function App() {
   );
   useEffect(() => {
     if (!isPushSupported()) return;
+    // The channel must exist before the first alert can land: Android posts
+    // nothing without one, and Firebase's own fallback is the unnamed
+    // "Miscellaneous" row at default importance.
+    void ensureAndroidChannel();
     let cancelled = false;
     // Which name this device is filed under is the gateway's answer, not ours:
     // a machine with no signing key of its own is handed a relay grant instead

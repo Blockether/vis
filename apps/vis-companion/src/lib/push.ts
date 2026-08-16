@@ -99,6 +99,43 @@ export async function pushPermission(): Promise<PushPermission> {
 }
 
 /**
+ * The one Android channel every Vis alert is filed under.
+ *
+ * `scripts/android-prepare.mjs` reads THIS literal and stamps it into the
+ * manifest as Firebase's `default_notification_channel_id`, so the id the app
+ * creates and the id the tray files alerts under cannot drift apart.
+ */
+export const PUSH_CHANNEL_ID = 'vis_answers';
+
+/**
+ * Create that channel, on Android, before any alert can arrive.
+ *
+ * Android 8+ posts nothing without a channel, so an app that declares none
+ * hands the decision to Firebase: it files every alert under its own
+ * `fcm_fallback_notification_channel` — shown to the reader as "Miscellaneous",
+ * at default importance, with no description and no heads-up banner. The reader
+ * who wants to keep answers and drop everything else has nothing to switch.
+ *
+ * Re-creating it on every launch is safe: Android keeps a channel's user edits
+ * once it exists, so this never overrides a reader who turned the sound off.
+ */
+export async function ensureAndroidChannel(): Promise<void> {
+  if (!isPushSupported() || Capacitor.getPlatform() !== 'android') return;
+  try {
+    await PushNotifications.createChannel({
+      id: PUSH_CHANNEL_ID,
+      name: 'Answers',
+      description: 'One alert per finished turn: a session on a paired machine answered you.',
+      importance: 4, // HIGH — a finished answer earns a heads-up banner
+      vibration: true,
+    });
+  } catch {
+    // A device that refuses the channel still gets the alert through Firebase's
+    // fallback; tray plumbing must never break push registration.
+  }
+}
+
+/**
  * Ask for permission (if not already answered) and register with APNs/FCM,
  * resolving the device token. Rejects with a human-readable reason — a denied
  * permission is a normal outcome the UI must explain, not a crash.

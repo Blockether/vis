@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The launch window: the app's own background colour with the Vis mark centred at
+  its intrinsic size. A stretched bitmap (Capacitor's stock splash.png, one per
+  orientation and density) distorts the mark on any screen whose aspect differs
+  from the asset; a layer-list never scales it.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/vis_splash" />
+    <item>
+        <bitmap android:src="@drawable/splash_mark" android:gravity="center" />
+    </item>
+</layer-list>
