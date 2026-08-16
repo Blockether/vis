@@ -127,7 +127,16 @@
   (it "refuses an opt-in family BY NAME instead of reporting absent forever"
       ;; `:absent` with nothing downloading is the one answer a user cannot act
       ;; on, so the refusal carries the command that installs it.
-      (with-redefs [assets/installed? (constantly false)]
+      ;; The phoneme tables are a PRECONDITION of this refusal, not its subject:
+      ;; a machine without espeak-ng is refused for THAT first, which is how this
+      ;; passed on a developer machine and failed on CI.
+      (with-redefs
+        [tts/espeak-data-dir
+         (constantly "/espeak-ng-data")
+
+         assets/installed?
+         (constantly false)]
+
         (let [state (tts/start-download! :pocket-tts)]
           (expect (= :failed (:state state)))
           (expect (re-find #"pocket-tts-int8" (:error state)))
@@ -140,14 +149,25 @@
           (expect (re-find #"--piper --voice ryan" (:error state))))))
   (it "starts the download of a family Vis does fetch by itself"
       (let [started (atom [])]
+        ;; espeak-ng belongs to the SYSTEM, so its absence must not decide whether the
+        ;; download of a voice starts, and `installed?` answers from what `install!`
+        ;; already recorded: the background future settling FIRST would otherwise
+        ;; report :absent, which is the race a loaded runner loses.
         (with-redefs
-          [assets/installed? (constantly false)
+          [tts/espeak-data-dir (constantly "/espeak-ng-data")
+           assets/installed? (fn [entry]
+                               (boolean (some #{(:id entry)} @started)))
            assets/install! (fn [entry & _]
                              (swap! started conj (:id entry))
                              (:install-dir entry))]
 
           (let [state (tts/start-download! :piper)]
-            (expect (contains? #{:downloading :ready} (:state state))))))))
+            (expect (contains? #{:downloading :ready} (:state state))))
+          ;; Settle that install INSIDE the redefs: a future outliving them would call
+          ;; the REAL installer and reach the network.
+          (loop [n 0]
+            (when (and (empty? @started) (< n 300)) (Thread/sleep 10) (recur (inc n))))
+          (expect (= ["piper-en_US-kristin-medium"] @started))))))
 
 (defdescribe install-model-test
              (it "installs an opt-in model when the CLI asks for it by name"
