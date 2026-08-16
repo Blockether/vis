@@ -133,6 +133,24 @@
   ^long [mode]
   (if (alpha-mode? mode) 24 0))
 
+(defn- band-shifts
+  "Which byte of a packed 0xAARRGGBB pixel each of a mode's PILLOW BANDS occupies,
+   in band order. Storage is always four components; the bands a mode ANSWERS are
+   Pillow's own, so 'LA' is (gray, alpha) -- TWO -- and every op that reports bands
+   (`getpixel`, `tobytes`, `split`, `histogram`) counts them here instead of
+   lumping 'LA' in with 'RGBA'."
+  [mode]
+  (case (str mode)
+    ("L" "1" "I" "F" "P")
+    [16]
+
+    "LA"
+    [16 24]
+
+    "RGBA"
+    [16 8 0 24]
+
+    [16 8 0]))
 (defn- mask-at
   "One mask sample, 0-255. A '1' mask is BOOLEAN -- any non-zero copies the
    source pixel whole -- every other mode reads `band` straight."
@@ -942,14 +960,8 @@
     (if (and (= "P" (str mode)) indices)
       ;; a P pixel is its PALETTE INDEX, not the colour that index resolves to.
       (bit-and (long (aget indices (+ (* (long y) (.getWidth img)) (long x)))) 0xFF)
-      (case (str mode)
-        ("L" "1" "I" "F" "P")
-        (ch p 16)
-
-        ("RGBA" "LA")
-        [(ch p 16) (ch p 8) (ch p 0) (ch p 24)]
-
-        [(ch p 16) (ch p 8) (ch p 0)]))))
+      (let [vs (mapv #(ch p (long %)) (band-shifts mode))]
+        (if (= 1 (count vs)) (first vs) vs)))))
 
 (defn- op-putpixel
   [h x y c]
@@ -1014,7 +1026,7 @@
 
           (when (and (>= dx 0) (< dx dw) (>= dy 0) (< dy dh))
             (if mimg
-               (let [mp (long (mask-at mimg band bitmap? i j))]
+              (let [mp (long (mask-at mimg band bitmap? i j))]
                 (cond (>= mp 255) (.setRGB d dx dy (.getRGB s i j))
                       (pos? mp) (.setRGB d
                                          dx
@@ -1082,14 +1094,7 @@
      (.getHeight img)
 
      chans
-     (case (str mode)
-       ("L" "1" "I" "F" "P")
-       [16]
-
-       ("RGBA" "LA")
-       [16 8 0 24]
-
-       [16 8 0])
+     (band-shifts mode)
 
      nch
      (count chans)
@@ -1102,7 +1107,7 @@
         (let [p (.getRGB img x y)]
           (dotimes [c nch]
             (let
-              [v (ch p (nth chans c))
+              [v (ch p (long (nth chans c)))
                idx (+ (* c 256) v)]
 
               (aset bins idx (inc (aget bins idx))))))))
@@ -1120,15 +1125,11 @@
      hh
      (.getHeight img)
 
+     shifts
+     (band-shifts mode)
+
      bpp
-     (case (str mode)
-       ("L" "1" "I" "F" "P")
-       1
-
-       ("RGBA" "LA")
-       4
-
-       3)
+     (count shifts)
 
      buf
      (byte-array (* w hh bpp))]
@@ -1142,19 +1143,8 @@
                 [p (.getRGB img x y)
                  i (* (+ (* y w) x) bpp)]
 
-                (case bpp
-                  1
-                  (aset buf i (unchecked-byte (ch p 16)))
-
-                  4
-                  (do (aset buf i (unchecked-byte (ch p 16)))
-                      (aset buf (+ i 1) (unchecked-byte (ch p 8)))
-                      (aset buf (+ i 2) (unchecked-byte (ch p 0)))
-                      (aset buf (+ i 3) (unchecked-byte (ch p 24))))
-
-                  (do (aset buf i (unchecked-byte (ch p 16)))
-                      (aset buf (+ i 1) (unchecked-byte (ch p 8)))
-                      (aset buf (+ i 2) (unchecked-byte (ch p 0))))))))
+                (dotimes [c bpp]
+                  (aset buf (+ i c) (unchecked-byte (ch p (long (nth shifts c)))))))))
           (.encodeToString (Base64/getEncoder) buf)))))
 
 (defn- op-frombytes
@@ -1167,14 +1157,7 @@
      (str mode)
 
      bpp
-     (case mode
-       ("L" "1" "I" "F" "P")
-       1
-
-       ("RGBA" "LA")
-       4
-
-       3)
+     (count (band-shifts mode))
 
      out
      (new-raster mode w h)]
@@ -1189,9 +1172,14 @@
           (.setRGB out
                    x
                    y
-                   (unchecked-int (case bpp
+                   (unchecked-int (case (long bpp)
                                     1
                                     (gray-argb (u 0))
+
+                                    ;; 'LA' arrives as (gray, alpha): the gray band is
+                                    ;; replicated so every colour read sees it.
+                                    2
+                                    (argb (u 1) (u 0) (u 0) (u 0))
 
                                     4
                                     (argb (u 3) (u 0) (u 1) (u 2))
@@ -1475,25 +1463,15 @@
      (.getWidth img)
 
      hh
-     (.getHeight img)
-
-     shifts
-     (case (str mode)
-       ("L" "1" "I" "F" "P")
-       [16]
-
-       ("RGBA" "LA")
-       [16 8 0 24]
-
-       [16 8 0])]
+     (.getHeight img)]
 
     (mapv (fn [sh]
             (let [out (new-raster "L" w hh)]
               (dotimes [y hh]
                 (dotimes [x w]
-                  (.setRGB out x y (unchecked-int (gray-argb (ch (.getRGB img x y) sh))))))
+                  (.setRGB out x y (unchecked-int (gray-argb (ch (.getRGB img x y) (long sh)))))))
               (meta-of (put-img! out "L"))))
-          shifts)))
+          (band-shifts mode))))
 
 (defn- op-merge
   [mode handles]
@@ -1526,7 +1504,12 @@
                    x
                    y
                    (unchecked-int (case mode
-                                    ("RGBA" "LA")
+                                    ;; 'LA' takes TWO bands -- gray and alpha -- and
+                                    ;; keeps the gray replicated across R/G/B.
+                                    "LA"
+                                    (argb (or g 255) r r r)
+
+                                    "RGBA"
                                     (argb (or a 255) r g b)
 
                                     "RGB"

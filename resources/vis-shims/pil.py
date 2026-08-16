@@ -625,7 +625,10 @@ def __vis_install_pil__():
             raw = self.tobytes()
             if self.mode in ("L", "1", "I", "F", "P"):
                 data = list(raw)
-            elif self.mode in ("RGBA", "LA"):
+            elif self.mode == "LA":
+                # TWO bands, not the four the host raster stores: Pillow's (L, A).
+                data = [tuple(raw[i : i + 2]) for i in range(0, len(raw), 2)]
+            elif self.mode == "RGBA":
                 data = [tuple(raw[i : i + 4]) for i in range(0, len(raw), 4)]
             else:
                 data = [tuple(raw[i : i + 3]) for i in range(0, len(raw), 3)]
@@ -707,12 +710,17 @@ def __vis_install_pil__():
             return self.split()[channel]
 
         def putalpha(self, alpha):
-            rgb = self if self.mode == "RGB" else self.convert("RGB")
-            r, g, b = rgb.split()
             if isinstance(alpha, Image):
                 a = alpha if alpha.mode == "L" else alpha.convert("L")
             else:
                 a = new("L", self.size, int(alpha))
+            if self.mode in ("L", "LA"):
+                # a gray image keeps its gray band -- L/LA plus alpha is LA, not RGBA.
+                gray = self if self.mode == "L" else self.split()[0]
+                self._set(_H("__vis_pil_merge__", "LA", [gray._handle, a._handle]))
+                return
+            rgb = self if self.mode == "RGB" else self.convert("RGB")
+            r, g, b = rgb.split()
             self._set(
                 _H(
                     "__vis_pil_merge__",
@@ -1184,6 +1192,10 @@ def __vis_install_pil__():
     frombuffer = frombytes
 
     def merge(mode, bands):
+        # A wrong band count used to reach the host and come back as a garbage
+        # pixel; "LA" takes two bands, not RGBA's four.
+        if len(bands) != _MODEBANDS.get(str(mode), 3):
+            raise ValueError("wrong number of bands")
         hs = [b._handle for b in bands]
         return _wrap(_H("__vis_pil_merge__", str(mode), hs))
 

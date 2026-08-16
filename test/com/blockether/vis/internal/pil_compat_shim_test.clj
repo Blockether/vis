@@ -927,12 +927,101 @@
                             "    msg = str(e)\n" "msg"))))))
   ;; `Image.new('LA', size, (gray, alpha))` used to die inside the host with a raw
   ;; Java NPE, because a two-element colour fell through to the RGB(A) arm and
-  ;; unpacked nil. An 'LA' raster keeps the gray replicated across R/G/B here, so
-  ;; the pair is read off the first and last components.
+  ;; unpacked nil. An 'LA' pixel is the (gray, alpha) PAIR Pillow answers, whatever
+  ;; the raster packs underneath.
   (it "fills an 'LA' image from a (gray, alpha) pair"
       (with-python-context
         (expect (= [200 128]
                    (ev python-context
                        (str "from PIL import Image\n"
-                            "p = Image.new('LA',(2,2),(200,128)).getpixel((0,0))\n"
-                            "[p[0], p[-1]]")))))))
+                            "list(Image.new('LA',(2,2),(200,128)).getpixel((0,0)))")))))))
+
+;; Regression, report 55ed67f6 (same session as the mask band above): 'LA' was
+;; stored as an RGBA raster and REPORTED as one, so every band-counting op answered
+;; four components -- `getpixel` gave (gray, gray, gray, alpha), `tobytes` four
+;; bytes a pixel, `split` four images, `histogram` 1024 bins -- while
+;; `Image.getmodebands('LA')` already said two, so anything that trusted the mode
+;; read alpha as a colour. The raster still packs 0xAARRGGBB; what changed is that
+;; the BANDS a mode answers now come from one place (`band-shifts`).
+(defdescribe
+  pil-la-band-count-regression-test
+  (it "answers as many pixel components as the mode has bands"
+      (with-python-context
+        (expect
+          (= [2 2 2]
+             (ev python-context
+                 (str
+                   "from PIL import Image\n"
+                   "im = Image.new('LA',(2,2),(200,128))\n"
+                   "[len(im.getpixel((0,0))), len(im.getbands()), Image.getmodebands('LA')]"))))))
+  (it "keeps two bytes a pixel in tobytes"
+      (with-python-context (expect (= [200 128 200 128 200 128 200 128]
+                                      (ev python-context
+                                          (str
+                                            "from PIL import Image\n"
+                                            "list(Image.new('LA',(2,2),(200,128)).tobytes())"))))))
+  (it "reads (gray, alpha) pairs back out of raw 'LA' bytes"
+      (with-python-context (expect
+                             (= [10 20 30 40]
+                                (ev python-context
+                                    (str "from PIL import Image\n"
+                                         "im = Image.frombytes('LA',(2,1),bytes([10,20,30,40]))\n"
+                                         "list(im.getpixel((0,0))) + list(im.getpixel((1,0)))"))))))
+  (it "splits into a gray band and an alpha band"
+      (with-python-context
+        (expect (= [2 200 128]
+                   (ev python-context
+                       (str "from PIL import Image\n"
+                            "bands = Image.new('LA',(2,2),(200,128)).split()\n"
+                            "[len(bands), bands[0].getpixel((0,0)), bands[1].getpixel((0,0))]"))))))
+  (it "merges a gray band and an alpha band back into 'LA'"
+      (with-python-context
+        (expect
+          (= ["LA" 200 128]
+             (ev python-context
+                 (str "from PIL import Image\n"
+                      "m = Image.merge('LA',[Image.new('L',(2,2),200), Image.new('L',(2,2),128)])\n"
+                      "[m.mode] + list(m.getpixel((0,0)))"))))))
+  (it "refuses a band count the mode does not have"
+      (with-python-context (expect (= "wrong number of bands"
+                                      (ev python-context
+                                          (str "from PIL import Image\n"
+                                               "try:\n"
+                                               "    Image.merge('LA',[Image.new('L',(2,2),200)])\n"
+                                               "    msg = 'NO ERROR'\n" "except ValueError as e:\n"
+                                               "    msg = str(e)\n" "msg"))))))
+  (it "histograms two bands and reports two extremes"
+      (with-python-context
+        (expect (= [512 4 4 200 200 128 128]
+                   (ev python-context
+                       (str "from PIL import Image\n"
+                            "im = Image.new('LA',(2,2),(200,128))\n" "h = im.histogram()\n"
+                            "lo, hi = im.getextrema()\n"
+                            "[len(h), h[200], h[256+128]] + list(lo) + list(hi)"))))))
+  (it "hands getdata and getcolors (gray, alpha) pairs"
+      (with-python-context
+        (expect (= [4 200 128 4 200 128]
+                   (ev python-context
+                       (str "from PIL import Image\n"
+                            "im = Image.new('LA',(2,2),(200,128))\n" "d = list(im.getdata())\n"
+                            "count, colour = im.getcolors()[0]\n"
+                            "[len(d)] + list(d[0]) + [count] + list(colour)"))))))
+  (it "reads a gray+alpha PNG as one (gray, alpha) pixel"
+      (with-python-context (expect (= ["LA" 90 128]
+                                      (ev python-context
+                                          (str "from PIL import Image\nimport io, base64\n"
+                                               "im = Image.open(io.BytesIO(base64.b64decode('"
+                                               gray-alpha-png-b64
+                                               "')))\n" "[im.mode] + list(im.getpixel((1,1)))"))))))
+  (it "converts RGBA to 'LA' without carrying a colour band along"
+      (with-python-context (expect (= [90 128]
+                                      (ev python-context
+                                          (str "from PIL import Image\n"
+                                               "src = Image.new('RGBA',(2,2),(90,90,90,128))\n"
+                                               "list(src.convert('LA').getpixel((0,0)))"))))))
+  (it "putalpha on a gray image gives 'LA', not 'RGBA'"
+      (with-python-context
+        (expect (= ["LA" 90 55]
+                   (ev python-context
+                       (str "from PIL import Image\n" "im = Image.new('L',(2,2),90)\n"
+                            "im.putalpha(55)\n" "[im.mode] + list(im.getpixel((0,0)))")))))))
