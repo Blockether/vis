@@ -21,6 +21,7 @@
   (:require [charred.api :as json]
             [clojure.edn :as edn]
             [clojure.string :as str]
+            [com.blockether.vis.ext.persistance-sqlite.maintenance :as maintenance]
             [com.blockether.vis.ext.persistance-sqlite.migration :as migration]
             [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.internal.paths :as paths]
@@ -410,7 +411,10 @@
 
 (defn- open-disk-pool!
   "Fresh pool over `file`, schema installed under the cross-process migration
-   lock. Closes the pool if the migration fails so a failed open leaks nothing."
+   lock, then the fortnightly space reclaim handed to its own thread
+   (`maintenance/vacuum-async!` — off the open path, since VACUUM rewrites the
+   whole file). Closes the pool if the migration fails so a failed open leaks
+   nothing."
   ^HikariDataSource [^String path ^String file]
   (let
     [raw
@@ -420,6 +424,7 @@
      (pooled-datasource raw (str "vis-rlm-disk-" (.incrementAndGet pool-counter)))]
 
     (try (with-migration-lock! path #(install-schema! pool))
+         (maintenance/vacuum-async! pool file)
          pool
          (catch Throwable t (try (.close pool) (catch Throwable _ nil)) (throw t)))))
 
