@@ -112,7 +112,7 @@
         (expect (not (str/includes? (:message err) "host call returned null"))))))
 
 (defdescribe python-binding-aliases-test
-             ;; A native tool is reachable in the sandbox under its canonical Python name
+             ;; A host verb is reachable in the sandbox under its canonical Python name
              ;; PLUS the intentional compatibility aliases; a missing alias is a bare
              ;; NameError to the model, which reads as "the tool is gone" and invites a spin.
              (it "exposes grep as grep/find_files/find and unaliased tools as themselves"

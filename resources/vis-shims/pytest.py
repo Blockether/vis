@@ -2602,7 +2602,7 @@ def __vis_install_pytest_compat__():
     sys.modules["pytest"] = mod
 
     # Autoload: staple onto builtins so pytest.raises(...) works in every
-    # run_python block WITHOUT an explicit `import pytest` (mirrors json/os).
+    # python_execution block WITHOUT an explicit `import pytest` (mirrors json/os).
     try:
         import builtins as _b
 

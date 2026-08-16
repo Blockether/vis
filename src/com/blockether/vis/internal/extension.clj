@@ -415,7 +415,7 @@
 (s/def :ext.symbol/val some?)
 ;; Per-symbol activation predicate `(fn [env] -> bool)`, default true. THE gate:
 ;; when it returns false the symbol is inactive this iteration — not bound into
-;; the env, its native tool not advertised, its handler not dispatchable. Use it
+;; the env, not advertised in the prompt, its handler not dispatchable. Use it
 ;; to tie a sub-toggle to one verb within a multi-toggle extension.
 (s/def :ext.symbol/active-fn fn?)
 ;; When true, the live `env` is prepended as the call's FIRST arg (so the impl is
@@ -2128,9 +2128,9 @@
   (run-op-around (keyword op-kw) env f (vec args)))
 
 (defn- folded-kwargs->positional
-  "Inverse of the engine's `synth-call` for the DIRECT-python surface. When the
-   agent writes a native tool call in a `python_execution` block with ALL-KEYWORD
-   args (`tool(id=…, n=…)`), GraalPy folds those kwargs into ONE trailing
+  "Re-expand a folded kwargs dict for the DIRECT-python surface. When the agent
+   calls a symbol in a `python_execution` block with ALL-KEYWORD args
+   (`tool(id=…, n=…)`), GraalPy folds those kwargs into ONE trailing
    dict positional (see `__vis_exec_call__` in `env-python`). A fixed-arity impl
    `[env id n]` would then receive the whole `{id n}` map in its `id` slot.
    Re-expand that lone map

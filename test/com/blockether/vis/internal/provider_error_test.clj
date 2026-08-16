@@ -234,7 +234,7 @@
 
     (it "classifies the deterministic request defect separately from outages"
         (expect (= :tool-schema (perr/provider-error-kind err)))
-        (expect (= "Native tool schema rejected: patch" (perr/provider-error-title err))))
+        (expect (= "Tool schema rejected: patch" (perr/provider-error-title err))))
     (it "names the exact tool and schema, then forbids an unchanged retry"
         (expect (re-find #"`patch`" (perr/provider-error-explanation err)))
         (expect (re-find #"`input_schema`" (perr/provider-error-explanation err)))

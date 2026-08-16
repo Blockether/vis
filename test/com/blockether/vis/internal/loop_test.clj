@@ -283,7 +283,7 @@
 
 (defdescribe
   prose-beyond-code-test
-  ;; The model often restates its run_python code in its message prose; that
+  ;; The model often restates its python_execution code in its message prose; that
   ;; prose must be SUPPRESSED so it doesn't render as a dim duplicate of the
   ;; real code block. Only genuine commentary survives.
   ;; The door (`normalize-tool-calls`) already stringified every argument key,
@@ -590,8 +590,8 @@
                          (expect (= "completed" (get (second res) "status")))
                          (expect (true? (:finished @sib)))))))))
 
-(defdescribe native-tool-call-execution-test
-             ;; REGRESSION: native tool calling once shipped 100% broken — `run-iteration`
+(defdescribe tool-call-execution-test
+             ;; REGRESSION: tool calling once shipped 100% broken — `run-iteration`
              ;; synthesized `env* (assoc environment)` (a 1-arg assoc) before execute-code, so
              ;; EVERY tool-call iteration threw ArityException ("Provider unavailable / Wrong
              ;; number of args (1) passed to clojure.core/assoc"). 120+ loop tests stayed green
@@ -1477,12 +1477,12 @@
      :content
      (or content
          [{:type "thinking" :thinking (str "think-" id) :thinking-signature (str "sig-" id)}
-          {:type "tool_use" :id (str "tc-" id) :name "grep" :input {"query" "lmstudio"}}])}
+          {:type "tool_use" :id (str "tc-" id) :name "python_execution" :input {"query" "lmstudio"}}])}
     :llm-provider provider
     :llm-model model
     :preserved-thinking/replay? replay?
     :attachments attachments
-    :tool-calls [{:id (str "tc-" id) :name "grep" :input {"query" "lmstudio"}}]
+    :tool-calls [{:id (str "tc-" id) :name "python_execution" :input {"query" "lmstudio"}}]
     :forms-vec [{:scope (str "t1/i" id)
                  :svar/tool-call-id (str "tc-" id)
                  :result {"item_count" 2 "paths" ["a.clj" "b.clj"]}}]}])
@@ -2351,12 +2351,12 @@
 
 
 (defdescribe
-  native-tool-result-pairing-test
-  "REARCHITECTURE (same DB schema): an iteration is a LIST of tool-calls, one of
-   which may be `python_execution`. Each tool_use gets its OWN tool_result,
-   carrying ITS OWN forms' return — forms are grouped by `:svar/tool-call-id`. A
-   DIRECT file tool's return is its value; python_execution's return IS the text
-   it print()s. No more 'first call carries everything, the rest get a stub'."
+  tool-result-pairing-test
+  "REARCHITECTURE (same DB schema): an iteration is a LIST of `python_execution`
+   tool-calls. Each tool_use gets its OWN tool_result, carrying ITS OWN forms'
+   return — forms are grouped by `:svar/tool-call-id`. A call's return IS the
+   text it print()s. No more 'first call carries everything, the rest get a
+   stub'."
   (let
     [irm
      (var-get #'lp/iteration-results-message)
@@ -2367,11 +2367,10 @@
     (it "each parallel tool_use is answered by its OWN result"
         (let
           [m
-           (irm {:tool-calls [{:id "A" :name "cat"} {:id "B" :name "rg"}
+           (irm {:tool-calls [{:id "A" :name "python_execution"} {:id "B" :name "python_execution"}
                               {:id "P" :name "python_execution"}]
-                 ;; native cat/rg carry :result (their value); python_execution
-                 ;; carries :stdout (what it printed) — the engine emits ONE
-                 ;; channel per call, never both.
+                 ;; A and B returned a value without printing (:result); P printed
+                 ;; (:stdout) — the engine emits ONE channel per call, never both.
                  :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "A" :result "AAA"}
                              {:scope "t1/i1/f2" :svar/tool-call-id "B" :result "BBB"}
                              {:scope "t1/i1/f3" :svar/tool-call-id "P" :result nil :stdout "PPP"}]})
@@ -2380,11 +2379,11 @@
            (into {} (map (juxt :tool_use_id :content)) (:content m))]
 
           (expect (= 3 (count (:content m))))
-          ;; native cat/rg → their RETURN value; not cross-contaminated
+          ;; A/B → their RETURN value; not cross-contaminated
           (expect (str/includes? (by-id "A") "AAA"))
           (expect (not (str/includes? (by-id "A") "BBB")))
           (expect (str/includes? (by-id "B") "BBB"))
-          ;; python_execution → its PRINTED string
+          ;; P → its PRINTED string
           (expect (str/includes? (by-id "P") "PPP"))))
     (it "no tool_result carries a result-recovery handle"
         ;; Regression guard for the `ntr` removal: nothing stores a call's return
@@ -2392,7 +2391,7 @@
         ;; handle here would promise a store that no longer exists.
         (let
           [m
-           (irm {:tool-calls [{:id "toolu_A" :name "cat"} {:id "P" :name "python_execution"}]
+           (irm {:tool-calls [{:id "toolu_A" :name "python_execution"} {:id "P" :name "python_execution"}]
                  :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "toolu_A" :result "AAA"}
                              {:scope "t1/i1/f2" :svar/tool-call-id "P" :result nil :stdout "PPP"}]})
 
@@ -2406,7 +2405,7 @@
     (it "a FAILED call's tool_result is flagged :is_error true; a successful one is not"
         (let
           [m
-           (irm {:tool-calls [{:id "ok" :name "cat"} {:id "bad" :name "cat"}]
+           (irm {:tool-calls [{:id "ok" :name "python_execution"} {:id "bad" :name "python_execution"}]
                  :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "ok" :result "FILE"}
                              {:scope "t1/i1/f2" :svar/tool-call-id "bad" :error "No such file"}]})
 
@@ -2425,26 +2424,10 @@
           [m (irm {:tool-calls [{:id "P" :name "python_execution"}]
                    :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "P"}]})]
           (expect (str/includes? (get-in m [:content 0 :content]) "no return"))))
-    (it "a NATIVE call with no output gets a tool-appropriate hint, not the print() one"
-        ;; A native tool RETURNS a value; telling it to print() reads as a
-        ;; malfunction and invites a pointless re-run (the shape that spins).
-        (let
-          [m
-           (irm {:tool-calls [{:id "F" :name "grep"}]
-                 :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "F"}]})
-
-           c
-           (get-in m [:content 0 :content])]
-
-          (expect (str/includes? c "`grep`"))
-          (expect (str/includes? c "NOT a failure"))
-          (expect (not (str/includes? c "print()")))
-          ;; still a plain result, never flagged as an error
-          (expect (nil? (:is_error (get-in m [:content 0]))))))
     (it "an unpaired/fold form folds onto the FIRST call (nothing lost)"
         (let
           [m
-           (irm {:tool-calls [{:id "A" :name "cat"}]
+           (irm {:tool-calls [{:id "A" :name "python_execution"}]
                  :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "A" :result "body"}
                              {:summary? true :summary-iters ["t1/i0"] :summary-gist "ctx"}]})
 
@@ -2453,7 +2436,7 @@
 
           (expect (str/includes? c "body"))
           (expect (str/includes? c "folded t1/i0 · ctx"))))
-    (it "code-entries-preflight keeps distinct native tool-calls SEPARATE (no merge)"
+    (it "code-entries-preflight keeps distinct tool-calls SEPARATE (no merge)"
         (let
           [entries
            (:code-entries
@@ -3311,7 +3294,7 @@
     (it "a bare string program is rejected and points at native answering, not :answer/:code"
         (let [m (err "\"just prose\"")]
           (expect (some? m))
-          (expect (str/includes? m "run_python"))
+          (expect (str/includes? m "python_execution"))
           (expect (not (str/includes? m ":answer")))))
     (it "a leaked Markdown fence says PYTHON, never Clojure"
         (let [m (err "```python")]
@@ -4534,7 +4517,7 @@
                        :content)))
         (expect (some #(re-find #"Emergency transport fold" (str (:content %)))
                       (:messages recovery)))
-        (expect (some #(re-find #"1 search, 1 tool call" (str (:content %)))
+        (expect (some #(re-find #"1 tool call" (str (:content %)))
                       (:messages recovery)))))
     (it "measures the estimator's undercount from the refused request, never a constant"
         (let

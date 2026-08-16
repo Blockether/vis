@@ -1423,7 +1423,7 @@
 
 (def ^:private auto-imports-python
   "Install tiny convenience imports as Python builtins so agents can use them
-   without repeating imports in every run_python block. os/sys/json/re (plus the
+   without repeating imports in every python_execution block. os/sys/json/re (plus the
    builtins self-ref) are bound EAGERLY - they are cheap, load anyway via engine
    internals, and are the hottest names. Every OTHER name is a `_LazyStd` proxy
    on builtins: the real stdlib module is imported on the FIRST bare touch
@@ -2154,7 +2154,7 @@
      (.getBindings ctx "python")]
 
     ;; Tiny stdlib conveniences as Python builtins (not globals):
-    ;; `json.dumps(...)` and `shlex.quote(...)` work in every run_python
+    ;; `json.dumps(...)` and `shlex.quote(...)` work in every python_execution
     ;; block without repeated imports.
     (install-auto-imports! ctx)
     ;; Tool fns + engine values (names snake-ified to Python-legal identifiers).
@@ -3416,7 +3416,7 @@
           (clear-block-failures! ctx)
           ;; FLAT sum type — success is ONE CONTEXT channel, never both:
           ;;   - printed output (`:stdout`) → the python_execution result; OR
-          ;;   - the returned value (`:result`) → a native tool call (never prints).
+          ;;   - the returned value (`:result`) → a block that returned without printing.
           ;; Printed output WINS. `:printed-results` rides ALONGSIDE `:stdout` —
           ;; it is DISPLAY-only (cards), NOT a second context channel. `:attachments`
           ;; ride alongside EITHER — a produced-artifact channel, not context.
@@ -3486,7 +3486,7 @@
    coroutine, returning the FLAT sum-typed outcome:
 
      {:stdout <printed>}   ; SUCCESS — python_execution (what it print()ed)
-     {:result <value>}     ; SUCCESS — a native tool value (nothing printed)
+     {:result <value>}     ; SUCCESS — the block's returned value (nothing printed)
      {:error  <op-error>}  ; FAILURE — the raised error IS the result
 
    `__vis_run_async__` AST-wraps the block in an `async def`, AUTO-SETTLES every

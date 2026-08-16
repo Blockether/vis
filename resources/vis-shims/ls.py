@@ -1,7 +1,7 @@
 # vis sandbox directory-listing shim: ls.
 #
 # Mapping a tree is the question a model asks most, so it costs a Python call
-# inside the block it is already running rather than a native tool round trip.
+# inside the block it is already running rather than a wire round trip.
 # The walk stays on the HOST (fff: .gitignore/.ignore aware, directories first),
 # and errors cross the boundary as DATA - a kind the shim turns into the real
 # Python exception, since GraalPy does not route host exceptions through except.

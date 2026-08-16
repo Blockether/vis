@@ -9,7 +9,7 @@
        first use and cached beside the socket — then REUSED by every
        `eval!`. This is how Cider/Calva/every editor drives nREPL: no
        per-eval `clone`/`close` round-trip on the hot path (those were
-       what blew the native-tool timeout budget under JVM load), nothing
+       what blew the `run_tests` budget under JVM load), nothing
        to leak, and session-local state — `*1`/`*2`/`*3`/`*e` and dynamic
        `set!`s — PERSISTS across calls like a real REPL (`(def …)` was
        already global; now the whole session is).
@@ -139,7 +139,7 @@
    first use, then REUSED by every `eval!` so session-local state — `*1`/`*e`
    and dynamic `set!`s — persists, and so the hot path carries no per-eval
    `clone`/`close` round-trip (those round-trips, under JVM load, are what
-   blew the native-tool timeout budget). Dropped when the connection evicts."
+   blew the `run_tests` budget). Dropped when the connection evicts."
   [client host port]
   (let [k (key-of host port)]
     (or (get-in @connections [k :session])

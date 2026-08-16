@@ -1179,10 +1179,10 @@
         (some? (:error block))
         (assoc :error (realize-value (:error block)))
 
-        ;; Tool-call identity: which native tool-call (svar tool_use id) this form
-        ;; answers, plus its name. `iteration-results-message` groups forms by this
-        ;; id so EACH tool_use gets its OWN tool_result carrying its own output —
-        ;; the maki model where one of the calls may be `python_execution`.
+        ;; Tool-call identity: which tool_use (svar id) this form answers, plus
+        ;; its name. `iteration-results-message` groups forms by this id so EACH
+        ;; tool_use gets its OWN tool_result carrying its own output — one reply
+        ;; may carry several `python_execution` calls.
         (some? (:svar/tool-call-id block))
         (assoc :svar/tool-call-id (:svar/tool-call-id block))
 

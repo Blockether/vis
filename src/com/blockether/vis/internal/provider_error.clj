@@ -623,8 +623,8 @@
       (if-let [field (gateway-tool-field-rejection err)]
         (str "Gateway sent an unsupported tool field: " field)
         (if-let [tool-name (:tool-name data)]
-          (str "Native tool schema rejected: " tool-name)
-          "Native tool schema rejected"))
+          (str "Tool schema rejected: " tool-name)
+          "Tool schema rejected"))
 
       :output-budget-too-small
       "Output token budget too small"

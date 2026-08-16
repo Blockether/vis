@@ -149,7 +149,7 @@ def __vis_install_yaml_compat__():
     sys.modules["yaml"] = mod
 
     # Autoload: staple onto builtins so yaml.safe_load(...) works in every
-    # run_python block WITHOUT an explicit `import yaml` (mirrors json/os).
+    # python_execution block WITHOUT an explicit `import yaml` (mirrors json/os).
     try:
         import builtins as _b
 

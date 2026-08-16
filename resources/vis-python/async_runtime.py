@@ -1009,7 +1009,7 @@ class __VisShell__(__VisResult__):
 
 
 class __VisResultList__(list):
-    # A native tool result whose TOP-LEVEL shape is a LIST (struct_patch
+    # A host call result whose TOP-LEVEL shape is a LIST (struct_patch
     # returns one row per file; some tools return a list of hits). It stays a
     # REAL list — index / iterate / len / json.dumps / {**_}-free code all behave —
     # but ALSO answers the dict probes (.get/.keys/.items/.values) so a uniform
@@ -1029,7 +1029,7 @@ class __VisResultList__(list):
 
 
 class __VisResultStr__(str):
-    # A native tool result that is a bare STRING (a tool returning plain text). Still a
+    # A host call result that is a bare STRING (a verb returning plain text). Still a
     # real str, but answers the same dict probes, so `.get('op')` yields None instead of
     # blowing up with a `'str' object has no attribute 'get'` when a probe hits it.
     # .keys()/.items()/.values() are empty — a string has no fields.

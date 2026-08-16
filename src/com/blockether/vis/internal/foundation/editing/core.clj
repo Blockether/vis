@@ -6,8 +6,8 @@
    1. Structured helpers for tree / search / structure:
 
         (ls dir)              ; a DIRECTORY -> [{name path type size}], directories first;
-        (ls dir, depth=2)     ; nested rows sit in `children`. A SANDBOX helper, not a
-                              ; native tool: it is called inside a python_execution block.
+        (ls dir, depth=2)     ; nested rows sit in `children`. The walk runs inside
+                              ; the block, so mapping a tree costs no wire round trip.
                               ; A nil or blank path throws before any I/O.
         (grep query)          ; -> ONE anchored TEXT block, never a map: a summary line,
                               ; then `  <line>:<hash>| <text>` rows under each path;
@@ -358,7 +358,7 @@
    deliberately.
 
    It streamed a just-written TEMP file (under `/tmp` or `$TMPDIR`) to the DB as a
-   `session_iteration_attachment` — the native-tool twin of the sandbox OUTBOX
+   `session_iteration_attachment` — the host-side twin of the sandbox OUTBOX
    tap. A no-op for a non-temp path, or when no capture sink is bound (the file
    tool ran outside a driven block). NEVER throws — a capture must not break an
    edit."

@@ -1,7 +1,7 @@
 (ns com.blockether.vis.ext.foundation-search.core
-  "Research extension — NATIVE tools.
+  "Research extension — bare sandbox verbs.
 
-   Three model-facing bindings, bound BARE (native, no alias) in the
+   Three model-facing bindings, bound BARE (no alias) in the
    sandbox alongside cat/rg/patch — same surface as the foundation
    kernel, no `;; -- EXTENSION search --` prompt block:
 
@@ -803,8 +803,8 @@
           authors
           (assoc "authors" authors))))))
 
-;; READ side: `opts` arrives from the model as a STRING-keyed dict (native tool
-;; input). Read the ONE canonical snake_case key per option — no camelCase
+;; READ side: `opts` arrives from the model as a STRING-keyed dict written in the
+;; block. Read the ONE canonical snake_case key per option — no camelCase
 ;; fallback, no dual-read, no alias tolerance.
 ;;
 ;; WRITE side: the map returned here is Exa's `web_search_exa` / `get_code_context_exa`

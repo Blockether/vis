@@ -2565,7 +2565,7 @@ def __vis_install_pil__():
     sys.modules["PIL.ImageShow"] = ImageShow
 
     # Autoload: staple onto builtins so PIL.Image / Image.new work in every
-    # run_python block WITHOUT an explicit import (mirrors json/yaml/matplotlib).
+    # python_execution block WITHOUT an explicit import (mirrors json/yaml/matplotlib).
     try:
         import builtins as _b
 

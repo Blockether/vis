@@ -1313,7 +1313,7 @@ def __vis_install_requests_compat__():
     sys.modules["requests"] = mod
 
     # Autoload: staple onto builtins so requests.get(...) works in every
-    # run_python block WITHOUT an explicit `import requests` (mirrors json/os).
+    # python_execution block WITHOUT an explicit `import requests` (mirrors json/os).
     try:
         import builtins as _b
 

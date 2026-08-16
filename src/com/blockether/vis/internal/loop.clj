@@ -619,11 +619,11 @@
   [python-context expr]
   (cond
     (bare-string-code-block? expr)
-    "Your run_python code is just a bare string literal. To ANSWER, reply with plain text and DON'T call run_python — never pass a quoted string as the program."
+    "Your python_execution code is just a bare string literal. To ANSWER, reply with plain text and DON'T call python_execution — never pass a quoted string as the program."
     (markdown-fence-block? expr)
-    "A Markdown fence (` ```… `) leaked into your run_python code. Pass ONLY executable Python statements — no fence markers."
+    "A Markdown fence (` ```… `) leaked into your python_execution code. Pass ONLY executable Python statements — no fence markers."
     (comment-only-block? python-context expr)
-    "Your run_python code is only `#` comments with no executable statement. Add a statement to run, or reply with plain text instead of calling run_python."))
+    "Your python_execution code is only `#` comments with no executable statement. Add a statement to run, or reply with plain text instead of calling python_execution."))
 
 ;; The engine is full-Python: a block's source is the program verbatim and
 ;; passes through to eval untouched — no parsing, unwrapping, or reformatting.
@@ -3298,11 +3298,11 @@
 
 (defn- iteration-results-message
   "Render ONE prior tool-call iteration as the `tool_result` user message that
-   answers its `tool_use`(s) — maki model: the content is what the program
-   PRINTED (raw stdout), plus errors and any `summarize`/`drop` fold lines.
-   One `tool_result` block per `tool_use`, each carrying ITS
-   OWN forms' output (forms are grouped by `:svar/tool-call-id`) — the maki
-   model, where one call may be python_execution and others direct file tools.
+   answers its `tool_use`(s): the content is what the program PRINTED (raw
+   stdout), plus errors and any `summarize`/`drop` fold lines. One `tool_result`
+   block per `tool_use`, each carrying ITS OWN forms' output (forms are grouped
+   by `:svar/tool-call-id`), because one reply may carry several
+   `python_execution` calls.
    Falls back to a plain text user message when no tool calls are recorded."
   [iter-record]
   (let
@@ -3341,11 +3341,8 @@
                       (when g (str " · " g))))))
            forms)
 
-     ;; What becomes context:
-     ;;   - python_execution: ONLY what the program PRINTED, shown RAW. A bare
-     ;;     expression's value is NOT auto-echoed — print() to see it.
-     ;;   - NATIVE file tools (cat/rg/…): the call's RETURN value, because the
-     ;;     model never print()s a native call — its result IS the output.
+     ;; What becomes context: ONLY what the program PRINTED, shown RAW. A bare
+     ;; expression's value is NOT auto-echoed — print() to see it.
      ;; Errors always surface (the model must see a failure even if nothing
      ;; printed). A clipped value still lives in the sandbox to re-slice.
      clip-wire
@@ -3367,13 +3364,13 @@
            s)))
 
      ;; Each form carries exactly ONE success channel (the engine emits one or
-     ;; the other, never both): `:result` = a native tool call's returned value
-     ;; (rendered), `:stdout` = what python_execution print()ed. An `:error`
-     ;; replaces the return. So no tool-family branch is needed — surface
-     ;; whichever is present. The ERROR envelope is the one internal
-     ;; keyword-keyed shape rendered here — `error->display` renders it as
-     ;; clean, LLM-legible text with REAL newlines (source excerpt + caret
-     ;; kept readable, never an escaped one-line literal).
+     ;; the other, never both): `:result` = the block's returned value when it
+     ;; printed nothing (rendered), `:stdout` = what it print()ed. An `:error`
+     ;; replaces the return. So surface whichever is present. The ERROR
+     ;; envelope is the one internal keyword-keyed shape rendered here —
+     ;; `error->display` renders it as clean, LLM-legible text with REAL
+     ;; newlines (source excerpt + caret kept readable, never an escaped
+     ;; one-line literal).
      form-output
      (fn [f]
        (cond (:summary? f) nil
@@ -3488,16 +3485,10 @@
                   :tool_use_id (:id tc)
                   :content
                   (if (str/blank? c)
-                    ;; Empty body: the message must match the CALL KIND. A
-                    ;; python_execution block shows what it print()s; a NATIVE
-                    ;; tool returns a value, so telling it to print() reads as
-                    ;; a malfunction and invites a pointless retry.
-                    (if (= "python_execution" (str (:name tc)))
-                      "(no return — python_execution returns what it print()s; this call printed nothing. print() what you want to see.)"
-                      (str
-                        "(no result — `"
-                        (or (not-empty (str (:name tc))) "tool")
-                        "` completed and returned nothing. This is NOT a failure; do not re-run it for the same answer.)"))
+                    ;; Empty body: `python_execution` is the only call there is, and its
+                    ;; result is what the block PRINTED — so an empty body means it
+                    ;; printed nothing.
+                    "(no return — python_execution returns what it print()s; this call printed nothing. print() what you want to see.)"
                     c)}
                  errored?
                  (assoc :is_error true))))
@@ -3959,7 +3950,7 @@
             {})))))
 
 (defn- normalize-tool-calls
-  "THE DOOR: every native tool call svar returns enters the engine HERE.
+  "THE DOOR: every tool call svar returns enters the engine HERE.
 
    svar hands model-authored arguments over strings-only — its response parse
    leaves tool-argument subtrees UNINTERNED, so a provider can no longer deliver
@@ -4024,12 +4015,12 @@
 (defn- prose-beyond-code
   "The assistant `prose` (a model `:content` string streamed ALONGSIDE a tool
    call) is worth showing ONLY when it carries commentary BEYOND the code it's
-   about to run. Models frequently restate the exact `run_python` code in their
+   about to run. Models frequently restate the exact `python_execution` code in their
    message — as a ```fenced``` block or verbatim — which then renders as a dim
    DUPLICATE of the real code block. So strip any fenced code from the prose and
    compare what's left (and the whole prose, de-whitespaced) against the
    concatenated tool-call code; return the prose when it still says something,
-   else nil. `tool-calls` are the native tool calls; their `:input` carries
+   else nil. `tool-calls` are the model's `python_execution` calls; their `:input` carries
    `code`."
   [prose tool-calls]
   (when-let
@@ -4285,9 +4276,9 @@
        ask-opts
        (rt/with-default-ask-code-idle-timeout
          (cond->
-           {;; Native tool calling (codex/maki model): the model
-            ;; takes every action by calling `run_python` with a
-            ;; Python program; a reply with NO tool call is the
+           {;; ONE tool on the wire: the model takes every action
+            ;; by calling `python_execution` with a Python
+            ;; program; a reply with NO tool call is the
             ;; final answer (its text). svar returns
             ;; {:stop-reason :tool-calls|:end :tool-calls :content
             ;; :assistant-message}.
@@ -4400,13 +4391,13 @@
                             code-observation))
        api-usage (ask-result->api-usage ask-result)
        reasoning-effort-resolution (:routed/reasoning-effort ask-result)
-       ;; Native tool calling: the model either CALLS `run_python`
+       ;; The model either CALLS `python_execution`
        ;; (`:stop-reason :tool-calls`) or, with NO tool call
        ;; (`:stop-reason :end`), returns its final answer as `:content`.
        ;; An answer reply finalizes the turn directly (finalize-answer!
        ;; records it; the FINAL path below stores/renders it) and runs no
        ;; code. A tool-call reply becomes the executable blocks: one
-       ;; `run_python` call → one block, carrying the tool_use `:id` so the
+       ;; `python_execution` call → one block, carrying the tool_use `:id` so the
        ;; driver can pair its result into a `tool_result` message.
        tool-calls (normalize-tool-calls (:tool-calls ask-result))
        ;; The model can return PROSE (`:content`) ALONGSIDE a tool call — its
@@ -4419,7 +4410,7 @@
                         not-empty)
        answer-md (when (and (empty? tool-calls) (= :end (:stop-reason ask-result))) prose-md)
        ;; Show the prose ONLY when it adds something the code doesn't already
-       ;; say — otherwise it's a dim duplicate of the run_python block.
+       ;; say — otherwise it's a dim duplicate of the python_execution block.
        assistant-prose (when (seq tool-calls) (prose-beyond-code prose-md tool-calls))
        _ (when answer-md (finalize-answer! environment answer-md))
        _ (when (and assistant-prose on-chunk)
@@ -6143,40 +6134,23 @@
              (:phase chunk)))
 
 (defn- emergency-fold-activity
-  "Mechanical activity counts for omitted iterations; derives only recorded tool names."
+  "Mechanical activity count for the omitted iterations, derived only from the
+   tool calls they recorded. `python_execution` is the only call there is, so the
+   COUNT is the whole shape — no tool family is left to name."
   [trailer-iters scopes]
   (let
-    [names
+    [calls
      (into []
            (comp (filter (fn [[_ rec]]
                            (contains? scopes (some iter-of-scope (keep :scope (:forms-vec rec))))))
                  (mapcat (fn [[_ rec]]
-                           (keep #(some-> (:name %)
-                                          name)
-                                 (:tool-calls rec)))))
+                           (keep :name (:tool-calls rec)))))
            trailer-iters)
 
-     counts
-     (frequencies names)
+     n
+     (long (count calls))]
 
-     categories
-     [["search" (+ (long (get counts "grep" 0)) (long (get counts "search" 0)))]
-      ["read"
-       (+ (long (get counts "cat" 0))
-          (long (get counts "struct_index" 0))
-          (long (get counts "struct_nodes" 0)))] ["test" (long (get counts "run_tests" 0))]
-      ["tool call" (long (count names))]]]
-
-    (->> categories
-         (keep (fn [[label n]]
-                 (let [n (long n)]
-                   (when (pos? n)
-                     (str n
-                          " "
-                          (if (and (= label "search") (not= n 1))
-                            "searches"
-                            (str label (when (not= n 1) "s"))))))))
-         (str/join ", "))))
+    (when (pos? n) (str n " tool call" (when (not= n 1) "s")))))
 
 (def ^:private CONTEXT_OVERFLOW_MARGINS
   "Headroom each successive rescue leaves under the provider's input limit AFTER the
@@ -7764,7 +7738,7 @@
                                              ;; `:preserved-thinking/replay? false`.
                                              :assistant-message (:assistant-message
                                                                   iteration-result)
-                                             ;; Native tool calls for this iteration — iteration-results-message
+                                             ;; Tool calls for this iteration — iteration-results-message
                                              ;; pairs one `tool_result` block per call's :id (the API requires
                                              ;; every tool_use be answered).
                                              :tool-calls (:tool-calls iteration-result)
@@ -9843,7 +9817,7 @@
      ;; maki-style in-program concurrency: run each thunk (a Python callable,
      ;; e.g. `lambda: rg({...})`) on a VIRTUAL THREAD and return results in
      ;; order. GraalPy releases its lock on blocking I/O, so I/O-bound tool
-     ;; calls genuinely overlap inside ONE run_python call. Dynamic sink
+     ;; calls genuinely overlap inside ONE python_execution call. Dynamic sink
      ;; bindings (tool-event/render) are conveyed via `bound-fn*` so tools
      ;; called concurrently still render. ALL thunks run; if several FAIL,
      ;; every future is still settled (we don't abort at the first throw) and

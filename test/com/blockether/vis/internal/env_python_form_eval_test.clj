@@ -1204,7 +1204,7 @@ await patch({'path': css})" "t1/i1")]
   no-auto-repair-test
   "Auto-repair and fabrication/glued detection were REMOVED (2026-06-21). A reply
    that fails to split is NOT salvaged — it errors as a plain SyntaxError and the
-   model resends clean code. With native tool calling (one run_python code arg)
+   model resends clean code. With ONE `code` argument per tool call
    the block-concat causes don't arise; :auto-repaired is always nil."
   (it "GLUED top-level forms ERROR as a SyntaxError (not repaired)"
       (let [r (ep/run-python-block (py-ctx) "len([1,2])abs(-3)")]
@@ -1476,7 +1476,7 @@ await patch({'path': css})" "t1/i1")]
 
 (defdescribe
   wrap-ifn-host-null-guard-test
-  ;; The SOURCE guard: `wrap-ifn` runs every native tool from Python. A
+  ;; The SOURCE guard: `wrap-ifn` runs every host verb from Python. A
   ;; NullPointerException inside a tool body (the null `row`) is caught AT
   ;; THE BOUNDARY and rethrown as a labelled, catchable ex-info instead of a
   ;; raw Java "... is null" naming a private local. A genuine Python fault

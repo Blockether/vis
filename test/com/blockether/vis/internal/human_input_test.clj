@@ -705,8 +705,8 @@
 
 (defdescribe blocking-wall-park-test
              ;; REGRESSION: HITL "is not working" — the dialog opened, the operator was
-             ;; still typing, and the enclosing timeout wall (the Python eval watchdog, the
-             ;; native-tool wall) billed that thinking time and killed the call with a bare
+             ;; still typing, and the enclosing timeout wall (the Python eval watchdog)
+             ;; billed that thinking time and killed the call with a bare
              ;; `Timeout (120s)` while the dialog was still on screen.
              (it
                "parks the enclosing timeout wall until the operator answers"
