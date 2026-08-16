@@ -18,6 +18,9 @@
  *      on both stores and two uploads can never collide.
  *   4. cleartext HTTP        → res/xml/network_security_config.xml + AndroidManifest
  *      (API 28+ blocks http:// by default; the gateway is a bare LAN/tailnet IP)
+ *   5. notification icon     → res/drawable-<dpi>/ic_stat_vis.png + AndroidManifest meta-data
+ *      (Firebase refuses an adaptive icon in the tray, so without it the status bar
+ *       shows Android's stock bell instead of the Vis mark)
  *
  * Usage:
  *   node scripts/android-prepare.mjs
@@ -319,8 +322,26 @@ if (!manifest.includes('android:usesCleartextTraffic')) {
 if (!manifest.includes('android:networkSecurityConfig')) {
   manifest = manifest.replace(/<application\b/, '<application\n        android:networkSecurityConfig="@xml/network_security_config"');
 }
+
+// Firebase draws the tray notification itself, and `CommonNotificationBuilder`
+// REFUSES an adaptive icon — "Adaptive icons cannot be used in notifications" —
+// so with no explicit small icon it falls back to Android's stock bell and the
+// Vis mark never reaches the status bar. `ic_stat_vis` is the tracked monochrome
+// silhouette (Android keeps only its alpha) tinted with the brand teal.
+for (const [name, resource] of [
+  ['com.google.firebase.messaging.default_notification_icon', '@drawable/ic_stat_vis'],
+  ['com.google.firebase.messaging.default_notification_color', '@color/vis_notification'],
+]) {
+  if (!manifest.includes(name)) {
+    manifest = manifest.replace(
+      /\n(\s*)<\/application>/,
+      `\n$1    <meta-data android:name="${name}" android:resource="${resource}" />\n$1</application>`,
+    );
+  }
+}
 if (manifest !== manifestBefore) writeFileSync(manifestPath, manifest);
-console.log('\u2713 Android network + microphone permissions');
+console.log('✓ Android network + microphone permissions');
+console.log('✓ notification icon → @drawable/ic_stat_vis + @color/vis_notification  (Firebase small icon)');
 
 /**
  * 6. System share target.
