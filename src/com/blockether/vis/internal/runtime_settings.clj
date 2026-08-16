@@ -12,8 +12,21 @@
   (:import [org.graalvm.polyglot Context]))
 
 (def DEFAULT_EVAL_TIMEOUT_MS
-  "Default timeout in milliseconds for code evaluation in the Python sandbox."
-  120000)
+  "Default wall-clock backstop around ONE `python_execution` block — five minutes.
+
+   A BACKSTOP for guest code that would never finish on its own (`while True:`, a
+   wedged frame), never a co-deadline for work that is progressing. Every BOUNDED
+   call a block makes — shell, `run_tests`, HTTP — is already floored ABOVE this
+   number by the widener below, so what this number really bounds is the in-sandbox
+   compute no scan can see: a large parse, an image pass, an analytic loop over
+   thousands of files. At two minutes that work was killed exactly where it got
+   expensive, and the model re-ran the whole block from zero.
+
+   The price is deliberate: a genuinely wedged block now costs five minutes of a
+   turn instead of two. It stays far under [[MAX_EVAL_TIMEOUT_MS]] and under every
+   bounded-call floor, so a block that makes such a call still gets that call's own
+   budget plus the widener's grace."
+  300000)
 
 (def MIN_EVAL_TIMEOUT_MS "Floor for :eval-timeout-ms." 3000)
 
@@ -125,12 +138,12 @@
    killed precisely where their output started to matter, with the work already
    paid for.
 
-   It matters here because it used to EQUAL the 120s eval watchdog. A `shell`
-   call that named no timeout therefore raced a watchdog that had already
-   started, and the watchdog always won: the turn got a bare `Timeout (120s)`
-   with NO output instead of shell's own envelope (partial stdout, `timed_out`
-   true, a killed process tree). The widener below now floors the watchdog above
-   this budget whenever an eval calls the shell at all."
+   It matters here because it used to EQUAL the eval watchdog's own default: both
+   were two minutes. A `shell` call that named no timeout therefore raced a
+   watchdog that had already started, and the watchdog always won — the turn got a
+   bare `Timeout` with NO output instead of shell's own envelope (partial stdout,
+   `timed_out` true, a killed process tree). The widener below now floors the
+   watchdog above this budget whenever an eval calls the shell at all."
   1800)
 
 (def MAX_SHELL_TIMEOUT_SECS
@@ -141,7 +154,7 @@
 
    A budget that is a variable or an expression is invisible to a text scan, so
    flooring at anything under the cap let the watchdog preempt a legal wait with a
-   bare `Timeout (120s)` instead of shell's own envelope — the same defect
+   bare `Timeout` instead of shell's own envelope — the same defect
    `DEFAULT_SHELL_TIMEOUT_SECS` describes, one spelling further out."
   1800)
 
@@ -150,7 +163,9 @@
    minute budget (the Clojure pack's 290s nREPL deadline) and answers a timeout
    with a STRUCTURED test result; a direct tool call parks the native wall for
    exactly that reason. Called from `python_execution` it must not die earlier at
-   the generic 120s watchdog and lose the run's result."
+   the generic eval watchdog and lose the run's result — this floor keeps the
+   block's wall a grace period above the 290s deadline even though the watchdog's
+   own plain default is now the same five minutes."
   300)
 
 (def HTTP_CALL_FLOOR_SECS
@@ -160,9 +175,9 @@
    A request's budget is invisible to a text scan in the way that matters: the
    shim's own per-call default is 30s, the block usually loops over N hosts, and
    the helper doing the fetching is typically defined in an EARLIER block. So a
-   perfectly ordinary crawl raced the 120s watchdog, and the watchdog won — a
-   bare `Timeout (120s)` for work that was progressing normally, which is the
-   defect `DEFAULT_SHELL_TIMEOUT_SECS` describes, spelled in sockets.
+   perfectly ordinary crawl raced the watchdog — two minutes, then — and the
+   watchdog won: a bare `Timeout` for work that was progressing normally, which is
+   the defect `DEFAULT_SHELL_TIMEOUT_SECS` describes, spelled in sockets.
 
    Unlike shell's, this floor does NOT drop when the block spells a literal
    `timeout=`: that number bounds ONE request, never the loop around it."

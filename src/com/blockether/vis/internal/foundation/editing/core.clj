@@ -147,7 +147,7 @@
 
    Everything else about grep is bounded by COUNTS (`limit`, page limits,
    `rg-breadth-probe-limit`), which says nothing about time: a pathological tree
-   or needle could ride all the way to the native-tool hard kill at 120 s and
+   or needle could ride all the way to the outer Python eval wall and
    return NOTHING. Past this budget the sweep stops and reports what it has with
    `truncated_by`/`hits_truncated_by` = `time` plus a narrowing hint, so partial
    results never read as a whole answer."
@@ -3144,7 +3144,7 @@
 
      ;; WALL-CLOCK budget for the scan below. Every other bound here is a COUNT,
      ;; which says nothing about time: before this, a pathological tree could run
-     ;; to the 120 s native-tool kill and return nothing at all.
+     ;; to the outer Python eval wall and return nothing at all.
      deadline
      (+ (System/currentTimeMillis) (long rg-search-budget-ms))
 

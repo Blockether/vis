@@ -2108,6 +2108,20 @@
                           (expect (nil? (:error read-back)))
                           (expect (= 1 (:result read-back))))
                         (finally (lp/dispose-environment! env)))))
+             (it "gives a plain Python block five minutes before the backstop fires"
+                 ;; The watchdog is a BACKSTOP for a block that will never finish on its
+                 ;; own, never a co-deadline for work in progress. At two minutes ordinary
+                 ;; in-sandbox compute — a large parse, an image pass, an analytic loop —
+                 ;; was killed exactly where it got expensive, and it names no bounded call
+                 ;; for the widener below to see.
+                 (expect (= (* 5 60 1000) rt/DEFAULT_EVAL_TIMEOUT_MS))
+                 (expect (= rt/DEFAULT_EVAL_TIMEOUT_MS
+                            (eval-timeout-ms-for-code rt/DEFAULT_EVAL_TIMEOUT_MS "print(1)")))
+                 ;; Every bounded-call floor stays ABOVE the plain default, so a block that
+                 ;; makes one still gets that call's own budget plus the widener's grace.
+                 (expect (< rt/DEFAULT_EVAL_TIMEOUT_MS (+ (* 1000 rt/RUN_TESTS_FLOOR_SECS) 10000)))
+                 (expect (< rt/DEFAULT_EVAL_TIMEOUT_MS (+ (* 1000 rt/HTTP_CALL_FLOOR_SECS) 10000)))
+                 (expect (< rt/DEFAULT_EVAL_TIMEOUT_MS rt/MAX_EVAL_TIMEOUT_MS)))
              (it "extends the outer eval timeout when shell code asks for a longer timeout"
                  (expect (= 120000 (eval-timeout-ms-for-code 120000 "print(1)")))
                  ;; Any `shell` call floors at the CAP, literal budget or not: the literal

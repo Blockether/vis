@@ -5625,8 +5625,8 @@
    10 MB, so a needle living in a 20 MB log/dump made grep answer \"No file NAME
    or CONTENT matched\" — a false negative, strictly worse than the slow scan the
    fff path replaced. And every other bound on a grep is a COUNT, which says
-   nothing about time: a pathological tree could ride to the 120 s native-tool
-   kill and return nothing at all."
+   nothing about time: a pathological tree could ride to the outer Python eval
+   wall and return nothing at all."
   (let
     [gt
      (grep-data-fn)

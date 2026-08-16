@@ -605,7 +605,7 @@
               {:name "cwd"} {:name "timeout_ms"}]
      :call {:lead-opt "language" :rest :always}
      ;; repl_eval's own `timeout_ms` can exceed the generic Python eval
-     ;; watchdog (DEFAULT_EVAL_TIMEOUT_MS, 120s); dispatch it directly in
+     ;; watchdog (DEFAULT_EVAL_TIMEOUT_MS, five minutes); dispatch it directly in
      ;; Clojure so the language pack's own timeout budget wins (parity with
      ;; run_tests above).
      :inject-env? true

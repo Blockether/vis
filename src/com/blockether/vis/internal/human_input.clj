@@ -1241,7 +1241,7 @@
          ;; Waiting on a human is NOT wall-clock work an enclosing timeout may
          ;; bill: park every enclosing wall (Python eval watchdog, native-tool
          ;; wall) for as long as the operator takes. Without this the surrounding
-         ;; wall kills the thread at `Timeout (120s)` with the dialog still up.
+         ;; wall kills the thread at `Timeout` with the dialog still up.
          (rt/park-blocking-wall (fn []
                                   (try (if (indefinite-timeout? timeout-ms)
                                          ;; No deadline at all: only an answer, a cancel or an

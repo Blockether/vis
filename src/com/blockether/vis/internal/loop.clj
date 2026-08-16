@@ -851,7 +851,7 @@
           ;; What the block PRINTED before the wall is real work — progress lines
           ;; of a fetch loop, results already computed. The guest never reaches
           ;; its own `{:stdout}` outcome here, so drain the capture buffer onto
-          ;; the envelope instead of answering with a bare `Timeout (120s)` and
+          ;; the envelope instead of answering with a bare `Timeout` and
           ;; nothing else: that is unactionable, and the model re-runs the whole
           ;; block blind.
           (let
