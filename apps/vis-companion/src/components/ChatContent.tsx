@@ -1997,19 +1997,62 @@ function buildSegments(
 // this component's parent every frame, so without a memo boundary here every
 // frame would re-render every segment already on screen -- quadratic over a
 // transcript, and measurably so: a 400-call session spent 1.8 s of main thread
-// re-rendering settled cards. `segment` comes from a memoised `buildSegments`,
-// so its identity only changes when the transcript really did.
+// re-rendering settled cards.
+//
+// Identity alone is not that boundary while a turn STREAMS. One delta hands the
+// screen a new `iterations` array (`reduceLiveEvent` rebuilds it to grow the
+// tail), `buildSegments` runs again, and every segment it returns is a fresh
+// object — so a `memo` comparing identity re-rendered the whole trace on every
+// flush, ~7 times a second, for a turn whose settled iterations cannot change.
+// The entries are pure derivations of the iteration objects and THOSE keep
+// their identity across a flush, so the entries are what to compare.
+type TraceSegmentProps = {
+  segment: TraceSegmentData;
+  live: boolean;
+  client?: GatewayClient;
+  sid?: string;
+};
+
+/**
+ * Same iteration, same trace: `thinking`/`prose` carry the `answered` set's
+ * effect, and `forms`/`attachments` come straight off the iteration this entry
+ * was built from.
+ */
+function sameTraceEntry(a: TraceEntry, b: TraceEntry): boolean {
+  return (
+    a.iteration === b.iteration &&
+    a.index === b.index &&
+    a.thinking === b.thinking &&
+    a.prose === b.prose
+  );
+}
+
+function sameTraceSegment(
+  a: TraceSegmentProps,
+  b: TraceSegmentProps,
+): boolean {
+  if (a.live !== b.live || a.client !== b.client || a.sid !== b.sid)
+    return false;
+  const before = a.segment;
+  const after = b.segment;
+  if (before === after) return true;
+  return (
+    before.key === after.key &&
+    before.closed === after.closed &&
+    before.items.length === after.items.length &&
+    sameTraceEntry(before.head, after.head) &&
+    before.items.every((entry, index) =>
+      sameTraceEntry(entry, after.items[index]),
+    )
+  );
+}
+
 const TraceSegment = memo(function TraceSegment({
   segment,
   live,
   client,
   sid,
-}: {
-  segment: TraceSegmentData;
-  live: boolean;
-  client?: GatewayClient;
-  sid?: string;
-}) {
+}: TraceSegmentProps) {
   // Inside a segment, adjacent code-less forms pool into ONE grid; a python
   // block keeps its own frame under its source and starts a new pool after it.
   const chunks = useMemo(() => {
@@ -2073,7 +2116,7 @@ const TraceSegment = memo(function TraceSegment({
       )}
     </section>
   );
-});
+}, sameTraceSegment);
 
 export const IterationTrace = memo(function IterationTrace({
   iterations,

@@ -9,8 +9,13 @@ import { rememberReadingPosition } from "./reading-position";
 // screen then re-opened on the newest turn — right for someone who WAS at the
 // bottom, wrong for everyone else, and unprovable either way.
 
-/** A fresh JavaScript context on the same tab: exactly what reload leaves behind. */
+/**
+ * A fresh JavaScript context on the same tab: exactly what reload leaves behind.
+ * The `pagehide` is the reload's own — marks are coalesced while a reader works
+ * the scroller (see `lib/parked`) and written when the page can be thrown away.
+ */
 async function afterReload() {
+  window.dispatchEvent(new Event("pagehide"));
   vi.resetModules();
   return import("./reading-position");
 }

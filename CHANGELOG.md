@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Cori speaks from the high weights her author published: a quality level is a separate training run, not a setting, so every voice Vis carries is the best level published for that speaker
 
 ### Fixed
+- A big session on a phone types and scrolls at speed again: a keystroke no longer re-runs the sessions list waiting behind the transcript, that list asks the fleet for nothing while it is parked, marking your place costs one store write per gesture instead of one per frame, and a streaming answer redraws only the step it is writing
 - Voice no longer needs Vis restarted to work again: an engine that failed to load is tried on the next use, a failed model download can be retried, and a recording that threw never blocks the next one
 - The installed binary can speak and listen at all — sherpa reads its own Java API through JNI by name, so the native image now keeps every one of those names: the class it calls back into while it speaks, and every step of the walk it makes through the generation options
 
