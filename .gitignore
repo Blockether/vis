@@ -2,11 +2,13 @@
 # match at any depth (root, packages/*, extensions/*, docs/, etc.).
 .cpcache/
 .cache/
-# clj-kondo: ignore the cache/imports it generates locally, but keep
-# our project-level config + hooks in the repo so editors and CI use
-# the same lint rules.
+# clj-kondo: the local cache is generated, but config.edn, hooks/ AND the
+# configs imported from dependencies (`imports/`) are the lint rules — without
+# them a fresh checkout resolves no lazytest/malli/spel macro and `-M:lint`
+# fails only on CI. Refresh them with:
+#   clojure -M:test:lint -m clj-kondo.main --copy-configs --dependencies \
+#     --lint "$(clojure -Spath -M:test)"
 .clj-kondo/.cache/
-.clj-kondo/imports/
 .clj-kondo/inline-configs/
 .lsp/
 .shadow-cljs/
