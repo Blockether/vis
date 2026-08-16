@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Removing a provider, forgetting a machine or deleting a session now asks inside its own red box: the sentence saying what it costs stands in that box with the two answers, instead of hanging under the row above between the same hairlines two calm rows share
 - An opened note saves from the band that names it: `Save` is a cell beside the ✕, where every other dialog verb in this app already stands, and the band reports which version the note just became — the docked strip under the comments is gone and the note is 53px taller for it
 - Opening the sessions list no longer drags the whole history down behind it: a poll asks for the first page only, and when the gateway reports the same ordering it keeps the rows it already holds, so a machine with 1192 sessions costs one request every ten seconds instead of twelve — and the list stops flickering, because a poll that found nothing new no longer rebuilds the fleet under the filter, the sort and your place in it
+- A session you come back to opens where you stopped reading: your place is now taken as you LEAVE and honoured against the transcript once it has finished painting, and the history it needs is pulled back in until it fits — the phone used to answer with a screen it had not painted a row of yet, throw the place away on the opening's own scrolls, and rebuild the same eight-turn window whatever you had loaded, so a live session you had read 91 349 px back into reopened at its very FIRST turn, every time; a place further back than this visit can reach now lands you on the newest turn, following it again, instead of parking you at the top for good
+
 ## [v0.1.38] - 2026-08-14
 
 ### Changed
