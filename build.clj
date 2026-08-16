@@ -42,7 +42,7 @@
        (catch Exception _ nil)))
 
 (def build-stamp
-  "IDENTITY of ONE native build, on one line: `<version> <commit> <channel> <built-at>`.
+  "IDENTITY of ONE native build, on one line: `<version> <commit> <track> <built-at>`.
    Written into the image (`vis/BUILD`) and beside it (`target/vis.build`), so
    `vis-agent runtime` can report which commit a binary came from WITHOUT
    executing it — the binary whose provenance you need most is the one that
@@ -51,8 +51,11 @@
    Not a second version source: `--version` reports `version` and nothing else,
    and no reader takes a version from here. `<commit>` carries a `-dirty` suffix
    for a worktree with uncommitted changes and is `unknown` where history is
-   unavailable. `<channel>` is VIS_CHANNEL — `stable` for a tag build, `beta` for
-   a per-commit build, `dev` for a workstation."
+   unavailable. `<track>` is VIS_RELEASE_TRACK, the DISTRIBUTION axis: `stable`
+   for a tag build, `beta` for the rolling per-commit build, `dev` for a
+   workstation. Deliberately NOT called a channel — in Vis a channel is a user
+   interface an extension registers (TUI, web, Telegram), and one word for two
+   unrelated axes is how a build lands on the wrong one."
   (delay (let
            [commit
             (or (git-line "rev-parse HEAD") (System/getenv "VIS_BUILD_COMMIT") "unknown")
@@ -62,7 +65,7 @@
 
            (str/join " "
                      [version (if dirty? (str commit "-dirty") commit)
-                      (or (not-empty (str (System/getenv "VIS_CHANNEL"))) "dev")
+                      (or (not-empty (str (System/getenv "VIS_RELEASE_TRACK"))) "dev")
                       (str (java.time.Instant/now))]))))
 ;; Package catalog
 
@@ -1236,7 +1239,7 @@
        "-H:IncludeResources=META-INF/vis-extension/.*" "-H:IncludeResources=.*\\.edn$"
        ;; the build-written `vis/VERSION` (git sha) read by `vis-agent --version`
        "-H:IncludeResources=vis/VERSION"
-       ;; the build-written `vis/BUILD` (version, commit, channel, timestamp)
+       ;; the build-written `vis/BUILD` (version, commit, track, timestamp)
        "-H:IncludeResources=vis/BUILD"
        ;; Flyway migration SQL (not in the agent-traced metadata)
        "-H:IncludeResources=db/.*"

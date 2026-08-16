@@ -1,0 +1,224 @@
+name: Beta Native
+
+# THE BETA TRACK: the rolling, per-commit native distribution.
+#
+# One release, one tag: `beta`. Every build moves that tag onto the commit it
+# shipped and replaces the assets on its prerelease, so `vis-agent update
+# --track beta` always resolves the newest beta by name and never by version.
+# Assets carry the SAME names as a stable release — the wrapper looks for
+# `vis-agent-<os>-<arch>-community.tar.gz` and nothing else.
+#
+# COALESCED, not literally per commit. native-image takes 70-130 min on a free
+# runner (see native-release.yml for the measured numbers), so a beta per push
+# would queue for ever and burn the runner pool. The schedule takes the NEWEST
+# green commit every 6 h instead: a burst of ten commits ships one beta, and a
+# quiet day ships none.
+#
+# GREEN IS A PRECONDITION, not a hope. A commit only becomes a beta once CI
+# (.github/workflows/ci.yml — tests, classpath, clj-kondo + reflection lint,
+# and the AOT job that fails on a reflection or boxed-math warning) has a
+# SUCCESSFUL run for that exact sha. Nothing is built otherwise.
+#
+# NEVER ON THE SELF-HOSTED MAC. native-release.yml builds macOS arm64 on our own
+# Apple-silicon machine because no hosted macOS class can hold the ~13.7 GiB
+# analysis; that machine is a workstation, and a build pins every core and
+# ~15 GiB for its duration. A beta every few hours would take it away from the
+# person using it, so betas run ONLY on free GitHub-hosted Linux runners and the
+# beta track has no macOS asset. macOS ships on stable tags.
+#
+# The `beta` tag is deliberately not `v*`: native-release.yml triggers on
+# `v[0-9]*`, so moving this one never starts a stable release build.
+
+on:
+  schedule:
+    # Every 6 hours. Raising the frequency does not ship more betas, it only
+    # shortens the window in which a commit can go green before the next pick.
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit to ship as the beta (empty = main's newest green commit)"
+        type: string
+        default: ''
+      force:
+        description: "Build even when the beta track already ships that commit"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write          # move the `beta` tag, upload its assets
+
+concurrency:
+  group: beta-native
+  cancel-in-progress: false
+
+env:
+  VIS_BETA_TAG: beta
+
+jobs:
+  pick:
+    name: pick the commit this beta ships
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.pick.outputs.sha }}
+      short: ${{ steps.pick.outputs.short }}
+      build: ${{ steps.pick.outputs.build }}
+    steps:
+      - name: Choose a green commit the beta track does not already carry
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          WANTED: ${{ inputs.sha }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          sha="$WANTED"
+          [ -n "$sha" ] || sha="$(gh api "repos/$REPO/commits/main" -q .sha)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "short=${sha:0:12}" >> "$GITHUB_OUTPUT"
+          shipped="$(gh api "repos/$REPO/git/ref/tags/$VIS_BETA_TAG" -q .object.sha 2>/dev/null || true)"
+          if [ "$shipped" = "$sha" ] && [ "$FORCE" != 'true' ]; then
+            echo 'build=false' >> "$GITHUB_OUTPUT"
+            echo "::notice::the beta track already ships $sha — nothing to build"
+            exit 0
+          fi
+          # The whole gate, in one question: did CI finish successfully for THIS
+          # commit? A beta is a build of a commit that already passed everything.
+          green="$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$sha&per_page=100" \
+                     -q '[.workflow_runs[] | select(.conclusion == "success")] | length')"
+          if [ "${green:-0}" -lt 1 ]; then
+            echo 'build=false' >> "$GITHUB_OUTPUT"
+            echo "::notice::CI is not green for $sha — no beta is cut from it"
+            exit 0
+          fi
+          echo 'build=true' >> "$GITHUB_OUTPUT"
+          echo "::notice::building the beta from $sha"
+
+  tag:
+    name: move the beta tag
+    needs: pick
+    if: needs.pick.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      # The tag moves BEFORE the builds, so both matrix legs attach to a release
+      # that already points at the right commit and neither races the other into
+      # creating it.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.pick.outputs.sha }}
+      - name: Point `beta` at this commit and open its prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.pick.outputs.sha }}
+          SHORT: ${{ needs.pick.outputs.short }}
+        run: |
+          set -euo pipefail
+          git tag -f "$VIS_BETA_TAG" "$SHA"
+          git push -f origin "refs/tags/$VIS_BETA_TAG"
+          notes="Rolling beta of \`main\`, built from $SHA after its CI run went green.
+
+          Install or switch:
+
+              vis-agent update --track beta
+
+          Back to releases:
+
+              vis-agent update --track stable
+
+          Linux x64 and arm64 only — macOS betas are not built (see beta-native.yml).
+          \`vis-agent runtime\` reports the commit each installed runtime was built from."
+          if gh release view "$VIS_BETA_TAG" >/dev/null 2>&1; then
+            gh release edit "$VIS_BETA_TAG" --prerelease --title "Beta $SHORT" --notes "$notes"
+          else
+            gh release create "$VIS_BETA_TAG" --prerelease --target "$SHA" \
+              --title "Beta $SHORT" --notes "$notes"
+          fi
+
+  native:
+    name: beta / ${{ matrix.asset }}
+    needs: [pick, tag]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The same two FREE runners, the same measured heap settings as
+          # native-release.yml — a beta must be built exactly the way the stable
+          # asset is, or it stops predicting anything about the release.
+          - { os: ubuntu-latest, bin: target/vis, asset: vis-agent-linux-x64-community.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
+          - { os: ubuntu-24.04-arm, bin: target/vis, asset: vis-agent-linux-arm64-community.tar.gz, extra_args: '-J-Xmx14g -J-Xms8g -J-XX:+UseParallelGC -H:DeadlockWatchdogInterval=0' }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.pick.outputs.sha }}
+      - uses: ./.github/actions/setup-graalvm-25
+      - uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.clojure/.cpcache
+            ~/.vis/build-cache
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
+          restore-keys: deps-${{ runner.os }}-
+      # GitHub's Linux runner ships ~4 GB of swap; back the 14 GB builder heap
+      # with a real swapfile instead of letting the JVM die on GC overhead.
+      - name: Enlarge builder swap
+        run: |
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l 32G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+      - name: Build native image
+        env:
+          VIS_NATIVE_EXTRA_ARGS: ${{ matrix.extra_args }}
+          # Which distribution track this binary belongs to, stamped INTO the
+          # image and beside it (build.clj `build-stamp`), so `vis-agent runtime`
+          # can say a beta is running without executing the binary.
+          VIS_RELEASE_TRACK: beta
+          VIS_AUTO_INSTALL_GRAALVM: "0"
+        run: clojure -T:build native
+      - name: Stage wrapper bundle
+        shell: bash
+        run: bin/stage-release-bundle "${{ matrix.bin }}" "${{ matrix.asset }}"
+      - name: Smoke-test the installed wrapper
+        shell: bash
+        run: target/release-bundle/vis-agent help >/dev/null
+      - name: Smoke-test the language-resources sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$(target/release-bundle/vis-agent python -c "import ast; print('py-ok')")"
+          [ "$out" = "py-ok" ] || { echo '::error::the staged language resources do not load'; exit 1; }
+      - name: Smoke-test the gateway
+        shell: bash
+        run: |
+          set -uo pipefail
+          out="$(target/release-bundle/vis-agent providers status anthropic 2>&1 || true)"
+          echo "$out"
+          if printf '%s\n' "$out" | grep -q 'did not become ready'; then
+            echo '::error::gateway daemon failed to boot — the route table is broken'
+            exit 1
+          fi
+          target/release-bundle/vis-agent gateway stop >/dev/null 2>&1 || true
+      - name: Test the native binary
+        shell: bash
+        env:
+          VIS_NATIVE_BIN: ${{ matrix.bin }}
+        run: clojure -M:test-native
+      - name: Attach to the beta prerelease
+        uses: softprops/action-gh-release@v3
+        with:
+          files: ${{ matrix.asset }}
+          tag_name: ${{ env.VIS_BETA_TAG }}
+          prerelease: true
+          make_latest: false
+          fail_on_unmatched_files: true

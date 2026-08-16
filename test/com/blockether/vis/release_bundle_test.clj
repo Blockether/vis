@@ -441,3 +441,121 @@
                (expect (str/includes? output "qemu-user") output)
                (expect (not= 0 exit) output))
              (finally (delete-tree! mac))))))
+
+;; The distribution TRACK: `stable` (release tags) or `beta` (the rolling
+;; per-commit prerelease). It is deliberately not called a channel — a channel
+;; in Vis is a user interface an extension registers (TUI, web, Telegram) — and
+;; the two must never share a word in build, wrapper or workflow.
+(defdescribe
+  distribution-track-test
+  (it
+    "remembers the track, and never moves it without being told to"
+    (let
+      [root
+       (.toFile (Files/createTempDirectory "vis-track-test-" (make-array FileAttribute 0)))
+
+       home
+       (doto (io/file root "home") .mkdirs)
+
+       bin-dir
+       (doto (io/file root "bin") .mkdirs)
+
+       path-dir
+       (doto (io/file root "path") .mkdirs)
+
+       launcher
+       (io/file bin-dir "vis-agent")
+
+       track-file
+       (io/file home ".vis" "install" "track")
+
+       update!
+       (fn [& args]
+         (run-bash (into ["bash" (.getAbsolutePath launcher) "update"] args)
+                   {"HOME" (.getAbsolutePath home)
+                    "PATH" (str (.getAbsolutePath path-dir) ":" (System/getenv "PATH"))}))]
+
+      (try (io/copy (io/file "bin/vis-agent") launcher)
+           (.setExecutable ^java.io.File launcher true)
+           (write-executable! (io/file bin-dir "vis-agent-native") "#!/usr/bin/env bash\nexit 0\n")
+           ;; A curl that resolves nothing stops the update at the endpoint it
+           ;; CHOSE — which is the whole question here. No network, no download.
+           (write-executable! (io/file path-dir "curl") "#!/usr/bin/env bash\nexit 22\n")
+           (let [{:keys [exit output]} (update! "--track" "beta")]
+             (expect (not= 0 exit) output)
+             (expect (str/includes? output "releases/tags/beta") output))
+           (expect (= "beta\n" (slurp track-file)))
+           ;; The next plain `update` must stay on beta: a tester silently
+           ;; dropped back to stable files bugs against a build never running.
+           (let [{:keys [exit output]} (update!)]
+             (expect (not= 0 exit) output)
+             (expect (str/includes? output "releases/tags/beta") output))
+           ;; Naming a version is a one-off, not a track switch.
+           (let [{:keys [exit output]} (update! "v9.9.9")]
+             (expect (not= 0 exit) output)
+             (expect (str/includes? output "releases/tags/v9.9.9") output))
+           (expect (= "beta\n" (slurp track-file)))
+           (let [{:keys [exit output]} (update! "--track" "stable")]
+             (expect (not= 0 exit) output)
+             (expect (str/includes? output "releases/latest") output))
+           (expect (= "stable\n" (slurp track-file)))
+           ;; The beta track has one moving tag and no versions at all.
+           (let [{:keys [exit output]} (update! "--track" "beta" "v1.2.3")]
+             (expect (not= 0 exit) output)
+             (expect (str/includes? output "has no versions") output))
+           (let [{:keys [exit output]} (update! "--track" "nightly")]
+             (expect (not= 0 exit) output)
+             (expect (str/includes? output "unknown track") output))
+           ;; `runtime` reports the followed track, and says when the installed
+           ;; binary was built for a different one.
+           (spit (io/file bin-dir "vis-agent-native.build")
+                 "0.1.28 4c1f2a9dabc beta 2026-08-17T10:22:31.123Z\n")
+           (let
+             [{:keys [exit output]} (run-bash ["bash" (.getAbsolutePath launcher) "runtime"]
+                                              {"HOME" (.getAbsolutePath home)})]
+             (expect (= 0 exit) output)
+             (expect (str/includes? output "Track:        stable") output)
+             (expect (str/includes? output "built on the beta track") output))
+           (finally (delete-tree! root)))))
+  (it
+    "builds the beta track on free runners only, off a commit CI already passed"
+    (let
+      [beta
+       (slurp ".github/workflows/beta-native.yml")
+
+       stable
+       (slurp ".github/workflows/native-release.yml")
+
+       directives
+       (->> (str/split-lines beta)
+            (remove #(str/starts-with? (str/triml %) "#"))
+            (str/join "\n")
+            str/lower-case)]
+
+      ;; A beta must never take the workstation-class Apple-silicon builder the
+      ;; stable macOS asset needs: a build pins every core and ~15 GiB, and one
+      ;; every few hours takes the machine away from the person using it.
+      (expect (not (str/includes? directives "macos-")) directives)
+      (expect (not (str/includes? directives "self-hosted")) directives)
+      (expect (not (str/includes? directives "vis_macos_arm64_runner")) directives)
+      (doseq [runner ["ubuntu-latest" "ubuntu-24.04-arm"]]
+        (expect (str/includes? beta runner) runner))
+      ;; Coalesced, gated on a green CI run for that exact commit, and stamped.
+      (expect (str/includes? beta "cron:") beta)
+      (expect (str/includes? beta "actions/workflows/ci.yml/runs?head_sha=") beta)
+      (expect (str/includes? beta "VIS_RELEASE_TRACK: beta") beta)
+      (expect (str/includes? (slurp "build.clj") "(System/getenv \"VIS_RELEASE_TRACK\")")
+              "build.clj")
+      (expect (str/includes? beta "prerelease: true") beta)
+      ;; The rolling tag is not a v* tag, or every beta would start a stable
+      ;; native release too.
+      (expect (str/includes? beta "VIS_BETA_TAG: beta") beta)
+      (expect (str/includes? stable "tags: ['v[0-9]*']") stable)
+      (expect (str/includes? stable "VIS_RELEASE_TRACK:") stable)
+      ;; One word, one axis: `channel` belongs to the TUI/web/Telegram adapters.
+      (doseq
+        [[what source] {"build.clj" (slurp "build.clj")
+                        "bin/vis-agent" (slurp "bin/vis-agent")
+                        "beta-native.yml" beta
+                        "native-release.yml" stable}]
+        (expect (not (str/includes? source "VIS_CHANNEL")) what)))))

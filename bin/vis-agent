@@ -23,6 +23,8 @@
 #   install/vis-agent-native   the private native runtime
 #   install/src                the checkout Vis owns
 #   install/ref                the commit that checkout is pinned to
+#   install/track              the distribution track this install follows
+#                              (`stable` release tags, or the rolling `beta`)
 #
 # Install with `bin/install-vis-agent`: it installs this wrapper and then lets
 # it fetch its own runtime, so wrapper and runtime can never drift apart.
@@ -70,6 +72,12 @@ vis_repo_url="${VIS_REPO_URL:-https://github.com/$vis_repo_slug.git}"
 vis_branch="main"
 managed_src="$vis_install_dir/src"
 managed_ref_file="$vis_install_dir/ref"
+# The distribution TRACK this install follows: `stable` (release tags) or `beta`
+# (the rolling per-commit prerelease). Remembered here so `update` never jumps
+# tracks on its own — only an explicit `--track` moves it.
+# Deliberately NOT called a channel: in Vis a channel is a user interface an
+# extension registers (TUI, web, Telegram).
+vis_track_file="$vis_install_dir/track"
 
 say()  { printf 'vis-agent: %s\n' "$*"; }
 warn() { printf 'vis-agent: %s\n' "$*" >&2; }
@@ -79,6 +87,16 @@ die()  { printf 'vis-agent: %s\n' "$1" >&2; shift; for line in "$@"; do printf '
 read_state() {
   [[ -f "$1" ]] || return 0
   head -n1 "$1" 2>/dev/null | tr -d '[:space:]' || true
+}
+
+# The remembered distribution track, defaulting to stable. Anything else on disk
+# is treated as stable rather than trusted: an unreadable track must not send an
+# update at an endpoint nobody publishes.
+vis_track() {
+  case "$(read_state "$vis_track_file")" in
+    beta)   printf 'beta' ;;
+    *)      printf 'stable' ;;
+  esac
 }
 
 # Resolve this script through symlinks: an install puts this wrapper on PATH, and
@@ -294,14 +312,14 @@ vis_runtime() {
       *) warn "runtime takes no arguments (got '$1')"; vis_runtime_usage; return 2 ;;
     esac
   fi
-  local effective native source_root ref stamp built pin_sha
+  local effective native source_root ref stamp built pin_sha track stamp_track
   effective="$(runtime_effective)"
   native="$(find_native 2>/dev/null || printf 'not installed')"
   source_root="$(find_jvm_source 2>/dev/null || printf 'not installed')"
   ref="$(read_state "$managed_ref_file")"
   [[ -n "$ref" ]] || ref="unpinned"
   # What that native runtime IS: the stamp `clojure -T:build native` writes beside
-  # the image and every release bundle ships — `<version> <commit> <channel>
+  # the image and every release bundle ships — `<version> <commit> <track>
   # <built-at>`. Read as a FILE, never by running the binary: the runtime whose
   # provenance you need is precisely the one that aborts on every command.
   stamp=""
@@ -336,9 +354,22 @@ vis_runtime() {
       built="$built"$'\n'"              STALE: not the pinned $pin_sha — rebuild with 'vis-agent update --rebuild'"
     fi
   fi
+  # Which track this install FOLLOWS, against the one the installed binary was
+  # BUILT for. They part company after a hand-installed bundle, and that is
+  # exactly when a "beta bug" turns out to be a stale stable runtime.
+  track="$(vis_track)"
+  if [[ -n "$stamp" ]]; then
+    stamp_track="${stamp#* }"
+    stamp_track="${stamp_track#* }"
+    stamp_track="${stamp_track%% *}"
+    if [[ -n "$stamp_track" && "$stamp_track" != "$track" ]]; then
+      track="$track (this runtime was built on the $stamp_track track)"
+    fi
+  fi
   printf 'Runtime:      %s\n' "$effective"
   printf 'Native:       %s\n' "$native"
   printf 'Built:        %s\n' "$built"
+  printf 'Track:        %s\n' "$track"
   printf 'Source:       %s\n' "$source_root"
   printf 'Pinned at:    %s\n' "$ref"
 }
@@ -435,7 +466,8 @@ vis_runtime_usage() {
   cat >&2 <<'EOF'
 Usage: vis-agent runtime
          Report what runs, where it is installed, which commit the native
-         runtime was BUILT from, and the commit the source Vis owns sits at.
+         runtime was BUILT from, which distribution track this install follows,
+         and the commit the source Vis owns sits at.
          There is nothing to switch: how Vis was installed decides the runtime,
          and 'vis-agent update' keeps it current.
 EOF
@@ -579,25 +611,31 @@ sync_wrapper_from_source() {
 # Releases ship the launcher and its native runtime as a single bundle, so both
 # are replaced together and can never drift apart.
 update_native() {
-  local target="${1:-latest}"
+  local target="${1:-latest}" track="${2:-stable}"
   require_cmd curl "the native runtime"
   require_cmd tar "the native runtime"
   local asset api dl json archive unpack native_dir
   asset="$(vis_platform_asset)"
-  if [[ "$target" == latest ]]; then
-    api="https://api.github.com/repos/$vis_repo_slug/releases/latest"
-  else
+  if [[ "$target" != latest ]]; then
     api="https://api.github.com/repos/$vis_repo_slug/releases/tags/$target"
+  elif [[ "$track" == beta ]]; then
+    # The beta track is ONE rolling prerelease: CI moves the `beta` tag onto the
+    # newest commit that passed everything, so "the newest beta" IS that tag and
+    # there is no version to name.
+    api="https://api.github.com/repos/$vis_repo_slug/releases/tags/beta"
+  else
+    api="https://api.github.com/repos/$vis_repo_slug/releases/latest"
   fi
-  say "resolving $asset from $api"
+  say "resolving $asset on the $track track from $api"
   json="$(curl -fsSL "$api")" || true
   # `set -o pipefail` + `set -e` would kill this function on a no-match grep,
   # swallowing the actionable message below. Keep the failure local.
   dl="$(vis_asset_url "$json" "$asset")"
   if [[ -z "$dl" ]]; then
-    die "update: no native runtime published for '$asset'." \
+    die "update: no native runtime published for '$asset' on the $track track." \
         "Checked $api" \
-        "Releases currently carry Linux x64 and arm64 only." \
+        "The stable track carries Linux x64 and arm64; the beta track is built on" \
+        "free runners only, so it carries the same two and never macOS." \
         "Elsewhere Vis runs from the source it owns: install it with bin/install-vis-agent"
   fi
 
@@ -653,27 +691,37 @@ update_native() {
 
 vis_update_usage() {
   cat >&2 <<'EOF'
-Usage: vis-agent update [vX.Y.Z] [--rebuild]
-         (no target)   the newest published release for a native install, or
-                       main's newest commit for a source install
-         vX.Y.Z        that release instead of the newest
+Usage: vis-agent update [vX.Y.Z] [--track stable|beta] [--rebuild]
+         (no target)   the newest release on the remembered track for a native
+                       install, or main's newest commit for a source install
+         vX.Y.Z        that release instead of the newest, once — naming a
+                       version never moves the remembered track
+         --track NAME  follow that distribution track from now on:
+                         stable  release tags, every platform we publish
+                         beta    the rolling per-commit prerelease, Linux only
          --rebuild     after a source update, build the native runtime from
                        that source
        Update takes the runtime that is installed forward; it never swaps one
-       runtime for the other. The vis-agent command travels with it: a native
-       update replaces this file from the release bundle, a source update
-       copies it out of the source it just pinned.
+       runtime for the other, and never changes track on its own. The vis-agent
+       command travels with it: a native update replaces this file from the
+       release bundle, a source update copies it out of the source it just
+       pinned.
 EOF
 }
 
 # `update` moves the installed runtime forward — the only runtime there is.
 vis_do_update() {
-  local target="" rebuild=0 arg
-  for arg in "$@"; do
+  local target="" rebuild=0 track="" arg
+  while (( $# )); do
+    arg="$1"
     case "$arg" in
       --rebuild) rebuild=1 ;;
+      --track) track="${2:-}"; [[ -n "$track" ]] || die "update: --track needs a name" \
+                                                        "Tracks are 'stable' and 'beta'"; shift ;;
+      --track=*) track="${arg#*=}" ;;
       -h|--help) vis_update_usage; exit 0 ;;
-      -*) die "update: unknown option $arg" "Usage: vis-agent update [vX.Y.Z] [--rebuild]" ;;
+      -*) die "update: unknown option $arg" \
+              "Usage: vis-agent update [vX.Y.Z] [--track stable|beta] [--rebuild]" ;;
       # A published release, or nothing at all. A git ref would name source
       # nobody published, and Vis does not install source nobody published.
       latest|v[0-9]*)
@@ -683,11 +731,31 @@ vis_do_update() {
       *) die "update: '$arg' is not a released version" \
              "Name a release (vX.Y.Z), or nothing at all to take the newest" ;;
     esac
+    shift
   done
+  case "$track" in
+    ""|stable|beta) ;;
+    *) die "update: unknown track '$track'" \
+           "Tracks are 'stable' (release tags) and 'beta' (the rolling per-commit prerelease)" ;;
+  esac
+  # The beta track has no versions to name: its ONE tag moves.
+  [[ -z "$target" || "$target" == latest || "$track" != beta ]] || \
+    die "update: the beta track has no versions — its single 'beta' release moves" \
+        "Take the newest beta with 'vis-agent update --track beta'"
   mkdir -p "$vis_install_dir"
+  # Switching tracks is an explicit act and it STICKS: every later `update`
+  # follows the remembered track, and nothing else ever moves it. Otherwise a
+  # beta tester silently falls back to stable on the next update, and a bug is
+  # filed against a build that was never running.
+  if [[ -n "$track" ]]; then
+    printf '%s\n' "$track" > "$vis_track_file"
+    say "following the $track track"
+  fi
 
   case "$(runtime_effective)" in
     jvm)
+      [[ -z "$track" ]] || die "update: --track selects a PUBLISHED native distribution, and this Vis runs the source runtime" \
+                               "The source runtime follows main; there is no track to choose"
       update_source "$target"
       sync_wrapper_from_source "$managed_src"
       if (( rebuild )); then build_native_runtime "$managed_src"; fi
@@ -695,7 +763,7 @@ vis_do_update() {
     native)
       (( ! rebuild )) || die "update: --rebuild builds FROM source, and this Vis runs the native runtime" \
                              "Install the source runtime with bin/install-vis-agent to build from it"
-      update_native "${target:-latest}"
+      update_native "${target:-latest}" "$(vis_track)"
       ;;
   esac
   exit 0

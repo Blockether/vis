@@ -6,7 +6,7 @@ name: Native Release
 # no air-gapped/"corporate" variant; see the matrix for why macOS is not here):
 #   vis-agent-<os>-<arch>-community.tar.gz — the full distribution: the
 #                         `vis-agent` Bash wrapper plus its private native
-#                         runtime, with every channel (TUI + web + Telegram),
+#                         runtime, with every UI channel (TUI + web + Telegram),
 #                         voice ASR, and the web/network `search` extension.
 #                         The ~465 MB Parakeet voice model is not embedded; it
 #                         downloads on first use, so the runtime stays lean.
@@ -177,10 +177,12 @@ jobs:
           # setup-graalvm-25 installed the LOCKED pin (25.1.3). A mismatch here means
           # the setup step is broken; fail fast rather than SDKMAN-installing a JDK
           # in the middle of a 2 h release build.
-          # Which distribution channel this binary belongs to, stamped INTO the
-          # image and beside it (build.clj `build-stamp`): a tag build is the
-          # stable channel, a branch dispatch is a dry run of it.
-          VIS_CHANNEL: ${{ steps.target.outputs.publish == 'true' && 'stable' || 'beta' }}
+          # Which distribution TRACK this binary belongs to, stamped INTO the
+          # image and beside it (build.clj `build-stamp`). A tag build IS the
+          # stable track; a branch dispatch publishes nothing, so it is marked
+          # `dry-run` and can never pass for a shipped beta (the beta track has
+          # its own workflow, beta-native.yml).
+          VIS_RELEASE_TRACK: ${{ steps.target.outputs.publish == 'true' && 'stable' || 'dry-run' }}
           VIS_AUTO_INSTALL_GRAALVM: "0"
         run: clojure -T:build native
       # ONE definition of a release bundle, shared with `bin/release-native` so a
@@ -342,10 +344,12 @@ jobs:
           restore-keys: deps-${{ runner.os }}-
       - name: Build native image
         env:
-          # Which distribution channel this binary belongs to, stamped INTO the
-          # image and beside it (build.clj `build-stamp`): a tag build is the
-          # stable channel, a branch dispatch is a dry run of it.
-          VIS_CHANNEL: ${{ steps.target.outputs.publish == 'true' && 'stable' || 'beta' }}
+          # Which distribution TRACK this binary belongs to, stamped INTO the
+          # image and beside it (build.clj `build-stamp`). A tag build IS the
+          # stable track; a branch dispatch publishes nothing, so it is marked
+          # `dry-run` and can never pass for a shipped beta (the beta track has
+          # its own workflow, beta-native.yml).
+          VIS_RELEASE_TRACK: ${{ steps.target.outputs.publish == 'true' && 'stable' || 'dry-run' }}
           VIS_AUTO_INSTALL_GRAALVM: "0"
         run: clojure -T:build native
       - name: Stage wrapper bundle

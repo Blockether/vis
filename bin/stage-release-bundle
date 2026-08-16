@@ -11,7 +11,7 @@
 #   vis-agent             the public Bash wrapper
 #   vis-agent-native      the private native runtime
 #   vis-agent-resources/  GraalPy/Truffle language resources
-#   vis-agent-native.build  the build stamp: version, commit, channel, timestamp
+#   vis-agent-native.build  the build stamp: version, commit, track, timestamp
 #   install-vis-agent     the installer, so a bundle can bootstrap itself
 #
 # The resources DIRECTORY is not optional. The image is built with
