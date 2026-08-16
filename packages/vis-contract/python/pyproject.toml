@@ -20,7 +20,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vis-contract"
-version = "0.1.38"
+version = "0.1.39"
 description = "The Vis extension contract — the ops a Vis host answers, as data, and the protocol they declare."
 readme = "README.md"
 requires-python = ">=3.11"
