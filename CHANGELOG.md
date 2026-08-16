@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Tapping the transcript no longer throws you through the session: taking the keyboard down — which is what a tap outside the composer does — leaves a reader parked in history on the exact line they were reading, instead of moving them by the keyboard's whole height
 - Voice no longer needs Vis restarted to work again: an engine that failed to load is tried on the next use, a failed model download can be retried, and a recording that threw never blocks the next one
 - The installed binary can speak and listen at all — sherpa reads its own Java API through JNI by name, so the native image now keeps every one of those names: the class it calls back into while it speaks, and every step of the walk it makes through the generation options
+- A command reads as its answer in the app: `/reload` and `!` turns no longer paint the command itself as a Python program with a result card under it
 
 ## [v0.1.38] - 2026-08-14
 

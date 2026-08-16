@@ -1003,15 +1003,29 @@ function resultBody(form: TranscriptForm): string {
   return typeof form.result === "string" ? raw : fenced(raw, "json");
 }
 
+// A synthetic COMMAND turn carries ONE form the model never wrote: `/reload` is
+// persisted as the slash envelope (`run-slash-turn!`, tag `user-slash`) and `!ls`
+// as the shell result (`run-bang-turn!`, tag `user-shell`), purely so history and
+// resume keep them. The engine stamps those tags so a channel SUPPRESSES the
+// trace — the answer band under the turn already is the whole result — and
+// without that rule the app painted `/reload` as a PYTHON program with its own
+// RESULT band under it.
+const COMMAND_FORM_TAGS = new Set(["user-slash", "user-shell"]);
+
+/** A form the trace paints NOTHING for: engine chrome, an answer, or a command. */
+function hiddenForm(form: TranscriptForm): boolean {
+  return (
+    Boolean(form.silent) ||
+    form.result === "vis_silent" ||
+    form.result === "vis_answer" ||
+    COMMAND_FORM_TAGS.has(String(form.tag ?? ""))
+  );
+}
+
 // Mirrors `form/result-cards`: a block that printed several results carries one
 // mini-form per result, and every other block is its own single card.
 function toolCards(form: TranscriptForm): TranscriptForm[] {
-  if (
-    form.silent ||
-    form.result === "vis_silent" ||
-    form.result === "vis_answer"
-  )
-    return [];
+  if (hiddenForm(form)) return [];
   if (form.cards?.length) return form.cards.flatMap(toolCards);
   return [form];
 }
@@ -1195,10 +1209,11 @@ function formCodeLanguage(form: TranscriptForm): string {
 }
 
 // The program the model wrote is the evidence on screen in every state — while
-// it runs, when it lands, and when it fails. The only source a block hides is
-// one it never had. Mirrors `render/hide-code-chrome?`.
-function showFormCode(_form: TranscriptForm, code: string): boolean {
-  return Boolean(code);
+// it runs, when it lands, and when it fails. The only sources a block hides are
+// one it never had and one no trace paints at all: a command turn's `src` is the
+// command itself, so painting it turned `/reload` into a program.
+function showFormCode(form: TranscriptForm, code: string): boolean {
+  return Boolean(code) && !hiddenForm(form);
 }
 
 const PYTHON_PREVIEW_LINES = 5;
@@ -1313,12 +1328,7 @@ const FormTrace = memo(function FormTrace({
   form: TranscriptForm;
   live?: boolean;
 }) {
-  if (
-    form.silent ||
-    form.result === "vis_silent" ||
-    form.result === "vis_answer"
-  )
-    return null;
+  if (hiddenForm(form)) return null;
   const code = formCode(form);
   const showCode = showFormCode(form, code);
   const cards = toolCards(form);
@@ -2103,12 +2113,7 @@ const TraceSegment = memo(function TraceSegment({
     const built: Chunk[] = [];
     segment.items.forEach((entry) => {
       entry.forms.forEach((form, formIndex) => {
-        if (
-          form.silent ||
-          form.result === "vis_silent" ||
-          form.result === "vis_answer"
-        )
-          return;
+        if (hiddenForm(form)) return;
         const key = `${entry.index}-${formIndex}-${form.scope ?? "form"}`;
         if (showFormCode(form, formCode(form))) {
           built.push({ kind: "code", key, form });

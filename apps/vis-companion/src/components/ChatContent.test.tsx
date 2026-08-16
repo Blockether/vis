@@ -328,6 +328,55 @@ describe("a card wears no op badge, but its band has a name", () => {
   });
 });
 
+// Regression, reported from the companion: a `/reload` turn painted the command
+// itself as a PYTHON program with a RESULT band under it. A slash (`user-slash`)
+// and a bang (`user-shell`) are persisted as ONE synthetic form so history and
+// resume keep them; the answer beside it already IS the whole result.
+describe("a command turn shows its answer, never a program", () => {
+  const trace = (form: Record<string, unknown>) =>
+    renderToStaticMarkup(
+      <AssistantMessage
+        turn={{
+          id: "command",
+          status: "completed",
+          user_request: "/reload",
+          iterations: [{ id: "iteration-1", forms: [form] }],
+          content: [
+            { id: "block-1", type: "prose", markdown: "Reloaded — configuration" },
+          ],
+        }}
+      />,
+    );
+
+  it("hides the slash envelope a slash turn persists", () => {
+    const html = trace({
+      scope: "t1/i1/f1",
+      tag: "user-slash",
+      src: "/reload",
+      result: { "slash/status": "ok", "slash/title": "Reloaded" },
+    });
+
+    expect(html).not.toContain("PYTHON");
+    expect(text(html)).not.toContain("/reload");
+    expect(text(html)).not.toContain("slash/status");
+    expect(text(html)).toContain("Reloaded — configuration");
+  });
+
+  it("hides the shell result a bang turn persists", () => {
+    const html = trace({
+      scope: "t1/i1/f1",
+      tag: "user-shell",
+      op: "shell",
+      src: "!ls",
+      result_summary: "exit 0",
+      result_render: "```\nREADME.md\n```",
+    });
+
+    expect(html).not.toContain("PYTHON");
+    expect(text(html)).not.toContain("exit 0");
+    expect(text(html)).toContain("Reloaded — configuration");
+  });
+});
 // Every tile in this rail fetches its own bytes on first paint, so an iteration
 // that produced forty artifacts fired forty requests in one tick — on whatever
 // connection the phone had. A page at a time now, by count AND by weight.
