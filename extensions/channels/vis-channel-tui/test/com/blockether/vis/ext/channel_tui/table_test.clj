@@ -16,6 +16,7 @@
             [com.blockether.vis.ext.channel-tui.table :as table]
             [com.blockether.vis.ext.channel-tui.terminals :as term]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
+            [com.blockether.vis.internal.form :as form]
             [com.blockether.vis.internal.loop :as vloop]
             [com.blockether.vis.internal.render :as ast])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]
@@ -729,7 +730,7 @@
   (it "the body the engine hands the human is the fence VERBATIM, and it paints"
       (let
         [card
-         (#'vloop/tool-result-display {:stdout wire-fence})
+         (form/result-display {:stdout wire-fence})
 
          tbls
          (keep :table (:line-meta (markdown-render (str (:body card)))))]

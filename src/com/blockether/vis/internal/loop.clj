@@ -3240,7 +3240,7 @@
   "Drop the ROWS out of every ````vis-table` fence in model-facing output.
 
    A CSV/TSV `attach` is DATA for the HUMAN: the fence rides the transcript
-   verbatim (see `tool-result-display`) and both surfaces paint it as a live
+   verbatim (see `form/result-display`) and both surfaces paint it as a live
    grid — sortable, pageable, openable as a full-screen sheet. The model needs
    none of that. Sending the payload would re-upload the whole sheet on EVERY
    later request, because tool results replay: one 500-row export then costs
