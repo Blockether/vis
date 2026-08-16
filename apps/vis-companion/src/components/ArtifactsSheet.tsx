@@ -649,11 +649,17 @@ function FilterStrip({
  */
 function DetailOverlay({
   name,
+  subtitle,
+  actions,
   onClose,
   fill = false,
   children,
 }: {
   name: string;
+  /** What the band should REPORT about the artifact under its name. */
+  subtitle?: ReactNode;
+  /** The artifact's own verbs, as cells of this band before the ✕. */
+  actions?: ReactNode;
   onClose: () => void;
   /** The child fills the body and scrolls itself. */
   fill?: boolean;
@@ -669,6 +675,8 @@ function DetailOverlay({
       <DialogHeader
         isStacked
         title={name}
+        subtitle={subtitle}
+        actions={actions}
         closeLabel={`Close ${name}`}
         onClose={onClose}
       />
@@ -760,17 +768,28 @@ function ArtifactDetail({
   // document saves back as the next version of the same filename.
   if (isTextMedia(artifact.mediaType, artifact.name)) {
     return (
-      <DetailOverlay name={artifact.name} onClose={onClose} fill>
-        <MarkdownArtifact
-          client={client}
-          sid={sid}
-          iterationId={artifact.iterationId}
-          name={artifact.name}
-          mediaType={artifact.mediaType}
-          url={url}
-          plain={!isMarkdownMedia(artifact.mediaType, artifact.name)}
-        />
-      </DetailOverlay>
+      <MarkdownArtifact
+        client={client}
+        sid={sid}
+        iterationId={artifact.iterationId}
+        name={artifact.name}
+        mediaType={artifact.mediaType}
+        url={url}
+        plain={!isMarkdownMedia(artifact.mediaType, artifact.name)}
+        // The note's own verb stands in this overlay's band, one cell from the
+        // ✕, and the band reports the version it saved as.
+        chrome={({ actions, note, body }) => (
+          <DetailOverlay
+            name={artifact.name}
+            subtitle={note}
+            actions={actions}
+            onClose={onClose}
+            fill
+          >
+            {body}
+          </DetailOverlay>
+        )}
+      />
     );
   }
 

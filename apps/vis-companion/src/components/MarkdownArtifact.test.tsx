@@ -8,6 +8,7 @@ import {
   ANNOTATION_COLORS,
   annotationColor,
   annotationWash,
+  type DocumentChrome,
   MarkdownAnnotator,
 } from "./MarkdownArtifact";
 
@@ -15,6 +16,20 @@ const html = (node: Parameters<typeof renderToStaticMarkup>[0]) =>
   renderToStaticMarkup(node);
 
 const noop = async () => undefined;
+
+/**
+ * A document is always read inside somebody else's chrome, and this stands in for
+ * it with the two parts a band has: the verbs it offers, and what it reports.
+ */
+const chrome = ({ actions, note, body }: Parameters<DocumentChrome>[0]) => (
+  <div>
+    <header>
+      {actions}
+      {note}
+    </header>
+    {body}
+  </div>
+);
 
 /**
  * One finger, down and up on the same spot. React reads the POINTER, not
@@ -39,7 +54,11 @@ const flick = (element: Element) => {
 describe("an opened markdown note", () => {
   it("renders the note as prose and invites a selection", () => {
     const markup = html(
-      <MarkdownAnnotator text={"# Ship it\n\n- one\n- two\n"} onSave={noop} />,
+      <MarkdownAnnotator
+        text={"# Ship it\n\n- one\n- two\n"}
+        onSave={noop}
+        chrome={chrome}
+      />,
     );
     expect(markup).toContain("<h1");
     expect(markup).toContain("Ship it");
@@ -55,6 +74,7 @@ describe("an opened markdown note", () => {
           "# Ship it\n\n## Comments\n\n- **“Ship it”** — When exactly?\n" as string
         }
         onSave={noop}
+        chrome={chrome}
       />,
     );
     expect(markup).toContain('aria-label="Comments"');
@@ -79,7 +99,8 @@ describe("picking a passage on a touch screen", () => {
       root.render(
         <MarkdownAnnotator
           text={"# Ship it\n\nWe cut on Friday.\n"}
-          onSave={noop}
+        onSave={noop}
+        chrome={chrome}
         />,
       );
     });
@@ -104,17 +125,32 @@ describe("picking a passage on a touch screen", () => {
     host.remove();
   });
 
-  it("keeps Save reachable: the note scrolls, the controls are pinned", () => {
+  // Regression, user report ("why isn't the global save next to that whole close on
+  // the header bar"): the document's one verb was a docked footer under the comments —
+  // a 28px face on a 53px strip at the far end of the column from the ✕ — while every
+  // other dialog verb in this app is a cell of the band that names what it acts on.
+  it("hands its one verb to the band and docks no footer of its own", () => {
     const markup = html(
       <MarkdownAnnotator
         text={"# Ship it\n\nWe cut on Friday.\n"}
         onSave={noop}
+        chrome={chrome}
       />,
     );
-    // The column itself does not scroll — only the prose inside it does.
+    // The column itself does not scroll — only the prose inside it does — and it
+    // ends above the home indicator now that nothing is docked under it.
     expect(markup).toContain("overflow-hidden");
     expect(markup).toContain("flex-1 touch-manipulation overflow-y-auto");
     expect(markup).toContain("env(safe-area-inset-bottom)");
+
+    const band = markup.slice(0, markup.indexOf("</header>"));
+    const column = markup.slice(markup.indexOf("</header>"));
+    // The ✕'s own cell with a word in it: welded by the band's hairline and as
+    // tall as the band, never a bordered button parked on a title.
+    expect(band).toContain(">Save<");
+    expect(band).toContain("border-l");
+    expect(band).toContain("self-stretch");
+    expect(column).not.toContain(">Save<");
   });
 });
 
@@ -135,7 +171,8 @@ describe("marking up the passages a comment is about", () => {
             "- **\u201cShip it\u201d** \u2014 When exactly?\n" +
             "- **\u201cWe cut on Friday.\u201d** \u2014 Who signs off?\n"
           }
-          onSave={noop}
+        onSave={noop}
+        chrome={chrome}
         />,
       );
     });
@@ -212,6 +249,7 @@ describe("an opened plain-text artifact", () => {
       <MarkdownAnnotator
         text={"# not a heading\nsecond line\n"}
         onSave={noop}
+        chrome={chrome}
         plain
       />,
     );
@@ -236,7 +274,8 @@ describe("a comment on the whole note", () => {
       root.render(
         <MarkdownAnnotator
           text={"# Ship it\n\nWe cut on Friday.\n"}
-          onSave={noop}
+        onSave={noop}
+        chrome={chrome}
         />,
       );
     });
@@ -287,6 +326,7 @@ describe("a comment on the whole note", () => {
           "# Ship it\n\n## Comments\n\n- **Whole document** \u2014 Stale.\n"
         }
         onSave={noop}
+        chrome={chrome}
       />,
     );
     expect(markup).toContain("<sup");
@@ -306,7 +346,9 @@ describe("the tap that quotes a passage", () => {
     document.body.append(host);
     const root = createRoot(host);
     act(() => {
-      root.render(<MarkdownAnnotator text={text} onSave={noop} />);
+      root.render(
+        <MarkdownAnnotator text={text} onSave={noop} chrome={chrome} />,
+      );
     });
     return {
       host,

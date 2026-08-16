@@ -9,7 +9,10 @@ import {
   isPdfMedia,
   isTextMedia,
 } from "../lib/artifacts";
-import { MarkdownArtifact } from "./MarkdownArtifact";
+import {
+  type DocumentChrome,
+  MarkdownArtifact,
+} from "./MarkdownArtifact";
 import { PdfAnnotator } from "./PdfArtifact";
 import { TextFrame } from "./TextArtifact";
 import { ChevronIcon } from "./icons";
@@ -200,47 +203,61 @@ export const DocOverlay = memo(function DocOverlay({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  return (
+  const chrome: DocumentChrome = ({ actions, note, body }) => (
     <div className="fixed inset-0 z-50 flex h-[100dvh] min-h-0 min-w-0 flex-col overflow-hidden overscroll-contain bg-panel pt-[env(safe-area-inset-top)]">
       {/* The one header band, exactly as an artifact opened from the sheet or any
           other surface that opens over another wears it: the name is the title,
-          what the file IS is the subtitle, and the way out is the header's own. */}
+          what the file IS is the subtitle, and the way out is the header's own.
+          A document that can be SAVED puts that verb in this same run of cells,
+          and the band reports what became of it under its name. */}
       <DialogHeader
         title={name}
-        subtitle={[docKindLabel(mime), sizeLabel].filter(Boolean).join(" · ")}
+        subtitle={
+          note || [docKindLabel(mime), sizeLabel].filter(Boolean).join(" · ")
+        }
+        actions={actions}
         closeLabel={`Close ${name}`}
         onClose={onClose}
       />
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {/* Opened, the artifact is not only READ: a note can be commented on and a
-            PDF drawn on, and either one saves as the next version of the same
-            filename. */}
-        {annotate && url && !failed && isTextMedia(mime, name) ? (
-          <MarkdownArtifact
-            client={annotate.client}
-            sid={annotate.sid}
-            iterationId={annotate.iterationId}
-            name={name}
-            mediaType={mime}
-            url={url}
-            plain={!isMarkdownMedia(mime, name)}
-          />
-        ) : annotate && url && !failed && isPdfMedia(mime) ? (
-          <PdfAnnotator
-            client={annotate.client}
-            sid={annotate.sid}
-            iterationId={annotate.iterationId}
-            name={name}
-            mediaType={mime}
-            url={url}
-            frame={<DocFrame url={url} mime={mime} name={name} />}
-          />
-        ) : (
-          <DocBody name={name} mime={mime} url={url} failed={failed} />
-        )}
-      </div>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">{body}</div>
     </div>
   );
+
+  // Opened, the artifact is not only READ: a note can be commented on and a PDF
+  // drawn on, and either one saves as the next version of the same filename.
+  if (annotate && url && !failed && isTextMedia(mime, name)) {
+    return (
+      <MarkdownArtifact
+        client={annotate.client}
+        sid={annotate.sid}
+        iterationId={annotate.iterationId}
+        name={name}
+        mediaType={mime}
+        url={url}
+        plain={!isMarkdownMedia(mime, name)}
+        chrome={chrome}
+      />
+    );
+  }
+
+  return chrome({
+    actions: null,
+    note: "",
+    body:
+      annotate && url && !failed && isPdfMedia(mime) ? (
+        <PdfAnnotator
+          client={annotate.client}
+          sid={annotate.sid}
+          iterationId={annotate.iterationId}
+          name={name}
+          mediaType={mime}
+          url={url}
+          frame={<DocFrame url={url} mime={mime} name={name} />}
+        />
+      ) : (
+        <DocBody name={name} mime={mime} url={url} failed={failed} />
+      ),
+  });
 });
 
 /**

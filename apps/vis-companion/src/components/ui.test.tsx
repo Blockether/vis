@@ -10,6 +10,7 @@ import gatewaySource from "../lib/gateway.ts?raw";
 import settingsSource from "../screens/SettingsScreen.tsx?raw";
 import chatSource from "./ChatContent.tsx?raw";
 import docSource from "./DocArtifact.tsx?raw";
+import markdownArtifactSource from "./MarkdownArtifact.tsx?raw";
 import tableBarSource from "./DataTable.tsx?raw";
 import boundarySource from "./ErrorBoundary.tsx?raw";
 import artifactsSheetSource from "./ArtifactsSheet.tsx?raw";
@@ -675,6 +676,21 @@ describe("BandButton", () => {
     expect(html()).not.toContain("text-dialog-title-foreground");
     // A busy verb says so in its own word (`Refreshing…`), so the cell only fades.
     expect(html({ disabled: true })).toContain("disabled:opacity-60");
+  });
+
+  // Regression, user report ("why isn't the global save next to that whole close on the
+  // header bar"): an opened note kept its own docked footer — a bordered `Button` under
+  // the comments, at the far end of the column from the ✕ — after every other dialog verb
+  // in the app had become a cell of the band that names what it acts on. The annotator
+  // hands ONE cell up, and both surfaces that open a document give it to their band.
+  it("is where an opened document's own verb stands, on both surfaces", () => {
+    expect(markdownArtifactSource).toContain("<BandButton");
+    expect(markdownArtifactSource.match(/onClick={save}/g)).toHaveLength(1);
+    // Nothing is docked under the note any more, and the band reports the version.
+    expect(markdownArtifactSource).not.toContain("border-t border-dialog-edge px-3 py-3 pb-[max(");
+    for (const source of [docSource, artifactsSheetSource]) {
+      expect(source).toContain("actions={actions}");
+    }
   });
 });
 

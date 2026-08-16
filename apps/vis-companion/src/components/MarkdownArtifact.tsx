@@ -1,4 +1,12 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import {
+  memo,
+  type ReactElement,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 import type { GatewayClient } from "../lib/gateway";
 import {
@@ -11,7 +19,7 @@ import {
 import { Markdown } from "./ChatContent";
 import { readArtifactText } from "./TextArtifact";
 import { TrashIcon } from "./icons";
-import { Button, IconButton } from "./ui";
+import { BandButton, Button, IconButton } from "./ui";
 
 /** The blocks a tap may quote: one paragraph, heading, item or cell. */
 const QUOTABLE_BLOCKS = "p,li,h1,h2,h3,h4,h5,h6,blockquote,pre,td,th";
@@ -56,6 +64,27 @@ export function annotationWash(index: number): string {
 }
 
 /**
+ * THE DOCUMENT'S ONE VERB BELONGS TO THE BAND THAT NAMES IT.
+ *
+ * A note is always read inside somebody else's chrome — the artifacts sheet's
+ * stacked overlay, the transcript's full-screen one — and that chrome already
+ * carries the band with the document's name and the one way out of it. Save
+ * stood in a docked footer under the comments instead: a 28px face asking for
+ * 53px of an 844px phone, at the far end of the column from the ✕, to say what
+ * the band says in a cell. The app settled that once already, when the model
+ * picker's `Refresh` and `Manage providers` left their footer for the band.
+ *
+ * So the annotator hands its cell UP and the chrome decides which band it is:
+ * `actions` is the `BandButton`, `note` is what the band should REPORT (the
+ * version this document just became, or why it did not), and `body` is the
+ * column that scrolls under it.
+ */
+export type DocumentChrome = (parts: {
+  actions: ReactNode;
+  note: string;
+  body: ReactNode;
+}) => ReactElement;
+/**
  * A MARKDOWN NOTE, READ AS PROSE AND MARKED UP BY HAND.
  *
  * Opening a note renders it — headings as headings, through the transcript's
@@ -77,6 +106,7 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
   mediaType,
   url,
   plain,
+  chrome,
 }: {
   client: GatewayClient;
   sid: string;
@@ -86,6 +116,8 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
   url: string;
   /** A `.txt`/`.log` note: the same annotator, reading the file verbatim. */
   plain?: boolean;
+  /** The band and the frame this document is read inside. */
+  chrome: DocumentChrome;
 }) {
   const [loaded, setLoaded] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -121,13 +153,24 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
   );
 
   if (failed || loaded === null) {
-    return (
-      <p className="p-4 font-mono text-meta text-dialog-hint">
-        {failed ? "This artifact could not be read." : "Loading…"}
-      </p>
-    );
+    return chrome({
+      actions: null,
+      note: "",
+      body: (
+        <p className="p-4 font-mono text-meta text-dialog-hint">
+          {failed ? "This artifact could not be read." : "Loading…"}
+        </p>
+      ),
+    });
   }
-  return <MarkdownAnnotator text={loaded} onSave={save} plain={plain} />;
+  return (
+    <MarkdownAnnotator
+      text={loaded}
+      onSave={save}
+      plain={plain}
+      chrome={chrome}
+    />
+  );
 });
 
 /**
@@ -158,12 +201,15 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   text,
   onSave,
   plain,
+  chrome,
 }: {
   text: string;
   /** Persists the document and answers with the version it became. */
   onSave: (text: string) => Promise<number | undefined>;
   /** Read the file verbatim, line by line, instead of rendering markdown. */
   plain?: boolean;
+  /** The band and the frame this document is read inside. */
+  chrome: DocumentChrome;
 }) {
   const parsed = parseAnnotated(text);
   const proseRef = useRef<HTMLDivElement | null>(null);
@@ -333,11 +379,11 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
       .finally(() => setSaving(false));
   }, [onSave, body, comments]);
 
-  return (
-    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+  const column = (
+    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden pb-[env(safe-area-inset-bottom)]">
       {/* The prose is the only part that grows: everything under it is pinned, so
-          a long note scrolls inside its own box instead of pushing Save off the
-          bottom of an iPhone. */}
+          a long note scrolls inside its own box. The column ends at the home
+          indicator on its own now that no verb is docked under it. */}
       <div
         ref={proseRef}
         onPointerDown={beginTap}
@@ -447,16 +493,24 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
         </ul>
       ) : null}
 
-      <div className="flex shrink-0 items-center gap-3 border-t border-dialog-edge px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-4">
-        <Button type="button" onClick={save} disabled={!dirty || saving}>
-          {saving ? "Saving…" : "Save"}
-        </Button>
-        {status ? (
-          <span role="status" className="text-meta text-dialog-hint">
-            {status}
-          </span>
-        ) : null}
-      </div>
+      {/* A live region is only announced when it was already standing, so the
+          outcome the band shows has a permanent, silent twin here. */}
+      <span className="sr-only" role="status">
+        {status}
+      </span>
     </div>
   );
+
+  return chrome({
+    // The document's one verb, in the band that names it: the band's own height,
+    // welded by its hairline, one cell from the way out.
+    actions: (
+      <BandButton type="button" onClick={save} disabled={!dirty || saving}>
+        {saving ? "Saving…" : "Save"}
+      </BandButton>
+    ),
+    // What just happened to this document, said under its name.
+    note: status,
+    body: column,
+  });
 });

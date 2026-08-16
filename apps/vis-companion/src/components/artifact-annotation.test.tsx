@@ -44,8 +44,10 @@ let host: HTMLDivElement;
 function gatewayStub(version: number) {
   return {
     saveArtifactBytes: vi.fn(async () => ({ version })),
+    saveArtifactText: vi.fn(async () => ({ version })),
   } as unknown as GatewayClient & {
     saveArtifactBytes: ReturnType<typeof vi.fn>;
+    saveArtifactText: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -57,6 +59,29 @@ function press(selector: string) {
   });
 }
 
+function pressText(label: string) {
+  const button = Array.from(document.querySelectorAll("button")).find(
+    (candidate) => candidate.textContent?.trim() === label,
+  );
+  if (!button) throw new Error(`no control named ${label}`);
+  act(() => {
+    button.click();
+  });
+}
+
+/** React reads a controlled field through the native setter, never `value =`. */
+function type(text: string) {
+  const field = document.querySelector("textarea");
+  if (!field) throw new Error("no field to type into");
+  const setter = Object.getOwnPropertyDescriptor(
+    window.HTMLTextAreaElement.prototype,
+    "value",
+  )!.set!;
+  act(() => {
+    setter.call(field, text);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
 /** Let the component's own promises (fetch, render, save) settle. */
 async function settle() {
   await act(async () => {
@@ -100,6 +125,60 @@ describe("an artifact opened from the transcript", () => {
     expect(host.querySelector("h1")?.textContent).toBe("Release plan");
   });
 
+  // Regression, user report ("why isn't the global save next to that whole close on
+  // the header bar"): a note's Save was docked in a footer under the comments, so the
+  // document's one verb and its one way out stood at opposite ends of the screen.
+  it("saves a note from the band that names it, and the band reports the version", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("# Release plan\n\nWe cut on Friday.")),
+    );
+    const client = gatewayStub(7);
+    await act(async () => {
+      root.render(
+        <DocOverlay
+          name="PLAN.md"
+          mime="text/markdown"
+          url="blob:note"
+          failed={false}
+          annotate={{ client, sid: "s1", iterationId: "i1" }}
+          onClose={() => undefined}
+        />,
+      );
+    });
+    await settle();
+
+    const band = () => host.querySelector("header")!;
+    const saves = () =>
+      Array.from(host.querySelectorAll("button")).filter((button) =>
+        /^Sav/.test(button.textContent ?? ""),
+      );
+
+    // There is ONE of it, it is in the band, and it has nothing to do yet.
+    expect(saves()).toHaveLength(1);
+    expect(saves()[0].closest("header")).toBe(band());
+    expect(saves()[0].disabled).toBe(true);
+
+    pressText("Comment on the note");
+    type("Stale.");
+    pressText("Add comment");
+    expect(saves()[0].disabled).toBe(false);
+
+    act(() => {
+      saves()[0].click();
+    });
+    await settle();
+
+    expect(client.saveArtifactText).toHaveBeenCalledWith(
+      "s1",
+      "i1",
+      "PLAN.md",
+      "text/markdown",
+      expect.stringContaining("Stale."),
+    );
+    // What became of the document is the band's to report, under its name.
+    expect(band().textContent).toContain("Saved as v7");
+  });
   it("draws on a PDF page and saves it as the next version", async () => {
     vi.stubGlobal(
       "fetch",
