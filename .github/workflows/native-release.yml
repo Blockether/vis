@@ -177,6 +177,10 @@ jobs:
           # setup-graalvm-25 installed the LOCKED pin (25.1.3). A mismatch here means
           # the setup step is broken; fail fast rather than SDKMAN-installing a JDK
           # in the middle of a 2 h release build.
+          # Which distribution channel this binary belongs to, stamped INTO the
+          # image and beside it (build.clj `build-stamp`): a tag build is the
+          # stable channel, a branch dispatch is a dry run of it.
+          VIS_CHANNEL: ${{ steps.target.outputs.publish == 'true' && 'stable' || 'beta' }}
           VIS_AUTO_INSTALL_GRAALVM: "0"
         run: clojure -T:build native
       # ONE definition of a release bundle, shared with `bin/release-native` so a
@@ -338,6 +342,10 @@ jobs:
           restore-keys: deps-${{ runner.os }}-
       - name: Build native image
         env:
+          # Which distribution channel this binary belongs to, stamped INTO the
+          # image and beside it (build.clj `build-stamp`): a tag build is the
+          # stable channel, a branch dispatch is a dry run of it.
+          VIS_CHANNEL: ${{ steps.target.outputs.publish == 'true' && 'stable' || 'beta' }}
           VIS_AUTO_INSTALL_GRAALVM: "0"
         run: clojure -T:build native
       - name: Stage wrapper bundle

@@ -32,6 +32,38 @@
    report this one string."
   (str/trim (slurp "VIS_VERSION")))
 
+(defn- git-line
+  "One line of `git` output from this checkout, or nil when git cannot answer — a
+   container build copies source without its history and has no `.git` at all."
+  [args]
+  (try (some-> (b/git-process {:git-args args})
+               str/trim
+               not-empty)
+       (catch Exception _ nil)))
+
+(def build-stamp
+  "IDENTITY of ONE native build, on one line: `<version> <commit> <channel> <built-at>`.
+   Written into the image (`vis/BUILD`) and beside it (`target/vis.build`), so
+   `vis-agent runtime` can report which commit a binary came from WITHOUT
+   executing it — the binary whose provenance you need most is the one that
+   aborts on every command.
+
+   Not a second version source: `--version` reports `version` and nothing else,
+   and no reader takes a version from here. `<commit>` carries a `-dirty` suffix
+   for a worktree with uncommitted changes and is `unknown` where history is
+   unavailable. `<channel>` is VIS_CHANNEL — `stable` for a tag build, `beta` for
+   a per-commit build, `dev` for a workstation."
+  (delay (let
+           [commit
+            (or (git-line "rev-parse HEAD") (System/getenv "VIS_BUILD_COMMIT") "unknown")
+
+            dirty?
+            (some? (git-line "status --porcelain"))]
+
+           (str/join " "
+                     [version (if dirty? (str commit "-dirty") commit)
+                      (or (not-empty (str (System/getenv "VIS_CHANNEL"))) "dev")
+                      (str (java.time.Instant/now))]))))
 ;; Package catalog
 
 (def ^:private subproject-patterns
@@ -310,6 +342,14 @@
 
 (def ^:private native-bin "target/vis")
 
+(defn- write-build-stamp!
+  "Records this build's identity beside the binary as `target/vis.build` — the
+   file `bin/stage-release-bundle` ships and `vis-agent runtime` reads. Beside
+   and not only inside, because the runtime whose provenance matters most is the
+   one that aborts before it can be asked anything."
+  []
+  (spit (str native-bin ".build") (str @build-stamp "\n"))
+  (println "-> stamped" (str native-bin ".build") (str "(" @build-stamp ")")))
 (defn- native-image-command
   "The native-image launcher to invoke via `b/process` (Java ProcessBuilder).
    Resolve the concrete launcher from GRAALVM_HOME / JAVA_HOME
@@ -859,6 +899,12 @@
     (let [vfile (io/file native-class-dir "vis" "VERSION")]
       (io/make-parents vfile)
       (spit vfile version))
+    ;; `vis/BUILD`: the build's IDENTITY beside its version — see `build-stamp`.
+    ;; Read by nothing that reports a version; it answers "which commit is this
+    ;; binary", which VIS_VERSION deliberately cannot.
+    (let [bfile (io/file native-class-dir "vis" "BUILD")]
+      (io/make-parents bfile)
+      (spit bfile @build-stamp))
     ;; no :ns-compile => compile EVERY ns found in :src-dirs (extensions included)
     (b/compile-clj {:basis basis :src-dirs srcs :class-dir native-class-dir})
     basis))
@@ -1190,6 +1236,8 @@
        "-H:IncludeResources=META-INF/vis-extension/.*" "-H:IncludeResources=.*\\.edn$"
        ;; the build-written `vis/VERSION` (git sha) read by `vis-agent --version`
        "-H:IncludeResources=vis/VERSION"
+       ;; the build-written `vis/BUILD` (version, commit, channel, timestamp)
+       "-H:IncludeResources=vis/BUILD"
        ;; Flyway migration SQL (not in the agent-traced metadata)
        "-H:IncludeResources=db/.*"
        ;; The WHOLE embedded docs corpus (markdown pages + manifest +
@@ -1340,7 +1388,7 @@
                                   (into [(native-image-command)]
                                         (native-image-args basis (oracle-native-image? opts)))})]
       (if (zero? exit)
-        (println "-> built" native-bin)
+        (do (write-build-stamp!) (println "-> built" native-bin))
         (throw (ex-info "native-image build failed" {:exit exit}))))))
 
 (defn native
@@ -1384,5 +1432,5 @@
                                   (into [(native-image-command)]
                                         (native-image-args basis (oracle-native-image? opts)))})]
       (if (zero? exit)
-        (println "-> built" native-bin)
+        (do (write-build-stamp!) (println "-> built" native-bin))
         (throw (ex-info "native-image build failed" {:exit exit}))))))

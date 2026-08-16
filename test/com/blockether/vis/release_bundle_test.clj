@@ -63,6 +63,9 @@
        asset
        (io/file root "vis-agent-linux-arm64-community.tar.gz")
 
+       stamp
+       "0.1.28 4c1f2a9dabcdef0123456789abcdef01234567 beta 2026-08-17T10:22:31.123Z\n"
+
        stage!
        (fn []
          (run-bash ["bash" "bin/stage-release-bundle" "--from-dir" (.getAbsolutePath from-dir)
@@ -79,15 +82,109 @@
              (expect (not (.isFile asset)) "no asset may survive a rejected bundle"))
            (.mkdirs (io/file from-dir "vis-agent-resources/python"))
            (spit (io/file from-dir "vis-agent-resources/python/marker") "stdlib\n")
+           ;; Regression, issue #148: a bundle carried no record of the commit its
+           ;; runtime was built from, so a months-old binary beside fresh source
+           ;; passed for current and its long-fixed crash was reported again.
+           (let [{:keys [exit output]} (stage!)]
+             (expect (not= 0 exit) output)
+             (expect (str/includes? output "vis-agent-native.build") output)
+             (expect (not (.isFile asset)) "no asset may survive a rejected bundle"))
+           (spit (io/file from-dir "vis-agent-native.build") stamp)
            (let [{:keys [exit output]} (stage!)]
              (expect (= 0 exit) output)
              (expect (.isFile asset) output)
              (expect (= "stdlib\n"
                         (slurp (io/file bundle-dir "vis-agent-resources/python/marker"))))
+             (expect (= stamp (slurp (io/file bundle-dir "vis-agent-native.build"))))
              (doseq [entry ["vis-agent" "vis-agent-native" "install-vis-agent"]]
                (expect (.canExecute (io/file bundle-dir entry)) entry)))
            (finally (delete-tree! root))))))
 
+;; Regression, issue #148: `vis-agent runtime` printed the SOURCE pin beside a
+;; native runtime built from an entirely different commit, so a binary from
+;; before a fix looked like the pinned one and its crash was filed all over
+;; again. Nothing recorded which commit an installed runtime came from.
+(defdescribe
+  native-build-stamp-test
+  (it
+    "dates the installed runtime from its stamp and calls out one older than the pin"
+    (let
+      [root
+       (.toFile (Files/createTempDirectory "vis-build-stamp-test-" (make-array FileAttribute 0)))
+
+       home
+       (doto (io/file root "home") .mkdirs)
+
+       bin-dir
+       (doto (io/file root "bin") .mkdirs)
+
+       launcher
+       (io/file bin-dir "vis-agent")
+
+       runtime!
+       (fn []
+         (run-bash ["bash" (.getAbsolutePath launcher) "runtime"]
+                   {"HOME" (.getAbsolutePath home)}))]
+
+      (try (io/copy (io/file "bin/vis-agent") launcher)
+           (.setExecutable ^java.io.File launcher true)
+           (write-executable! (io/file bin-dir "vis-agent-native") "#!/usr/bin/env bash\nexit 0\n")
+           ;; No stamp means a runtime built before stamps existed — say so instead
+           ;; of letting it pass for current.
+           (let [{:keys [exit output]} (runtime!)]
+             (expect (= 0 exit) output)
+             (expect (str/includes? output "predates build stamps") output))
+           (spit (io/file bin-dir "vis-agent-native.build")
+                 "0.1.28 4c1f2a9dabc beta 2026-08-17T10:22:31.123Z\n")
+           (let [{:keys [exit output]} (runtime!)]
+             (expect (= 0 exit) output)
+             (expect (str/includes? output "Built:        0.1.28 4c1f2a9dabc beta") output)
+             (expect (not (str/includes? output "STALE")) output))
+           ;; The reported situation: source pinned at one commit, native built from
+           ;; another. The stamp is read as a file — the binary is never run, because
+           ;; the one whose provenance matters is the one that aborts on every call.
+           (let
+             [src
+              (doto (io/file home ".vis" "install" "src") .mkdirs)
+
+              _
+              (run-bash ["bash" "-c"
+                         (str
+                           "cd "
+                           (.getAbsolutePath src)
+                           " && git init -q"
+                           " && printf '{}' > deps.edn && git add -A"
+                           " && git -c user.email=ci@example.com -c user.name=ci commit -qm init")]
+                        {})
+
+              head-sha
+              (str/trim (:output (run-bash ["git" "-C" (.getAbsolutePath src) "rev-parse" "HEAD"]
+                                           {})))]
+
+             (spit (io/file home ".vis" "install" "ref") (str head-sha "\n"))
+             (let [{:keys [exit output]} (runtime!)]
+               (expect (= 0 exit) output)
+               (expect (str/includes? output "STALE") output)
+               (expect (str/includes? output head-sha) output))
+             (spit (io/file bin-dir "vis-agent-native.build")
+                   (str "0.1.28 " head-sha " stable 2026-08-17T10:22:31.123Z\n"))
+             (let [{:keys [exit output]} (runtime!)]
+               (expect (= 0 exit) output)
+               (expect (not (str/includes? output "STALE")) output)))
+           (finally (delete-tree! root)))))
+  (it "writes that stamp from the build — into the image and beside the binary"
+      (let
+        [build-clj
+         (slurp "build.clj")
+
+         stage
+         (slurp "bin/stage-release-bundle")]
+
+        (expect (str/includes? build-clj "(spit (str native-bin \".build\")") build-clj)
+        (expect (str/includes? build-clj "\"-H:IncludeResources=vis/BUILD\"") build-clj)
+        ;; Provenance, never a version: `--version` still reports VIS_VERSION alone.
+        (expect (str/includes? build-clj "(spit vfile version)") build-clj)
+        (expect (str/includes? stage "vis-agent-native.build") stage))))
 (defn- fake-tools!
   "A PATH directory whose `uname` claims `os`/`arch`, plus a container engine that
   answers `--version`/`info`/`run` without a VM. Lets the host-target and

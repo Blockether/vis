@@ -11,6 +11,7 @@
 #   vis-agent             the public Bash wrapper
 #   vis-agent-native      the private native runtime
 #   vis-agent-resources/  GraalPy/Truffle language resources
+#   vis-agent-native.build  the build stamp: version, commit, channel, timestamp
 #   install-vis-agent     the installer, so a bundle can bootstrap itself
 #
 # The resources DIRECTORY is not optional. The image is built with
@@ -63,6 +64,11 @@ if [[ -n "$from_dir" ]]; then
     die "$from_dir is missing vis-agent-resources/ — the language-resources sidecar" \
         "Rebuild it: the image must be built with -H:+CopyLanguageResources."
   cp -R "$from_dir/vis-agent-resources" "$bundle/vis-agent-resources"
+  [[ -f "$from_dir/vis-agent-native.build" ]] || \
+    die "$from_dir is missing vis-agent-native.build — the build stamp" \
+        "'clojure -T:build native' writes it beside the image; without it nobody" \
+        "can tell which commit an installed runtime came from."
+  install -m 0644 "$from_dir/vis-agent-native.build" "$bundle/vis-agent-native.build"
 else
   [[ -x "$native" ]] || die "no native runtime at $native"
   native_dir="$(cd -P "$(dirname "$native")" && pwd)"
@@ -75,6 +81,13 @@ else
   install -m 0755 "$native" "$bundle/vis-agent-native"
   install -m 0755 "$repo_root/bin/install-vis-agent" "$bundle/install-vis-agent"
   cp -R "$resources" "$bundle/vis-agent-resources"
+  # Provenance travels WITH the binary, and beside it: a runtime that aborts on
+  # every command still has to answer which commit built it.
+  [[ -f "$native.build" ]] || \
+    die "no build stamp at $native.build" \
+        "'clojure -T:build native' writes it beside the image; rebuild instead of" \
+        "packing a runtime nobody can date."
+  install -m 0644 "$native.build" "$bundle/vis-agent-native.build"
 fi
 
 tar -C "$bundle" -czf "$asset" .

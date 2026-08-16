@@ -217,6 +217,7 @@ RUN VIS_NATIVE_EXTRA_ARGS="-Duser.home=/home/vis ${VIS_NATIVE_EXTRA_ARGS}" \
 # `bin/vis-agent update` unpacks.
 FROM scratch AS native-export
 COPY --from=builder /build/target/vis /vis-agent-native
+COPY --from=builder /build/target/vis.build /vis-agent-native.build
 COPY --from=builder /build/target/resources /vis-agent-resources
 COPY --from=builder /build/bin/vis-agent /vis-agent
 COPY --from=builder /build/bin/install-vis-agent /install-vis-agent

@@ -160,6 +160,29 @@ jobs:
       - name: Resolve ${{ matrix.path }} classpath
         run: cd ${{ matrix.path }} && clojure -Spath > /dev/null
 
+  # The cheapest gate there is (~6 s for the whole tree) and the one a beta build
+  # must not skip: clj-kondo through the repo's own :lint alias. It runs beside
+  # the suite rather than after it — a lint error is worth reporting while the
+  # tests are still going.
+  lint:
+    name: lint / clj-kondo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-graalvm-25
+      - uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.clojure/.cpcache
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
+          restore-keys: deps-${{ runner.os }}-
+      - name: Lint the whole tree
+        run: clojure -M:lint
   # AOT gate: compile EVERY namespace (core + every extension) exactly as the
   # native build's prepare-native-classes! does. This is what catches compile
   # errors (e.g. an unresolved symbol in an extension) BEFORE the slow, gated
@@ -168,7 +191,7 @@ jobs:
   aot:
     name: build / aot uberjar
     runs-on: ubuntu-latest
-    needs: [tests, classpath]
+    needs: [tests, classpath, lint]
     steps:
       - uses: actions/checkout@v7
       # See the tests job for why we install GraalVM CE 25.1.3 directly rather
@@ -185,13 +208,24 @@ jobs:
             ~/.clojure/.cpcache
           key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
-      - name: AOT-compile all namespaces (uberjar)
+      - name: AOT-compile all namespaces, refusing reflection or boxed math
         env:
           # The action above already installed the pinned CE. If build.clj still sees
           # the wrong JDK, that is a BROKEN SETUP — fail loudly instead of silently
           # SDKMAN-installing a second GraalVM inside the runner.
           VIS_AUTO_INSTALL_GRAALVM: "0"
-        run: clojure -T:build uber
+        # `*warn-on-reflection*` and `*unchecked-math* :warn-on-boxed` only PRINT,
+        # so a namespace that reflects stays green until somebody reads a build
+        # log. This is the one pass that compiles EVERY namespace, and the same
+        # AOT classes a native image is built from — make the warning the failure
+        # here or it reaches a published binary.
+        run: |
+          set -o pipefail
+          clojure -T:build uber 2>&1 | tee aot.log
+          if grep -E 'Reflection warning|Boxed math warning' aot.log; then
+            echo "::error::AOT emitted reflection or boxed-math warnings (listed above)"
+            exit 1
+          fi
 
   # The `vis` module, its outside-the-sandbox host and the declaration both of them
   # read are what PyPI installs as `vis-agent` and `vis-contract`, and the harness

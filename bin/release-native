@@ -305,7 +305,8 @@ podman_export() {
     .
   ctr="$(eng create --platform "$platform" "$image" /vis-agent)" || \
     die "podman could not create a container from $image"
-  for entry in vis-agent vis-agent-native install-vis-agent vis-agent-resources; do
+  for entry in vis-agent vis-agent-native vis-agent-native.build install-vis-agent \
+               vis-agent-resources; do
     eng cp "$ctr:/$entry" "$out/$entry" || {
       eng rm -f "$ctr" >/dev/null 2>&1 || true
       die "podman cp failed for /$entry out of $image"

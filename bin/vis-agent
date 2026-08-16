@@ -294,26 +294,51 @@ vis_runtime() {
       *) warn "runtime takes no arguments (got '$1')"; vis_runtime_usage; return 2 ;;
     esac
   fi
-  local effective native source_root ref
+  local effective native source_root ref stamp built pin_sha
   effective="$(runtime_effective)"
   native="$(find_native 2>/dev/null || printf 'not installed')"
   source_root="$(find_jvm_source 2>/dev/null || printf 'not installed')"
   ref="$(read_state "$managed_ref_file")"
   [[ -n "$ref" ]] || ref="unpinned"
+  # What that native runtime IS: the stamp `clojure -T:build native` writes beside
+  # the image and every release bundle ships — `<version> <commit> <channel>
+  # <built-at>`. Read as a FILE, never by running the binary: the runtime whose
+  # provenance you need is precisely the one that aborts on every command.
+  stamp=""
+  if [[ "$native" == "not installed" ]]; then
+    built="not installed"
+  elif [[ -r "$native.build" ]]; then
+    stamp="$(head -n 1 "$native.build")"
+    built="${stamp:-unknown}"
+  else
+    built="unknown (this runtime predates build stamps — 'vis-agent update')"
+  fi
   # A pin is a claim about the source on disk, so check it instead of repeating
   # it: source that has been walked off its ref is what a source launch would
   # silently run.
+  pin_sha=""
   if [[ "$source_root" == "$managed_src" && -d "$managed_src/.git" ]] \
      && command -v git >/dev/null 2>&1; then
-    local head_sha pin_sha
+    local head_sha
     head_sha="$(git -C "$managed_src" rev-parse --verify --quiet HEAD 2>/dev/null || true)"
     pin_sha="$(git -C "$managed_src" rev-parse --verify --quiet "$ref^{commit}" 2>/dev/null || true)"
     if [[ -n "$head_sha" && -n "$pin_sha" && "$head_sha" != "$pin_sha" ]]; then
       ref="$ref (DRIFTED: source is at $head_sha — restore it with 'vis-agent update')"
     fi
   fi
+  # A binary is a build of ONE commit and the pin names one. A native runtime
+  # older than the source beside it is what gets reported as a bug that was fixed
+  # weeks earlier, so say so here rather than letting the binary say nothing.
+  if [[ -n "$stamp" && -n "$pin_sha" ]]; then
+    local built_commit="${stamp#* }"
+    built_commit="${built_commit%% *}"
+    if [[ -n "$built_commit" && "$built_commit" != "$pin_sha" ]]; then
+      built="$built"$'\n'"              STALE: not the pinned $pin_sha — rebuild with 'vis-agent update --rebuild'"
+    fi
+  fi
   printf 'Runtime:      %s\n' "$effective"
   printf 'Native:       %s\n' "$native"
+  printf 'Built:        %s\n' "$built"
   printf 'Source:       %s\n' "$source_root"
   printf 'Pinned at:    %s\n' "$ref"
 }
@@ -409,9 +434,10 @@ ensure_java_runtime() {
 vis_runtime_usage() {
   cat >&2 <<'EOF'
 Usage: vis-agent runtime
-         Report what runs, where it is installed, and the commit the source
-         Vis owns sits at. There is nothing to switch: how Vis was installed
-         decides the runtime, and 'vis-agent update' keeps it current.
+         Report what runs, where it is installed, which commit the native
+         runtime was BUILT from, and the commit the source Vis owns sits at.
+         There is nothing to switch: how Vis was installed decides the runtime,
+         and 'vis-agent update' keeps it current.
 EOF
 }
 
@@ -597,6 +623,11 @@ update_native() {
     die "update: the release bundle is missing its launcher or native runtime"
 
   mv -f "$unpack/vis-agent-native" "$native_dir/vis-agent-native"
+  # The stamp travels with the runtime it describes, and is replaced with it:
+  # otherwise `vis-agent runtime` dates a new binary by the old build.
+  rm -f "$native_dir/vis-agent-native.build"
+  [[ ! -f "$unpack/vis-agent-native.build" ]] || \
+    mv -f "$unpack/vis-agent-native.build" "$native_dir/vis-agent-native.build"
   # The language-resources sidecar travels WITH the runtime it was built for.
   # Always clear the old one first: a bundle that predates -H:+CopyLanguageResources
   # carries no directory, and its binary has the resources embedded, so a stale
