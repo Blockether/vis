@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.38 (4280) — 2026-08-16
+<!-- commit: 936e3be55930ab3eec07f34b255f2b9d6397a0b5 -->
+
+- Disclose each machine's settings under its own row
+- Keep a reader's place when the keyboard comes and goes
+- Repoint the table card test at the display's new home
+- Confirm an exited child's silence before reporting it
+- Reclaim the SQLite freelist once a fortnight
+- Paint only the turns a session is showing
+- Drop a retired column SQLite was refusing to drop
+- Raise the wait budget and cap to thirty minutes
+- Stop storing what a reader can re-derive
+- Ship the extension API as the vis-agent package
+- Drop the TODO whose every item shipped
+- Close item 1 and record the residues nothing schedules
+- Make the redaction test independent of the caller's environment
+- Record the TODO state after the doc and ranker work
+- Reformat every Clojure and Python source in place
+- Pin the two loaded-runner flakes without a stopwatch
+- Own the espeak and pty-log preconditions the runners lack
+- Regenerate the spel agent skill for 0.9.26
+- Name the keys a test run answers with
+- Make the test suite green on both runners
+
 ## 0.1.38 (4179) — 2026-08-14
 <!-- commit: 1c55f10b2d9fca5397741b8ac0c8ac1097f97b97 -->
 
