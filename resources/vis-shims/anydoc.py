@@ -75,8 +75,8 @@ def __vis_install_anydoc__():
         if isinstance(data, (bytes, bytearray, memoryview)):
             return bytes(data)
         raise SourceError(
-            "anydoc needs bytes-like document data, not %s; a document on disk "
-            "is anydoc.to_markdown(path) / anydoc.read(path)" % type(data).__name__
+            "anydoc needs bytes-like document data, not %s; open the file in "
+            "binary mode, or hand anydoc the path itself" % type(data).__name__
         )
 
     def _source(source, name=None, head=0):
@@ -1101,8 +1101,7 @@ def __vis_install_anydoc__():
         source,
         format=None,
         name=None,
-        assets=True,
-        max_assets=0,
+        max_assets=None,
         id=None,
         blocks=True,
     ):
@@ -1110,8 +1109,10 @@ def __vis_install_anydoc__():
 
         `blocks=True` (the default) also asks for the plain `text`, the block
         structure and — for a PDF — the page count, which is what citations are
-        addressed in. The host caches every conversion on the CONTENT hash of
-        the bytes, so converting the same document twice is free.
+        addressed in. `max_assets` is the single knob on embedded binaries:
+        None takes every one, `0` takes none, an integer takes that many. The
+        host caches every conversion on the CONTENT hash of the bytes, so
+        converting the same document twice is free.
         """
         data, name, path = _source(source, name)
         try:
@@ -1120,7 +1121,7 @@ def __vis_install_anydoc__():
                 _b64(data),
                 _text(format),
                 _text(name),
-                bool(assets),
+                max_assets != 0,
                 int(max_assets or 0),
                 bool(blocks),
             )
@@ -1140,31 +1141,16 @@ def __vis_install_anydoc__():
             pages=payload.get("pages"),
         )
 
-    def to_markdown_bytes(data, format=None, name=None):
-        """GitHub-Flavored Markdown for document bytes."""
-        payload = _call(
-            _markdown, _b64(data), _text(format), _text(name), False, 0, False
-        )
-        return payload.get("markdown") or ""
-
     def to_markdown(source, format=None, name=None):
         """GitHub-Flavored Markdown for a document: a path, bytes or an open file."""
         data, name, path = _source(source, name)
         try:
-            return to_markdown_bytes(data, format=format, name=name)
+            payload = _call(
+                _markdown, _b64(data), _text(format), _text(name), False, 0, False
+            )
         except DocumentError as error:
             raise _document_error(error, path, format)
-
-    def read(path, format=None, assets=True, max_assets=0, id=None, blocks=True):
-        """`to_document` for a document on disk; its id is the path you gave."""
-        return to_document(
-            path,
-            format=format,
-            assets=assets,
-            max_assets=max_assets,
-            id=id,
-            blocks=blocks,
-        )
+        return payload.get("markdown") or ""
 
     def detect(source=b"", name=None, format=None):
         """Identify a document without converting it: `{format, source, formats}`.
@@ -1178,18 +1164,6 @@ def __vis_install_anydoc__():
         """
         data, name, _path = _source(source, name, head=4096)
         return _call(_detect, _b64(data), _text(format), _text(name))
-
-    def format_from_bytes(data):
-        """The format a document's own signature reports, or None."""
-        return detect(_as_bytes(data))["format"]
-
-    def format_from_extension(extension):
-        """The format a file extension claims, or None."""
-        return detect(b"", name=str(extension))["format"]
-
-    def format_from_path(path):
-        """The format of a file on disk: signature first, extension second."""
-        return detect(path)["format"]
 
     def formats():
         """Every format this converter understands."""
@@ -1217,9 +1191,8 @@ def __vis_install_anydoc__():
             return None
         extension = extension.lower()
         if extension not in _known_extensions:
-            _known_extensions[extension] = format_from_extension(
-                "document." + extension
-            )
+            found = detect(b"", name="document." + extension)
+            _known_extensions[extension] = found["format"]
         return _known_extensions[extension]
 
     # Matching
@@ -1423,7 +1396,7 @@ def __vis_install_anydoc__():
             key = None
         if key is not None and key in _documents:
             return _documents[key], True
-        document = read(path, format=format, assets=False, blocks=True)
+        document = to_document(path, format=format, max_assets=0, blocks=True)
         if key is not None:
             if len(_documents) >= _DOCUMENT_CACHE:
                 _documents.pop(next(iter(_documents)))
@@ -1471,7 +1444,7 @@ def __vis_install_anydoc__():
             def load(data=data, hint=hint, name=name):
                 try:
                     return (
-                        to_document(data, format=format, name=hint, assets=False),
+                        to_document(data, format=format, name=hint, max_assets=0),
                         False,
                     )
                 except DocumentError as error:
@@ -1755,7 +1728,7 @@ Reading:
 
     anydoc.to_markdown("q1.pdf")                 -> str
     anydoc.to_markdown(raw, name="q1.pdf")       -> str
-    doc = anydoc.read("q1.pdf")                  -> Document
+    doc = anydoc.to_document("q1.pdf")           -> Document
     doc.markdown / doc.text / doc.blocks / doc.pages / doc.assets
     doc.outline()                                -> the headings, indented
 
@@ -1766,8 +1739,8 @@ Asking:
         print(c)          # q1.pdf p.7 line 12 > Revenue: ...March broke...
 
 A document is a path, raw bytes or an open binary file, at every reading door:
-to_markdown, to_document, read and detect take any of the three. Bytes carrying
-no signature of their own need name="ledger.csv" or format="csv" to be read.
+to_markdown, to_document and detect take any of the three. Bytes carrying no
+signature of their own need name="ledger.csv" or format="csv" to be read.
 
 `sources` is a path, a directory (walked), bytes, a Document, a list of any of
 those, or a {id: source} mapping to name the ids yourself.
@@ -1825,15 +1798,10 @@ also the plain builtin (ValueError / TypeError) you would have caught."""
         "clear_cache",
         "detect",
         "explain_query",
-        "format_from_bytes",
-        "format_from_extension",
-        "format_from_path",
         "formats",
-        "read",
         "search",
         "to_document",
         "to_markdown",
-        "to_markdown_bytes",
     ]
     mod.__getattr__ = __getattr__
     mod.AnydocError = AnydocError
@@ -1851,15 +1819,10 @@ also the plain builtin (ValueError / TypeError) you would have caught."""
     mod.clear_cache = clear_cache
     mod.detect = detect
     mod.explain_query = explain_query
-    mod.format_from_bytes = format_from_bytes
-    mod.format_from_extension = format_from_extension
-    mod.format_from_path = format_from_path
     mod.formats = formats
-    mod.read = read
     mod.search = search
     mod.to_document = to_document
     mod.to_markdown = to_markdown
-    mod.to_markdown_bytes = to_markdown_bytes
     sys.modules["anydoc"] = mod
     _bi.anydoc = mod
 

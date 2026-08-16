@@ -1057,12 +1057,12 @@ print(hits.total_matches, hits.is_truncated, hits.skipped)
 print(hits.explain())              # the parse, the filters, the ranking
 ```
 
-Reading is separate from asking: `anydoc.read(source)` gives a `Document`
-(`.markdown .text .blocks .pages .assets .outline()`), `anydoc.to_markdown(…)`
-the Markdown alone, and `doc.search(…)` asks one document you already hold. A
-source is a path, raw bytes or an open binary file, whichever one the caller
-happens to hold; bytes with no signature of their own (a `.csv`) need `name=` or
-`format=` to say what they are.
+Reading is separate from asking: `anydoc.to_document(source)` gives a
+`Document` (`.markdown .text .blocks .pages .assets .outline()`),
+`anydoc.to_markdown(…)` the Markdown alone, and `doc.search(…)` asks one
+document you already hold. A source is a path, raw bytes or an open binary file,
+whichever one the caller happens to hold; bytes with no signature of their own
+(a `.csv`) need `name=` or `format=` to say what they are.
 `sources` is a path, a directory (walked), bytes, a `Document`, a list of any of
 those, or a `{id: source}` mapping when the ids — or the names those bytes need
 to be read at all — are yours to choose.

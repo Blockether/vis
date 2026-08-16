@@ -76,13 +76,12 @@
   anydoc-module-test
   (it "stays lazy and imports as a module"
       (with-fresh-python-context
-        (expect
-          (true?
-            (ev python-context
-                (str "import sys\n"
-                     "before = 'anydoc' not in sys.modules\n" "import anydoc\n"
-                     "before and anydoc is sys.modules['anydoc'] "
-                     "and callable(anydoc.to_markdown) and callable(anydoc.to_markdown_bytes)"))))))
+        (expect (true?
+                  (ev python-context
+                      (str "import sys\n"
+                           "before = 'anydoc' not in sys.modules\n" "import anydoc\n"
+                           "before and anydoc is sys.modules['anydoc'] "
+                           "and callable(anydoc.to_markdown) and callable(anydoc.to_document)"))))))
   (it "reports the formats it understands, fetched from the host on first touch"
       (with-python-context (expect (= [true true true]
                                       (ev python-context
@@ -90,34 +89,51 @@
                                                "fs = anydoc.FORMATS\n"
                                                "['docx' in fs, 'pdf' in fs, 'csv' in fs]")))))))
 
-(defdescribe anydoc-convert-test
-             (it "renders a real .docx as GitHub-Flavored Markdown"
-                 (with-python-context (let
-                                        [markdown (ev python-context
-                                                      (str "import anydoc\n"
-                                                           "anydoc.to_markdown_bytes("
-                                                           (py-bytes @docx-fixture)
-                                                           ")"))]
-                                        (expect (str/includes? markdown "# **Quarterly Report**"))
-                                        (expect (str/includes? markdown "Revenue grew.")))))
-             (it "renders signature-less CSV once a name says what it is"
+;; The reading doors are CLOSED, and small on purpose: `read`, `to_markdown_bytes`
+;; and the three `format_from_*` aliases each only forwarded to one of these
+;; eight - every one of them with its own idea of what a source is.
+(defdescribe anydoc-surface-test
+             (it "publishes one door per question and nothing that only forwards to another"
                  (with-python-context
-                   (let
-                     [markdown (ev python-context
-                                   (str "import anydoc\n"
-                                        "anydoc.to_markdown_bytes(b'city,people\\nOslo,700000\\n', "
-                                        "name='cities.csv')"))]
-                     (expect (str/includes? markdown "| city | people |"))
-                     (expect (str/includes? markdown "Oslo")))))
-             (it "identifies a document without converting it"
-                 (with-python-context
-                   (expect (= ["docx" "content" "csv" nil]
-                              (ev python-context
-                                  (str "import anydoc\n"
-                                       "found = anydoc.detect(" (py-bytes @docx-fixture)
-                                       ")\n" "[found['format'], found['source'],\n"
-                                       " anydoc.format_from_extension('cities.csv'),\n"
-                                       " anydoc.format_from_bytes(b'city,people\\n')]")))))))
+                   (expect
+                     (= [["cache_info" "clear_cache" "detect" "explain_query" "formats" "search"
+                          "to_document" "to_markdown"] 5]
+                        (ev python-context
+                            (str "import anydoc\n"
+                                 "public = sorted(n for n in anydoc.__all__ if n[0].islower())\n"
+                                 "gone = 0\n"
+                                 "for name in ('read', 'to_markdown_bytes', 'format_from_bytes',\n"
+                                 "             'format_from_path', 'format_from_extension'):\n"
+                                 "    try:\n"
+                                 "        getattr(anydoc, name)\n" "    except AttributeError:\n"
+                                 "        gone += 1\n" "[public, gone]")))))))
+
+(defdescribe
+  anydoc-convert-test
+  (it "renders a real .docx as GitHub-Flavored Markdown"
+      (with-python-context
+        (let
+          [markdown (ev python-context
+                        (str "import anydoc\n" "anydoc.to_markdown(" (py-bytes @docx-fixture) ")"))]
+          (expect (str/includes? markdown "# **Quarterly Report**"))
+          (expect (str/includes? markdown "Revenue grew.")))))
+  (it "renders signature-less CSV once a name says what it is"
+      (with-python-context (let
+                             [markdown (ev python-context
+                                           (str
+                                             "import anydoc\n"
+                                             "anydoc.to_markdown(b'city,people\\nOslo,700000\\n', "
+                                             "name='cities.csv')"))]
+                             (expect (str/includes? markdown "| city | people |"))
+                             (expect (str/includes? markdown "Oslo")))))
+  (it "identifies a document without converting it"
+      (with-python-context (expect (= ["docx" "content" "csv" nil]
+                                      (ev python-context
+                                          (str "import anydoc\n"
+                                               "found = anydoc.detect(" (py-bytes @docx-fixture)
+                                               ")\n" "[found['format'], found['source'],\n"
+                                               " anydoc.detect(name='cities.csv')['format'],\n"
+                                               " anydoc.detect(b'city,people\\n')['format']]")))))))
 
 (defdescribe anydoc-document-test
              (it "returns a Document carrying the format, its evidence and its assets"
@@ -141,13 +157,13 @@
                                        " isinstance(asset.bytes, bytes) and asset.bytes[:8] == "
                                        (py-bytes (b64 (byte-array (take 8 @png-fixture))))
                                        ",\n" " len(asset.bytes) == len(asset)]"))))))
-             (it "keeps its asset promises: none when refused, capped when limited"
+             (it "keeps its one asset knob's promises: none at 0, capped at N, all by default"
                  (with-python-context
                    (expect (= [0 1 2]
                               (ev python-context
                                   (str "import anydoc\n"
                                        "deck = " (py-bytes (b64 @pptx-fixture))
-                                       "\n" "[len(anydoc.to_document(deck, assets=False).assets),\n"
+                                       "\n" "[len(anydoc.to_document(deck, max_assets=0).assets),\n"
                                        " len(anydoc.to_document(deck, max_assets=1).assets),\n"
                                        " len(anydoc.to_document(deck).assets)]")))))))
 
@@ -158,16 +174,15 @@
         (expect (= [true true]
                    (ev python-context
                        (str "import anydoc\n"
-                            "try:\n" "    anydoc.to_markdown_bytes(b'\\x00\\x01not a document')\n"
+                            "try:\n" "    anydoc.to_markdown(b'\\x00\\x01not a document')\n"
                             "    out = [False, False]\n" "except anydoc.AnydocError as err:\n"
                             "    out = [True, bool(str(err))]\n" "out"))))))
-  (it "refuses text where bytes belong instead of guessing an encoding"
-      (with-python-context
-        (expect (true? (ev python-context
-                           (str "import anydoc\n"
-                                "try:\n" "    anydoc.to_markdown_bytes('already a string')\n"
-                                "    out = False\n" "except TypeError:\n"
-                                "    out = True\n" "out")))))))
+  (it "refuses a source that is neither a path, bytes nor an open file"
+      (with-python-context (expect (true? (ev python-context
+                                              (str "import anydoc\n"
+                                                   "try:\n" "    anydoc.to_markdown(42)\n"
+                                                   "    out = False\n" "except TypeError:\n"
+                                                   "    out = True\n" "out")))))))
 
 (defdescribe anydoc-disk-test
              (it "reads a document on disk in one call"
@@ -181,10 +196,10 @@
                                                         dir
                                                         "/report.docx'\n"
                                                         "markdown = anydoc.to_markdown(path)\n"
-                                                        "doc = anydoc.read(path)\n"
+                                                        "doc = anydoc.to_document(path)\n"
                                                         "['# **Quarterly Report**' in markdown,\n"
                                                         " doc.markdown == markdown,\n"
-                                                        " anydoc.format_from_path(path),\n"
+                                                        " anydoc.detect(path)['format'],\n"
                                                         " doc.format == 'docx']")))))))
              (it "identifies a signature-less .csv on disk by its own file name"
                  (let [dir (tmp-dir)]
@@ -197,7 +212,7 @@
                                          "path = '"
                                          dir
                                          "/cities.csv'\n"
-                                         "[anydoc.format_from_path(path),\n"
+                                         "[anydoc.detect(path)['format'],\n"
                                          " '| city | people |' in anydoc.to_markdown(path)]"))))))))
 
 ;; --- search: one document, a few, or a directory of many, with citations ---
@@ -341,7 +356,7 @@
                python-context
                (py
                  "import anydoc"
-                 (str "doc = anydoc.read('" dir "/report.docx')")
+                 (str "doc = anydoc.to_document('" dir "/report.docx')")
                  ;; The best hit is the passage that answers the WHOLE
                  ;; query, not the boosted heading that answers half.
                  "hit = doc.search('March revenue')[0]"
@@ -358,7 +373,7 @@
                          (expect (= [2 2 true "pdf"]
                                     (ev python-context
                                         (py "import anydoc"
-                                            (str "doc = anydoc.read('" dir "/report.pdf')")
+                                            (str "doc = anydoc.to_document('" dir "/report.pdf')")
                                             "hit = doc.search('April')[0]"
                                             "[doc.pages," " hit.page,"
                                             " hit.location.startswith('p.2')," " hit.format]")))))))
@@ -368,7 +383,7 @@
                          (expect (= ["table-row" "Month" "March"]
                                     (ev python-context
                                         (py "import anydoc"
-                                            (str "doc = anydoc.read('" dir "/report.docx')")
+                                            (str "doc = anydoc.to_document('" dir "/report.docx')")
                                             "hit = doc.search('table:March')[0]"
                                             "[hit.block_kind, hit.cell.name, hit.cell.text]"))))))))
 
@@ -381,7 +396,7 @@
           (expect
             (= [2 1 1 1 1 1 1 1 1]
                (ev python-context
-                   (py "import anydoc" (str "doc = anydoc.read('" dir "/report.docx')")
+                   (py "import anydoc" (str "doc = anydoc.to_document('" dir "/report.docx')")
                        "n = lambda q, **kw: len(doc.search(q, **kw))" "[n('\\\"March 2024\\\"'),"
                        " n('market')," " n('efficient'),"
                        " n('Z\u00fcrich')," " n(\"don't\"),"
@@ -393,7 +408,7 @@
                          (expect (= [0 0 ["march"] 0 true]
                                     (ev python-context
                                         (py "import anydoc"
-                                            (str "doc = anydoc.read('" dir "/report.docx')")
+                                            (str "doc = anydoc.to_document('" dir "/report.docx')")
                                             "typo = doc.search('Marhc')" "[len(typo),"
                                             " len(doc.search('march', ignore_case=False)),"
                                             " typo.suggestions.get('marhc'),"
@@ -408,7 +423,7 @@
           dir
           (expect (= [1 0 5 0 0 1 1 1 0]
                      (ev python-context
-                         (py "import anydoc" (str "doc = anydoc.read('" dir "/report.docx')")
+                         (py "import anydoc" (str "doc = anydoc.to_document('" dir "/report.docx')")
                              "n = lambda q, **kw: len(doc.search(q, **kw))"
                              ;; `+`/`-` judge the DOCUMENT, the way Lucene does: a
                              ;; document missing a required term is not searched at
@@ -569,7 +584,8 @@
                        " from_file == from_path," " anydoc.to_document(path).markdown == from_path,"
                        " anydoc.to_document(raw).markdown == from_path,"
                        " anydoc.detect(path)['format'],"
-                       " anydoc.read(raw).format," " anydoc.to_document(path).id == path]")))))))
+                       " anydoc.to_document(raw).format,"
+                       " anydoc.to_document(path).id == path]")))))))
   (it "keeps every refusal typed and points a caller at the door it wanted"
       (let [dir (corpus {"report.docx" @report-docx-bytes})]
         (with-fs-context
@@ -577,13 +593,13 @@
           (expect
             (= [true true true true true]
                (ev python-context
-                   (py "import anydoc"
+                   (py "import anydoc, io"
                        "out = []"
                        "try:"
-                       "    anydoc.to_markdown_bytes('already a string')"
+                       "    anydoc.to_markdown(io.StringIO('a document, but as text'))"
                        "    out.append(False)"
                        "except anydoc.SourceError as err:"
-                       "    out.append('to_markdown(path)' in str(err))"
+                       "    out.append('binary' in str(err))"
                        "try:"
                        "    anydoc.to_markdown(b'\\x00\\x01not a document')"
                        "    out.append(False)"
@@ -623,16 +639,18 @@
 (defn- prose-surfaces
   "Every place vis DESCRIBES anydoc to somebody who will not read the source: the
    `:shim/description` the registry advertises (one bullet of the system prompt's
-   sandbox-shims block, and the sandbox's `doc`/`apropos` gist), the module
-   docstring the sandbox hands the model, and the docs page.
-   All three are prose nobody runs."
+   sandbox-shims block, and the sandbox's `doc`/`apropos` gist), the `:shim/docs`
+   page `doc(\"anydoc\")` prints, the module docstring the sandbox hands the model,
+   and the docs page. All four are prose nobody runs."
   [^Context python-context]
-  {":shim/description" (-> shim-anydoc/vis-extension
-                           :ext/sandbox-shims
-                           first
-                           :shim/description)
-   "anydoc.__doc__" (ev python-context (py "import anydoc" "anydoc.__doc__"))
-   "extending.md" @docs-anydoc-section})
+  (let
+    [shim (-> shim-anydoc/vis-extension
+              :ext/sandbox-shims
+              first)]
+    {":shim/description" (:shim/description shim)
+     ":shim/docs" (:shim/docs shim)
+     "anydoc.__doc__" (ev python-context (py "import anydoc" "anydoc.__doc__"))
+     "extending.md" @docs-anydoc-section}))
 
 (defn- unknown-members
   "The claimed names that are NEITHER a member of one of anydoc's own objects NOR
@@ -640,7 +658,7 @@
   [^Context python-context dir claimed]
   (ev python-context
       (py "import anydoc"
-          (str "doc = anydoc.read('" dir "/report.docx')")
+          (str "doc = anydoc.to_document('" dir "/report.docx')")
           "hits = doc.search('March revenue')"
           "cell_hit = doc.search('table:March')[0]" (str "walk = anydoc.search('March', '" dir "')")
           "known = set()"
@@ -649,7 +667,7 @@
           "            anydoc.SearchResults, anydoc.Skipped, anydoc.Block, anydoc.Cell):"
           "    known |= set(dir(obj))" (str "claimed = " (py-list claimed))
           "missing = [name for name in claimed if name not in known]"
-          "[name for name in missing if not anydoc.format_from_extension('.' + name)]")))
+          "[name for name in missing if not anydoc.detect(name='document.' + name)['format']]")))
 
 (defn- documented-queries
   "Every query vis SHOWS somebody: the first cell of each row of the docs table,
