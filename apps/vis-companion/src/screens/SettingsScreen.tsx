@@ -2023,10 +2023,7 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
   const fleetNote = unscopedMessage(note, providers);
 
   return (
-    <SettingsPanel
-      title="Providers"
-      action={<AddProviderButton auth={auth} />}
-    >
+    <SettingsPanel title="Providers">
       {(fleetErr || fleetNote) && (
         <div className="space-y-2 p-3">
           {fleetErr && <Banner kind="err">{fleetErr.text}</Banner>}
@@ -2047,6 +2044,11 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
       )}
 
       <ProviderRows auth={auth} />
+      {/* THE VERB SITS UNDER THE LIST IT ADDS TO. Squeezed into the band it was a
+          42px word beside the column's own amber verb, at the top of a list it
+          appends to the bottom of; full width under the last row it is one target
+          the thumb already rests near. */}
+      <AddProviderButton auth={auth} />
     </SettingsPanel>
   );
 }
@@ -2462,7 +2464,10 @@ export function SettingsPanel({
           </p>
         )}
       </header>
-      <div>{children}</div>
+      {/* A PANEL BODY DIVIDES ITS OWN PARTS. `divide-y` draws only BETWEEN
+          siblings, so a panel holding one list is unchanged, and a panel whose
+          last child is a verb gets the hairline that verb needs to be a row. */}
+      <div className="divide-y divide-dialog-edge">{children}</div>
     </section>
   );
 }

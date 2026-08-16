@@ -1071,6 +1071,9 @@ export function NotifyConnectionRow({
       : `Connect notifications from ${machine}`;
 
   return (
+    // FULL WIDTH ON A PHONE. A lone verb hugging the right edge of a full-bleed
+    // panel reads as a leftover of a row that lost its text; the thumb is also
+    // nowhere near it. Below `sm:` the button IS the row.
     <div className="flex items-center justify-end px-3 py-2">
       {/* Connecting is the invitation and wears the amber; disconnecting is the
           way out of something already working and never shouts to be taken. */}
@@ -1081,7 +1084,7 @@ export function NotifyConnectionRow({
         aria-busy={isWaiting}
         disabled={disabled}
         onClick={onClick}
-        className="shrink-0"
+        className="w-full justify-center sm:w-auto sm:shrink-0"
       >
         <span className={isWaiting ? 'animate-pulse' : ''}>{label}</span>
       </Button>

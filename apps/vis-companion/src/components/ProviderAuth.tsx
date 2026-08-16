@@ -877,16 +877,19 @@ export function AddProviderButton({ auth }: { auth: ProviderAuth }) {
 
   return (
     <>
+      {/* A ROW, NOT A CHIP. It stands under the last provider as the list's own
+          last line, so it wears the row's height and the full width. */}
       <Button
         variant="quiet"
-        density="compact"
+        density="panel"
+        className="w-full justify-center"
         aria-label="Add a provider"
         onClick={() => {
           setIsPicking(true);
           setChosen(null);
         }}
       >
-        Add
+        Add a provider
       </Button>
 
       {isPicking && (
@@ -1173,8 +1176,12 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
                     void (authed ? auth.recheck(provider.id) : auth.signIn(provider));
                   }}
                 >
+                  {/* THE DOT BELONGS TO THE NAME, NOT TO THE ROW. Centred in a
+                      two-line row it floated 8px below the label it marks, between
+                      the name and its meta line, marking neither. `self-start` with
+                      the label's own 18px line box puts it on the name's line. */}
                   <span
-                    className={`shrink-0 font-mono text-title ${dot.tone} ${isProbing ? 'animate-pulse' : ''}`}
+                    className={`shrink-0 self-start font-mono text-title leading-[18px] ${dot.tone} ${isProbing ? 'animate-pulse' : ''}`}
                     aria-hidden="true"
                     title={dot.label}
                   >

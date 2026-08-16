@@ -1418,12 +1418,36 @@ describe("settings is ONE dialog with two columns", () => {
     expect(band).toContain('aria-label="Add a machine"');
     expect(band).toContain('variant="primary"');
     expect(band).toContain(">\n                Add a machine\n              </Button>");
+    // Then the quiet word in the band was still a 42px chip at the TOP of a list
+    // it appends to the BOTTOM of: it left the band entirely and became the list's
+    // own last row, full width under the last provider.
+    expect(settings).not.toContain("action={<AddProviderButton");
     const providerButton = providerAuthSource.slice(
       providerAuthSource.indexOf("<Button"),
       providerAuthSource.indexOf("{isPicking &&"),
     );
     expect(providerButton).toContain('variant="quiet"');
     expect(providerButton).not.toContain('variant="primary"');
+    expect(providerButton).toContain("w-full justify-center");
+    expect(providerButton).toContain("Add a provider");
+  });
+
+  // Reported over this screenshot: why is that button not simply full width on a
+  // phone, and the green dots do not line up with the text.
+  it("gives a lone verb the phone's full width and rides each status dot on the name's line", () => {
+    // The notification verb hugged the right edge of a full-bleed panel with
+    // nothing beside it, so it read as the leftover of a row that lost its text.
+    const notify = uiSource.slice(
+      uiSource.indexOf("export function NotifyConnectionRow"),
+      uiSource.indexOf("THE ✕, AND THERE IS EXACTLY ONE OF IT"),
+    );
+    expect(notify).toContain("w-full justify-center sm:w-auto");
+    // And a dot centred in a two-line row sat between the name and its meta line,
+    // marking neither. Both lists give it the name's own 18px line box; the
+    // two-line provider row also pins it to the first line.
+    for (const source of [providerAuthSource, machinesSource])
+      expect(source).toContain("font-mono text-title leading-[18px]");
+    expect(providerAuthSource).toContain("shrink-0 self-start font-mono text-title");
   });
 
   it("hides a machine's own verbs behind its row, and keeps no panel of them", () => {
