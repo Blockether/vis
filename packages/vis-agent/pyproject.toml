@@ -13,6 +13,10 @@
 #
 # No dependencies, and none are welcome: an extension author installs this to get
 # the API and its outside-the-sandbox host, not a tree of somebody else's code.
+#
+# `requires-python` is the CPython level vis' own GraalPy implements: the module in
+# `src/vis` is the file the engine execs, so a Python the engine could not run is a
+# Python this package must not be written in. CI verifies on exactly that floor.
 
 [build-system]
 requires = ["hatchling>=1.27"]
@@ -23,7 +27,7 @@ name = "vis-agent"
 version = "0.1.38"
 description = "The Vis extension API — write a Vis extension in Python, and run it with or without Vis."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "Blockether" }]
