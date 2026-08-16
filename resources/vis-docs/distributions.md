@@ -40,6 +40,8 @@ vis-agent runtime
 ```text
 Runtime:      native
 Native:       ~/.vis/install/vis-agent-native
+Built:        0.1.40 49ccf1b155ec stable 2026-08-17T09:12:44Z
+Track:        stable
 Source:       ~/.vis/install/src
 Pinned at:    49ccf1b155ec8fe18db7f48f00a30d1ac21be90d
 ```
@@ -57,6 +59,29 @@ never silently substitutes another runtime.
 | `vis-agent update` | a native install: the newest release bundle; a source install: main's newest commit |
 | `vis-agent update vX.Y.Z` | that release instead of the newest: bundle for `native`, tag for `jvm` |
 | `vis-agent update --rebuild` | after a source update, builds the sidecar locally (`clojure -T:build native`) |
+| `vis-agent update --track NAME` | follows the `stable` or `beta` track from now on; the choice sticks |
+
+### Tracks
+
+A build carries the track it was made for in its stamp, and `vis-agent runtime`
+prints it beside the commit that produced the binary.
+
+| Track | Who builds it | Followable |
+|---|---|---|
+| `stable` | a release tag; the assets on the newest release | yes, and the default |
+| `beta` | the rolling per-commit prerelease, built on free runners, so Linux only | yes |
+| `dev` | a build of your own: `clojure -T:build native`, or `vis-agent update --rebuild` | no |
+| `dry-run` | a CI build that published nothing | no |
+
+`dev` and `dry-run` are stamps, not destinations: nothing publishes them, so
+`--track dev` is refused, and a runtime carrying one moves forward by being
+rebuilt rather than updated. Switching track is explicit and it sticks — an
+update never changes track on its own, or a beta tester silently falls back to
+stable and files bugs against a build that was never running. Naming a version
+is a one-off and leaves the remembered track where it was.
+
+A track is not a channel: in Vis a channel is a user interface an extension
+registers (TUI, web, Telegram).
 
 A target that is not a released version is refused: Vis installs what is
 published, never source nobody published.

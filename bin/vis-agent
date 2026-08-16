@@ -73,8 +73,11 @@ vis_branch="main"
 managed_src="$vis_install_dir/src"
 managed_ref_file="$vis_install_dir/ref"
 # The distribution TRACK this install follows: `stable` (release tags) or `beta`
-# (the rolling per-commit prerelease). Remembered here so `update` never jumps
-# tracks on its own — only an explicit `--track` moves it.
+# (the rolling per-commit prerelease). Those two are the whole followable axis —
+# a runtime stamped `dev` (a build of your own) or `dry-run` (a CI build that
+# published nothing) belongs to no track at all, and is replaced by rebuilding
+# it rather than by updating. Remembered here so `update` never jumps tracks on
+# its own — only an explicit `--track` moves it.
 # Deliberately NOT called a channel: in Vis a channel is a user interface an
 # extension registers (TUI, web, Telegram).
 vis_track_file="$vis_install_dir/track"
@@ -356,15 +359,21 @@ vis_runtime() {
   fi
   # Which track this install FOLLOWS, against the one the installed binary was
   # BUILT for. They part company after a hand-installed bundle, and that is
-  # exactly when a "beta bug" turns out to be a stale stable runtime.
+  # exactly when a "beta bug" turns out to be a stale stable runtime. `dev` and
+  # `dry-run` name no published track, so a binary carrying one was built here or
+  # by a CI dry run: say THAT, instead of reporting the everyday state of a
+  # locally built runtime as a discrepancy with a track it never claimed.
   track="$(vis_track)"
   if [[ -n "$stamp" ]]; then
     stamp_track="${stamp#* }"
     stamp_track="${stamp_track#* }"
     stamp_track="${stamp_track%% *}"
-    if [[ -n "$stamp_track" && "$stamp_track" != "$track" ]]; then
-      track="$track (this runtime was built on the $stamp_track track)"
-    fi
+    case "$stamp_track" in
+      ""|"$track") ;;
+      dev)     track="$track (this runtime was built from source here, not from a published track)" ;;
+      dry-run) track="$track (this runtime is a CI dry-run build and was never published)" ;;
+      *)       track="$track (this runtime was built on the $stamp_track track)" ;;
+    esac
   fi
   printf 'Runtime:      %s\n' "$effective"
   printf 'Native:       %s\n' "$native"
@@ -509,7 +518,9 @@ build_native_runtime() {
   local source_root="$1"
   require_cmd clojure "--rebuild"
   say "building the native runtime from $source_root ('clojure -T:build native')"
-  ( cd "$source_root" && clojure -T:build native ) || exit 1
+  # A build of YOURS, whatever environment it inherited: a rebuild run from a CI
+  # shell must not stamp itself with that job's track (build.clj `release-tracks`).
+  ( cd "$source_root" && VIS_RELEASE_TRACK=dev clojure -T:build native ) || exit 1
 }
 
 # ── update: source runtime ───────────────────────────────────────────────────
@@ -699,6 +710,8 @@ Usage: vis-agent update [vX.Y.Z] [--track stable|beta] [--rebuild]
          --track NAME  follow that distribution track from now on:
                          stable  release tags, every platform we publish
                          beta    the rolling per-commit prerelease, Linux only
+                       A build of your own is stamped `dev` and follows nothing;
+                       `--rebuild` is what moves it
          --rebuild     after a source update, build the native runtime from
                        that source
        Update takes the runtime that is installed forward; it never swaps one
@@ -735,6 +748,11 @@ vis_do_update() {
   done
   case "$track" in
     ""|stable|beta) ;;
+    dev|dry-run)
+      die "update: '$track' is not a distribution track — nothing publishes it" \
+          "'dev' is what a build of your own stamps ('vis-agent update --rebuild')," \
+          "'dry-run' a CI build that published nothing." \
+          "Tracks are 'stable' (release tags) and 'beta' (the rolling per-commit prerelease)" ;;
     *) die "update: unknown track '$track'" \
            "Tracks are 'stable' (release tags) and 'beta' (the rolling per-commit prerelease)" ;;
   esac

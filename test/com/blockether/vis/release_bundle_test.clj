@@ -475,48 +475,111 @@
                    {"HOME" (.getAbsolutePath home)
                     "PATH" (str (.getAbsolutePath path-dir) ":" (System/getenv "PATH"))}))]
 
-      (try (io/copy (io/file "bin/vis-agent") launcher)
-           (.setExecutable ^java.io.File launcher true)
-           (write-executable! (io/file bin-dir "vis-agent-native") "#!/usr/bin/env bash\nexit 0\n")
-           ;; A curl that resolves nothing stops the update at the endpoint it
-           ;; CHOSE — which is the whole question here. No network, no download.
-           (write-executable! (io/file path-dir "curl") "#!/usr/bin/env bash\nexit 22\n")
-           (let [{:keys [exit output]} (update! "--track" "beta")]
-             (expect (not= 0 exit) output)
-             (expect (str/includes? output "releases/tags/beta") output))
-           (expect (= "beta\n" (slurp track-file)))
-           ;; The next plain `update` must stay on beta: a tester silently
-           ;; dropped back to stable files bugs against a build never running.
-           (let [{:keys [exit output]} (update!)]
-             (expect (not= 0 exit) output)
-             (expect (str/includes? output "releases/tags/beta") output))
-           ;; Naming a version is a one-off, not a track switch.
-           (let [{:keys [exit output]} (update! "v9.9.9")]
-             (expect (not= 0 exit) output)
-             (expect (str/includes? output "releases/tags/v9.9.9") output))
-           (expect (= "beta\n" (slurp track-file)))
-           (let [{:keys [exit output]} (update! "--track" "stable")]
-             (expect (not= 0 exit) output)
-             (expect (str/includes? output "releases/latest") output))
-           (expect (= "stable\n" (slurp track-file)))
-           ;; The beta track has one moving tag and no versions at all.
-           (let [{:keys [exit output]} (update! "--track" "beta" "v1.2.3")]
-             (expect (not= 0 exit) output)
-             (expect (str/includes? output "has no versions") output))
-           (let [{:keys [exit output]} (update! "--track" "nightly")]
-             (expect (not= 0 exit) output)
-             (expect (str/includes? output "unknown track") output))
-           ;; `runtime` reports the followed track, and says when the installed
-           ;; binary was built for a different one.
-           (spit (io/file bin-dir "vis-agent-native.build")
-                 "0.1.28 4c1f2a9dabc beta 2026-08-17T10:22:31.123Z\n")
-           (let
-             [{:keys [exit output]} (run-bash ["bash" (.getAbsolutePath launcher) "runtime"]
-                                              {"HOME" (.getAbsolutePath home)})]
-             (expect (= 0 exit) output)
-             (expect (str/includes? output "Track:        stable") output)
-             (expect (str/includes? output "built on the beta track") output))
-           (finally (delete-tree! root)))))
+      (try
+        (io/copy (io/file "bin/vis-agent") launcher)
+        (.setExecutable ^java.io.File launcher true)
+        (write-executable! (io/file bin-dir "vis-agent-native") "#!/usr/bin/env bash\nexit 0\n")
+        ;; A curl that resolves nothing stops the update at the endpoint it
+        ;; CHOSE — which is the whole question here. No network, no download.
+        (write-executable! (io/file path-dir "curl") "#!/usr/bin/env bash\nexit 22\n")
+        (let [{:keys [exit output]} (update! "--track" "beta")]
+          (expect (not= 0 exit) output)
+          (expect (str/includes? output "releases/tags/beta") output))
+        (expect (= "beta\n" (slurp track-file)))
+        ;; The next plain `update` must stay on beta: a tester silently
+        ;; dropped back to stable files bugs against a build never running.
+        (let [{:keys [exit output]} (update!)]
+          (expect (not= 0 exit) output)
+          (expect (str/includes? output "releases/tags/beta") output))
+        ;; Naming a version is a one-off, not a track switch.
+        (let [{:keys [exit output]} (update! "v9.9.9")]
+          (expect (not= 0 exit) output)
+          (expect (str/includes? output "releases/tags/v9.9.9") output))
+        (expect (= "beta\n" (slurp track-file)))
+        (let [{:keys [exit output]} (update! "--track" "stable")]
+          (expect (not= 0 exit) output)
+          (expect (str/includes? output "releases/latest") output))
+        (expect (= "stable\n" (slurp track-file)))
+        ;; The beta track has one moving tag and no versions at all.
+        (let [{:keys [exit output]} (update! "--track" "beta" "v1.2.3")]
+          (expect (not= 0 exit) output)
+          (expect (str/includes? output "has no versions") output))
+        (let [{:keys [exit output]} (update! "--track" "nightly")]
+          (expect (not= 0 exit) output)
+          (expect (str/includes? output "unknown track") output))
+        ;; `dev` is NOT unknown: it is the stamp every build of your own
+        ;; carries, and no endpoint serves it. Refuse it by name, say what it
+        ;; is, and leave the followed track exactly where it was.
+        (doseq [t ["dev" "dry-run"]]
+          (let [{:keys [exit output]} (update! "--track" t)]
+            (expect (not= 0 exit) output)
+            (expect (str/includes? output "is not a distribution track") output)
+            (expect (str/includes? output "--rebuild") output)))
+        (expect (= "stable\n" (slurp track-file)))
+        ;; `runtime` reports the followed track, and says when the installed
+        ;; binary was built for a different one.
+        (spit (io/file bin-dir "vis-agent-native.build")
+              "0.1.28 4c1f2a9dabc beta 2026-08-17T10:22:31.123Z\n")
+        (let
+          [{:keys [exit output]} (run-bash ["bash" (.getAbsolutePath launcher) "runtime"]
+                                           {"HOME" (.getAbsolutePath home)})]
+          (expect (= 0 exit) output)
+          (expect (str/includes? output "Track:        stable") output)
+          (expect (str/includes? output "built on the beta track") output))
+        ;; A runtime built here is the everyday state of a workstation, not a
+        ;; discrepancy with a track it never claimed: `dev` and `dry-run` are
+        ;; published by nothing, so name what they are instead.
+        (doseq
+          [[stamp-track phrase] [["dev" "built from source here"] ["dry-run" "never published"]]]
+          (spit (io/file bin-dir "vis-agent-native.build")
+                (str "0.1.28 4c1f2a9dabc " stamp-track " 2026-08-17T10:22:31.123Z\n"))
+          (let
+            [{:keys [exit output]} (run-bash ["bash" (.getAbsolutePath launcher) "runtime"]
+                                             {"HOME" (.getAbsolutePath home)})]
+            (expect (= 0 exit) output)
+            (expect (str/includes? output phrase) output)
+            (expect (not (str/includes? output (str "built on the " stamp-track " track")))
+                    output)))
+        (finally (delete-tree! root)))))
+  ;; The stamp is ONE space-separated line, so its track field is a closed
+  ;; vocabulary or it is a parsing hazard: VIS_RELEASE_TRACK took any string at
+  ;; all, and a typo — or a value with a space in it — shipped a build whose
+  ;; every later field read one place to the right.
+  (it
+    "stamps only a track build.clj declares, in the build and in every workflow"
+    (let
+      [build-clj
+       (slurp "build.clj")
+
+       tracks
+       (->> (re-find #"(?s)\(def release-tracks.*?#\{([^}]*)\}" build-clj)
+            second
+            (re-seq #"\"([^\"]+)\"")
+            (map second)
+            set)
+
+       stamped
+       (->> (file-seq (io/file ".github/workflows"))
+            (filter #(str/ends-with? (.getName ^java.io.File %) ".yml"))
+            (mapcat (fn [f]
+                      (map (fn [v]
+                             [(.getName ^java.io.File f) v])
+                           (map second (re-seq #"VIS_RELEASE_TRACK:\s*(.+)" (slurp f))))))
+            vec)]
+
+      ;; Both ends of the axis, and both marks for a build nobody publishes.
+      (expect (= #{"stable" "beta" "dev" "dry-run"} tracks) tracks)
+      ;; The stamp reads the environment THROUGH that vocabulary, and an
+      ;; unlabelled build is a build of your own.
+      (expect (str/includes? build-clj "(release-track)") build-clj)
+      (expect (str/includes? build-clj "(contains? release-tracks track)") build-clj)
+      (expect (seq stamped) "no workflow stamps a track at all")
+      (doseq [[wf value] stamped]
+        (doseq
+          [t (if (str/includes? value "${{")
+               (map second (re-seq #"(?:&&|\|\|)\s*'([^']+)'" value))
+               [(str/trim value)])]
+          (expect (contains? tracks t) (str wf ": " value))))))
   ;; A hosted Apple-silicon fallback is only useful if it can FINISH: the free
   ;; macOS arm64 class is 3 cores / 7 GiB RAM / 14 GiB disk, so a heap above
   ;; physical RAM has no volume to swap into and native-image exits on the

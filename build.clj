@@ -41,6 +41,38 @@
                not-empty)
        (catch Exception _ nil)))
 
+(def release-tracks
+  "The closed DISTRIBUTION vocabulary — every value `VIS_RELEASE_TRACK` may take,
+   and the axis `vis-agent update --track` moves along:
+
+     stable   built from a release tag; the assets on `releases/latest`
+     beta     the rolling per-commit prerelease (beta-native.yml), Linux only
+     dev      a build of your own — `clojure -T:build native`, or
+              `vis-agent update --rebuild`. The DEFAULT, because a build no CI
+              labelled happened on somebody's workstation
+     dry-run  a CI build that publishes nothing (a branch dispatch of
+              native-release.yml), so it can never pass for a shipped beta
+
+   Only `stable` and `beta` are FOLLOWED: nothing publishes the other two, and a
+   runtime stamped with one is replaced by rebuilding it, not by updating.
+   Deliberately NOT called a channel — in Vis a channel is a user interface an
+   extension registers (TUI, web, Telegram), and one word for two unrelated axes
+   is how a build lands on the wrong one."
+  #{"stable" "beta" "dev" "dry-run"})
+
+(defn- release-track
+  "VIS_RELEASE_TRACK, refused unless it names a `release-tracks` entry. The stamp
+   is ONE space-separated line, so an unvetted value — a typo, or anything with a
+   space in it — shifts every field behind it and every reader misidentifies the
+   build it needed identified. Unset means `dev`: an unlabelled build is yours."
+  []
+  (let [track (str/trim (str (System/getenv "VIS_RELEASE_TRACK")))]
+    (cond (str/blank? track) (get release-tracks "dev")
+          (contains? release-tracks track) track
+          :else (throw (ex-info
+                         (str "VIS_RELEASE_TRACK=" (pr-str track) " is not a distribution track")
+                         {:track track :tracks (sort release-tracks)})))))
+
 (def build-stamp
   "IDENTITY of ONE native build, on one line: `<version> <commit> <track> <built-at>`.
    Written into the image (`vis/BUILD`) and beside it (`target/vis.build`), so
@@ -51,11 +83,7 @@
    Not a second version source: `--version` reports `version` and nothing else,
    and no reader takes a version from here. `<commit>` carries a `-dirty` suffix
    for a worktree with uncommitted changes and is `unknown` where history is
-   unavailable. `<track>` is VIS_RELEASE_TRACK, the DISTRIBUTION axis: `stable`
-   for a tag build, `beta` for the rolling per-commit build, `dev` for a
-   workstation. Deliberately NOT called a channel — in Vis a channel is a user
-   interface an extension registers (TUI, web, Telegram), and one word for two
-   unrelated axes is how a build lands on the wrong one."
+   unavailable. `<track>` is one of `release-tracks`, which owns that vocabulary."
   (delay (let
            [commit
             (or (git-line "rev-parse HEAD") (System/getenv "VIS_BUILD_COMMIT") "unknown")
@@ -64,8 +92,7 @@
             (some? (git-line "status --porcelain"))]
 
            (str/join " "
-                     [version (if dirty? (str commit "-dirty") commit)
-                      (or (not-empty (str (System/getenv "VIS_RELEASE_TRACK"))) "dev")
+                     [version (if dirty? (str commit "-dirty") commit) (release-track)
                       (str (java.time.Instant/now))]))))
 ;; Package catalog
 

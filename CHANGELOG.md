@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- fix(build): make `dev` a track of its own, refused as an update target
+
 ## [v0.1.40] - 2026-08-16
 
 ### Changed
@@ -20,8 +23,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - chore(release): v0.1.40 (382410b19)
 - fix(build): copy every root classpath path into the native image (c1b39d0a1)
 - release: update release notes for v0.1.39 (ed3eeb944)
-
-
 
 ## [v0.1.39] - 2026-08-16
 
