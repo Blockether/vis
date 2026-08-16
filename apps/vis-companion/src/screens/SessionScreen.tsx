@@ -4707,11 +4707,12 @@ export function SessionScreen({
     () =>
       visibleTurns.map((turn, index) => {
         const request = turn.user_request ?? turn.request ?? "";
-        // No content-visibility deferral: the DOM is already bounded to
-        // INITIAL_VISIBLE_TURNS by pagination, and deferred turns rendered
-        // white placeholder bands (plus a synchronous render hitch) when
-        // fast-scrolling up into them on iOS — the 480px intrinsic-size guess
-        // never matched the real height, so the scroll position shifted too.
+        // A turn skips its own paint, in `AssistantMessage`
+        // (`useMeasuredPaintSkip`), never from this wrapper: the size a skip
+        // stands in for has to be the one that turn MEASURED, and a wrapper
+        // knows nothing about it. The 480px intrinsic-size guess that used to
+        // live here is what rendered white placeholder bands and shifted the
+        // scroll position when you flew up into a turn on iOS.
         return (
           <div
             className={index === 0 ? "" : "mt-10"}

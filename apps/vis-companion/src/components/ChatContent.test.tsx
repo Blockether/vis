@@ -246,13 +246,17 @@ describe("collapsed tool results", () => {
 // Regression, reported white artefacts while scrolling a long session upward:
 // measured in headless WebKit on this very transcript (77 000 px, 401 code
 // blocks), a fling up left as much as 376 px of the 900 px viewport painting as
-// bare paper, card frames already there and their bodies still empty. A turn
-// that declares `contain` (or `content-visibility`) is a paint island WebKit
-// rasterizes only once it enters the viewport, which a fast scroll always
-// outruns — the note at the top of ChatContent.tsx retired both, and the user
-// bubble was the one subtree that kept `[contain:layout_style]`.
-describe("a turn is one continuous paint tree", () => {
-  const paintIsland = /\bcontain:|\bcontent-visibility/u;
+// bare paper, card frames already there and their bodies still empty. That was
+// `contain:layout style` on every turn — a paint island WebKit rasterizes only
+// when it enters the viewport, which a fast scroll always outruns.
+//
+// A finished turn IS skipped again (`useMeasuredPaintSkip`), and this is the
+// difference that made it safe: the skip is armed by a MEASUREMENT and never
+// declared in the markup, so no turn can be skipped at a height nobody measured
+// — the guessed size is what used to correct itself above the reader.
+// `ChatContent.paintSkip.test.tsx` pins the armed half.
+describe("a turn declares no size it has not measured", () => {
+  const paintIsland = /\bcontain:|\bcontent-visibility|contain-intrinsic-size/u;
 
   it("gives a user bubble no paint-isolation boundary", () => {
     const html = renderToStaticMarkup(
@@ -262,7 +266,7 @@ describe("a turn is one continuous paint tree", () => {
     expect(html).not.toMatch(paintIsland);
   });
 
-  it("gives an assistant turn no paint-isolation boundary", () => {
+  it("leaves an assistant turn's markup free of containment", () => {
     const html = renderToStaticMarkup(
       <AssistantMessage
         turn={{

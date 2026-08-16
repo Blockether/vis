@@ -96,28 +96,42 @@ export const transcriptEnterClass =
 export const transcriptRiseClass =
   "animate-transcript-rise motion-reduce:animate-none";
 
-// One assistant turn is thousands of nodes, and opening a session used to mount
-// them all in one shot: measured on device, a single turn of this transcript is
-// ~13k elements and the first paint cost 409 ms, the full window 1256 ms — the
-// stall between tapping a row and seeing the conversation.
+// One assistant turn is thousands of nodes, and opening a session mounts many
+// of them at once: measured on device, a single turn of this transcript is ~13k
+// elements and the first paint cost 409 ms, the full window 1256 ms.
 //
-// `content-visibility:auto` was that fix and had to be REVERTED: it buys first
-// paint by guessing the height of everything it skips, and every first reveal
-// then corrects that guess. On a scroller with no scroll anchoring (WebKit has
-// none, and the transcript sets `overflow-anchor:none` on purpose) a correction
-// ABOVE the viewport moves what you are reading. Measured in WebKit on a 28-turn
-// session, one 10 000 px scroll up: 39 height corrections totalling 53 307 px,
-// the worst single ones 21 002 / 12 940 / 7 752 px — the flicker while scrolling
-// a freshly opened session. Without it: zero height corrections.
+// What a long session costs AFTER that is paint, and paint scales with the
+// whole mounted tree rather than with what is on screen. Measured on the iOS
+// simulator against a 30-turn session (64 517 nodes, 265 635 px), one scroll
+// frame: 82 ms for the live screen, 74 ms for an inert clone of the same DOM
+// with no React and no listeners in it — so no amount of memoization moves that
+// number, and 17 ms once each turn is its own skippable box.
 //
-// `contain:layout style` had to go with it. It faked no size, but it split a
-// 41 148 px transcript into 198 paint-isolated islands, and a fast fling then
+// `content-visibility:auto` was reverted here once and the reason was never the
+// containment: it was the SIZE. `contain-intrinsic-size` GUESSED (480 px, later
+// 800 px), every first reveal corrected the guess, and on a scroller with no
+// scroll anchoring (WebKit has none, and the transcript sets
+// `overflow-anchor:none` on purpose) a correction ABOVE the viewport moves what
+// you are reading — 39 corrections totalling 53 307 px on one 10 000 px scroll
+// up, the worst single ones 21 002 / 12 940 / 7 752 px. The guess reproduces on
+// the simulator: `auto 800px` over those 30 turns made 23 height changes and a
+// transcript that measured 24 916 px instead of 265 635 px.
+//
+// So `useMeasuredPaintSkip` hands the engine the height a turn ALREADY has, and
+// only once layout has measured it. Same session, same fling: 0 corrections, 0
+// height changes, 0 px of drift, and mid-fling screenshots at 72 000 px/s whose
+// longest ink-free run is the settled one's (28.0 pt).
+//
+// `contain:layout style` stays retired. It faked no size, but it split a
+// 41 148 px transcript into 198 paint-isolated islands and a fast fling then
 // exposed the paper background before WebKit rasterized them — the white bands.
-// A continuous paint tree has no such catch-up boundary.
+// One box per TURN is the whole win (30 boxes: 17 ms a frame; the same CSS on
+// all 5 008 trace segments: 33 ms — every containment box costs ~3 µs a frame),
+// so nothing smaller than a turn declares containment.
 //
-// What keeps the open cheap instead is the bounded window: pagination mounts
-// only INITIAL_VISIBLE_TURNS, `Load earlier` brings the rest in on demand, and
-// the iteration ramp below stages a turn's trace. None of those guess a height.
+// What keeps the OPEN cheap is still the bounded window: pagination mounts only
+// INITIAL_VISIBLE_TURNS, `Load earlier` brings the rest in on demand, and the
+// iteration ramp below stages a turn's trace. None of those guess a height.
 
 type DiffLineKind = "add" | "del" | "ctx";
 type DiffLine =
@@ -1369,47 +1383,72 @@ const REASONING_PREVIEW_LINES = 3;
 // Clojure transcript split; keep the three in step.
 const REASONING_COLLAPSE_MIN_HIDDEN = 3;
 
-// Collapsed-height measurement for THINKING bands, batched across the whole
-// transcript. One shared observer and one animation-frame flush prevent a
-// long session from doing N independent layout reads on rotation.
-const bandMeasures = new WeakMap<Element, () => void>();
-const observedBands = new Set<Element>();
-const pendingBands = new Set<Element>();
-let bandFrame: number | null = null;
-let bandObserver: ResizeObserver | null = null;
+// Height measurement batched across the whole transcript: THINKING bands
+// deciding what they hide, and finished turns sizing their own paint skip. One
+// shared observer and one animation-frame flush prevent a long session from
+// doing N independent layout reads on rotation.
+//
+// A measure READS, and returns the write it wants performed (or nothing). Every
+// read in a flush therefore happens before every write: a callback that
+// measured and then restyled its own box would invalidate layout for the next
+// box in the same flush, and a transcript would lay itself out once per turn.
+const boxMeasures = new WeakMap<Element, () => (() => void) | void>();
+const observedBoxes = new Set<Element>();
+const pendingBoxes = new Set<Element>();
+let boxFrame: number | null = null;
+let boxObserver: ResizeObserver | null = null;
 
-function flushBands() {
-  bandFrame = null;
+/**
+ * True while WebKit is SKIPPING this subtree for `content-visibility:auto`.
+ *
+ * Nothing inside a skipped box is laid out, so every metric it reports is the
+ * placeholder that was written for it — believing one is how a measurement
+ * decays back into a guess.
+ */
+function isPaintSkipped(box: Element): boolean {
+  return typeof box.checkVisibility === "function"
+    ? !box.checkVisibility({ contentVisibilityAuto: true })
+    : false;
+}
+
+function flushBoxes() {
+  boxFrame = null;
   if (isViewportRotating()) return;
-  const targets = [...pendingBands];
-  pendingBands.clear();
-  for (const band of targets) bandMeasures.get(band)?.();
-}
-
-function scheduleBands(bands: Iterable<Element>) {
-  for (const band of bands) pendingBands.add(band);
-  if (bandFrame !== null || typeof window === "undefined") return;
-  bandFrame = window.requestAnimationFrame(flushBands);
-}
-
-function observeBand(band: Element, measure: () => void): () => void {
-  if (typeof ResizeObserver === "undefined") return () => {};
-  bandMeasures.set(band, measure);
-  observedBands.add(band);
-  if (!bandObserver) {
-    bandObserver = new ResizeObserver((entries) =>
-      scheduleBands(entries.map((entry) => entry.target)),
-    );
-    onViewportRotation((phase) => {
-      if (phase === "end") scheduleBands(observedBands);
-    });
+  const targets = [...pendingBoxes];
+  pendingBoxes.clear();
+  const writes: Array<() => void> = [];
+  for (const box of targets) {
+    const write = boxMeasures.get(box)?.();
+    if (write) writes.push(write);
   }
-  bandObserver.observe(band);
+  for (const write of writes) write();
+}
+
+function scheduleBoxes(boxes: Iterable<Element>) {
+  for (const box of boxes) pendingBoxes.add(box);
+  if (boxFrame !== null || typeof window === "undefined") return;
+  boxFrame = window.requestAnimationFrame(flushBoxes);
+}
+
+function observeBox(box: Element, measure: () => (() => void) | void): () => void {
+  boxMeasures.set(box, measure);
+  observedBoxes.add(box);
+  if (typeof ResizeObserver !== "undefined") {
+    if (!boxObserver) {
+      boxObserver = new ResizeObserver((entries) =>
+        scheduleBoxes(entries.map((entry) => entry.target)),
+      );
+      onViewportRotation((phase) => {
+        if (phase === "end") scheduleBoxes(observedBoxes);
+      });
+    }
+    boxObserver.observe(box);
+  }
   return () => {
-    bandObserver?.unobserve(band);
-    observedBands.delete(band);
-    pendingBands.delete(band);
-    bandMeasures.delete(band);
+    boxObserver?.unobserve(box);
+    observedBoxes.delete(box);
+    pendingBoxes.delete(box);
+    boxMeasures.delete(box);
   };
 }
 
@@ -1428,6 +1467,11 @@ export const ThinkingBand = memo(function ThinkingBand({
     if (!body) return;
 
     const measure = () => {
+      // A band inside a turn WebKit is skipping has no laid-out content:
+      // `scrollHeight` reads 0, and the disclosure would retire itself — on
+      // rotation, for every collapsed band in the transcript at once. A skipped
+      // band is measured when it is rendered again, never before.
+      if (isPaintSkipped(body)) return;
       const lineHeight =
         Number.parseFloat(window.getComputedStyle(body).lineHeight) || 20;
       const previewHeight = lineHeight * REASONING_PREVIEW_LINES;
@@ -1439,7 +1483,7 @@ export const ThinkingBand = memo(function ThinkingBand({
     };
 
     measure();
-    return observeBand(body, measure);
+    return observeBox(body, measure);
   }, [normalized]);
 
   // Collapsing is derived, not stored: a block with nothing hidden is never expanded.
@@ -2419,6 +2463,157 @@ function LiveProgress({
   );
 }
 
+// A turn is armed only once its size has HELD STILL for this long. A freshly
+// mounted turn paints its prose before its code blocks, pictures and tables
+// land, and a skip armed on that halfway height freezes the turn there: the
+// content keeps arriving into a subtree WebKit is no longer laying out, so
+// nothing reports the change. Measured on the simulator, arming on first sight:
+// a 24-turn transcript that really stands 443 315 px measured 100 701 px.
+const PAINT_SKIP_QUIET_MS = 400;
+
+/**
+ * Lets WebKit skip a finished turn it is not painting, at that turn's OWN size.
+ *
+ * The skip is only ever armed from a MEASUREMENT: never during the commit that
+ * created the turn (a read there would force one full transcript layout per
+ * turn), never while the turn is streaming (its height is still moving, and it
+ * is the row being read), and never before the size has been the same for
+ * `PAINT_SKIP_QUIET_MS`.
+ *
+ * Armed, the turn goes blind — a skipped subtree is not laid out, so no resize
+ * can report what changed inside it. So anything that CAN change it drops the
+ * skip first and measures again from scratch: the width (a rotation or a split
+ * view), a DOM mutation anywhere under it, a picture that finishes loading, and
+ * a size that no longer matches when the turn is rendered again. That is the
+ * whole difference from the `contain-intrinsic-size` guess this replaced: the
+ * engine is never handed a height that nobody measured.
+ *
+ * See the note at the top of this file for what the guess did instead.
+ */
+function useMeasuredPaintSkip(live: boolean) {
+  const ref = useRef<HTMLElement | null>(null);
+
+  useLayoutEffect(() => {
+    const box = ref.current;
+    if (!box) return;
+
+    type Size = { width: number; height: number };
+    /** The size the skip is armed with, or null while the turn is still open. */
+    let armed: Size | null = null;
+    /** The last size seen unarmed, and when this size was first seen. */
+    let seen: (Size & { at: number }) | null = null;
+    let recheck: number | null = null;
+    let content: MutationObserver | null = null;
+
+    const same = (a: Size, b: Size) =>
+      Math.abs(a.width - b.width) < 0.5 && Math.abs(a.height - b.height) < 0.5;
+
+    /** Look again after the quiet period: nothing else will report stillness. */
+    const soon = () => {
+      if (recheck !== null || typeof window === "undefined") return;
+      recheck = window.setTimeout(() => {
+        recheck = null;
+        scheduleBoxes([box]);
+      }, PAINT_SKIP_QUIET_MS);
+    };
+
+    const unwatch = () => {
+      content?.disconnect();
+      content = null;
+      box.removeEventListener("load", unarm, true);
+    };
+
+    const drop = () => {
+      unwatch();
+      armed = null;
+      seen = null;
+      box.style.contentVisibility = "";
+      box.style.containIntrinsicSize = "";
+    };
+
+    /** Something moved under the skip: measure the turn again, from scratch. */
+    const unarm = () => {
+      if (!armed) return;
+      drop();
+      scheduleBoxes([box]);
+    };
+
+    const watchContent = () => {
+      if (content || typeof MutationObserver === "undefined") return;
+      // Attributes are left out on purpose: arming writes two of this box's
+      // own, and a turn nobody is painting is a turn nobody can toggle. A
+      // picture that finishes loading mutates no DOM at all, so its `load`
+      // is caught on the way through instead.
+      content = new MutationObserver(unarm);
+      content.observe(box, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+      });
+      box.addEventListener("load", unarm, true);
+    };
+
+    if (live) {
+      drop();
+      return;
+    }
+
+    const measure = () => {
+      const width = box.offsetWidth;
+
+      if (isPaintSkipped(box)) {
+        // Everything a skipped turn reports is the placeholder it was given —
+        // except the WIDTH, which is still the layout's own answer.
+        if (!armed || Math.abs(width - armed.width) < 0.5) return;
+        return () => {
+          drop();
+          scheduleBoxes([box]);
+        };
+      }
+
+      const height = box.getBoundingClientRect().height;
+      // 0 is "not laid out" — a detached or hidden subtree — never "empty".
+      if (height <= 0) return;
+      const size = { width, height };
+
+      if (armed) {
+        if (same(armed, size)) return;
+        return () => {
+          drop();
+          scheduleBoxes([box]);
+        };
+      }
+
+      if (!seen || !same(seen, size)) {
+        seen = { ...size, at: Date.now() };
+        soon();
+        return;
+      }
+      if (Date.now() - seen.at < PAINT_SKIP_QUIET_MS) {
+        soon();
+        return;
+      }
+      return () => {
+        armed = size;
+        box.style.containIntrinsicSize = `auto ${height}px`;
+        box.style.contentVisibility = "auto";
+        watchContent();
+      };
+    };
+
+    const stop = observeBox(box, measure);
+    scheduleBoxes([box]);
+    return () => {
+      if (recheck !== null && typeof window !== "undefined")
+        window.clearTimeout(recheck);
+      stop();
+      drop();
+    };
+  }, [live]);
+
+  return ref;
+}
+
 export const AssistantMessage = memo(function AssistantMessage({
   turn,
   streaming = false,
@@ -2470,13 +2665,13 @@ export const AssistantMessage = memo(function AssistantMessage({
       : null;
   const fallbackNote = meta && !cancelled ? turnFallbackNote(turn) : null;
 
-  // Keep a turn an ordinary paint subtree: both a `content-visibility`
-  // placeholder (which corrects its guessed height above the reader) and a
-  // `contain:layout style` boundary (which WebKit rasterizes only once it
-  // enters the viewport) made big turns arrive late while scrolling — the
-  // shift and the white bands. See the note at the top of this file.
+  // A finished turn is one skippable paint box, sized by `useMeasuredPaintSkip`
+  // from its own measured height. The live turn is never skipped: it is the row
+  // being read, and its height is still moving.
+  const paintSkip = useMeasuredPaintSkip(streaming);
+
   return (
-    <article className="mt-4 w-full" aria-busy={streaming}>
+    <article className="mt-4 w-full" aria-busy={streaming} ref={paintSkip}>
       <div
         className={`mb-1 font-mono text-meta font-bold ${cancelled ? "text-dialog-hint" : "text-vis-role"}`}
       >
