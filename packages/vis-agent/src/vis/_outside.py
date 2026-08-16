@@ -747,27 +747,37 @@ _IMPLEMENTATIONS = {
 }
 
 
+class _OutsideHost:
+    """The host `vis` binds when there is no engine in the room.
+
+    One attribute per contract op, because that is the shape the engine injects
+    too: an extension holds a `vis_contract.Host` either way, and anyone writing a
+    third host has an interface to implement rather than a dict shape to guess.
+    """
+
+    def __init__(self, ops):
+        for name, fn in ops.items():
+            setattr(self, name, fn)
+
+    def __repr__(self):
+        return "<vis outside host: contract v{}, {} ops>".format(
+            contract["version"], len(_OPS)
+        )
+
+
 def _build_host():
-    # The DOCUMENT decides what exists; this file only claims to implement it. An
-    # op declared in the contract with nothing behind it fails here, at import,
-    # naming itself — not in front of a user halfway through an extension.
+    # The DOCUMENT decides what exists; this file only claims to implement it, and
+    # `check_host` is the contract's own gate: an op declared with nothing behind it
+    # fails here, at import, naming itself — not in front of a user halfway through
+    # an extension.
     built = {}
-    missing = []
     for op in contract["ops"]:
         name = op["name"]
         if op["outside"] == "refuse":
             built[name] = _refusal(name)
         elif name in _IMPLEMENTATIONS:
             built[name] = _IMPLEMENTATIONS[name]
-        else:
-            missing.append(name)
-    if missing:
-        raise ImportError(
-            "vis contract v{} declares host ops this package does not implement: {}".format(
-                contract["version"], ", ".join(missing)
-            )
-        )
-    return built
+    return vis_contract.check_host(_OutsideHost(built))
 
 
 host = _build_host()

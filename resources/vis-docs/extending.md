@@ -103,6 +103,12 @@ set `VIS_OUTSIDE_NONINTERACTIVE=1` to have every ask come back undeliverable.
 `background`, `logs`, `wait`, `send`, `stop`, read out of that declaration — so a
 file written against the sandbox drives a process the same way outside it.
 
+Neither host is special: `vis` calls thirteen methods on whatever object sits in
+its `_host`, and `vis_contract.Host` is that interface — a `typing.Protocol`, with
+`vis_contract.check_host(obj)` refusing an object that misses an op and naming the
+ones it missed. A third runtime that wants to run extension files implements it and
+seeds it; the engine seeds one, `vis._outside` builds one, and the file cannot tell.
+
 ### `vis.extension(...)`
 
 Exactly one call per file. Keyword arguments:

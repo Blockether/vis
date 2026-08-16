@@ -15,9 +15,9 @@
   (:import (org.graalvm.polyglot Context)))
 
 (defn- bootstrap-host-keys
-  "The `_host` dict keys the bootstrap builds, read out of its source."
+  "The op names the bootstrap hangs on its `_host` object, read out of its source."
   []
-  (set (map second (re-seq #"\"([a-z_]+)\": __vis_host_" pyx/bootstrap-python))))
+  (set (map second (re-seq #"([a-z_]+)=__vis_host_" pyx/bootstrap-python))))
 
 (defdescribe
   python-host-contract-test
@@ -26,7 +26,7 @@
     (it "declares every `__vis_host_*` global the bootstrap injects"
         (expect (= (set (re-seq #"__vis_host_\w+__" pyx/bootstrap-python))
                    (set (contract/host-globals)))))
-    (it "names each op the way the module's `_host` dict keys it"
+    (it "names each op the way the module's `_host` object attributes it"
         (expect (= (bootstrap-host-keys) (set (contract/op-names)))))
     (it "gives every refusing op a reason that names the call the author made"
         (let [refusing (filter #(= :outside/refuse (:op/outside %)) (contract/ops))]
@@ -62,12 +62,20 @@
                (finally (.close ctx))))))
   (describe
     "a live extension context"
-    (it "binds exactly the ops the document declares"
-        (let [^Context ctx (pyx/build-context "python-contract-test")]
-          (try (pyx/bind-inert-host! ctx nil)
-               (.eval ctx "python" ^String pyx/bootstrap-python)
-               (expect (= (sort (contract/op-names))
-                          (-> (.eval ctx "python" "import vis\n','.join(sorted(vis._host.keys()))")
-                              (.asString)
-                              (str/split #","))))
-               (finally (.close ctx)))))))
+    (it
+      "binds exactly the ops the document declares"
+      (let [^Context ctx (pyx/build-context "python-contract-test")]
+        (try
+          (pyx/bind-inert-host! ctx nil)
+          (.eval ctx "python" ^String pyx/bootstrap-python)
+          (expect
+            (=
+              (sort (contract/op-names))
+              (->
+                (.eval
+                  ctx
+                  "python"
+                  "import vis\n','.join(sorted(n for n in vars(vis._host) if not n.startswith('_')))")
+                (.asString)
+                (str/split #","))))
+          (finally (.close ctx)))))))

@@ -491,7 +491,7 @@
   "Every `__vis_host_*` global the bootstrap reads out of a context's bindings, in
    the order `packages/vis-contract/resources/vis-contract/python-host.edn` declares them.
 
-   The bootstrap builds its `_host` dict at MODULE level, so a member nobody bound
+   The bootstrap builds its `_host` object at MODULE level, so a member nobody bound
    is a `NameError` before the extension's first line runs. The contract document
    is the ONE list — adding a host call means adding an op there, and
    `python_host_test` fails when this binder, that bootstrap or the packaged

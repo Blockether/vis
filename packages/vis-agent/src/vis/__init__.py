@@ -1,9 +1,10 @@
 """The Vis extension API — everything an extension file reaches for.
 
 `import vis` inside a Vis extension gets this module FROM THE HOST: the engine
-builds it, seeds `_host` with the callables named by
-`packages/vis-contract/resources/vis-contract/python-host.edn`, execs this source into it and registers
-it in `sys.modules`, so every call below reaches the live agent.
+builds it, seeds `_host` with an object whose attributes are the ops named by
+`packages/vis-contract/resources/vis-contract/python-host.edn` — the `Host`
+protocol `vis-contract` declares — execs this source into it and registers it in
+`sys.modules`, so every call below reaches the live agent.
 
 Installed from PyPI (`pip install vis-agent`) there is no Vis process to seed
 anything, so `vis._outside` answers each op the way the contract document says it
@@ -84,7 +85,7 @@ def extension(
     import os as _os
 
     for _k, _v in (
-        _json.loads(_host["declare_env"](_json.dumps(env or []))) or {}
+        _json.loads(_host.declare_env(_json.dumps(env or []))) or {}
     ).items():
         _os.environ[str(_k)] = str(_v)
     _registration["spec"] = {
@@ -335,34 +336,34 @@ def strings_of(value):
 
 class _State:
     def get(self, key, default=None):
-        v = _host["state_get"](str(key))
+        v = _host.state_get(str(key))
         return default if v is None else v
 
     def __getitem__(self, key):
-        v = _host["state_get"](str(key))
+        v = _host.state_get(str(key))
         if v is None:
             raise KeyError(key)
         return v
 
     def __setitem__(self, key, value):
-        _host["state_put"](str(key), value)
+        _host.state_put(str(key), value)
 
     def __delitem__(self, key):
-        _host["state_del"](str(key))
+        _host.state_del(str(key))
 
     def __contains__(self, key):
-        return _host["state_get"](str(key)) is not None
+        return _host.state_get(str(key)) is not None
 
 
 state = _State()
 
 
 def log(level, msg):
-    _host["log"](str(level), str(msg))
+    _host.log(str(level), str(msg))
 
 
 def notify(text, level="info"):
-    _host["notify"](str(text), str(level))
+    _host.notify(str(text), str(level))
 
 
 def _shell_options(name, opts):
@@ -414,7 +415,7 @@ class Shell(dict):
 
 def _shell_call(name):
     def call(opts):
-        return _host[name](_shell_options(name, opts))
+        return getattr(_host, name)(_shell_options(name, opts))
 
     return call
 
@@ -639,7 +640,7 @@ def ask(title, fields, **options):
             return json.dumps(False)
         return json.dumps(verdict if isinstance(verdict, str) else str(verdict))
 
-    answer_json = _host["request_input"](
+    answer_json = _host.request_input(
         json.dumps(request),
         json.dumps({k: len(v) for k, v in validators.items()}),
         _run,
@@ -772,7 +773,7 @@ def check(title, fields, **options):
         # `validate=` that is not a function or cannot take the value - is
         # ANSWERED here rather than raised: `check` never throws.
         return str(exc)
-    verdict = json.loads(_host["check_input"](json.dumps(request)))
+    verdict = json.loads(_host.check_input(json.dumps(request)))
     if verdict.get("is_valid"):
         return None
     return str(verdict.get("error") or "invalid human-input request")
@@ -783,11 +784,11 @@ def reveal(handle):
     # handle is unknown or already forgotten. Never log or return the result.
     if not handle:
         return None
-    return _host["reveal_secret"](str(handle))
+    return _host.reveal_secret(str(handle))
 
 
 def forget(handle):
     # Drop the plaintext behind a handle as soon as it is no longer needed.
     if not handle:
         return False
-    return bool(_host["forget_secret"](str(handle)))
+    return bool(_host.forget_secret(str(handle)))

@@ -11,6 +11,7 @@ import json
 
 import pytest
 import vis
+import vis_contract
 from vis import _outside
 
 CONTRACT = _outside.contract
@@ -23,13 +24,17 @@ def _op(name):
 # -- The document and the implementation ---------------------------------------
 
 
-def test_the_host_serves_exactly_the_declared_ops():
-    assert sorted(_outside.host) == sorted(op["name"] for op in CONTRACT["ops"])
+def test_the_host_is_a_contract_host_and_serves_exactly_the_declared_ops():
+    # The protocol is the interface anyone else implements, so this host has to
+    # satisfy it the same way a stranger's would.
+    assert isinstance(_outside.host, vis_contract.Host)
+    served = sorted(n for n in vars(_outside.host) if not n.startswith("_"))
+    assert served == sorted(op["name"] for op in CONTRACT["ops"])
 
 
 def test_every_op_accepts_the_arity_the_contract_declares():
     for op in CONTRACT["ops"]:
-        fn = _outside.host[op["name"]]
+        fn = getattr(_outside.host, op["name"])
         if op["outside"] == "refuse":
             continue  # a refusal takes anything and answers the same way
         params = [
@@ -39,6 +44,46 @@ def test_every_op_accepts_the_arity_the_contract_declares():
         ]
         required = [p for p in params if p.default is p.empty]
         assert len(required) <= op["arity"] <= len(params), op["name"]
+
+
+class _Recorder:
+    """A host somebody else could have written: the contract's ops, nothing else."""
+
+    def __init__(self):
+        self.calls = []
+        for name in vis_contract.OPS:
+            setattr(self, name, self._record(name))
+
+    def _record(self, name):
+        def op(*args):
+            self.calls.append((name, args))
+            return None
+
+        return op
+
+
+def test_any_object_that_satisfies_the_protocol_can_be_the_host(monkeypatch):
+    # Three hosts exist now — the engine's, `_outside`'s and this one — and the
+    # module cannot tell them apart, because the protocol is the only agreement
+    # between them. That is what makes a third host somebody else's to write.
+    stranger = _Recorder()
+    assert isinstance(stranger, vis_contract.Host)
+    assert vis_contract.check_host(stranger) is stranger
+
+    monkeypatch.setattr(vis, "_host", stranger)
+    vis.log("info", "hello")
+    vis.notify("done")
+    vis.state["seat"] = 4
+    del vis.state["seat"]
+    vis.reveal("vis-secret:abc")
+
+    assert [name for name, _ in stranger.calls] == [
+        "log",
+        "notify",
+        "state_put",
+        "state_del",
+        "reveal_secret",
+    ]
 
 
 def test_a_refusing_op_raises_the_refusal_the_contract_states():

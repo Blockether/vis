@@ -2,7 +2,7 @@
 ;;
 ;; ONE document, three readers. The engine binds `:op/global` into every extension
 ;; context (`internal.python-extensions/host-member-names`); the packaged module
-;; builds its `_host` dict from `:op/name`; and outside a Vis process the package
+;; hangs its `_host` object's attributes off `:op/name`; and outside a Vis process the package
 ;; answers the op the way `:op/outside` says. `python_host_test` fails when any
 ;; reader drifts from this file, so a new host call is added HERE and nowhere else.
 ;;

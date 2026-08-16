@@ -94,7 +94,7 @@
 (defn op "The op named `name`, or nil." [name] (first (filter #(= name (:op/name %)) (ops))))
 
 (defn op-names
-  "The `_host` dict keys the packaged `vis` module builds, in document order."
+  "The op names the packaged `vis` module's `_host` object answers, in document order."
   []
   (mapv :op/name (ops)))
 
