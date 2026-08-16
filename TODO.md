@@ -14,7 +14,7 @@ Decide one at a time. Each item stays here until it is either **DONE** (shipped 
 
 ## 1. `apropos` must never answer `{}` for a non-empty query
 
-**Status:** open — decision needed
+**Status:** DONE — shipped t3-t5 `84b53c5d8`, t8 `1d36ba9bd`, t10 `d12f581b7`, t16 `ae1f3f45a`
 **Cost observed:** 2 dead-ends in-window, still reproducible today.
 
 Terms are ANDed with no fallback, so the query shape a model naturally types dead-ends:
@@ -414,3 +414,21 @@ its resolved terms as metadata), `env_python.clj` (row assembly, `apropos-limit`
 `__vis_kinds__` seeding), `foundation/mcp/core.clj` (`:kind "mcp"`), `resources/vis-docs/token-optimization.md`.
 Tests: `bm25_test` (resolved-term metadata), `doc_corpus_test` (preview: 3 parts, `at`, breadcrumb, bounds,
 correction), `env_python_test` (row shape end-to-end, `local` excluded from a described ask, listed in the listing).
+
+---
+
+## Still open (t22) — measured, none scheduled
+
+Nothing above is open. These are the residues the shipped work left behind, each with the
+measurement that would justify picking it up.
+
+1. **Three ranking near-ties, all doc-side** (measured t17, unchanged since): *"who calls this
+   function"* answers mcp `call` first — a one-word handle in the 12× name field; *"show me lines
+   10 to 40 of a file"* answers `download_code` because the bare numeral `10` carries high idf;
+   *"reduce token usage in a session"* answers `read_session`, whose page spends *usage* on tokens.
+   Each is one page's vocabulary, not the ranker — `editing/core_test`'s `natural-ask-test` is the
+   place to pin whichever one is worth a rewrite.
+2. **Move the ranker into `fff`** (parked t6/t7). The trigger stays: a second consumer of BM25F
+   inside the tree, or a corpus large enough that a JVM index build (8.7 ms today) shows up.
+3. **The running gateway serves the engine it started with.** Every doc, page and prompt change
+   since t12 is invisible until a restart — operational, not code.
