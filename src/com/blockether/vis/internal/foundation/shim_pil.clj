@@ -124,6 +124,21 @@
   [mode]
   (contains? #{"RGBA" "LA"} (str mode)))
 
+(defn- mask-band
+  "Which byte of a mask raster a paste reads: the ALPHA band of an 'RGBA'/'LA'
+   mask, the gray VALUE of an 'L' or bitmap mask -- PIL's own rule. Reading blue
+   instead blended `im.paste(im, box, im)` -- the idiom for dropping a
+   transparent PNG onto a canvas -- by the source's own BLUENESS, so gold
+   (253,198,80) came out cream over white and brown over charcoal."
+  ^long [mode]
+  (if (alpha-mode? mode) 24 0))
+
+(defn- mask-at
+  "One mask sample, 0-255. A '1' mask is BOOLEAN -- any non-zero copies the
+   source pixel whole -- every other mode reads `band` straight."
+  [^Raster m band bitmap? x y]
+  (let [v (ch (.getRGB m (long x) (long y)) (long band))]
+    (if bitmap? (if (zero? v) 0 255) v)))
 (defn- new-raster
   "A blank raster for `mode`: transparent for the alpha modes, opaque black
    otherwise -- the same starting state `new BufferedImage(...)` used to give."
@@ -153,24 +168,28 @@
   (zero? (.amask r)))
 
 (defn- ->argb
-  "PIL colour spec -> packed 0xAARRGGBB."
+  "PIL colour spec -> packed 0xAARRGGBB. A two-element colour is 'LA' the way PIL
+   takes it -- (gray, alpha) -- and a '1' image holds only 0 or 255, so any
+   non-zero ink fills white there."
   ^long [c mode]
-  (cond (nil? c) (if (alpha-mode? mode) (argb 0 0 0 0) (argb 255 0 0 0))
-        (number? c) (let [v (long c)]
-                      (argb 255 v v v))
-        (sequential? c) (let
-                          [v
-                           (mapv long c)
+  (let
+    [p (cond (nil? c) (if (alpha-mode? mode) (argb 0 0 0 0) (argb 255 0 0 0))
+             (number? c) (let [v (long c)]
+                           (argb 255 v v v))
+             (sequential? c) (let
+                               [v (mapv long c)
+                                [r g b a] v]
 
-                           [r g b a]
-                           v]
+                               (case (count v)
+                                 1
+                                 (argb 255 r r r)
 
-                          (case (count v)
-                            1
-                            (argb 255 r r r)
+                                 2
+                                 (argb g r r r)
 
-                            (if a (argb a r g b) (argb 255 r g b))))
-        :else (argb 255 0 0 0)))
+                                 (if a (argb a r g b) (argb 255 r g b))))
+             :else (argb 255 0 0 0))]
+    (if (and (= "1" (str mode)) (pos? (ch p 0))) (argb 255 255 255 255) p)))
 
 (defn- ->hex
   "Packed 0xAARRGGBB -> the `#rrggbbaa` string `imaging`'s draw ops take."
@@ -932,33 +951,10 @@
 
         [(ch p 16) (ch p 8) (ch p 0)]))))
 
-(defn- color->argb
-  ^long [c _mode]
-  (cond (number? c) (gray-argb (int c))
-        (sequential? c) (let
-                          [v
-                           (mapv int c)
-
-                           [r g b a]
-                           v]
-
-                          (case (count v)
-                            1
-                            (gray-argb (int r))
-
-                            2
-                            (argb (int g) (int r) (int r) (int r))
-
-                            3
-                            (argb 255 (int r) (int g) (int b))
-
-                            (argb (int a) (int r) (int g) (int b))))
-        :else (argb 255 0 0 0)))
-
 (defn- op-putpixel
   [h x y c]
-  (let [{:keys [^Raster img]} (entry h)]
-    (.setRGB img (int x) (int y) (unchecked-int (color->argb c nil)))
+  (let [{:keys [^Raster img mode]} (entry h)]
+    (.setRGB img (int x) (int y) (unchecked-int (->argb c mode)))
     nil))
 
 (defn- blend-argb
@@ -1001,8 +997,14 @@
      dh
      (.getHeight d)
 
-     mimg
-     (when (and mask (>= (long mask) 0)) (:img (entry mask)))]
+     {mimg :img mmode :mode}
+     (when (and mask (>= (long mask) 0)) (entry mask))
+
+     band
+     (mask-band mmode)
+
+     bitmap?
+     (= "1" (str mmode))]
 
     (dotimes [j sh]
       (dotimes [i sw]
@@ -1012,7 +1014,7 @@
 
           (when (and (>= dx 0) (< dx dw) (>= dy 0) (< dy dh))
             (if mimg
-              (let [mp (ch (.getRGB ^Raster mimg i j) 0)]
+               (let [mp (long (mask-at mimg band bitmap? i j))]
                 (cond (>= mp 255) (.setRGB d dx dy (.getRGB s i j))
                       (pos? mp) (.setRGB d
                                          dx
@@ -1308,7 +1310,7 @@
      {b :img}
      (entry hb)
 
-     {m :img}
+     {m :img mmode :mode}
      (entry hmask)
 
      ^Raster a
@@ -1319,6 +1321,12 @@
 
      ^Raster m
      m
+
+     band
+     (mask-band mmode)
+
+     bitmap?
+     (= "1" (str mmode))
 
      w
      (.getWidth a)
@@ -1331,7 +1339,7 @@
 
     (dotimes [y hh]
       (dotimes [x w]
-        (let [t (/ (ch (.getRGB m x y) 0) 255.0)]
+        (let [t (/ (long (mask-at m band bitmap? x y)) 255.0)]
           ;; composite(im1, im2, mask) = im1*mask + im2*(1-mask)
           (.setRGB out x y (unchecked-int (blend-argb (.getRGB b x y) (.getRGB a x y) t))))))
     (meta-of (put-img! out ma))))

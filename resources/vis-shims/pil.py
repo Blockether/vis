@@ -374,6 +374,16 @@ def __vis_install_pil__():
     ImageColor.getcolor = _getcolor
     ImageColor.colormap = dict(_NAMED)
 
+    # A paste/composite mask is read from its ALPHA band ("RGBA"/"LA"), its gray
+    # value ("L") or as a bitmap ("1"). Any other mode is PIL's own `bad
+    # transparency mask`: refused, never blended by whichever band happens to be
+    # there -- that silent blend washed every `im.paste(im, box, im)` composite.
+    _MASK_MODES = ("1", "L", "LA", "RGBA")
+
+    def _check_mask(mask):
+        if mask is not None and getattr(mask, "mode", None) not in _MASK_MODES:
+            raise ValueError("bad transparency mask")
+
     # -- the Image class -----------------------------------------------------
     def _wrap(meta):
         m = _lst(meta)
@@ -554,6 +564,7 @@ def __vis_install_pil__():
                 tmp = new(self.mode, (box[2] - box[0], box[3] - box[1]), col)
                 im = tmp
                 box = (box[0], box[1])
+            _check_mask(mask)
             x, y = 0, 0
             if box is not None:
                 x, y = int(box[0]), int(box[1])
@@ -1180,6 +1191,7 @@ def __vis_install_pil__():
         return _wrap(_H("__vis_pil_blend__", im1._handle, im2._handle, float(alpha)))
 
     def composite(image1, image2, mask):
+        _check_mask(mask)
         return _wrap(
             _H("__vis_pil_composite__", image1._handle, image2._handle, mask._handle)
         )

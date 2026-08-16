@@ -863,3 +863,76 @@
                                            "    msg = str(e)\n" "msg"))]
                              (expect (str/includes? msg "is not live"))
                              (expect (not (str/includes? msg "Cannot invoke")))))))
+
+;; Regression, report 55ed67f6 (the Android launcher-icon session): `paste` and
+;; `composite` read a mask's BLUE byte instead of its alpha band, so
+;; `im.paste(im, box, im)` -- the idiom for dropping a transparent PNG onto a
+;; canvas -- blended every pixel by its own blueness. Gold (253,198,80) landed
+;; cream (254,237,200) on white and brown on charcoal, which is how a set of
+;; side-by-side app-icon proofs came out lying about the icons they compared.
+(defdescribe
+  pil-mask-band-regression-test
+  (it "pastes an opaque RGBA source through its alpha band, unblended"
+      (with-python-context (expect (= [253 198 80]
+                                      (ev python-context
+                                          (str "from PIL import Image\n"
+                                               "src = Image.new('RGBA',(4,4),(253,198,80,255))\n"
+                                               "dst = Image.new('RGB',(4,4),(255,255,255))\n"
+                                               "dst.paste(src,(0,0),src)\n"
+                                               "list(dst.getpixel((1,1)))"))))))
+  (it "leaves the destination alone where the mask's alpha is zero"
+      (with-python-context (expect (= [255 255 255]
+                                      (ev python-context
+                                          (str "from PIL import Image\n"
+                                               "src = Image.new('RGBA',(4,4),(253,198,80,0))\n"
+                                               "dst = Image.new('RGB',(4,4),(255,255,255))\n"
+                                               "dst.paste(src,(0,0),src)\n"
+                                               "list(dst.getpixel((1,1)))"))))))
+  (it "blends an 'L' mask by its gray value"
+      (with-python-context (expect (= [254 226 167]
+                                      (ev python-context
+                                          (str "from PIL import Image\n"
+                                               "src = Image.new('RGBA',(4,4),(253,198,80,255))\n"
+                                               "dst = Image.new('RGB',(4,4),(255,255,255))\n"
+                                               "dst.paste(src,(0,0),Image.new('L',(4,4),128))\n"
+                                               "list(dst.getpixel((1,1)))"))))))
+  (it "takes a '1' mask as a boolean bitmap, and fills one with white"
+      (with-python-context
+        (expect
+          (= [253 198 80 255]
+             (ev python-context
+                 (str "from PIL import Image\n"
+                      "src = Image.new('RGBA',(4,4),(253,198,80,255))\n"
+                      "dst = Image.new('RGB',(4,4),(255,255,255))\n"
+                      "dst.paste(src,(0,0),Image.new('1',(4,4),1))\n"
+                      "list(dst.getpixel((1,1))) + [Image.new('1',(2,2),1).getpixel((0,0))]"))))))
+  (it "composites through the mask's alpha band"
+      (with-python-context
+        (expect (= [253 198 80]
+                   (ev python-context
+                       (str "from PIL import Image\n"
+                            "gold = Image.new('RGB',(4,4),(253,198,80))\n"
+                            "white = Image.new('RGB',(4,4),(255,255,255))\n"
+                            "m = Image.new('RGBA',(4,4),(0,0,0,255))\n"
+                            "list(Image.composite(gold, white, m).getpixel((1,1)))"))))))
+  (it "refuses a mask mode PIL cannot read instead of blending some band of it"
+      (with-python-context
+        (expect (= "bad transparency mask"
+                   (ev python-context
+                       (str "from PIL import Image\n"
+                            "src = Image.new('RGBA',(4,4),(253,198,80,255))\n"
+                            "dst = Image.new('RGB',(4,4),(255,255,255))\n"
+                            "try:\n" "    dst.paste(src,(0,0),Image.new('RGB',(4,4),(0,0,255)))\n"
+                            "    msg = 'NO ERROR'\n" "except ValueError as e:\n"
+                            "    msg = str(e)\n" "msg"))))))
+  ;; `Image.new('LA', size, (gray, alpha))` used to die inside the host with a raw
+  ;; Java NPE, because a two-element colour fell through to the RGB(A) arm and
+  ;; unpacked nil. An 'LA' raster keeps the gray replicated across R/G/B here, so
+  ;; the pair is read off the first and last components.
+  (it "fills an 'LA' image from a (gray, alpha) pair"
+      (with-python-context
+        (expect (= [200 128]
+                   (ev python-context
+                       (str "from PIL import Image\n"
+                            "p = Image.new('LA',(2,2),(200,128)).getpixel((0,0))\n"
+                            "[p[0], p[-1]]")))))))
