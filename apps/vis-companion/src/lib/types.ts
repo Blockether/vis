@@ -58,6 +58,13 @@ export interface Session {
   /** Canonical gateway liveness; older gateways are inferred from status. */
   live?: boolean;
   current_turn_id?: string | null;
+  /**
+   * The run is PARKED on a human-input request nobody has answered yet — the
+   * gateway's machine-wide fact, so a session blocked inside another process
+   * still says so here. `live` stays true while it waits: the turn holds, and
+   * nothing will move it but an answer.
+   */
+  is_awaiting_input?: boolean;
   /** In-flight facts and same-response gateway clock for clock-safe attachment. */
   running_request?: string;
   running_started_at?: number;

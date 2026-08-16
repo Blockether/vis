@@ -1992,3 +1992,25 @@
                (expect (< left (long (str/index-of field-row "▎")) (+ left inner-w 1)))
                (expect (str/includes? field-row "▎hi")))
              (finally (.stopScreen screen))))))
+
+(defdescribe
+  navigator-input-needed-test
+  "The session list's own answer to \"which of these is waiting on ME\". The row
+   reported turn counts and focus; a run parked on an unanswered human-input
+   request — normally parked in ANOTHER process — read as just another quiet
+   session, and this list is exactly where its operator goes looking for it."
+  (it "reports the demand instead of the turn count"
+      (let [row (var-get #'dlg/navigator-session-row)]
+        (expect
+          (= "! input needed"
+             (:status
+               (row nil
+                    {"id" "s-parked" "title" "Deploy" "turn_count" 3 "is_awaiting_input" true}))))
+        (expect (true? (:awaiting-input?
+                         (row nil {"id" "s-parked" "title" "Deploy" "is_awaiting_input" true}))))))
+  (it "leaves an unparked row's status exactly as it was"
+      (let [row (var-get #'dlg/navigator-session-row)]
+        (expect (= "3 turns" (:status (row nil {"id" "s-quiet" "title" "Deploy" "turn_count" 3}))))
+        (expect (= "● focused"
+                   (:status (row "s-quiet" {"id" "s-quiet" "title" "Deploy" "turn_count" 3}))))
+        (expect (not (:awaiting-input? (row nil {"id" "s-quiet" "title" "Deploy"})))))))

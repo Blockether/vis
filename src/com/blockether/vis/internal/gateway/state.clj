@@ -4339,6 +4339,12 @@
            ;; status/current_turn_id, and answers for the whole machine, so every
            ;; client of this gateway sees the SAME session running.
            :live (boolean current-turn-id)
+           ;; A run PARKED on a human is the one state no client can derive: the
+           ;; turn is still "running", nothing is streaming, and the only thing
+           ;; that will move it is the operator. Cross-process (see
+           ;; `bus/waiting-requests`), so the phone, the TUI picker and this
+           ;; gateway's own list all say INPUT NEEDED about the same session.
+           :is_awaiting_input (bus/session-waiting? sid)
            :current_turn_id current-turn-id
            :last_active_at (:last-active entry)
            :turn_count (long (or (:turn-count stats) 0))
@@ -4439,26 +4445,39 @@
     [;; ONE scan for the whole ordering: `sort-by` calls its key fn O(n log n)
      ;; times, and a liveness key that could flip mid-sort is a comparator that
      ;; contradicts itself.
-     live (bus/live-turns)]
+     live
+     (bus/live-turns)
+
+     ;; Same rule, same reason, for the sessions blocked on a human.
+     waiting
+     (bus/waiting-requests)]
+
     (->> (lp/by-channel channel)
          (sort-by (fn [record]
                     (let
-                      [id (:id record)
-                       entry (session-entry id)]
+                      [id
+                       (:id record)
 
-                      [(if (or (:current-turn entry) (get live (str id))) 0 1)
+                       entry
+                       (session-entry id)]
+
+                      [(cond (seq (get waiting (str id))) 0
+                             (or (:current-turn entry) (get live (str id))) 1
+                             :else 2)
                        (unchecked-negate (record-recency-ms record entry (get stats (str id))))
                        (str id)])))
          (mapv :id))))
 
 (defn- order-session-summaries
-  "Gateway-owned navigator order: live sessions first, then most recently
-   active. The id tie-breaker keeps repeated polls deterministic."
+  "Gateway-owned navigator order: sessions PARKED on a human first, then the
+   rest of the live ones, then most recently active. The id tie-breaker keeps
+   repeated polls deterministic."
   [sessions]
   (->> sessions
        (sort-by (fn [session]
-                  [(if (true? (get session "live")) 0 1)
-                   (unchecked-negate (long (session-recency-ms session)))
+                  [(cond (true? (get session "is_awaiting_input")) 0
+                         (true? (get session "live")) 1
+                         :else 2) (unchecked-negate (long (session-recency-ms session)))
                    (str (get session "id"))]))
        vec))
 
@@ -4546,8 +4565,9 @@
    `GET /v1/sessions` is enough to paint a session picker. Unwindowed —
    `list-sessions-page` serves clients that page.
 
-   The gateway owns navigator ordering: live sessions first, followed by idle
-   sessions in most-recently-active order. Clients must preserve this order.
+   The gateway owns navigator ordering: sessions blocked on a human first, then
+   the rest of the live ones, then idle sessions in most-recently-active order.
+   Clients must preserve this order.
 
    CROSS-CHANNEL by default (`channel` = `:all`): a conversation started
    in one channel is visible in the others and vice-versa. Pass a specific

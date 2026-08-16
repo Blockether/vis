@@ -32,6 +32,10 @@
        (setForegroundColor [color] (reset! fg color) this)
        (setBackgroundColor [color] (reset! bg color) this)
        (fillRectangle [_ _ _] this)
+       ;; `underline-cell!` reads the painted cell back before folding the
+       ;; UNDERLINE in; a nil here makes that a no-op, which is all a colour
+       ;; assertion needs from a status border.
+       (getCharacter [_col _row] nil)
        (putString
          ([col row text]
           (swap! writes conj {:col col :row row :text text :fg @fg :bg @bg :modifiers @active})
@@ -481,3 +485,58 @@
           [tab-hits-by-id (filter #(and (= :workspace-entry (:kind %)) (integer? (:index %)))
                                   (cr/current))]
           (expect (= 3 (count tab-hits-by-id)))))))
+
+(defdescribe
+  tab-input-needed-test
+  "A tab whose run is PARKED on an unanswered human-input request. Every other
+   cue in the strip is about work the machine is doing — `:running` says wait,
+   `:ready` says read it when you like — so a session standing on the operator
+   painted exactly like one getting on with the job, and it stood there until
+   somebody happened to open that tab."
+  (it "paints a parked background tab's label in the warning colour"
+      (cr/reset!)
+      (let
+        [writes
+         (atom [])
+
+         g
+         (dummy-text-graphics writes)
+
+         db
+         {:title "Chat"
+          :session {:id "123e4567-e89b-12d3-a456-426614174000"}
+          :active-tab-id :tab-1
+          :tabs [{:id :tab-1 :label "Front"} {:id :tab-2 :label "Parked"}]
+          ;; A background tab's open form lives in its own `:tab-locals` half —
+          ;; the same place its `:loading?` waits out a turn.
+          :tab-locals {:tab-2 {:human-input {:request {"id" "req-1"}}}}}
+
+         write-with
+         (fn [needle]
+           (some #(when (str/includes? (str (:text %)) needle) %) @writes))]
+
+        (cr/begin-frame!)
+        (header/draw-header! g db 0 160)
+        (cr/commit-frame!)
+        (expect (= t/warning-fg (:fg (write-with "Parked"))))
+        (expect (not= t/warning-fg (:fg (write-with "Front"))))))
+  (it "leaves the strip alone when no tab is waiting on anybody"
+      (cr/reset!)
+      (let
+        [writes
+         (atom [])
+
+         g
+         (dummy-text-graphics writes)
+
+         db
+         {:title "Chat"
+          :session {:id "123e4567-e89b-12d3-a456-426614174000"}
+          :active-tab-id :tab-1
+          :tabs [{:id :tab-1 :label "Front"} {:id :tab-2 :label "Quiet"}]}]
+
+        (cr/begin-frame!)
+        (header/draw-header! g db 0 160)
+        (cr/commit-frame!)
+        (expect (not= t/warning-fg
+                      (:fg (some #(when (str/includes? (str (:text %)) "Quiet") %) @writes)))))))

@@ -5667,10 +5667,18 @@
                 str))
 
      work-dir
-     (or (not-empty (:work-dir session)) "No work dir")]
+     (or (not-empty (:work-dir session)) "No work dir")
+
+     ;; The gateway's own fleet fact (`state/soul` -> `bus/waiting-requests`),
+     ;; never a local guess: a run parked on an unanswered human-input request
+     ;; is normally parked in ANOTHER process, and this list is where its
+     ;; operator goes looking for it.
+     awaiting-input?
+     (true? (get session "is_awaiting_input"))]
 
     {:id (str "session:" id)
      :focused? active?
+     :awaiting-input? awaiting-input?
      :title (session-title session)
      :opening (navigator-opening (get session "first_request"))
      :session (short-session-id session)
@@ -5679,7 +5687,9 @@
      :position (get session "project_position")
      :dir work-dir
      :work-dir work-dir
-     :status (if active? "● focused" (str (long (or (get session "turn_count") 0)) " turns"))
+     :status (cond awaiting-input? "! input needed"
+                   active? "● focused"
+                   :else (str (long (or (get session "turn_count") 0)) " turns"))
      :created (navigator-stamp (get session "created_at"))
      :modified (navigator-stamp (or (get session "modified_at")
                                     (get session "last_active_at")
@@ -6066,14 +6076,22 @@
      (str (:session entry) "  ·  " (:draft entry) "  ·  " (:modified entry))]
 
     (p/draw-selection-marker! g x row selected? t/dialog-hint-key)
-    (p/set-colors! g (if focused? t/dialog-hint-key t/dialog-fg) t/dialog-bg)
+    (p/set-colors! g
+                   (cond (:awaiting-input? entry) t/warning-fg
+                         focused? t/dialog-hint-key
+                         :else t/dialog-fg)
+                   t/dialog-bg)
     (if (or selected? focused?)
       (p/styled g [p/BOLD] (p/put-str! g content-x row title))
       (p/put-str! g content-x row title))
     (when opening
       (p/set-colors! g t/dialog-hint t/dialog-bg)
       (p/put-str! g (+ (long content-x) title-shown-w) row (str " - " opening)))
-    (p/set-colors! g (if focused? t/dialog-hint-key t/dialog-hint) t/dialog-bg)
+    (p/set-colors! g
+                   (cond (:awaiting-input? entry) t/warning-fg
+                         focused? t/dialog-hint-key
+                         :else t/dialog-hint)
+                   t/dialog-bg)
     (p/put-str! g status-x row status)
     (p/set-colors! g t/dialog-hint t/dialog-bg)
     (p/put-str! g content-x (inc (long row)) (p/ellipsize metadata (max 1 (- (long width) 2))))))

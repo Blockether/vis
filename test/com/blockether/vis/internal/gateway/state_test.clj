@@ -157,6 +157,39 @@
         (expect (not (contains? (state/soul "s4") "model_pref"))))))
 
 (defdescribe
+  soul-awaiting-input-test
+  "A run PARKED on a human is the one state a session list cannot derive: the
+   turn is still live, nothing is streaming, and only the operator can move it.
+   The soul carries the fact and the navigator order acts on it, so the phone,
+   the TUI picker and the gateway's own listing all point at the same session."
+  (it "carries the machine-wide waiting fact as is_awaiting_input"
+      (with-redefs
+        [lp/by-id
+         (fn [sid]
+           {:id sid :channel :api :title "t"})
+
+         lp/db-info
+         (constantly nil)
+
+         persistance/db-session-turn-stats
+         (constantly nil)
+
+         bus/waiting-requests
+         (constantly {"s-parked" [{"id" "req-1" "since" 1}]})]
+
+        (expect (true? (get (state/soul "s-parked") "is_awaiting_input")))
+        (expect (false? (get (state/soul "s-busy") "is_awaiting_input")))))
+  (it "puts a parked session above a live one, however old it is"
+      ;; The demand outranks both recency and liveness: a session that has been
+      ;; standing on its operator since yesterday is the row they came for.
+      (let
+        [rows
+         [{"id" "live-now" "live" true "modified_at" "2026-01-02T00:00:00Z"}
+          {"id" "parked" "live" true "is_awaiting_input" true "modified_at" "2026-01-01T00:00:00Z"}
+          {"id" "idle" "modified_at" "2026-01-03T00:00:00Z"}]]
+        (expect (= ["parked" "live-now" "idle"]
+                   (mapv #(get % "id") (#'state/order-session-summaries rows)))))))
+(defdescribe
   thinking-newline-normalization-test
   "Gateway-owned thinking normalization keeps live SSE, poll/replay, and session
    consumers in sync. A client may still render defensively, but it must

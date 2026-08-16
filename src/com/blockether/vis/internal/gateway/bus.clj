@@ -195,6 +195,157 @@
        (catch Throwable t (tel/log! :debug ["gateway-bus: live clear failed" (ex-message t)])))
   nil)
 
+;; Fleet human-input index
+
+(def ^:private ^:const WAITING_CACHE_MS
+  "How long ONE scan of the waiting directory is reused. Same reason as
+   `LIVE_CACHE_MS`: a fleet listing asks every session whether it is parked
+   inside a single build, so the scan must not run per row."
+  200)
+
+(defn- waiting-dir
+  "Directory holding one marker per session PARKED on an unanswered human-input
+   request ANYWHERE on this machine. The journal says a request was RAISED and,
+   later, that it was closed; this says which sessions are waiting on a human
+   RIGHT NOW, in one listing whose size is the number of open requests — which
+   is what a fleet listing can afford (same shape as [[live-dir]])."
+  ^Path []
+  (Path/of (System/getProperty "user.home") (into-array String [".vis" "gateway" "waiting"])))
+
+(defn- waiting-file ^File [sid] (.toFile (.resolve (waiting-dir) (str sid ".json"))))
+
+(defonce ^:private waiting-cache (atom {:at 0 :sessions {}}))
+
+(defn- invalidate-waiting-cache! [] (swap! waiting-cache assoc :at 0) nil)
+
+(defn- waiting-marker
+  "This machine's waiting marker for `sid`, or nil."
+  [sid]
+  (try (let [f (waiting-file sid)]
+         (when (.isFile f) (wire/parse-json (slurp f))))
+       (catch Throwable _ nil)))
+
+(defn- scan-waiting
+  "Read every marker into `{sid [request …]}`, keeping only those whose producer
+   process is still running. A marker whose pid is gone (a crash or a restart
+   while a dialog stood open) is DELETED here: the thread that was blocked on
+   that answer no longer exists, and without this one dead process leaves a
+   session demanding input forever on every client of this machine."
+  []
+  (try
+    (let [dir (.toFile (waiting-dir))]
+      (if-not (.isDirectory dir)
+        {}
+        (reduce (fn [acc ^File f]
+                  (let
+                    [marker (when (str/ends-with? (.getName f) ".json")
+                              (try (wire/parse-json (slurp f)) (catch Throwable _ nil)))
+                     sid (get marker "session_id")
+                     pid (get marker "pid")
+                     requests (get marker "requests")]
+
+                    (cond (nil? marker) acc
+                          (and sid (seq requests) (producer-alive? pid)) (assoc acc
+                                                                           (str sid) (vec requests))
+                          :else (do (.delete f) acc))))
+                {}
+                (or (.listFiles dir) (make-array File 0)))))
+    (catch Throwable t (tel/log! :debug ["gateway-bus: waiting scan failed" (ex-message t)]) {})))
+
+(defn waiting-requests
+  "`{session-id-string [{\"id\" … \"since\" …} …]}` for every human-input request
+   still unanswered on this machine — this process's and every sibling's alike.
+
+   THE cross-process answer to \"is this session waiting on a HUMAN\". The
+   engine's pending registry is process-local (only the process that raised a
+   request can settle it), so a gateway answering from it lit up exactly the
+   requests it happened to own: the phone listing a fleet was never told that a
+   run is blocked on the operator. Answering the request still goes through its
+   own process; this index only says WHO is waiting, so every surface — session
+   list, TUI picker, push — paints the same demand."
+  []
+  (let
+    [{:keys [at sessions]}
+     @waiting-cache
+
+     now
+     (System/currentTimeMillis)]
+
+    (if (< (- now (long at)) (long WAITING_CACHE_MS))
+      sessions
+      (let [fresh (scan-waiting)]
+        (reset! waiting-cache {:at now :sessions fresh})
+        fresh))))
+
+(defn session-waiting?
+  "True when `sid` is parked on an unanswered human-input request in ANY vis
+   process on this machine."
+  [sid]
+  (boolean (seq (get (waiting-requests) (str sid)))))
+
+(defn- mark-waiting!
+  "Announce that `sid` is blocked on `request` until somebody answers it. A
+   marker left by a DEAD process is replaced rather than extended, so an
+   abandoned request cannot ride along with a live one. Never throws."
+  [sid request]
+  (try (let
+         [dir
+          (waiting-dir)
+
+          marker
+          (waiting-marker sid)
+
+          rid
+          (str (get request "id"))
+
+          kept
+          (if (= (long producer-pid) (long (or (get marker "pid") -1)))
+            (vec (remove #(= rid (str (get % "id"))) (get marker "requests")))
+            [])]
+
+         (when-not (Files/exists dir (make-array LinkOption 0))
+           (Files/createDirectories dir (make-array FileAttribute 0)))
+         (spit (waiting-file sid)
+               (wire/json-str {"schema" 1
+                               "session_id" (str sid)
+                               "pid" producer-pid
+                               "requests" (conj kept
+                                                {"id" rid "since" (System/currentTimeMillis)})}))
+         (invalidate-waiting-cache!))
+       (catch Throwable t (tel/log! :debug ["gateway-bus: waiting mark failed" (ex-message t)])))
+  nil)
+
+(defn- clear-waiting!
+  "Retract ONE request from `sid`'s marker: it was answered, cancelled or timed
+   out. The marker survives while other requests are still open — a run can park
+   on more than one — and is deleted with the last of them. Never throws."
+  [sid request-id]
+  (try (let
+         [marker
+          (waiting-marker sid)
+
+          rid
+          (str request-id)
+
+          kept
+          (vec (remove #(= rid (str (get % "id"))) (get marker "requests")))]
+
+         (when marker
+           (if (seq kept)
+             (spit (waiting-file sid) (wire/json-str (assoc marker "requests" kept)))
+             (.delete (waiting-file sid)))
+           (invalidate-waiting-cache!)))
+       (catch Throwable t (tel/log! :debug ["gateway-bus: waiting clear failed" (ex-message t)])))
+  nil)
+
+(defn- clear-all-waiting!
+  "Drop `sid`'s marker outright: its turn reached a terminal, so no thread of it
+   can still be blocked on an answer. Never throws."
+  [sid]
+  (try (.delete (waiting-file sid))
+       (invalidate-waiting-cache!)
+       (catch Throwable t (tel/log! :debug ["gateway-bus: waiting clear failed" (ex-message t)])))
+  nil)
 ;; sid-str -> this process's tail of that session's journal:
 ;;   {:lock Object   ; hydrate! (HTTP threads) vs drain-file! (tailer thread)
 ;;    :off  long     ; bytes already consumed
@@ -351,12 +502,20 @@
        ;; The fleet's liveness marker rides the SAME durable write as the event
        ;; that changes it: a turn whose start reached disk is announced to every
        ;; process on this machine, and a write that failed announces nothing.
+       ;; A run PARKED on a human is the same kind of machine-wide fact, and the
+       ;; only one no terminal event will ever announce (see `waiting-dir`).
        (case (str (get event "type"))
          "turn.started"
          (mark-live! sid (get event "turn_id"))
 
          ("turn.completed" "turn.failed" "turn.cancelled")
-         (clear-live! sid)
+         (do (clear-live! sid) (clear-all-waiting! sid))
+
+         "human_input.request"
+         (mark-waiting! sid (get event "request"))
+
+         "human_input.close"
+         (clear-waiting! sid (get event "request_id"))
 
          nil)
        (catch Throwable t (tel/log! :debug ["gateway-bus: publish failed" (ex-message t)]) nil))
@@ -479,6 +638,7 @@
   [sid]
   (try (.delete (session-file sid)) (catch Throwable _ nil))
   (clear-live! sid)
+  (clear-all-waiting! sid)
   (let [k (str sid)]
     (swap! reaped-turns dissoc k)
     (swap! tails dissoc k))

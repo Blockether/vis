@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Settings reports whether this machine can listen and speak: how far a model download has got, which engine is answering, why one is missing, and one button that retries
 - `vis-agent extension voice say "<text>"` and `vis-agent extension voice transcribe <clip.wav>` — the two one-line checks that a machine's voice works
 - LJ (en-US), a fourth voice Vis fetches by itself, trained from scratch on public-domain recordings
+- A session that stopped to ask you something says so where you are looking: the fleet list flags it `INPUT NEEDED` and floats it to the top, the terminal tints that tab and its row amber, and the phone gets the notification
 
 ### Changed
 - Commits are `type(scope): summary` with a body of at most six WHY lines and a mandatory `Vis-Session: <uuid>` trailer

@@ -399,13 +399,14 @@
 
 ;; ── tab cell ────────────────────────────────────────────────────────────────
 (defn- tab-border-cols
-  "Column offsets 0..width-1 to underline for a `:ready` tab — the WHOLE
-   width, so the caller draws one steady, solid green \"ready to check\" line.
+  "Column offsets 0..width-1 to underline for a tab that CARRIES a steady cue —
+   `:ready` (finished, unread) and `:input` (parked on the operator) — the WHOLE
+   width, so the caller draws one solid line in the cell's own colour.
    Running tabs no longer use a per-column mask (they get an animated sweep,
    see `running-border!`); idle tabs (`nil`) get nothing."
   [status ^long width]
   (case status
-    :ready
+    (:ready :input)
     (range width)
 
     nil))
@@ -497,10 +498,19 @@
      ready?
      (= status :ready)
 
-     ;; A ready tab glows green (border + label); otherwise the normal
-     ;; active / inactive theme fg carries the underline border.
+     ;; A tab whose run is PARKED on a human. Nothing else in the strip demands
+     ;; an ACTION: `:running` says wait, `:ready` says read when you like, this
+     ;; one says the turn cannot move until you answer it — so it takes the
+     ;; warning colour the rest of the TUI reserves for "you".
+     input?
+     (= status :input)
+
+     ;; An input-needed tab burns amber (border + label), a ready tab glows
+     ;; green; otherwise the normal active / inactive theme fg carries the
+     ;; underline border.
      fg
-     (cond ready? t/status-ok
+     (cond input? t/warning-fg
+           ready? t/status-ok
            active? t/header-active-tab-fg
            :else t/border-fg)
 
@@ -524,7 +534,8 @@
      (count (take-while #(= \space %) text))
 
      num-fg
-     (cond ready? t/status-ok
+     (cond input? t/warning-fg
+           ready? t/status-ok
            active? t/header-tab-number-fg
            :else t/header-active-tab-accent)]
 
@@ -556,12 +567,14 @@
     (when show-close? (close-button! g (+ left inner-w) row fg bg workspace-id register?))
     ;; Status border LAST, over the fully painted cell:
     ;;   :ready   -> fold a steady UNDERLINE into every cell (solid green line);
+    ;;   :input   -> the same steady line, amber, under an amber label — a
+    ;;               demand must not blink away like the running sweep;
     ;;   :running -> `running-border!` — a continuous dim amber underline with a
     ;;               bright `warning-border` band sweeping across it (smooth,
     ;;               gapless, animated by the running turn's own repaints);
     ;;   nil      -> nothing.
     (case status
-      :ready
+      (:ready :input)
       (doseq [c (tab-border-cols status width)]
         (p/underline-cell! g (+ left (long c)) row))
 

@@ -101,6 +101,7 @@ import {
   searchTally,
   sessionIsListed,
   sessionIsLive,
+  sessionNeedsInput,
   sessionOrder,
   timeLabel,
   withSearchHits,
@@ -125,6 +126,11 @@ const SESSION_LIST_EVENTS = new Set([
   'turn.failed',
   'turn.cancelled',
   'session.title_updated',
+  // A run PARKED on a human ends no turn and streams nothing, so without these
+  // two the list kept painting a plain LIVE row for a session that was already
+  // waiting on the reader — and kept it there after somebody answered.
+  'human_input.request',
+  'human_input.close',
 ]);
 
 // A background poll issued right before the OS suspended the webview can never
@@ -2513,8 +2519,13 @@ const SessionRow = memo(function SessionRow({
             become grid items of the row itself, and id / turns / status / time land on
             FIXED tracks. That is the difference between a list and a phone list
             stretched to 1400px, where a title sat at x=56 and its own status badge at
-            x=1325 with nothing between them to carry the eye across. */}
-        <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_5.5rem_4.5rem_5rem_6rem] sm:gap-y-0">
+            x=1325 with nothing between them to carry the eye across.
+            Each fixed track is its own content's width: the status one holds the
+            LONGEST label it can show, and `INPUT NEEDED` measures 83px against
+            `LIVE`'s 34px, so it is 6rem/96px. The id track pays for those 16px —
+            8 hex characters measure 48px inside 4.5rem/72px — instead of the
+            title, which keeps 788px at 1440, 156px at 768 and 28px at 640. */}
+        <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_4.5rem_6rem_6rem] sm:gap-y-0">
           {/* The NAME, and nothing but the name. The badges used to ride inside this
               cell, so every row started its flags at a different x — the longer the
               title, the further right its `NEW` — and a long title pushed them off
@@ -2861,7 +2872,7 @@ function NavigatorSkeleton() {
                   key={row}
                   className={`flex min-h-12 w-full items-center py-1.5 [&+&]:border-t [&+&]:border-dialog-edge mouse:min-h-8 mouse:py-1 ${LIST_EDGE}`}
                 >
-                  <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_5.5rem_4.5rem_5rem_6rem] sm:gap-y-0">
+                  <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_4.5rem_6rem_6rem] sm:gap-y-0">
                     <span className="col-start-1 row-start-1 sm:col-start-auto sm:row-start-auto">
                       <SkeletonBar type="text-meta" width={width} baz="h-2.5" tone="bg-muted/30" />
                     </span>
@@ -2936,18 +2947,23 @@ function projectRoot(sessions: Session[]): string {
 }
 
 function statusLabel(session: Session): string {
+  // The DEMAND outranks liveness: a parked run is still live, and "LIVE" is
+  // exactly what made the row look like it was getting on with it.
+  if (sessionNeedsInput(session)) return 'INPUT NEEDED';
   if (sessionIsLive(session)) return 'LIVE';
   if (session.status === 'suspended') return 'WAITING';
   return 'IDLE';
 }
 
 function statusTone(session: Session): string {
+  if (sessionNeedsInput(session)) return 'text-warn-strong';
   if (sessionIsLive(session)) return 'text-ok';
   if (session.status === 'suspended') return 'text-warn-strong';
   return 'text-dialog-hint';
 }
 
 function statusDot(session: Session): string {
+  if (sessionNeedsInput(session)) return 'animate-pulse bg-warn-strong motion-reduce:animate-none';
   if (sessionIsLive(session)) return 'animate-pulse bg-ok motion-reduce:animate-none';
   if (session.status === 'suspended') return 'bg-warn-strong';
   return 'border border-dialog-hint';
@@ -2968,6 +2984,7 @@ function sessionSearchText(session: Session): string {
     session.workspace?.label,
     session.workspace?.root,
     session.status,
+    sessionNeedsInput(session) ? 'input needed waiting human' : '',
     sessionIsLive(session) ? 'live running' : 'idle',
   ]
     .filter(Boolean)

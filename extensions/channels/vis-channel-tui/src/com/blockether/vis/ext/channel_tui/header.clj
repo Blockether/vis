@@ -126,6 +126,15 @@
      (fn [id]
        (boolean (if (= id active-id) (:loading? db) (get-in db [:tab-locals id :loading?]))))
 
+     ;; A tab is PARKED when its session raised a human-input request nobody has
+     ;; answered yet. Same split as `running?`: the active tab's open form lives
+     ;; at the db root, every other tab's in its `:tab-locals` half (the close
+     ;; handler settles it in whichever tab holds it), so a background run
+     ;; blocked on the operator is visible without leaving the tab you are on.
+     awaiting-input?
+     (fn [id]
+       (boolean (if (= id active-id) (:human-input db) (get-in db [:tab-locals id :human-input]))))
+
      ;; Auto-title generation runs for the ACTIVE session (the host
      ;; fires it at the start of that session's turn), so the spinner
      ;; only ever attaches to the active tab.
@@ -136,12 +145,14 @@
     (if (seq entries)
       (mapv #(assoc %
                :running? (running? (:id %))
+               :awaiting-input? (awaiting-input? (:id %))
                :title-loading? (title-loading? (:id %)))
             entries)
       [{:id (or (:active-tab-id db) :main)
         :label (title-or-placeholder db)
         :active? true
         :running? (boolean (:loading? db))
+        :awaiting-input? (boolean (:human-input db))
         :title-loading? (boolean (:title-loading? db))}])))
 
 (defn- active-tab-entry-id
@@ -530,6 +541,11 @@
 
                 status
                 (cond
+                  ;; A run BLOCKED on the operator outranks every other cue,
+                  ;; including the "you are already looking at it" rule: it is
+                  ;; the one state that cannot end without the user, so the
+                  ;; strip keeps demanding until the form is answered.
+                  (:awaiting-input? entry) :input
                   ;; The tab you're already looking at gets
                   ;; NO cue — the live work is right there in
                   ;; the view, so the dots would be noise.

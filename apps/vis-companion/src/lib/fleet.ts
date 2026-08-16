@@ -311,6 +311,16 @@ export function sessionIsLive(session: Session): boolean {
   return session.live ?? session.status === 'running';
 }
 
+/**
+ * The run is parked on a human-input request nobody has answered yet.
+ *
+ * The one state the reader cannot infer from the row: the session is LIVE and
+ * silent, and it will stay that way until they answer it themselves.
+ */
+export function sessionNeedsInput(session: Session): boolean {
+  return session.is_awaiting_input === true;
+}
+
 
 /**
  * Nothing has happened in this session yet: no name, no turns, nothing running.

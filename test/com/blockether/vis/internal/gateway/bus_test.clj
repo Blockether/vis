@@ -37,7 +37,11 @@
        ;; in the developer's own ~/.vis.
        bus/live-dir
        (fn []
-         (.resolve ^java.nio.file.Path tmp "live"))]
+         (.resolve ^java.nio.file.Path tmp "live"))
+
+       bus/waiting-dir
+       (fn []
+         (.resolve ^java.nio.file.Path tmp "waiting"))]
 
       ;; a fresh journal dir is a fresh world: drop this process's orphan-reap
       ;; markers, tail cursors and cached liveness so re-running in one JVM starts
@@ -45,6 +49,7 @@
       (reset! (var-get #'bus/reaped-turns) {})
       (reset! (var-get #'bus/tails) {})
       (reset! (var-get #'bus/live-cache) {:at 0 :turns {}})
+      (reset! (var-get #'bus/waiting-cache) {:at 0 :sessions {}})
       (bus/set-deliver-fn! (fn [_sid _store? ev]
                              (swap! capture conj ev)))
       (try (f capture
@@ -551,3 +556,109 @@
             (expect (= "T-3" (bus/live-turn-id sid)))
             (bus/forget! sid)
             (expect (nil? (bus/live-turn-id sid))))))))
+
+(defdescribe
+  fleet-waiting-index-test
+  "Which sessions are BLOCKED on a human, for every process on this machine.
+   The engine's pending registry is process-local — only the process that raised
+   a request can settle it — so a gateway answering from it lit up exactly the
+   requests it happened to own, and a phone listing the fleet was never told
+   that a run had been standing on the operator for an hour."
+  (it "marks the session on the request event and retracts it on the close"
+      (with-temp-journal
+        (fn [_capture _write!]
+          (let [sid (str (random-uuid))]
+            (expect (not (bus/session-waiting? sid)))
+            (bus/publish! sid
+                          {"schema" 1
+                           "seq" 1
+                           "type" "human_input.request"
+                           "session_id" sid
+                           "request" {"id" "req-1" "title" "Which branch?"}}
+                          {:store? true})
+            (expect (bus/session-waiting? sid))
+            (expect (= ["req-1"] (mapv #(get % "id") (get (bus/waiting-requests) sid))))
+            (bus/publish!
+              sid
+              {"schema" 1 "seq" 2 "type" "human_input.close" "session_id" sid "request_id" "req-1"}
+              {:store? true})
+            (expect (not (bus/session-waiting? sid)))))))
+  (it "keeps waiting while a SECOND request of the same run is still open"
+      (with-temp-journal
+        (fn [_capture _write!]
+          (let [sid (str (random-uuid))]
+            (doseq [rid ["req-a" "req-b"]]
+              (bus/publish! sid
+                            {"schema" 1
+                             "seq" 1
+                             "type" "human_input.request"
+                             "session_id" sid
+                             "request" {"id" rid}}
+                            {:store? true}))
+            (expect (= ["req-a" "req-b"] (mapv #(get % "id") (get (bus/waiting-requests) sid))))
+            (bus/publish!
+              sid
+              {"schema" 1 "seq" 2 "type" "human_input.close" "session_id" sid "request_id" "req-a"}
+              {:store? true})
+            (expect (bus/session-waiting? sid))
+            (expect (= ["req-b"] (mapv #(get % "id") (get (bus/waiting-requests) sid))))))))
+  (it "drops the demand at the turn's terminal, answered or not"
+      (with-temp-journal
+        (fn [_capture _write!]
+          ;; A cancelled or failed turn takes its unanswered dialog with it. No
+          ;; close event is coming for a request nobody will ever settle, so a
+          ;; terminal is the last chance to retract the demand.
+          (let [sid (str (random-uuid))]
+            (bus/publish! sid
+                          {"schema" 1
+                           "seq" 1
+                           "type" "human_input.request"
+                           "session_id" sid
+                           "request" {"id" "req-abandoned"}}
+                          {:store? true})
+            (expect (bus/session-waiting? sid))
+            (bus/publish!
+              sid
+              {"schema" 1 "seq" 2 "type" "turn.cancelled" "session_id" sid "turn_id" "T-9"}
+              {:store? true})
+            (expect (not (bus/session-waiting? sid)))))))
+  (it "ignores AND deletes a marker whose producer process is gone"
+      (with-temp-journal
+        (fn [_capture _write!]
+          (let
+            [sid
+             (str (random-uuid))
+
+             dir
+             ^java.nio.file.Path (#'bus/waiting-dir)
+
+             f
+             (.toFile (.resolve dir (str sid ".json")))]
+
+            (java.nio.file.Files/createDirectories dir
+                                                   (make-array java.nio.file.attribute.FileAttribute
+                                                               0))
+            (spit f
+                  (wire/json-str {"schema" 1
+                                  "session_id" sid
+                                  "pid" dead-pid
+                                  "requests" [{"id" "req-orphan" "since" 1}]}))
+            (reset! (var-get #'bus/waiting-cache) {:at 0 :sessions {}})
+            ;; A dead process cannot answer its own dialog, and cannot retract
+            ;; it either — without this reap one crash leaves a session demanding
+            ;; input forever on every client of this machine.
+            (expect (not (bus/session-waiting? sid)))
+            (expect (not (.exists f)))))))
+  (it "drops the marker when the session is forgotten"
+      (with-temp-journal (fn [_capture _write!]
+                           (let [sid (str (random-uuid))]
+                             (bus/publish! sid
+                                           {"schema" 1
+                                            "seq" 1
+                                            "type" "human_input.request"
+                                            "session_id" sid
+                                            "request" {"id" "req-forgotten"}}
+                                           {:store? true})
+                             (expect (bus/session-waiting? sid))
+                             (bus/forget! sid)
+                             (expect (not (bus/session-waiting? sid))))))))
