@@ -11,8 +11,9 @@ This file is generated: it is `extensions/common/vis-foundation-voice/resources/
 | `parakeet-tdt-0.6b-v3-int8` | CC-BY-4.0 | yes | the Vis assets release | automatically |
 | `pocket-tts-int8` | CC-BY-4.0 | yes | the Vis assets release | only when asked for by name |
 | `piper-en_US-kristin-medium` | LicenseRef-public-domain | yes | its publisher | automatically |
-| `piper-en_GB-cori-medium` | LicenseRef-public-domain | yes | its publisher | automatically |
+| `piper-en_GB-cori-high` | LicenseRef-public-domain | yes | its publisher | automatically |
 | `piper-en_US-john-medium` | LicenseRef-public-domain | yes | its publisher | automatically |
+| `piper-en_US-ljspeech-high` | LicenseRef-public-domain | yes | its publisher | automatically |
 | `piper-en_US-ryan-high` | CC-BY-NC-SA-4.0 | no | its publisher | only when asked for by name |
 
 ## `parakeet-tdt-0.6b-v3-int8`
@@ -56,19 +57,19 @@ Piper voice en_US-kristin-medium by Bryce Beattie (https://brycebeattie.com/file
   - Hugging Face, 64 MB, 2 files, when a Hugging Face token is configured - <https://huggingface.co/csukuangfj/vits-piper-en_US-kristin-medium>
   - the publisher, 67 MB - <https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-kristin-medium.tar.bz2>
 
-## `piper-en_GB-cori-medium`
+## `piper-en_GB-cori-high`
 
 Engine `:piper` - LicenseRef-public-domain - commercial use permitted - downloaded from its publisher, never mirrored by Vis
 
-Piper voice en_GB-cori-medium by Bryce Beattie (https://brycebeattie.com/files/tts/), released into the public domain. Trained from scratch on 24 hours of public-domain LibriVox recordings. VITS/ONNX export by k2-fsa/sherpa-onnx.
+Piper voice en_GB-cori-high by Bryce Beattie (https://brycebeattie.com/files/tts/), released into the public domain. Trained from scratch on 24 hours of public-domain LibriVox recordings. VITS/ONNX export by k2-fsa/sherpa-onnx.
 
-- Upstream: <https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/cori/medium>
+- Upstream: <https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/cori/high>
 - Voices: Cori (en-GB)
-- Installs into: `~/.vis/models/vits-piper-en_GB-cori-medium`
+- Installs into: `~/.vis/models/vits-piper-en_GB-cori-high`
 - Cannot speak until espeak-ng's phoneme tables are on the system.
 - Downloaded from, in order:
-  - Hugging Face, 64 MB, 2 files, when a Hugging Face token is configured - <https://huggingface.co/csukuangfj/vits-piper-en_GB-cori-medium>
-  - the publisher, 67 MB - <https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_GB-cori-medium.tar.bz2>
+  - Hugging Face, 114 MB, 2 files, when a Hugging Face token is configured - <https://huggingface.co/csukuangfj/vits-piper-en_GB-cori-high>
+  - the publisher, 116 MB - <https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_GB-cori-high.tar.bz2>
 
 ## `piper-en_US-john-medium`
 
@@ -83,6 +84,20 @@ Piper voice en_US-john-medium by Bryce Beattie (https://brycebeattie.com/files/t
 - Downloaded from, in order:
   - Hugging Face, 64 MB, 2 files, when a Hugging Face token is configured - <https://huggingface.co/csukuangfj/vits-piper-en_US-john-medium>
   - the publisher, 67 MB - <https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-john-medium.tar.bz2>
+
+## `piper-en_US-ljspeech-high`
+
+Engine `:piper` - LicenseRef-public-domain - commercial use permitted - downloaded from its publisher, never mirrored by Vis
+
+Piper voice en_US-ljspeech-high by Bryce Beattie (https://brycebeattie.com/files/tts/), released into the public domain. Trained from scratch on the LJ Speech dataset (https://keithito.com/LJ-Speech-Dataset/), itself public domain. VITS/ONNX export by k2-fsa/sherpa-onnx.
+
+- Upstream: <https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/ljspeech/high>
+- Voices: LJ (en-US)
+- Installs into: `~/.vis/models/vits-piper-en_US-ljspeech-high`
+- Cannot speak until espeak-ng's phoneme tables are on the system.
+- Downloaded from, in order:
+  - Hugging Face, 114 MB, 2 files, when a Hugging Face token is configured - <https://huggingface.co/csukuangfj/vits-piper-en_US-ljspeech-high>
+  - the publisher, 116 MB - <https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-ljspeech-high.tar.bz2>
 
 ## `piper-en_US-ryan-high`
 

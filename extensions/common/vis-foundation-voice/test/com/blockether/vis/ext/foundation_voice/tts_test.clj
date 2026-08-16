@@ -12,7 +12,8 @@
 (defdescribe
   catalogue-test
   (it "publishes the manifest's Piper voices, the default first"
-      (expect (= ["kristin" "cori" "john" "ryan"] (mapv #(name (:id %)) (tts/piper-voices))))
+      (expect (= ["kristin" "cori" "john" "ljspeech" "ryan"]
+                 (mapv #(name (:id %)) (tts/piper-voices))))
       (expect (every? :label (tts/piper-voices)))
       (expect (every? :language (tts/piper-voices)))
       (expect (= "kristin" (name (:id (:voice (first (tts/piper-assets))))))))
@@ -87,10 +88,10 @@
       (let [data (ex-data-of #(#'tts/piper-asset-for "nope"))]
         (expect (= :voice-tts/unknown-voice (:type data)))
         (expect (= :piper (:family data)))
-        (expect (= ["kristin" "cori" "john" "ryan"] (:known data)))))
+        (expect (= ["kristin" "cori" "john" "ljspeech" "ryan"] (:known data)))))
   (it "asks only for the voice, because the phoneme tables are the system's"
       (expect (= ["piper-en_US-kristin-medium"] (mapv :id (#'tts/required-assets :piper nil))))
-      (expect (= ["piper-en_GB-cori-medium"] (mapv :id (#'tts/required-assets :piper "cori"))))
+      (expect (= ["piper-en_GB-cori-high"] (mapv :id (#'tts/required-assets :piper "cori"))))
       (expect (= ["pocket-tts-int8"] (mapv :id (#'tts/required-assets :pocket-tts nil)))))
   (it "marks the voice a user has to install deliberately"
       ;; Ryan is in the catalogue and ONLY in the catalogue: CC BY-NC-SA, so a
@@ -238,6 +239,10 @@
 (defdescribe
   pocket-generation-config-test
   (it "hands sherpa a map of ONE class, and the clip's own words with it"
+      ;; A cold JVM has to provision the library FIRST: this class's own static
+      ;; initializer runs sherpa's loader, and after that first touch a missing
+      ;; library is permanent for the process.
+      (sherpa/ensure-native!)
       (let [clip (java.io.File/createTempFile "vis-pocket-clip-" ".wav")]
         (try (#'voices/write-wav! clip (short-array 24000) 24000)
              (let

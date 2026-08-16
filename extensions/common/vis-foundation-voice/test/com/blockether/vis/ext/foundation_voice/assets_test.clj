@@ -54,75 +54,95 @@
 
 (defn- ex-data-of [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
 
-(defdescribe manifest-test
-             (it "says of every asset what it is, who to credit and where it may come from"
-                 ;; The manifest is the only place a URL exists, so an entry missing its
-                 ;; licence or its checksum is an artifact Vis would install blind.
-                 (doseq [entry (assets/manifest)]
-                   (expect (string? (:id entry)))
-                   (expect (seq (:install-dir entry)))
-                   (expect (seq (:requires entry)))
-                   (expect (seq (:license entry)))
-                   (expect (seq (:attribution entry)))
-                   (expect (seq (:source-url entry)))
-                   (expect (seq (:sources entry)))
-                   (doseq [source (:sources entry)]
-                     (expect (keyword? (:host source)))
-                     (expect (contains? #{:archive :files} (:kind source)))
-                     (if (= :archive (:kind source))
-                       (do (expect (str/starts-with? (:url source) "https://"))
-                           (expect (re-matches sha256-pattern (:sha256 source)))
-                           (expect (pos? (long (:bytes source)))))
-                       (do (expect (= (set (:requires entry)) (set (map :path (:files source)))))
-                           (doseq [file (:files source)]
-                             (expect (str/starts-with? (:url file) "https://"))
-                             (expect (re-matches sha256-pattern (:sha256 file)))
-                             (expect (pos? (long (:bytes file))))))))))
-             (it "mirrors only what it is allowed to mirror"
-                 ;; The pack is Vis' own release: hosting an artifact there is a claim that
-                 ;; we may host it. Anything short of that is opt-in and says why.
-                 (doseq [entry (assets/manifest)]
-                   (let [is-mirrored (boolean (some #(= :pack (:host %)) (:sources entry)))]
-                     (expect (= is-mirrored (boolean (:is-redistributed entry))))
-                     (when is-mirrored (expect (true? (:is-commercial-ok entry))))
-                     (when-not (:is-commercial-ok entry)
-                       (expect (true? (:is-opt-in entry)))
-                       (expect (seq (:notice entry)))))))
-             (it "leaves every asset reachable WITHOUT a Hugging Face token"
-                 ;; A token changes where the bytes come from, never whether they can be
-                 ;; had: a gated source is dropped when there is none and moves to the
-                 ;; front when there is one.
-                 (doseq [entry (assets/manifest)]
-                   (let
-                     [open (assets/sources entry false)
-                      with-token (assets/sources entry true)]
+(defdescribe
+  manifest-test
+  (it "says of every asset what it is, who to credit and where it may come from"
+      ;; The manifest is the only place a URL exists, so an entry missing its
+      ;; licence or its checksum is an artifact Vis would install blind.
+      (doseq [entry (assets/manifest)]
+        (expect (string? (:id entry)))
+        (expect (seq (:install-dir entry)))
+        (expect (seq (:requires entry)))
+        (expect (seq (:license entry)))
+        (expect (seq (:attribution entry)))
+        (expect (seq (:source-url entry)))
+        (expect (seq (:sources entry)))
+        (doseq [source (:sources entry)]
+          (expect (keyword? (:host source)))
+          (expect (contains? #{:archive :files} (:kind source)))
+          (if (= :archive (:kind source))
+            (do (expect (str/starts-with? (:url source) "https://"))
+                (expect (re-matches sha256-pattern (:sha256 source)))
+                (expect (pos? (long (:bytes source)))))
+            (do (expect (= (set (:requires entry)) (set (map :path (:files source)))))
+                (doseq [file (:files source)]
+                  (expect (str/starts-with? (:url file) "https://"))
+                  (expect (re-matches sha256-pattern (:sha256 file)))
+                  (expect (pos? (long (:bytes file))))))))))
+  (it "mirrors only what it is allowed to mirror"
+      ;; The pack is Vis' own release: hosting an artifact there is a claim that
+      ;; we may host it. Anything short of that is opt-in and says why.
+      (doseq [entry (assets/manifest)]
+        (let [is-mirrored (boolean (some #(= :pack (:host %)) (:sources entry)))]
+          (expect (= is-mirrored (boolean (:is-redistributed entry))))
+          (when is-mirrored (expect (true? (:is-commercial-ok entry))))
+          (when-not (:is-commercial-ok entry)
+            (expect (true? (:is-opt-in entry)))
+            (expect (seq (:notice entry)))))))
+  (it "leaves every asset reachable WITHOUT a Hugging Face token"
+      ;; A token changes where the bytes come from, never whether they can be
+      ;; had: a gated source is dropped when there is none and moves to the
+      ;; front when there is one.
+      (doseq [entry (assets/manifest)]
+        (let
+          [open (assets/sources entry false)
+           with-token (assets/sources entry true)]
 
-                     (expect (seq open))
-                     (expect (not-any? :is-token-required open))
-                     (expect (= (count (:sources entry)) (count with-token)))
-                     (when (some :is-token-required (:sources entry))
-                       (expect (true? (:is-token-required (first with-token))))))))
-             (it "resolves the ids the engines ask for and refuses one it does not know"
-                 (expect (= "parakeet-tdt-0.6b-v3-int8"
-                            (:id (assets/entry "parakeet-tdt-0.6b-v3-int8"))))
-                 (expect (= "pocket-tts-int8" (:id (assets/entry "pocket-tts-int8"))))
-                 (expect (= ["piper-en_US-kristin-medium" "piper-en_GB-cori-medium"
-                             "piper-en_US-john-medium" "piper-en_US-ryan-high"]
-                            (mapv :id (assets/for-engine :piper))))
-                 (expect (= ["pocket-tts-int8"] (mapv :id (assets/for-engine :pocket-tts))))
-                 (let [data (ex-data-of #(assets/entry "no-such-model"))]
-                   (expect (= :voice-assets/unknown-asset (:type data)))
-                   (expect (contains? (set (:known data)) "parakeet-tdt-0.6b-v3-int8"))))
-             (it "lists Ryan and refuses to host him"
-                 ;; The voice a user asked for by name: CC BY-NC-SA 4.0, so he is in the
-                 ;; catalogue with his terms attached and no source of him is ours.
-                 (let [entry (assets/entry "piper-en_US-ryan-high")]
-                   (expect (= "ryan" (name (get-in entry [:voice :id]))))
-                   (expect (true? (get-in entry [:voice :is-opt-in])))
-                   (expect (= "CC-BY-NC-SA-4.0" (:license entry)))
-                   (expect (false? (:is-commercial-ok entry)))
-                   (expect (not-any? #(= :pack (:host %)) (:sources entry)))
-                   (expect (str/includes? (:notice entry) "non-commercial")))))
+          (expect (seq open))
+          (expect (not-any? :is-token-required open))
+          (expect (= (count (:sources entry)) (count with-token)))
+          (when (some :is-token-required (:sources entry))
+            (expect (true? (:is-token-required (first with-token))))))))
+  (it "resolves the ids the engines ask for and refuses one it does not know"
+      (expect (= "parakeet-tdt-0.6b-v3-int8" (:id (assets/entry "parakeet-tdt-0.6b-v3-int8"))))
+      (expect (= "pocket-tts-int8" (:id (assets/entry "pocket-tts-int8"))))
+      (expect (= ["piper-en_US-kristin-medium" "piper-en_GB-cori-high" "piper-en_US-john-medium"
+                  "piper-en_US-ljspeech-high" "piper-en_US-ryan-high"]
+                 (mapv :id (assets/for-engine :piper))))
+      (expect (= ["pocket-tts-int8"] (mapv :id (assets/for-engine :pocket-tts))))
+      (let [data (ex-data-of #(assets/entry "no-such-model"))]
+        (expect (= :voice-assets/unknown-asset (:type data)))
+        (expect (contains? (set (:known data)) "parakeet-tdt-0.6b-v3-int8"))))
+  (it "lists Ryan and refuses to host him"
+      ;; The voice a user asked for by name: CC BY-NC-SA 4.0, so he is in the
+      ;; catalogue with his terms attached and no source of him is ours.
+      (let [entry (assets/entry "piper-en_US-ryan-high")]
+        (expect (= "ryan" (name (get-in entry [:voice :id]))))
+        (expect (true? (get-in entry [:voice :is-opt-in])))
+        (expect (= "CC-BY-NC-SA-4.0" (:license entry)))
+        (expect (false? (:is-commercial-ok entry)))
+        (expect (not-any? #(= :pack (:host %)) (:sources entry)))
+        (expect (str/includes? (:notice entry) "non-commercial"))))
+  (it "spells the same voice and the same quality level in every part of an entry"
+      ;; An entry names <lang>-<speaker>-<level> five times over: its id, its
+      ;; install directory, the file it requires, its source URL and every
+      ;; download URL. Lifting a voice from medium to high by editing four of
+      ;; the five installs the wrong weights under the right name, and the
+      ;; sha256 that would catch it is itself one of the things being edited.
+      (doseq [entry (assets/for-engine :piper)]
+        (let
+          [voice (str/replace (:id entry) #"^piper-" "")
+           [lang speaker level] (str/split voice #"-")]
+
+          (expect (= (str "vits-piper-" voice) (:install-dir entry)))
+          (expect (= [(str voice ".onnx") "tokens.txt"] (:requires entry)))
+          (expect (str/ends-with? (:source-url entry)
+                                  (str/join "/" [(subs lang 0 2) lang speaker level])))
+          (doseq
+            [source (:sources entry)
+             url (if (= :files (:kind source)) (mapv :url (:files source)) [(:url source)])]
+
+            (expect (str/includes? url voice)))))))
 
 (defdescribe
   install-test

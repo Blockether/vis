@@ -453,7 +453,7 @@ and voice are device-local settings.
 
 **Rationale.** Phase 4 ships three Piper voices because three are all that survived reading the training
 data's terms: `rhasspy/piper-voices` is MIT at the repository level while each voice inherits its dataset
-AND its base checkpoint, and 23 of the 28 English voices are fine-tuned from `lessac` (Blizzard 2013,
+AND its base checkpoint, and 24 of the 38 English voices are fine-tuned from `lessac` (Blizzard 2013,
 research-only) or `ryan` (CC BY-NC-SA). Kokoro is the best-licensed weights available and needs the same
 per-voice reading. Without this phase the catalogue is three voices in two accents.
 
@@ -467,8 +467,12 @@ per-voice reading. Without this phase the catalogue is three voices in two accen
   one.
 - Kokoro registers only when its own assets are installed, and its `lexicon.txt` path is measured against
   the espeak-free native before it is offered as redistributable.
-- Test that proves it done: the Phase 4 manifest tests pass unchanged for every new entry, and no entry
-  reaches the pack without `:is-commercial-ok true`.
+- Where upstream trained a speaker at more than one level, the entry carries the HIGHEST one published: a level
+  is a separate training run and not a setting, so `medium` stays only for a speaker upstream never trained at
+  `high`.
+- Test that proves it done: the Phase 4 manifest tests pass unchanged for every new entry, no entry reaches the
+  pack without `:is-commercial-ok true`, and `assets_test.clj` checks that the id, the install directory, the
+  required file, the source URL and every download URL of an entry spell the same voice AND the same level.
 
 **Unknowns.**
 - Does Kokoro's `lexicon.txt` cover enough English to be useful with espeak absent, which would make it a
@@ -541,9 +545,10 @@ C API is a different per-platform artifact under no Maven coordinate, and its he
 
 ## State of the plan
 
-**ACCEPTED** — Phases 1, 2, 3, 4 and 5 have landed. The pack carries only what Vis makes or may mirror, espeak-ng
-belongs to the system, the credits are a render of the manifest, the app chooses where a reply is spoken, and
-voice recovers from its own failures instead of asking for a restart. Phase 7 is the only one left.
+**ACCEPTED** — Phases 1 through 6 and Phase 8 have landed, and Phase 7's Piper half with them. The pack carries
+only what Vis makes or may mirror, espeak-ng belongs to the system, the credits are a render of the manifest, the
+app chooses where a reply is spoken, voice recovers from its own failures instead of asking for a restart, and
+every Piper voice is the highest level its author published. Kokoro is what is left.
 
 **Phase 1 — DONE**, `f99eaee39`, refined by the commit that carries this line.
 `vis-foundation-voice` resolves `com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm v1.13.5` from
@@ -754,6 +759,20 @@ says it instead and the composer says why once. The choice is the device's (it o
 the machine's voice is picked in that machine's Voices band, and Android's generated plugin can
 finally enumerate and select voices instead of speaking in one.
 
+**Phase 7 — the Piper half is DONE**, the commit that carries this line. Upstream's English catalogue has grown to
+38 voices, and reading each one's own terms still refuses most of it: 24 are fine-tuned from `lessac` (Blizzard
+2013, research-only) or `ryan` (CC BY-NC-SA), which rules those two originals out with them; `en_US-bryce` names a
+base its author never released; and the multi-speaker sets — `libritts` (904), `vctk` (109), `l2arctic` (24),
+`arctic` (18), `aru` (12), `semaine` (4) — would each need a speaker id this engine never asks for, because it pins
+`sid` to 0: every voice Vis ships is one person. Five single-speaker voices survive on their terms — Kristin, Cori,
+John, LJ and Norman — and upstream published a `high` for exactly two of them. A quality LEVEL is a separate
+training run and not a setting, so an entry carries the highest one published for its speaker: Cori moves from
+`medium` to `high`, 114 MB of weights instead of 64, and `en_US-ljspeech-high` joins her from the public-domain LJ
+Speech recordings. Kristin and John have no `high` to move to and stay as they are; Norman would arrive at `medium`
+and so does not arrive. Nothing about the bytes is taken on faith: the ONNX inside k2-fsa's tarball hashes to
+exactly the sha256 Hugging Face states for the same file, so both sources of an entry are verified by one sum, and
+both voices then spoke a sentence that Parakeet read back word for word. Kokoro is what is left of this phase.
+
 **Phase 8 — DONE**, the commit that carries this line. The report was "voice fails after the model is
 installed, and only restarting Vis fixes it", and it was three separate memories of one failure: a one-shot
 latch that made a single load error permanent for the process, a sticky `:failed` download state that every
@@ -808,7 +827,7 @@ Three decisions the plan takes, so they are not re-litigated in review:
 
 TODO, in order:
 
-1. **Phase 7** — the rest of the Piper catalogue and Kokoro, licensed one voice at a time.
+1. **Phase 7** — Kokoro, licensed the same way, one voice at a time. The Piper catalogue is read and settled.
 
 **Lineage.** This plan supersedes *"Let a session speak to the other sessions in its tree"*, which
 was **ACCEPTED** and unstarted; it is preserved verbatim at `git show b3130f92a:PLAN.md` and nothing

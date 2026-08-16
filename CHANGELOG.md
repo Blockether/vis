@@ -12,10 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Choose where a reply is spoken — off, this device, or the machine that answered — and in which voice, with the phone falling back to its own voice when the machine cannot speak
 - Settings reports whether this machine can listen and speak: how far a model download has got, which engine is answering, why one is missing, and one button that retries
 - `vis-agent extension voice say "<text>"` and `vis-agent extension voice transcribe <clip.wav>` — the two one-line checks that a machine's voice works
+- LJ (en-US), a fourth voice Vis fetches by itself, trained from scratch on public-domain recordings
 
 ### Changed
 - Commits are `type(scope): summary` with a body of at most six WHY lines and a mandatory `Vis-Session: <uuid>` trailer
 - `/v1/voice/model` and `/v1/speech/model` hang off the machine, beside its voices, instead of off a session
+- Cori speaks from the high weights her author published: a quality level is a separate training run, not a setting, so every voice Vis carries is the best level published for that speaker
 
 ### Fixed
 - Voice no longer needs Vis restarted to work again: an engine that failed to load is tried on the next use, a failed model download can be retried, and a recording that threw never blocks the next one

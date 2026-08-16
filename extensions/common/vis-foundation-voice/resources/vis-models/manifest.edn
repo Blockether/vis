@@ -116,6 +116,15 @@
     :sha256 "a733ba9bc5d4b9e621fdc1cc389227159d8879bbf0088b3fea17c5c441c428e3"
     :url
     "https://github.com/Blockether/vis/releases/download/voice-assets-pack/pocket-tts-onnx.tar.bz2"}]}
+ ;; Piper voices, and the quality LEVEL each one ships at. Upstream trains a
+ ;; speaker at `low`, `medium` and `high` separately, so a level is a different
+ ;; set of weights and not a setting: where a speaker has a `high`, that is the
+ ;; entry Vis carries, and `medium` stays only for the speakers upstream never
+ ;; trained at `high`. Of the five English speakers published at `high`, three
+ ;; are out on their terms or their shape: `lessac` (Blizzard 2013,
+ ;; research-only), `ryan` (CC BY-NC-SA, below) and `libritts` (CC BY 4.0 but
+ ;; 904 speakers, which needs a speaker id this engine does not ask for).
+ ;; The first entry is the default voice - the only one fetched unasked.
  {:attribution
   "Piper voice en_US-kristin-medium by Bryce Beattie (https://brycebeattie.com/files/tts/), released into the public domain. Trained from scratch on 11.5 hours of public-domain LibriVox recordings. VITS/ONNX export by k2-fsa/sherpa-onnx."
   :engine :piper
@@ -150,37 +159,36 @@
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-kristin-medium.tar.bz2"}]
   :voice {:gender :female :id "kristin" :label "Kristin (en-US)" :language "en-US"}}
  {:attribution
-  "Piper voice en_GB-cori-medium by Bryce Beattie (https://brycebeattie.com/files/tts/), released into the public domain. Trained from scratch on 24 hours of public-domain LibriVox recordings. VITS/ONNX export by k2-fsa/sherpa-onnx."
+  "Piper voice en_GB-cori-high by Bryce Beattie (https://brycebeattie.com/files/tts/), released into the public domain. Trained from scratch on 24 hours of public-domain LibriVox recordings. VITS/ONNX export by k2-fsa/sherpa-onnx."
   :engine :piper
-  :id "piper-en_GB-cori-medium"
-  :install-dir "vits-piper-en_GB-cori-medium"
+  :id "piper-en_GB-cori-high"
+  :install-dir "vits-piper-en_GB-cori-high"
   :is-commercial-ok true
   :is-redistributed false
   :license "LicenseRef-public-domain"
   :needs-espeak-ng true
-  :requires ["en_GB-cori-medium.onnx" "tokens.txt"]
-  :source-url "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/cori/medium"
+  :requires ["en_GB-cori-high.onnx" "tokens.txt"]
+  :source-url "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/cori/high"
   :sources
   [{:files
-    [{:bytes 63531507
-      :path "en_GB-cori-medium.onnx"
-      :sha256 "8b0d3cdd77f2878e0aa2048103eabb4d01b334783f99629f042bcf703aeba487"
+    [{:bytes 114219480
+      :path "en_GB-cori-high.onnx"
+      :sha256 "006bb4db48e066f7f1be91d218db3b76617a707196271694ca6455d7bbd13842"
       :url
-      "https://huggingface.co/csukuangfj/vits-piper-en_GB-cori-medium/resolve/main/en_GB-cori-medium.onnx"}
+      "https://huggingface.co/csukuangfj/vits-piper-en_GB-cori-high/resolve/main/en_GB-cori-high.onnx"}
      {:bytes 940
       :path "tokens.txt"
       :sha256 "ef3a7e4a8d1af0c9d4dc45aaae1a6242ebe24a7ed6f3d025a49eb29682784c6d"
-      :url
-      "https://huggingface.co/csukuangfj/vits-piper-en_GB-cori-medium/resolve/main/tokens.txt"}]
+      :url "https://huggingface.co/csukuangfj/vits-piper-en_GB-cori-high/resolve/main/tokens.txt"}]
     :host :hf
     :is-token-required true
     :kind :files}
-   {:bytes 67257412
+   {:bytes 115574061
     :host :upstream
     :kind :archive
-    :sha256 "49c9a5361bbdd95d7ca9687c4de11e5908481f65e7c7c368960df79949fdac2b"
+    :sha256 "42922f07738fcde2e49eed4e959635692f73b933de35a6b7c1010162ff566292"
     :url
-    "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_GB-cori-medium.tar.bz2"}]
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_GB-cori-high.tar.bz2"}]
   :voice {:gender :female :id "cori" :label "Cori (en-GB)" :language "en-GB"}}
  {:attribution
   "Piper voice en_US-john-medium by Bryce Beattie (https://brycebeattie.com/files/tts/), released into the public domain. Fine-tuned from Kristin on 12.5 hours of public-domain LibriVox recordings. VITS/ONNX export by k2-fsa/sherpa-onnx."
@@ -215,6 +223,39 @@
     :url
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-john-medium.tar.bz2"}]
   :voice {:gender :male :id "john" :label "John (en-US)" :language "en-US"}}
+ {:attribution
+  "Piper voice en_US-ljspeech-high by Bryce Beattie (https://brycebeattie.com/files/tts/), released into the public domain. Trained from scratch on the LJ Speech dataset (https://keithito.com/LJ-Speech-Dataset/), itself public domain. VITS/ONNX export by k2-fsa/sherpa-onnx."
+  :engine :piper
+  :id "piper-en_US-ljspeech-high"
+  :install-dir "vits-piper-en_US-ljspeech-high"
+  :is-commercial-ok true
+  :is-redistributed false
+  :license "LicenseRef-public-domain"
+  :needs-espeak-ng true
+  :requires ["en_US-ljspeech-high.onnx" "tokens.txt"]
+  :source-url "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/ljspeech/high"
+  :sources
+  [{:files
+    [{:bytes 114199139
+      :path "en_US-ljspeech-high.onnx"
+      :sha256 "fea8faae21240174e972568a004f1d7afb01a93dbc7b3a58c36ecdc1bae82e33"
+      :url
+      "https://huggingface.co/csukuangfj/vits-piper-en_US-ljspeech-high/resolve/main/en_US-ljspeech-high.onnx"}
+     {:bytes 940
+      :path "tokens.txt"
+      :sha256 "ef3a7e4a8d1af0c9d4dc45aaae1a6242ebe24a7ed6f3d025a49eb29682784c6d"
+      :url
+      "https://huggingface.co/csukuangfj/vits-piper-en_US-ljspeech-high/resolve/main/tokens.txt"}]
+    :host :hf
+    :is-token-required true
+    :kind :files}
+   {:bytes 115817679
+    :host :upstream
+    :kind :archive
+    :sha256 "00c6408d2409050312193b0d40ae07fde28af7d3d45a56efcc55440db516b935"
+    :url
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-ljspeech-high.tar.bz2"}]
+  :voice {:gender :female :id "ljspeech" :label "LJ (en-US)" :language "en-US"}}
  ;; The voice a user asked for by NAME, and the reason `:is-opt-in` has to exist
  ;; for a voice and not only for a model. RyanSpeech is CC BY-NC-SA 4.0:
  ;; NonCommercial rules out the mirror - a release asset of a commercial product
