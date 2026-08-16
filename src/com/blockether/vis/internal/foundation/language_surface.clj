@@ -570,8 +570,13 @@
     {:symbol 'run_tests
      :result
      (str
-       "String-keyed, stamped with `op`; absent fields mean not applicable. Carries execution metadata, "
-       "counts/details, output, timeout, and REPL-recovery diagnostics.")
+        "String-keyed, stamped with `op`; absent fields mean not applicable. The verdict is `is_pass`. "
+        "Counts: `total`, `pass`, `fail`, `errored` (the erroring subset of `fail`), `skipped`, "
+        "`selected`. `failures` carries ONE ROW PER FAULT — `test`, `type` (`fail` or `error`), "
+        "`message`, plus `ns` (Clojure) or `file` (Python) — so a red run already names what to "
+        "open. `output` is the runner's own text; `ns`, `target`, `framework`, `mode`, `ms` say "
+        "what ran and how. A REPL that could not serve answers `repl_wedged`, `repl_unusable`, "
+        "`recovered` and a `hint`; `timed_out`, `error`, `exit` carry the rest.")
      :description
      (str
        "Run the pack's tests — `run_tests({\"paths\": [\"test/foo_test.clj\"]})`, or "

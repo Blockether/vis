@@ -1257,9 +1257,14 @@ Six rules follow, each measured against Vis's own corpus:
    refuses without it (call it and see — `grep` marks none, because a query-less
    `grep` lists files); `:note` is at most six words, the one thing the key's name
    does not already say. Positional arguments belong to the call line, not here.
-4. **`:result` states the shape, never the workflow** — the keys Python will index
-   into. A sandbox verb returns a raw value with nothing in front of it, so this
-   is the only place its result is ever described.
+4. **`:result` states the shape, never the workflow** — the exact keys Python will
+   index into, spelled the way the map spells them. A sandbox verb returns a raw
+   value with nothing in front of it, so this is the only place its result is ever
+   described, and a contract written in nouns teaches a probe instead: `run_tests`
+   answered *"execution metadata, counts/details, output, timeout, and REPL-recovery
+   diagnostics"* for thirty keys, so a caller had to print the map to find `is_pass`.
+   A contract that names fewer than two of its keys, and does not answer plain text,
+   fails `extension_test`.
 5. **Say a word once.** Query terms are ORed, stemmed (`define` / `defines` /
    `defined` / `defining` are one term) and priced by rarity; a repeat saturates
    instead of stacking, so keyword stuffing buys no rank and costs the human who

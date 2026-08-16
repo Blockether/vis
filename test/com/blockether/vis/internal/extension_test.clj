@@ -548,6 +548,19 @@
   (let [shape (:ext.symbol/call entry)]
     (and (map? shape) (or (some? (:rest shape)) (= ["options"] (:pos shape))))))
 
+(defn- named-keys
+  "Every wire key a result contract actually NAMES: the backticked identifiers it
+   prints, plus the members of a backticked brace list (`{pass, fail, output}`).
+   Two characters or fewer is a word, not a key — `op` and `ns` are named by the
+   contracts around them, never alone."
+  [result]
+  (into #{}
+        (comp (map second)
+              (mapcat #(str/split % #"[^A-Za-z0-9_]+"))
+              (filter #(re-matches #"[a-z][a-z0-9_]{2,}" %)))
+        (re-seq #"`([^`]+)`" (str result))))
+
+
 ;; Regression, doc quality: a tool page used to be prose alone — 17 of the bound
 ;; tools never showed a single call, and an options-dict tool stated its required
 ;; keys nowhere `doc(name)` could reach, so the model learned them from refusals.
@@ -616,4 +629,33 @@
         (expect (str/starts-with? (str (get ks 'struct_index)) "Keys: paths (REQUIRED)")
                 (str (get ks 'struct_index)))
         (expect (not (str/includes? (str (get docs 'struct_index)) "Keys: paths (REQUIRED)")))
-        (expect (every? #(str/starts-with? (str %) "Keys: ") (vals ks))))))
+        (expect (every? #(str/starts-with? (str %) "Keys: ") (vals ks)))))
+  ;; Regression, doc quality: `run_tests` answered "execution metadata,
+  ;; counts/details, output, timeout, and REPL-recovery diagnostics" — thirty
+  ;; keys a caller could only learn by printing the map, on the one tool every
+  ;; verification goes through. Every other bound tool already named its own.
+  (it "names the keys of a result instead of describing them in nouns"
+      (doseq [entry (live-tool-entries)]
+        (let
+          [sym (:ext.symbol/symbol entry)
+           result (str (:ext.symbol/result entry))]
+
+          ;; A contract that answers TEXT says so and has no keys to name.
+          (expect (or (re-find #"(?i)plain string" result) (<= 2 (count (named-keys result))))
+                  (str sym " names no key of its result: " result)))))
+  (it "states the verdict, the counts and the fault rows a test run answers with"
+      (let
+        [result
+         (->> (live-tool-entries)
+              (filter #(= 'run_tests (:ext.symbol/symbol %)))
+              first
+              :ext.symbol/result
+              str)
+
+         named
+         (named-keys result)]
+
+        ;; Read a red run, do not rerun it louder: the fault rows are already here.
+        (doseq
+          [k ["is_pass" "pass" "fail" "errored" "skipped" "total" "failures" "message" "output"]]
+          (expect (contains? named k) (str "run_tests never names `" k "`: " result))))))
