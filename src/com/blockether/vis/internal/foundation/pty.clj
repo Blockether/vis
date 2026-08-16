@@ -114,6 +114,12 @@
 
 (def ^:private h-waitpid (delay (dh "waitpid" I [I ADDR I])))
 
+;; poll(2). The reader loop ASKS whether the terminal has anything left instead of
+;; blocking in `read`, because the parent holds a slave descriptor open for the
+;; child's lifetime and a blocking read would never see EOF. `nfds_t` is 32-bit on
+;; macOS and 64-bit on Linux, so the count crosses as a long: correct on both.
+(def ^:private h-poll (delay (dh "poll" I [ADDR L I])))
+
 ;; addchdir_np: glibc >= 2.29 and macOS >= 10.15 (best-effort; ignored if absent).
 (def ^:private h-fa-chdir
   (delay (try (dh "posix_spawn_file_actions_addchdir_np" I [ADDR ADDR]) (catch Throwable _ nil))))
@@ -222,27 +228,82 @@
       (bit-and (bit-shift-right st 8) 0xff) ;; WIFEXITED -> WEXITSTATUS
       (+ 128 (bit-and st 0x7f)))))          ;; WIFSIGNALED -> 128+signo
 
-(defn- reader-loop!
-  "Drain the PTY master fd into `pout` until EOF, then close it. Runs on its own
-   daemon thread; a real terminal has no separate stderr, so this is the single
-   merged stream. Every chunk is ALSO fanned out to each fn in `@listeners`
-   (deref'd fresh each chunk) — the passthrough bridge subscribes there to tee
-   live output to attached human terminals without stealing from the pump."
-  [^long master ^PipedOutputStream pout listeners]
-  (try (with-open [arena (Arena/ofConfined)]
-         (let [buf (.allocate arena (long 8192))]
-           (loop []
+;; struct pollfd { int fd; short events; short revents; } — 8 bytes, and POLLIN is
+;; 0x0001 on both platforms.
+(def ^:private POLLIN (short 0x0001))
 
-             (let [n (long (invoke @h-read (int master) buf (long 8192)))]
-               (when (pos? n)
-                 (let [ba (.toArray (.asSlice buf 0 n) ValueLayout/JAVA_BYTE)]
-                   (.write pout ba)
-                   (.flush pout)
-                   (doseq [l @listeners]
-                     (try (l ba) (catch Throwable _ nil))))
-                 (recur))))))
+(def ^:private reader-poll-ms
+  "How long one poll in [[reader-loop!]] waits before re-asking whether the child
+   has been reaped. It is pure EXIT latency on an idle terminal — output itself is
+   never delayed, because a poll returns the moment bytes are queued — and a live
+   shell costs one syscall a hundredth of a second, which is nothing beside the
+   process it is watching."
+  (int 10))
+
+(defn- close-fd-once!
+  "Close a descriptor through `open?` so it is closed EXACTLY once. A second close
+   is not a harmless no-op: the number is free the moment the first one returns and
+   another thread's `open` may already be holding it."
+  [open? ^long fd]
+  (when (compare-and-set! open? true false)
+    (try (invoke @h-close (int fd)) (catch Throwable _ nil))))
+
+(defn- reader-loop!
+  "Drain the PTY master fd into `pout` until the terminal has no writer left, then
+   close it. Runs on its own daemon thread; a real terminal has no separate stderr,
+   so this is the single merged stream. Every chunk is ALSO fanned out to each fn in
+   `@listeners` (deref'd fresh each chunk) — the passthrough bridge subscribes there
+   to tee live output to attached human terminals without stealing from the pump.
+
+   The parent keeps a slave descriptor (`slave`) so the CHILD's exit is never the
+   LAST close of this terminal: on macOS that last close revokes the tty and
+   DISCARDS whatever is still queued in it, so a command that printed and exited
+   before this thread copied the bytes out reported that it had printed nothing at
+   all. Holding a slave costs the EOF that used to end this loop, so the loop polls:
+   it takes whatever is queued, and once the child is reaped (`exit`) and one poll
+   finds the terminal empty, everything the child wrote has been handed over. Only
+   then is the parent's slave dropped — and reading continues, because a grandchild
+   that inherited the terminal (`cmd &`) may still write to it, and EOF again means
+   what it always meant: the last writer is gone."
+  [master slave ^PipedOutputStream pout listeners exit master-open? slave-open?]
+  (try (with-open [arena (Arena/ofConfined)]
+         (let
+           [buf (.allocate arena (long 8192))
+            ^MemorySegment pfd (.allocate arena (long 8))
+            ;; ONE read of whatever the terminal holds, into the pipe and the
+            ;; listeners. Answers whether the stream is still open: a zero or
+            ;; negative `read` is its end.
+            drain-once! (fn []
+                          (let [n (long (invoke @h-read (int master) buf (long 8192)))]
+                            (when (pos? n)
+                              (let [ba (.toArray (.asSlice buf 0 n) ValueLayout/JAVA_BYTE)]
+                                (.write pout ba)
+                                (.flush pout)
+                                (doseq [l @listeners]
+                                  (try (l ba) (catch Throwable _ nil)))))
+                            (pos? n)))]
+
+           (.setAtIndex pfd I 0 (int master))
+           (.setAtIndex pfd S 2 (short POLLIN))
+           (when (loop []
+
+                   (let [ready (int (invoke @h-poll pfd (long 1) reader-poll-ms))]
+                     (cond
+                       ;; Bytes are queued: take them, whoever wrote them.
+                       (pos? ready) (when (drain-once!) (recur))
+                       ;; Nothing queued and the child is reaped: the terminal holds
+                       ;; nothing more of the child's, so the parent's slave can go.
+                       (some? @exit) true
+                       ;; Still running, or an interrupted poll: keep watching.
+                       :else (do (when (neg? ready) (Thread/sleep 1)) (recur)))))
+             (close-fd-once! slave-open? slave)
+             (loop []
+
+               (when (drain-once!) (recur))))))
        (catch Throwable _ nil)
-       (finally (try (.close pout) (catch Throwable _ nil)))))
+       (finally (try (.close pout) (catch Throwable _ nil))
+                (close-fd-once! slave-open? slave)
+                (close-fd-once! master-open? master))))
 
 (defn spawn!
   "Spawn `command` (a vector of program + args) under a real pseudo-terminal.
@@ -250,7 +311,7 @@
    Returns the handle map documented on the namespace."
   [{:keys [command dir env cols rows] :or {cols 120 rows 40}}]
   (let
-    [master
+    [spawned
      (with-open [arena (Arena/ofConfined)]
        (let
          [^MemorySegment amaster (.allocate arena (long 4))
@@ -291,18 +352,24 @@
            (let [rc (int (invoke @h-spawn pidp path fa at argv envp))]
              (invoke @h-fa-destr fa)
              (invoke @h-at-destr at)
-             (invoke @h-close slave) ;; parent drops slave -> master sees EOF on exit
+             ;; The parent KEEPS its slave descriptor: the child's exit must not be
+             ;; the last close of this terminal ([[reader-loop!]] owns dropping it,
+             ;; once nothing of the child's is queued in the tty any more).
              (when-not (zero? rc)
+               (invoke @h-close slave)
                (invoke @h-close master)
                (throw (ex-info (str "posix_spawn failed (errno " rc ")")
                                {:type ::spawn-failed :errno rc})))
-             [master (long (.getAtIndex pidp I 0))]))))
+             [master slave (long (.getAtIndex pidp I 0))]))))
 
-     [master-fd pid]
-     master
+     [master-fd slave-fd pid]
+     spawned
 
      master-fd
      (int master-fd)
+
+     slave-fd
+     (int slave-fd)
 
      pid
      (long pid)
@@ -316,16 +383,24 @@
      listeners
      (atom [])
 
-     _rthread
-     (doto (Thread. ^Runnable
-                    (fn []
-                      (reader-loop! master-fd pout listeners))
-                    (str "vis-pty-read-" pid))
-       (.setDaemon true)
-       (.start))
-
      exit
      (atom nil)
+
+     ;; Each descriptor is closed exactly once, by whichever side finishes last.
+     master-open?
+     (atom true)
+
+     slave-open?
+     (atom true)
+
+     _rthread
+     (doto (Thread.
+             ^Runnable
+             (fn []
+               (reader-loop! master-fd slave-fd pout listeners exit master-open? slave-open?))
+             (str "vis-pty-read-" pid))
+       (.setDaemon true)
+       (.start))
 
      wait-fn
      (fn []
@@ -336,9 +411,15 @@
                    (let [^MemorySegment status (.allocate arena (long 4))]
                      (invoke @h-waitpid (int pid) status (int 0))
                      (let [code (decode-status (long (.getAtIndex status I 0)))]
-                       (try (invoke @h-close master-fd) (catch Throwable _ nil))
                        (reset! exit code)
-                       code)))))))]
+                       code)))))))
+
+     ;; The reader can no longer learn that the child is gone from an EOF the
+     ;; terminal will not send while the parent holds a slave, so ONE thread reaps
+     ;; the child the moment it exits; every other caller of `:wait` reads the code
+     ;; it published straight out of `exit`.
+     _reaper
+     (doto (Thread. ^Runnable wait-fn (str "vis-pty-reap-" pid)) (.setDaemon true) (.start))]
 
     {:pid pid
      :in pin
