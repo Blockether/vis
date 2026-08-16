@@ -11,7 +11,12 @@ sys.modules["redact_secrets"] = redact_secrets
 spec.loader.exec_module(redact_secrets)  # type: ignore[union-attr]
 
 
-def test_redacts_env_and_edn_secrets_without_reporting_values(tmp_path):
+def test_redacts_env_and_edn_secrets_without_reporting_values(tmp_path, monkeypatch):
+    # The loader also reads the ambient process environment, so a machine that
+    # exports one of DEFAULT_ENV_KEYS loaded a third secret and the count below
+    # depended on who ran the test.
+    for key in redact_secrets.DEFAULT_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
     env = tmp_path / "verifier.env"
     config = tmp_path / "config.edn"
     artifacts = tmp_path / "artifacts"
