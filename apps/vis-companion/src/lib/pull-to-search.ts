@@ -22,10 +22,14 @@
  *     the caret is put in the field from `touchend`, the discrete event React
  *     flushes inside the gesture itself, exactly as a press on the glass does it.
  *
- * The gesture REPORTS ITSELF WHILE IT HAPPENS (`PullToSearchHint`) instead of
- * only when it lands. This app has no haptics, so the screen is the only
- * confirmation there is, and a pull that showed nothing until the finger lifted
- * would be a gesture nobody could learn and nobody could trust.
+ * The gesture REPORTS ITSELF WHILE IT HAPPENS (`PullToSearchHint`), and it
+ * reports by FOLLOWING THE FINGER: the band comes down the exact fraction of
+ * the way the pull has come, so the hand is moving the band rather than
+ * tripping a switch that then plays a canned slide of its own. Past the
+ * threshold the band gives only a third of what the finger asks for, and that
+ * resistance is the detent this app has no haptics to tick. The screen is the
+ * only confirmation there is, and a pull that showed nothing until the finger
+ * lifted would be a gesture nobody could learn and nobody could trust.
  */
 
 import { useEffect, useRef, type RefObject } from 'react';
@@ -51,6 +55,8 @@ export interface PullGesture {
   /** Where the finger landed, so every reading is measured from one origin. */
   readonly from: PullPoint;
   readonly phase: PullPhase;
+  /** How far the finger has come down from `from` — the band's whole position. */
+  readonly down: number;
 }
 
 /**
@@ -82,7 +88,7 @@ const UPWARD_PX = 4;
 export function pullStart(box: PullBox, touches: number, at: PullPoint): PullGesture | null {
   if (touches !== 1) return null;
   if (box.scrollTop > AT_TOP_PX) return null;
-  return { from: at, phase: 'none' };
+  return { from: at, phase: 'none', down: 0 };
 }
 
 /**
@@ -98,12 +104,62 @@ export function pullMove(gesture: PullGesture, touches: number, at: PullPoint): 
   if (sideways > SIDEWAYS_PX && sideways > down) return null;
   const phase: PullPhase =
     down >= PULL_OPEN_PX ? 'armed' : down >= PULL_HINT_PX ? 'pulling' : 'none';
-  return phase === gesture.phase ? gesture : { from: gesture.from, phase };
+  return { from: gesture.from, phase, down };
 }
 
 /**
- * Wire the gesture to `viewport`, reporting every phase change through `onPhase`
- * and opening the search on the lift that ends an armed pull.
+ * Past the open threshold the band GIVES rather than keeps up: about a third of
+ * every further pixel, and never more than this much of its own height out. A
+ * pull that tracked one-to-one forever would run the band down over the list
+ * with nothing left to say, where resistance is how a hand feels an end stop on
+ * a screen with no haptics to tick one.
+ */
+const OVERPULL_GIVE = 0.35;
+const MAX_REVEAL = 1.12;
+
+/**
+ * How much of the band is out, as a fraction of its own height: 0 where the
+ * finger landed, 1 exactly where a lift would open the search. It is the single
+ * number the screen is painted from, so what the band SHOWS can never disagree
+ * with what the phase SAYS.
+ */
+export function pullReveal(down: number): number {
+  if (down <= 0) return 0;
+  const reached = down / PULL_OPEN_PX;
+  if (reached <= 1) return reached;
+  return Math.min(MAX_REVEAL, 1 + (reached - 1) * OVERPULL_GIVE);
+}
+
+/**
+ * Put the band where the finger has dragged it, or hand it back to its class.
+ *
+ * While a finger is down the element carries its own position and the
+ * transition is switched OFF: a 150ms ease between the frames of a live drag is
+ * exactly the lag that reads as a gesture the phone is only pretending to
+ * follow. `null` clears both properties, and the class the band declares takes
+ * over WITH its transition — which is the same thing as gliding home, whether
+ * the pull was abandoned or the search page is on its way in.
+ *
+ * POSITION IS THE WHOLE REVEAL: the list card that owns the band is
+ * `overflow-hidden`, so a band parked one height up is not dimmed, it is simply
+ * behind the edge. Fading it in as well only laid a ghost of the header under
+ * the paper of the band coming down to cover it.
+ */
+export function paintPull(element: HTMLElement | null, reveal: number | null): void {
+  if (!element) return;
+  if (reveal === null) {
+    element.style.transitionDuration = '';
+    element.style.translate = '';
+    return;
+  }
+  element.style.transitionDuration = '0ms';
+  element.style.translate = `0px ${Math.round((reveal - 1) * 10000) / 100}%`;
+}
+
+/**
+ * Wire the gesture to `viewport`, reporting every phase change through
+ * `onPhase`, painting `hint` wherever the finger has dragged it, and opening
+ * the search on the lift that ends an armed pull.
  *
  * `onSearch` is `null` when the search page is ALREADY the screen: there is no
  * door left to open, so nothing is watched and nothing is hinted — a hint that
@@ -113,9 +169,16 @@ export function pullMove(gesture: PullGesture, touches: number, at: PullPoint): 
  * to: at the top of the list a downward drag moves nothing (`overscroll-contain`
  * on the scroller, `overscroll-behavior: none` on the shell), which is exactly
  * why this gesture is free to mean something.
+ *
+ * The band is painted STRAIGHT ONTO THE ELEMENT rather than through React state
+ * — `components/ImageViewer` carries a pinched picture the same way — because a
+ * re-render per `touchmove` stutters on exactly the phones this gesture exists
+ * for. The class on the band still owns where it RESTS, so a lift only has to
+ * hand it back and it glides home under the transition it declares itself.
  */
 export function usePullToSearch(
   viewport: RefObject<HTMLElement | null>,
+  hint: RefObject<HTMLElement | null>,
   onPhase: (phase: PullPhase) => void,
   onSearch: (() => void) | null,
 ): void {
@@ -133,12 +196,16 @@ export function usePullToSearch(
     if (!element || !hasDoor) return;
     let gesture: PullGesture | null = null;
 
-    // One place decides what the screen is told, so the hint can never be left
-    // standing by a path that forgot to clear it.
+    // One place decides what the screen is told AND what it is painted with, so
+    // the hint can never be left standing by a path that forgot to clear it,
+    // nor left behind the finger by a path that only reported a phase.
+    const paint = (next: PullGesture | null) =>
+      paintPull(hint.current, next && pullReveal(next.down));
     const report = (next: PullGesture | null) => {
       const was = gesture?.phase ?? 'none';
       gesture = next;
       const now = next?.phase ?? 'none';
+      paint(next);
       if (now !== was) latest.current.onPhase(now);
     };
 
@@ -183,5 +250,5 @@ export function usePullToSearch(
       element.removeEventListener('touchcancel', onCancel);
       report(null);
     };
-  }, [hasDoor, viewport]);
+  }, [hasDoor, hint, viewport]);
 }

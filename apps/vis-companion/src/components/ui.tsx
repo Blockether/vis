@@ -12,7 +12,7 @@ import {
 
 import type { MachineColor } from '../lib/machine-colors';
 import type { PullPhase } from '../lib/pull-to-search';
-import type { RefObject } from 'react';
+import type { Ref, RefObject } from 'react';
 import { createPortal } from 'react-dom';
 
 import {
@@ -1209,16 +1209,34 @@ export function CloseButton({
  * It is not `Button`: a bordered box on a title band claims a rank chrome has not
  * earned, and a 32px face centred in a 48px band is a smaller target than the ✕ one
  * hairline away from it — two boxes for the two things a band can do.
+ *
+ * A CELL WITH SOMETHING TO COMMIT WEARS THE ACCENT (`isPrimary`). Save is the one
+ * verb in this app that can be OWED — a note with an unsaved remark, a picture with
+ * ink on it — and it stood in the band's own quiet ink whether or not there was
+ * anything to save, so the screen never said which of the two it was. Reported as:
+ * when there is something to save, it should look like the yellow buttons. It wears
+ * the same accent `Button variant="primary"` does, and ONLY while it is live: a cell
+ * with nothing to commit is `disabled`, and the colour leaves with the verb rather
+ * than fading with it, so the paint IS the report.
  */
 export function BandButton({
   className = '',
+  isPrimary = false,
   children,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement>) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  /** This cell COMMITS something, and wears the accent while it has something to commit. */
+  isPrimary?: boolean;
+}) {
+  const isLive = isPrimary && !props.disabled;
   return (
     <button
       type="button"
-      className={`grid shrink-0 place-items-center self-stretch whitespace-nowrap border-l border-current/20 px-3 font-mono text-meta font-bold text-current transition-colors duration-150 hover:bg-current/10 focus-visible:bg-current/10 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent motion-reduce:transition-none sm:px-4 sm:text-ui mouse:px-3 mouse:text-meta ${className}`}
+      className={`grid shrink-0 place-items-center self-stretch whitespace-nowrap border-l border-current/20 px-3 font-mono text-meta font-bold transition-colors duration-150 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent motion-reduce:transition-none sm:px-4 sm:text-ui mouse:px-3 mouse:text-meta ${
+        isLive
+          ? 'bg-accent text-accent-foreground hover:bg-accent-2 focus-visible:bg-accent-2'
+          : 'text-current hover:bg-current/10 focus-visible:bg-current/10'
+      } ${className}`}
       {...props}
     >
       {children}
@@ -1343,18 +1361,31 @@ export const SearchField = forwardRef<
  * It is `HEADER_BAND`'s own height and paper: it stands in for the band it
  * covers rather than adding a second, thinner strip above it, and it is
  * decoration for a touch gesture, so it is never announced and never pressed.
+ *
+ * It FOLLOWS THE FINGER: `lib/pull-to-search` paints it straight onto this
+ * element while a pull is live, and the classes here are only where it rests
+ * and how it glides back once the hand has let go. Where it waits is one whole
+ * height above home, which the list card clips: nothing hides it but the edge,
+ * so the pull draws opaque paper out from under that edge instead of dissolving
+ * a translucent band over the header it is covering.
  */
-export function PullToSearchHint({ phase }: { phase: PullPhase }) {
+export function PullToSearchHint({ phase, ref }: { phase: PullPhase; ref?: Ref<HTMLDivElement> }) {
   const isShown = phase !== 'none';
+  const isArmed = phase === 'armed';
   return (
     <div
+      ref={ref}
       aria-hidden="true"
-      className={`pointer-events-none absolute inset-x-0 top-0 z-20 flex min-h-13 items-center justify-center gap-2 border-b border-dialog-edge bg-level-project font-mono text-meta transition-[translate,opacity] duration-150 motion-reduce:transition-none mouse:min-h-9 ${
-        isShown ? 'translate-y-0 opacity-100' : '-translate-y-full opacity-0'
-      } ${phase === 'armed' ? 'text-accent' : 'text-dialog-hint'}`}
+      className={`pointer-events-none absolute inset-x-0 top-0 z-20 flex min-h-13 items-center justify-center gap-2 border-b bg-level-project font-mono text-meta transition-[translate] duration-150 motion-reduce:transition-none mouse:min-h-9 ${
+        isShown ? 'translate-y-0' : '-translate-y-full'
+      } ${isArmed ? 'border-accent text-accent' : 'border-dialog-edge text-dialog-hint'}`}
     >
-      <SearchIcon className="size-3.5 shrink-0" />
-      {phase === 'armed' ? 'Release to search' : 'Pull to search'}
+      <SearchIcon
+        className={`size-3.5 shrink-0 transition-transform duration-150 motion-reduce:transition-none ${
+          isArmed ? 'scale-125' : 'scale-100'
+        }`}
+      />
+      {isArmed ? 'Release to search' : 'Pull to search'}
     </div>
   );
 }

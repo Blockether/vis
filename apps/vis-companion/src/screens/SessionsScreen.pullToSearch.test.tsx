@@ -50,21 +50,54 @@ describe("pulling the sessions list down", () => {
     try {
       const list = await listOf(view);
       const hint = () => view.container.querySelector<HTMLElement>(".pointer-events-none.absolute")!;
-      expect(hint().className).toContain("opacity-0");
+      expect(hint().className).toContain("-translate-y-full");
 
       act(() => {
         fireTouch(list, "touchstart", [AT]);
         fireTouch(list, "touchmove", [down(20)]);
       });
       expect(hint().textContent).toBe("Pull to search");
-      expect(hint().className).toContain("opacity-100");
+      expect(hint().className).toContain("translate-y-0");
 
       act(() => fireTouch(list, "touchmove", [down(PULL_OPEN_PX)]));
       expect(hint().textContent).toBe("Release to search");
       expect(hint().className).toContain("text-accent");
+      // Armed, the whole band takes the accent — its edge and its glass with it.
+      expect(hint().className).toContain("border-accent");
+      expect(hint().querySelector("svg")?.getAttribute("class")).toContain("scale-125");
 
       act(() => fireTouch(list, "touchend", []));
-      expect(hint().className).toContain("opacity-0");
+      expect(hint().className).toContain("-translate-y-full");
+    } finally {
+      view.restore();
+      view.unmount();
+    }
+  });
+
+  it("carries the band down under the finger rather than playing a slide at it", async () => {
+    const view = fleet(() => {});
+    try {
+      const list = await listOf(view);
+      const hint = () => view.container.querySelector<HTMLElement>(".pointer-events-none.absolute")!;
+
+      act(() => {
+        fireTouch(list, "touchstart", [AT]);
+        fireTouch(list, "touchmove", [down(PULL_OPEN_PX / 4)]);
+      });
+      expect(hint().style.translate).toBe("0px -75%");
+
+      act(() => fireTouch(list, "touchmove", [down(PULL_OPEN_PX / 2)]));
+      expect(hint().style.translate).toBe("0px -50%");
+
+      act(() => fireTouch(list, "touchmove", [down(PULL_OPEN_PX)]));
+      expect(hint().style.translate).toBe("0px 0%");
+
+      // Past the threshold the band gives, so no pull can run it over the list.
+      act(() => fireTouch(list, "touchmove", [down(PULL_OPEN_PX * 4)]));
+      expect(parseFloat(hint().style.translate.split(" ")[1])).toBeLessThanOrEqual(12);
+
+      act(() => fireTouch(list, "touchend", []));
+      expect(hint().style.translate).toBe("");
     } finally {
       view.restore();
       view.unmount();

@@ -7,14 +7,16 @@ import { drag, fireTouch, pullDown } from "./pull-to-search.fixture";
 import {
   PULL_HINT_PX,
   PULL_OPEN_PX,
+  paintPull,
   pullMove,
+  pullReveal,
   pullStart,
   usePullToSearch,
   type PullPhase,
 } from "./pull-to-search";
 
 const AT = { x: 180, y: 120 };
-const watching = { from: AT, phase: "none" as PullPhase };
+const watching = { from: AT, phase: "none" as PullPhase, down: 0 };
 const down = (by: number) => ({ x: AT.x, y: AT.y + by });
 
 describe("reading a pull at the top of the list", () => {
@@ -56,7 +58,67 @@ describe("reading a pull at the top of the list", () => {
   });
 });
 
-/** A scroller with the gesture on it, reporting every phase it is told about. */
+
+describe("how far the band has come down", () => {
+  it("answers the finger one for one until a lift would open the search", () => {
+    expect(pullReveal(0)).toBe(0);
+    expect(pullReveal(PULL_OPEN_PX / 4)).toBeCloseTo(0.25, 5);
+    expect(pullReveal(PULL_OPEN_PX / 2)).toBeCloseTo(0.5, 5);
+    expect(pullReveal(PULL_OPEN_PX)).toBe(1);
+  });
+
+  it("gives only a fraction of the pull past the threshold, so the gesture ends against something", () => {
+    const past = pullReveal(PULL_OPEN_PX * 2);
+    expect(past).toBeGreaterThan(1);
+    expect(past).toBeLessThan(1.4);
+    // However hard the list is pulled, the band stops somewhere it can be read.
+    expect(pullReveal(PULL_OPEN_PX * 40)).toBe(pullReveal(PULL_OPEN_PX * 4));
+  });
+
+  it("stays home for a finger that has not come down at all", () => {
+    expect(pullReveal(-40)).toBe(0);
+  });
+});
+
+describe("painting the band under the finger", () => {
+  it("carries the band and drops its transition while a finger owns it", () => {
+    const band = document.createElement("div");
+
+    paintPull(band, 0.125);
+
+    expect(band.style.translate).toBe("0px -87.5%");
+    expect(band.style.transitionDuration).toBe("0ms");
+  });
+
+  it("never dims the paper: the card's edge is what hides a band that is not out", () => {
+    const band = document.createElement("div");
+
+    paintPull(band, 0.25);
+
+    expect(band.style.opacity).toBe("");
+    expect(band.style.translate).toBe("0px -75%");
+  });
+
+  it("puts the band exactly home at the pixel the lift starts to mean something", () => {
+    const band = document.createElement("div");
+
+    paintPull(band, 1);
+
+    expect(band.style.translate).toBe("0px 0%");
+    expect(band.style.opacity).toBe("");
+  });
+
+  it("hands the band back to its class, which is what glides it home", () => {
+    const band = document.createElement("div");
+    paintPull(band, 0.8);
+
+    paintPull(band, null);
+
+    expect(band.style.translate).toBe("");
+    expect(band.style.transitionDuration).toBe("");
+  });
+});
+
 function PulledList({
   onSearch,
   seen = [],
@@ -65,13 +127,17 @@ function PulledList({
   seen?: PullPhase[];
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  const band = useRef<HTMLDivElement | null>(null);
   const [phase, setPhase] = useState<PullPhase>("none");
-  usePullToSearch(ref, (next) => {
+  usePullToSearch(ref, band, (next) => {
     seen.push(next);
     setPhase(next);
   }, onSearch);
   return (
-    <div ref={ref} data-testid="list" data-phase={phase} />
+    <>
+      <div ref={band} data-testid="band" />
+      <div ref={ref} data-testid="list" data-phase={phase} />
+    </>
   );
 }
 
@@ -141,5 +207,34 @@ describe("pulling the sessions list down", () => {
 
     expect(seen).toEqual([]);
     expect(getByTestId("list").dataset.phase).toBe("none");
+  });
+
+  it("carries the band with the finger, and hands it back on the lift", () => {
+    const { getByTestId } = render(<PulledList onSearch={() => {}} />);
+    const list = getByTestId("list");
+    const band = getByTestId("band");
+
+    act(() => {
+      fireTouch(list, "touchstart", [AT]);
+      fireTouch(list, "touchmove", [down(PULL_OPEN_PX / 2)]);
+    });
+    expect(band.style.translate).toBe("0px -50%");
+    expect(band.style.transitionDuration).toBe("0ms");
+
+    act(() => fireTouch(list, "touchmove", [down(PULL_OPEN_PX)]));
+    expect(band.style.translate).toBe("0px 0%");
+
+    act(() => fireTouch(list, "touchend", []));
+    expect(band.style.translate).toBe("");
+    expect(band.style.transitionDuration).toBe("");
+  });
+
+  it("hands the band back when the browser takes the drag away", () => {
+    const { getByTestId } = render(<PulledList onSearch={() => {}} />);
+    const list = getByTestId("list");
+
+    act(() => pullDown(list, PULL_OPEN_PX, "cancel"));
+
+    expect(getByTestId("band").style.translate).toBe("");
   });
 });

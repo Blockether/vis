@@ -423,6 +423,7 @@ export function SessionsScreen({
   // from a hang.
   const [actionProgress, setActionProgress] = useState<{ done: number; total: number } | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const hintRef = useRef<HTMLDivElement>(null);
   // How far the finger has pulled the top of the list down, in the only three
   // steps the screen paints. It changes at most twice per gesture, never per frame.
   const [pullPhase, setPullPhase] = useState<PullPhase>('none');
@@ -832,7 +833,7 @@ export function SessionsScreen({
   // AT THE TOP OF THE LIST, A PULL IS A QUESTION ABOUT SEARCH. The glass that opens
   // the search page sits in the far top corner of the app bar; the thumb already
   // reading this list has a gesture for it, and every native list answers it.
-  usePullToSearch(listRef, setPullPhase, onSearch);
+  usePullToSearch(listRef, hintRef, setPullPhase, onSearch);
 
   // Transcript + title search runs server-side and RANKED (see `rank` below), and
   // it is a fleet ROUND TRIP per machine over a whole transcript store — hundreds
@@ -1806,7 +1807,7 @@ export function SessionsScreen({
         <div className="relative flex h-full min-h-0 flex-col overflow-hidden border-y border-dialog-edge bg-panel sm:mx-0 sm:h-auto sm:max-h-full sm:border-x sm:border-r-2">
         {/* The pull reports itself while it happens: the card clips the band until a
             finger brings it down over the list's first header. */}
-        <PullToSearchHint phase={pullPhase} />
+        <PullToSearchHint phase={pullPhase} ref={hintRef} />
         {/* A create that failed has no button left to speak from once the order's own
             popover is gone, so the word lands on the paper the list is about to fill. */}
         {createError && (
