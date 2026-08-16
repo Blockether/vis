@@ -878,7 +878,7 @@ export function AddProviderButton({ auth }: { auth: ProviderAuth }) {
   return (
     <>
       <Button
-        variant="primary"
+        variant="quiet"
         density="compact"
         aria-label="Add a provider"
         onClick={() => {

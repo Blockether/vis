@@ -1407,22 +1407,23 @@ describe("settings is ONE dialog with two columns", () => {
     // Reported over this screenshot: the providers description says nothing the
     // rows do not, and "8/8 SIGNED IN" is a count of a list already on screen —
     // both crowded the one band whose rows each carry their own status. The
-    // band's word was also the widest thing in it, so the verb is `Add` and the
-    // band supplies the noun (the full phrase stays as the accessible name).
-    const panel = settings.slice(
-      settings.indexOf("function ProvidersPanel"),
-      settings.indexOf("<ProviderRows"),
-    );
-    expect(panel).toContain('title="Providers"');
-    expect(panel).not.toContain("description=");
-    expect(panel).not.toContain("meta=");
-    expect(panel).not.toContain("signed in`");
+    // Reported over this screenshot: the two bands wore the SAME amber button, so
+    // the providers band read as a second machines band. The machines column keeps
+    // its full-size primary verb; the providers band, nested one level in, drops to
+    // a quiet face so it sits under the column it belongs to instead of competing.
     const band = settings.slice(
       settings.indexOf("<SettingsColumn"),
       settings.indexOf("{/* THE COG"),
     );
     expect(band).toContain('aria-label="Add a machine"');
-    expect(band).toContain(">\n                Add\n              </Button>");
+    expect(band).toContain('variant="primary"');
+    expect(band).toContain(">\n                Add a machine\n              </Button>");
+    const providerButton = providerAuthSource.slice(
+      providerAuthSource.indexOf("<Button"),
+      providerAuthSource.indexOf("{isPicking &&"),
+    );
+    expect(providerButton).toContain('variant="quiet"');
+    expect(providerButton).not.toContain('variant="primary"');
   });
 
   it("hides a machine's own verbs behind its row, and keeps no panel of them", () => {

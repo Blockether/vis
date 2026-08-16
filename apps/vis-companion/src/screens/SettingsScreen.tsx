@@ -1881,7 +1881,7 @@ export function SettingsDialog({
                 aria-label="Add a machine"
                 onClick={() => setIsAdding(true)}
               >
-                Add
+                Add a machine
               </Button>
             }
           >
