@@ -6,10 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import {
-  GatewayClient,
-  GatewayError,
-} from "../lib/gateway";
+import { GatewayClient, GatewayError } from "../lib/gateway";
 import type {
   GatewayConn,
   PushDevice,
@@ -219,164 +216,167 @@ function GatewayPanels({ gateway }: { gateway: GatewayConn }) {
   return (
     // Groups run FULL BLEED and are divided by one rule, so the dialog's own frame is
     // the only box on the screen. A banner still needs air, so it brings its own
-    // rather than padding every group to get it.
-    <div className="min-w-0 touch-pan-y divide-y divide-dialog-edge overflow-x-hidden">
-          {err && (
-            <div className="p-3 sm:p-4">
-              <Banner kind="err">{err}</Banner>
-            </div>
-          )}
+    // rather than padding every group to get it. The stack also RULES ITS OWN TOP:
+    // `divide-y` draws only BETWEEN groups, so the first band opened straight onto
+    // the machine row that owns it with nothing between them, and Providers read as
+    // part of that row instead of the first thing under it.
+    <div className="min-w-0 touch-pan-y divide-y divide-dialog-edge overflow-x-hidden border-t border-dialog-edge">
+      {err && (
+        <div className="p-3 sm:p-4">
+          <Banner kind="err">{err}</Banner>
+        </div>
+      )}
 
-          {!unreachable && !unauthorized && <ProvidersPanel client={client} />}
+      {!unreachable && !unauthorized && <ProvidersPanel client={client} />}
 
-          {!unreachable && !unauthorized && (
-            <NotificationsPanel client={client} gateway={gateway} />
-          )}
+      {!unreachable && !unauthorized && (
+        <NotificationsPanel client={client} gateway={gateway} />
+      )}
 
-          {!unreachable && !unauthorized && <McpServersPanel client={client} />}
+      {!unreachable && !unauthorized && <McpServersPanel client={client} />}
 
-          {!unreachable && !unauthorized && (
-            <VoiceEnginesPanel client={client} />
-          )}
+      {!unreachable && !unauthorized && <VoiceEnginesPanel client={client} />}
 
-          {!unreachable && !unauthorized && <VoicesPanel client={client} />}
+      {!unreachable && !unauthorized && <VoicesPanel client={client} />}
 
-          {unreachable ? (
-            <SettingsPanel title="Settings">
-              <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
-                <p className="font-mono text-body font-bold text-err">
-                  Machine unreachable
-                </p>
-                <p className="font-mono text-meta text-dialog-hint">
-                  Can't load settings — vis isn't responding on this machine.
-                </p>
-                <Button variant="secondary" onClick={() => void load()}>
-                  Retry
-                </Button>
-              </div>
-            </SettingsPanel>
-          ) : unauthorized ? (
-            <SettingsPanel title="Settings" meta="unauthorized">
-              <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
-                <p className="font-mono text-body font-bold text-warn-strong">
-                  Token missing or invalid
-                </p>
-                <p className="max-w-sm font-mono text-meta text-dialog-hint">
-                  The machine is online, but rejected this token. Re-pair from{" "}
-                  <code className="text-accent-ink">vis-agent gateway pair</code> and
-                  paste the fresh link to load its settings.
-                </p>
-                <Button variant="secondary" onClick={() => void load()}>
-                  Retry
-                </Button>
-              </div>
-            </SettingsPanel>
-          ) : groups === null ? (
-            <SettingsPanel title="Loading">
-              {/* `bg-panel-2` equals `bg-panel` in the shipped themes, so plain
+      {unreachable ? (
+        <SettingsPanel title="Settings">
+          <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
+            <p className="font-mono text-body font-bold text-err">
+              Machine unreachable
+            </p>
+            <p className="font-mono text-meta text-dialog-hint">
+              Can't load settings — vis isn't responding on this machine.
+            </p>
+            <Button variant="secondary" onClick={() => void load()}>
+              Retry
+            </Button>
+          </div>
+        </SettingsPanel>
+      ) : unauthorized ? (
+        <SettingsPanel title="Settings" meta="unauthorized">
+          <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
+            <p className="font-mono text-body font-bold text-warn-strong">
+              Token missing or invalid
+            </p>
+            <p className="max-w-sm font-mono text-meta text-dialog-hint">
+              The machine is online, but rejected this token. Re-pair from{" "}
+              <code className="text-accent-ink">vis-agent gateway pair</code>{" "}
+              and paste the fresh link to load its settings.
+            </p>
+            <Button variant="secondary" onClick={() => void load()}>
+              Retry
+            </Button>
+          </div>
+        </SettingsPanel>
+      ) : groups === null ? (
+        <SettingsPanel title="Loading">
+          {/* `bg-panel-2` equals `bg-panel` in the shipped themes, so plain
                   tinted blocks were an invisible skeleton — a blank hole where
                   the settings should be. Bars are drawn in `--color-muted`. */}
+          <div
+            className="space-y-px bg-dialog-edge"
+            role="status"
+            aria-live="polite"
+            aria-label="Loading settings"
+          >
+            <p className="bg-panel px-4 py-2 font-mono text-ui text-dialog-hint">
+              Loading settings…
+            </p>
+            {["w-1/2", "w-2/3", "w-2/5"].map((width) => (
               <div
-                className="space-y-px bg-dialog-edge"
-                role="status"
-                aria-live="polite"
-                aria-label="Loading settings"
+                key={width}
+                className="animate-pulse bg-panel px-4 py-3.5 motion-reduce:animate-none"
               >
-                <p className="bg-panel px-4 py-2 font-mono text-ui text-dialog-hint">
-                  Loading settings…
-                </p>
-                {["w-1/2", "w-2/3", "w-2/5"].map((width) => (
-                  <div
-                    key={width}
-                    className="animate-pulse bg-panel px-4 py-3.5 motion-reduce:animate-none"
-                  >
-                    <span className={`block h-2.5 bg-muted/30 ${width}`} />
-                    <span className="mt-2 block h-1.5 w-1/4 bg-muted/20" />
-                  </div>
-                ))}
+                <span className={`block h-2.5 bg-muted/30 ${width}`} />
+                <span className="mt-2 block h-1.5 w-1/4 bg-muted/20" />
               </div>
-            </SettingsPanel>
-          ) : groups.length === 0 ? (
-            <SettingsPanel title="Settings">
-              <p className="px-4 py-6 text-center font-mono text-body text-dialog-hint">
-                No settings exposed by this machine.
-              </p>
-            </SettingsPanel>
-          ) : (
-            groups.map((group) => (
-              <SettingsPanel
-                key={group.id}
-                title={group.title}
-                meta={`${group.toggles.length} ${group.toggles.length === 1 ? "option" : "options"}`}
-              >
-                <div className="divide-y divide-dialog-edge">
-                  {group.toggles.map((toggle) => {
-                    const busy = pending === toggle.id;
-                    return (
-                      <div
-                        key={toggle.id}
-                        className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 px-3 py-3 transition-colors hover:bg-hover sm:px-4 sm:py-2.5"
-                      >
-                        <span
-                          className={`pt-0.5 font-mono text-body ${
-                            toggle.type === "boolean" && toggle.enabled
-                              ? "text-ok"
-                              : "text-dialog-hint"
-                          }`}
-                          aria-hidden="true"
+            ))}
+          </div>
+        </SettingsPanel>
+      ) : groups.length === 0 ? (
+        <SettingsPanel title="Settings">
+          <p className="px-4 py-6 text-center font-mono text-body text-dialog-hint">
+            No settings exposed by this machine.
+          </p>
+        </SettingsPanel>
+      ) : (
+        groups.map((group) => (
+          <SettingsPanel
+            key={group.id}
+            title={group.title}
+            meta={`${group.toggles.length} ${group.toggles.length === 1 ? "option" : "options"}`}
+          >
+            <div className="divide-y divide-dialog-edge">
+              {group.toggles.map((toggle) => {
+                const busy = pending === toggle.id;
+                return (
+                  <div
+                    key={toggle.id}
+                    className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 px-3 py-3 transition-colors hover:bg-hover sm:px-4 sm:py-2.5"
+                  >
+                    <span
+                      className={`pt-0.5 font-mono text-body ${
+                        toggle.type === "boolean" && toggle.enabled
+                          ? "text-ok"
+                          : "text-dialog-hint"
+                      }`}
+                      aria-hidden="true"
+                    >
+                      {toggle.type === "boolean"
+                        ? toggle.enabled
+                          ? "●"
+                          : "○"
+                        : "◆"}
+                    </span>
+
+                    <div className="min-w-0">
+                      <p className="break-words font-mono text-ui font-bold text-white">
+                        {toggle.label}
+                      </p>
+                      {toggle.description && (
+                        <p
+                          className={`mt-0.5 break-words ${PROSE} text-meta text-dialog-hint`}
                         >
-                          {toggle.type === "boolean"
-                            ? toggle.enabled
-                              ? "●"
-                              : "○"
-                            : "◆"}
-                        </span>
+                          {toggle.description}
+                        </p>
+                      )}
+                    </div>
 
-                        <div className="min-w-0">
-                          <p className="break-words font-mono text-ui font-bold text-white">
-                            {toggle.label}
-                          </p>
-                          {toggle.description && (
-                            <p className={`mt-0.5 break-words ${PROSE} text-meta text-dialog-hint`}>
-                              {toggle.description}
-                            </p>
-                          )}
-                        </div>
+                    {toggle.type === "boolean" && (
+                      <Switch
+                        label={toggle.label}
+                        isOn={!!toggle.enabled}
+                        isBusy={busy}
+                        disabled={busy}
+                        onClick={() => flip(toggle)}
+                      />
+                    )}
 
-                        {toggle.type === "boolean" && (
-                          <Switch
-                            label={toggle.label}
-                            isOn={!!toggle.enabled}
-                            isBusy={busy}
-                            disabled={busy}
-                            onClick={() => flip(toggle)}
-                          />
-                        )}
-
-                        {toggle.type === "enum" && toggle.choices && (
-                          <div className="col-span-full col-start-2 flex min-w-0 flex-wrap gap-1.5">
-                            {toggle.choices.map((choice) => {
-                              const selected = toggle.value === choice;
-                              return (
-                                <Chip
-                                  key={choice}
-                                  isOn={selected}
-                                  disabled={busy}
-                                  onClick={() => pick(toggle, choice)}
-                                >
-                                  {choice}
-                                </Chip>
-                              );
-                            })}
-                          </div>
-                        )}
+                    {toggle.type === "enum" && toggle.choices && (
+                      <div className="col-span-full col-start-2 flex min-w-0 flex-wrap gap-1.5">
+                        {toggle.choices.map((choice) => {
+                          const selected = toggle.value === choice;
+                          return (
+                            <Chip
+                              key={choice}
+                              isOn={selected}
+                              disabled={busy}
+                              onClick={() => pick(toggle, choice)}
+                            >
+                              {choice}
+                            </Chip>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
-                </div>
-              </SettingsPanel>
-            ))
-          )}
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </SettingsPanel>
+        ))
+      )}
     </div>
   );
 }
@@ -656,7 +656,7 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
   return (
     <SettingsPanel
       title="MCP servers"
-      description="Tools run on this gateway and are shared with every client. Commands, tokens, and environment values never leave this machine."
+      description="Tools shared with every client; secrets stay on this machine."
       meta={servers === null ? "loading" : `${servers.length} configured`}
     >
       <div className="divide-y divide-dialog-edge">
@@ -1070,7 +1070,7 @@ function VoicesPanel({ client }: { client: GatewayClient }) {
   return (
     <SettingsPanel
       title="Voices"
-      description="How this machine speaks. A cloning engine learns a voice from one recording, so adding a voice is uploading the clip it should sound like."
+      description="How this machine speaks. A cloning engine learns a voice from one clip."
       meta={
         catalogue
           ? `${voices.length} ${voices.length === 1 ? "voice" : "voices"}`
@@ -1098,8 +1098,9 @@ function VoicesPanel({ client }: { client: GatewayClient }) {
         {voices.length > 0 && (
           <>
             <p className="font-mono text-chip text-dialog-hint">
-              A reply this device sends here is spoken in the voice marked ●. Whether
-              replies are spoken at all is in Application → Spoken replies.
+              A reply this device sends here is spoken in the voice marked ●.
+              Whether replies are spoken at all is in Application → Spoken
+              replies.
             </p>
             <div className="border border-dialog-edge bg-panel-2">
               <ChoiceCell
@@ -1113,10 +1114,7 @@ function VoicesPanel({ client }: { client: GatewayClient }) {
         )}
 
         {voices.map((voice) => (
-          <div
-            key={voice.id}
-            className="border border-dialog-edge bg-panel-2"
-          >
+          <div key={voice.id} className="border border-dialog-edge bg-panel-2">
             <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 pr-3">
               <ChoiceCell
                 className="min-w-0"
@@ -1279,7 +1277,9 @@ function EngineRow({
   const canPrepare =
     reading !== null &&
     !reading.absence &&
-    (state?.status === "absent" || state?.status === "failed" || !!reading.error);
+    (state?.status === "absent" ||
+      state?.status === "failed" ||
+      !!reading.error);
 
   return (
     <div className="space-y-2 border border-dialog-edge bg-panel-2 p-3">
@@ -1433,7 +1433,7 @@ export function VoiceEnginesPanel({ client }: { client: GatewayClient }) {
   return (
     <SettingsPanel
       title="Speech engines"
-      description="Whether this machine can listen and speak right now. Models are downloaded once, on the machine, and nothing here leaves it."
+      description="Whether this machine can listen and speak. Models stay on it."
       meta={meta}
     >
       <div className="space-y-2 p-3">
@@ -1489,11 +1489,12 @@ function FormLabel({
  * It is the sentence the two dialogs used to spend a whole header band saying.
  */
 /** The three answers to "where is a reply spoken", in the order the band offers them. */
-const SPEECH_ROUTE_FACES: Record<SpeechRoute, { title: string; sub: string }> = {
-  off: { title: "Off", sub: "answers stay on the page" },
-  device: { title: "This device", sub: "the phone reads them" },
-  gateway: { title: "The machine", sub: "its own voice speaks" },
-};
+const SPEECH_ROUTE_FACES: Record<SpeechRoute, { title: string; sub: string }> =
+  {
+    off: { title: "Off", sub: "answers stay on the page" },
+    device: { title: "This device", sub: "the phone reads them" },
+    gateway: { title: "The machine", sub: "its own voice speaks" },
+  };
 
 /** What each speed sounds like, so the number is not the only thing on the cell. */
 const SPEECH_RATE_WORDS: Record<string, string> = {
@@ -1559,7 +1560,7 @@ export function SpokenRepliesPanel() {
   return (
     <SettingsPanel
       title="Spoken replies"
-      description="Whether an answer is read out loud, and by what. Which voice a machine uses is picked in that machine's own Voices band."
+      description="Whether an answer is read out loud, and by what."
       meta={SPEECH_ROUTE_FACES[route].sub}
     >
       <div className="space-y-2 p-3">
@@ -1598,8 +1599,8 @@ export function SpokenRepliesPanel() {
             )}
             {voices !== null && deviceList.length === 0 && (
               <p className="py-2 text-center font-mono text-meta text-dialog-hint">
-                This device has no speech engine installed, so nothing can be read out
-                loud here.
+                This device has no speech engine installed, so nothing can be
+                read out loud here.
               </p>
             )}
             {deviceList.length > 0 && (
@@ -1614,11 +1615,16 @@ export function SpokenRepliesPanel() {
                   <ChoiceCell
                     key={voice.id}
                     title={voice.label}
-                    sub={[voice.language, voice.isDefault ? "device default" : null]
+                    sub={[
+                      voice.language,
+                      voice.isDefault ? "device default" : null,
+                    ]
                       .filter(Boolean)
                       .join(" · ")}
                     isSelected={prefs?.deviceVoice === voice.id}
-                    onClick={() => void save(() => setSpeechDeviceVoice(voice.id))}
+                    onClick={() =>
+                      void save(() => setSpeechDeviceVoice(voice.id))
+                    }
                   />
                 ))}
               </div>
@@ -1670,7 +1676,9 @@ function SettingsColumn({
               </span>
             )}
           </div>
-          {action && <span className="flex shrink-0 items-center">{action}</span>}
+          {action && (
+            <span className="flex shrink-0 items-center">{action}</span>
+          )}
         </div>
         {/* One LINE, not a paragraph. This column's own said what a machine stores,
             how to swipe a row and what it shares with the TUI — 310 characters, six
@@ -1747,7 +1755,10 @@ export function SettingsDialog({
    * fleet's verbs all pointed at one row, and the row under the thumb was not it.
    */
   onMakePrimary?: (conn: GatewayConn) => void | Promise<void>;
-  onRename?: (conn: GatewayConn, label: string | undefined) => void | Promise<void>;
+  onRename?: (
+    conn: GatewayConn,
+    label: string | undefined,
+  ) => void | Promise<void>;
   onRemove?: (conn: GatewayConn) => void | Promise<void>;
   /**
    * Bind one machine to a different address. It acts on the ROW it came out of —
@@ -1838,7 +1849,9 @@ export function SettingsDialog({
     });
   }, []);
   const openUrls = new Set(
-    gateways.filter((conn) => openIds.has(machineId(conn))).map((conn) => conn.url),
+    gateways
+      .filter((conn) => openIds.has(machineId(conn)))
+      .map((conn) => conn.url),
   );
 
   const health = useFleetHealth(gateways);
@@ -1918,7 +1931,7 @@ export function SettingsDialog({
 
             <SettingsPanel
               title="Theme"
-              description="Every palette Vis ships, rendered from the same theme definitions the TUI paints with. The choice is saved on this device."
+              description="Every palette Vis ships, saved on this device."
               meta={`${THEMES.length} available`}
             >
               <div className="grid grid-cols-1 gap-px bg-dialog-edge">
@@ -1937,7 +1950,7 @@ export function SettingsDialog({
 
             <SettingsPanel
               title="Sessions per project"
-              description="How many sessions each project lists before paging. Collapsed projects show this many live sessions; expanding pages the rest in steps of the same size."
+              description="How many sessions a project lists before paging."
               meta="saved on this device"
             >
               <div className="grid grid-cols-1 gap-px bg-dialog-edge min-[420px]:grid-cols-3">
@@ -1960,7 +1973,6 @@ export function SettingsDialog({
 
             <SpokenRepliesPanel />
           </SettingsColumn>
-
         </div>
       </DialogFrame>
 
@@ -2014,7 +2026,7 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
   return (
     <SettingsPanel
       title="Providers"
-      description="Sign in to model providers so this machine can reach them, then tag the default model and a fallback on another provider."
+      description="Accounts this machine signs in with."
       meta={
         providers ? `${signedIn}/${providers.length} signed in` : "checking…"
       }
@@ -2327,10 +2339,7 @@ export function NativeNotificationsPanel({
   const blocked = supported && perm === "denied";
   const checking = devices === null;
   const hasBanner =
-    Boolean(err) ||
-    !supported ||
-    blocked ||
-    Boolean(push && !available);
+    Boolean(err) || !supported || blocked || Boolean(push && !available);
 
   return (
     <SettingsPanel title="Notifications" meta={machine}>
@@ -2341,10 +2350,10 @@ export function NativeNotificationsPanel({
           {push && !available && refusedRelay && (
             <Banner kind="warn">
               This machine relays notifications through {refusedRelay}, which is
-              not https — this device will not hand a push grant to an address on
-              the wire. Unset VIS_PUSH_RELAY_URL there and it goes back to the
-              relay this app was built with; point it at an https address to keep
-              your own.
+              not https — this device will not hand a push grant to an address
+              on the wire. Unset VIS_PUSH_RELAY_URL there and it goes back to
+              the relay this app was built with; point it at an https address to
+              keep your own.
             </Banner>
           )}
 
@@ -2364,8 +2373,8 @@ export function NativeNotificationsPanel({
 
           {blocked && (
             <Banner kind="warn">
-              Notifications are turned off for Vis in system Settings — turn them
-              on there and this device can connect again.
+              Notifications are turned off for Vis in system Settings — turn
+              them on there and this device can connect again.
             </Banner>
           )}
         </div>
@@ -2439,10 +2448,14 @@ export function SettingsPanel({
           </span>
         )}
         {action && (
-          <span className="flex shrink-0 items-center self-center">{action}</span>
+          <span className="flex shrink-0 items-center self-center">
+            {action}
+          </span>
         )}
         {description && (
-          <p className={`w-full pl-2 ${PROSE} font-mono text-chip text-dialog-hint`}>
+          <p
+            className={`w-full pl-2 ${PROSE} font-mono text-chip text-dialog-hint`}
+          >
             {description}
           </p>
         )}
@@ -2459,4 +2472,3 @@ function gatewayHost(url: string): string {
     return url;
   }
 }
-

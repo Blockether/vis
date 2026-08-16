@@ -261,7 +261,12 @@ describe("ProjectCrumb", () => {
   // edge every row of this list shares.
   it("keeps the name on the list's leading edge", () => {
     const folded = renderToStaticMarkup(
-      <ProjectCrumb name="vis" isOpen={false} onToggle={() => {}} label="Expand vis" />,
+      <ProjectCrumb
+        name="vis"
+        isOpen={false}
+        onToggle={() => {}}
+        label="Expand vis"
+      />,
     );
 
     expect(folded).toContain(LIST_EDGE);
@@ -273,7 +278,12 @@ describe("ProjectCrumb", () => {
   // screen exists for and must never be swallowed by a disclosure.
   it("takes only the naming half of the band", () => {
     const html = renderToStaticMarkup(
-      <ProjectCrumb name="vis" isOpen onToggle={() => {}} label="Collapse vis" />,
+      <ProjectCrumb
+        name="vis"
+        isOpen
+        onToggle={() => {}}
+        label="Collapse vis"
+      />,
     );
 
     expect(html).toContain("flex-1");
@@ -394,8 +404,12 @@ describe("NewSessionButton", () => {
     expect(html()).toContain("<svg");
     expect(html()).not.toContain(">New session<");
     // The name survives whole where a reader and a pointer can still get at it.
-    expect(html({ where: "vis" })).toContain('aria-label="New session on tower"');
-    expect(html({ where: "vis" })).toContain('title="New session on tower, in vis"');
+    expect(html({ where: "vis" })).toContain(
+      'aria-label="New session on tower"',
+    );
+    expect(html({ where: "vis" })).toContain(
+      'title="New session on tower, in vis"',
+    );
   });
 
   it("names the machine it will start on, because every header carries one", () => {
@@ -552,7 +566,13 @@ describe("CloseButton", () => {
     // five old boxes survive either.
     expect(/\bw-\d/.test(mark), "a width of its own").toBe(false);
     expect(/\bh-\d/.test(mark), "a height of its own").toBe(false);
-    for (const box of ["min-h-8", "mouse:min-h-6", "min-w-9", "w-7", "min-h-7"]) {
+    for (const box of [
+      "min-h-8",
+      "mouse:min-h-6",
+      "min-w-9",
+      "w-7",
+      "min-h-7",
+    ]) {
       expect(mark, box).not.toContain(box);
     }
   });
@@ -608,16 +628,18 @@ describe("CloseButton", () => {
         onMouseDown={() => {}}
       />,
     ).replaceAll("Remove notes.md", "X");
-    expect(chip).toBe(html({ label: "Clear search" }).replaceAll("Clear search", "X"));
+    expect(chip).toBe(
+      html({ label: "Clear search" }).replaceAll("Clear search", "X"),
+    );
 
     const dialog = html({ isBand: true, label: "Close artifacts" }).replaceAll(
       "Close artifacts",
       "X",
     );
-    const menu = html({ isBand: true, label: "Close projects on tower" }).replaceAll(
-      "Close projects on tower",
-      "X",
-    );
+    const menu = html({
+      isBand: true,
+      label: "Close projects on tower",
+    }).replaceAll("Close projects on tower", "X");
     expect(menu).toBe(dialog);
   });
 
@@ -781,7 +803,9 @@ describe("Pager", () => {
   const isPainted = (html: string, label: string) => {
     const at = html.indexOf(`aria-label="${label}"`);
     expect(at).toBeGreaterThan(-1);
-    return !html.slice(html.lastIndexOf("<button", at), at).includes("invisible");
+    return !html
+      .slice(html.lastIndexOf("<button", at), at)
+      .includes("invisible");
   };
 
   it("renders nothing for a project that fits on one page", () => {
@@ -862,9 +886,12 @@ describe("Pager", () => {
     expect(html).toContain("tabular-nums");
     expect(html).toContain("4 / 80");
     // The two forms are exclusive, and the numbers are the half that gives way.
-    const label = /<span aria-hidden="true" class="([^"]*)"/.exec(html)?.[1] ?? "";
+    const label =
+      /<span aria-hidden="true" class="([^"]*)"/.exec(html)?.[1] ?? "";
     expect(label).toContain("sm:hidden");
-    expect(html).toContain('class="hidden flex-1 items-center justify-center gap-1 sm:flex"');
+    expect(html).toContain(
+      'class="hidden flex-1 items-center justify-center gap-1 sm:flex"',
+    );
     // `display: none` takes the numbers out of the accessibility tree too, so the
     // position is announced ONCE, by the live region both forms are drawn from.
     expect(html.match(/Page 4 of 80/g)?.length).toBe(1);
@@ -972,19 +999,27 @@ describe("SectionShelf", () => {
     expect(pager).not.toContain("border-t border-dialog-edge");
     // It never grows on the phone line it shares with the count, and takes the
     // shelf's trailing end from `sm` up, where its numbers are painted.
-    expect(pager).toContain('class="flex min-w-0 shrink-0 justify-end sm:grow"');
+    expect(pager).toContain(
+      'class="flex min-w-0 shrink-0 justify-end sm:grow"',
+    );
   });
 
   it("carries the group's count, which the header's cluster no longer does", () => {
-    const shelf = /<SectionShelf>[\s\S]*?<\/SectionShelf>/.exec(sessionsListSource)?.[0];
-    expect(shelf).toContain("<HeaderTally count={sessions.length} unit=\"session\" />");
+    const shelf = /<SectionShelf>[\s\S]*?<\/SectionShelf>/.exec(
+      sessionsListSource,
+    )?.[0];
+    expect(shelf).toContain(
+      '<HeaderTally count={sessions.length} unit="session" />',
+    );
     expect(shelf).toContain("<LiveCount count={liveCount} />");
     expect(shelf).toContain("<Pager page={shownPage}");
     // ...and it is the ONLY place either of them is rendered on this screen.
     expect(sessionsListSource.match(/<Pager /g)?.length).toBe(1);
     // Scoped to the PROJECT header: the fleet view's machine band keeps a tally of
     // its own, which is a different section counting a different thing.
-    const projectBand = /<ProjectCrumb[\s\S]*?<\/SectionHeader>/.exec(sessionsListSource)?.[0];
+    const projectBand = /<ProjectCrumb[\s\S]*?<\/SectionHeader>/.exec(
+      sessionsListSource,
+    )?.[0];
     expect(projectBand).toContain("<NewSessionButton");
     expect(projectBand).not.toContain("HeaderTally");
     expect(projectBand).not.toContain("LiveCount");
@@ -1008,7 +1043,9 @@ describe("SectionGap", () => {
 
   it("opens every group but the first, and every machine but the first", () => {
     expect(sessionsListSource).toContain("{groupIndex > 0 && <SectionGap />}");
-    expect(sessionsListSource).toContain("{sectionIndex > 0 && <SectionGap />}");
+    expect(sessionsListSource).toContain(
+      "{sectionIndex > 0 && <SectionGap />}",
+    );
   });
 });
 
@@ -1127,13 +1164,17 @@ describe("the list grid", () => {
     expect(html).not.toContain("max-w-[60%]");
     // Name first, path under it, and each line still truncates in the column the
     // trailing cluster leaves rather than pushing the header wider.
-    expect(html.indexOf(">companion<")).toBeLessThan(html.indexOf("~/vis/apps"));
+    expect(html.indexOf(">companion<")).toBeLessThan(
+      html.indexOf("~/vis/apps"),
+    );
     expect(html.split("truncate").length - 1).toBe(2);
     expect(html).toContain('title="/Users/dev/vis/apps/vis-companion"');
     // The loading band stands in for the SAME two lines, through the same two
     // slots: a one-line skeleton grows by a line the moment data lands.
     expect(sessionsListSource).toMatch(/name=\{<SkeletonBar type="text-title"/);
-    expect(sessionsListSource).toMatch(/qualifier=\{\s*<SkeletonBar type="text-chip"/);
+    expect(sessionsListSource).toMatch(
+      /qualifier=\{\s*<SkeletonBar type="text-chip"/,
+    );
   });
 
   // The last 8px of the same misalignment: a mark sized to its own ink moved the
@@ -1145,9 +1186,14 @@ describe("the list grid", () => {
   // started further left, and the two names never read as a hierarchy.
   it("reserves one glyph column, marked or not", () => {
     const marked = renderToStaticMarkup(
-      <HeaderTitle mark={<MachineMark color={MACHINE_COLORS[0]!} />} name="tower" />,
+      <HeaderTitle
+        mark={<MachineMark color={MACHINE_COLORS[0]!} />}
+        name="tower"
+      />,
     );
-    const bare = renderToStaticMarkup(<HeaderTitle name="vis" qualifier="~/vis" />);
+    const bare = renderToStaticMarkup(
+      <HeaderTitle name="vis" qualifier="~/vis" />,
+    );
     for (const html of [marked, bare]) {
       expect(html).toContain("grid size-3.5 shrink-0 place-items-center");
     }
@@ -1226,7 +1272,9 @@ describe("Modal and DialogFrame as a phone sheet", () => {
   const source = uiSource;
 
   it("lets the sheet take the whole glass on a phone and centres it from sm: up", () => {
-    expect(source).toContain("${position} inset-0 z-50 flex justify-center bg-ink/85");
+    expect(source).toContain(
+      "${position} inset-0 z-50 flex justify-center bg-ink/85",
+    );
     expect(source).toContain("'items-end' : 'items-stretch'");
     expect(source).toContain("sm:items-center");
     // No padding at all on the phone: a sheet touches all four edges.
@@ -1338,6 +1386,21 @@ describe("settings is ONE dialog with two columns", () => {
     expect(sheet).toContain("<AddMachine");
     expect(settings).not.toContain(">Pair machine</Button>");
     expect(settings).not.toContain("onPair");
+  });
+
+  it("welds a machine's opened panels to its row with a rule, and keeps each band's line short", () => {
+    // Reported: "providers don't look good, there is no border on top, some
+    // overlong needless texts". The panel stack only DIVIDED between groups, so
+    // the first band (Providers) met the machine row it belongs to with no
+    // hairline at all, and the two longest descriptions wrapped to three and four
+    // lines on a 390px phone above rows 48px tall.
+    const stack = settings.slice(
+      settings.indexOf("touch-pan-y"),
+      settings.indexOf("<ProvidersPanel"),
+    );
+    expect(stack).toContain("border-t border-dialog-edge");
+    for (const description of settings.matchAll(/description="([^"]+)"/g))
+      expect(description[1].length).toBeLessThanOrEqual(80);
   });
 
   it("hides a machine's own verbs behind its row, and keeps no panel of them", () => {
@@ -1493,9 +1556,13 @@ describe("where a new session starts", () => {
   it("picks every setting with the one ChoiceCell, spelled once", () => {
     // Every segmented choice the dialog offers - theme, page size, where a reply is
     // spoken, which voice speaks it - is the SAME cell.
-    expect(settingsSource.match(/<ChoiceCell/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(settingsSource.match(/<ChoiceCell/g)?.length).toBeGreaterThanOrEqual(
+      2,
+    );
     // The cell moved into the vocabulary; the dialog no longer owns a copy.
-    expect(settingsSource.match(/function ChoiceCell\(/g)?.length).toBe(undefined);
+    expect(settingsSource.match(/function ChoiceCell\(/g)?.length).toBe(
+      undefined,
+    );
     expect(uiSource.match(/function ChoiceCell\(/g)?.length).toBe(1);
   });
 });
@@ -1556,13 +1623,12 @@ describe("a project's pages are cut from the list on screen", () => {
   const sessions = sessionsListSource;
   const gateway = gatewaySource;
 
-  it('slices the rows it paints, and asks no second source for them', () => {
-    expect(sessions).toContain('projectPage(sessions, page, pageSize)');
-    expect(sessions).not.toContain('listProjectPage');
-    expect(gateway).not.toContain('listProjectPage');
-    expect(gateway).not.toContain('&root=${encodeURIComponent(root)}');
+  it("slices the rows it paints, and asks no second source for them", () => {
+    expect(sessions).toContain("projectPage(sessions, page, pageSize)");
+    expect(sessions).not.toContain("listProjectPage");
+    expect(gateway).not.toContain("listProjectPage");
+    expect(gateway).not.toContain("&root=${encodeURIComponent(root)}");
   });
-
 
   it("keeps no disclosure and no 'Show more'", () => {
     expect(sessions).not.toContain("HeaderToggle");
@@ -1580,7 +1646,9 @@ describe("running prose has exactly one rule", () => {
   const RULE = "hyphens-auto [hyphenate-limit-chars:6_3_3] text-pretty";
 
   it("declares it once in ui.tsx, justified, with hyphenation attached", () => {
-    expect(uiSource).toContain(`export const PROSE =\n  '${RULE} text-justify';`);
+    expect(uiSource).toContain(
+      `export const PROSE =\n  '${RULE} text-justify';`,
+    );
     expect(uiSource).toContain(
       `export const PROSE_RAGGED =\n  '${RULE} text-left';`,
     );
@@ -1601,20 +1669,20 @@ describe("running prose has exactly one rule", () => {
 // Regression, user report ("it should be this search more subtle and looking more
 // connected to our designs"): the search box was rounder, taller and whiter than the
 // controls it sat beside — a white slab on paper that carries no other box at rest.
-describe('SearchField', () => {
+describe("SearchField", () => {
   const field = uiSource.slice(uiSource.indexOf("export const SearchField"));
   // The field's own box: the first class template in the component is its `<label>`.
-  const box = (/className={`([^`]*)`}/.exec(field)?.[1] ?? '').split(/\s+/);
+  const box = (/className={`([^`]*)`}/.exec(field)?.[1] ?? "").split(/\s+/);
 
-  it('wears Button\'s own face and only lights up when focused', () => {
-    expect(uiSource).toContain('export const SearchField');
+  it("wears Button's own face and only lights up when focused", () => {
+    expect(uiSource).toContain("export const SearchField");
     // Same box as `Button`: flat corners, its border and type step.
-    expect(field).toContain('rounded-none');
-    expect(field).not.toContain('rounded ');
+    expect(field).toContain("rounded-none");
+    expect(field).not.toContain("rounded ");
     // Paper at rest; the input surface and the ring arrive with the caret.
-    expect(field).toContain('bg-transparent');
-    expect(field).toContain('focus-within:bg-input');
-    expect(field).toContain('focus-within:border-accent');
+    expect(field).toContain("bg-transparent");
+    expect(field).toContain("focus-within:bg-input");
+    expect(field).toContain("focus-within:border-accent");
   });
 
   // Regression, user report ("search HEIGHT still too big taking into account the
@@ -1624,45 +1692,45 @@ describe('SearchField', () => {
   // paints a 32px face and reaches the finger's 44px through invisible slop. The
   // field does the same, split into TWO strips so the face itself stays the input's
   // own — a press in the middle of the text still places a caret where it landed.
-  it('wears the bar’s own face and reaches the touch step around it', () => {
-    expect(box).toContain('h-8');
-    expect(box).toContain('mouse:h-6');
-    expect(box).not.toContain('h-11');
-    expect(box).toContain('relative');
-    expect(box).toContain('before:-top-1.5');
-    expect(box).toContain('after:-bottom-1.5');
-    expect(box).toContain('before:h-1.5');
-    expect(box).toContain('after:h-1.5');
+  it("wears the bar’s own face and reaches the touch step around it", () => {
+    expect(box).toContain("h-8");
+    expect(box).toContain("mouse:h-6");
+    expect(box).not.toContain("h-11");
+    expect(box).toContain("relative");
+    expect(box).toContain("before:-top-1.5");
+    expect(box).toContain("after:-bottom-1.5");
+    expect(box).toContain("before:h-1.5");
+    expect(box).toContain("after:h-1.5");
     // A mouse needs no slop, and the strips would only eat the rows around it.
-    expect(box).toContain('mouse:before:content-none');
-    expect(box).toContain('mouse:after:content-none');
+    expect(box).toContain("mouse:before:content-none");
+    expect(box).toContain("mouse:after:content-none");
   });
 
   // Same report: Clear was a 12px glyph centred in its own 28px box sitting INSIDE
   // the field's inset, so the ✕ ink stopped about 20px short of the border while the
   // placeholder started 10px in — the asymmetry an eye reads as "far from right".
-  it('lets Clear absorb the field’s own trailing inset', () => {
+  it("lets Clear absorb the field’s own trailing inset", () => {
     // The field gives back the inset the ✕ would otherwise sit inside, so the square
     // runs to the border and centres its mark there, and both inks agree.
     expect(field).toMatch(/<CloseButton[\s\S]*?className="-me-3 sm:-me-4"/);
-    expect(box).toContain('px-3');
-    expect(box).toContain('sm:px-4');
+    expect(box).toContain("px-3");
+    expect(box).toContain("sm:px-4");
   });
 
   // Regression, user report (paraphrased: the second band looked worse — put search
   // back on the header): a search box is recognised by the magnifying glass INSIDE the
   // open field, and this one carried no mark at all, so a bare framed box on the bar
   // read as "some input" rather than "search".
-  it('carries the magnifying glass inside the open field', () => {
-    expect(field).toContain('<SearchIcon');
+  it("carries the magnifying glass inside the open field", () => {
+    expect(field).toContain("<SearchIcon");
     // Leading, before the input: the mark introduces the field, it does not end it.
-    expect(field.indexOf('<SearchIcon')).toBeLessThan(field.indexOf('<input'));
-    expect(uiSource).toContain('SearchIcon');
+    expect(field.indexOf("<SearchIcon")).toBeLessThan(field.indexOf("<input"));
+    expect(uiSource).toContain("SearchIcon");
   });
 
   // It is a SEARCH field, so the phone keyboard says so and nothing autocorrects a
   // machine name into prose.
-  it('asks the phone for a search keyboard', () => {
+  it("asks the phone for a search keyboard", () => {
     expect(field).toContain('type="search"');
     expect(field).toContain('enterKeyHint="search"');
     expect(field).toContain('autoCorrect="off"');
@@ -1781,7 +1849,13 @@ describe("MachineSwitcher", () => {
       </MachineTab>,
     );
     const failed = renderToStaticMarkup(
-      <MachineTab isOn={false} isDown note="Unable to connect" isNoteError onClick={() => {}}>
+      <MachineTab
+        isOn={false}
+        isDown
+        note="Unable to connect"
+        isNoteError
+        onClick={() => {}}
+      >
         tower
       </MachineTab>,
     );
@@ -1827,7 +1901,9 @@ describe("MachineProjectsButton", () => {
     expect(html).toContain("bg-accent");
     // Several machines are on screen at once in the All view: the label says which.
     expect(
-      renderToStaticMarkup(<MachineProjectsButton machine="nuc" onPress={() => {}} />),
+      renderToStaticMarkup(
+        <MachineProjectsButton machine="nuc" onPress={() => {}} />,
+      ),
     ).toContain('aria-label="Projects on nuc"');
   });
 
@@ -1884,7 +1960,9 @@ describe("three verbs, three marks", () => {
     const [inventory] = glyph(projects);
     expect(start).toBe(renderToStaticMarkup(<PlusIcon className="size-4" />));
     expect(draft).toBe(renderToStaticMarkup(<DraftIcon className="size-4" />));
-    expect(inventory).toBe(renderToStaticMarkup(<ProjectsIcon className="size-4" />));
+    expect(inventory).toBe(
+      renderToStaticMarkup(<ProjectsIcon className="size-4" />),
+    );
     expect(new Set([start, draft, inventory]).size).toBe(3);
   });
 });
@@ -1895,7 +1973,11 @@ describe("three verbs, three marks", () => {
 // the button that had actually been pressed sat there looking untouched.
 describe("NewSessionButton, busy", () => {
   const busy = renderToStaticMarkup(
-    <NewSessionButton machine="tower" busyLabel="Creating..." onPress={() => {}} />,
+    <NewSessionButton
+      machine="tower"
+      busyLabel="Creating..."
+      onPress={() => {}}
+    />,
   );
 
   it("wears the work in its own face, where the press happened", () => {
@@ -1939,12 +2021,18 @@ describe("Modal, fit", () => {
   it("has a size that stops at its content, next to the full-screen one", () => {
     expect(uiSource).toContain("size?: 'full' | 'fit' | 'wide';");
     // The sheet still arrives from the bottom edge — same scrim, same physics.
-    expect(uiSource).toContain("size === 'fit' ? 'items-end' : 'items-stretch'");
-    expect(uiSource).toContain("size === 'fit' ? 'max-h-full sm:h-auto' : DIALOG_DESKTOP_HEIGHT");
+    expect(uiSource).toContain(
+      "size === 'fit' ? 'items-end' : 'items-stretch'",
+    );
+    expect(uiSource).toContain(
+      "size === 'fit' ? 'max-h-full sm:h-auto' : DIALOG_DESKTOP_HEIGHT",
+    );
   });
 
   it("is what the rename/delete question opens in", () => {
-    expect(sessionsListSource).toContain('<Modal size="fit" onDismiss={closeRowAction}>');
+    expect(sessionsListSource).toContain(
+      '<Modal size="fit" onDismiss={closeRowAction}>',
+    );
   });
 
   // Regression, user report (rename field hidden under the iOS keyboard): the native
@@ -1952,8 +2040,12 @@ describe("Modal, fit", () => {
   // tall as the glass and leaves a bottom sheet underneath the keyboard.
   it("keeps the sheet inside the viewport-pinned app shell", () => {
     expect(appSource).toContain("data-viewport-shell");
-    expect(uiSource).toContain("document.querySelector<HTMLElement>('[data-viewport-shell]')");
-    expect(uiSource).toContain("portalHost === document.body ? 'fixed' : 'absolute'");
+    expect(uiSource).toContain(
+      "document.querySelector<HTMLElement>('[data-viewport-shell]')",
+    );
+    expect(uiSource).toContain(
+      "portalHost === document.body ? 'fixed' : 'absolute'",
+    );
     expect(uiSource).toContain("portalHost,\n  );");
   });
 
@@ -1965,13 +2057,15 @@ describe("Modal, fit", () => {
   it("tells the frame inside it that no notch stands above a fit sheet", () => {
     expect(uiSource).toContain("const IsFitSheet = createContext(false);");
     expect(uiSource).toContain("<IsFitSheet.Provider value={size === 'fit'}>");
-    expect(uiSource).toContain("isFitSheet ? '' : 'pt-[env(safe-area-inset-top)]'");
+    expect(uiSource).toContain(
+      "isFitSheet ? '' : 'pt-[env(safe-area-inset-top)]'",
+    );
   });
 
   // The pause that BLOCKS a run is a question too, and it was the last surface
   // hand-rolling a scrim beside this one.
   it("is what a human-input pause opens in", () => {
-    expect(humanInputSource).toContain('<Modal');
+    expect(humanInputSource).toContain("<Modal");
     expect(humanInputSource).toContain('size="fit"');
     expect(humanInputSource).not.toContain("fixed inset-0 z-50");
   });
@@ -2002,7 +2096,6 @@ describe("Modal, fit", () => {
   });
 });
 
-
 // Regression, user report ("in the artifacts when I read the md file there is this
 // close button which doesn't look like rest of the close buttons"): an opened
 // document wore a caption STRIP with the X hung off its end on panel paper, while
@@ -2032,7 +2125,6 @@ describe("every surface uses the vocabulary's own controls", () => {
     expect(tableBarSource).not.toContain("border border-edge-strong px-3");
   });
 });
-
 
 // The user's own words, twice: "I really don't understand how we can have so many
 // different buttons styles … PLEASE ENSURE WE HAVE REUSABLE COMPONENTS", then "go
@@ -2114,7 +2206,11 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
     it("carries a name and, when there is more to say, a title", () => {
       expect(html()).toContain('aria-label="Copy session id"');
       const titled = renderToStaticMarkup(
-        <CopyChip value="abc" label="Copy session id" title="Copy session id\nabc">
+        <CopyChip
+          value="abc"
+          label="Copy session id"
+          title="Copy session id\nabc"
+        >
           abc
         </CopyChip>,
       );
@@ -2248,7 +2344,9 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
         // stretches between the chip's top and bottom), and the queued row's is
         // pulled out of the row's own padding onto the tray's edge.
         for (const token of className?.split(" ") ?? []) {
-          expect(token, token).toMatch(/^(absolute|inset-y-0|right-0|my-auto|-me-2\.5)$/);
+          expect(token, token).toMatch(
+            /^(absolute|inset-y-0|right-0|my-auto|-me-2\.5)$/,
+          );
         }
       }
     });
@@ -2300,7 +2398,9 @@ describe("every screen uses the second vocabulary too", () => {
     expect(sessionScreenSource).toContain("<CloseButton");
     expect(sessionScreenSource).toContain("<MenuItem");
     expect(sessionScreenSource).toContain("<CopyChip");
-    expect(sessionScreenSource).not.toContain("hover:bg-warn-surface hover:text-err");
+    expect(sessionScreenSource).not.toContain(
+      "hover:bg-warn-surface hover:text-err",
+    );
     expect(sessionScreenSource).not.toContain('role="menuitem"');
   });
 
@@ -2336,7 +2436,9 @@ describe("the button's four ranks", () => {
       "bg-accent",
     );
     expect(
-      classes(renderToStaticMarkup(<Button variant="secondary">Cancel</Button>)),
+      classes(
+        renderToStaticMarkup(<Button variant="secondary">Cancel</Button>),
+      ),
     ).toContain("border-edge-strong");
   });
 
@@ -2476,9 +2578,9 @@ describe("the composer's own controls", () => {
   // name and the reasoning level as two empty boxes with a hairline between
   // them — the divider was the only thing on screen.
   it("says the word it was given", () => {
-    expect(renderToStaticMarkup(<MetaButton isPicker>opus</MetaButton>)).toContain(
-      "opus",
-    );
+    expect(
+      renderToStaticMarkup(<MetaButton isPicker>opus</MetaButton>),
+    ).toContain("opus");
     expect(renderToStaticMarkup(<MetaButton>quick</MetaButton>)).toContain(
       "quick",
     );
@@ -2496,9 +2598,7 @@ describe("the composer's own controls", () => {
   });
 
   it("completes @ and / with one row, and never steals the caret", () => {
-    const html = renderToStaticMarkup(
-      <OptionRow isActive>notes.md</OptionRow>,
-    );
+    const html = renderToStaticMarkup(<OptionRow isActive>notes.md</OptionRow>);
     expect(html).toContain('role="option"');
     expect(html).toContain('aria-selected="true"');
     expect(classes(html)).toContain("bg-accent");
@@ -2512,9 +2612,7 @@ describe("the composer's own controls", () => {
   });
 
   it("leaves by the band's own leading half, notch included", () => {
-    const html = renderToStaticMarkup(
-      <BackButton label="Back to sessions" />,
-    );
+    const html = renderToStaticMarkup(<BackButton label="Back to sessions" />);
     expect(html).toContain('aria-label="Back to sessions"');
     expect(classes(html)).toContain("pl-[env(safe-area-inset-left)]");
   });
@@ -2574,7 +2672,9 @@ describe("a setting is picked and switched by one control each", () => {
     expect(off).toContain("hover:bg-hover");
     expect(off).not.toContain("hover:text-white");
     // ON is the amber slab, framed in its own colour, so the box never changes.
-    const on = classes(renderToStaticMarkup(<Switch label="Web search" isOn />));
+    const on = classes(
+      renderToStaticMarkup(<Switch label="Web search" isOn />),
+    );
     expect(on).toContain("border-accent");
     expect(on).toContain("bg-accent");
     expect(on).not.toContain("border-transparent");
@@ -2593,9 +2693,16 @@ describe("a setting is picked and switched by one control each", () => {
 // not alert this device.`, `OFF` — so the row said no three times over and never once
 // said how to say yes.
 describe("the notifications row answers one question", () => {
-  const row = (props: Partial<ComponentProps<typeof NotifyConnectionRow>> = {}) =>
+  const row = (
+    props: Partial<ComponentProps<typeof NotifyConnectionRow>> = {},
+  ) =>
     renderToStaticMarkup(
-      <NotifyConnectionRow machine="visgw" isOn={false} onClick={() => {}} {...props} />,
+      <NotifyConnectionRow
+        machine="visgw"
+        isOn={false}
+        onClick={() => {}}
+        {...props}
+      />,
     );
 
   it("states whether this device is connected, and names the machine either way", () => {
@@ -2639,7 +2746,9 @@ describe("the notifications row answers one question", () => {
 
     const checking = row({ isChecking: true });
     expect(checking).toContain("Checking…");
-    expect(checking).toContain("Asking visgw whether this device is registered.");
+    expect(checking).toContain(
+      "Asking visgw whether this device is registered.",
+    );
     // Neither a verdict nor a verb before the machine has answered: there is no
     // direction to offer yet.
     expect(checking).not.toContain("Not connected");
@@ -2671,7 +2780,9 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(sessionScreenSource).toContain(
       "Listening · tap the microphone again to finish",
     );
-    expect(sessionScreenSource).toContain("Voice conversation · Vis is working");
+    expect(sessionScreenSource).toContain(
+      "Voice conversation · Vis is working",
+    );
     expect(sessionScreenSource).toContain(
       "Voice conversation · Speaking · tap the microphone to stop",
     );
@@ -2682,7 +2793,9 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(sessionScreenSource).not.toContain('aria-label="Microphone mode"');
     expect(sessionScreenSource).not.toContain('label="Choose microphone mode"');
     expect(sessionScreenSource).not.toContain("voiceModeMenuOpen");
-    expect(sessionScreenSource).not.toContain('label="Leave voice conversation"');
+    expect(sessionScreenSource).not.toContain(
+      'label="Leave voice conversation"',
+    );
     expect(sessionScreenSource).not.toContain("border-l border-dialog-edge");
     // A hidden gesture is only hidden if nothing says it: the accessible name
     // carries the act AND the switch, in both modes.
@@ -2694,7 +2807,9 @@ describe("the session screen and the settings dialog spell no control out", () =
     );
     // A finger is not the only pointer, and a keyboard cannot press and hold.
     expect(sessionScreenSource).toContain("onContextMenu");
-    expect(sessionScreenSource).toContain('event.key === "Enter" && event.shiftKey');
+    expect(sessionScreenSource).toContain(
+      'event.key === "Enter" && event.shiftKey',
+    );
     // Holding ARMS the conversation; it must not start recording in the same
     // gesture, so the entry path opens the route and stops there.
     expect(sessionScreenSource).toMatch(
@@ -2736,7 +2851,9 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(sessionScreenSource).toContain("<LoadMore");
     expect(sessionScreenSource).toContain("isEarlier");
     expect(sessionScreenSource).not.toContain("grid h-8 w-7");
-    expect(sessionScreenSource).not.toContain("tracking-[0.08em] text-dialog-hint-key underline");
+    expect(sessionScreenSource).not.toContain(
+      "tracking-[0.08em] text-dialog-hint-key underline",
+    );
   });
 
   it("moves the settings picker and the switch into the vocabulary", () => {
@@ -2759,7 +2876,9 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(settingsSource).not.toContain("Notify me from this machine");
     expect(settingsSource).not.toContain("Stop notifying me from this machine");
     expect(settingsSource).not.toContain("devices?.map(");
-    expect(settingsSource).not.toContain("No devices registered with this machine.");
+    expect(settingsSource).not.toContain(
+      "No devices registered with this machine.",
+    );
     expect(settingsSource).not.toContain("Checking registered devices…");
     // The list is still READ — matching this device's masks against it is how the
     // panel knows it is registered at all — it is simply never rendered.
@@ -2808,7 +2927,9 @@ describe("the session screen and the settings dialog spell no control out", () =
     // The verb is the band's trailing CELL, centred against the title's own cell,
     // and that cell is what wraps — never the line the verb stands on.
     const band =
-      /bg-level-machine">\s*<div className="([^"]*)"/.exec(settingsSource)?.[1] ?? "";
+      /bg-level-machine">\s*<div className="([^"]*)"/.exec(
+        settingsSource,
+      )?.[1] ?? "";
     expect(band).toContain("items-center");
     expect(band).toContain("min-h-12");
     expect(band).not.toContain("items-baseline");
@@ -2816,8 +2937,9 @@ describe("the session screen and the settings dialog spell no control out", () =
     // MACHINES says its own name and nothing else: no sentence telling the reader
     // to tap a row, and no meta naming one machine over a list of them.
     const machinesColumn =
-      /<SettingsColumn\s+title="Machines"([\s\S]*?)>\s*\{\/\*/.exec(settingsSource)?.[1] ??
-      "";
+      /<SettingsColumn\s+title="Machines"([\s\S]*?)>\s*\{\/\*/.exec(
+        settingsSource,
+      )?.[1] ?? "";
     expect(machinesColumn.length).toBeGreaterThan(0);
     expect(machinesColumn).not.toContain("description=");
     expect(machinesColumn).not.toContain("meta=");
@@ -2979,7 +3101,9 @@ describe("the way out wears the ink of its band", () => {
     );
     expect(close).toContain("text-current");
     // Only the pointer inks it, and only red.
-    expect(close.replace(/hover:text-\S+|focus-visible:text-\S+/g, "")).not.toMatch(
+    expect(
+      close.replace(/hover:text-\S+|focus-visible:text-\S+/g, ""),
+    ).not.toMatch(
       /\btext-(white|dialog-title-foreground|accent-foreground|dialog-hint)\b/,
     );
   });
@@ -3043,13 +3167,17 @@ describe("a call site positions, and the component paints", () => {
   }
 
   it("tells placement from paint", () => {
-    expect(paintAtCallSites('<Button className="flex-1 shrink-0" />')).toEqual([]);
+    expect(paintAtCallSites('<Button className="flex-1 shrink-0" />')).toEqual(
+      [],
+    );
     expect(
-      paintAtCallSites('<Button className="min-h-9 px-3 font-mono text-meta" />'),
+      paintAtCallSites(
+        '<Button className="min-h-9 px-3 font-mono text-meta" />',
+      ),
     ).toEqual(["Button: min-h-9, px-3, font-mono, text-meta"]);
-    expect(paintAtCallSites('<Spinner className="text-accent-ink" />')).toEqual([
-      "Spinner: text-accent-ink",
-    ]);
+    expect(paintAtCallSites('<Spinner className="text-accent-ink" />')).toEqual(
+      ["Spinner: text-accent-ink"],
+    );
     // A control this file does not own paints where it stands.
     expect(paintAtCallSites('<div className="bg-panel" />')).toEqual([]);
   });
@@ -3076,7 +3204,8 @@ describe("a call site positions, and the component paints", () => {
       ([path]) => !path.includes("/dev/") && !path.includes(".test."),
     );
     const bands = owners.filter(
-      ([, source]) => (source.match(/<header[^>]*bg-dialog-title/g) ?? []).length > 0,
+      ([, source]) =>
+        (source.match(/<header[^>]*bg-dialog-title/g) ?? []).length > 0,
     );
     expect(bands.map(([path]) => path)).toEqual(["./ui.tsx"]);
     // The hand-built closes all wore this hairline against the title bar's ink.
@@ -3097,7 +3226,9 @@ describe("a call site positions, and the component paints", () => {
     );
     expect(panel).toContain("font-mono");
     expect(panel).toContain("min-h-9");
-    expect(renderToStaticMarkup(<Button>Save</Button>)).not.toContain("font-mono");
+    expect(renderToStaticMarkup(<Button>Save</Button>)).not.toContain(
+      "font-mono",
+    );
     // The panel's two verbs became one row (`NotifyConnectionRow`), which carries
     // its own; the one verb left in this screen is the door to the OS that row
     // cannot open itself.
@@ -3136,9 +3267,9 @@ describe("a call site positions, and the component paints", () => {
     expect(
       renderToStaticMarkup(<DialogHeader title="report.png" isStacked />),
     ).toContain("border-dialog-title-foreground/20");
-    expect(renderToStaticMarkup(<DialogHeader title="Pasted #1" />)).not.toContain(
-      "safe-area-inset-top",
-    );
+    expect(
+      renderToStaticMarkup(<DialogHeader title="Pasted #1" />),
+    ).not.toContain("safe-area-inset-top");
   });
 
   it("draws the zoom bar as one frame", () => {
@@ -3229,7 +3360,7 @@ describe("one way out, and it says what it closes", () => {
     expect(unnamed).toEqual([]);
   });
 
-  it("never names a way out just \"Close\"", () => {
+  it('never names a way out just "Close"', () => {
     const generic: string[] = [];
     for (const [path, source] of shipped) {
       if (/\blabel="Close"/.test(source)) generic.push(path);
@@ -3263,9 +3394,9 @@ describe("one way out, and it says what it closes", () => {
   });
 
   it("gives a band with nowhere to go no way out at all", () => {
-    expect(renderToStaticMarkup(<DialogHeader title="How to fix it" />)).not.toContain(
-      "<button",
-    );
+    expect(
+      renderToStaticMarkup(<DialogHeader title="How to fix it" />),
+    ).not.toContain("<button");
     expect(
       renderToStaticMarkup(<MenuHeading>Projects · tower</MenuHeading>),
     ).not.toContain("<button");
@@ -3284,7 +3415,9 @@ describe("one way out, and it says what it closes", () => {
   it("calls the artifact's way out the same thing on both surfaces", () => {
     expect(artifactsSheetSource).toContain("closeLabel={`Close ${name}`}");
     expect(docSource).toContain("closeLabel={`Close ${name}`}");
-    expect(artifactsSheetSource).not.toContain('closeLabel="Back to artifacts"');
+    expect(artifactsSheetSource).not.toContain(
+      'closeLabel="Back to artifacts"',
+    );
   });
 });
 
