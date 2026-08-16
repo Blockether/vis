@@ -1187,6 +1187,32 @@
         ;; Confirming an exited child's log is quiet is charged to a command that is
         ;; already done, so it is the shortest sleep in the loop.
         (expect (< @#'shell/wait-drain-poll-ms (poll 10000)))))
+  ;; Regression, CI: a loaded macOS runner handed a PTY child's only line over
+  ;; tens of ms after the child was already gone, and the wait — which confirmed
+  ;; silence with ONE 5 ms read — reported that the command had printed nothing.
+  (it "keeps confirming an exited child's silence until the pump hands its bytes over"
+      (let
+        [reads
+         (atom 0)
+
+         ;; A pump that hands its ONE chunk over five reads after the exit is
+         ;; already visible, and has nothing more to give after that.
+         late-pump
+         (fn [_env _id _opts]
+           (let [n (swap! reads inc)]
+             {:result {"stdout" (if (= 6 n) "late-line" "")
+                       "status" "exited"
+                       "exit" 0
+                       "is_eof" true
+                       "next_offset" (if (< n 6) 0 9)}}))]
+
+        (with-redefs-fn {#'shell/shell-logs-impl late-pump}
+          (fn []
+            (let [w (:result (shell-wait* {} "late" {:seconds 5}))]
+              (expect (= "late-line" (get w "stdout")))
+              (expect (false? (get w "timed_out")))
+              ;; Confirming silence costs the drain window, never the budget.
+              (expect (< (long (get w "duration_ms")) 1000)))))))
   (it "tells the ticker WHAT it waits for — the command and the budget, not the op"
       (with-shell-on
         (fn []

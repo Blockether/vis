@@ -2073,6 +2073,14 @@
    finished."
   5)
 
+(def ^:private wait-drain-quiet-reads
+  "Quiet reads that confirm an EXITED child really printed nothing, taken
+   [[wait-drain-poll-ms]] apart — a quarter second of silence in all. A wait that
+   has already captured bytes reports at the first quiet read; only a wait still
+   holding an empty log pays this, because the alternative is answering that a
+   command printed nothing when its output was merely still in flight."
+  50)
+
 (def ^:private wait-chunk-limit
   "Bytes one wait iteration reads. Large enough that a build's output is drained in
    a few reads, small enough that a runaway producer cannot allocate without bound
@@ -2149,7 +2157,13 @@
        0
 
        quiet
-       0]
+       0
+
+       ;; Whether THIS wait has captured anything at all. Having seen bytes, the
+       ;; pump is demonstrably handing them over; having seen none, an empty read
+       ;; cannot yet tell a silent command from a pump still on its first chunk.
+       seen
+       false]
 
       (let
         [res
@@ -2162,21 +2176,29 @@
          (long (or (get res "next_offset") off))
 
          idle
-         (if (= "" text) idle 0)]
+         (if (= "" text) idle 0)
+
+         seen
+         (or seen (not= "" text))]
 
         ;; Cancellable in HOST code: an interrupt lands HERE, at guest-code
         ;; speed, instead of at this wait's own deadline.
         (rt/guest-safepoint!)
         ((:append! acc) text)
         (cond (>= (now-ms) deadline) (finish res nxt)
-              (not (get res "is_eof")) (recur nxt 0 0)
+              (not (get res "is_eof")) (recur nxt 0 0 seen)
               (= "running" (get res "status")) (do (Thread/sleep (long (wait-idle-poll-ms idle)))
-                                                   (recur nxt (inc idle) 0))
-              ;; Exited: one confirming quiet read before reporting, so bytes the pump
-              ;; flushed between the exit and this read still reach the caller.
-              (and (= "" text) (pos? quiet)) (finish res nxt)
+                                                   (recur nxt (inc idle) 0 seen))
+              ;; Exited: confirm the log has gone quiet before reporting. One read
+              ;; is enough once bytes have arrived. Having captured NOTHING, keep
+              ;; confirming across the whole drain window: on a loaded runner a PTY
+              ;; child's only line is handed over tens of ms after the child is
+              ;; already gone, and reporting at the first quiet read turns a
+              ;; command that printed into one that did not.
+              (and (= "" text) (<= (long (if seen 1 wait-drain-quiet-reads)) (long quiet)))
+              (finish res nxt)
               :else (do (Thread/sleep (long wait-drain-poll-ms))
-                        (recur nxt (inc idle) (if (= "" text) (inc quiet) 0))))))))
+                        (recur nxt (inc idle) (if (= "" text) (inc quiet) 0) seen)))))))
 
 
 (def ^:private control-key-names
