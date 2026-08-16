@@ -83,19 +83,6 @@ afterEach(() => {
 });
 
 describe("spoken reply routing", () => {
-  it("says nothing at all when the reader turned speech off", async () => {
-    const { speechOutput } = await import("./speech");
-    speechOutput.apply(prefs({ route: "off" }));
-    speechOutput.setGateway({
-      speak: () => Promise.reject(new Error("must not be asked")),
-    });
-
-    await speechOutput.speak("The answer is on the page.");
-
-    expect(said).toEqual([]);
-    expect(played).toEqual([]);
-  });
-
   it("plays what the machine sent, and does not also say it here", async () => {
     const { speechOutput } = await import("./speech");
     const speak = vi

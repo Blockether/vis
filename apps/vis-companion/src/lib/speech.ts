@@ -130,7 +130,6 @@ class SpeechOutput {
 
   async speak(text: string): Promise<void> {
     const prefs = await this.settings();
-    if (prefs.route === "off") return;
     if (prefs.route === "gateway" && this.gateway) {
       try {
         const audio = await this.gateway.speak(text, prefs.gatewayVoice);

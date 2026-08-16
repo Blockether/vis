@@ -605,9 +605,10 @@ export interface SpeechVoices {
 /**
  * WHERE a reply is spoken. App-local, like the theme: a machine is never asked and
  * never told, because the device doing the listening is the only thing that can
- * answer it.
+ * answer it. There is no `off`: a reply is read out loud only for a turn this
+ * device started by VOICE, so not talking to it IS the silence.
  */
-export type SpeechRoute = "off" | "device" | "gateway";
+export type SpeechRoute = "device" | "gateway";
 
 /** The whole spoken-output choice this device made. */
 export interface SpeechPrefs {

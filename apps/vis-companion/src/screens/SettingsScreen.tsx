@@ -1070,27 +1070,28 @@ function VoicesPanel({ client }: { client: GatewayClient }) {
   const canImport = catalogue?.engine?.is_voice_import === true;
 
   return (
-    <SettingsPanel
-      title="Voices"
-      description="How this machine speaks. A cloning engine learns a voice from one clip."
-      meta={
-        catalogue
-          ? `${voices.length} ${voices.length === 1 ? "voice" : "voices"}`
-          : "checking…"
-      }
-    >
-      <div className="space-y-2 p-3">
-        {err && <Banner kind="err">{err}</Banner>}
-        {note && <Banner kind="ok">{note}</Banner>}
+    <SettingsPanel title="Voices">
+      {/* A VOICE IS A ROW, NOT A CARD. Reported over this screen: every voice sat in
+          its own hairline box inside a padded box inside the panel, three frames
+          deep, and the band spent two lines saying where a DIFFERENT band lives.
+          The list divides on one rule like every other list here, and the panel's
+          one verb is its last row. */}
+      <div className="divide-y divide-dialog-edge">
+        {(err || note) && (
+          <div className="space-y-2 p-3">
+            {err && <Banner kind="err">{err}</Banner>}
+            {note && <Banner kind="ok">{note}</Banner>}
+          </div>
+        )}
 
         {catalogue === null && !err && (
-          <p className="py-4 text-center font-mono text-meta text-dialog-hint">
+          <p className="px-3 py-5 font-mono text-meta text-dialog-hint sm:px-4">
             Reading this machine's voices…
           </p>
         )}
 
         {catalogue && voices.length === 0 && (
-          <p className="py-4 text-center font-mono text-meta text-dialog-hint">
+          <p className="px-3 py-5 font-mono text-meta text-dialog-hint sm:px-4">
             {canImport
               ? "No voice yet — import a recording and it becomes one."
               : "This engine speaks in no named voice."}
@@ -1098,28 +1099,26 @@ function VoicesPanel({ client }: { client: GatewayClient }) {
         )}
 
         {voices.length > 0 && (
-          <>
-            <p className="font-mono text-chip text-dialog-hint">
-              A reply this device sends here is spoken in the voice marked ●.
-              Whether replies are spoken at all is in Application → Spoken
-              replies.
-            </p>
-            <div className="border border-dialog-edge bg-panel-2">
-              <ChoiceCell
-                title="Engine default"
-                sub="whatever this machine picks"
-                isSelected={prefs?.gatewayVoice == null}
-                onClick={() => void chooseVoice(null)}
-              />
-            </div>
-          </>
+          <ChoiceCell
+            className="w-full"
+            title="Engine default"
+            sub="whatever this machine picks"
+            isSelected={prefs?.gatewayVoice == null}
+            onClick={() => void chooseVoice(null)}
+          />
         )}
 
         {voices.map((voice) => (
-          <div key={voice.id} className="border border-dialog-edge bg-panel-2">
-            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 pr-3">
+          <div key={voice.id}>
+            <div
+              className={
+                voice.is_imported
+                  ? "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 pr-3"
+                  : "min-w-0"
+              }
+            >
               <ChoiceCell
-                className="min-w-0"
+                className="w-full min-w-0"
                 title={voice.label ?? voice.id}
                 sub={[
                   voice.language,
@@ -1150,78 +1149,80 @@ function VoicesPanel({ client }: { client: GatewayClient }) {
             )}
           </div>
         ))}
-
-        {canImport && (
-          <div className="space-y-2 border border-dialog-edge bg-panel-2 p-3">
-            <input
-              ref={fileRef}
-              type="file"
-              accept="audio/*"
-              className="hidden"
-              aria-label="Recording to import as a voice"
-              onChange={(event) => chooseClip(event.target.files?.[0] ?? null)}
-            />
-            {clip === null ? (
-              <Button
-                variant="secondary"
-                onClick={() => fileRef.current?.click()}
-              >
-                Import a voice…
-              </Button>
-            ) : (
-              <div className="space-y-2">
-                <FormLabel
-                  label="Recording"
-                  hint="Ten to thirty seconds of clear speech is plenty."
-                >
-                  <p className="truncate font-mono text-meta text-white">
-                    {clip.name}
-                  </p>
-                </FormLabel>
-                <FormLabel label="Name">
-                  <Input
-                    value={voiceName}
-                    placeholder="What to call this voice"
-                    onChange={(event) => setVoiceName(event.target.value)}
-                  />
-                </FormLabel>
-                <FormLabel
-                  label="Language"
-                  hint="Optional — the tag this clip speaks in, like en or en-GB."
-                >
-                  <Input
-                    value={language}
-                    placeholder="en"
-                    onChange={(event) => setLanguage(event.target.value)}
-                  />
-                </FormLabel>
-                <FormLabel
-                  label="What the clip says"
-                  hint="Optional, and worth typing: the model is TOLD these words, so the clone tracks the voice instead of guessing them."
-                >
-                  <Input
-                    value={says}
-                    placeholder="Transcript of the recording"
-                    onChange={(event) => setSays(event.target.value)}
-                  />
-                </FormLabel>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant="primary"
-                    disabled={!voiceName.trim() || pending === "import"}
-                    onClick={() => void importClip()}
-                  >
-                    {pending === "import" ? "Importing…" : "Import"}
-                  </Button>
-                  <Button variant="quiet" onClick={() => chooseClip(null)}>
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
       </div>
+
+      {canImport && (
+        <>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="audio/*"
+            className="hidden"
+            aria-label="Recording to import as a voice"
+            onChange={(event) => chooseClip(event.target.files?.[0] ?? null)}
+          />
+          {clip === null ? (
+            <Button
+              variant="primary"
+              density="panel"
+              className="w-full justify-center"
+              onClick={() => fileRef.current?.click()}
+            >
+              Import a voice…
+            </Button>
+          ) : (
+            <div className="space-y-2 p-3">
+              <FormLabel
+                label="Recording"
+                hint="Ten to thirty seconds of clear speech is plenty."
+              >
+                <p className="truncate font-mono text-meta text-white">
+                  {clip.name}
+                </p>
+              </FormLabel>
+              <FormLabel label="Name">
+                <Input
+                  value={voiceName}
+                  placeholder="What to call this voice"
+                  onChange={(event) => setVoiceName(event.target.value)}
+                />
+              </FormLabel>
+              <FormLabel
+                label="Language"
+                hint="Optional — the tag this clip speaks in, like en or en-GB."
+              >
+                <Input
+                  value={language}
+                  placeholder="en"
+                  onChange={(event) => setLanguage(event.target.value)}
+                />
+              </FormLabel>
+              <FormLabel
+                label="What the clip says"
+                hint="Optional, and worth typing: the model is TOLD these words, so the clone tracks the voice instead of guessing them."
+              >
+                <Input
+                  value={says}
+                  placeholder="Transcript of the recording"
+                  onChange={(event) => setSays(event.target.value)}
+                />
+              </FormLabel>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="primary"
+                  disabled={!voiceName.trim() || pending === "import"}
+                  onClick={() => void importClip()}
+                >
+                  {pending === "import" ? "Importing…" : "Import"}
+                </Button>
+                <Button variant="quiet" onClick={() => chooseClip(null)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </SettingsPanel>
   );
 }
@@ -1284,7 +1285,7 @@ function EngineRow({
       !!reading.error);
 
   return (
-    <div className="space-y-2 border border-dialog-edge bg-panel-2 p-3">
+    <div className="space-y-2 px-3 py-2.5 sm:px-4">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <p className="font-mono text-ui text-white">{title}</p>
         <p className="font-mono text-meta text-dialog-hint">
@@ -1435,10 +1436,9 @@ export function VoiceEnginesPanel({ client }: { client: GatewayClient }) {
   return (
     <SettingsPanel
       title="Speech engines"
-      description="Whether this machine can listen and speak. Models stay on it."
       meta={meta}
     >
-      <div className="space-y-2 p-3">
+      <div className="divide-y divide-dialog-edge">
         <EngineRow
           title="Listening"
           hint="Turns a recording into text — the microphone in the composer, and Ctrl+B in the terminal."
@@ -1490,12 +1490,16 @@ function FormLabel({
  * this copy of Vis, or the machine — and every band under it belongs to that owner.
  * It is the sentence the two dialogs used to spend a whole header band saying.
  */
-/** The three answers to "where is a reply spoken", in the order the band offers them. */
+/**
+ * The two places a reply can be spoken. There is no `Off`: nothing here ever speaks
+ * on its own — a reply is read out loud only for a turn this device STARTED by
+ * voice, and the spoken block in the transcript is replayed by pressing it. Silence
+ * is already the default of not talking to it.
+ */
 const SPEECH_ROUTE_FACES: Record<SpeechRoute, { title: string; sub: string }> =
   {
-    off: { title: "Off", sub: "answers stay on the page" },
-    device: { title: "This device", sub: "the phone reads them" },
-    gateway: { title: "The machine", sub: "its own voice speaks" },
+    device: { title: "This device", sub: "the phone reads it" },
+    gateway: { title: "The machine", sub: "its own voice" },
   };
 
 /** What each speed sounds like, so the number is not the only thing on the cell. */
@@ -1560,15 +1564,15 @@ export function SpokenRepliesPanel() {
   const deviceList = voices ?? [];
 
   return (
-    <SettingsPanel
-      title="Spoken replies"
-      description="Whether an answer is read out loud, and by what."
-      meta={SPEECH_ROUTE_FACES[route].sub}
-    >
-      <div className="space-y-2 p-3">
-        {err && <Banner kind="err">{err}</Banner>}
+    <SettingsPanel title="Spoken replies" meta={SPEECH_ROUTE_FACES[route].sub}>
+      <div className="divide-y divide-dialog-edge">
+        {err && (
+          <div className="p-3">
+            <Banner kind="err">{err}</Banner>
+          </div>
+        )}
 
-        <div className="grid grid-cols-1 gap-px bg-dialog-edge min-[420px]:grid-cols-3">
+        <div className="grid grid-cols-2 gap-px bg-dialog-edge">
           {SPEECH_ROUTES.map((choice) => (
             <ChoiceCell
               key={choice}
@@ -1582,7 +1586,7 @@ export function SpokenRepliesPanel() {
 
         {route === "device" && (
           <>
-            <div className="grid grid-cols-1 gap-px bg-dialog-edge min-[420px]:grid-cols-3">
+            <div className="grid grid-cols-3 gap-px bg-dialog-edge">
               {SPEECH_RATES.map((choice) => (
                 <ChoiceCell
                   key={choice}
@@ -1595,14 +1599,13 @@ export function SpokenRepliesPanel() {
             </div>
 
             {voices === null && (
-              <p className="py-2 text-center font-mono text-meta text-dialog-hint">
+              <p className="px-3 py-5 font-mono text-meta text-dialog-hint sm:px-4">
                 Asking this device what it can speak in…
               </p>
             )}
             {voices !== null && deviceList.length === 0 && (
-              <p className="py-2 text-center font-mono text-meta text-dialog-hint">
-                This device has no speech engine installed, so nothing can be
-                read out loud here.
+              <p className="px-3 py-5 font-mono text-meta text-dialog-hint sm:px-4">
+                This device has no speech engine installed.
               </p>
             )}
             {deviceList.length > 0 && (

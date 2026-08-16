@@ -1449,6 +1449,34 @@ describe("settings is ONE dialog with two columns", () => {
     expect(mcp).toContain("Add an MCP server");
   });
 
+  // Reported over the same screenshot: the voice bands were the worst of the lot,
+  // and a reader asked what an `Off` switch for spoken replies is even for.
+  it("unboxes the voice lists and drops the silence that nothing needed", () => {
+    // Every voice, and every engine, sat in its own hairline box inside a padded
+    // box inside the panel — three frames deep for one row of text.
+    const voices = settings.slice(
+      settings.indexOf('title="Voices"'),
+      settings.indexOf("How far one engine has got"),
+    );
+    expect(voices).not.toContain("description=");
+    expect(voices).not.toContain("meta=");
+    expect(voices).not.toContain("bg-panel-2");
+    expect(voices).toContain("w-full justify-center");
+    expect(voices).toContain("Import a voice…");
+    const engines = settings.slice(
+      settings.indexOf("function EngineRow"),
+      settings.indexOf('title="Speech engines"'),
+    );
+    expect(engines).not.toContain("bg-panel-2");
+    // Nothing speaks unless this device started the turn by voice, so `Off` named
+    // a state the reader already has by not talking to it. The band ROUTES.
+    const spoken = settings.slice(
+      settings.indexOf("SPEECH_ROUTE_FACES"),
+      settings.indexOf("function SettingsColumn"),
+    );
+    expect(spoken).not.toContain('off:');
+    expect(spoken).not.toContain("description=");
+  });
   // Reported over this screenshot: why is that button not simply full width on a
   // phone, and the green dots do not line up with the text.
   it("gives a lone verb the phone's full width and rides each status dot on the name's line", () => {
@@ -3296,8 +3324,8 @@ describe("a call site positions, and the component paints", () => {
     );
     // The panel's two verbs became one row (`NotifyConnectionRow`), which carries
     // its own; what is left in this screen is the door to the OS that row cannot
-    // open itself, plus the MCP list's own last row.
-    expect(settingsSource.match(/density="panel"/g)).toHaveLength(2);
+    // open itself, plus the MCP and Voices lists' own last rows.
+    expect(settingsSource.match(/density="panel"/g)).toHaveLength(3);
   });
 
   it("gives the spinner the app's waiting ink as a tone", () => {

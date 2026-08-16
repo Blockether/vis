@@ -40,25 +40,28 @@ const cell = (title: string) =>
   screen.getAllByRole("button").find((button) => button.textContent?.startsWith(title));
 
 describe("the spoken-replies band", () => {
-  it("offers the three places a reply can be spoken, and starts on this device", async () => {
+  // Reported over this screen: a reader asked what an `Off` switch is FOR when a
+  // reply is only ever spoken for a turn they started by voice. The band routes,
+  // it does not gate.
+  it("offers the two places a reply can be spoken, and starts on this device", async () => {
     render(<SpokenRepliesPanel />);
 
     await waitFor(() => expect(cell("This device")).toBeTruthy());
-    expect(cell("Off")).toBeTruthy();
     expect(cell("The machine")).toBeTruthy();
+    expect(cell("Off")).toBeFalsy();
     expect(cell("This device")?.getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("silences the router itself when the reader picks Off, not just the cell", async () => {
+  it("hands the reply to the machine when the reader picks it", async () => {
     render(<SpokenRepliesPanel />);
-    await waitFor(() => expect(cell("Off")).toBeTruthy());
+    await waitFor(() => expect(cell("The machine")).toBeTruthy());
 
-    fireEvent.click(cell("Off")!);
+    fireEvent.click(cell("The machine")!);
 
     await waitFor(async () =>
-      expect((await speechOutput.settings()).route).toBe("off"),
+      expect((await speechOutput.settings()).route).toBe("gateway"),
     );
-    // Speed and voice belong to the device that speaks; nothing speaks now.
+    // Speed and voice belong to the device that speaks; that machine speaks now.
     expect(cell("System default")).toBeFalsy();
   });
 

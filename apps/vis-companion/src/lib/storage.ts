@@ -261,7 +261,7 @@ const SPEECH_DEVICE_VOICE_KEY = "vis.speech.deviceVoice";
 const SPEECH_GATEWAY_VOICE_KEY = "vis.speech.gatewayVoice";
 const SPEECH_RATE_KEY = "vis.speech.rate";
 
-export const SPEECH_ROUTES: readonly SpeechRoute[] = ["off", "device", "gateway"];
+export const SPEECH_ROUTES: readonly SpeechRoute[] = ["device", "gateway"];
 /** What Vis did before there was a choice: the phone says the answer out loud. */
 export const DEFAULT_SPEECH_ROUTE: SpeechRoute = "device";
 export const SPEECH_RATES: readonly number[] = [0.85, 1, 1.2];
