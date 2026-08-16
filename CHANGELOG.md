@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - A project you fold stays folded: the sessions list opens the project at the top of a machine and leaves every other one as you last left it, through opening a session, coming back, and relaunching the app — a search still shows what it matched, fold or no fold
 - Removing a provider, forgetting a machine or deleting a session now asks inside its own red box: the sentence saying what it costs stands in that box with the two answers, instead of hanging under the row above between the same hairlines two calm rows share
 - An opened note saves from the band that names it: `Save` is a cell beside the ✕, where every other dialog verb in this app already stands, and the band reports which version the note just became — the docked strip under the comments is gone and the note is 53px taller for it
+- Opening the sessions list no longer drags the whole history down behind it: a poll asks for the first page only, and when the gateway reports the same ordering it keeps the rows it already holds, so a machine with 1192 sessions costs one request every ten seconds instead of twelve — and the list stops flickering, because a poll that found nothing new no longer rebuilds the fleet under the filter, the sort and your place in it
 ## [v0.1.38] - 2026-08-14
 
 ### Changed

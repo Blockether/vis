@@ -2121,17 +2121,60 @@ export class GatewayClient {
     };
 
     const head = await fetchWindow(0);
-    // A revalidated head against a complete cached list is the steady state: stop
-    // here, keep the pins, and hand back the identical array. `rows` identity is
-    // what proves the 304 — the window itself is rebuilt to carry a fresh order.
     const headPin = known.get(0);
+    // THE ORDERING DECIDES WHETHER THERE IS A WALK AT ALL.
+    //
+    // Only the FIRST window moves minute to minute: the list is recency-ordered, so
+    // every arrival, answer and demand for a human lands at the top, and a session
+    // with a turn in flight re-stamps its own row on every poll. The windows below
+    // it then cost a conditional round trip EACH to be told 304 — measured against a
+    // 1192-session store, 12 serial requests every ten seconds per machine, eleven
+    // of them proving nothing had changed. That cascade is what a reader sees the
+    // moment the list is opened.
+    //
+    // `X-Vis-Sessions-Order` digests the WHOLE ordering — every id, in order (see
+    // `state/list-sessions-page`) — so a digest equal to the one these pins were cut
+    // from is proof that no session below this window moved, arrived or left: the
+    // offsets the cached tail was cut at still address the same rows, and the head
+    // is the only window worth having. The poll costs ONE request.
+    //
+    // What the digest does NOT prove is CONTENT below the head, and the trade is
+    // deliberate: a session renamed without re-ranking keeps its cached title until
+    // the ordering next moves. Everything else re-ranks or re-counts by construction
+    // — a turn, a deletion, a new session — and a mutation made HERE swaps the
+    // snapshot array, which misses every pin and walks for real.
     if (
       headPin &&
-      head.rows === headPin.rows &&
       cached &&
-      cached.length === head.total
-    )
-      return cached;
+      cached.length === head.total &&
+      head.etag !== "" &&
+      head.order !== "" &&
+      head.order === headPin.order &&
+      // A window can come back SHORT (a session deleted between the ordering and the
+      // decoration of its page). Splicing a short head onto the tail would shift
+      // every row below it by the difference.
+      head.rows.length === Math.min(SESSIONS_PAGE, head.total)
+    ) {
+      // Nothing moved and the head itself did not change: hand back the identical
+      // array, which React bails out on, and keep every pin.
+      if (head.rows === headPin.rows) return cached;
+      const rows = reconcileRows(
+        cached,
+        head.rows.concat(cached.slice(head.rows.length)),
+      );
+      writeSnapshot(key, rows);
+      // Re-pin the one window that was actually re-read, onto the reconciled rows.
+      // The windows below keep the pins they already have: they describe rows this
+      // list still holds at the offsets they were cut from.
+      const windows = new Map(known);
+      windows.set(0, { ...head, rows: rows.slice(0, head.rows.length) });
+      GatewayClient.sessionsValidators.set(key, { full: rows, windows });
+      writeSnapshot(this.snapshotKey("sessions-pin"), {
+        etag: head.etag,
+        total: head.total,
+      });
+      return rows;
+    }
 
     const progressive = !cached || cached.length === 0;
 

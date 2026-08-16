@@ -517,24 +517,28 @@ export function SessionsScreen({
       // passed over (see `searchFanout`).
       const alive = () => searchSilentRef.current.delete(key);
       try {
+        // A poll that answers with the rows already on screen is NOT NEWS. Patching
+        // anyway handed the list a new fleet array every ten seconds, and every memo
+        // built from it — the scope filter, the sort, the project grouping, the pager
+        // — re-ran under a reader who was only reading.
+        const settle = (rows: Session[]) => {
+          const held = machinesRef.current.find(
+            (machine) => machineKey(machine.conn) === key,
+          );
+          const merged = reconcileSessions(held?.sessions ?? null, rows);
+          if (held && held.error === null && merged === held.sessions) return;
+          patchMachine(key, (machine) => ({ ...machine, sessions: merged, error: null }));
+        };
         // Paint the first page the moment it lands instead of waiting for the whole
         // fleet to drain. Only ever called on a cold load (see `listSessions`).
         const next = await api.listSessions(signal, (partial) => {
           if (signal?.aborted) return;
           alive();
-          patchMachine(key, (machine) => ({
-            ...machine,
-            sessions: reconcileSessions(machine.sessions, partial),
-            error: null,
-          }));
+          settle(partial);
         });
         if (signal?.aborted) return null;
         alive();
-        patchMachine(key, (machine) => ({
-          ...machine,
-          sessions: reconcileSessions(machine.sessions, next),
-          error: null,
-        }));
+        settle(next);
         return null;
       } catch (cause) {
         if (signal?.aborted) return null;

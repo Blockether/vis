@@ -74,6 +74,90 @@ describe('GatewayClient session-list validators', () => {
   });
 });
 
+// Regression, user report (paraphrased: "opening the session list fires request after
+// request for every page, over and over, as though the totals kept accumulating"): the
+// poll re-walked EVERY window on every tick. Only the FIRST one had changed — a session
+// with a turn in flight re-stamps its own row — and each window below it cost a round
+// trip to answer 304. Measured against a 1192-session machine: 12 serial requests every
+// ten seconds, eleven of them reporting that nothing had happened.
+describe('GatewayClient session-list paging', () => {
+  const fleet = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      id: `session-${index}`,
+      title: `Session ${index}`,
+    }));
+
+  /** The window `url` asks for, stamped with the ordering it was cut from. */
+  const listing = (rows: unknown[], url: string, order: string) => {
+    const offset = Number(new URL(url).searchParams.get('offset') ?? 0);
+    const page = rows.slice(offset, offset + 100);
+    return new Response(
+      JSON.stringify({
+        sessions: page,
+        total: rows.length,
+        has_more: offset + page.length < rows.length,
+      }),
+      {
+        headers: {
+          ETag: `"${order}-${offset}"`,
+          'X-Vis-Sessions-Order': order,
+        },
+      },
+    );
+  };
+
+  const gateway = (rows: unknown[], order: string) =>
+    vi.fn((url: string) => Promise.resolve(listing(rows, url, order)));
+
+  it('asks only for the head when the ordering has not moved', async () => {
+    const rows = fleet(150);
+    const cold = gateway(rows, 'ordering-1');
+    vi.stubGlobal('fetch', cold);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+
+    const first = await client.listSessions();
+    expect(first).toHaveLength(150);
+    expect(cold).toHaveBeenCalledTimes(2);
+
+    // The head answers with a row that changed. The digest is the one those windows
+    // were cut from, so nothing below the head can have moved.
+    const renamed = rows.map((row, index) =>
+      index === 0 ? { ...row, title: 'Renamed' } : row,
+    );
+    const poll = vi.fn((url: string) =>
+      Promise.resolve(listing(renamed, url, 'ordering-1')),
+    );
+    vi.stubGlobal('fetch', poll);
+
+    const second = await client.listSessions();
+    expect(poll).toHaveBeenCalledTimes(1);
+    expect(second[0]?.title).toBe('Renamed');
+    // The tail is the rows this client already held, not a re-download.
+    expect(second).toHaveLength(150);
+    expect(second[149]).toBe(first[149]);
+  });
+
+  it('walks the rest of the list again when the ordering moved', async () => {
+    const rows = fleet(150);
+    const cold = gateway(rows, 'ordering-1');
+    vi.stubGlobal('fetch', cold);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+
+    await client.listSessions();
+    // A session re-ranked: the offsets the cached tail was cut at no longer address
+    // the same rows, so the walk is the only honest answer.
+    const moved = [rows[149], ...rows.slice(0, 149)];
+    const poll = gateway(moved, 'ordering-2');
+    vi.stubGlobal('fetch', poll);
+
+    const second = await client.listSessions();
+    expect(poll).toHaveBeenCalledTimes(2);
+    expect(second[0]?.id).toBe('session-149');
+  });
+});
+
 // Regression: slash discovery used a gateway-global route, so the palette was resolved
 // against the daemon's launch directory instead of the open session's nested project.
 describe('GatewayClient session slash palette', () => {
