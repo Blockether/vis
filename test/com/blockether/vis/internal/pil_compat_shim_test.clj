@@ -896,10 +896,10 @@
                                                "dst = Image.new('RGB',(4,4),(255,255,255))\n"
                                                "dst.paste(src,(0,0),Image.new('L',(4,4),128))\n"
                                                "list(dst.getpixel((1,1)))"))))))
-  (it "takes a '1' mask as a boolean bitmap, and fills one with white"
+  (it "takes a '1' mask as a boolean bitmap, and keeps its raw pixel value"
       (with-python-context
         (expect
-          (= [253 198 80 255]
+          (= [253 198 80 1]
              (ev python-context
                  (str "from PIL import Image\n"
                       "src = Image.new('RGBA',(4,4),(253,198,80,255))\n"
@@ -1025,3 +1025,87 @@
                    (ev python-context
                        (str "from PIL import Image\n" "im = Image.new('L',(2,2),90)\n"
                             "im.putalpha(55)\n" "[im.mode] + list(im.getpixel((0,0)))")))))))
+;; Colour was resolved MODE-BLIND: an int fill became a gray level whatever the
+;; mode (so `Image.new('RGB', size, 0x804020)` was gray, not blue), a colour name
+;; never became luma on 'L'/'LA', a fresh 'RGBA' image came back OPAQUE black,
+;; a wrong-arity tuple raised the wrong message, ImageDraw COMPOSITED a
+;; translucent ink instead of replacing the pixel (`fill=(0, 0, 0, 0)` erased
+;; nothing at all), and a '1' image's bytes were one BYTE per pixel where PIL
+;; packs one BIT. Every expectation here is what Pillow 12.1.1 answers.
+(defdescribe
+  pil-colour-parity-test
+  (it "reads an int fill as PIL's packed 0xAABBGGRR, per mode"
+      (with-python-context
+        (expect (= [[32 64 128] 255 [32 64 128 0] [200 0]]
+                   (ev python-context
+                       (str "from PIL import Image\n"
+                            "[list(Image.new('RGB',(2,2),0x804020).getpixel((0,0))),\n"
+                            " Image.new('L',(2,2),0x804020).getpixel((0,0)),\n"
+                            " list(Image.new('RGBA',(2,2),0x804020).getpixel((0,0))),\n"
+                            " list(Image.new('LA',(2,2),200).getpixel((0,0)))]"))))))
+  (it "turns a colour name into luma on a gray mode"
+      (with-python-context
+        (expect (= [76 [76 255] [255 0 0 255] [32 64 128]]
+                   (ev python-context
+                       (str "from PIL import Image\n"
+                            "[Image.new('L',(2,2),'red').getpixel((0,0)),\n"
+                            " list(Image.new('LA',(2,2),'red').getpixel((0,0))),\n"
+                            " list(Image.new('RGBA',(2,2),'red').getpixel((0,0))),\n"
+                            " list(Image.new('RGB',(2,2),'#204080').getpixel((0,0)))]"))))))
+  (it "starts an alpha mode TRANSPARENT, not opaque black"
+      (with-python-context (expect (= [[0 0 0 0] [0 0] 0 [0 0 0]]
+                                      (ev python-context
+                                          (str
+                                            "from PIL import Image\n"
+                                            "[list(Image.new('RGBA',(2,2)).getpixel((0,0))),\n"
+                                            " list(Image.new('LA',(2,2)).getpixel((0,0))),\n"
+                                            " Image.new('L',(2,2)).getpixel((0,0)),\n"
+                                            " list(Image.new('RGB',(2,2)).getpixel((0,0)))]"))))))
+  (it "names the arity a mode accepts when the tuple is wrong"
+      (with-python-context
+        (expect (= ["color must be int or single-element tuple"
+                    "color must be int, or tuple of one or two elements"
+                    "color must be int, or tuple of one, three or four elements"]
+                   (ev python-context
+                       (str "from PIL import Image\n" "def msg(mode, colour):\n"
+                            "    try:\n" "        Image.new(mode,(2,2),colour)\n"
+                            "        return 'NO ERROR'\n" "    except TypeError as e:\n"
+                            "        return str(e)\n"
+                            "[msg('L',(7,8)), msg('LA',(1,2,3)), msg('RGB',(7,8))]"))))))
+  (it "refuses a colour NAME in putpixel, which takes numbers only"
+      (with-python-context
+        (expect (= ["color must be int or tuple" [1 2 3 4]]
+                   (ev python-context
+                       (str "from PIL import Image\n"
+                            "im = Image.new('RGBA',(2,2))\n" "try:\n"
+                            "    im.putpixel((1,1),'red')\n" "    got = 'NO ERROR'\n"
+                            "except TypeError as e:\n" "    got = str(e)\n"
+                            "im.putpixel((1,1),(1,2,3,4))\n" "[got, list(im.getpixel((1,1)))]"))))))
+  (it "REPLACES the pixels a draw covers instead of compositing onto them"
+      (with-python-context
+        (expect
+          (= [[1 2 3 4] [0 0 0 0] [7 8]]
+             (ev
+               python-context
+               (str
+                 "from PIL import Image, ImageDraw\n" "def drawn(mode, colour, base=None):\n"
+                 "    im = Image.new(mode,(4,4)) if base is None else Image.new(mode,(4,4),base)\n"
+                 "    ImageDraw.Draw(im).rectangle((0,0,3,3), fill=colour)\n"
+                 "    return list(im.getpixel((1,1)))\n" "[drawn('RGBA',(1,2,3,4)),\n"
+                 " drawn('RGBA',(0,0,0,0),(255,0,0,255)),\n" " drawn('LA',(7,8))]"))))))
+  (it "packs a bilevel image one BIT per pixel, rows padded to a byte"
+      (with-python-context (expect (= [[255 128 255 128] [0 0 0 0] 4]
+                                      (ev python-context
+                                          (str "from PIL import Image\n"
+                                               "[list(Image.new('1',(9,2),1).tobytes()),\n"
+                                               " list(Image.new('1',(9,2),0).tobytes()),\n"
+                                               " len(Image.new('1',(9,2),1).tobytes())]"))))))
+  (it "unpacks those bits back into pixels, and getdata keeps the raw values"
+      (with-python-context
+        (expect (= [255 0 255 255 0 [1 1 1 1 1 1]]
+                   (ev python-context
+                       (str "from PIL import Image\n"
+                            "im = Image.frombytes('1',(9,2), bytes([0b10100000,0b10000000,0,0]))\n"
+                            "[im.getpixel((0,0)), im.getpixel((1,0)), im.getpixel((2,0)),\n"
+                            " im.getpixel((8,0)), im.getpixel((0,1)),\n"
+                            " list(Image.new('1',(3,2),1).getdata())]")))))))

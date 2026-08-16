@@ -186,28 +186,27 @@
   (zero? (.amask r)))
 
 (defn- ->argb
-  "PIL colour spec -> packed 0xAARRGGBB. A two-element colour is 'LA' the way PIL
-   takes it -- (gray, alpha) -- and a '1' image holds only 0 or 255, so any
-   non-zero ink fills white there."
+  "A RESOLVED colour -> packed 0xAARRGGBB. RESOLVING a PIL colour SPEC is PIL's own
+   `getink` rule -- an int is the packed 0xAABBGGRR compatibility form for a
+   multi-band mode but one clipped byte for a single-band one, and a colour name is
+   read in the target mode -- and it lives in the Python shim (`_ink`), the only
+   side that knows a mode's BAND COUNT and PIL's error vocabulary. What crosses is
+   [r g b a]; a shorter vector is one of this namespace's own literals."
   ^long [c mode]
-  (let
-    [p (cond (nil? c) (if (alpha-mode? mode) (argb 0 0 0 0) (argb 255 0 0 0))
-             (number? c) (let [v (long c)]
-                           (argb 255 v v v))
-             (sequential? c) (let
-                               [v (mapv long c)
-                                [r g b a] v]
+  (if (sequential? c)
+    (let [[r g b a] (mapv long c)]
+      (case (count c)
+        1
+        (argb 255 r r r)
 
-                               (case (count v)
-                                 1
-                                 (argb 255 r r r)
+        2
+        (argb g r r r)
 
-                                 2
-                                 (argb g r r r)
+        3
+        (argb 255 r g b)
 
-                                 (if a (argb a r g b) (argb 255 r g b))))
-             :else (argb 255 0 0 0))]
-    (if (and (= "1" (str mode)) (pos? (ch p 0))) (argb 255 255 255 255) p)))
+        (argb a r g b)))
+    (if (alpha-mode? mode) (argb 0 0 0 0) (argb 255 0 0 0))))
 
 (defn- ->hex
   "Packed 0xAARRGGBB -> the `#rrggbbaa` string `imaging`'s draw ops take."
@@ -1129,23 +1128,41 @@
      (band-shifts mode)
 
      bpp
-     (count shifts)
+     (count shifts)]
 
-     buf
-     (byte-array (* w hh bpp))]
-
-    (if (and (= "P" (str mode)) indices (= (alength indices) (* w hh)))
+    (cond
       ;; a P image's bytes ARE its palette indices.
+      (and (= "P" (str mode)) indices (= (alength indices) (* w hh)))
       (.encodeToString (Base64/getEncoder) ^bytes indices)
-      (do (dotimes [y hh]
-            (dotimes [x w]
-              (let
-                [p (.getRGB img x y)
-                 i (* (+ (* y w) x) bpp)]
+      ;; PIL packs a BILEVEL image one BIT per pixel, most significant bit first,
+      ;; each row padded to a whole byte -- a 2x2 '1' image is TWO bytes, not four.
+      (= "1" (str mode)) (let
+                           [stride
+                            (quot (+ (long w) 7) 8)
 
-                (dotimes [c bpp]
-                  (aset buf (+ i c) (unchecked-byte (ch p (long (nth shifts c)))))))))
-          (.encodeToString (Base64/getEncoder) buf)))))
+                            buf
+                            (byte-array (* stride (long hh)))]
+
+                           (dotimes [y hh]
+                             (dotimes [x w]
+                               (when (pos? (ch (.getRGB img x y) 16))
+                                 (let [i (+ (* y stride) (quot x 8))]
+                                   (aset buf
+                                         i
+                                         (unchecked-byte (bit-or (bit-and (aget buf i) 0xff)
+                                                                 (bit-shift-right 128
+                                                                                  (rem x 8)))))))))
+                           (.encodeToString (Base64/getEncoder) buf))
+      :else (let [buf (byte-array (* w hh bpp))]
+              (dotimes [y hh]
+                (dotimes [x w]
+                  (let
+                    [p (.getRGB img x y)
+                     i (* (+ (* y w) x) bpp)]
+
+                    (dotimes [c bpp]
+                      (aset buf (+ i c) (unchecked-byte (ch p (long (nth shifts c)))))))))
+              (.encodeToString (Base64/getEncoder) buf)))))
 
 (defn- op-frombytes
   [mode w h b64]
@@ -1162,29 +1179,43 @@
      out
      (new-raster mode w h)]
 
-    (dotimes [y h]
-      (dotimes [x w]
-        (let
-          [i (* (+ (* y (long w)) x) (long bpp))
-           u (fn [^long k]
-               (bit-and (aget data (+ i k)) 0xff))]
+    (if (= "1" mode)
+      ;; the inverse of the bilevel packing above: a set bit reads back as 255, the
+      ;; way PIL's raw '1' decoder unpacks it.
+      (let [stride (quot (+ (long w) 7) 8)]
+        (dotimes [y h]
+          (dotimes [x w]
+            (let [b (bit-and (aget data (+ (* (long y) stride) (quot (long x) 8))) 0xff)]
+              (.setRGB out
+                       x
+                       y
+                       (unchecked-int
+                         (gray-argb (if (pos? (bit-and b (bit-shift-right 128 (rem (long x) 8))))
+                                      255
+                                      0))))))))
+      (dotimes [y h]
+        (dotimes [x w]
+          (let
+            [i (* (+ (* y (long w)) x) (long bpp))
+             u (fn [^long k]
+                 (bit-and (aget data (+ i k)) 0xff))]
 
-          (.setRGB out
-                   x
-                   y
-                   (unchecked-int (case (long bpp)
-                                    1
-                                    (gray-argb (u 0))
+            (.setRGB out
+                     x
+                     y
+                     (unchecked-int (case (long bpp)
+                                      1
+                                      (gray-argb (u 0))
 
-                                    ;; 'LA' arrives as (gray, alpha): the gray band is
-                                    ;; replicated so every colour read sees it.
-                                    2
-                                    (argb (u 1) (u 0) (u 0) (u 0))
+                                      ;; 'LA' arrives as (gray, alpha): the gray band is
+                                      ;; replicated so every colour read sees it.
+                                      2
+                                      (argb (u 1) (u 0) (u 0) (u 0))
 
-                                    4
-                                    (argb (u 3) (u 0) (u 1) (u 2))
+                                      4
+                                      (argb (u 3) (u 0) (u 1) (u 2))
 
-                                    (argb 255 (u 0) (u 1) (u 2))))))))
+                                      (argb 255 (u 0) (u 1) (u 2)))))))))
     (meta-of (put-img! out mode))))
 
 (defn- op-point
@@ -1769,14 +1800,118 @@
         (swap! live-draws assoc (long h) img)
         img)))
 
+(def ^:private ink-keys "The op keys carrying a `#rrggbbaa` ink." [:fill :stroke])
+
+(defn- translucent-op?
+  "Does this op paint with an ink that is not fully opaque?"
+  [op]
+  (boolean (some (fn [k]
+                   (when-let [^String c (get op k)]
+                     (< (Long/parseLong (subs c 7 9) 16) 255)))
+                 ink-keys)))
+
+(defn- opaque-op
+  "The same op with every ink forced fully opaque -- what the coverage pass draws."
+  [op]
+  (reduce (fn [o k]
+            (if-let [^String c (get o k)]
+              (assoc o k (str (subs c 0 7) "ff"))
+              o))
+          op
+          ink-keys))
+
+(defn- ink-alphas
+  "This op's inks as {0xRRGGBB -> alpha}, plus `:default` for a pixel whose colour
+   is neither ink exactly (an antialiased blend between fill and outline)."
+  [op]
+  (reduce (fn [m k]
+            (if-let [^String c (get op k)]
+              (let [a (Long/parseLong (subs c 7 9) 16)]
+                (-> m
+                    (assoc (Long/parseLong (subs c 1 7) 16) a)
+                    (update :default #(or % a))))
+              m))
+          {}
+          ink-keys))
+
+(defn- replace-op!
+  "Draw ONE op the way PIL's ImageDraw does -- REPLACING the pixels it covers,
+   never compositing onto them. tiny-skia only ever blends source-over, so an ink
+   whose alpha is below 255 (`fill=(0, 0, 0, 0)` to erase a hole, a translucent
+   overlay written verbatim) would otherwise come back blended and, at alpha 0,
+   not drawn at all. The op is drawn ONCE at full opacity onto a transparent
+   scratch canvas: that canvas' straight RGBA says which pixels PIL would touch
+   and with which ink, so the destination takes the ink colour with its REAL
+   alpha. PIL draws aliased, so a pixel the renderer only half covers is left
+   alone. Answers the image to keep drawing into; the caller closes the old one."
+  [img op]
+  (let
+    [{:keys [width height]}
+     (im/info img)
+
+     w
+     (long width)
+
+     h
+     (long height)
+
+     scratch
+     (im/blank (int w) (int h))]
+
+    (try (im/draw! scratch [(opaque-op op)])
+         (let
+           [^bytes cov
+            (im/pixels scratch)
+
+            ^bytes dst
+            (im/pixels img)
+
+            alphas
+            (ink-alphas op)
+
+            fallback
+            (long (:default alphas 255))]
+
+           (dotimes [i (* w h)]
+             (let [o (* 4 i)]
+               (when (<= 128 (bit-and (aget cov (+ o 3)) 0xff))
+                 (let
+                   [r (bit-and (aget cov o) 0xff)
+                    g (bit-and (aget cov (+ o 1)) 0xff)
+                    b (bit-and (aget cov (+ o 2)) 0xff)
+                    a (long (get alphas
+                                 (bit-or (bit-shift-left r 16) (bit-shift-left g 8) b)
+                                 fallback))]
+
+                   (aset dst o (unchecked-byte r))
+                   (aset dst (+ o 1) (unchecked-byte g))
+                   (aset dst (+ o 2) (unchecked-byte b))
+                   (aset dst (+ o 3) (unchecked-byte a))))))
+           (im/from-pixels dst (int w) (int h)))
+         (finally (im/close! scratch)))))
+
 (defn- run-draws!
-  "Hand this handle's queued ops to the cdylib as ONE `im/draw!` batch."
+  "Hand this handle's queued ops to the cdylib as ONE `im/draw!` batch -- unless
+   one of them paints with a translucent ink, which `replace-op!` has to run on
+   its own."
   [h]
   (let [k (long h)]
     (when-let [ops (seq (get @pending-draws k))]
       (swap! pending-draws dissoc k)
       (when-let [^Raster r (:img (raw-entry k))]
-        (im/draw! (draw-img k r) (vec ops)))))
+        (let [img (draw-img k r)]
+          (if (some translucent-op? ops)
+            (swap! live-draws assoc
+              k
+              (reduce (fn [im op]
+                        (if (translucent-op? op)
+                          (let [next-im (replace-op! im op)]
+                            (im/close! im)
+                            next-im)
+                          (do (im/draw! im [op]) im)))
+                      img
+                      ops))
+            (im/draw! img (vec ops)))))))
   nil)
 
 (defn- draw-into!
@@ -1992,25 +2127,6 @@
 
       nil)))
 
-(defn- op-draw
-  [h op xy opts]
-  (let
-    [fill
-     (get opts "fill")
-
-     outline
-     (get opts "outline")
-
-     ops
-     (draw-ops op
-               (mapv double xy)
-               (when (some? fill) (->hex (->argb fill "RGB")))
-               (when (some? outline) (->hex (->argb outline "RGB")))
-               opts)]
-
-    (when (seq ops) (draw-into! h ops))
-    nil))
-
 (defn- read-draw-op
   "Decode ONE op record of a flat draw batch starting at `i`: name, n-coords,
    coords..., n-opts, then key/value pairs. Returns [next-index ops]."
@@ -2179,8 +2295,6 @@
                          (pil-envelope #(op-split h)))
    "__vis_pil_merge__" (fn [mode hs]
                          (pil-envelope #(op-merge mode hs)))
-   "__vis_pil_draw__" (fn [h op xy opts]
-                        (pil-envelope #(op-draw h op xy opts)))
    "__vis_pil_draws__" (fn [batch]
                          (pil-envelope #(op-draws batch)))
    "__vis_pil_textbbox__" (fn [text size font]

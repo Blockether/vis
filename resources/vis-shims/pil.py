@@ -137,38 +137,22 @@ def __vis_install_pil__():
 
     _color_cache = {}
 
-    def _packcol(color):
-        # A PIL colour spec packed into ONE 0xAARRGGBB scalar, memoised: draw
-        # loops reuse a handful of colours, and packing here beats marshalling
-        # a list per op.
+    def _packcol(color, mode):
+        # A colour RESOLVED in `mode` and packed into ONE 0xAARRGGBB scalar,
+        # memoised: draw loops reuse a handful of colours, and packing here beats
+        # marshalling a list per op.
         if color is None:
             return None
         try:
-            key = color if isinstance(color, (str, int)) else tuple(color)
+            key = (str(mode), color if isinstance(color, (str, int)) else tuple(color))
         except TypeError:
             key = None
         if key is not None:
             packed = _color_cache.get(key)
             if packed is not None:
                 return packed
-        if isinstance(color, str):
-            parts = [int(v) for v in _getrgb(color)]
-        elif isinstance(color, (list, tuple)):
-            parts = [int(v) for v in color]
-        else:
-            v = int(color)
-            parts = [v, v, v]
-        if len(parts) == 1:
-            parts = parts * 3
-        while len(parts) < 3:
-            parts.append(0)
-        alpha = parts[3] if len(parts) > 3 else 255
-        packed = (
-            ((alpha & 255) << 24)
-            | ((parts[0] & 255) << 16)
-            | ((parts[1] & 255) << 8)
-            | (parts[2] & 255)
-        )
+        r, g, b, a = _ink(color, mode)
+        packed = ((a & 255) << 24) | ((r & 255) << 16) | ((g & 255) << 8) | (b & 255)
         if key is not None and len(_color_cache) < 1024:
             _color_cache[key] = packed
         return packed
@@ -363,11 +347,66 @@ def __vis_install_pil__():
         raise ValueError("unknown color specifier: " + repr(color))
 
     def _getcolor(color, mode):
+        # PIL's `ImageColor.getcolor`: a colour NAME resolved IN the target mode --
+        # a grayscale-base mode answers the ITU-R 601-2 luma (scaled to 24 bits, the
+        # way `convert` does it), and a mode whose last band is alpha keeps the
+        # spec's alpha, 255 when the spec carried none.
         rgb = _getrgb(color)
-        if mode in ("L", "1"):
+        alpha = 255
+        if len(rgb) == 4:
+            rgb, alpha = rgb[:3], rgb[3]
+        m = str(mode)
+        if m in ("1", "L", "LA", "La", "I", "F"):
             r, g, b = rgb[0], rgb[1], rgb[2]
-            return int(round(0.299 * r + 0.587 * g + 0.114 * b))
-        return rgb
+            lum = (r * 19595 + g * 38470 + b * 7471 + 0x8000) >> 16
+            return (lum, alpha) if m[-1] == "A" else lum
+        return tuple(rgb) + (alpha,) if m[-1] == "A" else tuple(rgb)
+
+    def _ink_message(bands, is_tuple):
+        if bands == 1:
+            return "color must be int or single-element tuple"
+        if not is_tuple:
+            return "color must be int or tuple"
+        if bands == 2:
+            return "color must be int, or tuple of one or two elements"
+        return "color must be int, or tuple of one, three or four elements"
+
+    def _ink(color, mode, names=True):
+        # PIL's `getink`: a colour SPEC becomes pixel bytes by the mode's BAND COUNT,
+        # never by the four bytes the host happens to store. An INT is PIL's packed
+        # 0xAABBGGRR compatibility form for a multi-band mode -- so `Image.new('RGB',
+        # size, 255)` is RED and `Image.new('RGBA', size)` is TRANSPARENT, not opaque
+        # black -- and a byte clipped to 0..255 for a single-band one. A colour NAME
+        # is resolved in the target mode; `putpixel` resolves none, exactly as PIL
+        # refuses one there. Answers [r, g, b, a], which the host packs.
+        bands = _MODEBANDS.get(str(mode), 3)
+        if isinstance(color, str):
+            if not names:
+                raise TypeError(_ink_message(bands, False))
+            color = _getcolor(color, mode)
+        if isinstance(color, (list, tuple)) and len(color) == 1:
+            color = color[0]
+        if isinstance(color, (list, tuple)):
+            parts = [int(c) for c in color]
+            n = len(parts)
+            if bands == 1 or (bands == 2 and n != 2) or (bands > 2 and n not in (3, 4)):
+                raise TypeError(_ink_message(bands, True))
+            if bands == 2:
+                v, a = parts
+                return [v, v, v, a]
+            a = parts[3] if n == 4 and bands == 4 else 255
+            return [parts[0], parts[1], parts[2], a]
+        try:
+            v = int(color)
+        except (TypeError, ValueError):
+            raise TypeError(_ink_message(bands, False))
+        if bands == 1:
+            v = 0 if v < 0 else (255 if v > 255 else v)
+            return [v, v, v, 255]
+        r, g, b, a = v & 255, (v >> 8) & 255, (v >> 16) & 255, (v >> 24) & 255
+        if bands == 2:
+            return [r, r, r, a]
+        return [r, g, b, a if bands == 4 else 255]
 
     ImageColor = types.ModuleType("PIL.ImageColor")
     ImageColor.getrgb = _getrgb
@@ -497,11 +536,7 @@ def __vis_install_pil__():
             translate=None,
             fillcolor=None,
         ):
-            fc = None
-            if fillcolor is not None:
-                fc = _getrgb(fillcolor) if isinstance(fillcolor, str) else fillcolor
-                if isinstance(fc, (list, tuple)):
-                    fc = [int(x) for x in fc]
+            fc = None if fillcolor is None else _ink(fillcolor, self.mode)
             return _wrap(
                 _H("__vis_pil_rotate__", self._handle, float(angle), bool(expand), fc)
             )
@@ -547,11 +582,13 @@ def __vis_install_pil__():
             return int(v)
 
         def putpixel(self, xy, value):
-            if isinstance(value, (list, tuple)):
-                val = [int(c) for c in value]
-            else:
-                val = int(value)
-            _H("__vis_pil_putpixel__", self._handle, int(xy[0]), int(xy[1]), val)
+            _H(
+                "__vis_pil_putpixel__",
+                self._handle,
+                int(xy[0]),
+                int(xy[1]),
+                _ink(value, self.mode, False),
+            )
 
         def paste(self, im, box=None, mask=None):
             if not isinstance(im, Image):
@@ -560,8 +597,7 @@ def __vis_install_pil__():
                     box = (0, 0, self._w, self._h)
                 if len(box) == 2:
                     box = (box[0], box[1], self._w, self._h)
-                col = _getrgb(im) if isinstance(im, str) else im
-                tmp = new(self.mode, (box[2] - box[0], box[3] - box[1]), col)
+                tmp = new(self.mode, (box[2] - box[0], box[3] - box[1]), im)
                 im = tmp
                 box = (box[0], box[1])
             _check_mask(mask)
@@ -622,8 +658,13 @@ def __vis_install_pil__():
             return base64.b64decode(_H("__vis_pil_tobytes__", self._handle))
 
         def getdata(self, band=None):
+            if self.mode == "1":
+                # a bilevel image's BYTES are bit-packed, but its PIXELS are the raw
+                # values PIL stored (`Image.new('1', size, 1)` reads back as 1, not
+                # 255), so read the band, never `tobytes`.
+                return list(self.split()[0].tobytes())
             raw = self.tobytes()
-            if self.mode in ("L", "1", "I", "F", "P"):
+            if self.mode in ("L", "I", "F", "P"):
                 data = list(raw)
             elif self.mode == "LA":
                 # TWO bands, not the four the host raster stores: Pillow's (L, A).
@@ -741,11 +782,7 @@ def __vis_install_pil__():
                 data = method.data
                 method = method.method
             w, h = int(size[0]), int(size[1])
-            fc = fillcolor
-            if isinstance(fc, str):
-                fc = list(_getrgb(fc))
-            elif isinstance(fc, (list, tuple)):
-                fc = [int(x) for x in fc]
+            fc = None if fillcolor is None else _ink(fillcolor, self.mode)
             if method == EXTENT:
                 x0, y0, x1, y1 = data
                 sx = (x1 - x0) / float(w) if w else 1.0
@@ -962,14 +999,7 @@ def __vis_install_pil__():
     # -- module-level Image constructors ------------------------------------
     def new(mode, size, color=0):
         w, h = size
-        if isinstance(color, str):
-            color = _getrgb(color)
-        if color is None:
-            fill = None
-        elif isinstance(color, (list, tuple)):
-            fill = [int(c) for c in color]
-        else:
-            fill = int(color)
+        fill = None if color is None else _ink(color, mode)
         return _wrap(_H("__vis_pil_new__", str(mode), int(w), int(h), fill))
 
     # -- palette / quality / Exif helpers ------------------------------------
@@ -1382,7 +1412,9 @@ def __vis_install_pil__():
             self.mode = im.mode
 
         def _emit(self, name, xy, keys, values):
-            # ONE flat scalar record per op, appended to the shared draw queue.
+            # ONE flat scalar record per op, appended to the shared draw queue. A
+            # colour key is resolved HERE, in the image's OWN mode: how many bands a
+            # spec must carry is the mode's business, not the caller's.
             record = [name]
             points = self._flat(xy)
             record.append(len(points))
@@ -1390,6 +1422,8 @@ def __vis_install_pil__():
             tail = []
             for i in range(len(keys)):
                 value = values[i]
+                if keys[i] in ("fill", "outline"):
+                    value = _packcol(value, self.mode)
                 if value is not None:
                     tail.append(keys[i])
                     tail.append(value)
@@ -1410,17 +1444,17 @@ def __vis_install_pil__():
             return out
 
         def point(self, xy, fill=None):
-            self._emit("point", xy, ("fill",), (_packcol(fill),))
+            self._emit("point", xy, ("fill",), (fill,))
 
         def line(self, xy, fill=None, width=1, joint=None):
-            self._emit("line", xy, ("fill", "width"), (_packcol(fill), int(width)))
+            self._emit("line", xy, ("fill", "width"), (fill, int(width)))
 
         def rectangle(self, xy, fill=None, outline=None, width=1):
             self._emit(
                 "rectangle",
                 xy,
                 ("fill", "outline", "width"),
-                (_packcol(fill), _packcol(outline), int(width)),
+                (fill, outline, int(width)),
             )
 
         def rounded_rectangle(
@@ -1457,7 +1491,7 @@ def __vis_install_pil__():
                 "ellipse",
                 xy,
                 ("fill", "outline", "width"),
-                (_packcol(fill), _packcol(outline), int(width)),
+                (fill, outline, int(width)),
             )
 
         def polygon(self, xy, fill=None, outline=None, width=1):
@@ -1465,7 +1499,7 @@ def __vis_install_pil__():
                 "polygon",
                 xy,
                 ("fill", "outline", "width"),
-                (_packcol(fill), _packcol(outline), int(width)),
+                (fill, outline, int(width)),
             )
 
         def arc(self, xy, start, end, fill=None, width=1):
@@ -1473,7 +1507,7 @@ def __vis_install_pil__():
                 "arc",
                 xy,
                 ("fill", "start", "end", "width"),
-                (_packcol(fill), float(start), float(end), int(width)),
+                (fill, float(start), float(end), int(width)),
             )
 
         def chord(self, xy, start, end, fill=None, outline=None, width=1):
@@ -1482,8 +1516,8 @@ def __vis_install_pil__():
                 xy,
                 ("fill", "outline", "start", "end", "width"),
                 (
-                    _packcol(fill),
-                    _packcol(outline),
+                    fill,
+                    outline,
                     float(start),
                     float(end),
                     int(width),
@@ -1496,8 +1530,8 @@ def __vis_install_pil__():
                 xy,
                 ("fill", "outline", "start", "end", "width"),
                 (
-                    _packcol(fill),
-                    _packcol(outline),
+                    fill,
+                    outline,
                     float(start),
                     float(end),
                     int(width),
@@ -1510,7 +1544,7 @@ def __vis_install_pil__():
                 "text",
                 xy,
                 ("fill", "font_size", "font", "text"),
-                (_packcol(fill), int(size), _fontname(font), str(text)),
+                (fill, int(size), _fontname(font), str(text)),
             )
 
         def multiline_text(self, xy, text, fill=None, font=None, spacing=4, **kw):
