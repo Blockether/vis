@@ -1,8 +1,11 @@
 (ns com.blockether.vis.internal.docs-test
   "Docs renderer: cross-page markdown links must resolve in BOTH output
    modes (live `/docs/<slug>`, static `<slug>.html`), and the live
-   handler tolerates literal `<slug>.md` deep links with a redirect."
-  (:require [com.blockether.vis.internal.docs :as docs]
+   handler tolerates literal `<slug>.md` deep links with a redirect.
+   Plus one CONTENT invariant: `extending.md` is where an extension author
+   learns what `doc(name)` renders and what an `apropos` row previews."
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.docs :as docs]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private rewrite-md-links @#'docs/rewrite-md-links)
@@ -56,3 +59,28 @@
       (let [g (docs/generation)]
         (docs/collect)
         (expect (= g (docs/generation))))))
+
+(defn- extending-md [] (:md (first (filter #(= "extending" (:slug %)) (:pages (docs/collect))))))
+
+;; A tool page is rendered from FOUR entry keys (`extension/symbol-signature`,
+;; `symbol-keys-line`, `symbol-doc-text`) and previewed as a FOUR-key row
+;; (`doc-corpus/gist`). `extending.md` is the only place an author is told either,
+;; so when one of those renderers changes, this test names the page that must
+;; change with it.
+(defdescribe
+  extending-page-teaches-its-renderings-test
+  (it "names every entry key `doc(name)` renders, and both structural lines"
+      (let [md (extending-md)]
+        (expect (string? md))
+        (doseq
+          [needle [":description" ":params" ":result" ":call" "Keys:" "(REQUIRED)" "Raw result:"]]
+          (expect (str/includes? md needle) (str "extending.md never mentions " needle)))))
+  (it "shows an `apropos` row with all four of its keys"
+      (let [md (extending-md)]
+        (doseq [needle ["'kind'" "'gist'" "'at'" "'hit'"]]
+          (expect (str/includes? md needle)
+                  (str "extending.md never shows " needle " in an apropos row")))))
+  (it "names the shim keys that drive discovery and the page they answer with"
+      (let [md (extending-md)]
+        (doseq [needle [":shim/imports" ":shim/globals" ":shim/description" ":shim/docs"]]
+          (expect (str/includes? md needle) (str "extending.md never mentions " needle))))))

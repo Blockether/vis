@@ -58,7 +58,10 @@ Skills are **progressive**, so they cost almost nothing until used:
 2. When a task matches, the model calls `doc("name")` and gets the **whole
    `SKILL.md`**: the frontmatter description as its first line, then the body
    verbatim. `apropos(text)` searches those bodies, so a rule the description
-   never mentions is still findable.
+   never mentions is still findable. That description is also the entry's FIRST
+   line — a separately scored ranking field, and the opening of every `apropos`
+   row for the skill — so write it as the ask ("Use when the user reports an iOS
+   crash…"), never as a title.
 3. The model reads the skill's bundled files with its normal file tools and
    follows the instructions.
 

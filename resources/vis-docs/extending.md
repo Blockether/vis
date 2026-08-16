@@ -194,9 +194,14 @@ vis.symbol(fn, name=None, tag="observation", is_hidden=False)
   names (`todo_add` under alias `todo`) without double-prefixing.
 - **The docstring is mandatory** — it is the whole contract. `apropos(text)`
   searches it and `doc(name)` returns it verbatim, so it is the only place the
-  tool is described. House style: `await name(args) -> shape` on the first line,
-  because that first line is what the curated `doc()` index prints.
-- Parameter names are read from the real signature and shown to the model.
+  tool is described. Open it with the QUESTION the tool answers, in the words a
+  user would type: that first line is scored as its own field and is what an
+  `apropos` row previews. Never retype the signature there — the page renders one
+  from the real Python signature, so a hand-written copy prints twice, goes stale,
+  and displaces the sentence that should rank. See
+  [Your page and your `apropos` row](#your-page-and-your-apropos-row).
+- Parameter names are read from the real signature and shown to the model — name
+  them the way the model should type them.
 - `is_hidden=True` hides the tool from the model-facing listing (still callable).
 - Boolean keys keep **one spelling** across the boundary: a Python `is_<name>` key
   is the Clojure `:is-<name>` keyword — the same mechanical `_` ↔ `-` mirror the
@@ -1193,12 +1198,83 @@ What follows from that:
 | `:call` | The keyword→positional shape when the model's call differs from the implementation's arglists (`{:pos ["repository"] :opt-pos ["opts"] :rest :always}`) | A shape that contradicts a real arity |
 | `:ext/prompt-fn` | Dynamic availability, routing, or catalogs only | Signatures, example calls, or anything `doc(name)` already answers |
 
-The call line and the `Keys:` line are STRUCTURE: `doc(name)` renders both from the entry, and `apropos` ranks the document's first line, so a hand-written `await my_tool(…)` inside the prose both goes stale and displaces the sentence that should rank.
+The call line and the `Keys:` line are STRUCTURE — `doc(name)` renders both from the entry, never from your text; [Your page and your `apropos` row](#your-page-and-your-apropos-row) shows what that renders to, and what a hand-written signature costs.
 
 A model finds a symbol with `apropos(text)` — full-text over every docstring,
 documentation page, skill body and MCP tool description — and reads its contract
 with `doc(name)`. The prompt therefore does not need to carry either one, which is
 the whole reason a fragment must not restate them.
+
+### Your page and your `apropos` row
+
+Those two renderings ARE the contract, and both are built from the entry — so
+writing a tool is writing them. `doc("struct_index")` answers:
+
+```
+# struct_index  ·  callable                              <- the sandbox name
+
+struct_index(options, **kwargs)                          <- STRUCTURE: `:call`, else the real arglists
+Keys: paths (REQUIRED) · ranges · include_occurrences    <- STRUCTURE: `:params`
+
+ONE options map is the whole call — `struct_index({"paths": ["src"]})` …   <- `:description` (or the docstring)
+
+Raw result: String-keyed `{results}`; one row per path …  <- `:result`
+```
+
+A search never answers a body. It answers one bounded ROW per hit, built from the
+same text:
+
+```python
+apropos("how do I replace lines in a file")
+# 'patch': {'kind': 'tool', 'at': 1, 'hit': 'replace',
+#           'gist': 'Apply EVERY anchored edit for one file in a single atomic write … '
+#                   '… patch(path, [{"from": a, "replace": new}]) …'}
+```
+
+`kind` is the source that seeded the document (`tool` · `shim` · `page` · `skill`
+· `mcp` · `local`), `gist` is a bounded excerpt — the opening, the window the
+query landed in, and a fragment from deeper down — `at` is the 1-based line that
+window starts on, so a 70 KB skill is read from where it answers, and `hit` names
+the terms that matched (a spell correction shows as `pathc→patch`). Your page is
+RANKED by its first line, PREVIEWED by its opening, and READ from `at`.
+
+Six rules follow, each measured against Vis's own corpus:
+
+1. **Open with the question the tool answers, in the asker's words.** The first
+   line is scored as its own field and is what the row previews. Vis's editing
+   pages were written mechanics-first, for a reader who already knew the tool;
+   rewriting only their opening lines moved `grep` from rank 36 to 1 for *"find
+   where a symbol is used across the repo"* and `struct_index` from 50 to 1 for
+   *"what functions are defined in this file"* — over 27 natural asks, top-1
+   17 → 22.
+2. **Never write the call into the prose.** `doc(name)` prints it from `:call` or
+   the real arglists, and the `Keys:` line from `:params`. A hand-typed
+   `await my_tool(…)` inside the text prints twice, goes stale, and displaces the
+   sentence that should rank: when a call line was first prepended to `patch`'s
+   text, `patch` fell from rank 1 to 19 for its own defining ask.
+3. **Declare every option key in `:params`, once.** `:name` is the WIRE key
+   spelled exactly as the model types it; `:required?` only when the tool really
+   refuses without it (call it and see — `grep` marks none, because a query-less
+   `grep` lists files); `:note` is at most six words, the one thing the key's name
+   does not already say. Positional arguments belong to the call line, not here.
+4. **`:result` states the shape, never the workflow** — the keys Python will index
+   into. A sandbox verb returns a raw value with nothing in front of it, so this
+   is the only place its result is ever described.
+5. **Say a word once.** Query terms are ORed, stemmed (`define` / `defines` /
+   `defined` / `defining` are one term) and priced by rarity; a repeat saturates
+   instead of stacking, so keyword stuffing buys no rank and costs the human who
+   pulls the page.
+6. **Keep it a page.** Vis's 35 built-in tool pages run 301 B to 1.3 KB, median
+   676 B. Everything a caller needs WHILE calling belongs here rather than in the
+   prompt — and nothing else does.
+
+A symbol with neither `:description` nor a docstring has **no page at all**. After
+registering, read both renderings the way the model meets them:
+
+```python
+apropos("the sentence a user would actually type")  # is your tool in the first rows?
+print(doc("weather_lookup"))                        # call line right, keys marked, result stated?
+```
 
 ### Sandbox shims and autoloads
 
@@ -1216,6 +1292,12 @@ List one or more shim specs under `:ext/sandbox-shims`:
 
 ```clojure
 {:shim/name        "yaml"
+ ;; DISCOVERY, and never inferred from the name: the exact top-level modules a
+ ;; caller may `import`, and the exact names callable with no import at all.
+ ;; Both are listed in the prompt and answer `doc(name)`/`apropos(text)`, so a
+ ;; name missing here is a capability the model never learns it has.
+ :shim/imports     ["yaml"]
+ :shim/globals     []
  ;; PUSHED into every request's system prompt: one line, the surface and what it
  ;; does NOT support. Detail a caller needs only while calling belongs in
  ;; `:shim/docs`, which nothing pushes and `doc("yaml")` answers.
@@ -1236,6 +1318,13 @@ List one or more shim specs under `:ext/sandbox-shims`:
  ;; native image, embed it with `-H:IncludeResources=<your-prefix>/.*`.
  :shim/source      "vis-shims/yaml.py"}
 ```
+
+One page documents every name a shim contributes: `:shim/docs` — or, absent it,
+`:shim/description` — becomes the `doc`/`apropos` answer for each of them that
+the shim's own Python did not already document. So a shim with `:shim/globals`
+must NAME the call on that page (`nippy_encode(obj) -> bytes`), not just the
+library it stands in for; a contract test fails a globals page that never spells
+`name(`.
 
 Installed BEFORE the sandbox's baseline snapshot, so your `__vis_*` bridge names
 and published module are hidden from the model's live-vars view. Install is
