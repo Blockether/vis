@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 - A big session on a phone types and scrolls at speed again: a keystroke no longer re-runs the sessions list waiting behind the transcript, that list asks the fleet for nothing while it is parked, marking your place costs one store write per gesture instead of one per frame, and a streaming answer redraws only the step it is writing
 - A session scrolls at full speed however far back it goes: the phone lays out and paints only the turns it is showing, each one skipped at the height it was measured at, so a fast flick through 24 turns runs at 17 ms a frame instead of 104 ms and nothing shifts under your thumb
+- Tapping the transcript no longer throws you through the session: taking the keyboard down — which is what a tap outside the composer does — leaves a reader parked in history on the exact line they were reading, instead of moving them by the keyboard's whole height
 - Voice no longer needs Vis restarted to work again: an engine that failed to load is tried on the next use, a failed model download can be retried, and a recording that threw never blocks the next one
 - The installed binary can speak and listen at all — sherpa reads its own Java API through JNI by name, so the native image now keeps every one of those names: the class it calls back into while it speaks, and every step of the walk it makes through the generation options
 

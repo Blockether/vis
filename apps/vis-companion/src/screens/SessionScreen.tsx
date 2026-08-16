@@ -3582,13 +3582,16 @@ export function SessionScreen({
             // bottom — and then snaps it down: the small jump a reader sees
             // every time the composer is tapped (measured on iOS: 274 px).
             followEnd(box);
-          } else if (!followingRef.current) {
-            const limit = Math.max(0, box.scrollHeight - height);
-            box.scrollTop = Math.max(
-              0,
-              Math.min(limit, box.scrollTop + (previous - height)),
-            );
           }
+          // A reader parked in HISTORY gets nothing, for the same reason the
+          // composer case gets nothing: the keyboard takes its pixels off the
+          // scroller's bottom edge, so every line already on screen keeps its
+          // exact y and their page is still correct. Moving them by the shell's
+          // whole delta is what a tap reads as "the transcript shot off" — and
+          // a tap anywhere outside the composer is exactly what takes the
+          // keyboard DOWN, so a stray tap in the middle of the screen threw the
+          // reader 274 px (of a 568 px screen, measured on an iPhone 17 Pro)
+          // through a transcript they were reading.
         }
       }
       if (composerOnly || !followingRef.current || readerOwnsScroll()) return;
