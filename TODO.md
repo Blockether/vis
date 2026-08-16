@@ -3,6 +3,10 @@
 Five open items, ranked by measured cost. Evidence is from `read_session` over 7 sessions /
 61 turns / 2 592 iterations, plus `usage.failures` (115 rows) and live re-checks.
 
+**State after t21: every item is DONE or CLOSED.** 1 · 7 · 8 shipped the ranker and the row;
+2 shipped the call line, the keys line and the result contract; 3 · 4 · 5 closed on re-measured
+evidence — the behaviour they were written about is gone.
+
 Decide one at a time. Each item stays here until it is either **DONE** (shipped + tested) or
 **DROPPED** (with the reason). Nothing here is committed; this file is a working note.
 
@@ -124,7 +128,7 @@ never every global), and a test pinning the 8 queries above plus the two empty-a
 
 ## 2. `doc(name)` must state required arguments, not only the result shape
 
-**Status:** open — decision needed, and NEXT (re-measured live t14, still real)
+**Status:** DONE — shipped t15 `4eb49268f`, t18 `b2a63f670`, t19 `ebf0441cd`, t21 (this turn)
 **Cost observed:** ~10 iterations in `d4664dc1`; one-off repaired since.
 
 08-13 `doc("patch")` was 510 B and described the RESULT only, never the required edit keys.
@@ -147,7 +151,25 @@ Today it is 790 B and shows the call shape — but that was a hand repair of one
   (`{:pos ["path" "edits"]}`, `{:lead-opt "language" :rest :always}`) and a corpus entry already
   has a `:call` slot (`doc_corpus.clj:16,498`) that the page never prints.
 
-**Decision:** _pending_ (B, generated from `:call`, is the only one that cannot drift)
+**Decision: B — the page RENDERS the call from the entry, so it cannot drift. DONE.**
+
+- `doc(name)` opens with `name(args)` (from `:call`, else the real arglists) and prints
+  `Keys: a (REQUIRED) · b (note)` from a new `:params` vocabulary — every engine-bound tool, every
+  extension tool (t15). Required keys were PROBED, never read off a docstring.
+- Both lines are STRUCTURE, rendered beside the document: writing them INTO the text hijacked the
+  first-line BM25F field and dropped `patch` from rank 1 to 19 for its own defining ask (t16).
+- The core prompt now spells the call shape of `grep`, `struct_index`, `struct_nodes` beside `cat`
+  and `patch` — 8 shape errors in 326 code-verb calls, 3 hard refusals (t18).
+- `extending.md` shows the rendered page and the `apropos` row it produces, with the rules that
+  earned them (t19).
+
+**t21 — the mirror half: the RESULT that names no key.** 22 of the 23 bound tool pages already named
+their own; `run_tests`, the tool every verification goes through, answered *"execution metadata,
+counts/details, output, timeout, and REPL-recovery diagnostics"* for a 30-key map, so a caller had to
+print the map to find `is_pass`. It now names the verdict, the six counts, the fault rows
+(`test,type,message` plus `ns`/`file`), `output` and the REPL-recovery flags — page 640 B → 1 045 B.
+`extension_test` fails any contract that names fewer than two of its keys unless it answers plain
+text; measured with that rule, `run_tests` was the ONE violator (0 keys named).
 
 ---
 
@@ -179,7 +201,7 @@ surface — nothing left to build here.
 
 ## 4. Surface `defs()` where the amnesia actually happens
 
-**Status:** open — decision needed
+**Status:** CLOSED on fresh evidence (t21) — the measured cost is gone, no code needed
 **Cost observed:** 162 `def` statements, 99 distinct names, **87 redefinitions (54 %)**,
 only **1** byte-identical — the other 86 drifted. `defs()` was called **0** times.
 
@@ -192,13 +214,26 @@ different notions of how to render a `grep` result inside one session, so no anc
 - B. Warn on redefinition of a name that already exists with a different body.
 - C. Prompt-only wording change.
 
-**Decision:** _pending_
+**Re-measured t21 — 60 recent gateway journals, 895 unique sandbox blocks:**
+
+| | audit (08-11 → 08-13) | t21 |
+|---|---|---|
+| `def` statements | 162 | 59 |
+| redefinitions | **87 (54 %)** | **8 (14 %)** |
+| byte-identical re-derivations | 86 of 87 drifted | **0** — every redefinition today refines |
+| `defs()` calls | **0** | **22** |
+
+**Decision: none of A/B/C — closed by what already shipped.** The prompt rule (`defs()` lists them,
+`defs(name)` reads one back, a `def` outlives the block, the turn and a gateway restart) plus t20's
+docstring surface (`851ac835f`: one docstring line is the `defs()` gist, the whole of it the
+`doc(name)` page, and what `apropos` finds it by) moved the behaviour. B is refuted by the data: a
+redefinition warning would fire on 8 refinements and 0 re-derivations — pure noise.
 
 ---
 
 ## 5. Promote the four re-derived helpers to `.vis/extensions/*.py`
 
-**Status:** open — decision needed
+**Status:** CLOSED on fresh evidence (t21) — three of the four helpers no longer exist
 **Cost observed:** 28 combined re-derivations of four missing capabilities.
 
 | helper | defs | distinct bodies | turns | what it really is |
@@ -217,7 +252,22 @@ different notions of how to render a `grep` result inside one session, so no anc
 - B. Write only `gall` + `show` (pure `grep` ergonomics) and fix `grep` to not need them.
 - C. Fix `grep` to return drained, rendered results and write none.
 
-**Decision:** _pending_
+**Re-measured t21 — the same 60 journals, deduped:**
+
+| helper | audit | t21 | why |
+|---|---|---|---|
+| `V(path,a,b)` | 9 defs | **0** | `cat` is discovered — `show me lines 10 to 40 of a file` answers it first |
+| `rt(path,old,new)` | 6 defs | **0** | `patch` is discovered — `replace lines in a file` answers it first |
+| `gall` | 11 defs | **0** | `grep` drains its own pagination and answers anchored TEXT |
+| `show` | 10 defs | 4 defs / 3 sessions | flattens a `{"matches": …}` map `grep` NO LONGER RETURNS |
+| `run` / `git` | 3 / 4 | 5 one-line shell wrappers | all re-derive `print((await shell(cmd)).wait(secs)["stdout"])`, which `doc("shell")` prints verbatim |
+
+**Decision: C — fix the tool and its page, write no extension.** Nothing goes into
+`.vis/extensions/*.py`: the four capabilities are either obsolete or already one documented line, and
+an extension would freeze a wrapper around a contract that keeps improving. What remains is discovery,
+measured at HEAD: `run a shell command and get its output` / `wait for a command to finish` /
+`read the last lines of a running command` all answer `shell` first; `stop a process I started`
+answers `repl_stop` first and `shell` fifth — a near-tie, logged, not fixed.
 
 ---
 
