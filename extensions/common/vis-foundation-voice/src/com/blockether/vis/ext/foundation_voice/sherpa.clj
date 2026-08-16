@@ -26,16 +26,14 @@
    (`files/download!`), from the install being atomic, and from the loaded
    library having to answer `version` — which `sherpa-native-test` asserts.
 
-   JNI and not `java.lang.foreign`, because the choice is upstream's and not
-   ours: the library Vis ships, `libsherpa-onnx-jni`, exports 133 `Java_*` entry
-   points and NOT ONE `SherpaOnnx*` C symbol, so a Panama downcall has nothing
-   to bind to. sherpa's C API is a different artifact — per-platform `-shared`
-   tarballs on GitHub releases, under no Maven coordinate — and its header
-   declares 156 functions over 86 structs whose layouts we would own from then
-   on, where drifting from a bump corrupts memory silently instead of failing by
-   name. Vis does use FFM where it owns the boundary — `internal/foundation/pty`
-   is downcalls and no JNI — so here the image registers the API jar's types for
-   JNI instead (`reachability-metadata.json`, pinned by `sherpa-test`)."
+   ;; JNI and not `java.lang.foreign`, because the choice is upstream's: the library
+   ;; Vis ships, `libsherpa-onnx-jni`, exports 133 `Java_*` entry points and not one
+   ;; `SherpaOnnx*` C symbol, so a Panama downcall has nothing to bind to. sherpa's C
+   ;; API is a separate artifact — per-platform tarballs under no Maven coordinate —
+   ;; whose 156 functions over 86 structs would leave us owning their layouts. Vis
+   ;; does use FFM where it owns the boundary (`internal/foundation/pty`); here the
+   ;; image registers the API jar's types for JNI instead
+   ;; (`reachability-metadata.json`, pinned by `sherpa-test`)."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]

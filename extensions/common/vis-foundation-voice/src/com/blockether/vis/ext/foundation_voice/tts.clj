@@ -38,13 +38,11 @@
 ;; espeak-ng, which is the SYSTEM's to install and not Vis' to ship
 ;; =============================================================================
 
-;; Piper phonemizes through espeak-ng, which reads its phoneme tables from a
-;; directory at run time. Vis does not ship those tables: espeak-ng is
-;; GPL-3.0-or-later and one command away in every package manager, so the
-;; machine installs it once and every Piper voice - and everything else on that
-;; machine - shares the copy. Missing tables are therefore a REFUSAL that names
-;; the command for the platform it is refusing on, never a silent failure and
-;; never a download.
+;; Piper phonemizes through espeak-ng, whose tables Vis does not ship:
+;; GPL-3.0-or-later, one package away, read from their own directory at run time
+;; and shared by everything else on the machine. Missing tables are a REFUSAL that
+;; names the install command for this platform, never a silent failure or a
+;; download.
 (def ^:const espeak-data-env "VIS_ESPEAK_NG_DATA")
 
 (def espeak-data-files
@@ -347,10 +345,9 @@
 
     (.. (OfflineTtsConfig/builder) (setModel model) build)))
 
-;; ONE loaded model at a time. Loading is seconds and hundreds of megabytes, so
-;; speaking the next line in the same voice must not pay it again; and a session
-;; that switches voice must not hold every model it ever used. The instance we
-;; drop is released by sherpa's own finalizer once nothing refers to it.
+;; ONE loaded model at a time: loading costs seconds and hundreds of megabytes, so
+;; the same voice must not pay it twice and a switch of voice must not retain the
+;; old model. sherpa frees the dropped instance in its own finalizer.
 (defonce ^:private loaded* (atom nil))
 
 (defn- loaded-tts
@@ -372,13 +369,10 @@
   15.0)
 
 (deftype
-  ;; NAMED on purpose, and registered for JNI in reachability-metadata.json.
-  ;; sherpa calls this back FROM C++: GetObjectClass on the instance, then
-  ;; GetMethodID "invoke" "([F)Ljava/lang/Integer;". A `reify` answers to a
-  ;; name the compiler invents (`tts$generation_callback$reify__97523`), which
-  ;; no metadata can register and every build changes - so the JVM spoke and
-  ;; the native image crashed inside the first callback. A deftype has a stable
-  ;; class name, and `sherpa-test` fails if the metadata stops carrying it.
+  ;; NAMED on purpose: sherpa calls this back FROM C++ with GetMethodID "invoke"
+  ;; "([F)Ljava/lang/Integer;", and a `reify`'s class name is invented anew by every
+  ;; build, so no metadata can register it. `sherpa-test` fails if
+  ;; reachability-metadata.json stops carrying this class.
   GenerationCallback
   [^AtomicLong produced ^long sample-rate ^double expected-seconds report]
   OfflineTtsCallback
@@ -445,18 +439,14 @@
 
     (.setReferenceAudio gen (.getSamples reader))
     (.setReferenceSampleRate gen (.getSampleRate reader))
-    ;; The clip's own transcript when the catalogue knows it: pocket-tts is
-    ;; given the reference audio AND what it says, and a clone that is not
+    ;; pocket-tts is given the reference audio AND its transcript: a clone that is not
     ;; guessing at the words tracks the voice far more closely.
     (.setReferenceText gen (str clip-text))
     (.setNumSteps gen (int 5))
-    ;; sherpa reads this map FROM C++: `GetObjectClass` on the instance, then
-    ;; `entrySet`, `iterator`, `hasNext`, `next`, `getKey`, `getValue` on
-    ;; whatever CONCRETE class it finds. A Clojure map answers to a class that
-    ;; changes with its size (`PersistentArrayMap`, then `PersistentHashMap`),
-    ;; so no metadata can register the walk - the native image called an
-    ;; uncompiled `entrySet` and died inside the JNI trampoline. One JDK class,
-    ;; registered in reachability-metadata.json, is the whole fix.
+    ;; sherpa walks this map FROM C++ by whatever CONCRETE class it finds
+    ;; (`entrySet`, `iterator`, `next`, `getKey`). A Clojure map changes class with
+    ;; its size, so no metadata can register that walk and the native image died in
+    ;; the JNI trampoline. One JDK class is the whole fix.
     (.setExtra gen (doto (LinkedHashMap.) (.put "temperature" "0.7") (.put "chunk_size" "15")))
     gen))
 
