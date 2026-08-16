@@ -87,6 +87,7 @@ export function renderSessionsScreen({
   onOpen = () => {},
   onUnreachable,
   isVisible = true,
+  onSearch = () => {},
   at,
 }: {
   machines?: MachineFixture[];
@@ -96,6 +97,8 @@ export function renderSessionsScreen({
   onUnreachable?: (message: string | null) => void;
   /** Mounted but off the glass, the way the shell parks it behind a session. */
   isVisible?: boolean;
+  /** The door to the search page, or `null` when that page is already open. */
+  onSearch?: (() => void) | null;
   /**
    * Mount these very machines again, instead of minting fresh ones. A relaunch
    * builds the list from nothing while what the app SAVED is still there, and that
@@ -227,6 +230,7 @@ export function renderSessionsScreen({
       subscriptions={null}
       onOpen={onOpen}
       onUnreachable={onUnreachable}
+      onSearch={onSearch}
     />
   );
   const view = render(screen(query, isVisible));

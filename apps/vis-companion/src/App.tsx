@@ -949,6 +949,11 @@ export function App() {
               subscriptions={subscriptions}
               onUnreachable={handleUnreachable}
               onOpen={openGatewaySession}
+              // The list's own way into the search page: a pull at the top of it
+              // opens the same door the app bar's glass is, and the page it opens is
+              // this screen with the query over it — so while it is already open,
+              // the gesture has nothing left to open and stands down.
+              onSearch={searching ? null : () => setSearching(true)}
             />
           </div>
         )}

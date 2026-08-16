@@ -11,6 +11,7 @@ import {
 } from 'react';
 
 import type { MachineColor } from '../lib/machine-colors';
+import type { PullPhase } from '../lib/pull-to-search';
 import type { RefObject } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -1325,6 +1326,38 @@ export const SearchField = forwardRef<
   );
 });
 
+/**
+ * WHAT A PULL AT THE TOP OF THE LIST IS ABOUT TO DO.
+ *
+ * The band the search page arrives behind, riding down over the first header of
+ * the list while a finger drags it (`lib/pull-to-search`). It is the whole
+ * report this gesture gets: with no haptics on this app, a pull that showed
+ * nothing until the finger lifted would be a gesture nobody could learn.
+ *
+ * It says what the NEXT thing the hand does will mean — `Pull to search` while
+ * the pull is short of the threshold, `Release to search` once lifting would
+ * open the page — so the reader is never told about a state, only about their
+ * own next move. Armed, it takes the accent, because the one moment worth
+ * seeing out of the corner of an eye is the moment the gesture becomes real.
+ *
+ * It is `HEADER_BAND`'s own height and paper: it stands in for the band it
+ * covers rather than adding a second, thinner strip above it, and it is
+ * decoration for a touch gesture, so it is never announced and never pressed.
+ */
+export function PullToSearchHint({ phase }: { phase: PullPhase }) {
+  const isShown = phase !== 'none';
+  return (
+    <div
+      aria-hidden="true"
+      className={`pointer-events-none absolute inset-x-0 top-0 z-20 flex min-h-13 items-center justify-center gap-2 border-b border-dialog-edge bg-level-project font-mono text-meta transition-[translate,opacity] duration-150 motion-reduce:transition-none mouse:min-h-9 ${
+        isShown ? 'translate-y-0 opacity-100' : '-translate-y-full opacity-0'
+      } ${phase === 'armed' ? 'text-accent' : 'text-dialog-hint'}`}
+    >
+      <SearchIcon className="size-3.5 shrink-0" />
+      {phase === 'armed' ? 'Release to search' : 'Pull to search'}
+    </div>
+  );
+}
 export function Banner({ kind, children }: { kind: 'ok' | 'warn' | 'err'; children: ReactNode }) {
   const colors = {
     ok: 'border-ok/50 bg-ok/10 text-ok',

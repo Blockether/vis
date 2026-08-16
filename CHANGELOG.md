@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - fix(build): make `dev` a track of its own, refused as an update target
+- feat(companion): pull the sessions list down to open the fleet-wide search
 
 ## [v0.1.40] - 2026-08-16
 

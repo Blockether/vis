@@ -22,6 +22,7 @@ import {
   MachineProjectsButton,
   NewSessionButton,
   ProjectCrumb,
+  PullToSearchHint,
   RowDisclosure,
   SectionGap,
   SectionHeader,
@@ -55,6 +56,7 @@ import {
   useListScrollPark,
   type ListAnchor,
 } from '../lib/list-scroll';
+import { usePullToSearch, type PullPhase } from '../lib/pull-to-search';
 import { SwipeActions } from '../components/SwipeActions';
 import {
   ManageProjectsSheet,
@@ -308,6 +310,13 @@ interface Props {
    * off a screen nobody can see.
    */
   isVisible: boolean;
+  /**
+   * Open the fleet-wide search page — the same door the app bar's glass is. It is
+   * `null` while that page is ALREADY the screen, which stands the list's pull-down
+   * gesture (`lib/pull-to-search`) down: a hint promising a page the reader is
+   * already standing on is the screen lying to them.
+   */
+  onSearch: (() => void) | null;
 }
 
 export function SessionsScreen({
@@ -318,6 +327,7 @@ export function SessionsScreen({
   onUnreachable,
   onOpen,
   isVisible,
+  onSearch,
 }: Props) {
   // A machine OWNS its projects: every row belongs to exactly one gateway, and a
   // project only exists inside the machine it lives on. The fleet is therefore
@@ -413,6 +423,9 @@ export function SessionsScreen({
   // from a hang.
   const [actionProgress, setActionProgress] = useState<{ done: number; total: number } | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  // How far the finger has pulled the top of the list down, in the only three
+  // steps the screen paints. It changes at most twice per gesture, never per frame.
+  const [pullPhase, setPullPhase] = useState<PullPhase>('none');
   const refreshAnchorRef = useRef<ListAnchor | null>(null);
   // The reading position is put back at most once per mount, and never after the
   // reader has taken the scroller over.
@@ -815,6 +828,11 @@ export function SessionsScreen({
   useListScrollPark(listRef, () => {
     restoredRef.current = true;
   });
+
+  // AT THE TOP OF THE LIST, A PULL IS A QUESTION ABOUT SEARCH. The glass that opens
+  // the search page sits in the far top corner of the app bar; the thumb already
+  // reading this list has a gesture for it, and every native list answers it.
+  usePullToSearch(listRef, setPullPhase, onSearch);
 
   // Transcript + title search runs server-side and RANKED (see `rank` below), and
   // it is a fleet ROUND TRIP per machine over a whole transcript store — hundreds
@@ -1785,7 +1803,10 @@ export function SessionsScreen({
             home indicator, which used to swallow them.
             At `sm` the card detaches again and ENDS where its content ends (`max-h-full`
             + `h-auto`), so the desktop never draws a border around empty paper. */}
-        <div className="flex h-full min-h-0 flex-col overflow-hidden border-y border-dialog-edge bg-panel sm:mx-0 sm:h-auto sm:max-h-full sm:border-x sm:border-r-2">
+        <div className="relative flex h-full min-h-0 flex-col overflow-hidden border-y border-dialog-edge bg-panel sm:mx-0 sm:h-auto sm:max-h-full sm:border-x sm:border-r-2">
+        {/* The pull reports itself while it happens: the card clips the band until a
+            finger brings it down over the list's first header. */}
+        <PullToSearchHint phase={pullPhase} />
         {/* A create that failed has no button left to speak from once the order's own
             popover is gone, so the word lands on the paper the list is about to fill. */}
         {createError && (
