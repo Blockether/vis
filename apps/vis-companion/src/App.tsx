@@ -179,21 +179,11 @@ export function App() {
     null,
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // The settings dialog's REMOUNT identity is the machine you opened, captured
-  // once — never its current URL. Switching address rewrites `settingsTarget.url`,
-  // and keying the dialog on that tore it down and rebuilt it: the entry
-  // transition replayed, the scroll position snapped back to the top and every
-  // panel refetched from an empty cache. That is the jump. The address is a
-  // property of the machine, not its identity.
-  const [settingsKey, setSettingsKey] = useState("");
   // ONE settings dialog, opened from two places at two aims: the cog opens it on the
   // machine the app is already using, a machine's `⋯` opens it on that machine. Both
   // land in the same box, so neither is a different destination.
   const openSettings = useCallback((conn: GatewayConn | null) => {
-    if (conn) {
-      setSettingsKey(conn.id ?? conn.url);
-      setSettingsTarget(conn);
-    }
+    if (conn) setSettingsTarget(conn);
     setSettingsOpen(true);
   }, []);
   const [ready, setReady] = useState(false);
@@ -221,21 +211,6 @@ export function App() {
   const subscriptions = useMemo(
     () => (client ? new SessionSubscriptionHub(client) : null),
     [client],
-  );
-  // Stable client for the open settings dialog: a fresh `new GatewayClient(...)`
-  // per render made the dialog's `load` re-fire on every unrelated App re-render
-  // (session polling, subscriptions), re-applying the theme and flickering it.
-  // Keyed on the transport pair only: renaming a machine (or any other field
-  // `GatewayClient` never reads) must not build a new client and re-fire the
-  // dialog's `load`.
-  const settingsUrl = settingsTarget?.url ?? "";
-  const settingsToken = settingsTarget?.token;
-  const settingsClient = useMemo(
-    () =>
-      settingsUrl
-        ? new GatewayClient({ url: settingsUrl, token: settingsToken })
-        : null,
-    [settingsUrl, settingsToken],
   );
 
   const refresh = useCallback(async () => {
@@ -1018,11 +993,7 @@ export function App() {
         <SettingsDialog
           gateways={conns}
           gateway={settingsTarget}
-          gatewayKey={settingsKey}
-          client={settingsClient}
-          activeUrl={active?.url}
           primaryUrl={primary?.url}
-          onSelectGateway={openSettings}
           onAddMachine={addConnection}
           onMakePrimary={async (conn) => {
             await Promise.all([setPrimaryUrl(conn.url), setActiveUrl(conn.url)]);
@@ -1035,8 +1006,7 @@ export function App() {
           onRename={async (conn, label) => {
             const updated = { ...conn, label };
             await upsertConnection(updated);
-            // The column keeps reading the machine it was reading, under its new
-            // name — the row that was renamed is not always the one being read.
+            // The row the dialog opened on keeps its identity under the new name.
             if (settingsTarget?.url === conn.url) setSettingsTarget(updated);
             await refresh();
           }}
@@ -1046,12 +1016,11 @@ export function App() {
             await refresh();
           }}
           onSelectAddress={async (conn, url, pinned) => {
-            // The verb acts on the ROW it came out of, which is not always the
-            // machine this column is READING: the address line belongs to its own
-            // machine, and only the two pointers that actually named this gateway
-            // move with it.
+            // The verb acts on the ROW it came out of, never on another machine: the
+            // address line belongs to its own machine, and only the two pointers that
+            // actually named this gateway move with it.
             const wasActive = conn.url === active?.url;
-            const wasReading = settingsTarget?.url === conn.url;
+            const wasOpened = settingsTarget?.url === conn.url;
             if (url !== conn.url) {
               const named = Boolean(conn.label) && conn.label !== hostOf(conn.url);
               await switchConnectionUrl(
@@ -1062,7 +1031,7 @@ export function App() {
             }
             const saved = await upsertConnection({ url, pinned });
             const next = saved.find((c) => c.url === url) ?? { ...conn, url, pinned };
-            if (wasReading) setSettingsTarget(next);
+            if (wasOpened) setSettingsTarget(next);
             if (wasActive) setActive(next);
             await refresh();
           }}

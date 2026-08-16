@@ -1353,9 +1353,15 @@ describe("settings is ONE dialog with two columns", () => {
     expect(settings).toContain("onRemove?: (conn: GatewayConn)");
   });
 
-  it("switches machine inside the dialog instead of closing it", () => {
+  it("hides each machine's settings under that machine's own row", () => {
+    // The column used to paint ONE machine's panels under the WHOLE list — the
+    // machine whose row was pressed last, marked `CURRENT` — so a press replaced
+    // the settings already on screen instead of opening the row it landed on.
     expect(settings).toContain("<MachineRows");
-    expect(settings).toContain("onSelectGateway");
+    expect(settings).toContain("openUrls={openUrls}");
+    expect(settings).toContain("renderPanel={(conn) => (");
+    expect(settings).not.toContain("onSelectGateway");
+    expect(settings).not.toContain("activeUrl");
   });
 
   it("gives each column its own scroll on desktop", () => {
@@ -2783,8 +2789,10 @@ describe("the session screen and the settings dialog spell no control out", () =
   // keep; the `⋯` is what goes.
   it("gives the band one line and keeps every row's verbs under its own slide", () => {
     // ONE row-verb surface in this app, on both lists, with nothing standing beside it.
+    // (The row's key moved out to the block that holds the row AND the settings
+    // that machine discloses under it.)
     expect(machinesSource).toContain(
-      "<SwipeActions key={conn.url} label={name} actions={actions}>",
+      "<SwipeActions label={name} actions={actions}>",
     );
     expect(sessionsListSource).toContain("<SwipeActions");
     expect(machinesSource).not.toContain("KebabButton");

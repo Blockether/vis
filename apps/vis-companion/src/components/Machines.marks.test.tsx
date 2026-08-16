@@ -2,6 +2,8 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
+import machinesSource from './Machines.tsx?raw';
+
 import type { GatewayConn } from '../lib/types';
 import { MachineRows } from './Machines';
 
@@ -12,6 +14,13 @@ import { MachineRows } from './Machines';
 // the app opens on and the one it is using — so two permanent words stood in the
 // line whose name, address and latency the reader actually came for. In a fleet
 // they still repeated each other on the primary's own row.
+//
+// Regression, user report (the settings design, "including that whole CURRENT"):
+// the row went on wearing `CURRENT` for whichever machine the app happened to be
+// talking to. It named no choice the reader had made — the app painted it on the
+// machine the settings column was reading — so a rank a verb in this row SETS
+// (`PRIMARY`) and a fact about the app's own bookkeeping stood in one box, in one
+// ink, on rows the reader was pressing to change something else entirely.
 
 const tower: GatewayConn = { url: 'http://192.168.0.241:7890', label: 'tower' };
 const laptop: GatewayConn = { url: 'http://100.64.0.10:7890', label: 'laptop' };
@@ -22,7 +31,6 @@ function rows(props: Partial<Parameters<typeof MachineRows>[0]> = {}) {
     <MachineRows
       conns={[tower]}
       primaryUrl={tower.url}
-      activeUrl={tower.url}
       selectedUrl={tower.url}
       health={{}}
       onPick={() => {}}
@@ -47,19 +55,18 @@ describe('what a machine row says about its rank', () => {
     expect(lineOf('tower')).toContain('tower');
   });
 
-  it('ranks the fleet, and never repeats the rank on the row that holds it', () => {
+  it('ranks the fleet, and says nothing else about it', () => {
     rows({ conns: [tower, laptop] });
 
     expect(lineOf('tower')).toContain('Primary');
-    // The app opens on `tower` and is using `tower`: one word says both.
-    expect(screen.queryByText('Current')).toBeNull();
+    expect(lineOf('laptop')).not.toContain('Primary');
   });
 
-  it('says CURRENT exactly where the app is NOT on the machine it opens on', () => {
-    rows({ conns: [tower, laptop], activeUrl: laptop.url });
+  it('never says CURRENT, whichever machine the app is talking to', () => {
+    rows({ conns: [tower, laptop] });
 
-    expect(lineOf('laptop')).toContain('Current');
-    expect(lineOf('tower')).toContain('Primary');
-    expect(lineOf('tower')).not.toContain('Current');
+    expect(screen.queryByText('Current')).toBeNull();
+    // And the prop that fed it is gone from the list's own contract.
+    expect(machinesSource).not.toContain('activeUrl?:');
   });
 });

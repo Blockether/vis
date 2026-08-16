@@ -54,7 +54,6 @@ export function ConnectScreen({
             <MachineRows
               conns={conns}
               selectedUrl={active?.url}
-              activeUrl={active?.url}
               primaryUrl={primary?.url}
               health={health}
               onPick={onSettings}

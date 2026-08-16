@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useRef,
+  useMemo,
   useState,
   type ReactNode,
 } from "react";
@@ -110,7 +111,7 @@ import {
 } from "../components/Machines";
 
 /**
- * ONE MACHINE'S OWN SETTINGS, as a column inside `SettingsDialog`.
+ * ONE MACHINE'S OWN SETTINGS, standing under that machine's own row in `SettingsDialog`.
  *
  * These panels used to be a dialog of their own — `Machine settings`, opened from a
  * machine's `⋯` — so the two halves of one question ("where do I change this?") stood
@@ -118,13 +119,16 @@ import {
  * what left is the frame around them, and the dialog now owns Escape, the title and
  * the way out.
  */
-function GatewayPanels({
-  client,
-  gateway,
-}: {
-  client: GatewayClient;
-  gateway: GatewayConn;
-}) {
+function GatewayPanels({ gateway }: { gateway: GatewayConn }) {
+  // ONE CLIENT PER MACHINE, and the transport pair is its whole identity. A fresh
+  // `new GatewayClient(...)` per render re-fired every panel's `load` on every
+  // unrelated re-render of the dialog; renaming a machine — a field no client reads
+  // — must not rebuild it either. The panels mount only while this machine's row is
+  // open, so nothing here talks to a gateway the reader has not opened.
+  const client = useMemo(
+    () => new GatewayClient({ url: gateway.url, token: gateway.token }),
+    [gateway.url, gateway.token],
+  );
   // Reopening the dialog paints the gateway's last known toggles immediately;
   // `load` below refreshes them (and `setSetting` patches the cache in place).
   const [groups, setGroups] = useState<ToggleGroup[] | null>(
@@ -1686,6 +1690,11 @@ function SettingsColumn({
   );
 }
 
+/** A machine's identity across an address change: a URL is a property of it, not it. */
+function machineId(conn: GatewayConn): string {
+  return conn.id ?? conn.url;
+}
+
 /**
  * SETTINGS IS ONE PLACE: this device on the left, the machines on the right.
  *
@@ -1696,19 +1705,24 @@ function SettingsColumn({
  * filed under the device while the machine it produced was filed somewhere else.
  *
  * One dialog, two columns, one rule between them. MACHINES owns the fleet — which
- * machines this device is paired with, how to add another, and what the machine being
- * read decides — and APPLICATION owns what this copy of Vis decides (theme, page size).
+ * machines this device is paired with, how to add another, and what each of them
+ * decides — and APPLICATION owns what this copy of Vis decides (theme, page size).
  * Machines leads, because the cog is opened to reach a machine far more often than to
  * repaint the app, and below `sm:` the columns stack in that same order.
+ *
+ * A MACHINE'S SETTINGS ARE HIDDEN UNDER THAT MACHINE. Every row is a disclosure and
+ * its panels stand under its own row, opened by the chevron the rest of this app
+ * opens things with. They used to be ONE column body under the whole list, showing
+ * whichever machine was pressed last: pressing a machine opened nothing, it swapped
+ * the settings already on screen for another machine's — reported as a press that
+ * changes the view instead of opening the row — and the machine that column happened
+ * to be reading wore the word `CURRENT`, which named no choice the reader had made.
+ * Opening one machine leaves every other machine exactly as it was.
  */
 export function SettingsDialog({
   gateways,
   gateway,
-  gatewayKey,
-  client,
-  activeUrl,
   primaryUrl,
-  onSelectGateway,
   onAddMachine,
   onMakePrimary,
   onRename,
@@ -1717,18 +1731,13 @@ export function SettingsDialog({
   onClose,
 }: {
   gateways: GatewayConn[];
-  /** The machine the Gateways column is showing; `null` only when none is paired. */
-  gateway: GatewayConn | null;
   /**
-   * The selected machine's REMOUNT identity, captured once — never its current URL.
-   * Switching address rewrites the URL, and keying on that tore the column down.
+   * The machine this dialog was OPENED on, and the only row that starts open: the cog
+   * lands on the machine the app is using, a session's `Manage providers` on its own
+   * machine. `null` only when none is paired.
    */
-  gatewayKey: string;
-  client: GatewayClient | null;
-  /** The machine the APP is talking to, which is not always the one being read. */
-  activeUrl?: string | null;
+  gateway: GatewayConn | null;
   primaryUrl?: string | null;
-  onSelectGateway: (conn: GatewayConn) => void;
   /** Pairing is setup, and setup happens HERE — never by leaving this dialog. */
   onAddMachine: (conn: GatewayConn, makeActive?: boolean) => Promise<void>;
   /**
@@ -1742,8 +1751,7 @@ export function SettingsDialog({
   onRemove?: (conn: GatewayConn) => void | Promise<void>;
   /**
    * Bind one machine to a different address. It acts on the ROW it came out of —
-   * the machine's own address line — and never on whichever machine this column
-   * happens to be reading.
+   * the machine's own address line — and never on another machine's.
    */
   onSelectAddress?: (
     conn: GatewayConn,
@@ -1817,6 +1825,22 @@ export function SettingsDialog({
     }
   }
 
+  // WHICH MACHINES STAND OPEN, held by the identity that survives an address change.
+  // Several may: opening a machine is never a reason to close another one.
+  const [openIds, setOpenIds] = useState<ReadonlySet<string>>(
+    () => new Set(gateway ? [machineId(gateway)] : []),
+  );
+  const toggleMachine = useCallback((conn: GatewayConn) => {
+    setOpenIds((open) => {
+      const next = new Set(open);
+      if (!next.delete(machineId(conn))) next.add(machineId(conn));
+      return next;
+    });
+  }, []);
+  const openUrls = new Set(
+    gateways.filter((conn) => openIds.has(machineId(conn))).map((conn) => conn.url),
+  );
+
   const health = useFleetHealth(gateways);
 
   return (
@@ -1857,31 +1881,25 @@ export function SettingsDialog({
                 now the very components that screen is made of: one object, and nothing
                 leaves this dialog to reach it. It leads the dialog because it is what
                 the cog was opened FOR — below `sm:` the columns stack in that order. */}
-            {gateways.length > 0 && (
+            {gateways.length > 0 ? (
               <MachineRows
                 conns={gateways}
-                selectedUrl={gateway?.url}
-                activeUrl={activeUrl}
+                openUrls={openUrls}
                 primaryUrl={primaryUrl}
                 health={health}
-                onPick={onSelectGateway}
+                onPick={toggleMachine}
                 onMakePrimary={onMakePrimary}
                 onRename={onRename}
                 onForget={onRemove}
                 onSelectAddress={onSelectAddress}
-              />
-            )}
-
-            {gateway && client ? (
-              <GatewayPanels
-                key={gatewayKey}
-                client={client}
-                gateway={gateway}
+                renderPanel={(conn) => (
+                  <GatewayPanels key={machineId(conn)} gateway={conn} />
+                )}
               />
             ) : (
               <SettingsPanel title="No machine yet">
                 <p className="px-4 py-6 text-center font-mono text-body text-dialog-hint">
-                  Add a machine above and its settings appear here.
+                  Add a machine above, and its settings live under its own row.
                 </p>
               </SettingsPanel>
             )}

@@ -57,7 +57,6 @@ function fleet(conns: GatewayConn[] = [tower, nas]) {
     <MachineRows
       conns={conns}
       selectedUrl={conns[0]?.url}
-      activeUrl={conns[0]?.url}
       health={{}}
       onPick={() => {}}
       onSelectAddress={(conn, url, pinned) => {

@@ -1,4 +1,13 @@
-import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import type { GatewayConn } from '../lib/types';
 import { GatewayClient, GatewayError } from '../lib/gateway';
 import { parsePairing } from '../lib/pairing';
@@ -14,7 +23,7 @@ import {
 import { onWake } from '../lib/wake';
 import { warm } from '../lib/warm';
 import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
-import { Banner, Button, ConfirmRow, Input, ListRow, Spinner } from './ui';
+import { Banner, Button, ConfirmRow, Input, LIST_FRAME, ListRow, Spinner } from './ui';
 import { AddressIcon, ChevronIcon, PencilIcon, SortIcon, StarIcon, TrashIcon } from './icons';
 import { SwipeActions, type SwipeAction } from './SwipeActions';
 import { MENU_WIDTH, Menu, MenuHeading, MenuItem } from './Menu';
@@ -434,10 +443,17 @@ function AddressMenu({
  * THE PAIRED MACHINES, one pressable row each: what it is called, where it
  * answers, how fast, and whether this device is using it right now.
  *
- * `selectedUrl` is what the surface is SHOWING (the settings column's machine);
- * `activeUrl` is what the app is USING. They are the same row most of the time
- * and different exactly when you are reading another machine's settings, so they
- * are two marks rather than one.
+ * A MACHINE'S OWN SETTINGS STAND UNDER ITS OWN ROW. Hand the list `renderPanel` and
+ * every row becomes a DISCLOSURE — a chevron, `aria-expanded`, one press that opens
+ * or closes THIS machine — with `openUrl` naming the one that is open. Those settings
+ * used to be a single column body under the WHOLE list, painted for whichever row was
+ * pressed last, so pressing a machine opened nothing: it REPLACED the settings already
+ * on screen with another machine's, which is the report this shape answers. And
+ * `renderPanel` is called for the open row and for no other, so a machine's panels
+ * never mount — and never poll its gateway — until its own row asks for them.
+ *
+ * `selectedUrl` is only "you are here" paint, for a list whose rows are places to GO
+ * (`ConnectScreen`); a list that discloses paints the row it has open instead.
  *
  * A MACHINE'S OWN VERBS WAIT UNDER ITS OWN ROW, and a slide is what reaches
  * them. They were a `Saved connection` panel under the list first — a name field,
@@ -461,12 +477,13 @@ function AddressMenu({
  * `Primary` and `Current`, and why a machine is not answering rides the verdict
  * cell it belongs to.
  *
- * A RANK MARK EXISTS ONLY WHERE THERE IS A FLEET TO RANK. `Primary` names the
- * machine the app opens on and `Current` the one it is using; with a single
- * machine paired both are lit for ever and neither can ever vary, so the row
- * wore two permanent words that told the reader nothing — the same reason a
- * solo fleet renders no `All` tile. In a fleet `Current` is worth saying only
- * where it is NOT the primary; on the primary's own row it repeats it.
+ * A RANK MARK EXISTS ONLY WHERE THERE IS A FLEET TO RANK, and `Primary` is the only
+ * rank: it names the machine the app opens on, and a verb in this very row sets it.
+ * `Current` — the machine the app happened to be talking to — was reported as the
+ * part of this design that says nothing a reader can act on: it wore the same box as
+ * a rank nobody chose, it was lit for ever on a solo fleet, and on the primary's own
+ * row it only repeated `Primary`. The paper says which machine is open now, so the
+ * word is gone and so is the `activeUrl` that fed it.
  *
  * A verb exists here only when its handler does, so `ConnectScreen`'s list —
  * where a row is a place to GO, not a thing to manage — stays exactly as it was.
@@ -474,7 +491,8 @@ function AddressMenu({
 export function MachineRows({
   conns,
   selectedUrl,
-  activeUrl,
+  openUrls,
+  renderPanel,
   primaryUrl,
   health,
   onPick,
@@ -485,8 +503,18 @@ export function MachineRows({
   onSelectAddress,
 }: {
   conns: GatewayConn[];
+  /** The row painted "you are here", in a list whose rows are places to GO. */
   selectedUrl?: string | null;
-  activeUrl?: string | null;
+  /**
+   * Every machine standing OPEN, by url. A machine's settings belong to its own
+   * row, so opening one is never a reason to close another.
+   */
+  openUrls?: ReadonlySet<string>;
+  /**
+   * THIS machine's settings, rendered under THIS machine's row while it is open.
+   * Passing it turns every row into a disclosure; it is called for the open row only.
+   */
+  renderPanel?: (conn: GatewayConn) => ReactNode;
   primaryUrl?: string | null;
   health: Record<string, GwHealth>;
   onPick: (conn: GatewayConn) => void;
@@ -511,6 +539,8 @@ export function MachineRows({
   /** The machine whose address dropdown is open, and where it hangs. */
   const [binding, setBinding] = useState<{ url: string; at: MenuPosition } | null>(null);
 
+  // One id per LIST, so a machine's panel can be named by the row that opens it.
+  const listId = useId();
   // Escape unwinds THIS row's own surface first. Settings closes itself on an
   // Escape it hears on the window, so a rename opened inside it used to leave with
   // the whole dialog on one keystroke; a capture listener always runs before
@@ -556,7 +586,7 @@ export function MachineRows({
   const isFleet = conns.length > 1;
   return (
     <div className="divide-y divide-dialog-edge">
-      {conns.map((conn) => {
+      {conns.map((conn, index) => {
         const hv = healthView(health[conn.url]);
         const name = conn.label ?? hostOf(conn.url);
 
@@ -605,7 +635,11 @@ export function MachineRows({
         // reached by sliding it. A verb exists only when its handler does, so
         // `ConnectScreen`'s list carries none and never slides; the rank verb is
         // missing from the machine that already holds the rank.
-        const isReading = conn.url === selectedUrl;
+        const isOpen = Boolean(renderPanel) && (openUrls?.has(conn.url) ?? false);
+        // The open row and the "you are here" row wear one paper: a list does one of
+        // the two, and a machine standing out of it looks the same either way.
+        const isMarked = isOpen || conn.url === selectedUrl;
+        const panelId = `${listId}-machine-${index}`;
         // Is there a route to CHOOSE? One address and no pin is simply "the address".
         const bindable = Boolean(onSelectAddress) && canBind(conn);
         const actions: SwipeAction[] = [];
@@ -647,62 +681,70 @@ export function MachineRows({
           });
 
         return (
-          <SwipeActions key={conn.url} label={name} actions={actions}>
-            {/* The selected paper belongs to the whole row: the machine being read
-                is one slab. */}
-            <div className={`min-w-0 ${isReading ? 'bg-panel-2' : ''}`}>
-              <ListRow
-                isSelected={isReading}
-                onClick={() => onPick(conn)}
-                className="min-w-0 gap-3"
-              >
-                <span
-                  className={`shrink-0 font-mono text-title ${hv.dotClass} ${hv.state === 'checking' ? 'animate-pulse' : ''}`}
-                  aria-hidden="true"
-                  title={hv.label}
+          <div key={conn.url} className="min-w-0">
+            <SwipeActions label={name} actions={actions}>
+              {/* The paper belongs to the whole row: a machine standing open is one
+                  slab, and its own settings hang under that slab. */}
+              <div className={`min-w-0 ${isMarked ? 'bg-panel-2' : ''}`}>
+                <ListRow
+                  isSelected={isMarked}
+                  onClick={() => onPick(conn)}
+                  className="min-w-0 gap-3"
+                  aria-expanded={renderPanel ? isOpen : undefined}
+                  aria-controls={renderPanel && isOpen ? panelId : undefined}
                 >
-                  {hv.glyph}
-                </span>
-                <span className="flex min-w-0 flex-1 items-center gap-2">
-                  <span className="truncate font-mono text-body font-bold text-white">
-                    {name}
-                  </span>
-                  {isFleet && conn.url === primaryUrl && (
-                    <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
-                      Primary
-                    </span>
-                  )}
-                  {isFleet && conn.url === activeUrl && conn.url !== primaryUrl && (
-                    <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-dialog-hint">
-                      Current
-                    </span>
-                  )}
-                  {conn.pinned && (
-                    <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
-                      Pinned
-                    </span>
-                  )}
-                </span>
-                <span
-                  className={`shrink-0 font-mono text-chip font-bold uppercase tracking-wider ${hv.textClass}`}
-                  title={hv.why ?? hv.label}
-                >
-                  {hv.state === 'online'
-                    ? (hv.ms != null ? `${hv.ms}ms` : '')
-                    : hv.label}
-                </span>
-                {actionLabel && (
                   <span
-                    className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-dialog-hint"
+                    className={`shrink-0 font-mono text-title ${hv.dotClass} ${hv.state === 'checking' ? 'animate-pulse' : ''}`}
                     aria-hidden="true"
+                    title={hv.label}
                   >
-                    {actionLabel}
+                    {hv.glyph}
                   </span>
-                )}
-                {actionLabel && <ChevronIcon className="size-3 text-dialog-hint" aria-hidden />}
-              </ListRow>
-            </div>
-          </SwipeActions>
+                  <span className="flex min-w-0 flex-1 items-center gap-2">
+                    <span className="truncate font-mono text-body font-bold text-white">
+                      {name}
+                    </span>
+                    {isFleet && conn.url === primaryUrl && (
+                      <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
+                        Primary
+                      </span>
+                    )}
+                    {conn.pinned && (
+                      <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
+                        Pinned
+                      </span>
+                    )}
+                  </span>
+                  <span
+                    className={`shrink-0 font-mono text-chip font-bold uppercase tracking-wider ${hv.textClass}`}
+                    title={hv.why ?? hv.label}
+                  >
+                    {hv.state === 'online'
+                      ? (hv.ms != null ? `${hv.ms}ms` : '')
+                      : hv.label}
+                  </span>
+                  {actionLabel && (
+                    <span
+                      className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-dialog-hint"
+                      aria-hidden="true"
+                    >
+                      {actionLabel}
+                    </span>
+                  )}
+                  {/* ONE MARK FOR "THERE IS MORE HERE": it turns down on the machine
+                      whose settings are open, and points on where the row LEAVES. */}
+                  {(renderPanel || actionLabel) && (
+                    <ChevronIcon open={isOpen} className="size-3 shrink-0 text-dialog-hint" />
+                  )}
+                </ListRow>
+              </div>
+            </SwipeActions>
+            {isOpen && renderPanel && (
+              <div id={panelId} className={`min-w-0 ${LIST_FRAME}`}>
+                {renderPanel(conn)}
+              </div>
+            )}
+          </div>
         );
       })}
       {bound && onSelectAddress && binding && (
