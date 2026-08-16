@@ -83,6 +83,7 @@ export function renderSessionsScreen({
   onOpen = () => {},
   onUnreachable,
   isVisible = true,
+  at,
 }: {
   machines?: MachineFixture[];
   query?: string;
@@ -91,13 +92,21 @@ export function renderSessionsScreen({
   onUnreachable?: (message: string | null) => void;
   /** Mounted but off the glass, the way the shell parks it behind a session. */
   isVisible?: boolean;
+  /**
+   * Mount these very machines again, instead of minting fresh ones. A relaunch
+   * builds the list from nothing while what the app SAVED is still there, and that
+   * is the only way to watch a preference outlive the screen that set it.
+   */
+  at?: GatewayConn[];
 } = {}) {
   const requests: FleetRequest[] = [];
-  const conns: GatewayConn[] = machines.map((machine, index) => ({
-    url: `http://gateway-${++origins}.example.com`,
-    token: "t",
-    label: machine.label ?? `machine-${index + 1}`,
-  }));
+  const conns: GatewayConn[] =
+    at ??
+    machines.map((machine, index) => ({
+      url: `http://gateway-${++origins}.example.com`,
+      token: "t",
+      label: machine.label ?? `machine-${index + 1}`,
+    }));
   // Each mount gets its OWN copy of the fixture rows. A PATCH lands on the gateway's
   // own row — that is where a star lives — so one test's star must never leak into
   // the next through a shared fixture.

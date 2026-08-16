@@ -119,6 +119,7 @@ import {
   type StartFlow,
   type FleetMachine,
 } from '../lib/fleet';
+import { projectFoldKey, readProjectFold, writeProjectFold } from '../lib/project-fold';
 
 const SESSION_LIST_EVENTS = new Set([
   'turn.started',
@@ -1858,6 +1859,9 @@ export function SessionsScreen({
                           onNewDraft={(anchor, root) => openDraftsAt(anchor, machine.conn, root)}
                           pageSize={pageSize}
                           drafts={draftMessages}
+                          // The order already put the machine's live work on top; the
+                          // project it lands on is the one that opens by itself.
+                          isTop={groupIndex === 0}
                         />
                         </Fragment>
                       ))}
@@ -2198,6 +2202,7 @@ const ProjectGroup = memo(function ProjectGroup({
   creating,
   onNewDraft,
   pageSize,
+  isTop,
 }: {
   project: string;
   sessions: Session[];
@@ -2225,6 +2230,11 @@ const ProjectGroup = memo(function ProjectGroup({
   /** Opens the private-copy question for this project, anchored on the button. */
   onNewDraft?: (anchor: HTMLElement, root: string) => void;
   pageSize: number;
+  /**
+   * This is the project the machine's own order put ON TOP, and the one project
+   * that opens without being asked. Everything below it starts folded.
+   */
+  isTop: boolean;
 }) {
   const root = projectRoot(sessions);
   const base = useMemo(() => clientFor(conn).base, [conn]);
@@ -2242,9 +2252,21 @@ const ProjectGroup = memo(function ProjectGroup({
   // screen already paints: `projectPage` owns that arithmetic and the reason it
   // is not the gateway's.
   const [page, setPage] = useState(1);
-  // A project FOLDS, and it starts open: the screen's job is to show work, so the
-  // reader closes what they are done with rather than opening what they came for.
-  const [isOpen, setIsOpen] = useState(true);
+  // A project FOLDS, and only the top one starts open: the screen's job is to show
+  // the work that moved last, not four checkouts' history at once. What the reader
+  // folds afterwards is theirs and outlives this component — see `lib/project-fold`.
+  const foldKey = projectFoldKey(machineKey(conn), root);
+  const [isOpen, setIsOpen] = useState(() => readProjectFold(foldKey) ?? isTop);
+  // A fold is a DECISION, not a frame: it is written where it was made, so the next
+  // screen built from nothing starts where this reader left it.
+  const fold = (open: boolean) => {
+    writeProjectFold(foldKey, open);
+    setIsOpen(open);
+  };
+  // A FILTER is a fleet-wide question and its answer may not sit behind a fold: while
+  // a query is on, every project that still has rows shows them. The fold the reader
+  // set is untouched and is back the moment the query is.
+  const isShowing = isOpen || needle !== '';
   const {
     page: shownPage,
     pageCount,
@@ -2319,9 +2341,9 @@ const ProjectGroup = memo(function ProjectGroup({
           name={project}
           qualifier={homeifyPath(root) || 'No workspace path'}
           qualifierTitle={root}
-          isOpen={isOpen}
-          onToggle={() => setIsOpen((open) => !open)}
-          label={`${isOpen ? 'Collapse' : 'Expand'} ${project}`}
+          isOpen={isShowing}
+          onToggle={() => fold(!isShowing)}
+          label={`${isShowing ? 'Collapse' : 'Expand'} ${project}`}
         />
         {/* The trailing cluster now holds only what this group OFFERS. What it
             reports moved down to the shelf: on a 320px screen the count, the live
@@ -2341,7 +2363,7 @@ const ProjectGroup = memo(function ProjectGroup({
       </SectionHeader>
       {/* The rows carry no bottom rule of their own: the trough that opens the next
           project, or the card's own bottom border, closes the group. */}
-      {isOpen && rows.length > 0 && (
+      {isShowing && rows.length > 0 && (
         <>
         {/* The group's own shelf, hung under its header and sticking with it: what
             the project counts, then the pages it is walked by. The pager used to

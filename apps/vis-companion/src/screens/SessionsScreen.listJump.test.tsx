@@ -11,6 +11,8 @@ import { listSession, renderSessionsScreen } from "./sessions-screen-harness";
 // it down the glass, with nothing putting the reading position back.
 
 const ROW = 100;
+/** What a project's own header takes, once folding leaves some of them alone. */
+const HEADER = 48;
 
 function fleetOf(count: number, prefix: string, perProject: number) {
   return Array.from({ length: count }, (_, index) =>
@@ -23,16 +25,29 @@ function fleetOf(count: number, prefix: string, perProject: number) {
   );
 }
 
-/** Give jsdom a layout: every listed row is `ROW` tall, in DOM order. */
+/**
+ * Give jsdom a layout: in DOM order, a project header takes `HEADER` and every
+ * listed row takes `ROW`. Headers are laid out too because a project that arrives
+ * FOLDED still takes its band — which is exactly what pushes a reader down now.
+ */
 function measure(viewport: HTMLElement): () => void {
   const real = Element.prototype.getBoundingClientRect;
   const rect = (top: number, height: number) =>
     ({ top, bottom: top + height, left: 0, right: 0, width: 0, height, x: 0, y: top }) as DOMRect;
+  const boxes = () => {
+    const laid = new Map<Element, { top: number; height: number }>();
+    let cursor = 0;
+    for (const node of document.querySelectorAll('section[aria-label$=" sessions"], [data-session-id]')) {
+      const height = node.hasAttribute("data-session-id") ? ROW : HEADER;
+      laid.set(node, { top: cursor, height });
+      cursor += height;
+    }
+    return laid;
+  };
   Element.prototype.getBoundingClientRect = function (this: Element): DOMRect {
     if (this === viewport) return rect(0, 600);
-    const rows = Array.from(document.querySelectorAll("[data-session-id]"));
-    const index = rows.indexOf(this);
-    return index < 0 ? rect(0, 0) : rect(index * ROW - viewport.scrollTop, ROW);
+    const box = boxes().get(this);
+    return box ? rect(box.top - viewport.scrollTop, box.height) : rect(0, 0);
   };
   return () => {
     Element.prototype.getBoundingClientRect = real;
@@ -61,33 +76,41 @@ describe("the sessions list while a fleet loads", () => {
     });
     try {
       // Alpha's first window and the whole of beta are on screen; alpha's later
-      // pages — five more projects — are still in flight.
+      // pages — five more projects — are still in flight. Only the top project of
+      // each machine paints its rows, so the rest are bands with a chevron.
       await waitFor(() => {
         expect(ids()).toContain("beta-0");
-        expect(ids()).toContain("alpha-99");
+        expect(ids()).toContain("alpha-0");
+        expect(view.getByLabelText("Expand alpha-p9")).toBeTruthy();
       });
-      expect(ids()).not.toContain("alpha-149");
+      expect(view.queryByLabelText("Expand alpha-p14")).toBeNull();
       const viewport = view.container.querySelector<HTMLElement>(".overflow-y-auto");
       expect(viewport).not.toBeNull();
       unmeasure = measure(viewport!);
+      const laidTop = (id: string) =>
+        document
+          .querySelector<HTMLElement>(`[data-session-id="${id}"]`)!
+          .getBoundingClientRect().top + viewport!.scrollTop;
 
       // The reader is parked with one of beta's rows under the top edge.
-      const before = ids().indexOf("beta-0");
+      const before = laidTop("beta-0");
       expect(before).toBeGreaterThan(0);
       act(() => {
-        viewport!.scrollTop = before * ROW;
+        viewport!.scrollTop = before;
       });
 
       // Alpha's remaining projects land ABOVE everything beta owns.
       view.releasePages();
       await waitFor(() => {
-        expect(ids()).toContain("alpha-149");
+        expect(view.getByLabelText("Expand alpha-p14")).toBeTruthy();
       });
 
-      const after = ids().indexOf("beta-0");
-      expect(after).toBeGreaterThan(before);
+      expect(laidTop("beta-0")).toBeGreaterThan(before);
       // The parked row is still under the top edge: the list did not move.
-      expect(after * ROW - viewport!.scrollTop).toBe(0);
+      expect(
+        document.querySelector<HTMLElement>('[data-session-id="beta-0"]')!.getBoundingClientRect()
+          .top,
+      ).toBe(0);
     } finally {
       view.restore();
       view.unmount();
