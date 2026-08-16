@@ -115,4 +115,48 @@ describe("a trace backfilling the turns a reader is scrolling into", () => {
     expect(view.container.firstElementChild?.children.length).toBe(8);
     view.unmount();
   });
+  // Regression, user report ("it scrolls by itself, God knows where"): the ramp
+  // counted the segments it had mounted FROM THE END, so every segment a
+  // running turn streamed slid that window down by one and dropped the oldest
+  // one on screen. Content above the reader left the scroller for a frame and
+  // came back, with the screen's anchor corrector chasing it both ways —
+  // measured on an iPhone 17 Pro simulator as a -294 px write followed by
+  // +294 px 39 ms later, on a transcript nobody was touching.
+  it("never takes back a segment it has already shown", () => {
+    const queue: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      queue.push(cb);
+      return queue.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+
+    const iterations = Array.from({ length: 40 }, (_, index) =>
+      iteration(index),
+    );
+    const view = render(
+      <IterationTrace iterations={iterations} live client={client} sid="s1" />,
+    );
+    const shown = () =>
+      [...(view.container.firstElementChild?.children ?? [])].map(
+        (node) => node.textContent ?? "",
+      );
+
+    const before = shown();
+    expect(before.length).toBe(8);
+
+    // One flush of a turn still being written: a segment at the END.
+    view.rerender(
+      <IterationTrace
+        iterations={[...iterations, iteration(40)]}
+        live
+        client={client}
+        sid="s1"
+      />,
+    );
+
+    const after = shown();
+    expect(after.slice(0, before.length)).toEqual(before);
+    expect(after.length).toBe(before.length + 1);
+    view.unmount();
+  });
 });

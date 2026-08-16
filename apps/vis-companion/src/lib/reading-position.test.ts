@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   applyReadingPosition,
+  arrivedAtEnd,
   followEnd,
   forgetReadingPosition,
   isAtBottom,
@@ -192,5 +193,40 @@ describe('the opening veil waits for the transcript to hold still', () => {
     expect(settled(50_130)).toBe(false);
     expect(settled(50_130)).toBe(false);
     expect(settled(50_130)).toBe(true);
+  });
+});
+
+// Regression, user report ("it was live, I scrolled all the way down and it
+// never remembered that I want the new things"): a turn being written grows the
+// transcript every flush, so the end a reader is reaching for is not the end
+// the transcript has by the time their gesture lands. Measured on an iPhone 17
+// Pro simulator: six hard drags ended 512 px above it and the follow never
+// re-engaged.
+describe('arriving at an end that is still being written', () => {
+  const box = (scrollTop: number, scrollHeight: number, clientHeight: number): ScrollBox => ({
+    scrollTop,
+    scrollHeight,
+    clientHeight,
+  });
+
+  it('counts the end the gesture was aimed at', () => {
+    const landed = box(47_100, 48_100, 800);
+    expect(isAtBottom(landed)).toBe(false);
+    expect(arrivedAtEnd(landed, 47_500)).toBe(true);
+  });
+
+  it('is the end as it stands when nothing was aimed at', () => {
+    expect(arrivedAtEnd(box(47_100, 48_100, 800), 0)).toBe(false);
+    expect(arrivedAtEnd(box(47_300, 48_100, 800), 0)).toBe(true);
+  });
+
+  it('never invents an end the transcript no longer has', () => {
+    const shorter = box(20_000, 30_000, 800);
+    expect(arrivedAtEnd(shorter, 60_000)).toBe(false);
+    expect(arrivedAtEnd(box(29_200, 30_000, 800), 60_000)).toBe(true);
+  });
+
+  it('leaves a reader who never got there where they are', () => {
+    expect(arrivedAtEnd(box(44_000, 48_100, 800), 47_500)).toBe(false);
   });
 });

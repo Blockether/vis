@@ -71,6 +71,27 @@ export function isAtBottom(box: ScrollBox): boolean {
   return distanceFromEnd(box) <= AT_BOTTOM_PX;
 }
 
+/**
+ * Whether the reader ARRIVED at the end — with `aimed` as the end they were
+ * reaching for, not the one the transcript has now.
+ *
+ * A live turn grows under the finger: a flush every 150 ms, hundreds of pixels
+ * at a time. Judged against the end as it stands, a reader dragging down is
+ * always short of an end that keeps moving, so the follow never re-engages and
+ * the newest turn is never carried to them again. Measured on the simulator
+ * against a streaming session: six hard drags ended 512 px above the end, the
+ * transcript having grown 174 px underneath them, and "↓ Latest" stayed offered
+ * while the gap only widened. Growth the reader could not have seen is not
+ * distance they chose to keep.
+ *
+ * A transcript SHORTER than the aim — a turn collapsed, history dropped — is
+ * honoured as it stands: `aimed` is a memory, `scrollHeight` is the fact.
+ */
+export function arrivedAtEnd(box: ScrollBox, aimed: number): boolean {
+  const end = aimed > 0 ? Math.min(aimed, box.scrollHeight) : box.scrollHeight;
+  return box.scrollTop + box.clientHeight >= end - AT_BOTTOM_PX;
+}
+
 /** How far above the end `box` sits, or `null` when it is at the bottom. */
 export function markReadingPosition(box: ScrollBox | null): number | null {
   if (!box) return null;

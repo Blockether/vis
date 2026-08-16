@@ -115,6 +115,7 @@ import {
 import { readerOwnsScroll } from "../lib/reader-gesture";
 import {
   applyReadingPosition,
+  arrivedAtEnd,
   followEnd,
   heightSettler,
   isAtBottom,
@@ -1839,6 +1840,12 @@ export function SessionScreen({
   // Where `handleScroll` last SAW the scroller. A scroll event that finds it on
   // this pixel reports growth underneath a position this screen already owns.
   const seenTopRef = useRef(-1);
+  // The end the reader is REACHING FOR. Re-aimed on every scroll event that
+  // finds them more than a screen away, and FROZEN once they are inside that
+  // last screen: from there on, a live turn's growth is not distance they chose
+  // to keep, and measuring it as such is what stopped a streaming session from
+  // ever following its own newest turn again. Read by `arrivedAtEnd`.
+  const aimedEndRef = useRef(0);
 
   const scrollToEnd = useCallback((behavior: ScrollBehavior = "auto") => {
     const viewport = scrollRef.current;
@@ -4510,10 +4517,25 @@ export function SessionScreen({
       // screen's own catch-ups carries no intent: measuring it cleared the
       // follow on a scroller our own pin had put at the end, and from then on
       // every later catch-up was vetoed.
-      if (isAtBottom(viewport)) followingRef.current = true;
+      // The end that counts is the one they were reaching for; see the ref.
+      if (
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight >
+        viewport.clientHeight
+      )
+        aimedEndRef.current = viewport.scrollHeight;
+      if (arrivedAtEnd(viewport, aimedEndRef.current))
+        followingRef.current = true;
       else if (readerOwnsScroll()) followingRef.current = false;
       // The reader's place, kept for the next time this session is opened.
-      rememberReadingPosition(sid, markReadingPosition(viewport));
+      // A reader who ARRIVED parks nothing: their place is the newest turn, and
+      // a distance frozen while that turn was still being written would reopen
+      // the session in the middle of it.
+      rememberReadingPosition(
+        sid,
+        arrivedAtEnd(viewport, aimedEndRef.current)
+          ? null
+          : markReadingPosition(viewport),
+      );
       syncJump();
       // Keep the rotation anchor fresh: iOS can deliver the orientation signal
       // AFTER the reflow, and by then the top-most turn is already unreadable.

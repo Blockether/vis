@@ -2214,8 +2214,16 @@ export const IterationTrace = memo(function IterationTrace({
     [iterations, answered],
   );
 
-  const [mountedSegments, setMountedSegments] = useState(() =>
-    whole ? segments.length : SEGMENT_FIRST_PAINT,
+  // How many segments at the START of the trace are still held back. The ramp
+  // only ever SHRINKS it, which is what makes it safe on a turn that is still
+  // being written: counted from the END instead, every segment the agent
+  // streams would slide the mounted window down by one and DROP the oldest
+  // segment on screen — content above the reader leaving the scroller for a
+  // frame and coming back, with the screen's anchor corrector chasing it both
+  // ways. Measured on the simulator as a -294 px write followed by +294 px
+  // 39 ms later, on a transcript nobody was touching.
+  const [hiddenSegments, setHiddenSegments] = useState(() =>
+    whole ? 0 : Math.max(0, segments.length - SEGMENT_FIRST_PAINT),
   );
 
   // `whole` also arrives LATE, and it has to count then too. WHICH reconcile
@@ -2225,9 +2233,9 @@ export const IterationTrace = memo(function IterationTrace({
   // state, `whole` changed nothing for exactly those handovers. The collapse
   // documented above came back for them. Derived per render, it costs no commit
   // and no frame.
-  const shownSegments = whole ? segments.length : mountedSegments;
+  const hidden = whole ? 0 : hiddenSegments;
 
-  const rampDone = shownSegments >= segments.length;
+  const rampDone = hidden <= 0;
 
   // A chunk per frame, so the work the first paint skipped never lands as one
   // long frame either.
@@ -2235,9 +2243,10 @@ export const IterationTrace = memo(function IterationTrace({
     // A late `whole` also has to STICK. It arrives as a prop and can leave the
     // same way — the NEXT turn's handover moves the flag to its own row — so a
     // trace that showed everything only because the flag was up would collapse
-    // the moment it left. Bank it in the ramp's own state, which only grows.
+    // the moment it left. Bank it in the ramp's own state, which never hands
+    // a segment back.
     if (whole) {
-      setMountedSegments((count) => Math.max(count, segments.length));
+      setHiddenSegments(0);
       releaseRamp(rampId);
       return;
     }
@@ -2273,16 +2282,14 @@ export const IterationTrace = memo(function IterationTrace({
       }
 
       step.startedAt = performance.now();
-      setMountedSegments((count) => count + step.size);
+      setHiddenSegments((count) => Math.max(0, count - step.size));
     };
     frame = window.requestAnimationFrame(tick);
     return () => window.cancelAnimationFrame(frame);
-  }, [mountedSegments, rampDone, rampId, whole, segments.length]);
+  }, [hiddenSegments, rampDone, rampId, whole]);
 
   if (!segments.length) return null;
-  const shown = rampDone
-    ? segments
-    : segments.slice(segments.length - shownSegments);
+  const shown = rampDone ? segments : segments.slice(hidden);
 
   return (
     <div ref={rootRef} className="mb-2.5 grid gap-2.5">
