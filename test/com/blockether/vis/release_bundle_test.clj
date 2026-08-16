@@ -517,6 +517,30 @@
              (expect (str/includes? output "Track:        stable") output)
              (expect (str/includes? output "built on the beta track") output))
            (finally (delete-tree! root)))))
+  ;; A hosted Apple-silicon fallback is only useful if it can FINISH: the free
+  ;; macOS arm64 class is 3 cores / 7 GiB RAM / 14 GiB disk, so a heap above
+  ;; physical RAM has no volume to swap into and native-image exits on the
+  ;; first OutOfMemoryError. The fallback shrinks the build, not the promise.
+  (it "sizes the hosted macOS fallback to fit the free runner instead of swapping"
+      (let
+        [stable
+         (slurp ".github/workflows/native-release.yml")
+
+         fallback
+         (->> (str/split-lines stable)
+              (drop-while #(not (str/includes? % "-lt 16")))
+              (take 8)
+              (str/join "\n"))]
+
+        (expect (str/includes? fallback "--parallelism=2") fallback)
+        (expect (str/includes? fallback "-J-Xmx5g") fallback)
+        (expect (nil? (re-find #"-J-Xmx(?:[89]|1[0-9])g" fallback)) fallback)
+        ;; Quick build produces a slower binary, so it is for dry runs only.
+        (expect (str/includes? fallback "-Ob") fallback)
+        (expect (str/includes? fallback "steps.target.outputs.publish") fallback)
+        ;; One dispatch input moves the job off the workstation builder for a
+        ;; single run, without touching the repository variable.
+        (expect (str/includes? stable "inputs.runner || vars.VIS_MACOS_ARM64_RUNNER") stable)))
   (it
     "builds the beta track on free runners only, off a commit CI already passed"
     (let
