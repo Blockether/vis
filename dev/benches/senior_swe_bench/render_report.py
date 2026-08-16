@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Render a side-by-side Senior SWE-Bench HTML report."""
+
 from __future__ import annotations
 
 import argparse
@@ -150,7 +151,9 @@ def job_eval_metrics(job_result: dict[str, Any]) -> list[dict[str, Any]]:
     return metrics
 
 
-def task_pass(summary: dict[str, Any], reward: dict[str, Any], job_result: dict[str, Any]) -> bool | None:
+def task_pass(
+    summary: dict[str, Any], reward: dict[str, Any], job_result: dict[str, Any]
+) -> bool | None:
     for value in [summary.get("resolved"), summary.get("verifier_pass")]:
         if isinstance(value, bool):
             return value
@@ -168,7 +171,9 @@ def task_pass(summary: dict[str, Any], reward: dict[str, Any], job_result: dict[
     return None
 
 
-def task_pass_rate(summary: dict[str, Any], reward: dict[str, Any], job_result: dict[str, Any]) -> dict[str, Any]:
+def task_pass_rate(
+    summary: dict[str, Any], reward: dict[str, Any], job_result: dict[str, Any]
+) -> dict[str, Any]:
     metrics = job_eval_metrics(job_result)
     if metrics:
         passed = 0
@@ -186,7 +191,9 @@ def task_pass_rate(summary: dict[str, Any], reward: dict[str, Any], job_result: 
     return {"passed": 1 if passed_bool else 0, "total": 1, "source": "summary"}
 
 
-def verifier_rate(summary: dict[str, Any], reward_details: dict[str, Any]) -> dict[str, Any]:
+def verifier_rate(
+    summary: dict[str, Any], reward_details: dict[str, Any]
+) -> dict[str, Any]:
     verifier = summary.get("verifier")
     if not isinstance(verifier, dict):
         verifier = reward_details.get("verifier")
@@ -203,14 +210,29 @@ def verifier_rate(summary: dict[str, Any], reward_details: dict[str, Any]) -> di
 
 def parse_pytest_counts(text: str) -> dict[str, Any] | None:
     for line in reversed(text.splitlines()):
-        if not any(word in line for word in [" passed", " failed", " error", " errors", " skipped"]):
+        if not any(
+            word in line
+            for word in [" passed", " failed", " error", " errors", " skipped"]
+        ):
             continue
         counts: dict[str, int] = {}
-        for amount, name in re.findall(r"(\d+)\s+(passed|failed|skipped|errors?|xfailed|xpassed)", line):
+        for amount, name in re.findall(
+            r"(\d+)\s+(passed|failed|skipped|errors?|xfailed|xpassed)", line
+        ):
             key = "errors" if name in {"error", "errors"} else name
             counts[key] = counts.get(key, 0) + int(amount)
         if counts:
-            total = sum(counts.get(key, 0) for key in ["passed", "failed", "errors", "skipped", "xfailed", "xpassed"])
+            total = sum(
+                counts.get(key, 0)
+                for key in [
+                    "passed",
+                    "failed",
+                    "errors",
+                    "skipped",
+                    "xfailed",
+                    "xpassed",
+                ]
+            )
             return {
                 "passed": counts.get("passed", 0),
                 "total": total,
@@ -252,13 +274,25 @@ def patch_stats_from_text(diff: str) -> dict[str, int]:
             added += 1
         elif line.startswith("-") and not line.startswith("---"):
             deleted += 1
-    return {"files": files, "hunks": hunks, "added_lines": added, "deleted_lines": deleted, "total_changed_lines": added + deleted}
+    return {
+        "files": files,
+        "hunks": hunks,
+        "added_lines": added,
+        "deleted_lines": deleted,
+        "total_changed_lines": added + deleted,
+    }
 
 
-def collect_timings(trial: dict[str, Any], job_result: dict[str, Any]) -> dict[str, Any]:
+def collect_timings(
+    trial: dict[str, Any], job_result: dict[str, Any]
+) -> dict[str, Any]:
     timings = {
-        "started_at": first_present(trial.get("started_at"), job_result.get("started_at")),
-        "finished_at": first_present(trial.get("finished_at"), job_result.get("finished_at")),
+        "started_at": first_present(
+            trial.get("started_at"), job_result.get("started_at")
+        ),
+        "finished_at": first_present(
+            trial.get("finished_at"), job_result.get("finished_at")
+        ),
         "total_s": None,
         "phases": {},
     }
@@ -272,7 +306,9 @@ def collect_timings(trial: dict[str, Any], job_result: dict[str, Any]) -> dict[s
     ]:
         phase = trial.get(key)
         if isinstance(phase, dict):
-            phases[label] = duration_seconds(phase.get("started_at"), phase.get("finished_at"))
+            phases[label] = duration_seconds(
+                phase.get("started_at"), phase.get("finished_at")
+            )
     timings["phases"] = phases
     return timings
 
@@ -312,12 +348,22 @@ def collect_run(
     agent_env = deep_get(trial_config, "agent", "env")
     if not isinstance(agent_env, dict):
         agents = job_config.get("agents")
-        agent_env = agents[0].get("env") if isinstance(agents, list) and agents and isinstance(agents[0], dict) else {}
+        agent_env = (
+            agents[0].get("env")
+            if isinstance(agents, list) and agents and isinstance(agents[0], dict)
+            else {}
+        )
     if not isinstance(agent_env, dict):
         agent_env = {}
 
-    agent_info = trial.get("agent_info") if isinstance(trial.get("agent_info"), dict) else {}
-    agent_model_info = agent_info.get("model_info") if isinstance(agent_info.get("model_info"), dict) else {}
+    agent_info = (
+        trial.get("agent_info") if isinstance(trial.get("agent_info"), dict) else {}
+    )
+    agent_model_info = (
+        agent_info.get("model_info")
+        if isinstance(agent_info.get("model_info"), dict)
+        else {}
+    )
     provider = first_present(
         provider_override,
         command.get("vis_provider"),
@@ -354,13 +400,26 @@ def collect_run(
     stats = job_result.get("stats") if isinstance(job_result.get("stats"), dict) else {}
     vis_stats = summary.get("vis") if isinstance(summary.get("vis"), dict) else {}
     metrics = {
-        "iterations": first_present(vis_stats.get("iterations"), deep_get(trial, "agent_result", "metadata", "vis", "iterations")),
-        "tool_calls": first_present(vis_stats.get("tool_calls"), deep_get(trial, "agent_result", "metadata", "vis", "tool_calls")),
+        "iterations": first_present(
+            vis_stats.get("iterations"),
+            deep_get(trial, "agent_result", "metadata", "vis", "iterations"),
+        ),
+        "tool_calls": first_present(
+            vis_stats.get("tool_calls"),
+            deep_get(trial, "agent_result", "metadata", "vis", "tool_calls"),
+        ),
         "shell_calls": vis_stats.get("shell_calls"),
         "failed_shell_calls": vis_stats.get("failed_shell_calls"),
         "file_reads": vis_stats.get("file_reads"),
-        "tokens": first_present(vis_stats.get("tokens"), deep_get(trial, "agent_result", "metadata", "vis", "tokens")),
-        "cost_usd": first_present(vis_stats.get("cost_usd"), deep_get(trial, "agent_result", "metadata", "vis", "cost_usd"), stats.get("cost_usd")),
+        "tokens": first_present(
+            vis_stats.get("tokens"),
+            deep_get(trial, "agent_result", "metadata", "vis", "tokens"),
+        ),
+        "cost_usd": first_present(
+            vis_stats.get("cost_usd"),
+            deep_get(trial, "agent_result", "metadata", "vis", "cost_usd"),
+            stats.get("cost_usd"),
+        ),
         "n_input_tokens": stats.get("n_input_tokens"),
         "n_cache_tokens": stats.get("n_cache_tokens"),
         "n_output_tokens": stats.get("n_output_tokens"),
@@ -372,7 +431,12 @@ def collect_run(
     if not isinstance(pb, dict):
         pb = {}
 
-    task_id = first_present(summary.get("task_id"), command.get("task_ids", [None])[0] if isinstance(command.get("task_ids"), list) else None)
+    task_id = first_present(
+        summary.get("task_id"),
+        command.get("task_ids", [None])[0]
+        if isinstance(command.get("task_ids"), list)
+        else None,
+    )
     pass_rate = task_pass_rate(summary, reward, job_result)
     verifier_command_rate = verifier_rate(summary, reward_details)
     status = summary.get("failure_class")
@@ -396,7 +460,11 @@ def collect_run(
             "model": model,
             "fair_provider": fair_provider,
             "fair_model": fair_model,
-            "agent": first_present(agent_info.get("name"), deep_get(trial_config, "agent", "name"), "unknown"),
+            "agent": first_present(
+                agent_info.get("name"),
+                deep_get(trial_config, "agent", "name"),
+                "unknown",
+            ),
             "artifact": command.get("vis_bench_artifact"),
             "config_delivery": command.get("vis_bench_config_delivery"),
             "remote_home": command.get("vis_bench_remote_home"),
@@ -409,12 +477,22 @@ def collect_run(
             "n_concurrent_trials": job_config.get("n_concurrent_trials"),
             "verifier_provider": command.get("vis_bench_verifier_provider"),
             "verifier_env_file": command.get("vis_bench_verifier_env_file"),
-            "verifier_openai_base_url": command.get("vis_bench_verifier_openai_base_url"),
+            "verifier_openai_base_url": command.get(
+                "vis_bench_verifier_openai_base_url"
+            ),
             "verifier_judge_model": command.get("vis_bench_verifier_judge_model"),
-            "verifier_classifier_model": command.get("vis_bench_verifier_classifier_model"),
-            "verifier_tool_choice_compat": command.get("vis_bench_verifier_tool_choice_compat"),
-            "verifier_response_format_compat": command.get("vis_bench_verifier_response_format_compat"),
-            "verifier_timeout_multiplier": command.get("vis_bench_verifier_timeout_multiplier"),
+            "verifier_classifier_model": command.get(
+                "vis_bench_verifier_classifier_model"
+            ),
+            "verifier_tool_choice_compat": command.get(
+                "vis_bench_verifier_tool_choice_compat"
+            ),
+            "verifier_response_format_compat": command.get(
+                "vis_bench_verifier_response_format_compat"
+            ),
+            "verifier_timeout_multiplier": command.get(
+                "vis_bench_verifier_timeout_multiplier"
+            ),
         },
         "timing": collect_timings(trial, job_result),
         "metrics": metrics,
@@ -426,12 +504,30 @@ def collect_run(
         "scoring": {
             "reward": reward.get("reward"),
             "correctness": reward.get("correctness"),
-            "verifier_score": first_present(reward.get("verifier_score"), deep_get(trial, "verifier_result", "rewards", "verifier_score")),
-            "taste_patch_bloat": first_present(reward.get("taste_patch_bloat"), deep_get(trial, "verifier_result", "rewards", "taste_patch_bloat")),
-            "rubric_judge_ok": first_present(reward.get("rubric_judge_ok"), deep_get(trial, "verifier_result", "rewards", "rubric_judge_ok")),
-            "taste_judge_ok": first_present(reward.get("taste_judge_ok"), deep_get(trial, "verifier_result", "rewards", "taste_judge_ok")),
-            "rubric_status": first_present(deep_get(reward_details, "rubric", "status"), judge_output.get("rubric_status")),
-            "taste_status": first_present(judge_output.get("taste_status"), deep_get(reward_details, "taste", "status")),
+            "verifier_score": first_present(
+                reward.get("verifier_score"),
+                deep_get(trial, "verifier_result", "rewards", "verifier_score"),
+            ),
+            "taste_patch_bloat": first_present(
+                reward.get("taste_patch_bloat"),
+                deep_get(trial, "verifier_result", "rewards", "taste_patch_bloat"),
+            ),
+            "rubric_judge_ok": first_present(
+                reward.get("rubric_judge_ok"),
+                deep_get(trial, "verifier_result", "rewards", "rubric_judge_ok"),
+            ),
+            "taste_judge_ok": first_present(
+                reward.get("taste_judge_ok"),
+                deep_get(trial, "verifier_result", "rewards", "taste_judge_ok"),
+            ),
+            "rubric_status": first_present(
+                deep_get(reward_details, "rubric", "status"),
+                judge_output.get("rubric_status"),
+            ),
+            "taste_status": first_present(
+                judge_output.get("taste_status"),
+                deep_get(reward_details, "taste", "status"),
+            ),
             "verifier_results": verifier_results,
         },
         "failure_details": failure_details,
@@ -439,14 +535,20 @@ def collect_run(
             "runner_log": str(runner_log.resolve()) if runner_log.exists() else None,
             "patch": str(patch_path.resolve()) if patch_path.exists() else None,
             "trace": deep_get(trial, "agent_result", "metadata", "vis", "trace"),
-            "transcript": str((run_dir / "vis-transcript.html").resolve()) if (run_dir / "vis-transcript.html").exists() else None,
-            "harbor_job_dir": deep_get(first_json(run_dir, "collection.json") or {}, "job_dir"),
+            "transcript": str((run_dir / "vis-transcript.html").resolve())
+            if (run_dir / "vis-transcript.html").exists()
+            else None,
+            "harbor_job_dir": deep_get(
+                first_json(run_dir, "collection.json") or {}, "job_dir"
+            ),
         },
         "notes": [],
     }
 
 
-def pending_harness(label: str, *, task_id: Any, fair_provider: str, fair_model: str) -> dict[str, Any]:
+def pending_harness(
+    label: str, *, task_id: Any, fair_provider: str, fair_model: str
+) -> dict[str, Any]:
     return {
         "label": label,
         "harness": label,
@@ -465,9 +567,18 @@ def pending_harness(label: str, *, task_id: Any, fair_provider: str, fair_model:
             "agent": "pi.dev",
             "config_delivery": "pending",
         },
-        "timing": {"started_at": None, "finished_at": None, "total_s": None, "phases": {}},
+        "timing": {
+            "started_at": None,
+            "finished_at": None,
+            "total_s": None,
+            "phases": {},
+        },
         "metrics": {},
-        "diff_stats": {"local_patch": {}, "agent_vs_oracle": {}, "agent_patch_lines": None},
+        "diff_stats": {
+            "local_patch": {},
+            "agent_vs_oracle": {},
+            "agent_patch_lines": None,
+        },
         "scoring": {},
         "failure_details": {"pytest": None, "failed_tests": [], "assertions": []},
         "artifacts": {},
@@ -477,12 +588,19 @@ def pending_harness(label: str, *, task_id: Any, fair_provider: str, fair_model:
     }
 
 
-def external_harness(path: Path, label: str, *, fair_provider: str, fair_model: str, task_id: Any) -> dict[str, Any]:
+def external_harness(
+    path: Path, label: str, *, fair_provider: str, fair_model: str, task_id: Any
+) -> dict[str, Any]:
     data = load_json(path)
     if not isinstance(data, dict):
         raise SystemExit(f"comparison JSON must be an object: {path}")
     params = data.get("params") if isinstance(data.get("params"), dict) else {}
-    result = pending_harness(label, task_id=task_id or data.get("task_id"), fair_provider=fair_provider, fair_model=fair_model)
+    result = pending_harness(
+        label,
+        task_id=task_id or data.get("task_id"),
+        fair_provider=fair_provider,
+        fair_model=fair_model,
+    )
     result.update({key: value for key, value in data.items() if key in result})
     result["label"] = label
     result["harness"] = data.get("harness") or label
@@ -512,7 +630,11 @@ def kv_table(rows: list[tuple[str, Any]], *, compact: bool = False) -> str:
     cls = "kv compact" if compact else "kv"
     out = [f'<table class="{cls}"><tbody>']
     for key, value in rows:
-        rendered = value if isinstance(value, str) and value.startswith("<") else html_escape(value if value not in (None, "") else MISSING)
+        rendered = (
+            value
+            if isinstance(value, str) and value.startswith("<")
+            else html_escape(value if value not in (None, "") else MISSING)
+        )
         out.append(f"<tr><th>{html_escape(key)}</th><td>{rendered}</td></tr>")
     out.append("</tbody></table>")
     return "\n".join(out)
@@ -532,14 +654,24 @@ def params_summary(harness: dict[str, Any]) -> str:
     fair_provider = params.get("fair_provider")
     fair_model = params.get("fair_model")
     delta = ""
-    if fair_provider and fair_model and (provider != fair_provider or model != fair_model):
+    if (
+        fair_provider
+        and fair_model
+        and (provider != fair_provider or model != fair_model)
+    ):
         delta = f'<div class="hint">fair target: {html_escape(fair_provider)} / {html_escape(fair_model)}</div>'
     return f"{html_escape(provider)} / {html_escape(model)}{delta}"
 
 
 def diff_summary(harness: dict[str, Any]) -> str:
-    diff_stats = harness.get("diff_stats") if isinstance(harness.get("diff_stats"), dict) else {}
-    local = diff_stats.get("local_patch") if isinstance(diff_stats.get("local_patch"), dict) else {}
+    diff_stats = (
+        harness.get("diff_stats") if isinstance(harness.get("diff_stats"), dict) else {}
+    )
+    local = (
+        diff_stats.get("local_patch")
+        if isinstance(diff_stats.get("local_patch"), dict)
+        else {}
+    )
     if not local:
         return MISSING
     files = local.get("files")
@@ -574,14 +706,29 @@ def comparison_table(harnesses: list[dict[str, Any]]) -> str:
         ("Verifier command pass", lambda h: rate_cell(h.get("verifier_command_rate"))),
         ("Inner pytest pass", lambda h: rate_cell(h.get("pytest_rate"))),
         ("Provider / model", params_summary),
-        ("Wall time", lambda h: html_escape(format_duration(deep_get(h, "timing", "total_s")))),
-        ("Iterations", lambda h: html_escape(format_number(deep_get(h, "metrics", "iterations")))),
-        ("Tokens / cost", lambda h: html_escape(format_token_cost(h.get("metrics") if isinstance(h.get("metrics"), dict) else {}))),
+        (
+            "Wall time",
+            lambda h: html_escape(format_duration(deep_get(h, "timing", "total_s"))),
+        ),
+        (
+            "Iterations",
+            lambda h: html_escape(format_number(deep_get(h, "metrics", "iterations"))),
+        ),
+        (
+            "Tokens / cost",
+            lambda h: html_escape(
+                format_token_cost(
+                    h.get("metrics") if isinstance(h.get("metrics"), dict) else {}
+                )
+            ),
+        ),
         ("Diff stats", lambda h: html_escape(diff_summary(h))),
         ("Scoring / judging", scoring_summary),
     ]
     header = "".join(f"<th>{html_escape(h['label'])}</th>" for h in harnesses)
-    out = [f'<table class="comparison"><thead><tr><th>Metric</th>{header}</tr></thead><tbody>']
+    out = [
+        f'<table class="comparison"><thead><tr><th>Metric</th>{header}</tr></thead><tbody>'
+    ]
     for label, renderer in rows:
         out.append(f"<tr><th>{html_escape(label)}</th>")
         for harness in harnesses:
@@ -596,10 +743,18 @@ def harness_card(harness: dict[str, Any]) -> str:
     timing = harness.get("timing") if isinstance(harness.get("timing"), dict) else {}
     phases = timing.get("phases") if isinstance(timing.get("phases"), dict) else {}
     metrics = harness.get("metrics") if isinstance(harness.get("metrics"), dict) else {}
-    diff_stats = harness.get("diff_stats") if isinstance(harness.get("diff_stats"), dict) else {}
+    diff_stats = (
+        harness.get("diff_stats") if isinstance(harness.get("diff_stats"), dict) else {}
+    )
     scoring = harness.get("scoring") if isinstance(harness.get("scoring"), dict) else {}
-    failure = harness.get("failure_details") if isinstance(harness.get("failure_details"), dict) else {}
-    artifacts = harness.get("artifacts") if isinstance(harness.get("artifacts"), dict) else {}
+    failure = (
+        harness.get("failure_details")
+        if isinstance(harness.get("failure_details"), dict)
+        else {}
+    )
+    artifacts = (
+        harness.get("artifacts") if isinstance(harness.get("artifacts"), dict) else {}
+    )
     notes = harness.get("notes") if isinstance(harness.get("notes"), list) else []
 
     phase_rows = [(name, format_duration(value)) for name, value in phases.items()]
@@ -609,9 +764,18 @@ def harness_card(harness: dict[str, Any]) -> str:
     diff_rows = [
         ("local patch", diff_summary(harness)),
         ("agent patch lines", format_number(diff_stats.get("agent_patch_lines"))),
-        ("agent/oracle bloat", format_number(deep_get(diff_stats, "agent_vs_oracle", "bloat_ratio"))),
-        ("agent sloc/files/hunks", f"{format_number(deep_get(diff_stats, 'agent_vs_oracle', 'agent_sloc'))} / {format_number(deep_get(diff_stats, 'agent_vs_oracle', 'agent_files'))} / {format_number(deep_get(diff_stats, 'agent_vs_oracle', 'agent_hunks'))}"),
-        ("oracle sloc/files/hunks", f"{format_number(deep_get(diff_stats, 'agent_vs_oracle', 'oracle_sloc'))} / {format_number(deep_get(diff_stats, 'agent_vs_oracle', 'oracle_files'))} / {format_number(deep_get(diff_stats, 'agent_vs_oracle', 'oracle_hunks'))}"),
+        (
+            "agent/oracle bloat",
+            format_number(deep_get(diff_stats, "agent_vs_oracle", "bloat_ratio")),
+        ),
+        (
+            "agent sloc/files/hunks",
+            f"{format_number(deep_get(diff_stats, 'agent_vs_oracle', 'agent_sloc'))} / {format_number(deep_get(diff_stats, 'agent_vs_oracle', 'agent_files'))} / {format_number(deep_get(diff_stats, 'agent_vs_oracle', 'agent_hunks'))}",
+        ),
+        (
+            "oracle sloc/files/hunks",
+            f"{format_number(deep_get(diff_stats, 'agent_vs_oracle', 'oracle_sloc'))} / {format_number(deep_get(diff_stats, 'agent_vs_oracle', 'oracle_files'))} / {format_number(deep_get(diff_stats, 'agent_vs_oracle', 'oracle_hunks'))}",
+        ),
     ]
 
     failure_items = []
@@ -634,7 +798,11 @@ def harness_card(harness: dict[str, Any]) -> str:
     if not artifact_items:
         artifact_items.append(f"<li>{MISSING}</li>")
 
-    note_items = "".join(f"<li>{html_escape(note)}</li>" for note in notes) if notes else f"<li>{MISSING}</li>"
+    note_items = (
+        "".join(f"<li>{html_escape(note)}</li>" for note in notes)
+        if notes
+        else f"<li>{MISSING}</li>"
+    )
 
     return f"""
 <section class="card">
@@ -643,69 +811,120 @@ def harness_card(harness: dict[str, Any]) -> str:
     {status_pill(harness.get("status"))}
   </div>
   <h3>Params</h3>
-  {kv_table([
-      ("task", harness.get("task_id")),
-      ("run id", harness.get("run_id")),
-      ("provider", params.get("provider")),
-      ("model", params.get("model")),
-      ("fair target", f"{params.get('fair_provider') or MISSING} / {params.get('fair_model') or MISSING}"),
-      ("agent", params.get("agent")),
-      ("artifact", params.get("artifact")),
-      ("config delivery", params.get("config_delivery")),
-      ("remote home", params.get("remote_home")),
-      ("remote home mount", params.get("remote_home_mount")),
-      ("task image", params.get("selected_task_image") or params.get("task_base_image")),
-      ("verifier provider", params.get("verifier_provider")),
-      ("verifier env file", params.get("verifier_env_file")),
-      ("verifier base URL", params.get("verifier_openai_base_url")),
-      ("verifier judge model", params.get("verifier_judge_model")),
-      ("verifier classifier", params.get("verifier_classifier_model")),
-      ("verifier tool choice", params.get("verifier_tool_choice_compat") or MISSING),
-      ("verifier response format", params.get("verifier_response_format_compat") or MISSING),
-      ("verifier timeout x", params.get("verifier_timeout_multiplier") or MISSING),
-      ("attempts / concurrency", f"{format_number(params.get('n_attempts'))} / {format_number(params.get('n_concurrent_trials'))}"),
-  ], compact=True)}
+  {
+        kv_table(
+            [
+                ("task", harness.get("task_id")),
+                ("run id", harness.get("run_id")),
+                ("provider", params.get("provider")),
+                ("model", params.get("model")),
+                (
+                    "fair target",
+                    f"{params.get('fair_provider') or MISSING} / {params.get('fair_model') or MISSING}",
+                ),
+                ("agent", params.get("agent")),
+                ("artifact", params.get("artifact")),
+                ("config delivery", params.get("config_delivery")),
+                ("remote home", params.get("remote_home")),
+                ("remote home mount", params.get("remote_home_mount")),
+                (
+                    "task image",
+                    params.get("selected_task_image") or params.get("task_base_image"),
+                ),
+                ("verifier provider", params.get("verifier_provider")),
+                ("verifier env file", params.get("verifier_env_file")),
+                ("verifier base URL", params.get("verifier_openai_base_url")),
+                ("verifier judge model", params.get("verifier_judge_model")),
+                ("verifier classifier", params.get("verifier_classifier_model")),
+                (
+                    "verifier tool choice",
+                    params.get("verifier_tool_choice_compat") or MISSING,
+                ),
+                (
+                    "verifier response format",
+                    params.get("verifier_response_format_compat") or MISSING,
+                ),
+                (
+                    "verifier timeout x",
+                    params.get("verifier_timeout_multiplier") or MISSING,
+                ),
+                (
+                    "attempts / concurrency",
+                    f"{format_number(params.get('n_attempts'))} / {format_number(params.get('n_concurrent_trials'))}",
+                ),
+            ],
+            compact=True,
+        )
+    }
   <h3>Time</h3>
-  {kv_table([("started", timing.get("started_at")), ("finished", timing.get("finished_at")), ("total", format_duration(timing.get("total_s")))] + phase_rows, compact=True)}
+  {
+        kv_table(
+            [
+                ("started", timing.get("started_at")),
+                ("finished", timing.get("finished_at")),
+                ("total", format_duration(timing.get("total_s"))),
+            ]
+            + phase_rows,
+            compact=True,
+        )
+    }
   <h3>Harness Metrics</h3>
-  {kv_table([
-      ("task pass rate", rate_cell(harness.get("pass_rate"))),
-      ("verifier command", rate_cell(harness.get("verifier_command_rate"))),
-      ("inner pytest", rate_cell(harness.get("pytest_rate"))),
-      ("iterations", format_number(metrics.get("iterations"))),
-      ("tool calls", format_number(metrics.get("tool_calls"))),
-      ("shell calls", format_number(metrics.get("shell_calls"))),
-      ("file reads", format_number(metrics.get("file_reads"))),
-      ("tokens / cost", format_token_cost(metrics)),
-  ], compact=True)}
+  {
+        kv_table(
+            [
+                ("task pass rate", rate_cell(harness.get("pass_rate"))),
+                ("verifier command", rate_cell(harness.get("verifier_command_rate"))),
+                ("inner pytest", rate_cell(harness.get("pytest_rate"))),
+                ("iterations", format_number(metrics.get("iterations"))),
+                ("tool calls", format_number(metrics.get("tool_calls"))),
+                ("shell calls", format_number(metrics.get("shell_calls"))),
+                ("file reads", format_number(metrics.get("file_reads"))),
+                ("tokens / cost", format_token_cost(metrics)),
+            ],
+            compact=True,
+        )
+    }
   <h3>Diff Stats</h3>
   {kv_table(diff_rows, compact=True)}
   <h3>Scoring / Judging</h3>
-  {kv_table([
-      ("reward", scoring.get("reward")),
-      ("correctness", scoring.get("correctness")),
-      ("verifier score", scoring.get("verifier_score")),
-      ("taste patch bloat", scoring.get("taste_patch_bloat")),
-      ("rubric judge ok", scoring.get("rubric_judge_ok")),
-      ("taste judge ok", scoring.get("taste_judge_ok")),
-      ("rubric status", scoring.get("rubric_status")),
-      ("taste status", scoring.get("taste_status")),
-  ], compact=True)}
+  {
+        kv_table(
+            [
+                ("reward", scoring.get("reward")),
+                ("correctness", scoring.get("correctness")),
+                ("verifier score", scoring.get("verifier_score")),
+                ("taste patch bloat", scoring.get("taste_patch_bloat")),
+                ("rubric judge ok", scoring.get("rubric_judge_ok")),
+                ("taste judge ok", scoring.get("taste_judge_ok")),
+                ("rubric status", scoring.get("rubric_status")),
+                ("taste status", scoring.get("taste_status")),
+            ],
+            compact=True,
+        )
+    }
   <h3>Failure Details</h3>
-  <ul class="detail-list">{''.join(failure_items)}</ul>
+  <ul class="detail-list">{"".join(failure_items)}</ul>
   <h3>Artifacts</h3>
-  <ul class="artifact-list">{''.join(artifact_items)}</ul>
+  <ul class="artifact-list">{"".join(artifact_items)}</ul>
   <h3>Notes</h3>
   <ul class="detail-list">{note_items}</ul>
 </section>
 """
 
 
-def render_html(harnesses: list[dict[str, Any]], *, title: str, fair_provider: str, fair_model: str) -> str:
+def render_html(
+    harnesses: list[dict[str, Any]], *, title: str, fair_provider: str, fair_model: str
+) -> str:
     generated_at = datetime.now().astimezone().isoformat(timespec="seconds")
     task_ids = sorted({str(h.get("task_id")) for h in harnesses if h.get("task_id")})
     cards = "\n".join(harness_card(harness) for harness in harnesses)
-    raw_json = html_escape(json.dumps({"generated_at": generated_at, "harnesses": harnesses}, indent=2, sort_keys=True))
+    raw_json = html_escape(
+        json.dumps(
+            {"generated_at": generated_at, "harnesses": harnesses},
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -834,8 +1053,8 @@ def render_html(harnesses: list[dict[str, Any]], *, title: str, fair_provider: s
       <p class="subtle">Static Senior SWE-Bench comparison report using Solarized Light. The fair comparison target is {html_escape(fair_provider)} / {html_escape(fair_model)}.</p>
       <div class="summary-strip">
         <span class="chip">generated: {html_escape(generated_at)}</span>
-        <span class="chip">tasks: {html_escape(', '.join(task_ids) if task_ids else MISSING)}</span>
-        <span class="chip">harnesses: {html_escape(', '.join(h['label'] for h in harnesses))}</span>
+        <span class="chip">tasks: {html_escape(", ".join(task_ids) if task_ids else MISSING)}</span>
+        <span class="chip">harnesses: {html_escape(", ".join(h["label"] for h in harnesses))}</span>
       </div>
     </header>
     {comparison_table(harnesses)}
@@ -854,10 +1073,23 @@ def render_html(harnesses: list[dict[str, Any]], *, title: str, fair_provider: s
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--vis-run", type=Path, required=True, help="Vis Senior SWE-Bench run directory.")
-    parser.add_argument("--pi-run", type=Path, help="Optional pi.dev run directory with Harbor-like artifacts.")
-    parser.add_argument("--pi-json", type=Path, help="Optional normalized pi.dev comparison JSON.")
-    parser.add_argument("--out", type=Path, required=True, help="HTML report output path.")
+    parser.add_argument(
+        "--vis-run",
+        type=Path,
+        required=True,
+        help="Vis Senior SWE-Bench run directory.",
+    )
+    parser.add_argument(
+        "--pi-run",
+        type=Path,
+        help="Optional pi.dev run directory with Harbor-like artifacts.",
+    )
+    parser.add_argument(
+        "--pi-json", type=Path, help="Optional normalized pi.dev comparison JSON."
+    )
+    parser.add_argument(
+        "--out", type=Path, required=True, help="HTML report output path."
+    )
     parser.add_argument("--title", default="Vis vs pi.dev Senior SWE-Bench Report")
     parser.add_argument("--vis-label", default="Vis")
     parser.add_argument("--pi-label", default="pi.dev")
@@ -891,11 +1123,27 @@ def main() -> int:
             fair_model=args.fair_model,
         )
     elif args.pi_json:
-        pi = external_harness(args.pi_json, args.pi_label, fair_provider=args.fair_provider, fair_model=args.fair_model, task_id=vis.get("task_id"))
+        pi = external_harness(
+            args.pi_json,
+            args.pi_label,
+            fair_provider=args.fair_provider,
+            fair_model=args.fair_model,
+            task_id=vis.get("task_id"),
+        )
     else:
-        pi = pending_harness(args.pi_label, task_id=vis.get("task_id"), fair_provider=args.fair_provider, fair_model=args.fair_model)
+        pi = pending_harness(
+            args.pi_label,
+            task_id=vis.get("task_id"),
+            fair_provider=args.fair_provider,
+            fair_model=args.fair_model,
+        )
 
-    html_text = render_html([vis, pi], title=args.title, fair_provider=args.fair_provider, fair_model=args.fair_model)
+    html_text = render_html(
+        [vis, pi],
+        title=args.title,
+        fair_provider=args.fair_provider,
+        fair_model=args.fair_model,
+    )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(html_text)
     print(f"wrote {args.out}")

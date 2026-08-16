@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Copy useful Harbor job artifacts into a Senior SWE-Bench run directory."""
+
 from __future__ import annotations
 
 import argparse
@@ -84,7 +85,9 @@ def collect(job_dir: Path, run_dir: Path, task_id: str) -> dict[str, Any]:
 
         verifier_copied = _copy_tree(trial_dir / "verifier", dest / "verifier")
         agent_copied = _copy_tree(trial_dir / "agent", dest / "agent")
-        _copy_file(trial_dir / "artifacts" / "manifest.json", dest / "artifacts-manifest.json")
+        _copy_file(
+            trial_dir / "artifacts" / "manifest.json", dest / "artifacts-manifest.json"
+        )
 
         for trace in trial_dir.glob(f"**/vis-traces/{task_id}/vis.trace.jsonl"):
             trace_dest = run_dir / "vis-traces" / task_id
@@ -115,7 +118,9 @@ def collect(job_dir: Path, run_dir: Path, task_id: str) -> dict[str, Any]:
         "traces": copied_traces,
         "reward_files": reward_files,
     }
-    (harbor_dir / "collection.json").write_text(json.dumps(summary, indent=2, sort_keys=True))
+    (harbor_dir / "collection.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True)
+    )
     return summary
 
 
@@ -126,7 +131,11 @@ def main() -> int:
     parser.add_argument("--task-id", required=True)
     args = parser.parse_args()
 
-    print(json.dumps(collect(args.job_dir, args.run_dir, args.task_id), indent=2, sort_keys=True))
+    print(
+        json.dumps(
+            collect(args.job_dir, args.run_dir, args.task_id), indent=2, sort_keys=True
+        )
+    )
     return 0
 
 

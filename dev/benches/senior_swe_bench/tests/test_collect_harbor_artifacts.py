@@ -3,7 +3,9 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("collect_harbor_artifacts", ROOT / "collect_harbor_artifacts.py")
+spec = importlib.util.spec_from_file_location(
+    "collect_harbor_artifacts", ROOT / "collect_harbor_artifacts.py"
+)
 collect_harbor_artifacts = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(collect_harbor_artifacts)  # type: ignore[union-attr]
 
@@ -42,11 +44,19 @@ def test_collect_copies_matching_trial_verifier_reward_and_trace(tmp_path):
     assert summary["job_files"] == ["result.json", "job.log"]
     assert summary["trials"][0]["verifier"] is True
     assert summary["trials"][0]["agent"] is True
-    assert (run / "harbor-output" / "trial" / "verifier" / "reward.json").read_text() == '{"reward": 1}'
+    assert (
+        run / "harbor-output" / "trial" / "verifier" / "reward.json"
+    ).read_text() == '{"reward": 1}'
     assert (run / "harbor-output" / "trial" / "trial.log").read_text() == "trial log"
-    assert (run / "harbor-output" / "trial" / "agent" / "pi.txt").read_text() == '{"type":"turn_end"}\n'
-    assert (run / "vis-traces" / task_id / "vis.trace.jsonl").read_text() == '{"event":"trace-chunk"}\n'
-    assert summary["reward_files"] == [str(run / "harbor-output" / "trial" / "verifier" / "reward.json")]
+    assert (
+        run / "harbor-output" / "trial" / "agent" / "pi.txt"
+    ).read_text() == '{"type":"turn_end"}\n'
+    assert (
+        run / "vis-traces" / task_id / "vis.trace.jsonl"
+    ).read_text() == '{"event":"trace-chunk"}\n'
+    assert summary["reward_files"] == [
+        str(run / "harbor-output" / "trial" / "verifier" / "reward.json")
+    ]
     assert (run / "harbor-output" / "collection.json").exists()
 
 
@@ -58,7 +68,9 @@ def test_collect_matches_task_by_task_path_name(tmp_path):
     run = tmp_path / "results" / "run"
     good.mkdir(parents=True)
     bad.mkdir()
-    (good / "result.json").write_text(json.dumps({"task_id": {"path": f"/x/{task_id}"}}))
+    (good / "result.json").write_text(
+        json.dumps({"task_id": {"path": f"/x/{task_id}"}})
+    )
     (bad / "result.json").write_text(json.dumps({"task_id": {"path": "/x/task-b"}}))
 
     summary = collect_harbor_artifacts.collect(job, run, task_id)

@@ -13,7 +13,9 @@ METRICS = ROOT / "metrics.py"
 
 
 class MetricsTest(unittest.TestCase):
-    def run_metrics(self, report: dict, report_name: str = "vis+zai.run-1.json") -> dict:
+    def run_metrics(
+        self, report: dict, report_name: str = "vis+zai.run-1.json"
+    ) -> dict:
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d)
             preds = tmp / "predictions.jsonl"

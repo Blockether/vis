@@ -5,6 +5,7 @@ Stratification is per-repo so the subset preserves the repo distribution
 of the full split. Commit the resulting JSON; the autoresearch loop treats
 it as a frozen workload.
 """
+
 from __future__ import annotations
 
 import argparse

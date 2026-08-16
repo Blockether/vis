@@ -61,8 +61,7 @@ def _slash_todos(ctx):
     if not todos:
         return vis.ok("No todos yet — ask the agent to add some.")
     lines = [
-        ("[x] " if t["done"] else "[ ] ") + f'#{t["id"]} {t["text"]}'
-        for t in todos
+        ("[x] " if t["done"] else "[ ] ") + f"#{t['id']} {t['text']}" for t in todos
     ]
     done = sum(1 for t in todos if t["done"])
     return vis.ok(

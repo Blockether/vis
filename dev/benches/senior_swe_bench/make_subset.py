@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Generate Senior SWE-Bench subset files for longer runs."""
+
 from __future__ import annotations
 
 import argparse
@@ -75,7 +76,9 @@ def filter_tasks(
     return selected
 
 
-def _repo_round_robin(tasks: list[dict[str, Any]], limit: int, seed: str) -> list[dict[str, Any]]:
+def _repo_round_robin(
+    tasks: list[dict[str, Any]], limit: int, seed: str
+) -> list[dict[str, Any]]:
     groups: dict[str, list[dict[str, Any]]] = {}
     for task in tasks:
         groups.setdefault(str(task.get("repo") or "unknown"), []).append(task)
@@ -94,7 +97,9 @@ def _repo_round_robin(tasks: list[dict[str, Any]], limit: int, seed: str) -> lis
     return selected
 
 
-def balanced_pick(tasks: list[dict[str, Any]], limit: int, seed: str) -> list[dict[str, Any]]:
+def balanced_pick(
+    tasks: list[dict[str, Any]], limit: int, seed: str
+) -> list[dict[str, Any]]:
     if limit <= 0:
         return []
     if len(tasks) <= limit:
@@ -103,14 +108,18 @@ def balanced_pick(tasks: list[dict[str, Any]], limit: int, seed: str) -> list[di
     buckets: dict[str, list[dict[str, Any]]] = {}
     for task in tasks:
         buckets.setdefault(str(task.get("segment") or "unknown"), []).append(task)
-    segments = sorted(buckets, key=lambda segment: _stable_key(seed, "segment", segment))
+    segments = sorted(
+        buckets, key=lambda segment: _stable_key(seed, "segment", segment)
+    )
 
     base = limit // len(segments)
     remainder = limit % len(segments)
     segment_picks: dict[str, list[dict[str, Any]]] = {}
     for index, segment in enumerate(segments):
         quota = base + (1 if index < remainder else 0)
-        segment_picks[segment] = _repo_round_robin(buckets[segment], quota, f"{seed}:{segment}")
+        segment_picks[segment] = _repo_round_robin(
+            buckets[segment], quota, f"{seed}:{segment}"
+        )
 
     selected: list[dict[str, Any]] = []
     while len(selected) < limit and any(segment_picks.values()):
@@ -124,7 +133,9 @@ def balanced_pick(tasks: list[dict[str, Any]], limit: int, seed: str) -> list[di
     seen = {_task_id(task) for task in selected}
     if len(selected) < limit:
         remaining = [task for task in tasks if _task_id(task) not in seen]
-        selected.extend(_repo_round_robin(remaining, limit - len(selected), f"{seed}:fill"))
+        selected.extend(
+            _repo_round_robin(remaining, limit - len(selected), f"{seed}:fill")
+        )
     return selected[:limit]
 
 
@@ -161,7 +172,9 @@ def select_tasks(
 
 def _load_all_tasks() -> tuple[dict[str, Any], list[dict[str, Any]]]:
     lock = list_tasks.load_lock()
-    tasks = list_tasks.harbor_tasks(lock["dataset_repo"]) or list_tasks.clone_tasks(lock)
+    tasks = list_tasks.harbor_tasks(lock["dataset_repo"]) or list_tasks.clone_tasks(
+        lock
+    )
     return lock, tasks
 
 
@@ -226,15 +239,48 @@ def build_subset(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=["smoke", "public-5", "overnight", "full"])
-    parser.add_argument("--out", type=Path, help="Write subset JSON to this path. Defaults to stdout.")
+    parser.add_argument(
+        "--out", type=Path, help="Write subset JSON to this path. Defaults to stdout."
+    )
     parser.add_argument("--name", help="Override generated subset name.")
-    parser.add_argument("--max-tasks", type=int, help="Limit selected task count. Overnight defaults to 10.")
-    parser.add_argument("--seed", default="senior-swe-bench", help="Deterministic balancing seed.")
-    parser.add_argument("--repo", action="append", default=[], help="Only include this repo; repeatable.")
-    parser.add_argument("--segment", action="append", default=[], help="Only include this segment; repeatable.")
-    parser.add_argument("--task-type", action="append", default=[], help="Only include this task type; repeatable.")
-    parser.add_argument("--include-task", action="append", default=[], help="Only include this task id; repeatable.")
-    parser.add_argument("--exclude-task", action="append", default=[], help="Exclude this task id; repeatable.")
+    parser.add_argument(
+        "--max-tasks",
+        type=int,
+        help="Limit selected task count. Overnight defaults to 10.",
+    )
+    parser.add_argument(
+        "--seed", default="senior-swe-bench", help="Deterministic balancing seed."
+    )
+    parser.add_argument(
+        "--repo",
+        action="append",
+        default=[],
+        help="Only include this repo; repeatable.",
+    )
+    parser.add_argument(
+        "--segment",
+        action="append",
+        default=[],
+        help="Only include this segment; repeatable.",
+    )
+    parser.add_argument(
+        "--task-type",
+        action="append",
+        default=[],
+        help="Only include this task type; repeatable.",
+    )
+    parser.add_argument(
+        "--include-task",
+        action="append",
+        default=[],
+        help="Only include this task id; repeatable.",
+    )
+    parser.add_argument(
+        "--exclude-task",
+        action="append",
+        default=[],
+        help="Exclude this task id; repeatable.",
+    )
     args = parser.parse_args()
 
     if args.max_tasks is not None and args.max_tasks <= 0:

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Emit Senior SWE-Bench run metrics without collapsing to pass/fail."""
+
 from __future__ import annotations
 
 import argparse
@@ -67,7 +68,11 @@ def install_only_success(run_dir: Path) -> bool:
         if not isinstance(data, dict):
             continue
         config = data.get("config")
-        if isinstance(config, dict) and config.get("install_only") is True and data.get("exception_info") is None:
+        if (
+            isinstance(config, dict)
+            and config.get("install_only") is True
+            and data.get("exception_info") is None
+        ):
             return True
     return False
 
@@ -81,7 +86,12 @@ def patch_bloat(diff: str) -> dict[str, int]:
             added += 1
         elif line.startswith("-") and not line.startswith("---"):
             deleted += 1
-    return {"files": files, "added_lines": added, "deleted_lines": deleted, "total_changed_lines": added + deleted}
+    return {
+        "files": files,
+        "added_lines": added,
+        "deleted_lines": deleted,
+        "total_changed_lines": added + deleted,
+    }
 
 
 def _cost_usd(cost: dict[str, Any]) -> Any:
@@ -91,7 +101,9 @@ def _cost_usd(cost: dict[str, Any]) -> Any:
     return None
 
 
-def _merge_trace_metrics(stats: dict[str, Any], source: dict[str, Any], max_iteration: int) -> int:
+def _merge_trace_metrics(
+    stats: dict[str, Any], source: dict[str, Any], max_iteration: int
+) -> int:
     if isinstance(source.get("tokens"), dict):
         stats["tokens"] = source["tokens"]
     if isinstance(source.get("cost"), dict):
@@ -143,7 +155,11 @@ def summarize_trace(trace: Path) -> dict[str, Any]:
         iteration = obj.get("iteration", payload.get("iteration"))
         if isinstance(iteration, int):
             max_iteration = max(max_iteration, iteration)
-        tool_event = payload.get("tool-event") if isinstance(payload.get("tool-event"), dict) else {}
+        tool_event = (
+            payload.get("tool-event")
+            if isinstance(payload.get("tool-event"), dict)
+            else {}
+        )
         tool = str(
             obj.get("tool")
             or obj.get("name")
@@ -155,13 +171,19 @@ def summarize_trace(trace: Path) -> dict[str, Any]:
         )
         scope = payload.get("scope")
         if phase in {"form-start", "tool-start"} and (scope or tool):
-            tool_id = str(scope or f"{phase}:{iteration}:{payload.get('position')}:{tool}")
+            tool_id = str(
+                scope or f"{phase}:{iteration}:{payload.get('position')}:{tool}"
+            )
             if tool_id not in tool_ids:
                 tool_ids.add(tool_id)
                 stats["tool_calls"] += 1
                 if "shell" in tool:
                     stats["shell_calls"] += 1
-                    if obj.get("exit") not in (None, 0) or obj.get("error") or payload.get("error"):
+                    if (
+                        obj.get("exit") not in (None, 0)
+                        or obj.get("error")
+                        or payload.get("error")
+                    ):
                         stats["failed_shell_calls"] += 1
                 if tool in file_read_tools:
                     stats["file_reads"] += 1
@@ -175,13 +197,19 @@ def summarize_trace(trace: Path) -> dict[str, Any]:
             stats["eval"] = eval_evidence
             stats["eval_valid"] = eval_evidence.get("valid?") is True
             effort_evidence = eval_evidence.get("reasoning-effort")
-            if isinstance(effort_evidence, dict) and isinstance(effort_evidence.get("requested"), str):
+            if isinstance(effort_evidence, dict) and isinstance(
+                effort_evidence.get("requested"), str
+            ):
                 stats["reasoning_effort"] = effort_evidence["requested"]
                 stats["reasoning_effort_explicit"] = True
     if max_iteration:
         stats["iterations"] = max(stats["iterations"], max_iteration)
     stats["telemetry_complete"] = stats["available"] and stats["iterations"] > 0
-    stats["reasoning_reporting"] = "reported" if _first_number(stats["tokens"], "reasoning", "reasoning_tokens") is not None else "unreported"
+    stats["reasoning_reporting"] = (
+        "reported"
+        if _first_number(stats["tokens"], "reasoning", "reasoning_tokens") is not None
+        else "unreported"
+    )
     return stats
 
 
@@ -213,14 +241,27 @@ def summarize_pi_trace(trace: Path) -> dict[str, Any]:
     totals = {"input": 0, "cached": 0, "output": 0, "total": 0}
     cost = 0.0
     cost_reported = False
-    file_read_words = ("cat", "sed", "rg", "grep", "find", "ls", "head", "tail", "git show", "git diff")
+    file_read_words = (
+        "cat",
+        "sed",
+        "rg",
+        "grep",
+        "find",
+        "ls",
+        "head",
+        "tail",
+        "git show",
+        "git diff",
+    )
 
     for event in events:
         if event.get("type") == "turn_end":
             stats["iterations"] += 1
         if event.get("type") == "tool_execution_end":
             tool_id = event.get("toolCallId")
-            result = event.get("result") if isinstance(event.get("result"), dict) else {}
+            result = (
+                event.get("result") if isinstance(event.get("result"), dict) else {}
+            )
             if result.get("isError") is True and isinstance(tool_id, str):
                 failed_tool_ids.add(tool_id)
         if event.get("type") != "message_end":
@@ -228,7 +269,11 @@ def summarize_pi_trace(trace: Path) -> dict[str, Any]:
         message = event.get("message") if isinstance(event.get("message"), dict) else {}
         if message.get("role") != "assistant":
             continue
-        for block in message.get("content", []) if isinstance(message.get("content"), list) else []:
+        for block in (
+            message.get("content", [])
+            if isinstance(message.get("content"), list)
+            else []
+        ):
             if not isinstance(block, dict):
                 continue
             if block.get("type") == "thinking":
@@ -243,20 +288,37 @@ def summarize_pi_trace(trace: Path) -> dict[str, Any]:
             tool_names[tool_id] = name
             if name in {"bash", "shell"}:
                 stats["shell_calls"] += 1
-            arguments = block.get("arguments") if isinstance(block.get("arguments"), dict) else {}
+            arguments = (
+                block.get("arguments")
+                if isinstance(block.get("arguments"), dict)
+                else {}
+            )
             command = str(arguments.get("command") or "")
             if any(word in command for word in file_read_words):
                 stats["file_reads"] += 1
         usage = message.get("usage") if isinstance(message.get("usage"), dict) else {}
-        input_value = usage.get("input") if isinstance(usage.get("input"), (int, float)) else 0
-        cache_value = usage.get("cacheRead") if isinstance(usage.get("cacheRead"), (int, float)) else 0
+        input_value = (
+            usage.get("input") if isinstance(usage.get("input"), (int, float)) else 0
+        )
+        cache_value = (
+            usage.get("cacheRead")
+            if isinstance(usage.get("cacheRead"), (int, float))
+            else 0
+        )
         totals["input"] += input_value + cache_value
         totals["cached"] += cache_value
         for key, aliases in {
             "output": ("output",),
             "total": ("totalTokens", "total_tokens"),
         }.items():
-            value = next((usage.get(alias) for alias in aliases if isinstance(usage.get(alias), (int, float))), None)
+            value = next(
+                (
+                    usage.get(alias)
+                    for alias in aliases
+                    if isinstance(usage.get(alias), (int, float))
+                ),
+                None,
+            )
             if value is not None:
                 totals[key] += value
         usage_cost = usage.get("cost") if isinstance(usage.get("cost"), dict) else {}
@@ -265,7 +327,10 @@ def summarize_pi_trace(trace: Path) -> dict[str, Any]:
             cost_reported = True
 
     stats["tool_calls"] = len(tool_ids)
-    stats["failed_shell_calls"] = len(failed_tool_ids & {tool_id for tool_id, name in tool_names.items() if name in {"bash", "shell"}})
+    stats["failed_shell_calls"] = len(
+        failed_tool_ids
+        & {tool_id for tool_id, name in tool_names.items() if name in {"bash", "shell"}}
+    )
     stats["tokens"] = totals
     if cost_reported and cost > 0:
         stats["cost_usd"] = cost
@@ -288,13 +353,19 @@ def task_metadata(dataset_copy: Path | None, task_id: str) -> dict[str, Any]:
         return {}
     try:
         import tomllib
+
         data = tomllib.loads(toml.read_text())
     except ModuleNotFoundError:
         from list_tasks import _mini_toml_metadata
+
         data = _mini_toml_metadata(toml.read_text())
     md = data.get("metadata", {})
     tx = md.get("taxonomy", {})
-    return {"segment": md.get("segment"), "task_type": tx.get("task_type"), "tags": md.get("tags", [])}
+    return {
+        "segment": md.get("segment"),
+        "task_type": tx.get("task_type"),
+        "tags": md.get("tags", []),
+    }
 
 
 def verifier_summary(verifier: Any) -> dict[str, Any] | None:
@@ -330,7 +401,11 @@ def first_present(mapping: dict[str, Any], *keys: str) -> Any:
 
 
 def _number(value: Any) -> int | float | None:
-    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+    return (
+        value
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+        else None
+    )
 
 
 def _first_number(mapping: dict[str, Any], *keys: str) -> int | float | None:
@@ -344,7 +419,9 @@ def _first_number(mapping: dict[str, Any], *keys: str) -> int | float | None:
 def _usage_event(event: dict[str, Any]) -> dict[str, Any]:
     usage = event.get("usage") if isinstance(event.get("usage"), dict) else event
     prompt_details = (
-        usage.get("prompt_tokens_details") if isinstance(usage.get("prompt_tokens_details"), dict) else {}
+        usage.get("prompt_tokens_details")
+        if isinstance(usage.get("prompt_tokens_details"), dict)
+        else {}
     )
     completion_details = (
         usage.get("completion_tokens_details")
@@ -360,7 +437,9 @@ def _usage_event(event: dict[str, Any]) -> dict[str, Any]:
         "cached_tokens",
     )
     if cached_tokens is None:
-        cached_tokens = _first_number(prompt_details, "cached_tokens", "cache_read_tokens")
+        cached_tokens = _first_number(
+            prompt_details, "cached_tokens", "cache_read_tokens"
+        )
     cache_write_tokens = _first_number(
         usage,
         "cache_write_tokens",
@@ -378,10 +457,14 @@ def _usage_event(event: dict[str, Any]) -> dict[str, Any]:
     if input_tokens is not None and cached_tokens is not None:
         uncached_tokens = max(0, input_tokens - cached_tokens)
     cost_usd = _first_number(event, "reported_cost_usd", "cost_usd", "cost")
-    available = any(value is not None for value in (input_tokens, output_tokens, total_tokens))
+    available = any(
+        value is not None for value in (input_tokens, output_tokens, total_tokens)
+    )
     return {
         "available": available,
-        "core_complete": all(value is not None for value in (input_tokens, output_tokens, total_tokens)),
+        "core_complete": all(
+            value is not None for value in (input_tokens, output_tokens, total_tokens)
+        ),
         "source": event.get("source"),
         "purpose": event.get("purpose"),
         "model": event.get("model"),
@@ -396,10 +479,16 @@ def _usage_event(event: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _aggregate_usage_events(events: list[dict[str, Any]], *, scope: str) -> dict[str, Any]:
-    normalized = [item for event in events if (item := _usage_event(event))["available"]]
+def _aggregate_usage_events(
+    events: list[dict[str, Any]], *, scope: str
+) -> dict[str, Any]:
+    normalized = [
+        item for event in events if (item := _usage_event(event))["available"]
+    ]
     token_values = {
-        key: [item[key] for item in normalized if isinstance(item.get(key), (int, float))]
+        key: [
+            item[key] for item in normalized if isinstance(item.get(key), (int, float))
+        ]
         for key in TOKEN_KEYS
     }
     costs = [
@@ -407,18 +496,23 @@ def _aggregate_usage_events(events: list[dict[str, Any]], *, scope: str) -> dict
         for item in normalized
         if isinstance(item.get("reported_cost_usd"), (int, float))
     ]
-    purposes = sorted({str(item["purpose"]) for item in normalized if item.get("purpose")})
+    purposes = sorted(
+        {str(item["purpose"]) for item in normalized if item.get("purpose")}
+    )
     models = sorted({str(item["model"]) for item in normalized if item.get("model")})
     sources = sorted({str(item["source"]) for item in normalized if item.get("source")})
     return {
         "scope": scope,
         "available": bool(normalized),
-        "complete": bool(normalized) and all(item["core_complete"] for item in normalized),
+        "complete": bool(normalized)
+        and all(item["core_complete"] for item in normalized),
         "calls": len(normalized),
         "sources": sources,
         "purposes": purposes,
         "models": models,
-        **{key: sum(values) if values else None for key, values in token_values.items()},
+        **{
+            key: sum(values) if values else None for key, values in token_values.items()
+        },
         "token_coverage": {key: len(values) for key, values in token_values.items()},
         "reported_cost_usd": sum(costs) if costs else None,
         "calls_with_reported_cost": len(costs),
@@ -453,9 +547,19 @@ def _validation_agent_usage_events(run_dir: Path) -> list[dict[str, Any]]:
         if not isinstance(data, dict):
             continue
         for message in data.get("messages", []):
-            extra = message.get("extra") if isinstance(message, dict) and isinstance(message.get("extra"), dict) else {}
-            response = extra.get("response") if isinstance(extra.get("response"), dict) else {}
-            usage = response.get("usage") if isinstance(response.get("usage"), dict) else None
+            extra = (
+                message.get("extra")
+                if isinstance(message, dict) and isinstance(message.get("extra"), dict)
+                else {}
+            )
+            response = (
+                extra.get("response") if isinstance(extra.get("response"), dict) else {}
+            )
+            usage = (
+                response.get("usage")
+                if isinstance(response.get("usage"), dict)
+                else None
+            )
             if usage:
                 events.append(
                     {
@@ -467,7 +571,9 @@ def _validation_agent_usage_events(run_dir: Path) -> list[dict[str, Any]]:
                     }
                 )
     for path in sorted(run_dir.glob("harbor-output/**/cc_stream/*.jsonl")):
-        result_events = [event for event in _jsonl(path) if event.get("type") == "result"]
+        result_events = [
+            event for event in _jsonl(path) if event.get("type") == "result"
+        ]
         if not result_events:
             continue
         result = result_events[-1]
@@ -479,18 +585,26 @@ def _validation_agent_usage_events(run_dir: Path) -> list[dict[str, Any]]:
                     "purpose": "validation_agent",
                     "model": result.get("model"),
                     "usage": usage,
-                    "reported_cost_usd": result.get("total_cost_usd", result.get("cost_usd")),
+                    "reported_cost_usd": result.get(
+                        "total_cost_usd", result.get("cost_usd")
+                    ),
                 }
             )
     return events
 
 
-def verifier_usage(run_dir: Path, command: dict[str, Any], segment: Any) -> dict[str, Any]:
+def verifier_usage(
+    run_dir: Path, command: dict[str, Any], segment: Any
+) -> dict[str, Any]:
     judge_events = _judge_usage_events(run_dir)
     validation_events = _validation_agent_usage_events(run_dir)
     judges = _aggregate_usage_events(judge_events, scope="verifier_judges")
-    validation_agent = _aggregate_usage_events(validation_events, scope="validation_agent")
-    aggregate = _aggregate_usage_events(judge_events + validation_events, scope="verifier_total")
+    validation_agent = _aggregate_usage_events(
+        validation_events, scope="validation_agent"
+    )
+    aggregate = _aggregate_usage_events(
+        judge_events + validation_events, scope="verifier_total"
+    )
     validation_required = str(segment).lower() == "design"
     capture = command.get("vis_bench_verifier_usage_capture") or None
     aggregate.update(
@@ -510,13 +624,25 @@ def verifier_usage(run_dir: Path, command: dict[str, Any], segment: Any) -> dict
     return aggregate
 
 
-def normalized_usage(trace_stats: dict[str, Any], trial_result: dict[str, Any]) -> dict[str, Any]:
-    tokens = trace_stats.get("tokens") if isinstance(trace_stats.get("tokens"), dict) else {}
-    agent_result = trial_result.get("agent_result") if isinstance(trial_result.get("agent_result"), dict) else {}
+def normalized_usage(
+    trace_stats: dict[str, Any], trial_result: dict[str, Any]
+) -> dict[str, Any]:
+    tokens = (
+        trace_stats.get("tokens") if isinstance(trace_stats.get("tokens"), dict) else {}
+    )
+    agent_result = (
+        trial_result.get("agent_result")
+        if isinstance(trial_result.get("agent_result"), dict)
+        else {}
+    )
     if trace_stats.get("available") and tokens:
         input_tokens = _first_number(tokens, "input", "input_tokens", "prompt")
-        cached_tokens = _first_number(tokens, "cached", "cache-read", "cache_read", "cache_tokens")
-        cache_write_tokens = _first_number(tokens, "cache-created", "cache_write", "cache_write_tokens")
+        cached_tokens = _first_number(
+            tokens, "cached", "cache-read", "cache_read", "cache_tokens"
+        )
+        cache_write_tokens = _first_number(
+            tokens, "cache-created", "cache_write", "cache_write_tokens"
+        )
         output_tokens = _first_number(tokens, "output", "output_tokens", "completion")
         reasoning_tokens = _first_number(tokens, "reasoning", "reasoning_tokens")
         total_tokens = _first_number(tokens, "total", "total_tokens")
@@ -536,8 +662,15 @@ def normalized_usage(trace_stats: dict[str, Any], trial_result: dict[str, Any]) 
     uncached_tokens = None
     if input_tokens is not None and cached_tokens is not None:
         uncached_tokens = max(0, input_tokens - cached_tokens)
-    available = input_tokens is not None or output_tokens is not None or total_tokens is not None
-    complete = all(value is not None for value in (input_tokens, cached_tokens, output_tokens, total_tokens))
+    available = (
+        input_tokens is not None
+        or output_tokens is not None
+        or total_tokens is not None
+    )
+    complete = all(
+        value is not None
+        for value in (input_tokens, cached_tokens, output_tokens, total_tokens)
+    )
     return {
         "scope": "agent",
         "available": available,
@@ -567,23 +700,40 @@ def completion_summary(
     reward_dict = reward if isinstance(reward, dict) else {}
     verifier_dict = verifier if isinstance(verifier, dict) else {}
     judge_dict = judge_output if isinstance(judge_output, dict) else {}
-    validation_status_dict = validation_status if isinstance(validation_status, dict) else {}
-    validation_results_dict = validation_results if isinstance(validation_results, dict) else {}
+    validation_status_dict = (
+        validation_status if isinstance(validation_status, dict) else {}
+    )
+    validation_results_dict = (
+        validation_results if isinstance(validation_results, dict) else {}
+    )
     resolved = reward_dict.get("resolved")
     score = _first_number(reward_dict, "reward", "correctness", "verifier_score")
     scoreable = isinstance(resolved, bool) or score is not None
-    passed = resolved if isinstance(resolved, bool) else (score >= 1 if score is not None else None)
-    rubric = reward_dict.get("rubric") if isinstance(reward_dict.get("rubric"), dict) else {}
-    taste = reward_dict.get("taste") if isinstance(reward_dict.get("taste"), dict) else {}
+    passed = (
+        resolved
+        if isinstance(resolved, bool)
+        else (score >= 1 if score is not None else None)
+    )
+    rubric = (
+        reward_dict.get("rubric") if isinstance(reward_dict.get("rubric"), dict) else {}
+    )
+    taste = (
+        reward_dict.get("taste") if isinstance(reward_dict.get("taste"), dict) else {}
+    )
     rubric_status = rubric.get("status") or judge_dict.get("rubric_status")
     taste_status = taste.get("status") or judge_dict.get("taste_status")
-    verifier_complete = isinstance(verifier_dict.get("total"), int) and verifier_dict.get("total", 0) > 0
+    verifier_complete = (
+        isinstance(verifier_dict.get("total"), int)
+        and verifier_dict.get("total", 0) > 0
+    )
     judges_complete = all(
         status == "ok" or (isinstance(status, str) and status.startswith("skipped:"))
         for status in (rubric_status, taste_status)
     )
     validation_required = str(segment).lower() == "design"
-    validation_score = _first_number(validation_results_dict, "validation_score", "score")
+    validation_score = _first_number(
+        validation_results_dict, "validation_score", "score"
+    )
     validation_complete = not validation_required or (
         validation_status_dict.get("returncode") == 0
         and not validation_results_dict.get("validation_agent_infrastructure_failure")
@@ -622,7 +772,9 @@ def completion_summary(
         "judges_complete": judges_complete,
         "validation_required": validation_required,
         "validation_complete": validation_complete,
-        "exception_type": harbor_exception.get("exception_type") if harbor_exception else None,
+        "exception_type": harbor_exception.get("exception_type")
+        if harbor_exception
+        else None,
     }
 
 
@@ -632,12 +784,32 @@ def agent_summary(
     trace_stats: dict[str, Any],
     preflight: dict[str, Any],
 ) -> dict[str, Any]:
-    agent_info = trial_result.get("agent_info") if isinstance(trial_result.get("agent_info"), dict) else {}
-    model_info = agent_info.get("model_info") if isinstance(agent_info.get("model_info"), dict) else {}
-    harness = command.get("bench_agent_label") or ("Vis" if command.get("vis_provider") else None)
-    raw_model = model_info.get("name") or command.get("bench_model") or command.get("vis_model")
-    model_provider = raw_model.split("/", 1)[0] if isinstance(raw_model, str) and "/" in raw_model else None
-    model = raw_model.split("/", 1)[1] if isinstance(raw_model, str) and "/" in raw_model else raw_model
+    agent_info = (
+        trial_result.get("agent_info")
+        if isinstance(trial_result.get("agent_info"), dict)
+        else {}
+    )
+    model_info = (
+        agent_info.get("model_info")
+        if isinstance(agent_info.get("model_info"), dict)
+        else {}
+    )
+    harness = command.get("bench_agent_label") or (
+        "Vis" if command.get("vis_provider") else None
+    )
+    raw_model = (
+        model_info.get("name") or command.get("bench_model") or command.get("vis_model")
+    )
+    model_provider = (
+        raw_model.split("/", 1)[0]
+        if isinstance(raw_model, str) and "/" in raw_model
+        else None
+    )
+    model = (
+        raw_model.split("/", 1)[1]
+        if isinstance(raw_model, str) and "/" in raw_model
+        else raw_model
+    )
     provider = model_info.get("provider") or model_provider
     if not provider and str(harness).lower() == "vis":
         provider = command.get("vis_provider")
@@ -645,18 +817,27 @@ def agent_summary(
     version = agent_info.get("version") or None
     if isinstance(version, str) and version.lower() == "unknown":
         version = None
-    artifact = preflight.get("artifact") if str(harness).lower() == "vis" and isinstance(preflight.get("artifact"), dict) else None
+    artifact = (
+        preflight.get("artifact")
+        if str(harness).lower() == "vis" and isinstance(preflight.get("artifact"), dict)
+        else None
+    )
     return {
-        "name": agent_info.get("name") or command.get("bench_agent_label") or command.get("bench_agent"),
+        "name": agent_info.get("name")
+        or command.get("bench_agent_label")
+        or command.get("bench_agent"),
         "harness": harness,
         "version": version,
         "requested_version": requested_version,
-        "version_matches_requested": version == requested_version if requested_version else None,
+        "version_matches_requested": version == requested_version
+        if requested_version
+        else None,
         "provider": provider,
         "model": model,
         "reasoning_effort": trace_stats.get("reasoning_effort")
         or command.get("bench_agent_reasoning_effort"),
-        "reasoning_effort_explicit": trace_stats.get("reasoning_effort_explicit") is True
+        "reasoning_effort_explicit": trace_stats.get("reasoning_effort_explicit")
+        is True
         or command.get("bench_agent_reasoning_effort_explicit") is True,
         "pi_thinking_level": command.get("bench_agent_pi_thinking_level") or None,
         "output_cap": command.get("bench_agent_output_cap"),
@@ -695,7 +876,10 @@ def failure_class(
             return "verifier_failed"
     if isinstance(reward, dict) and reward.get("reward") == 0:
         return "reward_zero"
-    if isinstance(reward, dict) and _first_number(reward, "reward", "correctness", "verifier_score") is not None:
+    if (
+        isinstance(reward, dict)
+        and _first_number(reward, "reward", "correctness", "verifier_score") is not None
+    ):
         return None
     if log_failure:
         return log_failure
@@ -716,7 +900,9 @@ def main() -> int:
     reward = (
         load_json(args.harbor_reward)
         if args.harbor_reward
-        else first_json(args.run_dir, "reward_details.json", "reward.json", "score.json")
+        else first_json(
+            args.run_dir, "reward_details.json", "reward.json", "score.json"
+        )
     )
     verifier = first_json(args.run_dir, "verifier_results.json")
     judge_output = first_json(args.run_dir, "judge_output.json")
@@ -732,14 +918,22 @@ def main() -> int:
     preflight_error = preflight_failure(args.run_dir)
     log_failure = harbor_log_failure_class(args.run_dir)
     install_only_ok = install_only_success(args.run_dir)
-    patch_text = args.patch.read_text(errors="replace") if args.patch and args.patch.exists() else ""
-    trace = args.trace or (args.run_dir / "vis-traces" / args.task_id / "vis.trace.jsonl")
+    patch_text = (
+        args.patch.read_text(errors="replace")
+        if args.patch and args.patch.exists()
+        else ""
+    )
+    trace = args.trace or (
+        args.run_dir / "vis-traces" / args.task_id / "vis.trace.jsonl"
+    )
     meta = task_metadata(args.dataset_copy, args.task_id)
     vis_trace_stats = summarize_trace(trace)
     trace_stats = _agent_trace(args.run_dir, vis_trace_stats)
     if command.get("bench_agent_reasoning_effort"):
         trace_stats = dict(trace_stats)
-        trace_stats.setdefault("reasoning_effort", command["bench_agent_reasoning_effort"])
+        trace_stats.setdefault(
+            "reasoning_effort", command["bench_agent_reasoning_effort"]
+        )
         trace_stats["reasoning_effort_explicit"] = (
             command.get("bench_agent_reasoning_effort_explicit") is True
         )
@@ -764,7 +958,11 @@ def main() -> int:
         verifier_pass = first_present(reward, "verifier_pass", "tests_passed")
         validation_agent_pass = first_present(reward, "validation_agent_pass")
         rubric_score = first_present(reward, "rubric_score", "score")
-    if isinstance(verifier, dict) and verifier_pass is None and verifier.get("total") is not None:
+    if (
+        isinstance(verifier, dict)
+        and verifier_pass is None
+        and verifier.get("total") is not None
+    ):
         verifier_pass = verifier.get("all_pass")
 
     failure = failure_class(
@@ -791,7 +989,9 @@ def main() -> int:
         "verifier": verifier_summary(verifier),
         "judge": judge_summary(judge_output),
         "install_only_success": install_only_ok,
-        "validation_agent_pass": bool(validation_agent_pass) if validation_agent_pass is not None else None,
+        "validation_agent_pass": bool(validation_agent_pass)
+        if validation_agent_pass is not None
+        else None,
         "rubric_score": rubric_score,
         "patch_bloat": patch_bloat(patch_text),
         "vis": vis_trace_stats,
@@ -801,7 +1001,8 @@ def main() -> int:
         "harbor": {
             "version": command.get("harbor_version"),
             "locked_version": command.get("harbor_version_locked"),
-            "version_matches_lock": command.get("harbor_version") == command.get("harbor_version_locked")
+            "version_matches_lock": command.get("harbor_version")
+            == command.get("harbor_version_locked")
             if command.get("harbor_version_locked")
             else None,
         },

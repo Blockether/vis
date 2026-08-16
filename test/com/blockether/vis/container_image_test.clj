@@ -201,8 +201,8 @@
                (expect (re-find #"(?m)^Runtime: +jvm$" output) output)
                (expect (re-find #"(?m)^Native: +not installed$" output) output)
                (expect (re-find (re-pattern (str "(?m)^Source: +"
-                                                 (java.util.regex.Pattern/quote
-                                                   (.getCanonicalPath checkout))
+                                                 (java.util.regex.Pattern/quote (.getCanonicalPath
+                                                                                  checkout))
                                                  "$"))
                                 output)
                        output))

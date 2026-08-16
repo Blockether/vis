@@ -3097,8 +3097,7 @@
           "a pipeline's exit is its LAST stage's, so a failed build looks green — run it plain, "
           "then slice on the handle or filter `log_path` in Python. "
           "`print((await shell(\"npm test\")).wait(300)[\"stdout\"])`.")
-     :params [{:name "id" :note "reuse to re-attach a live shell"}
-              {:name "cwd"}
+     :params [{:name "id" :note "reuse to re-attach a live shell"} {:name "cwd"}
               {:name "timeout_secs"}]
      :ticker-fn (shell-ticker "run")
      :inject-env? true

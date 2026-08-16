@@ -12,6 +12,7 @@ Vis is invoked with `--db :memory` so no state leaks between instances.
 The agent runs inside a fresh git worktree of the target repo at
 `base_commit` so the final `git diff` is the patch SWE-bench will score.
 """
+
 from __future__ import annotations
 
 import json
@@ -24,7 +25,9 @@ import time
 from pathlib import Path
 
 REPO_CACHE = Path(
-    os.environ.get("SWEBENCH_REPO_CACHE", str(Path.home() / ".cache" / "swebench-repos"))
+    os.environ.get(
+        "SWEBENCH_REPO_CACHE", str(Path.home() / ".cache" / "swebench-repos")
+    )
 )
 PROVIDER = os.environ.get("VIS_PROVIDER", "zai-coding-plan")
 MODEL = os.environ.get("VIS_MODEL", "glm-5.1")
@@ -49,7 +52,9 @@ def ensure_repo(repo: str) -> Path:
             check=True,
         )
     else:
-        subprocess.run(["git", "-C", str(mirror), "fetch", "--all", "--tags", "-q"], check=False)
+        subprocess.run(
+            ["git", "-C", str(mirror), "fetch", "--all", "--tags", "-q"], check=False
+        )
     return mirror
 
 
@@ -62,13 +67,13 @@ def make_worktree(mirror: Path, base_commit: str) -> Path:
 
 
 def render_prompt(instance: dict, workdir: Path) -> str:
-    return f"""You are working inside a git checkout of {instance['repo']} at commit \
-{instance['base_commit']} (cwd = {workdir}).
+    return f"""You are working inside a git checkout of {instance["repo"]} at commit \
+{instance["base_commit"]} (cwd = {workdir}).
 
 Your task:
 
 <problem_statement>
-{instance['problem_statement']}
+{instance["problem_statement"]}
 </problem_statement>
 
 Constraints:
@@ -93,7 +98,9 @@ def artifact_dir(iid: str) -> Path | None:
     return d
 
 
-def write_artifact(iid: str, name: str, content: str | bytes | dict | list | None) -> None:
+def write_artifact(
+    iid: str, name: str, content: str | bytes | dict | list | None
+) -> None:
     d = artifact_dir(iid)
     if d is None or content is None:
         return
@@ -135,12 +142,17 @@ def solve(instance: dict) -> dict:
         cmd = [
             VIS_BIN,
             "--full-trace-json-stream",
-            "--db", ":memory",
-            "--provider", PROVIDER,
-            "--model", MODEL,
+            "--db",
+            ":memory",
+            "--provider",
+            PROVIDER,
+            "--model",
+            MODEL,
             prompt,
         ]
-        write_artifact(iid, "command.json", {"cmd": cmd, "cwd": str(wt), "timeout_s": TIMEOUT})
+        write_artifact(
+            iid, "command.json", {"cmd": cmd, "cwd": str(wt), "timeout_s": TIMEOUT}
+        )
         log(f"{iid}: launching vis ({MODEL})")
 
         # Use Popen + on-disk redirect so partial trace survives timeout / kill.
@@ -188,13 +200,27 @@ def solve(instance: dict) -> dict:
                 continue
             try:
                 obj = json.loads(line)
-                if isinstance(obj, dict) and (obj.get("phase") == "turn-complete" or "trace" in obj):
+                if isinstance(obj, dict) and (
+                    obj.get("phase") == "turn-complete" or "trace" in obj
+                ):
                     final_payload = obj
                     break
             except Exception:
                 continue
-        write_artifact(iid, "vis.stdout.json", json.dumps(final_payload) if final_payload else proc_stdout)
-        proc = type("Proc", (), {"returncode": proc_returncode, "stdout": json.dumps(final_payload) if final_payload else "", "stderr": proc_stderr})
+        write_artifact(
+            iid,
+            "vis.stdout.json",
+            json.dumps(final_payload) if final_payload else proc_stdout,
+        )
+        proc = type(
+            "Proc",
+            (),
+            {
+                "returncode": proc_returncode,
+                "stdout": json.dumps(final_payload) if final_payload else "",
+                "stderr": proc_stderr,
+            },
+        )
         if proc.returncode != 0:
             result = {
                 **result_base(iid),
@@ -206,7 +232,9 @@ def solve(instance: dict) -> dict:
 
         diff = subprocess.run(
             ["git", "-C", str(wt), "diff", "--no-color", "HEAD"],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout
 
         # Best-effort token/cost extraction from vis-agent --json output. The Vis

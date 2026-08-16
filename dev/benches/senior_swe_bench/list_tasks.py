@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """List Senior SWE-Bench tasks from Harbor or a pinned shallow clone."""
+
 from __future__ import annotations
 
 import argparse
@@ -19,7 +20,9 @@ from typing import Any
 
 HERE = Path(__file__).resolve().parent
 LOCK = HERE / "dataset.lock.json"
-CACHE_ROOT = Path(os.environ.get("VIS_SSB_CACHE", Path.home() / ".cache" / "vis" / "senior-swe-bench"))
+CACHE_ROOT = Path(
+    os.environ.get("VIS_SSB_CACHE", Path.home() / ".cache" / "vis" / "senior-swe-bench")
+)
 
 
 def load_lock() -> dict[str, Any]:
@@ -67,7 +70,9 @@ def ensure_dataset_clone(lock: dict[str, Any]) -> Path:
         shutil.rmtree(tmp)
     url = f"https://github.com/{repo}.git"
     subprocess.run(["git", "clone", "--depth", "1", url, str(tmp)], check=True)
-    subprocess.run(["git", "-C", str(tmp), "fetch", "--depth", "1", "origin", commit], check=True)
+    subprocess.run(
+        ["git", "-C", str(tmp), "fetch", "--depth", "1", "origin", commit], check=True
+    )
     subprocess.run(["git", "-C", str(tmp), "checkout", "--detach", commit], check=True)
     if dest.exists():
         shutil.rmtree(dest)
@@ -128,7 +133,9 @@ def _mini_toml_metadata(text: str) -> dict[str, Any]:
 
 def task_from_dir(path: Path) -> dict[str, Any]:
     text = (path / "task.toml").read_text()
-    task_toml = tomllib.loads(text) if tomllib is not None else _mini_toml_metadata(text)
+    task_toml = (
+        tomllib.loads(text) if tomllib is not None else _mini_toml_metadata(text)
+    )
     metadata = task_toml.get("metadata", {})
     taxonomy = metadata.get("taxonomy", {})
     verifier = task_toml.get("verifier", {})
@@ -148,7 +155,9 @@ def clone_tasks(lock: dict[str, Any]) -> list[dict[str, Any]]:
     root = ensure_dataset_clone(lock) / "tasks"
     if not root.exists():
         raise SystemExit(f"dataset clone has no tasks/ directory: {root}")
-    return [task_from_dir(d) for d in sorted(root.iterdir()) if (d / "task.toml").exists()]
+    return [
+        task_from_dir(d) for d in sorted(root.iterdir()) if (d / "task.toml").exists()
+    ]
 
 
 def load_subset(path: str | None) -> set[str] | None:
@@ -171,14 +180,24 @@ def load_subset(path: str | None) -> set[str] | None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--subset", help="Subset JSON path relative to this package, e.g. subsets/smoke.json")
+    ap.add_argument(
+        "--subset",
+        help="Subset JSON path relative to this package, e.g. subsets/smoke.json",
+    )
     ap.add_argument("--json", action="store_true", help="Emit JSON instead of a table")
-    ap.add_argument("--refresh", action="store_true", help="Delete cached clone before listing")
+    ap.add_argument(
+        "--refresh", action="store_true", help="Delete cached clone before listing"
+    )
     args = ap.parse_args()
 
     lock = load_lock()
     if args.refresh:
-        shutil.rmtree(CACHE_ROOT / lock["dataset_repo"].replace("/", "__") / lock["dataset_commit"], ignore_errors=True)
+        shutil.rmtree(
+            CACHE_ROOT
+            / lock["dataset_repo"].replace("/", "__")
+            / lock["dataset_commit"],
+            ignore_errors=True,
+        )
 
     tasks = harbor_tasks(lock["dataset_repo"]) or clone_tasks(lock)
     subset = load_subset(args.subset)
@@ -193,7 +212,9 @@ def main() -> int:
         sys.stdout.write("\n")
     else:
         for t in tasks:
-            print(f"{t['task_id']}\t{t.get('segment') or '-'}\t{t.get('task_type') or '-'}\t{t.get('repo') or '-'}\t{t.get('visibility') or '-'}")
+            print(
+                f"{t['task_id']}\t{t.get('segment') or '-'}\t{t.get('task_type') or '-'}\t{t.get('repo') or '-'}\t{t.get('visibility') or '-'}"
+            )
     return 0
 
 

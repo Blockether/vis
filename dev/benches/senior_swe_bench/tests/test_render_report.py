@@ -4,7 +4,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("render_report", ROOT / "render_report.py")
+spec = importlib.util.spec_from_file_location(
+    "render_report", ROOT / "render_report.py"
+)
 render_report = importlib.util.module_from_spec(spec)
 sys.modules["render_report"] = render_report
 spec.loader.exec_module(render_report)  # type: ignore[union-attr]
@@ -38,8 +40,17 @@ def test_report_renders_side_by_side_solarized_summary(tmp_path):
                 "failure_class": "verifier_failed",
                 "verifier_pass": False,
                 "verifier": {"passed": 0, "total": 1, "all_pass": False},
-                "harbor_reward": {"reward": 0.0, "correctness": 0.0, "verifier_score": 0.0},
-                "patch_bloat": {"files": 2, "added_lines": 10, "deleted_lines": 2, "total_changed_lines": 12},
+                "harbor_reward": {
+                    "reward": 0.0,
+                    "correctness": 0.0,
+                    "verifier_score": 0.0,
+                },
+                "patch_bloat": {
+                    "files": 2,
+                    "added_lines": 10,
+                    "deleted_lines": 2,
+                    "total_changed_lines": 12,
+                },
                 "vis": {"iterations": 45, "tokens": {}, "cost_usd": None},
             }
         )
@@ -53,7 +64,13 @@ def test_report_renders_side_by_side_solarized_summary(tmp_path):
                 "stats": {
                     "evals": {
                         "vis-installed__glm-5.1__tasks": {
-                            "metrics": [{"reward": 0.0, "correctness": 0.0, "verifier_score": 0.0}]
+                            "metrics": [
+                                {
+                                    "reward": 0.0,
+                                    "correctness": 0.0,
+                                    "verifier_score": 0.0,
+                                }
+                            ]
                         }
                     },
                     "n_input_tokens": None,
@@ -73,7 +90,10 @@ def test_report_renders_side_by_side_solarized_summary(tmp_path):
                     "started_at": "2026-07-04T15:26:03.874127Z",
                     "finished_at": "2026-07-04T15:40:09.149312Z",
                 },
-                "agent_info": {"name": "vis-installed", "model_info": {"name": "glm-5.1", "provider": None}},
+                "agent_info": {
+                    "name": "vis-installed",
+                    "model_info": {"name": "glm-5.1", "provider": None},
+                },
             }
         )
     )
@@ -153,5 +173,7 @@ def test_report_links_generated_transcript(tmp_path):
         fair_model="glm-5.2",
     )
 
-    assert harness["artifacts"]["transcript"] == str((run / "vis-transcript.html").resolve())
+    assert harness["artifacts"]["transcript"] == str(
+        (run / "vis-transcript.html").resolve()
+    )
     assert "open transcript" in render_report.harness_card(harness)

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Generate per-task Senior SWE-Bench subset/run drilldown reports."""
+
 from __future__ import annotations
 
 import argparse
@@ -43,7 +44,10 @@ def deep_get(mapping: dict[str, Any], *keys: str) -> Any:
 
 def redact(value: Any) -> Any:
     if isinstance(value, dict):
-        return {key: "[REDACTED]" if SECRET_KEY_RE.search(str(key)) else redact(item) for key, item in value.items()}
+        return {
+            key: "[REDACTED]" if SECRET_KEY_RE.search(str(key)) else redact(item)
+            for key, item in value.items()
+        }
     if isinstance(value, list):
         return [redact(item) for item in value]
     return value
@@ -151,7 +155,11 @@ def find_patch_text(run_dir: Path, task_id: str | None) -> str | None:
 
 def contains_auth_failure(*values: Any) -> bool:
     text = "\n".join(str(value) for value in values if value is not None)
-    return "Authentication Failed" in text or "AuthenticationError" in text or "authentication failed" in text.lower()
+    return (
+        "Authentication Failed" in text
+        or "AuthenticationError" in text
+        or "authentication failed" in text.lower()
+    )
 
 
 def classify(row: dict[str, Any], texts: list[str | None]) -> str:
@@ -170,21 +178,35 @@ def classify(row: dict[str, Any], texts: list[str | None]) -> str:
     if not summary and row.get("exit_status") not in (None, 0):
         if preflight or row.get("command") == {}:
             return "missing_summary"
-    if contains_auth_failure(summary, validation_status, validation_results, judge, *texts):
+    if contains_auth_failure(
+        summary, validation_status, validation_results, judge, *texts
+    ):
         return "auth_failure"
     if "RewardFileEmptyError" in {ledger_failure, ledger_exception_type}:
         return "reward_empty"
-    if any("Docker daemon" in (text or "") or "Cannot connect to the Docker" in (text or "") for text in texts):
+    if any(
+        "Docker daemon" in (text or "")
+        or "Cannot connect to the Docker" in (text or "")
+        for text in texts
+    ):
         return "docker_or_platform_failure"
     if preflight:
         return "docker_or_platform_failure"
     if harbor_exception.get("exception_type") == "RewardFileEmptyError":
         return "reward_empty"
-    if summary.get("resolved") is True or reward.get("resolved") is True or reward.get("reward") == 1:
+    if (
+        summary.get("resolved") is True
+        or reward.get("resolved") is True
+        or reward.get("reward") == 1
+    ):
         return "scoreable_pass"
-    if any(reward.get(key) is not None for key in ("reward", "correctness", "resolved")):
+    if any(
+        reward.get(key) is not None for key in ("reward", "correctness", "resolved")
+    ):
         return "scoreable_fail"
-    if validation_results.get("validation_agent_infrastructure_failure") or validation_status.get("returncode") not in (None, 0):
+    if validation_results.get(
+        "validation_agent_infrastructure_failure"
+    ) or validation_status.get("returncode") not in (None, 0):
         return "validation_agent_infra_failure"
     if not validation_results and validation_status:
         return "validation_agent_no_results"
@@ -196,7 +218,10 @@ def classify(row: dict[str, Any], texts: list[str | None]) -> str:
     taste_status = str(judge.get("taste_status") or "")
     if "api_error" in rubric_status or "api_error" in taste_status:
         return "judge_api_error"
-    if "tool" in str(judge.get("rubric_error") or "").lower() or "tool" in str(judge.get("taste_error") or "").lower():
+    if (
+        "tool" in str(judge.get("rubric_error") or "").lower()
+        or "tool" in str(judge.get("taste_error") or "").lower()
+    ):
         return "judge_no_tool_use"
     if not summary:
         return "missing_summary"
@@ -212,23 +237,39 @@ def task_row(task: dict[str, Any]) -> dict[str, Any]:
     validation_status = as_dict(load_json(vdir / "validation_agent_status.json"))
     validation_results = as_dict(load_json(vdir / "validation_results.json"))
     judge = as_dict(load_json(vdir / "judge_output.json") or summary.get("judge"))
-    verifier = as_dict(load_json(vdir / "verifier_results.json") or summary.get("verifier"))
+    verifier = as_dict(
+        load_json(vdir / "verifier_results.json") or summary.get("verifier")
+    )
     reward = as_dict(
         load_json(vdir / "reward_details.json")
         or load_json(vdir / "reward.json")
         or load_json(vdir / "score.json")
         or summary.get("harbor_reward")
     )
-    task_id = first_present(summary.get("task_id"), task.get("task_id"), (command.get("task_ids") or [None])[0] if isinstance(command.get("task_ids"), list) else None)
+    task_id = first_present(
+        summary.get("task_id"),
+        task.get("task_id"),
+        (command.get("task_ids") or [None])[0]
+        if isinstance(command.get("task_ids"), list)
+        else None,
+    )
     patch_text = find_patch_text(run_dir, task_id)
     diagnostics = {
-        "test_stdout": diagnostic_excerpt(read_text(vdir / "test-stdout.txt", limit=8000)),
-        "run_judge_rubric_stderr": diagnostic_excerpt(read_text(vdir / "run_judge_rubric.stderr", limit=4000)),
-        "run_judge_taste_stderr": diagnostic_excerpt(read_text(vdir / "run_judge_taste.stderr", limit=4000)),
+        "test_stdout": diagnostic_excerpt(
+            read_text(vdir / "test-stdout.txt", limit=8000)
+        ),
+        "run_judge_rubric_stderr": diagnostic_excerpt(
+            read_text(vdir / "run_judge_rubric.stderr", limit=4000)
+        ),
+        "run_judge_taste_stderr": diagnostic_excerpt(
+            read_text(vdir / "run_judge_taste.stderr", limit=4000)
+        ),
     }
     row: dict[str, Any] = {
         "task_id": task_id,
-        "run_id": first_present(command.get("run_id"), task.get("run_id"), run_dir.name),
+        "run_id": first_present(
+            command.get("run_id"), task.get("run_id"), run_dir.name
+        ),
         "run_dir": str(run_dir),
         "exit_status": task.get("exit_status"),
         "metadata": task_metadata(run_dir, task_id),
@@ -254,11 +295,17 @@ def task_row(task: dict[str, Any]) -> dict[str, Any]:
             "total_stories": validation_results.get("total_stories"),
             "passed_cases": validation_results.get("passed_cases"),
             "total_cases": validation_results.get("total_cases"),
-            "infrastructure_failure": validation_results.get("validation_agent_infrastructure_failure"),
+            "infrastructure_failure": validation_results.get(
+                "validation_agent_infrastructure_failure"
+            ),
         },
         "judge": {
             "rubric_status": judge.get("rubric_status"),
-            "rubric_score": first_present(reward.get("rubric_score"), reward.get("score"), summary.get("rubric_score")),
+            "rubric_score": first_present(
+                reward.get("rubric_score"),
+                reward.get("score"),
+                summary.get("rubric_score"),
+            ),
             "taste_status": judge.get("taste_status"),
         },
         "patch": {
@@ -277,7 +324,10 @@ def task_row(task: dict[str, Any]) -> dict[str, Any]:
         "command": redact(command),
         "preflight_failure": preflight,
     }
-    row["failure_class"] = classify(row, list(diagnostics.values()) + [read_text(run_dir / "harbor.log", limit=4000)])
+    row["failure_class"] = classify(
+        row,
+        list(diagnostics.values()) + [read_text(run_dir / "harbor.log", limit=4000)],
+    )
     row.pop("ledger", None)
     row.pop("summary", None)
     row.pop("preflight_failure", None)
@@ -288,7 +338,11 @@ def resolve_subset(identifier: str) -> Path:
     path = Path(identifier)
     if path.exists():
         return path
-    candidate = RESULTS_DIR / "subsets" / (identifier if identifier.endswith(".json") else f"{identifier}.json")
+    candidate = (
+        RESULTS_DIR
+        / "subsets"
+        / (identifier if identifier.endswith(".json") else f"{identifier}.json")
+    )
     if candidate.exists():
         return candidate
     raise SystemExit(f"subset ledger not found: {identifier}")
@@ -296,7 +350,9 @@ def resolve_subset(identifier: str) -> Path:
 
 def build_report(subset: Path) -> dict[str, Any]:
     ledger = as_dict(load_json(subset))
-    tasks = [task_row(task) for task in ledger.get("tasks", []) if isinstance(task, dict)]
+    tasks = [
+        task_row(task) for task in ledger.get("tasks", []) if isinstance(task, dict)
+    ]
     counts = Counter(str(task["failure_class"]) for task in tasks)
     return {
         "subset": {
@@ -334,13 +390,15 @@ def render_markdown(report: dict[str, Any]) -> str:
     ]
     for name, count in report["failure_counts"].items():
         lines.append(f"- `{name}`: {count}")
-    lines.extend([
-        "",
-        "## Tasks",
-        "",
-        "| task | repo | segment | type | exit | class | reward | verifier | validation | rubric | taste | patch | vis |",
-        "| --- | --- | --- | --- | ---: | --- | --- | --- | --- | --- | --- | --- | --- |",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Tasks",
+            "",
+            "| task | repo | segment | type | exit | class | reward | verifier | validation | rubric | taste | patch | vis |",
+            "| --- | --- | --- | --- | ---: | --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
     for task in report["tasks"]:
         meta = task["metadata"]
         verifier = task["verifier"]
@@ -371,7 +429,12 @@ def render_markdown(report: dict[str, Any]) -> str:
         )
     lines.extend(["", "## Diagnostics", ""])
     for task in report["tasks"]:
-        lines.extend([f"### {task.get('task_id') or task.get('run_id')} — `{task.get('failure_class')}`", ""])
+        lines.extend(
+            [
+                f"### {task.get('task_id') or task.get('run_id')} — `{task.get('failure_class')}`",
+                "",
+            ]
+        )
         for name, excerpt in task.get("diagnostics", {}).items():
             if excerpt:
                 lines.extend([f"#### {name}", "", "```text", excerpt, "```", ""])
@@ -380,8 +443,14 @@ def render_markdown(report: dict[str, Any]) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("subset", help="Subset ledger path or run id under results/subsets")
-    parser.add_argument("--out-dir", type=Path, help="Directory for default JSON and Markdown report outputs")
+    parser.add_argument(
+        "subset", help="Subset ledger path or run id under results/subsets"
+    )
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        help="Directory for default JSON and Markdown report outputs",
+    )
     parser.add_argument("--json-out", type=Path)
     parser.add_argument("--md-out", type=Path)
     args = parser.parse_args()
@@ -396,7 +465,17 @@ def main() -> int:
     md_out.parent.mkdir(parents=True, exist_ok=True)
     json_out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     md_out.write_text(render_markdown(report))
-    print(json.dumps({"json": str(json_out), "markdown": str(md_out), "failure_counts": report["failure_counts"]}, indent=2, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "json": str(json_out),
+                "markdown": str(md_out),
+                "failure_counts": report["failure_counts"],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0
 
 

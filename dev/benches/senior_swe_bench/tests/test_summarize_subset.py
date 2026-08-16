@@ -4,13 +4,22 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("summarize_subset", ROOT / "summarize_subset.py")
+spec = importlib.util.spec_from_file_location(
+    "summarize_subset", ROOT / "summarize_subset.py"
+)
 summarize_subset = importlib.util.module_from_spec(spec)
 sys.modules["summarize_subset"] = summarize_subset
 spec.loader.exec_module(summarize_subset)  # type: ignore[union-attr]
 
 
-def _run_dir(root: Path, name: str, *, task_id: str, failure_class=None, install_only_success=True):
+def _run_dir(
+    root: Path,
+    name: str,
+    *,
+    task_id: str,
+    failure_class=None,
+    install_only_success=True,
+):
     run = root / name
     (run / "harbor-output").mkdir(parents=True)
     (run / "command.json").write_text(
@@ -33,7 +42,12 @@ def _run_dir(root: Path, name: str, *, task_id: str, failure_class=None, install
                 "task_id": task_id,
                 "failure_class": failure_class,
                 "install_only_success": install_only_success,
-                "patch_bloat": {"files": 0, "added_lines": 0, "deleted_lines": 0, "total_changed_lines": 0},
+                "patch_bloat": {
+                    "files": 0,
+                    "added_lines": 0,
+                    "deleted_lines": 0,
+                    "total_changed_lines": 0,
+                },
                 "vis": {"iterations": 0},
                 "agent_trace": {
                     "source": "vis_trace",
@@ -90,7 +104,9 @@ def _run_dir(root: Path, name: str, *, task_id: str, failure_class=None, install
         json.dumps({"job_dir": f"jobs/{name}", "trials": [{"trial_dir": "trial"}]})
     )
     (run / "secret-redaction.json").write_text(
-        json.dumps({"clean": True, "remaining_occurrences": 0, "secret_values_loaded": 1})
+        json.dumps(
+            {"clean": True, "remaining_occurrences": 0, "secret_values_loaded": 1}
+        )
     )
     return run
 
@@ -146,13 +162,18 @@ def test_summarize_subset_keeps_task_validity_out_of_agent_identity(tmp_path):
     assert summary["provenance"]["consistent"] is True
     assert len(summary["provenance"]["agents"]) == 1
     assert "vis_eval_valid" not in summary["provenance"]["agents"][0]
-    assert [task["agent"]["vis_eval_valid"] for task in summary["tasks"]] == [True, False]
+    assert [task["agent"]["vis_eval_valid"] for task in summary["tasks"]] == [
+        True,
+        False,
+    ]
 
 
 def test_summarize_subset_marks_missing_summary_and_nonzero_status(tmp_path):
     run = tmp_path / "subset-1-task-a"
     run.mkdir()
-    (run / "command.json").write_text(json.dumps({"run_id": "subset-1-task-a", "task_ids": ["task-a"]}))
+    (run / "command.json").write_text(
+        json.dumps({"run_id": "subset-1-task-a", "task_ids": ["task-a"]})
+    )
 
     summary = summarize_subset.summarize(
         subset_name="subset",

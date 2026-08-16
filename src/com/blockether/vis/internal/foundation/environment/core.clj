@@ -208,10 +208,7 @@ Returns {\"shape\": \"polylith\"|\"workspace\"|\"submodules\"|None, \"totals\": 
    the call line — the implementation docstring is developer documentation and
    never substitutes for either."
   [v sym description result]
-  (vis/symbol v {:symbol sym
-                 :tag :observation
-                 :description description
-                 :result result}))
+  (vis/symbol v {:symbol sym :tag :observation :description description :result result}))
 
 (def repositories-symbol
   (env-data-symbol
@@ -228,8 +225,9 @@ Returns {\"shape\": \"polylith\"|\"workspace\"|\"submodules\"|None, \"totals\": 
     'languages
     (str "What this workspace is WRITTEN IN: the primary language plus the whole distribution by "
          "file and byte count, read off the workspace scan. Takes no arguments.")
-    (str "String-keyed `{total_files, total_bytes, primary, languages, is_truncated, elapsed_ms}`; "
-         "each language is `{language, files, bytes, files_pct, bytes_pct}`, sorted by files desc.")))
+    (str
+      "String-keyed `{total_files, total_bytes, primary, languages, is_truncated, elapsed_ms}`; "
+      "each language is `{language, files, bytes, files_pct, bytes_pct}`, sorted by files desc.")))
 
 (def monorepo-symbol
   (env-data-symbol

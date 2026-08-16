@@ -4,7 +4,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("render_trace_transcript", ROOT / "render_trace_transcript.py")
+spec = importlib.util.spec_from_file_location(
+    "render_trace_transcript", ROOT / "render_trace_transcript.py"
+)
 renderer = importlib.util.module_from_spec(spec)
 sys.modules["render_trace_transcript"] = renderer
 spec.loader.exec_module(renderer)  # type: ignore[union-attr]
@@ -13,10 +15,40 @@ spec.loader.exec_module(renderer)  # type: ignore[union-attr]
 def test_render_trace_transcript_renders_conversation_not_stream_deltas(tmp_path):
     trace = tmp_path / "vis.trace.jsonl"
     frames = [
-        {"event": "trace-chunk", "payload": {"phase": "reasoning", "iteration": 1, "thinking": "First thought"}},
-        {"event": "trace-chunk", "payload": {"phase": "assistant-prose", "iteration": 1, "text": "I will inspect it."}},
-        {"event": "trace-chunk", "payload": {"phase": "form-start", "iteration": 1, "position": 0, "code": "read_file(...)"}},
-        {"event": "trace-chunk", "payload": {"phase": "form-result", "iteration": 1, "position": 0, "result-render": "contents"}},
+        {
+            "event": "trace-chunk",
+            "payload": {
+                "phase": "reasoning",
+                "iteration": 1,
+                "thinking": "First thought",
+            },
+        },
+        {
+            "event": "trace-chunk",
+            "payload": {
+                "phase": "assistant-prose",
+                "iteration": 1,
+                "text": "I will inspect it.",
+            },
+        },
+        {
+            "event": "trace-chunk",
+            "payload": {
+                "phase": "form-start",
+                "iteration": 1,
+                "position": 0,
+                "code": "read_file(...)",
+            },
+        },
+        {
+            "event": "trace-chunk",
+            "payload": {
+                "phase": "form-result",
+                "iteration": 1,
+                "position": 0,
+                "result-render": "contents",
+            },
+        },
         {"event": "result", "payload": {"answer": {"answer": "Done."}}},
     ]
     trace.write_text("".join(json.dumps(frame) + "\n" for frame in frames))
@@ -40,7 +72,11 @@ def test_render_trace_transcript_renders_error_result_vector(tmp_path):
                 "payload": {
                     "answer": [
                         "error",
-                        {"provider-error-data": {"wrapper-message": "Stream TTFT timeout"}},
+                        {
+                            "provider-error-data": {
+                                "wrapper-message": "Stream TTFT timeout"
+                            }
+                        },
                     ]
                 },
             }
@@ -56,9 +92,23 @@ def test_render_trace_transcript_renders_error_result_vector(tmp_path):
 def test_render_trace_transcript_accumulates_compact_reasoning_deltas(tmp_path):
     trace = tmp_path / "vis.trace.jsonl"
     frames = [
-        {"event": "trace-chunk", "payload": {"phase": "reasoning", "iteration": 1, "delta": "First "}},
-        {"event": "trace-chunk", "payload": {"phase": "reasoning", "iteration": 1, "delta": "thought"}},
-        {"event": "trace-chunk", "payload": {"phase": "form-start", "iteration": 1, "position": 0, "code": "read_file(...)"}},
+        {
+            "event": "trace-chunk",
+            "payload": {"phase": "reasoning", "iteration": 1, "delta": "First "},
+        },
+        {
+            "event": "trace-chunk",
+            "payload": {"phase": "reasoning", "iteration": 1, "delta": "thought"},
+        },
+        {
+            "event": "trace-chunk",
+            "payload": {
+                "phase": "form-start",
+                "iteration": 1,
+                "position": 0,
+                "code": "read_file(...)",
+            },
+        },
     ]
     trace.write_text("".join(json.dumps(frame) + "\n" for frame in frames))
 

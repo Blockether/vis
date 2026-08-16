@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Host-side preflight checks for Senior SWE-Bench Vis runs."""
+
 from __future__ import annotations
 
 import argparse
@@ -28,8 +29,7 @@ def pi_thinking_level(reasoning_effort: str) -> str:
         return {"high": "high", "max": "xhigh"}[reasoning_effort]
     except KeyError as exc:
         raise PreflightError(
-            "VIS_BENCH_REASONING_EFFORT must be high or max; "
-            f"got {reasoning_effort!r}"
+            f"VIS_BENCH_REASONING_EFFORT must be high or max; got {reasoning_effort!r}"
         ) from exc
 
 
@@ -98,14 +98,20 @@ def inspect_elf_header(head: bytes) -> dict[str, Any]:
     if not head.startswith(b"\x7fELF"):
         raise PreflightError("artifact native/vis is not an ELF binary")
     if len(head) < 20:
-        raise PreflightError("artifact native/vis is too short to contain an ELF header")
+        raise PreflightError(
+            "artifact native/vis is too short to contain an ELF header"
+        )
 
     elf_class = head[4]
     data_encoding = head[5]
     if elf_class != 2:
-        raise PreflightError(f"artifact native/vis must be ELF64, got class byte {elf_class}")
+        raise PreflightError(
+            f"artifact native/vis must be ELF64, got class byte {elf_class}"
+        )
     if data_encoding != 1:
-        raise PreflightError(f"artifact native/vis must be little-endian ELF, got data byte {data_encoding}")
+        raise PreflightError(
+            f"artifact native/vis must be little-endian ELF, got data byte {data_encoding}"
+        )
 
     machine_id = int.from_bytes(head[18:20], "little")
     machine_names = {
@@ -114,18 +120,31 @@ def inspect_elf_header(head: bytes) -> dict[str, Any]:
     }
     machine = machine_names.get(machine_id, f"unknown-{machine_id}")
     if machine_id != 183:
-        raise PreflightError(f"artifact native/vis must be Linux ARM64/aarch64 ELF, got {machine}")
-    return {"class": "ELF64", "data": "little", "machine": machine, "machine_id": machine_id}
+        raise PreflightError(
+            f"artifact native/vis must be Linux ARM64/aarch64 ELF, got {machine}"
+        )
+    return {
+        "class": "ELF64",
+        "data": "little",
+        "machine": machine,
+        "machine_id": machine_id,
+    }
 
 
-def resolve_python_dev_image_mode(task_id: str, requested: str, task_image: str, install_only: bool) -> str:
+def resolve_python_dev_image_mode(
+    task_id: str, requested: str, task_image: str, install_only: bool
+) -> str:
     mode = requested or "auto"
     if mode not in {"auto", "0", "1"}:
-        raise PreflightError(f"VIS_BENCH_PREPARE_PYTHON_DEV_IMAGE must be auto, 0, or 1; got {mode!r}")
+        raise PreflightError(
+            f"VIS_BENCH_PREPARE_PYTHON_DEV_IMAGE must be auto, 0, or 1; got {mode!r}"
+        )
 
     requires_python_dev = task_id in PYTHON_DEV_REQUIRED_TASKS
     if mode == "auto":
-        return "1" if requires_python_dev and not install_only and not task_image else "0"
+        return (
+            "1" if requires_python_dev and not install_only and not task_image else "0"
+        )
     if mode == "0" and requires_python_dev and not install_only and not task_image:
         reason = PYTHON_DEV_REQUIRED_TASKS[task_id]
         raise PreflightError(
@@ -135,10 +154,15 @@ def resolve_python_dev_image_mode(task_id: str, requested: str, task_image: str,
     return mode
 
 
-def resolve_config_delivery(config_path: str | Path | None, remote_home_mount: str | Path | None) -> str:
+def resolve_config_delivery(
+    config_path: str | Path | None, remote_home_mount: str | Path | None
+) -> str:
     if config_path:
         return "upload"
-    if remote_home_mount and (Path(remote_home_mount) / ".vis" / "config.edn").is_file():
+    if (
+        remote_home_mount
+        and (Path(remote_home_mount) / ".vis" / "config.edn").is_file()
+    ):
         return "mounted-home"
     return "none"
 
@@ -157,11 +181,15 @@ def validate_config_mount_combination(
         )
 
 
-def build_remote_home_mounts(source: str | Path | None, target: str, mode: str) -> list[dict[str, Any]]:
+def build_remote_home_mounts(
+    source: str | Path | None, target: str, mode: str
+) -> list[dict[str, Any]]:
     if not source:
         return []
     if mode not in {"ro", "rw"}:
-        raise PreflightError(f"VIS_BENCH_REMOTE_HOME_MOUNT_MODE must be 'ro' or 'rw', got {mode!r}")
+        raise PreflightError(
+            f"VIS_BENCH_REMOTE_HOME_MOUNT_MODE must be 'ro' or 'rw', got {mode!r}"
+        )
     if mode == "ro":
         raise PreflightError(
             "VIS_BENCH_REMOTE_HOME_MOUNT_MODE=ro is not supported when the mount target is VIS_BENCH_REMOTE_HOME; "
@@ -170,13 +198,21 @@ def build_remote_home_mounts(source: str | Path | None, target: str, mode: str) 
 
     source_path = Path(source)
     if not source_path.is_dir():
-        raise PreflightError(f"VIS_BENCH_REMOTE_HOME_MOUNT must be a directory, got {source_path}")
+        raise PreflightError(
+            f"VIS_BENCH_REMOTE_HOME_MOUNT must be a directory, got {source_path}"
+        )
     return [{"type": "bind", "source": str(source_path), "target": target}]
 
 
-def validate_credential_source(config_path: Path | None, *, required: bool, allow_missing: bool = False) -> dict[str, Any]:
+def validate_credential_source(
+    config_path: Path | None, *, required: bool, allow_missing: bool = False
+) -> dict[str, Any]:
     if config_path:
-        return {"required": required, "config_path": str(config_path), "allow_missing": allow_missing}
+        return {
+            "required": required,
+            "config_path": str(config_path),
+            "allow_missing": allow_missing,
+        }
     if not required:
         return {"required": False, "config_path": None, "allow_missing": allow_missing}
     if allow_missing:
@@ -201,10 +237,14 @@ def validate_artifact(path: Path) -> dict[str, Any]:
             meta_member = tf.getmember("vis-agent/metadata.json")
             meta = json.loads(tf.extractfile(meta_member).read())
             if meta.get("mode") != "native":
-                raise PreflightError(f"artifact mode must be native, got {meta.get('mode')!r}")
+                raise PreflightError(
+                    f"artifact mode must be native, got {meta.get('mode')!r}"
+                )
             native_file = str(meta.get("native_file") or "")
             if "ELF" not in native_file or "Linux" not in native_file:
-                raise PreflightError("artifact metadata does not describe a Linux ELF native binary")
+                raise PreflightError(
+                    "artifact metadata does not describe a Linux ELF native binary"
+                )
             install_member = tf.getmember("vis-agent/install.sh")
             if not install_member.isfile():
                 raise PreflightError("artifact vis-agent/install.sh must be a file")
@@ -223,7 +263,9 @@ def validate_artifact(path: Path) -> dict[str, Any]:
 
     expected_sha = meta.get("native_sha256")
     if expected_sha and expected_sha != native_sha256:
-        raise PreflightError("artifact native_sha256 does not match vis-agent/native/vis")
+        raise PreflightError(
+            "artifact native_sha256 does not match vis-agent/native/vis"
+        )
     return {
         "path": str(path),
         "mode": meta.get("mode"),
@@ -274,7 +316,9 @@ class EdnParser:
                     c = text[i]
                     if c == "\\":
                         if i + 1 >= len(text):
-                            raise PreflightError(f"unterminated string escape at byte {i}")
+                            raise PreflightError(
+                                f"unterminated string escape at byte {i}"
+                            )
                         out.append(text[i + 1])
                         i += 2
                         continue
@@ -288,7 +332,9 @@ class EdnParser:
                     raise PreflightError(f"unterminated string at byte {start}")
                 continue
             start = i
-            while i < len(text) and (not text[i].isspace()) and text[i] not in '{}[]",;':
+            while (
+                i < len(text) and (not text[i].isspace()) and text[i] not in '{}[]",;'
+            ):
                 i += 1
             tokens.append(Token("atom", text[start:i], start))
         return tokens
@@ -297,7 +343,9 @@ class EdnParser:
         value = self._parse_value()
         if self.pos != len(self.tokens):
             token = self.tokens[self.pos]
-            raise PreflightError(f"unexpected token {token.value!r} at byte {token.pos}")
+            raise PreflightError(
+                f"unexpected token {token.value!r} at byte {token.pos}"
+            )
         return value
 
     def _pop(self) -> Token:
@@ -312,7 +360,11 @@ class EdnParser:
         if token.kind == "string":
             return token.value
         if token.kind == "atom":
-            if token.value == "#" and self.pos < len(self.tokens) and self.tokens[self.pos].kind == "{":
+            if (
+                token.value == "#"
+                and self.pos < len(self.tokens)
+                and self.tokens[self.pos].kind == "{"
+            ):
                 self._pop()
                 return self._parse_set(token)
             return self._parse_atom(token)
@@ -352,7 +404,9 @@ class EdnParser:
         out = []
         while True:
             if self.pos >= len(self.tokens):
-                raise PreflightError(f"unterminated vector starting at byte {start.pos}")
+                raise PreflightError(
+                    f"unterminated vector starting at byte {start.pos}"
+                )
             if self.tokens[self.pos].kind == "]":
                 self.pos += 1
                 return out
@@ -378,7 +432,9 @@ class EdnParser:
                 return out
             key = self._parse_value()
             if self.pos >= len(self.tokens) or self.tokens[self.pos].kind == "}":
-                raise PreflightError(f"map has odd number of forms near byte {start.pos}")
+                raise PreflightError(
+                    f"map has odd number of forms near byte {start.pos}"
+                )
             out[key] = self._parse_value()
 
 
@@ -414,13 +470,19 @@ def validate_config(path: Path) -> dict[str, Any]:
     provider_configs: list[dict[str, Any]] = []
     for idx, provider in enumerate(providers):
         if not isinstance(provider, dict):
-            raise PreflightError(f":providers entry {idx} must be a map, got {type(provider).__name__}")
+            raise PreflightError(
+                f":providers entry {idx} must be a map, got {type(provider).__name__}"
+            )
         provider_id = _get(provider, ":id")
         if not isinstance(provider_id, str) or not provider_id:
-            raise PreflightError(f":providers entry {idx} is missing keyword/string :id")
+            raise PreflightError(
+                f":providers entry {idx} is missing keyword/string :id"
+            )
         normalized_id = provider_id[1:] if provider_id.startswith(":") else provider_id
         provider_ids.append(normalized_id)
-        provider_configs.append({"id": normalized_id, "base_url": _get(provider, ":base-url")})
+        provider_configs.append(
+            {"id": normalized_id, "base_url": _get(provider, ":base-url")}
+        )
     return {
         "path": str(path),
         "providers": len(providers),

@@ -157,34 +157,50 @@ def test_version_command_and_parser_use_configured_install(monkeypatch):
     monkeypatch.setenv("VIS_BENCH_INSTALL_PREFIX", "/opt/vis")
     installed = agent.VisInstalledAgent()
 
-    assert installed.get_version_command() == "HOME=/root /opt/vis/vis-agent -Duser.home=/root --version"
-    assert installed.parse_version("startup noise\nvis-agent e674131ef\n") == "vis-agent e674131ef"
+    assert (
+        installed.get_version_command()
+        == "HOME=/root /opt/vis/vis-agent -Duser.home=/root --version"
+    )
+    assert (
+        installed.parse_version("startup noise\nvis-agent e674131ef\n")
+        == "vis-agent e674131ef"
+    )
 
 
-def test_run_sets_provider_native_effort_and_populates_harbor_context(monkeypatch, tmp_path):
+def test_run_sets_provider_native_effort_and_populates_harbor_context(
+    monkeypatch, tmp_path
+):
     monkeypatch.setenv("VIS_BENCH_INSTALL_PREFIX", "/opt/vis")
     monkeypatch.setenv("VIS_BENCH_REMOTE_HOME", "/root")
     monkeypatch.setenv("VIS_BENCH_REASONING_EFFORT", "max")
     environment = FakeEnvironment()
-    environment.trace_contents = json.dumps(
-        {
-            "payload": {
-                "eval": {
-                    "valid?": True,
-                    "invalid-reasons": [],
-                    "reasoning-effort": {"requested": "max", "iterations": []},
+    environment.trace_contents = (
+        json.dumps(
+            {
+                "payload": {
+                    "eval": {
+                        "valid?": True,
+                        "invalid-reasons": [],
+                        "reasoning-effort": {"requested": "max", "iterations": []},
+                    }
                 }
             }
-        }
-    ) + "\n" + json.dumps(
-        {
-            "payload": {
-                "phase": "iteration-final",
-                "iteration": 3,
-                "final": {"iteration-count": 3, "tokens": {"input": 100, "output": 20, "total": 120}},
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "payload": {
+                    "phase": "iteration-final",
+                    "iteration": 3,
+                    "final": {
+                        "iteration-count": 3,
+                        "tokens": {"input": 100, "output": 20, "total": 120},
+                    },
+                }
             }
-        }
-    ) + "\n"
+        )
+        + "\n"
+    )
     context = {"task_id": "task-a", "workspace": str(tmp_path)}
 
     installed = agent.VisInstalledAgent()

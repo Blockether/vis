@@ -1,4 +1,5 @@
 """Harbor installed-agent wrapper for Vis on Senior SWE-Bench."""
+
 from __future__ import annotations
 
 import asyncio
@@ -28,6 +29,7 @@ except Exception:  # pragma: no cover - exercised only when Harbor is absent loc
         def with_prompt_template(fn):  # type: ignore[no-redef]
             return fn
 
+
 try:
     from harbor.agents.installed.pi import Pi as HarborPi  # type: ignore
 except Exception:  # pragma: no cover - keeps host-side unit tests Harbor-free.
@@ -41,7 +43,6 @@ DEFAULT_ARTIFACTS = "/logs/artifacts"
 DEFAULT_REMOTE_HOME = "/tmp/vis-home"
 PI_MODELS_ENV = "VIS_BENCH_PI_MODELS_JSON"
 PI_MODELS_REMOTE = "/tmp/vis-bench-pi-models.json"
-
 
 
 def _artifact_path() -> Path:
@@ -59,7 +60,11 @@ def _artifact_path() -> Path:
 
 def _workspace_from_context(context: Any) -> str:
     for key in ("workspace", "workdir", "repo_path", "repository_path"):
-        value = getattr(context, key, None) if not isinstance(context, dict) else context.get(key)
+        value = (
+            getattr(context, key, None)
+            if not isinstance(context, dict)
+            else context.get(key)
+        )
         if value:
             return str(value)
     return os.environ.get("HARBOR_WORKSPACE", "/repo")
@@ -78,7 +83,11 @@ def _task_id_from_context(context: Any, explicit_task_id: str | None = None) -> 
     if explicit_task_id:
         return explicit_task_id
     for key in ("task_name", "task_id", "id", "name"):
-        value = getattr(context, key, None) if not isinstance(context, dict) else context.get(key)
+        value = (
+            getattr(context, key, None)
+            if not isinstance(context, dict)
+            else context.get(key)
+        )
         if value:
             if isinstance(value, dict) and value.get("path"):
                 return Path(str(value["path"])).name
@@ -86,11 +95,26 @@ def _task_id_from_context(context: Any, explicit_task_id: str | None = None) -> 
     return "task"
 
 
-def _run_local(cmd: list[str], cwd: str | None = None, env: dict[str, str] | None = None, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, cwd=cwd, env=env, text=True, capture_output=True, timeout=timeout, check=False)
+def _run_local(
+    cmd: list[str],
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+    timeout: float | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        cmd,
+        cwd=cwd,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+    )
 
 
-async def _maybe_env_run(environment: Any, command: str, cwd: str | None = None, timeout: float | None = None) -> Any:
+async def _maybe_env_run(
+    environment: Any, command: str, cwd: str | None = None, timeout: float | None = None
+) -> Any:
     """Run through Harbor environment when it exposes a command API; else local."""
     timeout_sec = int(timeout) if timeout is not None else None
     exec_meth = getattr(environment, "exec", None)
@@ -110,8 +134,9 @@ async def _maybe_env_run(environment: Any, command: str, cwd: str | None = None,
             except TypeError:
                 continue
         return await result if asyncio.iscoroutine(result) else result
-    return await asyncio.to_thread(_run_local, ["bash", "-lc", command], cwd, None, timeout)
-
+    return await asyncio.to_thread(
+        _run_local, ["bash", "-lc", command], cwd, None, timeout
+    )
 
 
 def _result_text(result: Any, attr: str) -> str:
@@ -140,7 +165,9 @@ def _cost_usd(cost: dict[str, Any]) -> Any:
     return None
 
 
-def _merge_trace_metrics(stats: dict[str, Any], source: dict[str, Any], max_iteration: int) -> int:
+def _merge_trace_metrics(
+    stats: dict[str, Any], source: dict[str, Any], max_iteration: int
+) -> int:
     if isinstance(source.get("tokens"), dict):
         stats["tokens"] = source["tokens"]
     if isinstance(source.get("cost"), dict):
@@ -184,7 +211,11 @@ def _summarize_trace(trace: Path) -> dict[str, Any]:
         iteration = obj.get("iteration", payload.get("iteration"))
         if isinstance(iteration, int):
             max_iteration = max(max_iteration, iteration)
-        tool_event = payload.get("tool-event") if isinstance(payload.get("tool-event"), dict) else {}
+        tool_event = (
+            payload.get("tool-event")
+            if isinstance(payload.get("tool-event"), dict)
+            else {}
+        )
         tool_name = str(
             obj.get("tool")
             or obj.get("name")
@@ -196,7 +227,9 @@ def _summarize_trace(trace: Path) -> dict[str, Any]:
         )
         scope = payload.get("scope")
         if phase in {"form-start", "tool-start"} and (scope or tool_name):
-            tool_id = str(scope or f"{phase}:{iteration}:{payload.get('position')}:{tool_name}")
+            tool_id = str(
+                scope or f"{phase}:{iteration}:{payload.get('position')}:{tool_name}"
+            )
             if tool_id not in tool_ids:
                 tool_ids.add(tool_id)
                 stats["tool_calls"] += 1
@@ -216,7 +249,9 @@ def _summarize_trace(trace: Path) -> dict[str, Any]:
             stats["eval"] = eval_evidence
             stats["eval_valid"] = eval_evidence.get("valid?") is True
             effort_evidence = eval_evidence.get("reasoning-effort")
-            if isinstance(effort_evidence, dict) and isinstance(effort_evidence.get("requested"), str):
+            if isinstance(effort_evidence, dict) and isinstance(
+                effort_evidence.get("requested"), str
+            ):
                 stats["reasoning_effort"] = effort_evidence["requested"]
                 stats["reasoning_effort_explicit"] = True
     if max_iteration:
@@ -240,13 +275,21 @@ def _populate_context(context: Any, stats: dict[str, Any]) -> Any:
     tokens = stats.get("tokens") if isinstance(stats.get("tokens"), dict) else {}
     values = {
         "n_input_tokens": _token_value(tokens, "input", "input_tokens", "prompt"),
-        "n_cache_tokens": _token_value(tokens, "cached", "cache-read", "cache_read", "cache_tokens"),
-        "n_output_tokens": _token_value(tokens, "output", "output_tokens", "completion"),
-        "cost_usd": stats.get("cost_usd") if isinstance(stats.get("cost_usd"), (int, float)) else None,
+        "n_cache_tokens": _token_value(
+            tokens, "cached", "cache-read", "cache_read", "cache_tokens"
+        ),
+        "n_output_tokens": _token_value(
+            tokens, "output", "output_tokens", "completion"
+        ),
+        "cost_usd": stats.get("cost_usd")
+        if isinstance(stats.get("cost_usd"), (int, float))
+        else None,
     }
     metadata = {"vis": stats}
     if isinstance(context, dict):
-        context.update({key: value for key, value in values.items() if value is not None})
+        context.update(
+            {key: value for key, value in values.items() if value is not None}
+        )
         context.setdefault("metadata", {}).update(metadata)
         return context
     for key, value in values.items():
@@ -268,8 +311,14 @@ class VisInstalledAgent(BaseInstalledAgent):
         return "vis-installed"
 
     def get_version_command(self) -> str:
-        install_prefix = _env_value(self, "VIS_BENCH_INSTALL_PREFIX", DEFAULT_INSTALL) or DEFAULT_INSTALL
-        remote_home = _env_value(self, "VIS_BENCH_REMOTE_HOME", DEFAULT_REMOTE_HOME) or DEFAULT_REMOTE_HOME
+        install_prefix = (
+            _env_value(self, "VIS_BENCH_INSTALL_PREFIX", DEFAULT_INSTALL)
+            or DEFAULT_INSTALL
+        )
+        remote_home = (
+            _env_value(self, "VIS_BENCH_REMOTE_HOME", DEFAULT_REMOTE_HOME)
+            or DEFAULT_REMOTE_HOME
+        )
         return (
             f"HOME={shlex.quote(remote_home)} {shlex.quote(f'{install_prefix}/vis-agent')} "
             f"-Duser.home={shlex.quote(remote_home)} --version"
@@ -281,8 +330,14 @@ class VisInstalledAgent(BaseInstalledAgent):
     async def install(self, environment: Any) -> None:
 
         artifact = _artifact_path()
-        install_prefix = _env_value(self, "VIS_BENCH_INSTALL_PREFIX", DEFAULT_INSTALL) or DEFAULT_INSTALL
-        remote_home = _env_value(self, "VIS_BENCH_REMOTE_HOME", DEFAULT_REMOTE_HOME) or DEFAULT_REMOTE_HOME
+        install_prefix = (
+            _env_value(self, "VIS_BENCH_INSTALL_PREFIX", DEFAULT_INSTALL)
+            or DEFAULT_INSTALL
+        )
+        remote_home = (
+            _env_value(self, "VIS_BENCH_REMOTE_HOME", DEFAULT_REMOTE_HOME)
+            or DEFAULT_REMOTE_HOME
+        )
         vis_bin = f"{install_prefix}/vis-agent"
         remote_artifact = "/tmp/vis-agent.tar.gz"
         remote_stage = "/tmp/vis-agent-install"
@@ -311,7 +366,9 @@ class VisInstalledAgent(BaseInstalledAgent):
         if config_path:
             local_config = Path(config_path).expanduser().resolve()
             if not local_config.exists():
-                raise FileNotFoundError(f"VIS_BENCH_CONFIG points to missing file: {local_config}")
+                raise FileNotFoundError(
+                    f"VIS_BENCH_CONFIG points to missing file: {local_config}"
+                )
             remote_config = "/tmp/vis-config.edn"
             await environment.upload_file(local_config, remote_config)
             config_cmd = "bash -lc " + shlex.quote(
@@ -332,7 +389,6 @@ class VisInstalledAgent(BaseInstalledAgent):
                     f"stderr={_result_text(cfg_proc, 'stderr')[-1000:]}"
                 )
 
-
         version = await _maybe_env_run(
             environment,
             f"HOME={shlex.quote(remote_home)} {shlex.quote(vis_bin)} "
@@ -340,7 +396,9 @@ class VisInstalledAgent(BaseInstalledAgent):
             timeout=30,
         )
         if _returncode(version) != 0:
-            raise RuntimeError(f"vis-agent --version failed after install: {_result_text(version, 'stderr')[-1000:]}")
+            raise RuntimeError(
+                f"vis-agent --version failed after install: {_result_text(version, 'stderr')[-1000:]}"
+            )
 
         meta = {
             "artifact": str(artifact),
@@ -348,25 +406,48 @@ class VisInstalledAgent(BaseInstalledAgent):
             "remote_home": remote_home,
             "config_uploaded": bool(config_path),
             "vis_bin": vis_bin,
-            "vis_version": (_result_text(version, "stdout") or _result_text(version, "stderr")).strip(),
+            "vis_version": (
+                _result_text(version, "stdout") or _result_text(version, "stderr")
+            ).strip(),
         }
-        Path(_env_value(self, "VIS_BENCH_INSTALL_METADATA", "/tmp/vis-bench-install.json") or "/tmp/vis-bench-install.json").write_text(json.dumps(meta, indent=2))
+        Path(
+            _env_value(
+                self, "VIS_BENCH_INSTALL_METADATA", "/tmp/vis-bench-install.json"
+            )
+            or "/tmp/vis-bench-install.json"
+        ).write_text(json.dumps(meta, indent=2))
 
     @with_prompt_template
     async def run(self, instruction: str, environment: Any, context: Any) -> Any:
         task_id = _task_id_from_context(context, _env_value(self, "HARBOR_TASK_ID"))
         cwd = _workspace_from_context(context)
-        artifacts = Path(_env_value(self, "HARBOR_ARTIFACTS_DIR", DEFAULT_ARTIFACTS) or DEFAULT_ARTIFACTS)
+        artifacts = Path(
+            _env_value(self, "HARBOR_ARTIFACTS_DIR", DEFAULT_ARTIFACTS)
+            or DEFAULT_ARTIFACTS
+        )
         trace_dir = artifacts / "vis-traces" / task_id
         trace = trace_dir / "vis.trace.jsonl"
         stderr = trace_dir / "vis.stderr.txt"
 
-        install_prefix = _env_value(self, "VIS_BENCH_INSTALL_PREFIX", DEFAULT_INSTALL) or DEFAULT_INSTALL
-        vis_bin = _env_value(self, "VIS_BENCH_VIS_BIN", f"{install_prefix}/vis-agent") or f"{install_prefix}/vis-agent"
-        remote_home = _env_value(self, "VIS_BENCH_REMOTE_HOME", DEFAULT_REMOTE_HOME) or DEFAULT_REMOTE_HOME
-        provider = _env_value(self, "VIS_PROVIDER", "zai-coding-plan") or "zai-coding-plan"
+        install_prefix = (
+            _env_value(self, "VIS_BENCH_INSTALL_PREFIX", DEFAULT_INSTALL)
+            or DEFAULT_INSTALL
+        )
+        vis_bin = (
+            _env_value(self, "VIS_BENCH_VIS_BIN", f"{install_prefix}/vis-agent")
+            or f"{install_prefix}/vis-agent"
+        )
+        remote_home = (
+            _env_value(self, "VIS_BENCH_REMOTE_HOME", DEFAULT_REMOTE_HOME)
+            or DEFAULT_REMOTE_HOME
+        )
+        provider = (
+            _env_value(self, "VIS_PROVIDER", "zai-coding-plan") or "zai-coding-plan"
+        )
         model = _env_value(self, "VIS_MODEL", "glm-5.2") or "glm-5.2"
-        reasoning_effort = _env_value(self, "VIS_BENCH_REASONING_EFFORT", "high") or "high"
+        reasoning_effort = (
+            _env_value(self, "VIS_BENCH_REASONING_EFFORT", "high") or "high"
+        )
         if reasoning_effort not in {"high", "max"}:
             raise ValueError(
                 "VIS_BENCH_REASONING_EFFORT must be high or max; "
@@ -376,11 +457,15 @@ class VisInstalledAgent(BaseInstalledAgent):
         cmd = [
             vis_bin,
             f"-Duser.home={remote_home}",
-            "--db", ":memory",
+            "--db",
+            ":memory",
             "--full-trace-json-stream",
-            "--provider", provider,
-            "--model", model,
-            "--reasoning-effort", reasoning_effort,
+            "--provider",
+            provider,
+            "--model",
+            model,
+            "--reasoning-effort",
+            reasoning_effort,
             instruction,
         ]
         project_config = f"{cwd}/.vis/config.edn"
@@ -409,13 +494,25 @@ class VisInstalledAgent(BaseInstalledAgent):
                 # rollout trace unavailable instead of manufacturing zeroes.
                 pass
         if _returncode(result) != 0:
-            raise RuntimeError(f"vis-agent exited {_returncode(result)}; stderr artifact: {stderr}")
+            raise RuntimeError(
+                f"vis-agent exited {_returncode(result)}; stderr artifact: {stderr}"
+            )
         return result
 
     def populate_context_post_run(self, context: Any) -> Any:
         task_id = _task_id_from_context(context, _env_value(self, "HARBOR_TASK_ID"))
         local_trace = Path(self.logs_dir) / f"vis-{task_id}.trace.jsonl"
-        trace = local_trace if local_trace.exists() else Path(_env_value(self, "HARBOR_ARTIFACTS_DIR", DEFAULT_ARTIFACTS) or DEFAULT_ARTIFACTS) / "vis-traces" / task_id / "vis.trace.jsonl"
+        trace = (
+            local_trace
+            if local_trace.exists()
+            else Path(
+                _env_value(self, "HARBOR_ARTIFACTS_DIR", DEFAULT_ARTIFACTS)
+                or DEFAULT_ARTIFACTS
+            )
+            / "vis-traces"
+            / task_id
+            / "vis.trace.jsonl"
+        )
         stats = _summarize_trace(trace)
         stats.setdefault(
             "reasoning_effort",
@@ -477,9 +574,9 @@ class PiGlm52Agent(HarborPi):
             environment,
             command=(
                 "set -euo pipefail; "
-                "mkdir -p \"$HOME/.pi/agent\"; "
-                f"cp {shlex.quote(PI_MODELS_REMOTE)} \"$HOME/.pi/agent/models.json\"; "
-                "chmod 600 \"$HOME/.pi/agent/models.json\""
+                'mkdir -p "$HOME/.pi/agent"; '
+                f'cp {shlex.quote(PI_MODELS_REMOTE)} "$HOME/.pi/agent/models.json"; '
+                'chmod 600 "$HOME/.pi/agent/models.json"'
             ),
         )
         if proc is not None and _returncode(proc) != 0:

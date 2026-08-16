@@ -4,7 +4,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("render_run_index", ROOT / "render_run_index.py")
+spec = importlib.util.spec_from_file_location(
+    "render_run_index", ROOT / "render_run_index.py"
+)
 renderer = importlib.util.module_from_spec(spec)
 sys.modules["render_run_index"] = renderer
 spec.loader.exec_module(renderer)  # type: ignore[union-attr]
@@ -15,8 +17,21 @@ def test_index_groups_comparable_runs_and_links_artifacts(tmp_path):
     for name, harness, score in (("vis-run", "Vis", 1.0), ("pi-run", "pi.dev", 0.5)):
         run = results / name
         run.mkdir(parents=True)
-        (run / "command.json").write_text(json.dumps({"task_ids": ["same-task"], "bench_agent_label": harness}))
-        (run / "summary.json").write_text(json.dumps({"task_id": "same-task", "completion": {"status": "complete", "score": score, "passed": score == 1.0}}))
+        (run / "command.json").write_text(
+            json.dumps({"task_ids": ["same-task"], "bench_agent_label": harness})
+        )
+        (run / "summary.json").write_text(
+            json.dumps(
+                {
+                    "task_id": "same-task",
+                    "completion": {
+                        "status": "complete",
+                        "score": score,
+                        "passed": score == 1.0,
+                    },
+                }
+            )
+        )
 
     output = renderer.render(results, results / "index.html")
 

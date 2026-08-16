@@ -4,7 +4,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("compare_subsets", ROOT / "compare_subsets.py")
+spec = importlib.util.spec_from_file_location(
+    "compare_subsets", ROOT / "compare_subsets.py"
+)
 compare_subsets = importlib.util.module_from_spec(spec)
 sys.modules["compare_subsets"] = compare_subsets
 spec.loader.exec_module(compare_subsets)  # type: ignore[union-attr]
@@ -118,7 +120,11 @@ def _ledger(
             "complete": True,
             "tasks_with_complete_usage": 1,
             "tasks_with_reported_cost": 1,
-            "token_coverage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 1},
+            "token_coverage": {
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "total_tokens": 1,
+            },
             "tokens": {"input_tokens": 30, "output_tokens": 10, "total_tokens": 40},
             "reported_cost_usd": 0.0,
         },
@@ -134,9 +140,22 @@ def _ledger(
         "tasks": [
             {
                 "task_id": "task-a",
-                "completion": {"status": "complete_pass", "complete": True, "scoreable": True, "passed": True},
-                "usage": {"available": True, "complete": True, "total_tokens": total_tokens},
-                "verifier_usage": {"available": True, "complete": True, "total_tokens": 40},
+                "completion": {
+                    "status": "complete_pass",
+                    "complete": True,
+                    "scoreable": True,
+                    "passed": True,
+                },
+                "usage": {
+                    "available": True,
+                    "complete": True,
+                    "total_tokens": total_tokens,
+                },
+                "verifier_usage": {
+                    "available": True,
+                    "complete": True,
+                    "total_tokens": 40,
+                },
                 "agent_trace": {
                     "available": True,
                     "telemetry_complete": True,
@@ -157,8 +176,12 @@ def _ledger(
 
 
 def test_comparison_gates_authoritative_state_and_token_ratios(tmp_path):
-    vis = _ledger(tmp_path / "vis.json", harness="Vis", provider="zai", total_tokens=100)
-    pi = _ledger(tmp_path / "pi.json", harness="pi.dev", provider="zai", total_tokens=150)
+    vis = _ledger(
+        tmp_path / "vis.json", harness="Vis", provider="zai", total_tokens=100
+    )
+    pi = _ledger(
+        tmp_path / "pi.json", harness="pi.dev", provider="zai", total_tokens=150
+    )
 
     report = compare_subsets.build_comparison(vis, pi)
 
@@ -178,8 +201,15 @@ def test_comparison_gates_authoritative_state_and_token_ratios(tmp_path):
 
 
 def test_comparison_accepts_zai_coding_plan_transport_pair(tmp_path):
-    vis = _ledger(tmp_path / "vis.json", harness="Vis", provider="zai-coding-plan", total_tokens=100)
-    pi = _ledger(tmp_path / "pi.json", harness="pi.dev", provider="zai", total_tokens=100)
+    vis = _ledger(
+        tmp_path / "vis.json",
+        harness="Vis",
+        provider="zai-coding-plan",
+        total_tokens=100,
+    )
+    pi = _ledger(
+        tmp_path / "pi.json", harness="pi.dev", provider="zai", total_tokens=100
+    )
 
     report = compare_subsets.build_comparison(vis, pi)
 
@@ -188,7 +218,12 @@ def test_comparison_accepts_zai_coding_plan_transport_pair(tmp_path):
 
 
 def test_comparison_rejects_provider_endpoint_mismatch(tmp_path):
-    vis = _ledger(tmp_path / "vis.json", harness="Vis", provider="zai-coding-plan", total_tokens=100)
+    vis = _ledger(
+        tmp_path / "vis.json",
+        harness="Vis",
+        provider="zai-coding-plan",
+        total_tokens=100,
+    )
     pi = _ledger(
         tmp_path / "pi.json",
         harness="pi.dev",
@@ -212,7 +247,9 @@ def test_comparison_rejects_dirty_vis_artifact(tmp_path):
         total_tokens=100,
         source_dirty=True,
     )
-    pi = _ledger(tmp_path / "pi.json", harness="pi.dev", provider="zai", total_tokens=100)
+    pi = _ledger(
+        tmp_path / "pi.json", harness="pi.dev", provider="zai", total_tokens=100
+    )
 
     report = compare_subsets.build_comparison(vis, pi)
 
@@ -221,8 +258,12 @@ def test_comparison_rejects_dirty_vis_artifact(tmp_path):
 
 
 def test_comparison_rejects_missing_verifier_spend(tmp_path):
-    vis = _ledger(tmp_path / "vis.json", harness="Vis", provider="zai", total_tokens=100)
-    pi = _ledger(tmp_path / "pi.json", harness="pi.dev", provider="zai", total_tokens=100)
+    vis = _ledger(
+        tmp_path / "vis.json", harness="Vis", provider="zai", total_tokens=100
+    )
+    pi = _ledger(
+        tmp_path / "pi.json", harness="pi.dev", provider="zai", total_tokens=100
+    )
     data = json.loads(pi.read_text())
     data["spend_reporting_complete"] = False
     data["verifier_usage"] = {"complete": False}
@@ -236,8 +277,12 @@ def test_comparison_rejects_missing_verifier_spend(tmp_path):
 
 
 def test_comparison_ready_requires_rollout_telemetry(tmp_path):
-    vis = _ledger(tmp_path / "vis.json", harness="Vis", provider="zai", total_tokens=100)
-    pi = _ledger(tmp_path / "pi.json", harness="pi.dev", provider="zai", total_tokens=100)
+    vis = _ledger(
+        tmp_path / "vis.json", harness="Vis", provider="zai", total_tokens=100
+    )
+    pi = _ledger(
+        tmp_path / "pi.json", harness="pi.dev", provider="zai", total_tokens=100
+    )
     data = json.loads(pi.read_text())
     data["tool_telemetry_complete"] = False
     data["tasks"][0]["agent_trace"] = {"available": False, "telemetry_complete": False}
@@ -251,8 +296,12 @@ def test_comparison_ready_requires_rollout_telemetry(tmp_path):
 
 
 def test_comparison_rejects_missing_secret_redaction_evidence(tmp_path):
-    vis = _ledger(tmp_path / "vis.json", harness="Vis", provider="zai", total_tokens=100)
-    pi = _ledger(tmp_path / "pi.json", harness="pi.dev", provider="zai", total_tokens=100)
+    vis = _ledger(
+        tmp_path / "vis.json", harness="Vis", provider="zai", total_tokens=100
+    )
+    pi = _ledger(
+        tmp_path / "pi.json", harness="pi.dev", provider="zai", total_tokens=100
+    )
     data = json.loads(pi.read_text())
     data["secret_redaction_complete"] = False
     pi.write_text(json.dumps(data))
@@ -264,8 +313,12 @@ def test_comparison_rejects_missing_secret_redaction_evidence(tmp_path):
 
 
 def test_comparison_rejects_mismatched_provider_native_effort(tmp_path):
-    vis = _ledger(tmp_path / "vis.json", harness="Vis", provider="zai", total_tokens=100)
-    pi = _ledger(tmp_path / "pi.json", harness="pi.dev", provider="zai", total_tokens=100)
+    vis = _ledger(
+        tmp_path / "vis.json", harness="Vis", provider="zai", total_tokens=100
+    )
+    pi = _ledger(
+        tmp_path / "pi.json", harness="pi.dev", provider="zai", total_tokens=100
+    )
     data = json.loads(pi.read_text())
     data["provenance"]["agents"][0]["reasoning_effort"] = "max"
     data["provenance"]["agents"][0]["pi_thinking_level"] = "xhigh"
@@ -281,8 +334,12 @@ def test_comparison_rejects_mismatched_provider_native_effort(tmp_path):
 
 
 def test_comparison_rejects_wrong_or_missing_output_cap(tmp_path):
-    vis = _ledger(tmp_path / "vis.json", harness="Vis", provider="zai", total_tokens=100)
-    pi = _ledger(tmp_path / "pi.json", harness="pi.dev", provider="zai", total_tokens=100)
+    vis = _ledger(
+        tmp_path / "vis.json", harness="Vis", provider="zai", total_tokens=100
+    )
+    pi = _ledger(
+        tmp_path / "pi.json", harness="pi.dev", provider="zai", total_tokens=100
+    )
     data = json.loads(pi.read_text())
     data["provenance"]["agents"][0]["output_cap"] = None
     data["tasks"][0]["agent"]["output_cap"] = None
@@ -295,8 +352,12 @@ def test_comparison_rejects_wrong_or_missing_output_cap(tmp_path):
 
 
 def test_comparison_rejects_invalid_vis_eval_evidence(tmp_path):
-    vis = _ledger(tmp_path / "vis.json", harness="Vis", provider="zai", total_tokens=100)
-    pi = _ledger(tmp_path / "pi.json", harness="pi.dev", provider="zai", total_tokens=100)
+    vis = _ledger(
+        tmp_path / "vis.json", harness="Vis", provider="zai", total_tokens=100
+    )
+    pi = _ledger(
+        tmp_path / "pi.json", harness="pi.dev", provider="zai", total_tokens=100
+    )
     data = json.loads(vis.read_text())
     data["provenance"]["agents"][0]["vis_eval_valid"] = False
     data["tasks"][0]["agent"]["vis_eval_valid"] = False
@@ -309,8 +370,12 @@ def test_comparison_rejects_invalid_vis_eval_evidence(tmp_path):
 
 
 def test_comparison_rejects_missing_reasoning_control(tmp_path):
-    vis = _ledger(tmp_path / "vis.json", harness="Vis", provider="zai", total_tokens=100)
-    pi = _ledger(tmp_path / "pi.json", harness="pi.dev", provider="zai", total_tokens=100)
+    vis = _ledger(
+        tmp_path / "vis.json", harness="Vis", provider="zai", total_tokens=100
+    )
+    pi = _ledger(
+        tmp_path / "pi.json", harness="pi.dev", provider="zai", total_tokens=100
+    )
     data = json.loads(pi.read_text())
     data["provenance"]["agents"][0]["pi_models_sha256"] = None
     data["tasks"][0]["agent"]["pi_models_sha256"] = None

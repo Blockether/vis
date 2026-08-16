@@ -18,7 +18,12 @@ def test_patch_bloat_counts_diff_lines():
 +new
 +more
 """
-    assert metrics.patch_bloat(diff) == {"files": 1, "added_lines": 2, "deleted_lines": 1, "total_changed_lines": 3}
+    assert metrics.patch_bloat(diff) == {
+        "files": 1,
+        "added_lines": 2,
+        "deleted_lines": 1,
+        "total_changed_lines": 3,
+    }
 
 
 def test_summarize_trace_counts_trace_chunk_iterations(tmp_path):
@@ -123,7 +128,9 @@ def test_summarize_trace_reads_final_vis_effort_evidence(tmp_path):
             ],
         },
     }
-    trace.write_text(json.dumps({"event": "result", "payload": {"eval": evidence}}) + "\n")
+    trace.write_text(
+        json.dumps({"event": "result", "payload": {"eval": evidence}}) + "\n"
+    )
 
     summary = metrics.summarize_trace(trace)
 
@@ -163,7 +170,12 @@ def test_summary_reads_copied_verifier_results(tmp_path):
     summary = _run_metrics(tmp_path, run_dir)
 
     assert summary["verifier_pass"] is False
-    assert summary["verifier"] == {"passed": 14, "total": 15, "all_pass": False, "runner_errors": None}
+    assert summary["verifier"] == {
+        "passed": 14,
+        "total": 15,
+        "all_pass": False,
+        "runner_errors": None,
+    }
     assert summary["failure_class"] == "verifier_failed"
 
 
@@ -172,12 +184,17 @@ def test_summary_includes_judge_status(tmp_path):
     verifier_dir = run_dir / "harbor-output" / "trial" / "verifier"
     verifier_dir.mkdir(parents=True)
     (verifier_dir / "judge_output.json").write_text(
-        json.dumps({"rubric_status": "failed:api_error", "rubric_error": "bad tool_choice"})
+        json.dumps(
+            {"rubric_status": "failed:api_error", "rubric_error": "bad tool_choice"}
+        )
     )
 
     summary = _run_metrics(tmp_path, run_dir)
 
-    assert summary["judge"] == {"rubric_status": "failed:api_error", "rubric_error": "bad tool_choice"}
+    assert summary["judge"] == {
+        "rubric_status": "failed:api_error",
+        "rubric_error": "bad tool_choice",
+    }
 
 
 def test_summary_reads_harbor_trial_exception(tmp_path):
@@ -185,7 +202,14 @@ def test_summary_reads_harbor_trial_exception(tmp_path):
     trial = run_dir / "harbor-output" / "trial"
     trial.mkdir(parents=True)
     (trial / "result.json").write_text(
-        json.dumps({"exception_info": {"exception_type": "RewardFileNotFoundError", "exception_message": "missing"}})
+        json.dumps(
+            {
+                "exception_info": {
+                    "exception_type": "RewardFileNotFoundError",
+                    "exception_message": "missing",
+                }
+            }
+        )
     )
 
     summary = _run_metrics(tmp_path, run_dir)
@@ -199,7 +223,14 @@ def test_summary_preserves_false_reward_fields(tmp_path):
     verifier = run_dir / "harbor-output" / "trial" / "verifier"
     verifier.mkdir(parents=True)
     (verifier / "reward.json").write_text(
-        json.dumps({"resolved": False, "verifier_pass": False, "validation_agent_pass": False, "score": 0})
+        json.dumps(
+            {
+                "resolved": False,
+                "verifier_pass": False,
+                "validation_agent_pass": False,
+                "score": 0,
+            }
+        )
     )
 
     summary = _run_metrics(tmp_path, run_dir)
@@ -216,18 +247,26 @@ def test_summary_prefers_reward_details_over_reward(tmp_path):
     verifier.mkdir(parents=True)
     (verifier / "reward.json").write_text(json.dumps({"reward": 0.0}))
     (verifier / "reward_details.json").write_text(
-        json.dumps({"reward": 1.0, "rubric": {"status": "ok"}, "taste": {"status": "ok"}})
+        json.dumps(
+            {"reward": 1.0, "rubric": {"status": "ok"}, "taste": {"status": "ok"}}
+        )
     )
 
     summary = _run_metrics(tmp_path, run_dir)
 
-    assert summary["harbor_reward"] == {"reward": 1.0, "rubric": {"status": "ok"}, "taste": {"status": "ok"}}
+    assert summary["harbor_reward"] == {
+        "reward": 1.0,
+        "rubric": {"status": "ok"},
+        "taste": {"status": "ok"},
+    }
 
 
 def test_summary_classifies_docker_daemon_failure_from_harbor_log(tmp_path):
     run_dir = tmp_path / "run"
     run_dir.mkdir()
-    (run_dir / "harbor.log").write_text("Docker daemon is not running. Please start Docker and try again.\n")
+    (run_dir / "harbor.log").write_text(
+        "Docker daemon is not running. Please start Docker and try again.\n"
+    )
 
     summary = _run_metrics(tmp_path, run_dir)
 
@@ -278,7 +317,10 @@ def test_summary_normalizes_pi_harbor_usage_and_completion(tmp_path):
     (trial / "result.json").write_text(
         json.dumps(
             {
-                "agent_info": {"name": "pi", "model_info": {"provider": "zai", "name": "glm-5.2"}},
+                "agent_info": {
+                    "name": "pi",
+                    "model_info": {"provider": "zai", "name": "glm-5.2"},
+                },
                 "agent_result": {
                     "n_input_tokens": 100,
                     "n_cache_tokens": 70,
@@ -289,9 +331,15 @@ def test_summary_normalizes_pi_harbor_usage_and_completion(tmp_path):
             }
         )
     )
-    (verifier / "reward_details.json").write_text(json.dumps({"reward": 1.0, "correctness": 1.0}))
-    (verifier / "verifier_results.json").write_text(json.dumps({"passed": 1, "total": 1, "all_pass": True}))
-    (verifier / "judge_output.json").write_text(json.dumps({"rubric_status": "ok", "taste_status": "ok"}))
+    (verifier / "reward_details.json").write_text(
+        json.dumps({"reward": 1.0, "correctness": 1.0})
+    )
+    (verifier / "verifier_results.json").write_text(
+        json.dumps({"passed": 1, "total": 1, "all_pass": True})
+    )
+    (verifier / "judge_output.json").write_text(
+        json.dumps({"rubric_status": "ok", "taste_status": "ok"})
+    )
 
     summary = _run_metrics(tmp_path, run_dir)
 
@@ -340,7 +388,12 @@ def test_summary_prefers_pi_rollout_log_for_agent_telemetry_and_usage(tmp_path):
                 "role": "assistant",
                 "content": [
                     {"type": "thinking", "thinking": "inspect"},
-                    {"type": "toolCall", "id": "call-1", "name": "bash", "arguments": {"command": "ls"}},
+                    {
+                        "type": "toolCall",
+                        "id": "call-1",
+                        "name": "bash",
+                        "arguments": {"command": "ls"},
+                    },
                 ],
                 "usage": {
                     "input": 10,
@@ -351,9 +404,15 @@ def test_summary_prefers_pi_rollout_log_for_agent_telemetry_and_usage(tmp_path):
                 },
             },
         },
-        {"type": "tool_execution_end", "toolCallId": "call-1", "result": {"isError": False}},
+        {
+            "type": "tool_execution_end",
+            "toolCallId": "call-1",
+            "result": {"isError": False},
+        },
     ]
-    (agent_dir / "pi.txt").write_text("warning\n" + "\n".join(json.dumps(event) for event in events))
+    (agent_dir / "pi.txt").write_text(
+        "warning\n" + "\n".join(json.dumps(event) for event in events)
+    )
 
     summary = _run_metrics(tmp_path, run_dir)
 
@@ -371,7 +430,11 @@ def test_summary_aggregates_instrumented_judge_usage(tmp_path):
     verifier = run_dir / "harbor-output" / "trial" / "verifier"
     verifier.mkdir(parents=True)
     (run_dir / "command.json").write_text(
-        json.dumps({"vis_bench_verifier_usage_capture": "litellm_jsonl+validation_trajectories"})
+        json.dumps(
+            {
+                "vis_bench_verifier_usage_capture": "litellm_jsonl+validation_trajectories"
+            }
+        )
     )
     events = [
         {
@@ -391,11 +454,17 @@ def test_summary_aggregates_instrumented_judge_usage(tmp_path):
             "source": "litellm",
             "purpose": "taste_judge",
             "model": "openai/glm-5.2",
-            "usage": {"prompt_tokens": 200, "completion_tokens": 30, "total_tokens": 230},
+            "usage": {
+                "prompt_tokens": 200,
+                "completion_tokens": 30,
+                "total_tokens": 230,
+            },
             "reported_cost_usd": 0.02,
         },
     ]
-    (verifier / "llm_usage.jsonl").write_text("".join(json.dumps(event) + "\n" for event in events))
+    (verifier / "llm_usage.jsonl").write_text(
+        "".join(json.dumps(event) + "\n" for event in events)
+    )
 
     summary = _run_metrics(tmp_path, run_dir)
     usage = summary["verifier_usage"]
@@ -424,7 +493,11 @@ def test_design_verifier_usage_includes_validation_agent_trajectory(tmp_path):
                 "source": "litellm",
                 "purpose": "rubric_judge",
                 "model": "openai/glm-5.2",
-                "usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 20,
+                    "total_tokens": 120,
+                },
             }
         )
         + "\n"
@@ -443,7 +516,9 @@ def test_design_verifier_usage_includes_validation_agent_trajectory(tmp_path):
                                     "prompt_tokens": 500,
                                     "completion_tokens": 50,
                                     "total_tokens": 550,
-                                    "completion_tokens_details": {"reasoning_tokens": 25},
+                                    "completion_tokens_details": {
+                                        "reasoning_tokens": 25
+                                    },
                                 },
                             },
                         },
@@ -471,7 +546,14 @@ def test_summary_marks_harbor_exception_unscoreable(tmp_path):
     trial = run_dir / "harbor-output" / "trial"
     trial.mkdir(parents=True)
     (trial / "result.json").write_text(
-        json.dumps({"exception_info": {"exception_type": "RuntimeError", "exception_message": "agent failed"}})
+        json.dumps(
+            {
+                "exception_info": {
+                    "exception_type": "RuntimeError",
+                    "exception_message": "agent failed",
+                }
+            }
+        )
     )
 
     summary = _run_metrics(tmp_path, run_dir)
@@ -485,8 +567,12 @@ def test_summary_does_not_mark_correctness_authoritative_when_judge_failed(tmp_p
     run_dir = tmp_path / "run"
     verifier = run_dir / "harbor-output" / "trial" / "verifier"
     verifier.mkdir(parents=True)
-    (verifier / "reward_details.json").write_text(json.dumps({"reward": 1.0, "correctness": 1.0}))
-    (verifier / "verifier_results.json").write_text(json.dumps({"passed": 1, "total": 1, "all_pass": True}))
+    (verifier / "reward_details.json").write_text(
+        json.dumps({"reward": 1.0, "correctness": 1.0})
+    )
+    (verifier / "verifier_results.json").write_text(
+        json.dumps({"passed": 1, "total": 1, "all_pass": True})
+    )
     (verifier / "judge_output.json").write_text(
         json.dumps({"rubric_status": "failed:no_tool_use", "taste_status": "ok"})
     )
@@ -503,10 +589,19 @@ def test_summary_treats_inapplicable_judges_as_complete(tmp_path):
     run_dir = tmp_path / "run"
     verifier = run_dir / "harbor-output" / "trial" / "verifier"
     verifier.mkdir(parents=True)
-    (verifier / "reward_details.json").write_text(json.dumps({"reward": 0.0, "correctness": 0.0}))
-    (verifier / "verifier_results.json").write_text(json.dumps({"passed": 0, "total": 1, "all_pass": False}))
+    (verifier / "reward_details.json").write_text(
+        json.dumps({"reward": 0.0, "correctness": 0.0})
+    )
+    (verifier / "verifier_results.json").write_text(
+        json.dumps({"passed": 0, "total": 1, "all_pass": False})
+    )
     (verifier / "judge_output.json").write_text(
-        json.dumps({"rubric_status": "skipped:no_criteria", "taste_status": "skipped:empty_patches"})
+        json.dumps(
+            {
+                "rubric_status": "skipped:no_criteria",
+                "taste_status": "skipped:empty_patches",
+            }
+        )
     )
 
     summary = _run_metrics(tmp_path, run_dir)

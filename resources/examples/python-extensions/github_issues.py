@@ -83,7 +83,9 @@ def _slash_repo(ctx):
         vis.state["repo"] = args[0]
         return vis.ok(f"GitHub repo set: {args[0]}")
     repo = vis.state.get("repo")
-    return vis.ok(f"GitHub repo: {repo}" if repo else "No repo set — /gh-repo owner/repo")
+    return vis.ok(
+        f"GitHub repo: {repo}" if repo else "No repo set — /gh-repo owner/repo"
+    )
 
 
 PROMPT = """gh_ surface active — read access to the configured GitHub repo's issues.
@@ -103,7 +105,11 @@ vis.extension(
     ],
     prompt=PROMPT,
     slash_commands=[
-        vis.slash("gh-repo", _slash_repo, doc="Set or show the GitHub repo.",
-                  usage="/gh-repo owner/repo"),
+        vis.slash(
+            "gh-repo",
+            _slash_repo,
+            doc="Set or show the GitHub repo.",
+            usage="/gh-repo owner/repo",
+        ),
     ],
 )

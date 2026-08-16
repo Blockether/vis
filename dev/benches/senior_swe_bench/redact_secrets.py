@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Redact benchmark credentials from copied text and JSON artifacts."""
+
 from __future__ import annotations
 
 import argparse
@@ -51,7 +52,11 @@ def redact(paths: list[Path], secrets: set[bytes]) -> dict[str, object]:
         if path.is_file():
             candidates.append(path)
         elif path.is_dir():
-            candidates.extend(item for item in path.rglob("*") if item.is_file() and not item.is_symlink())
+            candidates.extend(
+                item
+                for item in path.rglob("*")
+                if item.is_file() and not item.is_symlink()
+            )
     for path in sorted(set(candidates)):
         original = path.read_bytes()
         sanitized = original

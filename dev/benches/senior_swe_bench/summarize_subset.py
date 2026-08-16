@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Aggregate per-task Senior SWE-Bench run summaries into a subset ledger."""
+
 from __future__ import annotations
 
 import argparse
@@ -45,7 +46,10 @@ def _secret_redaction(run_dir: Path) -> dict[str, Any]:
 
 
 def _unique_dicts(values: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [json.loads(value) for value in sorted({json.dumps(item, sort_keys=True) for item in values})]
+    return [
+        json.loads(value)
+        for value in sorted({json.dumps(item, sort_keys=True) for item in values})
+    ]
 
 
 def _task_entry(run_dir: Path, exit_status: int | None = None) -> dict[str, Any]:
@@ -54,7 +58,9 @@ def _task_entry(run_dir: Path, exit_status: int | None = None) -> dict[str, Any]
     collection = _collection(run_dir)
     dataset_lock = _dataset_lock(run_dir)
     secret_redaction = _secret_redaction(run_dir)
-    task_ids = command.get("task_ids") if isinstance(command.get("task_ids"), list) else []
+    task_ids = (
+        command.get("task_ids") if isinstance(command.get("task_ids"), list) else []
+    )
     task_id = summary.get("task_id") or (task_ids[0] if task_ids else None)
     harbor_exception = summary.get("harbor_exception")
     harbor_exception_type = None
@@ -69,10 +75,20 @@ def _task_entry(run_dir: Path, exit_status: int | None = None) -> dict[str, Any]
 
     agent = summary.get("agent") if isinstance(summary.get("agent"), dict) else {}
     harbor = summary.get("harbor") if isinstance(summary.get("harbor"), dict) else {}
-    completion = summary.get("completion") if isinstance(summary.get("completion"), dict) else {}
+    completion = (
+        summary.get("completion") if isinstance(summary.get("completion"), dict) else {}
+    )
     agent_usage = agent.get("usage") if isinstance(agent.get("usage"), dict) else {}
-    verifier_usage = summary.get("verifier_usage") if isinstance(summary.get("verifier_usage"), dict) else {}
-    agent_trace = summary.get("agent_trace") if isinstance(summary.get("agent_trace"), dict) else {}
+    verifier_usage = (
+        summary.get("verifier_usage")
+        if isinstance(summary.get("verifier_usage"), dict)
+        else {}
+    )
+    agent_trace = (
+        summary.get("agent_trace")
+        if isinstance(summary.get("agent_trace"), dict)
+        else {}
+    )
     verifier_config = {
         "provider": command.get("vis_bench_verifier_provider"),
         "base_url": command.get("vis_bench_verifier_openai_base_url"),
@@ -81,7 +97,9 @@ def _task_entry(run_dir: Path, exit_status: int | None = None) -> dict[str, Any]
         "validation_agent_model": command.get("vis_bench_verifier_va_model"),
         "validation_agent_harness": command.get("vis_bench_verifier_va_harness"),
         "tool_choice_compat": command.get("vis_bench_verifier_tool_choice_compat"),
-        "response_format_compat": command.get("vis_bench_verifier_response_format_compat"),
+        "response_format_compat": command.get(
+            "vis_bench_verifier_response_format_compat"
+        ),
         "usage_capture": command.get("vis_bench_verifier_usage_capture"),
     }
 
@@ -127,13 +145,17 @@ def _task_entry(run_dir: Path, exit_status: int | None = None) -> dict[str, Any]
         "resolved": summary.get("resolved"),
         "harbor_exception_type": harbor_exception_type,
         "patch_bloat": summary.get("patch_bloat"),
-        "vis_iterations": (summary.get("vis") or {}).get("iterations") if isinstance(summary.get("vis"), dict) else None,
+        "vis_iterations": (summary.get("vis") or {}).get("iterations")
+        if isinstance(summary.get("vis"), dict)
+        else None,
         "agent_iterations": agent_trace.get("iterations"),
         "agent_tool_calls": agent_trace.get("tool_calls"),
         "task_base_image": command.get("task_base_image"),
         "selected_task_image": command.get("selected_task_image"),
         "harbor_job_dir": collection.get("job_dir"),
-        "collected_trials": len(collection.get("trials", [])) if isinstance(collection.get("trials"), list) else 0,
+        "collected_trials": len(collection.get("trials", []))
+        if isinstance(collection.get("trials"), list)
+        else 0,
     }
 
 
@@ -146,12 +168,20 @@ def _manifest_runs(path: Path) -> tuple[dict[str, Any], list[tuple[Path, int | N
         if not isinstance(item, dict) or not item.get("run_dir"):
             continue
         status = item.get("exit_status")
-        runs.append((Path(item["run_dir"]), int(status) if status is not None else None))
+        runs.append(
+            (Path(item["run_dir"]), int(status) if status is not None else None)
+        )
     return data, runs
 
 
-def _aggregate_task_usage(tasks: list[dict[str, Any]], key: str, scope: str) -> dict[str, Any]:
-    usages = [task.get(key, {}) for task in tasks if task.get(key, {}).get("available") is True]
+def _aggregate_task_usage(
+    tasks: list[dict[str, Any]], key: str, scope: str
+) -> dict[str, Any]:
+    usages = [
+        task.get(key, {})
+        for task in tasks
+        if task.get(key, {}).get("available") is True
+    ]
     complete_usages = [usage for usage in usages if usage.get("complete") is True]
     token_keys = [
         "input_tokens",
@@ -182,8 +212,13 @@ def _aggregate_task_usage(tasks: list[dict[str, Any]], key: str, scope: str) -> 
         "tasks_missing_usage": len(tasks) - len(usages),
         "tasks_with_complete_usage": len(complete_usages),
         "complete": bool(tasks) and len(complete_usages) == len(tasks),
-        "tokens": {token_key: sum(values) if values else None for token_key, values in token_values.items()},
-        "token_coverage": {token_key: len(values) for token_key, values in token_values.items()},
+        "tokens": {
+            token_key: sum(values) if values else None
+            for token_key, values in token_values.items()
+        },
+        "token_coverage": {
+            token_key: len(values) for token_key, values in token_values.items()
+        },
         "reported_cost_usd": sum(costs) if costs else None,
         "tasks_with_reported_cost": len(costs),
         "calls": sum(calls) if calls else None,
@@ -191,8 +226,15 @@ def _aggregate_task_usage(tasks: list[dict[str, Any]], key: str, scope: str) -> 
 
 
 def _aggregate_task_telemetry(tasks: list[dict[str, Any]]) -> dict[str, Any]:
-    traces = [task.get("agent_trace", {}) for task in tasks if task.get("agent_trace", {}).get("available") is True]
-    complete_traces = [trace for trace in traces if trace.get("telemetry_complete") is True]
+    traces = [
+        task.get("agent_trace", {})
+        for task in tasks
+        if task.get("agent_trace", {}).get("available") is True
+    ]
+    complete_traces = [
+        trace for trace in traces if trace.get("telemetry_complete") is True
+    ]
+
     def numeric(key: str) -> int | float | None:
         values = [
             value
@@ -200,7 +242,10 @@ def _aggregate_task_telemetry(tasks: list[dict[str, Any]]) -> dict[str, Any]:
             if isinstance((value := trace.get(key)), (int, float))
         ]
         return sum(values) if values else None
-    sources = sorted({str(trace.get("source")) for trace in traces if trace.get("source")})
+
+    sources = sorted(
+        {str(trace.get("source")) for trace in traces if trace.get("source")}
+    )
     return {
         "tasks_with_trace": len(traces),
         "tasks_missing_trace": len(tasks) - len(traces),
@@ -222,20 +267,32 @@ def summarize(
     manifest_path: str | None = None,
 ) -> dict[str, Any]:
     tasks = [_task_entry(run_dir, exit_status) for run_dir, exit_status in run_dirs]
-    failure_counts = Counter(str(task["failure_class"]) for task in tasks if task.get("failure_class"))
+    failure_counts = Counter(
+        str(task["failure_class"]) for task in tasks if task.get("failure_class")
+    )
     completion_counts = Counter(
         str(task["completion"].get("status"))
         for task in tasks
         if isinstance(task.get("completion"), dict) and task["completion"].get("status")
     )
-    scoreable_tasks = sum(task.get("completion", {}).get("scoreable") is True for task in tasks)
-    completed_tasks = sum(task.get("completion", {}).get("complete") is True for task in tasks)
-    passed_tasks = sum(task.get("completion", {}).get("passed") is True for task in tasks)
+    scoreable_tasks = sum(
+        task.get("completion", {}).get("scoreable") is True for task in tasks
+    )
+    completed_tasks = sum(
+        task.get("completion", {}).get("complete") is True for task in tasks
+    )
+    passed_tasks = sum(
+        task.get("completion", {}).get("passed") is True for task in tasks
+    )
     agent_usage = _aggregate_task_usage(tasks, "agent_usage", "agent")
     agent_telemetry = _aggregate_task_telemetry(tasks)
     verifier_usage = _aggregate_task_usage(tasks, "verifier_usage", "verifier")
-    redaction_reports = [task["secret_redaction"] for task in tasks if task.get("secret_redaction")]
-    clean_redaction_reports = [report for report in redaction_reports if report.get("clean") is True]
+    redaction_reports = [
+        task["secret_redaction"] for task in tasks if task.get("secret_redaction")
+    ]
+    clean_redaction_reports = [
+        report for report in redaction_reports if report.get("clean") is True
+    ]
     secret_redaction = {
         "tasks_with_report": len(redaction_reports),
         "tasks_clean": len(clean_redaction_reports),
@@ -244,13 +301,21 @@ def summarize(
     expected_task_ids: list[str] | None = None
     if subset_path:
         subset_data = load_json(Path(subset_path))
-        if isinstance(subset_data, dict) and isinstance(subset_data.get("task_ids"), list):
+        if isinstance(subset_data, dict) and isinstance(
+            subset_data.get("task_ids"), list
+        ):
             expected_task_ids = [str(task_id) for task_id in subset_data["task_ids"]]
     actual_task_ids = [str(task["task_id"]) for task in tasks if task.get("task_id")]
     actual_counts = Counter(actual_task_ids)
-    duplicate_task_ids = sorted(task_id for task_id, count in actual_counts.items() if count > 1)
+    duplicate_task_ids = sorted(
+        task_id for task_id, count in actual_counts.items() if count > 1
+    )
     missing_task_ids = sorted(set(expected_task_ids or []) - set(actual_task_ids))
-    unexpected_task_ids = sorted(set(actual_task_ids) - set(expected_task_ids or [])) if expected_task_ids is not None else []
+    unexpected_task_ids = (
+        sorted(set(actual_task_ids) - set(expected_task_ids or []))
+        if expected_task_ids is not None
+        else []
+    )
     all_tasks_present = expected_task_ids is None or (
         not duplicate_task_ids
         and not missing_task_ids
@@ -259,18 +324,38 @@ def summarize(
     )
     agents = _unique_dicts(
         [
-            {key: value for key, value in task["agent"].items() if key != "vis_eval_valid"}
+            {
+                key: value
+                for key, value in task["agent"].items()
+                if key != "vis_eval_valid"
+            }
             for task in tasks
             if any(task["agent"].values())
         ]
     )
-    verifiers = _unique_dicts([task["verifier_config"] for task in tasks if any(task["verifier_config"].values())])
-    dataset_commits = sorted({str(task["dataset_commit"]) for task in tasks if task.get("dataset_commit")})
+    verifiers = _unique_dicts(
+        [
+            task["verifier_config"]
+            for task in tasks
+            if any(task["verifier_config"].values())
+        ]
+    )
+    dataset_commits = sorted(
+        {str(task["dataset_commit"]) for task in tasks if task.get("dataset_commit")}
+    )
     artifacts = _unique_dicts(
-        [task["agent"]["artifact"] for task in tasks if isinstance(task["agent"].get("artifact"), dict)]
+        [
+            task["agent"]["artifact"]
+            for task in tasks
+            if isinstance(task["agent"].get("artifact"), dict)
+        ]
     )
     harbor_versions = sorted(
-        {str(task["harbor"]["version"]) for task in tasks if task.get("harbor", {}).get("version")}
+        {
+            str(task["harbor"]["version"])
+            for task in tasks
+            if task.get("harbor", {}).get("version")
+        }
     )
     harbor_locked_versions = sorted(
         {
@@ -279,9 +364,20 @@ def summarize(
             if task.get("harbor", {}).get("locked_version")
         }
     )
-    exit_statuses = [task.get("exit_status") for task in tasks if task.get("exit_status") is not None]
-    exit_status = max(exit_statuses) if exit_statuses else (1 if failure_counts else 0 if tasks else None)
-    if exit_status in (None, 0) and tasks and completed_tasks < len(tasks) and not all(task.get("install_only_success") is True for task in tasks):
+    exit_statuses = [
+        task.get("exit_status") for task in tasks if task.get("exit_status") is not None
+    ]
+    exit_status = (
+        max(exit_statuses)
+        if exit_statuses
+        else (1 if failure_counts else 0 if tasks else None)
+    )
+    if (
+        exit_status in (None, 0)
+        and tasks
+        and completed_tasks < len(tasks)
+        and not all(task.get("install_only_success") is True for task in tasks)
+    ):
         exit_status = 3
     install_only_values = [task.get("install_only_success") for task in tasks]
     return {
@@ -293,7 +389,9 @@ def summarize(
         "failure_counts": dict(sorted(failure_counts.items())),
         "completion": {
             "counts": dict(sorted(completion_counts.items())),
-            "expected_tasks": len(expected_task_ids) if expected_task_ids is not None else None,
+            "expected_tasks": len(expected_task_ids)
+            if expected_task_ids is not None
+            else None,
             "expected_task_ids": expected_task_ids,
             "actual_task_ids": actual_task_ids,
             "duplicate_task_ids": duplicate_task_ids,
@@ -306,13 +404,16 @@ def summarize(
             "incomplete_tasks": len(tasks) - completed_tasks,
             "passed_tasks": passed_tasks,
             "pass_rate": (passed_tasks / scoreable_tasks) if scoreable_tasks else None,
-            "authoritative": bool(tasks) and all_tasks_present and completed_tasks == len(tasks),
+            "authoritative": bool(tasks)
+            and all_tasks_present
+            and completed_tasks == len(tasks),
         },
         "usage": agent_usage,
         "agent_usage": agent_usage,
         "agent_telemetry": agent_telemetry,
         "verifier_usage": verifier_usage,
-        "spend_reporting_complete": agent_usage["complete"] and verifier_usage["complete"],
+        "spend_reporting_complete": agent_usage["complete"]
+        and verifier_usage["complete"],
         "tool_telemetry_complete": agent_telemetry["complete"],
         "secret_redaction": secret_redaction,
         "secret_redaction_complete": secret_redaction["complete"],
@@ -337,7 +438,8 @@ def summarize(
                 and len(harbor_locked_versions) <= 1
             ),
         },
-        "all_install_only_success": bool(tasks) and all(value is True for value in install_only_values),
+        "all_install_only_success": bool(tasks)
+        and all(value is True for value in install_only_values),
         "tasks": tasks,
     }
 

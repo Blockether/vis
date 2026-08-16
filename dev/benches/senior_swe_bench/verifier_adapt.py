@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Run-local adaptations for Senior SWE-Bench verifier compatibility."""
+
 from __future__ import annotations
 
 import argparse
@@ -10,43 +11,45 @@ from pathlib import Path
 HELPER_MARKER = "# VIS_BENCH_OPENAI_COMPAT_TOOL_CHOICE_START"
 HELPER_END_MARKER = "# VIS_BENCH_OPENAI_COMPAT_TOOL_CHOICE_END"
 HELPER_ANCHOR = "\ndef complete(  # noqa: PLR0913\n"
-MODEL_VALIDATE_HELPER = '''def _vis_model_validate(schema: Any, args: dict[str, Any]) -> Any:
+MODEL_VALIDATE_HELPER = """def _vis_model_validate(schema: Any, args: dict[str, Any]) -> Any:
     try:
         return schema.model_validate(args)
-'''
+"""
 CALL_ORIGINAL = '    if tool_choice is not None:\n        call_kwargs["tool_choice"] = tool_choice\n'
 CALL_PATCHED = '    if tool_choice is not None:\n        call_kwargs["tool_choice"] = _vis_openai_compat_tool_choice(tool_choice)\n'
-USAGE_CALL_ORIGINAL = "    resp = _call_with_retry(litellm.completion, attempts, call_kwargs)\n"
-USAGE_CALL_PATCHED = '''    resp = _vis_record_usage(
+USAGE_CALL_ORIGINAL = (
+    "    resp = _call_with_retry(litellm.completion, attempts, call_kwargs)\n"
+)
+USAGE_CALL_PATCHED = """    resp = _vis_record_usage(
         _call_with_retry(litellm.completion, attempts, call_kwargs),
         model=routing.model,
         tools=tools,
         tool_choice=tool_choice,
     )
-'''
-TOOL_CALL_ARGS_ORIGINAL = '''            except (TypeError, json.JSONDecodeError):
+"""
+TOOL_CALL_ARGS_ORIGINAL = """            except (TypeError, json.JSONDecodeError):
                 return None
     return None
 
 
-'''
-TOOL_CALL_ARGS_PATCHED = '''            except (TypeError, json.JSONDecodeError):
+"""
+TOOL_CALL_ARGS_PATCHED = """            except (TypeError, json.JSONDecodeError):
                 return None
     return _vis_content_json_args(response, name)
 
 
-'''
-RESPONSE_FORMAT_ORIGINAL = '''    if thinking_budget > 0:
+"""
+RESPONSE_FORMAT_ORIGINAL = """    if thinking_budget > 0:
         call_kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
     call_kwargs.update(kwargs)
 
-'''
-RESPONSE_FORMAT_COMPACT_ORIGINAL = '''    if thinking_budget > 0:
+"""
+RESPONSE_FORMAT_COMPACT_ORIGINAL = """    if thinking_budget > 0:
         call_kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
     call_kwargs.update(kwargs)
     return call_kwargs
-'''
-RESPONSE_FORMAT_LEGACY_PATCHED = '''    if thinking_budget > 0:
+"""
+RESPONSE_FORMAT_LEGACY_PATCHED = """    if thinking_budget > 0:
         call_kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
     call_kwargs.update(kwargs)
     response_format = _vis_forced_tool_response_format(tools, tool_choice)
@@ -55,8 +58,8 @@ RESPONSE_FORMAT_LEGACY_PATCHED = '''    if thinking_budget > 0:
         call_kwargs.pop("tools", None)
         call_kwargs.pop("tool_choice", None)
 
-'''
-RESPONSE_FORMAT_PRE_DISABLE_PATCHED = '''    if thinking_budget > 0:
+"""
+RESPONSE_FORMAT_PRE_DISABLE_PATCHED = """    if thinking_budget > 0:
     call_kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
     call_kwargs.update(kwargs)
     response_format = _vis_forced_tool_response_format(tools, tool_choice)
@@ -68,8 +71,8 @@ RESPONSE_FORMAT_PRE_DISABLE_PATCHED = '''    if thinking_budget > 0:
         call_kwargs.pop("tools", None)
         call_kwargs.pop("tool_choice", None)
 
-'''
-RESPONSE_FORMAT_PATCHED = '''    if thinking_budget > 0:
+"""
+RESPONSE_FORMAT_PATCHED = """    if thinking_budget > 0:
         call_kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
     call_kwargs.update(kwargs)
     response_format = _vis_forced_tool_response_format(tools, tool_choice)
@@ -86,40 +89,42 @@ RESPONSE_FORMAT_PATCHED = '''    if thinking_budget > 0:
         call_kwargs.pop("tools", None)
         call_kwargs.pop("tool_choice", None)
 
-'''
+"""
 RESPONSE_FORMAT_COMPACT_PATCHED = RESPONSE_FORMAT_PATCHED + "    return call_kwargs\n"
 STRUCTURED_VALIDATE_ORIGINAL = "    return schema.model_validate(args)\n"
 STRUCTURED_VALIDATE_PATCHED = "    return _vis_model_validate(schema, args)\n"
 EXPLORE_VALIDATE_ORIGINAL = "                return emit_schema.model_validate(args)\n"
-EXPLORE_VALIDATE_PATCHED = "                return llm_utils._vis_model_validate(emit_schema, args)\n"
-EXPLORE_VALIDATE_RETRY_PATCHED = '''                try:
+EXPLORE_VALIDATE_PATCHED = (
+    "                return llm_utils._vis_model_validate(emit_schema, args)\n"
+)
+EXPLORE_VALIDATE_RETRY_PATCHED = """                try:
                     return llm_utils._vis_model_validate(emit_schema, args)
                 except ValueError as error:
                     emit_validation_error = str(error)
-'''
-EMIT_ERROR_INIT_ORIGINAL = '        emitted = any(c.function.name == emit_tool_name for c in tool_calls)\n'
-EMIT_ERROR_INIT_PATCHED = (
-    '        emit_validation_error = None\n'
-    '        emitted = any(c.function.name == emit_tool_name for c in tool_calls)\n'
+"""
+EMIT_ERROR_INIT_ORIGINAL = (
+    "        emitted = any(c.function.name == emit_tool_name for c in tool_calls)\n"
 )
-EMIT_NUDGE_ORIGINAL = '''                content = (
+EMIT_ERROR_INIT_PATCHED = (
+    "        emit_validation_error = None\n"
+    "        emitted = any(c.function.name == emit_tool_name for c in tool_calls)\n"
+)
+EMIT_NUDGE_ORIGINAL = """                content = (
                     f"Explore the codebase with the read-only tools before scoring "
                     f"(at least {min_explore_turns} steps), then call {emit_tool_name}."
                 )
-'''
-EMIT_NUDGE_PATCHED = '''                content = (
+"""
+EMIT_NUDGE_PATCHED = """                content = (
                     f"Your {emit_tool_name} arguments failed schema validation: "
                     f"{emit_validation_error}. Call {emit_tool_name} again with corrected arguments."
                     if emit_validation_error
                     else f"Explore the codebase with the read-only tools before scoring "
                     f"(at least {min_explore_turns} steps), then call {emit_tool_name}."
                 )
-'''
+"""
 FORCED_VALIDATE_ORIGINAL = "    return emit_schema.model_validate(emit_args) if emit_args is not None else None\n"
-FORCED_VALIDATE_PATCHED = (
-    "    return llm_utils._vis_model_validate(emit_schema, emit_args) if emit_args is not None else None\n"
-)
-FORCED_CALL_ORIGINAL = '''    response = llm_utils.complete(
+FORCED_VALIDATE_PATCHED = "    return llm_utils._vis_model_validate(emit_schema, emit_args) if emit_args is not None else None\n"
+FORCED_CALL_ORIGINAL = """    response = llm_utils.complete(
         model=model,
         system=system,
         messages=messages,
@@ -129,12 +134,12 @@ FORCED_CALL_ORIGINAL = '''    response = llm_utils.complete(
     )
     emit_args = llm_utils.tool_call_args(response, emit_tool_name)
     return emit_schema.model_validate(emit_args) if emit_args is not None else None
-'''
+"""
 FORCED_CALL_PATCHED = FORCED_CALL_ORIGINAL.replace(
     "emit_schema.model_validate(emit_args)",
     "llm_utils._vis_model_validate(emit_schema, emit_args)",
 )
-FORCED_VALIDATE_RETRY_PATCHED = '''    for attempt in range(2):
+FORCED_VALIDATE_RETRY_PATCHED = """    for attempt in range(2):
         response = llm_utils.complete(
             model=model,
             system=system,
@@ -158,7 +163,7 @@ FORCED_VALIDATE_RETRY_PATCHED = '''    for attempt in range(2):
                     ),
                 })
     return None
-'''
+"""
 LITELLM_REQUIREMENT = "litellm>=1.0,<2.0\n"
 PINNED_LITELLM_REQUIREMENT = "litellm==1.92.0\n"
 FASTAPI_REQUIREMENT = "fastapi>=0.136.3,<1.0\n"
@@ -449,11 +454,11 @@ def _patch_llm_utils(path: Path) -> AdaptedFile:
     if HELPER_MARKER in text:
         if (
             "_vis_content_json_args" not in text
-                or "_vis_forced_tool_response_format" not in text
-                or "_vis_forced_tool_json_instruction" not in text
-                or "_vis_disable_thinking_for_response_format" not in text
-                or "_vis_record_usage" not in text
-                or MODEL_VALIDATE_HELPER not in text
+            or "_vis_forced_tool_response_format" not in text
+            or "_vis_forced_tool_json_instruction" not in text
+            or "_vis_disable_thinking_for_response_format" not in text
+            or "_vis_record_usage" not in text
+            or MODEL_VALIDATE_HELPER not in text
         ):
             start = text.index(HELPER_MARKER)
             line_start = text.rfind("\n", 0, start) + 1
@@ -482,11 +487,15 @@ def _patch_llm_utils(path: Path) -> AdaptedFile:
     if RESPONSE_FORMAT_ORIGINAL in text:
         text = text.replace(RESPONSE_FORMAT_ORIGINAL, RESPONSE_FORMAT_PATCHED, 1)
     elif RESPONSE_FORMAT_COMPACT_ORIGINAL in text:
-        text = text.replace(RESPONSE_FORMAT_COMPACT_ORIGINAL, RESPONSE_FORMAT_COMPACT_PATCHED, 1)
+        text = text.replace(
+            RESPONSE_FORMAT_COMPACT_ORIGINAL, RESPONSE_FORMAT_COMPACT_PATCHED, 1
+        )
     elif RESPONSE_FORMAT_LEGACY_PATCHED in text:
         text = text.replace(RESPONSE_FORMAT_LEGACY_PATCHED, RESPONSE_FORMAT_PATCHED, 1)
     elif RESPONSE_FORMAT_PRE_DISABLE_PATCHED in text:
-        text = text.replace(RESPONSE_FORMAT_PRE_DISABLE_PATCHED, RESPONSE_FORMAT_PATCHED, 1)
+        text = text.replace(
+            RESPONSE_FORMAT_PRE_DISABLE_PATCHED, RESPONSE_FORMAT_PATCHED, 1
+        )
     elif RESPONSE_FORMAT_PATCHED not in text:
         raise AdaptationError(f"{path}: cannot find response_format insertion point")
 
@@ -494,7 +503,9 @@ def _patch_llm_utils(path: Path) -> AdaptedFile:
         structured_start = text.index("def complete_structured")
         prefix, structured = text[:structured_start], text[structured_start:]
         if STRUCTURED_VALIDATE_ORIGINAL in structured:
-            structured = structured.replace(STRUCTURED_VALIDATE_ORIGINAL, STRUCTURED_VALIDATE_PATCHED, 1)
+            structured = structured.replace(
+                STRUCTURED_VALIDATE_ORIGINAL, STRUCTURED_VALIDATE_PATCHED, 1
+            )
             text = prefix + structured
         elif STRUCTURED_VALIDATE_PATCHED not in structured:
             raise AdaptationError(f"{path}: cannot find structured validation return")
@@ -508,7 +519,9 @@ def _patch_llm_tools(path: Path) -> AdaptedFile:
     text = path.read_text()
     original = text
     if EXPLORE_VALIDATE_ORIGINAL in text:
-        text = text.replace(EXPLORE_VALIDATE_ORIGINAL, EXPLORE_VALIDATE_RETRY_PATCHED, 1)
+        text = text.replace(
+            EXPLORE_VALIDATE_ORIGINAL, EXPLORE_VALIDATE_RETRY_PATCHED, 1
+        )
     elif EXPLORE_VALIDATE_PATCHED in text:
         text = text.replace(EXPLORE_VALIDATE_PATCHED, EXPLORE_VALIDATE_RETRY_PATCHED, 1)
     elif EXPLORE_VALIDATE_RETRY_PATCHED not in text:
@@ -549,7 +562,9 @@ def _patch_test_sh(path: Path) -> AdaptedFile:
         if requirement not in text
     )
     if missing:
-        text = text.replace(PINNED_LITELLM_REQUIREMENT, PINNED_LITELLM_REQUIREMENT + missing, 1)
+        text = text.replace(
+            PINNED_LITELLM_REQUIREMENT, PINNED_LITELLM_REQUIREMENT + missing, 1
+        )
     if text != original:
         path.write_text(text)
     return AdaptedFile(path=str(path), changed=text != original)
@@ -561,12 +576,18 @@ def adapt_dataset(
     response_format_compat: str = "json_schema",
 ) -> dict[str, object]:
     if tool_choice_compat not in {"", "required"}:
-        raise AdaptationError(f"unsupported tool_choice compatibility mode: {tool_choice_compat}")
+        raise AdaptationError(
+            f"unsupported tool_choice compatibility mode: {tool_choice_compat}"
+        )
     if response_format_compat not in {"json_schema", "json_object"}:
-        raise AdaptationError(f"unsupported response_format compatibility mode: {response_format_compat}")
+        raise AdaptationError(
+            f"unsupported response_format compatibility mode: {response_format_compat}"
+        )
     llm_paths = sorted(dataset_copy.glob("tasks/*/tests/ssb_lib/llm_utils.py"))
     if not llm_paths:
-        raise AdaptationError(f"no task verifier llm_utils.py files found under {dataset_copy}")
+        raise AdaptationError(
+            f"no task verifier llm_utils.py files found under {dataset_copy}"
+        )
     test_paths = sorted(dataset_copy.glob("tasks/*/tests/test.sh"))
     adapted = [_patch_llm_utils(path) for path in llm_paths]
     adapted.extend(
@@ -576,13 +597,15 @@ def adapt_dataset(
     adapted.extend(_patch_test_sh(path) for path in test_paths)
     env = {"SSB_LLM_USAGE_PATH": "/logs/verifier/llm_usage.jsonl"}
     if tool_choice_compat:
-        env.update({
-            "SSB_OPENAI_COMPAT_PARSE_CONTENT_JSON": "1",
-            "SSB_OPENAI_COMPAT_RESPONSE_FORMAT": (
-                "json_object" if response_format_compat == "json_object" else "1"
-            ),
-            "SSB_OPENAI_COMPAT_TOOL_CHOICE": tool_choice_compat,
-        })
+        env.update(
+            {
+                "SSB_OPENAI_COMPAT_PARSE_CONTENT_JSON": "1",
+                "SSB_OPENAI_COMPAT_RESPONSE_FORMAT": (
+                    "json_object" if response_format_compat == "json_object" else "1"
+                ),
+                "SSB_OPENAI_COMPAT_TOOL_CHOICE": tool_choice_compat,
+            }
+        )
     return {
         "enabled": True,
         "usage_capture": "litellm_jsonl",
@@ -597,11 +620,17 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset-copy", type=Path, required=True)
     parser.add_argument("--tool-choice-compat", default="", choices=["", "required"])
-    parser.add_argument("--response-format-compat", default="json_schema", choices=["json_schema", "json_object"])
+    parser.add_argument(
+        "--response-format-compat",
+        default="json_schema",
+        choices=["json_schema", "json_object"],
+    )
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
 
-    result = adapt_dataset(args.dataset_copy, args.tool_choice_compat, args.response_format_compat)
+    result = adapt_dataset(
+        args.dataset_copy, args.tool_choice_compat, args.response_format_compat
+    )
     text = json.dumps(result, indent=2, sort_keys=True) + "\n"
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)

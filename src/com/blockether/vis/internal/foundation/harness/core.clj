@@ -208,20 +208,20 @@
 (def agent-symbol
   ;; bound Python verb, gated by :active-fn (sync removes it when agents are off)
   ;; and handed `env` via :inject-env? — one gating mechanism, no before-fn.
-  (vis/symbol #'agent
-              {:symbol 'agent
-               :description
-               (str "Run a named HARNESS AGENTS sub-agent in an isolated child loop — "
+  (vis/symbol
+    #'agent
+    {:symbol 'agent
+     :description (str
+                    "Run a named HARNESS AGENTS sub-agent in an isolated child loop — "
                     "`agent(name, prompt)`; its edits merge back into this workspace. An unknown "
                     "`name` answers the available ones instead of running. An EXPENSIVE full LLM "
                     "turn: delegate only work a sub-agent can finish on its own.")
-               :result
-               (str "String-keyed `{agent, task_id, status, answer, changed_files}`; an unknown name "
-                    "answers `{error, available}` instead.")
-               :active-fn (fn [_env]
-                            true)
-               :inject-env? true
-               :tag :mutation}))
+     :result (str "String-keyed `{agent, task_id, status, answer, changed_files}`; an unknown name "
+                  "answers `{error, available}` instead.")
+     :active-fn (fn [_env]
+                  true)
+     :inject-env? true
+     :tag :mutation}))
 
 ;; Prompt fragment — the CHEAP progressive listings (name — description)
 

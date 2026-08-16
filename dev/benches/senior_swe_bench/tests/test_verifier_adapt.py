@@ -4,7 +4,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("verifier_adapt", ROOT / "verifier_adapt.py")
+spec = importlib.util.spec_from_file_location(
+    "verifier_adapt", ROOT / "verifier_adapt.py"
+)
 verifier_adapt = importlib.util.module_from_spec(spec)
 sys.modules["verifier_adapt"] = verifier_adapt
 spec.loader.exec_module(verifier_adapt)  # type: ignore[union-attr]
@@ -74,8 +76,14 @@ def complete_structured(schema, args):
     assert "SSB_OPENAI_COMPAT_TOOL_CHOICE" in patched
     assert "SSB_OPENAI_COMPAT_PARSE_CONTENT_JSON" in patched
     assert "SSB_OPENAI_COMPAT_RESPONSE_FORMAT" in patched
-    assert 'call_kwargs["tool_choice"] = _vis_openai_compat_tool_choice(tool_choice)' in patched
-    assert "response_format = _vis_forced_tool_response_format(tools, tool_choice)" in patched
+    assert (
+        'call_kwargs["tool_choice"] = _vis_openai_compat_tool_choice(tool_choice)'
+        in patched
+    )
+    assert (
+        "response_format = _vis_forced_tool_response_format(tools, tool_choice)"
+        in patched
+    )
     assert "return _vis_content_json_args(response, name)" in patched
     assert "return _vis_model_validate(schema, args)" in patched
     assert verifier_adapt.MODEL_VALIDATE_HELPER in patched
@@ -141,7 +149,9 @@ def complete(  # noqa: PLR0913
     spec.loader.exec_module(patched)  # type: ignore[union-attr]
 
     class Message:
-        content = '```json\n{"criteria":[{"name":"fast-tags","score":1,"reason":"ok"}]}\n```'
+        content = (
+            '```json\n{"criteria":[{"name":"fast-tags","score":1,"reason":"ok"}]}\n```'
+        )
         tool_calls = []
 
     class Choice:
@@ -157,7 +167,9 @@ def complete(  # noqa: PLR0913
     }
 
 
-def test_adapted_llm_utils_uses_response_format_for_forced_single_tool(monkeypatch, tmp_path):
+def test_adapted_llm_utils_uses_response_format_for_forced_single_tool(
+    monkeypatch, tmp_path
+):
     llm_utils = tmp_path / "tasks" / "task-a" / "tests" / "ssb_lib" / "llm_utils.py"
     llm_utils.parent.mkdir(parents=True)
     llm_utils.write_text(
@@ -207,7 +219,9 @@ def complete(  # noqa: PLR0913
     )
     verifier_adapt.adapt_dataset(tmp_path, "required")
 
-    spec = importlib.util.spec_from_file_location("patched_llm_utils_response_format", llm_utils)
+    spec = importlib.util.spec_from_file_location(
+        "patched_llm_utils_response_format", llm_utils
+    )
     patched = importlib.util.module_from_spec(spec)
     sys.modules["patched_llm_utils_response_format"] = patched
     spec.loader.exec_module(patched)  # type: ignore[union-attr]
@@ -295,7 +309,9 @@ def complete(  # noqa: PLR0913
     )
     result = verifier_adapt.adapt_dataset(tmp_path, "required", "json_object")
 
-    spec = importlib.util.spec_from_file_location("patched_llm_utils_json_object", llm_utils)
+    spec = importlib.util.spec_from_file_location(
+        "patched_llm_utils_json_object", llm_utils
+    )
     patched = importlib.util.module_from_spec(spec)
     sys.modules["patched_llm_utils_json_object"] = patched
     spec.loader.exec_module(patched)  # type: ignore[union-attr]
@@ -332,10 +348,12 @@ def complete(  # noqa: PLR0913
     assert call_kwargs["extra_body"] == {"thinking": {"type": "disabled"}}
     assert call_kwargs["messages"][0]["role"] == "system"
     assert "submit_review" in call_kwargs["messages"][0]["content"]
-    assert "\"score\"" in call_kwargs["messages"][0]["content"]
+    assert '"score"' in call_kwargs["messages"][0]["content"]
 
 
-def test_adapted_llm_utils_records_usage_without_response_content(monkeypatch, tmp_path):
+def test_adapted_llm_utils_records_usage_without_response_content(
+    monkeypatch, tmp_path
+):
     llm_utils = tmp_path / "tasks" / "task-a" / "tests" / "ssb_lib" / "llm_utils.py"
     llm_utils.parent.mkdir(parents=True)
     llm_utils.write_text(
@@ -393,9 +411,16 @@ def complete(  # noqa: PLR0913
 
     usage_path = tmp_path / "llm_usage.jsonl"
     monkeypatch.setenv("SSB_LLM_USAGE_PATH", str(usage_path))
-    tools = [{"type": "function", "function": {"name": "submit_scores", "parameters": {}}}]
+    tools = [
+        {"type": "function", "function": {"name": "submit_scores", "parameters": {}}}
+    ]
 
-    assert patched._vis_record_usage(Response(), model="openai/glm-5.2", tools=tools, tool_choice=None).__class__ is Response
+    assert (
+        patched._vis_record_usage(
+            Response(), model="openai/glm-5.2", tools=tools, tool_choice=None
+        ).__class__
+        is Response
+    )
     event = json.loads(usage_path.read_text())
 
     assert event == {
@@ -498,8 +523,8 @@ def complete(  # noqa: PLR0913
         "                return emit_schema.model_validate(args)\n"
         "            if call.function.name == emit_tool_name:\n"
         "                content = (\n"
-        "                    f\"Explore the codebase with the read-only tools before scoring \"\n"
-        "                    f\"(at least {min_explore_turns} steps), then call {emit_tool_name}.\"\n"
+        '                    f"Explore the codebase with the read-only tools before scoring "\n'
+        '                    f"(at least {min_explore_turns} steps), then call {emit_tool_name}."\n'
         "                )\n"
         "    return emit_schema.model_validate(emit_args) if emit_args is not None else None\n"
     )
@@ -510,9 +535,15 @@ def complete(  # noqa: PLR0913
     assert "litellm==1.92.0" in test_sh.read_text()
     assert "fastapi>=0.136.3,<1.0" in test_sh.read_text()
     assert "orjson>=3.11.6,<4.0" in test_sh.read_text()
-    assert {item["path"] for item in first["files"]} == {str(llm_utils), str(llm_tools), str(test_sh)}
+    assert {item["path"] for item in first["files"]} == {
+        str(llm_utils),
+        str(llm_tools),
+        str(test_sh),
+    }
     assert "llm_utils._vis_model_validate(emit_schema, args)" in llm_tools.read_text()
-    assert "llm_utils._vis_model_validate(emit_schema, emit_args)" in llm_tools.read_text()
+    assert (
+        "llm_utils._vis_model_validate(emit_schema, emit_args)" in llm_tools.read_text()
+    )
     assert "emit_validation_error = str(error)" in llm_tools.read_text()
     assert "for attempt in range(2):" in llm_tools.read_text()
     assert [item for item in second["files"] if item["path"] == str(test_sh)] == [

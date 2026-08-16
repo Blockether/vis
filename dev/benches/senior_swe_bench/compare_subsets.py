@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Compare two Senior SWE-Bench subset ledgers with explicit evidence gates."""
+
 from __future__ import annotations
 
 import argparse
@@ -21,7 +22,9 @@ TOKEN_KEYS = [
     "reasoning_tokens",
     "total_tokens",
 ]
-PI_GLM52_MODELS_SHA256 = "c8663c7d2287c51cea995b3e5c47a2c7f94dce8dc1e629ee5c89ae6682c673a9"
+PI_GLM52_MODELS_SHA256 = (
+    "c8663c7d2287c51cea995b3e5c47a2c7f94dce8dc1e629ee5c89ae6682c673a9"
+)
 
 
 def load_ledger(path: Path) -> dict[str, Any]:
@@ -32,7 +35,11 @@ def load_ledger(path: Path) -> dict[str, Any]:
 
 
 def _first(items: Any) -> dict[str, Any]:
-    return items[0] if isinstance(items, list) and len(items) == 1 and isinstance(items[0], dict) else {}
+    return (
+        items[0]
+        if isinstance(items, list) and len(items) == 1 and isinstance(items[0], dict)
+        else {}
+    )
 
 
 def _task_map(ledger: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], bool]:
@@ -48,9 +55,13 @@ def _task_map(ledger: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], bool]:
 
 
 def _side(label: str, path: Path, ledger: dict[str, Any]) -> dict[str, Any]:
-    provenance = ledger.get("provenance") if isinstance(ledger.get("provenance"), dict) else {}
+    provenance = (
+        ledger.get("provenance") if isinstance(ledger.get("provenance"), dict) else {}
+    )
     agent = _first(provenance.get("agents"))
-    completion = ledger.get("completion") if isinstance(ledger.get("completion"), dict) else {}
+    completion = (
+        ledger.get("completion") if isinstance(ledger.get("completion"), dict) else {}
+    )
     agent_usage = (
         ledger.get("agent_usage")
         if isinstance(ledger.get("agent_usage"), dict)
@@ -58,7 +69,11 @@ def _side(label: str, path: Path, ledger: dict[str, Any]) -> dict[str, Any]:
         if isinstance(ledger.get("usage"), dict)
         else {}
     )
-    verifier_usage = ledger.get("verifier_usage") if isinstance(ledger.get("verifier_usage"), dict) else {}
+    verifier_usage = (
+        ledger.get("verifier_usage")
+        if isinstance(ledger.get("verifier_usage"), dict)
+        else {}
+    )
     return {
         "label": label,
         "ledger": str(path.resolve()),
@@ -71,7 +86,9 @@ def _side(label: str, path: Path, ledger: dict[str, Any]) -> dict[str, Any]:
         "verifier_usage": verifier_usage,
         "spend_reporting_complete": ledger.get("spend_reporting_complete") is True,
         "tool_telemetry_complete": ledger.get("tool_telemetry_complete") is True,
-        "agent_telemetry": ledger.get("agent_telemetry") if isinstance(ledger.get("agent_telemetry"), dict) else {},
+        "agent_telemetry": ledger.get("agent_telemetry")
+        if isinstance(ledger.get("agent_telemetry"), dict)
+        else {},
         "secret_redaction_complete": ledger.get("secret_redaction_complete") is True,
         "comparison_ready": ledger.get("comparison_ready") is True,
         "dataset_commits": provenance.get("dataset_commits") or [],
@@ -88,7 +105,11 @@ def _gate(passed: bool, detail: str) -> dict[str, Any]:
 
 
 def _number(value: Any) -> int | float | None:
-    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+    return (
+        value
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+        else None
+    )
 
 
 def _numeric_comparison(left: Any, right: Any) -> dict[str, Any]:
@@ -97,8 +118,12 @@ def _numeric_comparison(left: Any, right: Any) -> dict[str, Any]:
     return {
         "vis": left_number,
         "pi": right_number,
-        "delta_pi_minus_vis": right_number - left_number if left_number is not None and right_number is not None else None,
-        "ratio_pi_over_vis": right_number / left_number if left_number not in (None, 0) and right_number is not None else None,
+        "delta_pi_minus_vis": right_number - left_number
+        if left_number is not None and right_number is not None
+        else None,
+        "ratio_pi_over_vis": right_number / left_number
+        if left_number not in (None, 0) and right_number is not None
+        else None,
     }
 
 
@@ -153,7 +178,9 @@ def build_comparison(
         and len(pi["dataset_commits"]) == 1
         and vis["dataset_commits"] == pi["dataset_commits"]
     )
-    model_match = bool(vis["agent"].get("model")) and vis["agent"].get("model") == pi["agent"].get("model")
+    model_match = bool(vis["agent"].get("model")) and vis["agent"].get("model") == pi[
+        "agent"
+    ].get("model")
     vis_effort = vis["agent"].get("reasoning_effort")
     pi_effort = pi["agent"].get("reasoning_effort")
     pi_thinking_level = pi["agent"].get("pi_thinking_level")
@@ -168,12 +195,16 @@ def build_comparison(
         and pi["agent"].get("pi_models_sha256") == PI_GLM52_MODELS_SHA256
     )
     reasoning_effort_match = reasoning_control_present and vis_effort == pi_effort
-    pi_effort_translation = reasoning_control_present and pi_thinking_level == expected_pi_thinking_level
+    pi_effort_translation = (
+        reasoning_control_present and pi_thinking_level == expected_pi_thinking_level
+    )
     vis_output_cap = _number(vis["agent"].get("output_cap"))
     pi_output_cap = _number(pi["agent"].get("output_cap"))
     output_cap_match = vis_output_cap == pi_output_cap == 32_768
     vis_eval_values = _task_values(vis_tasks, "agent", "vis_eval_valid")
-    vis_eval_valid = bool(vis_tasks) and all(value is True for value in vis_eval_values.values())
+    vis_eval_valid = bool(vis_tasks) and all(
+        value is True for value in vis_eval_values.values()
+    )
     vis_endpoint = _normalized_url(vis["agent"].get("endpoint"))
     pi_endpoint = _normalized_url(pi["agent"].get("endpoint"))
     vis_route = vis["agent"].get("route")
@@ -184,24 +215,37 @@ def build_comparison(
         and (vis_route == "zai-coding-plan" or vis_endpoint == pi_endpoint)
     )
     verifier_match = len(vis["verifiers"]) == 1 and vis["verifiers"] == pi["verifiers"]
-    task_checksum_match = task_set_match and all(_task_values(vis_tasks, "task_checksum").values()) and (
-        _task_values(vis_tasks, "task_checksum") == _task_values(pi_tasks, "task_checksum")
+    task_checksum_match = (
+        task_set_match
+        and all(_task_values(vis_tasks, "task_checksum").values())
+        and (
+            _task_values(vis_tasks, "task_checksum")
+            == _task_values(pi_tasks, "task_checksum")
+        )
     )
-    task_environment_match = task_set_match and all(_task_values(vis_tasks, "task_base_image").values()) and (
-        {
-            task_id: (task.get("task_base_image"), task.get("selected_task_image"))
-            for task_id, task in vis_tasks.items()
-        }
-        == {
-            task_id: (task.get("task_base_image"), task.get("selected_task_image"))
-            for task_id, task in pi_tasks.items()
-        }
+    task_environment_match = (
+        task_set_match
+        and all(_task_values(vis_tasks, "task_base_image").values())
+        and (
+            {
+                task_id: (task.get("task_base_image"), task.get("selected_task_image"))
+                for task_id, task in vis_tasks.items()
+            }
+            == {
+                task_id: (task.get("task_base_image"), task.get("selected_task_image"))
+                for task_id, task in pi_tasks.items()
+            }
+        )
     )
     vis_artifact = _first(vis["artifacts"])
     vis_artifact_identified = bool(
-        vis_artifact.get("native_sha256") and vis_artifact.get("vis_revision") and vis_artifact.get("native_elf")
+        vis_artifact.get("native_sha256")
+        and vis_artifact.get("vis_revision")
+        and vis_artifact.get("native_elf")
     )
-    vis_artifact_clean = vis_artifact_identified and vis_artifact.get("source_dirty") is False
+    vis_artifact_clean = (
+        vis_artifact_identified and vis_artifact.get("source_dirty") is False
+    )
     pi_version_pinned = bool(pi["agent"].get("requested_version")) and (
         pi["agent"].get("version_matches_requested") is True
     )
@@ -213,8 +257,14 @@ def build_comparison(
         and pi["harbor_versions"] == pi["harbor_locked_versions"]
     )
     gates = {
-        "vis_complete": _gate(vis["comparison_ready"], "all Vis tasks completed verifier, judges, required validation, and agent token accounting"),
-        "pi_complete": _gate(pi["comparison_ready"], "all pi.dev tasks completed verifier, judges, required validation, and agent token accounting"),
+        "vis_complete": _gate(
+            vis["comparison_ready"],
+            "all Vis tasks completed verifier, judges, required validation, and agent token accounting",
+        ),
+        "pi_complete": _gate(
+            pi["comparison_ready"],
+            "all pi.dev tasks completed verifier, judges, required validation, and agent token accounting",
+        ),
         "token_spend_complete": _gate(
             vis["spend_reporting_complete"] and pi["spend_reporting_complete"],
             "agent spend and verifier overhead are captured for every task on both sides",
@@ -227,15 +277,29 @@ def build_comparison(
             vis["secret_redaction_complete"] and pi["secret_redaction_complete"],
             "every result tree was scanned after redaction with credential values loaded and no occurrences remaining",
         ),
-        "unique_task_ids": _gate(not vis_duplicates and not pi_duplicates, "neither ledger contains duplicate task ids"),
-        "task_set_match": _gate(task_set_match, f"Vis={len(vis_tasks)} tasks, pi.dev={len(pi_tasks)} tasks"),
-        "dataset_match": _gate(dataset_match, f"Vis={vis['dataset_commits']}, pi.dev={pi['dataset_commits']}"),
-        "task_checksum_match": _gate(task_checksum_match, "every paired Harbor task checksum is present and equal"),
+        "unique_task_ids": _gate(
+            not vis_duplicates and not pi_duplicates,
+            "neither ledger contains duplicate task ids",
+        ),
+        "task_set_match": _gate(
+            task_set_match, f"Vis={len(vis_tasks)} tasks, pi.dev={len(pi_tasks)} tasks"
+        ),
+        "dataset_match": _gate(
+            dataset_match,
+            f"Vis={vis['dataset_commits']}, pi.dev={pi['dataset_commits']}",
+        ),
+        "task_checksum_match": _gate(
+            task_checksum_match,
+            "every paired Harbor task checksum is present and equal",
+        ),
         "task_environment_match": _gate(
             task_environment_match,
             "base and selected task images are equal for every paired task",
         ),
-        "model_match": _gate(model_match, f"Vis={vis['agent'].get('model')}, pi.dev={pi['agent'].get('model')}"),
+        "model_match": _gate(
+            model_match,
+            f"Vis={vis['agent'].get('model')}, pi.dev={pi['agent'].get('model')}",
+        ),
         "reasoning_control_present": _gate(
             reasoning_control_present,
             "both sides explicitly record provider-native high|max; pi.dev also records its translated level and pinned models.json hash",
@@ -263,7 +327,9 @@ def build_comparison(
             f"Vis={vis['agent'].get('provider')} route={vis_route or 'not reported'} @ {vis_endpoint or 'not reported'}, "
             f"pi.dev={pi['agent'].get('provider')} route={pi_route or 'not reported'} @ {pi_endpoint or 'not reported'}",
         ),
-        "vis_version_identified": _gate(vis_version_identified, f"Vis={vis['agent'].get('version')}"),
+        "vis_version_identified": _gate(
+            vis_version_identified, f"Vis={vis['agent'].get('version')}"
+        ),
         "pi_version_pinned": _gate(
             pi_version_pinned,
             f"requested={pi['agent'].get('requested_version')}, actual={pi['agent'].get('version')}",
@@ -281,23 +347,34 @@ def build_comparison(
             f"Vis={vis['harbor_versions']} locked={vis['harbor_locked_versions']}; "
             f"pi.dev={pi['harbor_versions']} locked={pi['harbor_locked_versions']}",
         ),
-        "verifier_match": _gate(verifier_match, "judge, classifier, validation agent, endpoint, and compatibility settings match"),
+        "verifier_match": _gate(
+            verifier_match,
+            "judge, classifier, validation agent, endpoint, and compatibility settings match",
+        ),
         "provenance_consistent": _gate(
             vis["provenance_consistent"] and pi["provenance_consistent"],
             "each ledger uses one dataset commit, agent configuration, and verifier configuration",
         ),
     }
     data_complete = all(
-        gates[key]["passed"] for key in ("vis_complete", "pi_complete", "unique_task_ids", "task_set_match")
+        gates[key]["passed"]
+        for key in ("vis_complete", "pi_complete", "unique_task_ids", "task_set_match")
     )
     authoritative = data_complete and all(gate["passed"] for gate in gates.values())
 
     def compare_usage(scope: str) -> dict[str, Any]:
         vis_usage = vis[scope]
         pi_usage = pi[scope]
-        vis_tokens = vis_usage.get("tokens") if isinstance(vis_usage.get("tokens"), dict) else {}
-        pi_tokens = pi_usage.get("tokens") if isinstance(pi_usage.get("tokens"), dict) else {}
-        compared = {key: _numeric_comparison(vis_tokens.get(key), pi_tokens.get(key)) for key in TOKEN_KEYS}
+        vis_tokens = (
+            vis_usage.get("tokens") if isinstance(vis_usage.get("tokens"), dict) else {}
+        )
+        pi_tokens = (
+            pi_usage.get("tokens") if isinstance(pi_usage.get("tokens"), dict) else {}
+        )
+        compared = {
+            key: _numeric_comparison(vis_tokens.get(key), pi_tokens.get(key))
+            for key in TOKEN_KEYS
+        }
         compared["reported_cost_usd"] = _numeric_comparison(
             vis_usage.get("reported_cost_usd"), pi_usage.get("reported_cost_usd")
         )
@@ -312,8 +389,16 @@ def build_comparison(
         right = pi_tasks.get(task_id, {})
         left_usage = left.get("usage") if isinstance(left.get("usage"), dict) else {}
         right_usage = right.get("usage") if isinstance(right.get("usage"), dict) else {}
-        left_verifier_usage = left.get("verifier_usage") if isinstance(left.get("verifier_usage"), dict) else {}
-        right_verifier_usage = right.get("verifier_usage") if isinstance(right.get("verifier_usage"), dict) else {}
+        left_verifier_usage = (
+            left.get("verifier_usage")
+            if isinstance(left.get("verifier_usage"), dict)
+            else {}
+        )
+        right_verifier_usage = (
+            right.get("verifier_usage")
+            if isinstance(right.get("verifier_usage"), dict)
+            else {}
+        )
         task_rows.append(
             {
                 "task_id": task_id,
@@ -338,10 +423,13 @@ def build_comparison(
                     "agent_trace": right.get("agent_trace") or {},
                 },
                 "usage_delta": {
-                    key: _numeric_comparison(left_usage.get(key), right_usage.get(key)) for key in TOKEN_KEYS
+                    key: _numeric_comparison(left_usage.get(key), right_usage.get(key))
+                    for key in TOKEN_KEYS
                 },
                 "verifier_usage_delta": {
-                    key: _numeric_comparison(left_verifier_usage.get(key), right_verifier_usage.get(key))
+                    key: _numeric_comparison(
+                        left_verifier_usage.get(key), right_verifier_usage.get(key)
+                    )
                     for key in TOKEN_KEYS
                 },
             }
@@ -357,9 +445,12 @@ def build_comparison(
             and task_set_match
             and vis["tool_telemetry_complete"]
             and pi["tool_telemetry_complete"],
-            "spend_reporting_complete": vis["spend_reporting_complete"] and pi["spend_reporting_complete"],
-            "tool_telemetry_complete": vis["tool_telemetry_complete"] and pi["tool_telemetry_complete"],
-            "secret_redaction_complete": vis["secret_redaction_complete"] and pi["secret_redaction_complete"],
+            "spend_reporting_complete": vis["spend_reporting_complete"]
+            and pi["spend_reporting_complete"],
+            "tool_telemetry_complete": vis["tool_telemetry_complete"]
+            and pi["tool_telemetry_complete"],
+            "secret_redaction_complete": vis["secret_redaction_complete"]
+            and pi["secret_redaction_complete"],
         },
         "gates": gates,
         "sides": {"vis": vis, "pi": pi},
@@ -384,7 +475,11 @@ def _fmt(value: Any) -> str:
 
 def _coverage(side: dict[str, Any], metric: str, usage_key: str = "agent_usage") -> str:
     usage = side.get(usage_key) if isinstance(side.get(usage_key), dict) else {}
-    coverage = usage.get("token_coverage") if isinstance(usage.get("token_coverage"), dict) else {}
+    coverage = (
+        usage.get("token_coverage")
+        if isinstance(usage.get("token_coverage"), dict)
+        else {}
+    )
     return f"{coverage.get(metric, 0)}/{side.get('task_count') or 0}"
 
 
@@ -396,7 +491,11 @@ def _cost_coverage(side: dict[str, Any], usage_key: str) -> str:
 def _artifact_label(side: dict[str, Any]) -> str:
     artifact = _first(side.get("artifacts"))
     if not artifact:
-        return "not reported" if str(side.get("agent", {}).get("harness")).lower() == "vis" else "not applicable"
+        return (
+            "not reported"
+            if str(side.get("agent", {}).get("harness")).lower() == "vis"
+            else "not applicable"
+        )
     dirty = (
         "dirty"
         if artifact.get("source_dirty") is True
@@ -436,11 +535,11 @@ def render_markdown(report: dict[str, Any]) -> str:
         )
     lines.extend(
         [
-        "",
-        "## Evidence gates",
-        "",
-        "| gate | pass | detail |",
-        "| --- | --- | --- |",
+            "",
+            "## Evidence gates",
+            "",
+            "| gate | pass | detail |",
+            "| --- | --- | --- |",
         ]
     )
     for name, gate in report["gates"].items():
@@ -514,8 +613,15 @@ def render_markdown(report: dict[str, Any]) -> str:
             )
 
     append_usage_section("Agent token spend", "agent_usage_comparison", "agent_usage")
-    append_usage_section("Verifier token overhead", "verifier_usage_comparison", "verifier_usage")
-    lines.extend(["", "Reported USD cost is provider metadata and does not include subscription fees."])
+    append_usage_section(
+        "Verifier token overhead", "verifier_usage_comparison", "verifier_usage"
+    )
+    lines.extend(
+        [
+            "",
+            "Reported USD cost is provider metadata and does not include subscription fees.",
+        ]
+    )
     lines.extend(
         [
             "",
@@ -549,6 +655,7 @@ def render_html(report: dict[str, Any]) -> str:
 
     def esc(value: Any) -> str:
         return html.escape(_fmt(value))
+
     gate_rows = "".join(
         f"<tr><td><code>{html.escape(name)}</code></td><td class={'pass' if gate['passed'] else 'fail'}>{_fmt(gate['passed'])}</td>"
         f"<td>{html.escape(gate['detail'])}</td></tr>"
@@ -617,8 +724,14 @@ def render_html(report: dict[str, Any]) -> str:
     for task in report["tasks"]:
         vis_completion = task["vis"]["completion"]
         pi_completion = task["pi"]["completion"]
-        vis_status = vis_completion.get("status") or task["vis"].get("failure_class") or "missing"
-        pi_status = pi_completion.get("status") or task["pi"].get("failure_class") or "missing"
+        vis_status = (
+            vis_completion.get("status")
+            or task["vis"].get("failure_class")
+            or "missing"
+        )
+        pi_status = (
+            pi_completion.get("status") or task["pi"].get("failure_class") or "missing"
+        )
         task_rows.append(
             f"<tr><td><code>{html.escape(task['task_id'])}</code>"
             f"<div class='run-path'>Vis: {esc(task['vis'].get('run_dir'))}<br>pi.dev: {esc(task['pi'].get('run_dir'))}</div></td>"
@@ -651,15 +764,15 @@ details{{margin-top:28px}} summary{{cursor:pointer}} pre{{overflow:auto;backgrou
 @media(max-width:640px){{main{{padding:20px 12px 36px}} h1{{font-size:20px}}}}
 </style></head><body><main>
 <h1>Vis vs pi.dev Senior SWE-Bench comparison</h1>
-<p class="state {status_class}">Authoritative: <strong>{_fmt(state['authoritative'])}</strong> · Data complete: <strong>{_fmt(state['data_complete'])}</strong> · Comparison ready: <strong>{_fmt(state['comparison_ready'])}</strong> · Spend reporting complete: <strong>{_fmt(state['spend_reporting_complete'])}</strong> · Agent rollout telemetry complete: <strong>{_fmt(state['tool_telemetry_complete'])}</strong> · Secret redaction complete: <strong>{_fmt(state['secret_redaction_complete'])}</strong></p>
-<h2>Provenance</h2><div class="table-wrap"><table><thead><tr><th>Side</th><th>Harness</th><th>Version</th><th>Provider</th><th>Route</th><th>Endpoint</th><th>Model</th><th>Effort</th><th>Pi level</th><th>Output cap</th><th>Harbor</th><th>Artifact</th></tr></thead><tbody>{''.join(side_rows)}</tbody></table></div>
+<p class="state {status_class}">Authoritative: <strong>{_fmt(state["authoritative"])}</strong> · Data complete: <strong>{_fmt(state["data_complete"])}</strong> · Comparison ready: <strong>{_fmt(state["comparison_ready"])}</strong> · Spend reporting complete: <strong>{_fmt(state["spend_reporting_complete"])}</strong> · Agent rollout telemetry complete: <strong>{_fmt(state["tool_telemetry_complete"])}</strong> · Secret redaction complete: <strong>{_fmt(state["secret_redaction_complete"])}</strong></p>
+<h2>Provenance</h2><div class="table-wrap"><table><thead><tr><th>Side</th><th>Harness</th><th>Version</th><th>Provider</th><th>Route</th><th>Endpoint</th><th>Model</th><th>Effort</th><th>Pi level</th><th>Output cap</th><th>Harbor</th><th>Artifact</th></tr></thead><tbody>{"".join(side_rows)}</tbody></table></div>
 <h2>Evidence gates</h2><div class="table-wrap"><table><thead><tr><th>Gate</th><th>Pass</th><th>Detail</th></tr></thead><tbody>{gate_rows}</tbody></table></div>
-<h2>Agent rollout telemetry</h2><div class="table-wrap"><table><thead><tr><th>Side</th><th>Trace tasks</th><th>Iterations</th><th>Tool calls</th><th>Shell calls</th><th>File reads</th><th>Sources</th></tr></thead><tbody>{''.join(telemetry_rows)}</tbody></table></div>
-<h2>Completion</h2><div class="table-wrap"><table><thead><tr><th>Side</th><th>Expected</th><th>Present</th><th>Scoreable</th><th>Completed</th><th>Passed</th><th>Pass rate</th><th>Agent tokens</th><th>Verifier tokens</th><th>Agent cost</th><th>Verifier cost</th></tr></thead><tbody>{''.join(completion_rows)}</tbody></table></div>
+<h2>Agent rollout telemetry</h2><div class="table-wrap"><table><thead><tr><th>Side</th><th>Trace tasks</th><th>Iterations</th><th>Tool calls</th><th>Shell calls</th><th>File reads</th><th>Sources</th></tr></thead><tbody>{"".join(telemetry_rows)}</tbody></table></div>
+<h2>Completion</h2><div class="table-wrap"><table><thead><tr><th>Side</th><th>Expected</th><th>Present</th><th>Scoreable</th><th>Completed</th><th>Passed</th><th>Pass rate</th><th>Agent tokens</th><th>Verifier tokens</th><th>Agent cost</th><th>Verifier cost</th></tr></thead><tbody>{"".join(completion_rows)}</tbody></table></div>
 <h2>Agent token spend</h2><div class="table-wrap"><table><thead><tr><th>Metric</th><th>Vis</th><th>Coverage</th><th>pi.dev</th><th>Coverage</th><th>pi - Vis</th><th>pi / Vis</th></tr></thead><tbody>{agent_metric_rows}</tbody></table></div>
 <h2>Verifier token overhead</h2><div class="table-wrap"><table><thead><tr><th>Metric</th><th>Vis</th><th>Coverage</th><th>pi.dev</th><th>Coverage</th><th>pi - Vis</th><th>pi / Vis</th></tr></thead><tbody>{verifier_metric_rows}</tbody></table></div>
 <p>Reported USD cost is provider metadata and does not include subscription fees.</p>
-<h2>Tasks</h2><div class="table-wrap"><table><thead><tr><th>Task</th><th>Vis result</th><th>pi.dev result</th><th>Vis judges</th><th>pi.dev judges</th><th>Vis agent</th><th>pi.dev agent</th><th>Vis iterations</th><th>pi iterations</th><th>Vis tools</th><th>pi tools</th><th>Vis verifier</th><th>pi.dev verifier</th><th>pi / Vis agent</th></tr></thead><tbody>{''.join(task_rows)}</tbody></table></div>
+<h2>Tasks</h2><div class="table-wrap"><table><thead><tr><th>Task</th><th>Vis result</th><th>pi.dev result</th><th>Vis judges</th><th>pi.dev judges</th><th>Vis agent</th><th>pi.dev agent</th><th>Vis iterations</th><th>pi iterations</th><th>Vis tools</th><th>pi tools</th><th>Vis verifier</th><th>pi.dev verifier</th><th>pi / Vis agent</th></tr></thead><tbody>{"".join(task_rows)}</tbody></table></div>
 <details><summary>Normalized JSON</summary><pre>{raw}</pre></details>
 </main></body></html>"""
 
@@ -674,7 +787,12 @@ def main() -> int:
     parser.add_argument("--pi-label", default="pi.dev")
     args = parser.parse_args()
 
-    report = build_comparison(args.vis_ledger, args.pi_ledger, vis_label=args.vis_label, pi_label=args.pi_label)
+    report = build_comparison(
+        args.vis_ledger,
+        args.pi_ledger,
+        vis_label=args.vis_label,
+        pi_label=args.pi_label,
+    )
     stem = args.name or f"{args.vis_ledger.stem}-vs-{args.pi_ledger.stem}"
     args.out_dir.mkdir(parents=True, exist_ok=True)
     outputs = {
@@ -685,7 +803,13 @@ def main() -> int:
     outputs["json"].write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     outputs["markdown"].write_text(render_markdown(report))
     outputs["html"].write_text(render_html(report))
-    print(json.dumps({key: str(value) for key, value in outputs.items()} | {"authoritative": report["state"]["authoritative"]}, indent=2))
+    print(
+        json.dumps(
+            {key: str(value) for key, value in outputs.items()}
+            | {"authoritative": report["state"]["authoritative"]},
+            indent=2,
+        )
+    )
     return 0
 
 

@@ -1393,21 +1393,24 @@
 ;; (`session_state`, the fork rows `session_forks` reads) - so the tool that
 ;; reads a conversation is `read_session`.
 (def
-  ^{:doc "Developer alias for `foundation-inspect` — the model-facing contract is the
+  ^{:doc
+    "Developer alias for `foundation-inspect` — the model-facing contract is the
           symbol's `:description`/`:result` below."
     :arglists '([] [target])}
   read-session
   foundation-inspect)
 
 (def
-  ^{:doc "Developer alias for `foundation-get-session` — the model-facing contract is the
+  ^{:doc
+    "Developer alias for `foundation-get-session` — the model-facing contract is the
           symbol's `:description`/`:result` below."
     :arglists '([] [target])}
   get-session
   foundation-get-session)
 
 (def
-  ^{:doc "Developer alias for `foundation-sessions` — the model-facing contract is the
+  ^{:doc
+    "Developer alias for `foundation-sessions` — the model-facing contract is the
           symbol's `:description`/`:result` below."
     :arglists '([] [search])}
   list-sessions
@@ -1419,13 +1422,14 @@
     {:inject-env? true
      :tag :observation
      :description
-     (str "Read ONE conversation WHOLE — `read_session()` is the current session, "
-          "`read_session(target)` another; `target` takes a bare id, an unambiguous prefix, or the "
-          "copied `vis_session_id#<uuid>` marker. Filter "
-          "`transcript`/`turns`/`iterations`/`blocks` (`code`/`result`) in python_execution instead "
-          "of dumping it, and read current state off the live `session` map. This is the recovery "
-          "path for raw folded content of THIS session — it does not undo a fold intent or restore "
-          "it. Find ids with `list_sessions(search=…)`; one row alone is `get_session(id)`.")
+     (str
+       "Read ONE conversation WHOLE — `read_session()` is the current session, "
+       "`read_session(target)` another; `target` takes a bare id, an unambiguous prefix, or the "
+       "copied `vis_session_id#<uuid>` marker. Filter "
+       "`transcript`/`turns`/`iterations`/`blocks` (`code`/`result`) in python_execution instead "
+       "of dumping it, and read current state off the live `session` map. This is the recovery "
+       "path for raw folded content of THIS session — it does not undo a fold intent or restore "
+       "it. Find ids with `list_sessions(search=…)`; one row alone is `get_session(id)`.")
      :result
      (str "String-keyed `{session, current_turn, failures, diagnosis, session_forks, turn_retries, "
           "usage, transcript}`. `usage` is compact token/cost/outcome/error/routing; its tool rows "
@@ -1437,13 +1441,13 @@
     {:inject-env? true
      :tag :observation
      :description
-     (str "ONE session's descriptor — `get_session()` is the current session, `get_session(target)` "
-          "another (an id, an unambiguous prefix, or the copied `vis_session_id#<uuid>` marker). No "
-          "transcript: the content is `read_session(id)`, the whole index `list_sessions()`.")
-     :result
-     (str "String-keyed row `{id, channel, title, turn_count, created_at, modified_at, "
-          "is_current}`, plus `provider`/`model`/`provider_model` and `last_turn` "
-          "(`{id, outcome, user_request}`) when known. None when nothing matches.")}))
+     (str
+       "ONE session's descriptor — `get_session()` is the current session, `get_session(target)` "
+       "another (an id, an unambiguous prefix, or the copied `vis_session_id#<uuid>` marker). No "
+       "transcript: the content is `read_session(id)`, the whole index `list_sessions()`.")
+     :result (str "String-keyed row `{id, channel, title, turn_count, created_at, modified_at, "
+                  "is_current}`, plus `provider`/`model`/`provider_model` and `last_turn` "
+                  "(`{id, outcome, user_request}`) when known. None when nothing matches.")}))
 
 (def list-sessions-symbol
   (vis/symbol
@@ -1458,9 +1462,10 @@
           "`get_session(id)`, its content `read_session(id)`. Filter in python_execution; never "
           "stringify or slice blindly.")
      :result
-     (str "String-keyed rows `{id, channel, title, turn_count, created_at, modified_at}`; a matched "
-          "row adds `rank`, `is_in_title`/`is_in_request`/`is_in_reply`/`is_in_thinking` and the "
-          "`request_snippet`/`reply_snippet` windows.")}))
+     (str
+       "String-keyed rows `{id, channel, title, turn_count, created_at, modified_at}`; a matched "
+       "row adds `rank`, `is_in_title`/`is_in_request`/`is_in_reply`/`is_in_thinking` and the "
+       "`request_snippet`/`reply_snippet` windows.")}))
 
 
 (def all-symbols [read-session-symbol get-session-symbol list-sessions-symbol])

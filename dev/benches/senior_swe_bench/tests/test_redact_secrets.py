@@ -3,7 +3,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("redact_secrets", ROOT / "redact_secrets.py")
+spec = importlib.util.spec_from_file_location(
+    "redact_secrets", ROOT / "redact_secrets.py"
+)
 redact_secrets = importlib.util.module_from_spec(spec)
 sys.modules["redact_secrets"] = redact_secrets
 spec.loader.exec_module(redact_secrets)  # type: ignore[union-attr]

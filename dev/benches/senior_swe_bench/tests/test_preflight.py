@@ -74,7 +74,12 @@ def test_validate_artifact_accepts_matching_native_sha(tmp_path):
 
     assert result["mode"] == "native"
     assert result["native_sha256"] == hashlib.sha256(native).hexdigest()
-    assert result["native_elf"] == {"class": "ELF64", "data": "little", "machine": "aarch64", "machine_id": 183}
+    assert result["native_elf"] == {
+        "class": "ELF64",
+        "data": "little",
+        "machine": "aarch64",
+        "machine_id": 183,
+    }
     assert result["install_mode"] == "0o755"
     assert result["native_mode"] == "0o755"
     assert result["source_dirty"] is True
@@ -101,7 +106,9 @@ def test_pi_glm52_models_config_pins_context_output_and_only_two_efforts(tmp_pat
     model = config["providers"]["zai"]["models"][0]
 
     assert json.loads(path.read_text()) == config
-    assert config["providers"]["zai"]["baseUrl"] == "https://api.z.ai/api/coding/paas/v4"
+    assert (
+        config["providers"]["zai"]["baseUrl"] == "https://api.z.ai/api/coding/paas/v4"
+    )
     assert config["providers"]["zai"]["api"] == "openai-completions"
     assert model["id"] == "glm-5.2"
     assert model["contextWindow"] == 1_000_000
@@ -139,7 +146,9 @@ def test_validate_artifact_rejects_sha_mismatch(tmp_path):
 
 def test_validate_artifact_rejects_metadata_lie_about_elf(tmp_path):
     artifact = tmp_path / "vis-agent.tar.gz"
-    _artifact(artifact, b"not an elf", native_file="ELF 64-bit LSB executable, for GNU/Linux")
+    _artifact(
+        artifact, b"not an elf", native_file="ELF 64-bit LSB executable, for GNU/Linux"
+    )
 
     try:
         preflight.validate_artifact(artifact)
@@ -222,7 +231,9 @@ def test_validate_config_accepts_provider_vector_without_printing_secrets(tmp_pa
     assert "secret-value" not in str(result)
 
 
-def test_validate_config_accepts_edn_sets_and_tagged_literals_outside_providers(tmp_path):
+def test_validate_config_accepts_edn_sets_and_tagged_literals_outside_providers(
+    tmp_path,
+):
     config = tmp_path / "config.edn"
     config.write_text(
         """
@@ -241,9 +252,12 @@ def test_validate_config_accepts_edn_sets_and_tagged_literals_outside_providers(
         "provider_configs": [{"id": "zai", "base_url": None}],
     }
 
-def test_validate_config_rejects_accidentally_nested_top_level_keys_in_providers(tmp_path):
+
+def test_validate_config_rejects_accidentally_nested_top_level_keys_in_providers(
+    tmp_path,
+):
     config = tmp_path / "config.edn"
-    config.write_text('{:providers [{:id :openai} :toggles {:x true}]}')
+    config.write_text("{:providers [{:id :openai} :toggles {:x true}]}")
 
     try:
         preflight.validate_config(config)
@@ -254,16 +268,28 @@ def test_validate_config_rejects_accidentally_nested_top_level_keys_in_providers
 
 
 def test_resolve_python_dev_image_auto_enables_for_known_full_eval_task():
-    assert preflight.resolve_python_dev_image_mode("paperless-ngx-perf-document-counts", "auto", "", False) == "1"
+    assert (
+        preflight.resolve_python_dev_image_mode(
+            "paperless-ngx-perf-document-counts", "auto", "", False
+        )
+        == "1"
+    )
 
 
 def test_resolve_python_dev_image_auto_skips_install_only():
-    assert preflight.resolve_python_dev_image_mode("paperless-ngx-perf-document-counts", "auto", "", True) == "0"
+    assert (
+        preflight.resolve_python_dev_image_mode(
+            "paperless-ngx-perf-document-counts", "auto", "", True
+        )
+        == "0"
+    )
 
 
 def test_resolve_python_dev_image_rejects_known_task_when_disabled_without_override():
     try:
-        preflight.resolve_python_dev_image_mode("paperless-ngx-perf-document-counts", "0", "", False)
+        preflight.resolve_python_dev_image_mode(
+            "paperless-ngx-perf-document-counts", "0", "", False
+        )
     except preflight.PreflightError as exc:
         assert "requires a python-dev verifier image" in str(exc)
     else:
@@ -322,7 +348,9 @@ def test_validate_config_mount_combination_rejects_upload_plus_mount(tmp_path):
     try:
         preflight.validate_config_mount_combination("/tmp/config.edn", home)
     except preflight.PreflightError as exc:
-        assert "VIS_BENCH_CONFIG and VIS_BENCH_REMOTE_HOME_MOUNT are both set" in str(exc)
+        assert "VIS_BENCH_CONFIG and VIS_BENCH_REMOTE_HOME_MOUNT are both set" in str(
+            exc
+        )
     else:
         raise AssertionError("expected PreflightError")
 
@@ -411,7 +439,9 @@ def test_validate_credential_source_requires_config_for_full_eval():
 
 
 def test_validate_credential_source_allows_explicit_missing_config_override():
-    result = preflight.validate_credential_source(None, required=True, allow_missing=True)
+    result = preflight.validate_credential_source(
+        None, required=True, allow_missing=True
+    )
 
     assert result["required"] is True
     assert result["config_path"] is None
@@ -431,7 +461,7 @@ def test_validate_credential_source_records_config_path(tmp_path):
 
 def test_validate_config_rejects_odd_top_level_map(tmp_path):
     config = tmp_path / "config.edn"
-    config.write_text('{:providers [{:id :openai}] :toggles}')
+    config.write_text("{:providers [{:id :openai}] :toggles}")
 
     try:
         preflight.validate_config(config)

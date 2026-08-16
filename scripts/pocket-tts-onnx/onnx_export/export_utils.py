@@ -1,11 +1,12 @@
 import torch
 
+
 def flatten_state(state):
     """
     Flattens a nested dictionary state into a list of tensors.
     """
     flat = []
-    
+
     # Sort keys to ensure deterministic order
     for key in sorted(state.keys()):
         value = state[key]
@@ -16,8 +17,9 @@ def flatten_state(state):
         else:
             # Skip non-tensor values or handle them if necessary
             pass
-            
+
     return flat
+
 
 def unflatten_state(flat_list, structure):
     """
@@ -27,7 +29,7 @@ def unflatten_state(flat_list, structure):
     """
     state = {}
     idx = 0
-    
+
     for key in sorted(structure.keys()):
         value = structure[key]
         if isinstance(value, dict):
@@ -39,8 +41,9 @@ def unflatten_state(flat_list, structure):
             # Clone to ensure we don't modify the input tensor in-place, which ONNX dislikes for inputs
             state[key] = flat_list[idx].clone()
             idx += 1
-            
+
     return state, idx
+
 
 def get_state_structure(state):
     """
@@ -52,5 +55,5 @@ def get_state_structure(state):
         if isinstance(value, dict):
             structure[key] = get_state_structure(value)
         else:
-            structure[key] = "tensor" # Placeholder
+            structure[key] = "tensor"  # Placeholder
     return structure

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Render a collected Vis JSONL trace as a readable standalone HTML transcript."""
+
 from __future__ import annotations
 
 import argparse
@@ -46,7 +47,13 @@ def render(trace: Path, title: str) -> str:
 
     def emit_reasoning(iteration: int) -> None:
         if iteration not in rendered_reasoning and reasoning.get(iteration):
-            entries.append(block("reasoning", f"Iteration {iteration} reasoning", reasoning[iteration]))
+            entries.append(
+                block(
+                    "reasoning",
+                    f"Iteration {iteration} reasoning",
+                    reasoning[iteration],
+                )
+            )
             rendered_reasoning.add(iteration)
 
     for raw_line in trace.open(errors="replace"):
@@ -69,31 +76,57 @@ def render(trace: Path, title: str) -> str:
             if "thinking" in payload:
                 reasoning[iteration] = text(payload.get("thinking"))
             else:
-                reasoning[iteration] = reasoning.get(iteration, "") + text(payload.get("delta"))
+                reasoning[iteration] = reasoning.get(iteration, "") + text(
+                    payload.get("delta")
+                )
         elif phase == "assistant-prose":
             emit_reasoning(iteration)
             key = ("prose", iteration, 0)
             if key not in seen:
-                entries.append(block("assistant", f"Vis — iteration {iteration}", payload.get("text"), open_=True))
+                entries.append(
+                    block(
+                        "assistant",
+                        f"Vis — iteration {iteration}",
+                        payload.get("text"),
+                        open_=True,
+                    )
+                )
                 seen.add(key)
         elif phase == "form-start":
             position = payload.get("position", 0)
             key = ("call", iteration, position if isinstance(position, int) else 0)
             if key not in seen:
-                entries.append(block("tool", f"Tool call — iteration {iteration}", payload.get("code"), open_=True))
+                entries.append(
+                    block(
+                        "tool",
+                        f"Tool call — iteration {iteration}",
+                        payload.get("code"),
+                        open_=True,
+                    )
+                )
                 seen.add(key)
         elif phase == "form-result":
             position = payload.get("position", 0)
             key = ("result", iteration, position if isinstance(position, int) else 0)
             if key not in seen:
-                entries.append(block("tool-result", f"Tool result — iteration {iteration}", payload.get("result-render") or payload.get("result"), open_=False))
+                entries.append(
+                    block(
+                        "tool-result",
+                        f"Tool result — iteration {iteration}",
+                        payload.get("result-render") or payload.get("result"),
+                        open_=False,
+                    )
+                )
                 seen.add(key)
 
     for iteration in sorted(reasoning):
         emit_reasoning(iteration)
     if final:
         entries.append(block("final", "Final answer", final, open_=True))
-    body = "\n".join(entries) or "<p>No readable conversation events were found in this trace.</p>"
+    body = (
+        "\n".join(entries)
+        or "<p>No readable conversation events were found in this trace.</p>"
+    )
     return f"""<!doctype html>
 <html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
 <title>{html.escape(title)}</title><style>

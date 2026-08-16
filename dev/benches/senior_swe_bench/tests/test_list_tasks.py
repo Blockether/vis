@@ -22,4 +22,6 @@ def test_load_subset_accepts_cwd_relative_path(tmp_path, monkeypatch):
 def test_load_subset_accepts_package_relative_path(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
-    assert list_tasks.load_subset("subsets/smoke.json") == {"paperless-ngx-perf-document-counts"}
+    assert list_tasks.load_subset("subsets/smoke.json") == {
+        "paperless-ngx-perf-document-counts"
+    }
