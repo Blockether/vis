@@ -1423,11 +1423,13 @@ describe("settings is ONE dialog with two columns", () => {
     // own last row, full width under the last provider.
     expect(settings).not.toContain("action={<AddProviderButton");
     const providerButton = providerAuthSource.slice(
-      providerAuthSource.indexOf("<Button"),
+      providerAuthSource.indexOf("A ROW, NOT A CHIP"),
       providerAuthSource.indexOf("{isPicking &&"),
     );
-    expect(providerButton).toContain('variant="quiet"');
-    expect(providerButton).not.toContain('variant="primary"');
+    // Reported next over the same screenshot: that last row is the panel's one
+    // action, so it carries the amber the band's action used to carry.
+    expect(providerButton).toContain('variant="primary"');
+    expect(providerButton).not.toContain('variant="quiet"');
     expect(providerButton).toContain("w-full justify-center");
     expect(providerButton).toContain("Add a provider");
   });

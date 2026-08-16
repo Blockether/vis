@@ -2156,7 +2156,7 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
   return (
     <SettingsPanel title="Notifications" meta={machine}>
       {hasBanner && (
-        <div className="space-y-2 p-3 pb-0">
+        <div className="space-y-2 p-3">
           {err && <Banner kind="err">{err}</Banner>}
 
           {!supported && (
@@ -2341,7 +2341,7 @@ export function NativeNotificationsPanel({
   return (
     <SettingsPanel title="Notifications" meta={machine}>
       {hasBanner && (
-        <div className="space-y-2 p-3 pb-0">
+        <div className="space-y-2 p-3">
           {err && <Banner kind="err">{err}</Banner>}
 
           {push && !available && refusedRelay && (

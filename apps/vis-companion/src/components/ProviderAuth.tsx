@@ -880,7 +880,7 @@ export function AddProviderButton({ auth }: { auth: ProviderAuth }) {
       {/* A ROW, NOT A CHIP. It stands under the last provider as the list's own
           last line, so it wears the row's height and the full width. */}
       <Button
-        variant="quiet"
+        variant="primary"
         density="panel"
         className="w-full justify-center"
         aria-label="Add a provider"
