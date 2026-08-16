@@ -52,6 +52,10 @@ export interface FleetRequest {
 
 let origins = 0;
 let created = 0;
+// Reads per GATEWAY, so `heals` and `hangs` can answer the read they were given — and
+// keep counting across a relaunch that mounts the same machines again (`at`), which is
+// the only way to watch what this device REMEMBERED about a machine outlive the screen.
+const reads = new Map<string, number>();
 
 /** A read nobody answers: it ends when — and only when — the caller aborts it. */
 const blackhole = (signal?: AbortSignal | null) =>
@@ -116,8 +120,6 @@ export function renderSessionsScreen({
       { ...machines[index], sessions: machines[index].sessions?.map((row) => ({ ...row })) },
     ]),
   );
-  /** Reads per gateway, so `heals` can answer the retry it was given. */
-  const reads = new Map<string, number>();
 
   const answer = (body: unknown) =>
     new Response(JSON.stringify(body), {

@@ -195,6 +195,11 @@ const RETRY_TIMEOUT_MS = 5_000;
 // something this machine is still saying.
 const RETRY_NOTE_MS = 3_000;
 
+// A SILENT PROBE HAS NOBODY WAITING ON IT, but it must not hold its machine's only
+// reconnect slot open forever: a blackholed socket ends when somebody ends it, and the
+// next poll is ten seconds away.
+const RECONNECT_TIMEOUT_MS = 15_000;
+
 // Each project PAGES its own history, a gateway-cut window at a time — so the DOM is
 // bounded without a global window over the fleet.
 
@@ -221,14 +226,28 @@ function clientFor(conn: GatewayConn): GatewayClient {
   return client;
 }
 
+// MACHINES THIS DEVICE HAS ALREADY FOUND DARK, remembered for as long as their clients
+// are. A machine that is not answering is drained out of `All` (`scopedMachines`) — but
+// the fleet was rebuilt from nothing on every mount, and opening a session unmounts this
+// screen, so a laptop that was asleep came back as a machine nobody had tried yet: its
+// last known rows took a band, a rail and a section in the middle of the working fleet,
+// and the probe behind them spent the transport's whole budget confirming what this
+// device already knew before that section vanished under the reader. The verdict outlives
+// the screen that reached it: a machine known to be dark starts drained, and walks back
+// into the fleet when it ANSWERS — never because it is being asked again.
+const fleetOutage = new Map<string, string>();
+
 // Rebuild the fleet from the paired machines, painting each new one from its own
 // last known list so a machine that was on screen a second ago comes back with
-// rows instead of a skeleton.
+// rows instead of a skeleton — drained from the first frame when it is known dark.
 function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetMachine[] {
   return reconcileMachines(conns, previous).map((machine) => {
-    if (machine.sessions !== null) return machine;
+    if (machine.error !== null) return machine;
+    const outage = fleetOutage.get(machineKey(machine.conn)) ?? null;
+    if (machine.sessions !== null) return outage ? { ...machine, error: outage } : machine;
     const cached = clientFor(machine.conn).cachedSessions();
-    return cached ? { ...machine, sessions: cached } : machine;
+    if (!cached && !outage) return machine;
+    return { ...machine, sessions: cached ?? null, error: outage };
   });
 }
 
@@ -511,11 +530,16 @@ export function SessionsScreen({
     async (conn: GatewayConn, signal?: AbortSignal): Promise<string | null> => {
       const key = machineKey(conn);
       const api = clientFor(conn);
-      // ANY answer from this machine ends its search blackout. A gateway that was merely
-      // busy when a search ran out of deadline must not stay skipped: the 10s poll is
-      // what proves it alive again, and only a machine that keeps failing keeps being
-      // passed over (see `searchFanout`).
-      const alive = () => searchSilentRef.current.delete(key);
+      // ANY answer from this machine ends its darkness — both kinds. A gateway that was
+      // merely busy when a search ran out of deadline must not stay skipped: the 10s poll
+      // is what proves it alive again, and only a machine that keeps failing keeps being
+      // passed over (see `searchFanout`). The same answer ends its OUTAGE: a machine is
+      // back in `All` and back on the foreground load because it spoke, never because it
+      // was asked.
+      const alive = () => {
+        searchSilentRef.current.delete(key);
+        fleetOutage.delete(key);
+      };
       try {
         // A poll that answers with the rows already on screen is NOT NEWS. Patching
         // anyway handed the list a new fleet array every ten seconds, and every memo
@@ -543,7 +567,14 @@ export function SessionsScreen({
       } catch (cause) {
         if (signal?.aborted) return null;
         const failure = (cause as Error).message;
-        patchMachine(key, (machine) => ({ ...machine, error: failure }));
+        fleetOutage.set(key, failure);
+        // A FAILURE THAT SAYS NOTHING NEW IS NOT NEWS EITHER (same rule as `settle`).
+        // Re-patching an unchanged verdict handed the list a new fleet array on every
+        // poll — and with it a re-anchored scroll position and every memo built from the
+        // fleet — for a machine that has not been on screen since it went dark.
+        const held = machinesRef.current.find((machine) => machineKey(machine.conn) === key);
+        if (held?.error !== failure)
+          patchMachine(key, (machine) => ({ ...machine, error: failure }));
         return failure;
       }
     },
@@ -619,6 +650,43 @@ export function SessionsScreen({
     [loadMachine],
   );
 
+  // RECONNECTING A DARK MACHINE IS BACKGROUND WORK, and it is silent.
+  //
+  // It cannot ride the fleet load: a closed laptop TAKES the socket without refusing it,
+  // so awaiting it made every poll as slow as the machine that is not there — and
+  // `STALE_POLL_MS` then dropped the tick queued behind it, which is how one dead gateway
+  // halved the refresh of every machine that was answering. It must not be painted
+  // either: the reader is told about a machine coming BACK, never about this device
+  // asking. So it runs beside the load, at most one probe per machine at a time, and the
+  // only thing it can put on screen is an answer (see `loadMachine`).
+  const reconnecting = useRef(new Map<string, () => void>());
+  useEffect(
+    () => () => {
+      for (const cancel of reconnecting.current.values()) cancel();
+      reconnecting.current.clear();
+    },
+    [],
+  );
+  const reconnectMachine = useCallback(
+    (conn: GatewayConn) => {
+      const key = machineKey(conn);
+      if (reconnecting.current.has(key)) return;
+      const deadline = new AbortController();
+      let giveUp: number | undefined;
+      const done = () => {
+        if (giveUp !== undefined) window.clearTimeout(giveUp);
+        reconnecting.current.delete(key);
+      };
+      reconnecting.current.set(key, () => {
+        deadline.abort();
+        done();
+      });
+      giveUp = window.setTimeout(() => deadline.abort(), RECONNECT_TIMEOUT_MS);
+      void loadMachine(conn, deadline.signal).finally(done);
+    },
+    [loadMachine],
+  );
+
   const load = useCallback(
     async (signal?: AbortSignal, background = false) => {
       if (background) {
@@ -626,13 +694,21 @@ export function SessionsScreen({
         if (started !== null && Date.now() - started < STALE_POLL_MS) return;
         pollStartedAt.current = Date.now();
       }
+      // A machine already known dark is not part of this load at all: it is reconnected
+      // BESIDE it, so it can neither hold the fleet's refresh open nor repaint a list it
+      // is not in.
+      const paired = connsRef.current;
+      const dark = (conn: GatewayConn) => fleetOutage.has(machineKey(conn));
+      for (const conn of paired.filter(dark)) reconnectMachine(conn);
       try {
-        await Promise.all(connsRef.current.map((conn) => loadMachine(conn, signal)));
+        await Promise.all(
+          paired.filter((conn) => !dark(conn)).map((conn) => loadMachine(conn, signal)),
+        );
       } finally {
         if (background) pollStartedAt.current = null;
       }
     },
-    [loadMachine],
+    [loadMachine, reconnectMachine],
   );
 
   // A machine's NAME is not its transport, so renaming it must not refetch a thing —

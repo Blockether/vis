@@ -301,3 +301,99 @@ describe("a retry answers on its own clock", () => {
     expect(note(tile())).toBe("");
   });
 });
+
+// Regression, user report (paraphrased: "even when a machine is not active you try it on
+// `All` every single time, and that is what makes the list flash — reconnect to a machine
+// that failed in the background, and do not put it back on `All` while you are trying"):
+// the fleet was rebuilt from nothing on every mount, and opening a session unmounts this
+// screen, so a laptop this device had already found asleep came back as a machine nobody
+// had tried yet. It took a band, a rail and a section in the middle of the working fleet
+// until the probe behind it spent the transport's whole budget confirming what was
+// already known — and then the section vanished under the reader. Worse, that probe rode
+// the fleet's own poll: the tick queued behind it was dropped as stale, so one dead
+// gateway halved the refresh of every machine that was answering.
+describe("a machine known to be dark reconnects in the background", () => {
+  const alphaOrigin = (conns: { url: string }[]) => new URL(conns[0].url).origin;
+
+  it("never takes a place in All while it is being tried again", async () => {
+    const beta: MachineFixture = { label: "beta", down: true, hangs: true };
+    const view = renderSessionsScreen({ machines: [fleet()[0], beta] });
+    restore = view.restore;
+    await screen.findByText("First");
+    await waitFor(() => expect(screen.queryByLabelText("beta projects")).toBeNull());
+    view.unmount();
+
+    // The relaunch: same machines, same addresses, and beta is now the closed laptop that
+    // takes the socket without ever answering it.
+    const again = renderSessionsScreen({ machines: [fleet()[0], beta], at: view.conns });
+    restore = () => {
+      again.restore();
+      view.restore();
+    };
+    // The FIRST frame already knows: no band, no rail, no section standing in for a probe.
+    expect(screen.queryByLabelText("beta projects")).toBeNull();
+    await screen.findByText("First");
+    expect(screen.queryByLabelText("beta projects")).toBeNull();
+    // Still being asked, though — quietly. Dropping it from the view is not giving up on it.
+    const betaOrigin = new URL(view.conns[1].url).origin;
+    expect(again.requests.some((request) => request.machine === betaOrigin)).toBe(true);
+  });
+
+  describe("beside the fleet's own poll", () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    /** Let every poll, probe and repaint that fits inside `ms` happen. */
+    const settle = async (ms = 0) => {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+      });
+    };
+
+    const listReads = (view: { requests: { machine: string; path: string }[]; conns: { url: string }[] }) =>
+      view.requests.filter(
+        (request) =>
+          request.machine === alphaOrigin(view.conns) && request.path.startsWith("/v1/sessions?"),
+      ).length;
+
+    it("lets the machines that answer keep their ten seconds", async () => {
+      const view = renderSessionsScreen({
+        machines: [fleet()[0], { label: "beta", down: true, hangs: true }],
+      });
+      restore = view.restore;
+      await settle(50);
+      expect(screen.getByText("First")).toBeTruthy();
+
+      // One poll, then the next: neither is spent waiting on the machine that is not there.
+      const cold = listReads(view);
+      await settle(10_000);
+      const first = listReads(view);
+      expect(first).toBeGreaterThan(cold);
+      await settle(10_000);
+      expect(listReads(view)).toBeGreaterThan(first);
+    });
+
+    it("walks the machine back in when it finally answers", async () => {
+      const view = renderSessionsScreen({
+        machines: [
+          fleet()[0],
+          {
+            label: "beta",
+            down: true,
+            heals: true,
+            sessions: [listSession({ id: "b1", title: "Second", workspace: { root: "/w/two" } })],
+          },
+        ],
+      });
+      restore = view.restore;
+      await settle(50);
+      expect(screen.queryByLabelText("beta projects")).toBeNull();
+
+      // Nobody pressed anything: the poll's silent probe is what brings it home.
+      await settle(10_000);
+      await settle(50);
+      expect(screen.getByText("Second")).toBeTruthy();
+      expect(railHue("beta")).not.toBe(railHue("alpha"));
+    });
+  });
+});
