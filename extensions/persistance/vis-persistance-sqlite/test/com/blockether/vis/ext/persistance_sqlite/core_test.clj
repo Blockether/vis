@@ -754,7 +754,10 @@
          ;; Both children must finish opening before either writes. This makes one
          ;; concise test cover concurrent first-open migrations and cross-JVM writes.
          (spit marker \"ready\")
-         (let [deadline (+ (System/currentTimeMillis) 45000)]
+          ;; Outlast the parent's wait for the SLOWER sibling. A child that gave
+          ;; up first would exit while the parent still waited, and the run failed
+          ;; as -- children did not both open the store -- naming no cause.
+          (let [deadline (+ (System/currentTimeMillis) 300000)]
            (while (and (not (.exists (java.io.File. release)))
                        (< (System/currentTimeMillis) deadline))
              (Thread/sleep 25)))
@@ -792,15 +795,18 @@
      ;; (`-XX:TieredStopAtLevel=1`, serial GC) makes it SLOWER (7.4s), because that
      ;; loading is what C2 parallelises. Leave the defaults alone.
      ^java.util.List cmd
-     [(java-command) (str "-Dvis.test.db-dir=" (norm dir)) (str "-Dvis.test.marker=" (norm marker))
-      (str "-Dvis.test.release=" (norm release)) (str "-Dvis.test.title=" title) "clojure.main"
-      (norm (str script))]
+     [(java-command) "-Xmx1g" (str "-Dvis.test.db-dir=" (norm dir))
+      (str "-Dvis.test.marker=" (norm marker)) (str "-Dvis.test.release=" (norm release))
+      (str "-Dvis.test.title=" title) "clojure.main" (norm (str script))]
 
      pb
      (ProcessBuilder. cmd)]
 
     ;; Classpath via the environment keeps the child argv small and portable.
     (.put (.environment pb) "CLASSPATH" (System/getProperty "java.class.path"))
+    ;; The suite's own heap sizing travels in JAVA_TOOL_OPTIONS; a child that
+    ;; inherited it would let two cold JVMs grow to the parent's maximum on a
+    ;; shared runner. Each child opens ONE store, so a small heap is plenty.
     (.redirectErrorStream pb true)
     (let [child (.start pb)]
       (swap! child-output-futures assoc child (future (slurp (.getInputStream child))))
@@ -817,8 +823,9 @@
             :else (do (Thread/sleep 25) (recur))))))
 
 ;; Child JVMs cold-boot Clojure, Flyway, and sqlite-jdbc. The timeout bounds a
-;; broken child without letting one stalled process hold the full suite hostage.
-(def ^:private MULTIPROCESS_CHILD_TIMEOUT_S 120)
+;; broken child without letting one stalled process hold the full suite hostage;
+;; a loaded CI runner has taken over two minutes just to boot the pair.
+(def ^:private MULTIPROCESS_CHILD_TIMEOUT_S 240)
 
 (defn- child-output
   [^Process child]
@@ -867,6 +874,13 @@
           (try (when-not (wait-for-files markers children (* 1000 MULTIPROCESS_CHILD_TIMEOUT_S))
                  (doseq [^Process child children]
                    (when (.isAlive child) (.destroyForcibly child)))
+                 ;; The runner reports the message alone, so print what the
+                 ;; children said: a stall that only happens on CI is otherwise
+                 ;; undiagnosable from the log.
+                 (doseq [out (mapv child-output children)]
+                   (println "=== multiprocess child output ===")
+                   (println out)
+                   (println "=== end child output ==="))
                  (throw (ex-info "multiprocess children did not both open the store"
                                  {:output (mapv child-output children)})))
                (spit release "go")

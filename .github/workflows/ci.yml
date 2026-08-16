@@ -94,6 +94,18 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
           bwrap --unshare-all --ro-bind / / /bin/true
+      # The voice tests link sherpa-onnx's JNI, and the suite-wide network guard
+      # refuses the JitPack download that would fetch it — so a runner without the
+      # native fails every ASR/TTS test. Provision it in a JVM of its own first,
+      # cached, and the suite then finds it on disk with no network at all.
+      - uses: actions/cache@v6
+        with:
+          path: ~/.vis/native
+          key: vis-native-${{ runner.os }}-${{ hashFiles('extensions/common/vis-foundation-voice/src/com/blockether/vis/ext/foundation_voice/sherpa.clj') }}
+          restore-keys: vis-native-${{ runner.os }}-
+      - name: Provision the sherpa-onnx native runtime
+        run: |
+          clojure -M -e "(require '[com.blockether.vis.ext.foundation-voice.sherpa :as sherpa]) (prn (sherpa/ensure-native!))"
       - name: Run test suite
         env:
           # These are hard CI contracts, not best-effort coverage: macOS must
@@ -101,9 +113,10 @@ jobs:
           # pasta enforcement. The test namespace fails if either runner cannot.
           VIS_REQUIRE_MACOS_SANDBOX_E2E: ${{ runner.os == 'macOS' && '1' || '0' }}
           VIS_REQUIRE_LINUX_SANDBOX_E2E: ${{ runner.os == 'Linux' && '1' || '0' }}
-          # macos-26-arm64 has a smaller default JVM heap than the full Truffle
-          # suite needs; retain headroom for native allocations and subprocesses.
-          JAVA_TOOL_OPTIONS: ${{ runner.os == 'macOS' && '-Xmx5g' || '' }}
+          # Both runners need an explicit heap: macOS starts smaller than the full
+          # Truffle suite needs, and Linux's default (a quarter of RAM) ran the
+          # suite out of heap. Leave headroom for native allocations and children.
+          JAVA_TOOL_OPTIONS: ${{ runner.os == 'macOS' && '-Xmx5g' || '-Xmx6g' }}
         run: clojure -M:test
 
   # Every extension must resolve its own deps.edn cleanly — catches stale

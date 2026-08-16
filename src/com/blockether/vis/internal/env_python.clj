@@ -2236,9 +2236,9 @@
     ;; surface. `:shim/name` is registry identity only and must never imply importability.
     ;; `doc()` answers with `:shim/docs` when the shim declares one — the full
     ;; surface, PULLED — and falls back to the short `:shim/description` the
-    ;; system prompt pushes; a shim's own Python `__vis_docs__` still wins.
-    ;; Same JSON-hop marshalling as the tool docs above. Best-effort: a registry
-    ;; hiccup must never break context creation.
+    ;; system prompt pushes. A shim whose own Python already documents a global
+    ;; KEEPS that call contract — the argument list is what a caller types — and
+    ;; gains the page under it, because a page nothing reaches was cut, not moved.
     (try
       (let
         [shims
@@ -2254,15 +2254,21 @@
          docs
          (reduce (fn [m s]
                    (let
-                     [d
-                      (or (:shim/docs s) (:shim/description s))
+                     [page
+                      (when-not (str/blank? (:shim/docs s)) (:shim/docs s))
 
-                      base
-                      (if (and (string? d) (not (str/blank? d)))
-                        (str "sandbox shim \u2014 " d)
-                        "sandbox shim capability")]
+                      solo
+                      (or page (:shim/description s))
 
-                     (reduce #(assoc %1 %2 base) m (concat (:shim/imports s) (:shim/globals s)))))
+                      entry
+                      (cond->
+                        {"solo" (if (str/blank? solo)
+                                  "sandbox shim capability"
+                                  (str "sandbox shim — " solo))}
+                        page
+                        (assoc "page" page))]
+
+                     (reduce #(assoc %1 %2 entry) m (concat (:shim/imports s) (:shim/globals s)))))
                  {}
                  shims)]
 
@@ -2276,7 +2282,12 @@
                  "python"
                  (str "_vis_docs = globals().setdefault('__vis_docs__', {})\n"
                       "for _k, _v in json.loads(__vis_docs_json__).items():\n"
-                      "    _vis_docs.setdefault(_k, _v)\n" "del _vis_docs, _k, _v"))
+                      "    _own = _vis_docs.get(_k)\n"
+                      "    _page = _v.get('page')\n" "    if not _own:\n"
+                      "        _vis_docs[_k] = _v['solo']\n"
+                      "    elif _page and _page not in _own:\n"
+                      "        _vis_docs[_k] = _own + '\\n\\n' + _page\n"
+                      "del _vis_docs, _k, _v, _own, _page"))
           (.putMember g "__vis_docs_json__" nil))
         (seed-py-map! ctx
                       g

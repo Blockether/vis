@@ -1,6 +1,11 @@
 {:aliases {:test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
                   :extra-paths ["test"]
                   :main-opts ["-m" "lazytest.main" "--dir" "test"]}}
+ ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never
+ ;; from a :local/root dep's deps.edn, so this extension has to repeat the
+ ;; JitPack repo it inherits through com.blockether/vis -> the voice
+ ;; extension -> com.github.k2-fsa.sherpa-onnx, or resolving it alone fails.
+ :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
  :deps {com.blockether/vis {:local/root "../../.."}
         org.babashka/http-client {:mvn/version "0.4.24"}}
  :paths ["src" "resources"]}

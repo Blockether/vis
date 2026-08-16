@@ -586,15 +586,16 @@
   (it "indexes 4x the documented defs in far less than 4x-squared the time"
       (let
         [small
-         (min-index-ms (py-doc-source 750) 3)
+         (min-index-ms (py-doc-source 750) 5)
 
          big
-         (min-index-ms (py-doc-source 3000) 3)]
+         (min-index-ms (py-doc-source 3000) 5)]
 
         ;; 4x the input: linear work lands near 4x, the quadratic lookup landed
-        ;; near 16x. The generous 8x bound never flakes on scheduler noise yet
-        ;; still trips the moment the per-definition scan comes back.
-        (expect (< big (* 8.0 small))))))
+        ;; near 16x. A memory-pressured shared runner measured 9.7x for the
+        ;; LINEAR index, so the bound sits above that noise and below the
+        ;; regression it exists to catch.
+        (expect (< big (* 12.0 small))))))
 
 (defdescribe
   clojure-meta-docstring-test

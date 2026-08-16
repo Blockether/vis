@@ -165,12 +165,12 @@
                         (io/delete-file file true)))))))
 
 (defdescribe
-  wrapper-ignores-the-tree-it-sits-in-test
-  (it "runs what is installed, never the checkout the command file sits in"
-      ;; A copy of this wrapper inside a repository checkout is still only the
-      ;; command. Neither that tree's source nor a `target/vis` built in it is a
-      ;; runtime, so what runs is what Vis installed under VIS_HOME — here,
-      ;; nothing, and the wrapper says so instead of adopting its surroundings.
+  wrapper-runs-the-checkout-it-sits-in-test
+  (it "runs the checkout it sits in, and never a binary built there"
+      ;; A wrapper with a `deps.edn` one level up IS a checkout invocation: with
+      ;; nothing installed under VIS_HOME, running that tree's own live source is
+      ;; the only thing it can mean. What the tree BUILT is still not a runtime —
+      ;; a `target/vis` of its own never stands in for an installed release.
       (let
         [tmp
          (.toFile (Files/createTempDirectory "vis-checkout-launcher" (make-array FileAttribute 0)))
@@ -200,6 +200,11 @@
                (expect (zero? exit) output)
                (expect (re-find #"(?m)^Runtime: +jvm$" output) output)
                (expect (re-find #"(?m)^Native: +not installed$" output) output)
-               (expect (re-find #"(?m)^Source: +not installed$" output) output))
+               (expect (re-find (re-pattern (str "(?m)^Source: +"
+                                                 (java.util.regex.Pattern/quote
+                                                   (.getCanonicalPath checkout))
+                                                 "$"))
+                                output)
+                       output))
              (finally (doseq [file (reverse (file-seq tmp))]
                         (io/delete-file file true)))))))

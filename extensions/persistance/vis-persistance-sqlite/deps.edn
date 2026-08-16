@@ -15,6 +15,11 @@
  ;; `vis-runtime`'s `persistance.migration/migrate!` against
  ;; `classpath:db/sqlite/migration` (SQL ships in this package) so
  ;; every store starts with the canonical schema applied.
+ ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never
+ ;; from a :local/root dep's deps.edn, so this extension has to repeat the
+ ;; JitPack repo it inherits through com.blockether/vis -> the voice
+ ;; extension -> com.github.k2-fsa.sherpa-onnx, or resolving it alone fails.
+ :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
  :deps
  {org.clojure/clojure                       {:mvn/version "1.12.5"}
   ;; vis-sdk owns the extension-registration contract;

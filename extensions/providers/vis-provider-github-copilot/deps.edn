@@ -2,6 +2,11 @@
  ;; GitHub Copilot OAuth provider - device-flow authentication +
  ;; token lifecycle. Self-registers with `com.blockether.vis.core`
  ;; at namespace load via the unified `META-INF/vis-extension/vis.edn`.
+ ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never
+ ;; from a :local/root dep's deps.edn, so this extension has to repeat the
+ ;; JitPack repo it inherits through com.blockether/vis -> the voice
+ ;; extension -> com.github.k2-fsa.sherpa-onnx, or resolving it alone fails.
+ :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
  :deps
  {org.clojure/clojure       {:mvn/version "1.12.5"}
   ;; vis-sdk owns the extension and provider registries; vis-runtime

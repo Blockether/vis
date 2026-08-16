@@ -1,6 +1,11 @@
 ;; Standard provider presets. Each provider namespace registers exactly
 ;; one Vis extension/provider entry; shared package only avoids seven tiny jars.
 {:paths ["src" "resources"]
+ ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never
+ ;; from a :local/root dep's deps.edn, so this extension has to repeat the
+ ;; JitPack repo it inherits through com.blockether/vis -> the voice
+ ;; extension -> com.github.k2-fsa.sherpa-onnx, or resolving it alone fails.
+ :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
  :deps {com.blockether/vis {:local/root "../../.."}}
  :aliases
  {:test {:extra-paths ["test"]

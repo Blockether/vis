@@ -565,6 +565,28 @@
             nil
             bucket)))
 
+(defn- complete-handle-prefix
+  "The shortest HANDLE token `term` is a prefix of, or nil. A short ask is
+   someone reaching for a NAME, so a handle outranks an ordinary word that
+   happens to share the prefix: `she` is `shell`, not the `sheet` a shim
+   description mentions once. Same shortest-then-alphabetical rule as the
+   vocabulary completion, over the far smaller handle vocabulary."
+  [handle-ids ^String term]
+  (when (and (seq handle-ids) (>= (.length term) 3))
+    (reduce (fn [best cand]
+              (let [^String cand cand]
+                (if (and (> (.length cand) (.length term))
+                         (.startsWith cand term)
+                         (or (nil? best)
+                             (let [^String b best]
+                               (or (< (.length cand) (.length b))
+                                   (and (= (.length cand) (.length b))
+                                        (neg? (.compareTo cand b)))))))
+                  cand
+                  best)))
+            nil
+            (keys handle-ids))))
+
 (defn- nearest
   "The closest vocabulary term within one edit per three characters, or nil.
    Short terms are never rescued — every one-edit neighbour of a four-letter
@@ -616,18 +638,20 @@
 
 (defn- resolve-term
   "A term NO document contains is a partial handle or a typo: complete it as a
-   prefix, else spell-correct it, else drop it.
+   HANDLE first, then as an ordinary prefix, else spell-correct it, else drop it.
 
-   Both only ever look inside the term's OWN first-letter bucket. That is what
-   makes an off-corpus query honest AND cheap: a word starting with a letter no
-   document uses costs one map miss and contributes nothing, instead of walking
-   the vocabulary to hand back a confident, unrelated document."
-  [{:keys [postings vocab-by-head]} ^String term]
+   The handle vocabulary is small enough to scan whole; the other two only ever
+   look inside the term's OWN first-letter bucket. That is what makes an
+   off-corpus query honest AND cheap: a word starting with a letter no document
+   uses costs one map miss and contributes nothing, instead of walking the
+   vocabulary to hand back a confident, unrelated document."
+  [{:keys [postings vocab-by-head handle-ids]} ^String term]
   (if (contains? postings term)
     term
     (when (>= (.length term) 3)
-      (when-let [bucket (get vocab-by-head (.charAt term 0))]
-        (or (complete-prefix bucket term) (nearest bucket term))))))
+      (or (complete-handle-prefix handle-ids term)
+          (when-let [bucket (get vocab-by-head (.charAt term 0))]
+            (or (complete-prefix bucket term) (nearest bucket term)))))))
 
 (defn- resolve-query
   "Every query term the corpus can answer, in query order, deduplicated by what
@@ -706,17 +730,36 @@
         (aset scores id (+ (aget scores id) (* w (/ (* ptf (+ k1 1.0)) (+ k1 ptf))))))))
   scores)
 
+(def ^:private ^:const name-lookup-terms
+  "At most this many terms and the ask is a NAME LOOKUP - someone typing a handle,
+   or a handle plus one qualifier - rather than a described sentence."
+  2)
+
+(defn- names-token?
+  "Whether a query term NAMES a handle token: the token outright, or - when the
+   ask is a name lookup - a prefix of at least three characters, so `attach`
+   names `attachment`. A described ask stays exact: across a sentence, `line`
+   naming `one-liner` is noise, not the document the reader asked for."
+  [qset prefix? ^String tok]
+  (or (contains? qset tok)
+      (boolean (and prefix?
+                    (some
+                      (fn [^String q]
+                        (and (<= 3 (.length q)) (< (.length q) (.length tok)) (.startsWith tok q)))
+                      qset)))))
+
 (defn- add-handle-bonus!
-  "A document whose whole handle is covered by the query takes the bonus,
-   scaled by how much of the query that handle accounts for. `patch` for the
-   query `patch` takes all of it; `patch` for `patch anchors` takes half; a
-   handle the query only partly names takes none — which is why one extra word
-   is no longer a ranking cliff.
+  "A document whose handle the query NAMES takes the bonus, scaled by how much of
+   the handle the query covers AND by how much of the query that handle accounts
+   for. `patch` for the query `patch` takes all of it; `patch` for `patch anchors`
+   takes half; `list_attachments` for `attach` takes half of half - half a handle,
+   named by half a word - which keeps the functions named after a thing above the
+   prose that merely mentions it. A handle the query does not name takes none,
+   which is why one extra word is no longer a ranking cliff.
 
    The terms are the RESOLVED ones, so `strcut_patch` - one transposition off
-   a real handle - still covers `struct_patch` outright. Only the documents
-   whose handle uses one of the query's terms are visited (`:handle-ids`), so
-   this stays flat as a corpus grows."
+   a real handle - still covers `struct_patch` outright. Only HANDLE tokens are
+   scanned (`:handle-ids`), never the corpus body."
   [^doubles scores ^objects handle-toks handle-ids bonus query-terms]
   (let
     [bonus
@@ -726,15 +769,29 @@
      (set query-terms)
 
      qn
-     (count qset)]
+     (count qset)
+
+     prefix?
+     (<= qn (long name-lookup-terms))]
 
     (when (pos? qn)
-      (doseq [i (into #{} (mapcat #(get handle-ids %)) qset)]
-        (let [ht (aget handle-toks (int i))]
-          (when (and (seq ht) (every? qset ht))
+      (doseq
+        [i (into #{}
+                 (comp (filter (fn [[tok _]]
+                                 (names-token? qset prefix? tok)))
+                       (mapcat val))
+                 handle-ids)]
+        (let
+          [ht (aget handle-toks (int i))
+           covered (count (filter #(names-token? qset prefix? %) ht))]
+
+          (when (pos? covered)
             (aset scores
                   (int i)
-                  (+ (aget scores (int i)) (* bonus (/ (double (count ht)) (double qn)))))))))))
+                  (+ (aget scores (int i))
+                     (* bonus
+                        (/ (double covered) (double (count ht)))
+                        (/ (double covered) (double qn)))))))))))
 
 (defn- top-k
   "The `k` best of `hits` by (score desc, name asc) through a bounded heap: a

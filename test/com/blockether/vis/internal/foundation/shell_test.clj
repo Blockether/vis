@@ -2188,7 +2188,12 @@
             (let
               [sid "shell-handle-wait"
                env {:session-id sid}
-               r (:result (shell* env {"command" "printf 'done\\n'; exit 7" "id" "waited"}))
+               ;; A command that exits instantly can be over before the start
+               ;; call even answers, and then `exit` is already filled — the race
+               ;; is not the contract. Stay alive across the start so what fills
+               ;; `exit` here is unambiguously the WAIT.
+               r (:result (shell* env
+                                  {"command" "sleep 2; printf 'done\\n'; exit 7" "id" "waited"}))
                w (wait* env "waited")]
 
               (try (expect (nil? (get r "exit")))

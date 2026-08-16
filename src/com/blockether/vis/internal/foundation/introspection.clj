@@ -569,10 +569,11 @@
 
 (defn- search-session-rows
   "The SAME session search the TUI and the companion app run
-   (`db-search-session-matches`): the server ranks title/request/reply/thinking
-   and returns best band first, newest first inside a band. This projection
-   hydrates each match into an index row and KEEPS that order, so the agent
-   paints one relevance order instead of inventing a fourth."
+   (`db-search-session-matches`): the server answers FRESHEST FIRST — the order
+   the session list is already in, so a search reads as a FILTER of that list.
+   This projection hydrates each match into an index row and KEEPS that order,
+   so the agent paints one relevance order instead of inventing a fourth.
+   `:rank` travels as WHERE the query hit, never as the order."
   [env query]
   (if-let [db (:db-info env)]
     (try (into []

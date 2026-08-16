@@ -583,33 +583,42 @@
 
 (defdescribe
   list-sessions-search-test
-  (it "answers `search` in the SERVER's ranked order, tagged with where it hit"
-      (let [s (vis/db-create-connection! :memory)]
-        (try (let
-               [titled (h/store-session! s {:channel :tui :title "the needle title"})
-                spoken (h/store-session! s {:channel :tui :title "something else"})
-                _ (vis/db-store-session-turn!
-                    s
-                    {:parent-session-id spoken :user-request "find the needle" :status :done})
-                _ (h/store-session! s {:channel :tui :title "unrelated"})
-                rows (@#'introspection/foundation-sessions-data {:db-info s} "needle")
-                by-id (into {} (map (juxt #(str (:id %)) identity)) rows)
-                titled-row (get by-id (str titled))
-                spoken-row (get by-id (str spoken))]
+  (it
+    "answers `search` in the SERVER's own order, tagged with where it hit"
+    (let [s (vis/db-create-connection! :memory)]
+      (try
+        (let
+          [titled (h/store-session! s {:channel :tui :title "the needle title"})
+           ;; `created_at` is epoch MILLISECONDS and the fixtures land in
+           ;; one tick otherwise: two rows of the same millisecond tie, and
+           ;; a tie has no freshest. Separate them so the order under test
+           ;; is the server's, not the clock's.
+           _ (Thread/sleep 20)
+           spoken (h/store-session! s {:channel :tui :title "something else"})
+           _ (vis/db-store-session-turn!
+               s
+               {:parent-session-id spoken :user-request "find the needle" :status :done})
+           _ (h/store-session! s {:channel :tui :title "unrelated"})
+           rows (@#'introspection/foundation-sessions-data {:db-info s} "needle")
+           by-id (into {} (map (juxt #(str (:id %)) identity)) rows)
+           titled-row (get by-id (str titled))
+           spoken-row (get by-id (str spoken))]
 
-               ;; Title band (0) before the request band (1); the third session
-               ;; never matched, so it is simply absent.
-               (expect (= [(str titled) (str spoken)] (mapv #(str (:id %)) rows)))
-               (expect (= 0 (:rank titled-row)))
-               (expect (true? (:is-in-title titled-row)))
-               (expect (= 1 (:rank spoken-row)))
-               (expect (true? (:is-in-request spoken-row)))
-               (expect (false? (:is-in-title spoken-row)))
-               ;; A search row is still an INDEX row - same keys, no transcript.
-               (expect (= "the needle title" (:title titled-row)))
-               (expect (= 1 (:turn-count spoken-row)))
-               (expect (not (contains? titled-row :transcript))))
-             (finally (vis/db-dispose-connection! s)))))
+          ;; Freshest first, whatever band a row earned: the session that
+          ;; just took a turn leads the one whose title matched and has not
+          ;; moved since. `:rank` says WHERE the query hit, not how rows sort.
+          ;; The third session never matched, so it is simply absent.
+          (expect (= [(str spoken) (str titled)] (mapv #(str (:id %)) rows)))
+          (expect (= 0 (:rank titled-row)))
+          (expect (true? (:is-in-title titled-row)))
+          (expect (= 1 (:rank spoken-row)))
+          (expect (true? (:is-in-request spoken-row)))
+          (expect (false? (:is-in-title spoken-row)))
+          ;; A search row is still an INDEX row - same keys, no transcript.
+          (expect (= "the needle title" (:title titled-row)))
+          (expect (= 1 (:turn-count spoken-row)))
+          (expect (not (contains? titled-row :transcript))))
+        (finally (vis/db-dispose-connection! s)))))
   (it "a blank or absent search is the plain newest-first index"
       (let [s (vis/db-create-connection! :memory)]
         (try (let
