@@ -611,24 +611,25 @@ export function MachineRows({
 
         if (forgetting === conn.url)
           return (
-            <div key={conn.url}>
-              {/* What forgetting COSTS, in the row it is being asked in: the
-                  panel this verb came from spent a paragraph on it, and the
-                  answer is worthless without the sentence. */}
-              <p className="px-3 pt-2 font-mono text-chip text-dialog-hint">
-                Deletes {hostOf(conn.url)} and its access token from this device. Pairing again
-                needs the link or QR code from &lsquo;vis-agent gateway pair&rsquo;.
-              </p>
-              <ConfirmRow
-                question={`Forget ${name}?`}
-                confirmLabel="Yes, forget"
-                onKeep={() => setForgetting(null)}
-                onConfirm={() => {
-                  setForgetting(null);
-                  void onForget?.(conn);
-                }}
-              />
-            </div>
+            // What forgetting COSTS, inside the frame that asks it: the panel this
+            // verb came from spent a paragraph on it, and the answer is worthless
+            // without the sentence.
+            <ConfirmRow
+              key={conn.url}
+              question={`Forget ${name}?`}
+              cost={
+                <>
+                  Deletes {hostOf(conn.url)} and its access token from this device. Pairing again
+                  needs the link or QR code from &lsquo;vis-agent gateway pair&rsquo;.
+                </>
+              }
+              confirmLabel="Yes, forget"
+              onKeep={() => setForgetting(null)}
+              onConfirm={() => {
+                setForgetting(null);
+                void onForget?.(conn);
+              }}
+            />
           );
 
         // THE VERBS OF THIS MACHINE, waiting under its own row's trailing edge and

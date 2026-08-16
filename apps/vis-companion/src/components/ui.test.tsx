@@ -1564,6 +1564,51 @@ describe("the confirm that IS the row", () => {
     expect(html).toContain("min-h-12");
     expect(html).toContain("mouse:min-h-8");
   });
+
+  // Reported over a machine's providers ("why do we not have a border here when
+  // removing?"): the block REPLACES the row it is asking about, so the only
+  // edges around it were the list's own neutral 1px dividers — the same rule two
+  // calm rows share — and the cost sentence, hand-built at the call site, hung
+  // under the PREVIOUS provider and read as that row's meta line.
+  it("is a BOX in the ink it asks in, and the cost stands inside it", () => {
+    const html = renderToStaticMarkup(
+      <ConfirmRow
+        question="Remove Codex?"
+        cost="Signs out on the gateway machine."
+        confirmLabel="Yes, remove"
+        onKeep={() => {}}
+        onConfirm={() => {}}
+      />,
+    );
+    // Four sides in the destructive edge, and the box's own top rule stands IN
+    // FOR the list rule above it rather than stacking on it.
+    expect(html).toContain('class="-mt-px border border-err-edge"');
+    expect(html).toContain("Signs out on the gateway machine.");
+    // The rule between the sentence and the answers belongs to the sentence, so
+    // both answers keep the whole 48px a finger is owed.
+    expect(html).toContain("border-b border-err-edge px-3 py-2");
+    expect(html).toContain("flex min-h-12 items-stretch mouse:min-h-8");
+    // A question with nothing to spell out is the same box, minus that rule.
+    const bare = renderToStaticMarkup(
+      <ConfirmRow
+        question="Delete alpha?"
+        confirmLabel="Yes, delete"
+        onKeep={() => {}}
+        onConfirm={() => {}}
+      />,
+    );
+    expect(bare).toContain('class="-mt-px border border-err-edge"');
+    expect(bare).not.toContain("<p");
+  });
+
+  it("owns the sentence both lists used to build at the call site", () => {
+    for (const source of [providerAuthSource, machinesSource]) {
+      expect(source).toContain("cost=");
+      // The paragraph that used to stand OUTSIDE the frame, in each screen's
+      // own words.
+      expect(source).not.toContain("px-3 pt-2 font-mono text-chip");
+    }
+  });
 });
 
 // Regression, user report ("why doesn't the delete button on a project have the

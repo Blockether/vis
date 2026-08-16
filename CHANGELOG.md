@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - The installed binary can speak and listen at all — sherpa reads its own Java API through JNI by name, so the native image now keeps every one of those names: the class it calls back into while it speaks, and every step of the walk it makes through the generation options
 - A command reads as its answer in the app: `/reload` and `!` turns no longer paint the command itself as a Python program with a result card under it
 - A project you fold stays folded: the sessions list opens the project at the top of a machine and leaves every other one as you last left it, through opening a session, coming back, and relaunching the app — a search still shows what it matched, fold or no fold
+- Removing a provider, forgetting a machine or deleting a session now asks inside its own red box: the sentence saying what it costs stands in that box with the two answers, instead of hanging under the row above between the same hairlines two calm rows share
 ## [v0.1.38] - 2026-08-14
 
 ### Changed

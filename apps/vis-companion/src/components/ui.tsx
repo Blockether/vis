@@ -499,11 +499,22 @@ export const ListRow = forwardRef<
  * `MenuItem`'s danger row and the swipe strip's `Delete` wear, so the ink that
  * means "this does not come back" is the same ink wherever it is asked.
  *
- * The question itself is the group's LABEL: the row it stands in for is still
- * on screen, so a sighted reader has already read what is being asked.
+ * IT WEARS ITS OWN FRAME, AND THE COST IS ASKED INSIDE IT. The block REPLACES
+ * the row it is asking about, so that row is off the screen and every edge
+ * around the question was the list's own neutral divider — the same 1px rule
+ * two calm rows share. Reported over a machine's providers: `Signs out of
+ * OpenAI Codex…` hung under the OpenCode Go row and read as THAT row's meta
+ * line, and the refusal, standing on the panel's own paper with no edge of any
+ * kind, did not read as a control at all. So the group is boxed in `err-edge`
+ * and the cost sentence is a PROP inside that box — one question, framed in
+ * the ink it is asking in, and no call site spelling the sentence its own way.
+ *
+ * The question is also the group's own LABEL, for a reader who cannot see the
+ * box it is asked in.
  */
 export function ConfirmRow({
   question,
+  cost,
   keepLabel = 'No, keep',
   confirmLabel,
   isBusy = false,
@@ -512,6 +523,8 @@ export function ConfirmRow({
 }: {
   /** What is being asked, for a reader who cannot see the row: `Delete alpha?`. */
   question: string;
+  /** What committing COSTS, in one sentence, standing inside the same frame. */
+  cost?: ReactNode;
   /** The refusal, when keeping is not called "No, keep". */
   keepLabel?: string;
   /** The commitment, carrying its own progress while it runs: `Deleting...`. */
@@ -521,27 +534,40 @@ export function ConfirmRow({
   onConfirm: () => void;
 }) {
   return (
+    // The box's own edge REPLACES the list rule above it, so the question is
+    // bounded ONCE on every side instead of by a neutral hairline stacked on a
+    // red one; the rule below it is already this box's own bottom border.
     <div
       role="group"
       aria-label={question}
-      className="flex min-h-12 items-stretch mouse:min-h-8"
+      className="-mt-px border border-err-edge"
     >
-      <button
-        type="button"
-        autoFocus
-        className="flex flex-1 items-center justify-center bg-panel-2 font-mono text-meta font-bold uppercase tracking-[0.08em] text-white/70 transition-colors duration-150 hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none"
-        onClick={onKeep}
-      >
-        {keepLabel}
-      </button>
-      <button
-        type="button"
-        disabled={isBusy}
-        className="flex flex-1 items-center justify-center border-l border-err-edge bg-err-surface font-mono text-meta font-bold uppercase tracking-[0.08em] text-err-ink transition-colors duration-150 hover:bg-err hover:text-white active:bg-err active:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-err/70 disabled:opacity-60 motion-reduce:transition-none"
-        onClick={onConfirm}
-      >
-        {confirmLabel}
-      </button>
+      {cost !== undefined && (
+        // The rule that separates the cost from its two answers belongs to the
+        // SENTENCE, not to the answers: a border on that row would eat a pixel
+        // of the 48px both answers owe a finger.
+        <p className="border-b border-err-edge px-3 py-2 font-mono text-chip text-dialog-hint">
+          {cost}
+        </p>
+      )}
+      <div className="flex min-h-12 items-stretch mouse:min-h-8">
+        <button
+          type="button"
+          autoFocus
+          className="flex flex-1 items-center justify-center bg-panel-2 font-mono text-meta font-bold uppercase tracking-[0.08em] text-white/70 transition-colors duration-150 hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none"
+          onClick={onKeep}
+        >
+          {keepLabel}
+        </button>
+        <button
+          type="button"
+          disabled={isBusy}
+          className="flex flex-1 items-center justify-center border-l border-err-edge bg-err-surface font-mono text-meta font-bold uppercase tracking-[0.08em] text-err-ink transition-colors duration-150 hover:bg-err hover:text-white active:bg-err active:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-err/70 disabled:opacity-60 motion-reduce:transition-none"
+          onClick={onConfirm}
+        >
+          {confirmLabel}
+        </button>
+      </div>
     </div>
   );
 }

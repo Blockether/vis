@@ -1112,25 +1112,21 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
 
         if (removing === provider.id)
           return (
-            <div key={provider.id}>
-              {/* What removing COSTS, in the row it is being asked in: the daemon
-                  runs the provider's own logout AND drops its config entry, so
-                  this is the sign-out too, for every device on that machine. */}
-              <p className="px-3 pt-2 font-mono text-chip text-dialog-hint">
-                Signs out of {provider.label} on the gateway machine and deletes its entry there.
-                Every device paired with that machine loses it.
-              </p>
-              <ConfirmRow
-                question={`Remove ${provider.label}?`}
-                confirmLabel="Yes, remove"
-                isBusy={pending === `remove:${provider.id}`}
-                onKeep={() => setRemoving(null)}
-                onConfirm={() => {
-                  setRemoving(null);
-                  void auth.removeProvider(provider);
-                }}
-              />
-            </div>
+            // What removing COSTS, inside the frame that asks it: the daemon runs
+            // the provider's own logout AND drops its config entry, so this is the
+            // sign-out too, for every device on that machine.
+            <ConfirmRow
+              key={provider.id}
+              question={`Remove ${provider.label}?`}
+              cost={`Signs out of ${provider.label} on the gateway machine and deletes its entry there. Every device paired with that machine loses it.`}
+              confirmLabel="Yes, remove"
+              isBusy={pending === `remove:${provider.id}`}
+              onKeep={() => setRemoving(null)}
+              onConfirm={() => {
+                setRemoving(null);
+                void auth.removeProvider(provider);
+              }}
+            />
           );
 
         // THE VERBS OF THIS ACCOUNT, waiting under its own row's trailing edge.
