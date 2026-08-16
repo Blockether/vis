@@ -9,6 +9,7 @@
 
 def __vis_install_ls__():
     import json as _json
+    import os as _os
 
     __vis_ls_errors = {
         "denied": PermissionError,
@@ -16,6 +17,23 @@ def __vis_install_ls__():
         "file": NotADirectoryError,
         "args": ValueError,
     }
+
+    def _as_path(value):
+        """`value` as a filesystem string when it is path-like, else None."""
+        if isinstance(value, (str, bytes)) or hasattr(value, "__fspath__"):
+            return _os.fsdecode(_os.fspath(value))
+        return None
+
+    def _as_spec(entry):
+        """One request entry: a path-like becomes its string, a dict keeps its options."""
+        path = _as_path(entry)
+        if path is not None:
+            return path
+        if isinstance(entry, dict):
+            nested = _as_path(entry.get("path"))
+            if nested is not None:
+                return {**entry, "path": nested}
+        return entry
 
     def ls(paths=".", depth=1, is_hidden=False):
         """List directory contents through the host's ignore-aware walk.
@@ -25,7 +43,8 @@ def __vis_install_ls__():
         "children" when depth > 1. ls([dir, ...]) returns one
         {"path", "entries"} row per directory, in request order; an entry may be
         a dict {"path": dir, "depth": 2} whose own options override the shared
-        ones.
+        ones. A path is a str or any os.PathLike, so pathlib.Path works
+        wherever a string does.
 
         Dotfiles need is_hidden=True; gitignored entries are never listed. A
         file raises NotADirectoryError (read it with cat), a path that does not
@@ -35,12 +54,12 @@ def __vis_install_ls__():
         bridge = globals().get("__vis_list_directories__")
         if bridge is None:
             raise RuntimeError("ls: listing bridge not bound in this sandbox")
-        one = isinstance(paths, (str, bytes))
+        one = _as_path(paths) is not None
         request = [paths] if one else list(paths)
         env = bridge(
             _json.dumps(
                 {
-                    "paths": request,
+                    "paths": [_as_spec(entry) for entry in request],
                     "depth": int(depth),
                     "is_hidden": bool(is_hidden),
                 }
@@ -63,7 +82,8 @@ def __vis_install_ls__():
         "{path, entries} row per directory in request order. Dotfiles need "
         "is_hidden=True and gitignored entries are never listed. Raises "
         "NotADirectoryError for a file, FileNotFoundError naming the nearest "
-        "existing directory, PermissionError when an extension protects it."
+        "existing directory, PermissionError when an extension protects it. A "
+        "path is a str or a pathlib.Path."
     )
 
 

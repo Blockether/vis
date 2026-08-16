@@ -70,7 +70,7 @@
          "`ls(paths, depth=1, is_hidden=False)` maps a tree from the host's ignore-aware walk: "
          "entries `{name, path, type, size}`, directories first, nested under `children` when "
          "`depth` > 1. Dotfiles need `is_hidden=True`; gitignored entries are never listed; a file "
-         "raises `NotADirectoryError`.")
+         "raises `NotADirectoryError`. A path is a `str` or a `pathlib.Path`.")
        :shim/bindings ls-bridge-bindings
        :shim/source "vis-shims/ls.py"}]}))
 

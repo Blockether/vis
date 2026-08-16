@@ -93,7 +93,23 @@
          (str "d = globals()[\"__vis_docs__\"][\"ls\"]\n"
               "print(\"depth\" in d, \"is_hidden\" in d, \"gitignored\" in d)")]
 
-        (expect (= "True True True\n" (out ctx code))))))
+        (expect (= "True True True\n" (out ctx code)))))
+  ;; Regression: `ls(Path("src/..."))` raised `TypeError: 'PosixPath' object is not iterable` —
+  ;; one path-like argument was iterated as if it were a list of paths.
+  (it "takes a pathlib.Path alone, in a batch, and inside a per-path spec"
+      (let
+        [ctx
+         (sandbox)
+
+         code
+         (str "from pathlib import Path\n"
+              "root = Path(\"src/com/blockether/vis/internal/foundation\")\n" "rows = ls(root)\n"
+              "batch = ls([Path(\"resources/vis-shims\"), {\"path\": root, \"depth\": 1}])\n"
+              "print(any(r[\"name\"] == \"core.clj\" for r in rows), len(batch) == 2,\n"
+              "      any(e[\"name\"] == \"ls.py\" for e in batch[0][\"entries\"]),\n"
+              "      any(e[\"name\"] == \"editing\" for e in batch[1][\"entries\"]))")]
+
+        (expect (= "True True True True\n" (out ctx code))))))
 
 (defdescribe
   ls-shim-failure-test
