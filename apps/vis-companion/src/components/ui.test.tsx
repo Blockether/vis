@@ -2189,18 +2189,27 @@ describe("Modal, fit", () => {
     );
   });
 
-  // Regression, user report (rename field hidden under the iOS keyboard): the native
-  // keyboard pins only the app shell to its visible height. A body portal remains as
-  // tall as the glass and leaves a bottom sheet underneath the keyboard.
-  it("keeps the sheet inside the viewport-pinned app shell", () => {
+  // Regression, user report (rename field hidden under the iOS keyboard, then the
+  // note annotator's composer under it): the native keyboard pins only the app
+  // shell to its visible height. A body portal remains as tall as the glass and
+  // leaves a bottom sheet underneath the keyboard. ONE rule, one function: every
+  // full-screen layer asks `overlayLayer` where it mounts and how it is positioned.
+  it("keeps every full-screen layer inside the viewport-pinned app shell", () => {
     expect(appSource).toContain("data-viewport-shell");
     expect(uiSource).toContain(
       "document.querySelector<HTMLElement>('[data-viewport-shell]')",
     );
     expect(uiSource).toContain(
-      "portalHost === document.body ? 'fixed' : 'absolute'",
+      "host === document.body ? 'fixed' : 'absolute'",
     );
+    expect(uiSource).toContain("const { host: portalHost, position } = overlayLayer();");
     expect(uiSource).toContain("portalHost,\n  );");
+    // The opened document is the app's other full-screen layer, and it asks the
+    // same question instead of hanging off the body at `100dvh`.
+    expect(docSource).toContain("overlayLayer");
+    expect(docSource).toContain("overlayLayer().host,");
+    expect(docSource).not.toContain("document.body,");
+    expect(docSource).not.toContain("h-[100dvh]");
   });
 
   // Regression, user report ("cannot we make it less height, like it goes from

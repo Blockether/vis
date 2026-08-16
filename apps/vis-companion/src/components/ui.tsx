@@ -1373,6 +1373,29 @@ export const DIALOG_DESKTOP_HEIGHT = 'sm:h-[min(38rem,100%)]';
  */
 const IsFitSheet = createContext(false);
 
+/**
+ * WHERE A LAYER THAT COVERS THE APP IS MOUNTED, AND HOW IT IS POSITIONED.
+ *
+ * The native iOS keyboard pins the app SHELL — not the layout viewport — to the
+ * visible glass (`useVisualViewportShell`), and the same is true of a mobile web
+ * browser, whose `dvh` never subtracts a keyboard. A layer portalled to
+ * `document.body` therefore keeps the full glass height and leaves everything at
+ * its bottom edge, focused fields included, underneath the keyboard.
+ *
+ * So every full-screen layer mounts INSIDE the shell and is `absolute` in it;
+ * `fixed` on the body is only the fallback for a mount taken before the shell
+ * exists. `Modal` and the opened document (`DocArtifact`) are both that layer,
+ * which is why the rule is one function rather than two copies of a selector.
+ */
+export function overlayLayer(): {
+  host: HTMLElement;
+  position: 'absolute' | 'fixed';
+} {
+  const host =
+    document.querySelector<HTMLElement>('[data-viewport-shell]') ?? document.body;
+  return { host, position: host === document.body ? 'fixed' : 'absolute' };
+}
+
 export function Modal({
   onDismiss,
   size = 'full',
@@ -1395,12 +1418,7 @@ export function Modal({
   size?: 'full' | 'fit' | 'wide';
   children: ReactNode;
 }) {
-  // The native iOS keyboard pins this shell, rather than the layout viewport, to
-  // the visible glass. A body portal would keep the layout viewport's height and
-  // leave a bottom sheet (including focused fields) underneath the keyboard.
-  const portalHost =
-    document.querySelector<HTMLElement>('[data-viewport-shell]') ?? document.body;
-  const position = portalHost === document.body ? 'fixed' : 'absolute';
+  const { host: portalHost, position } = overlayLayer();
 
   return createPortal(
     <div

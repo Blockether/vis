@@ -111,8 +111,11 @@ describe("picking a passage on a touch screen", () => {
       tap(paragraph!);
     });
 
-    expect(host.textContent).toContain("Comment on “We cut on Friday.”");
+    // Regression, user report ("in the input I don't need to show what is
+    // selected — the colour already tells me"): the composer opens with the field
+    // and nothing else. The passage is what says which passage it is.
     expect(host.querySelector('textarea[aria-label="Comment"]')).not.toBeNull();
+    expect(host.textContent).not.toContain("Comment on “We cut on Friday.”");
 
     // The native callout is what broke it, so the prose does not offer one on a
     // touch screen; a mouse keeps its drag-selection.
@@ -365,7 +368,7 @@ describe("the tap that quotes a passage", () => {
     act(() => {
       flick(paragraph);
     });
-    expect(host.textContent).not.toContain("Comment on “We cut on Friday.”");
+    expect(paragraph.dataset.quotePending).toBeUndefined();
     expect(host.querySelector('textarea[aria-label="Comment"]')).toBeNull();
     done();
   });
@@ -382,6 +385,50 @@ describe("the tap that quotes a passage", () => {
     });
     expect(host.querySelector('textarea[aria-label="Comment"]')).toBeNull();
     expect(paragraph.dataset.quotePending).toBeUndefined();
+    done();
+  });
+
+  // Regression, user report ("when we select I don't need that yellow rail on the
+  // left, and the input doesn't have to show what is selected"): the pending
+  // passage carried a 2px accent rail down its leading edge AND a caption under
+  // the prose repeating its words, on the one screen a keyboard is covering.
+  it("marks the pending passage with its paper alone — no rail, no caption", () => {
+    const { host, paragraph, done } = mount("# Ship it\n\nWe cut on Friday.\n");
+    act(() => {
+      tap(paragraph);
+    });
+
+    expect(paragraph.dataset.quotePending).toBe("true");
+    expect(paragraph.style.boxShadow).toBe("");
+    expect(host.textContent).not.toContain("Comment on “We cut on Friday.”");
+    expect(host.querySelector('textarea[aria-label="Comment"]')).not.toBeNull();
+    done();
+  });
+
+  // A remark about the WHOLE note has no painted passage to point at, so that one
+  // composer still names what it is about.
+  it("still names the whole-document remark, which marks nothing", () => {
+    const { host, done } = mount("# Ship it\n\nWe cut on Friday.\n");
+    const open = [...host.querySelectorAll("button")].find((button) =>
+      (button.textContent ?? "").includes("Comment on the note"),
+    );
+    act(() => {
+      open!.click();
+    });
+
+    expect(host.textContent).toContain("Comment on the whole document");
+    done();
+  });
+
+  // Regression, user report ("the input should be ABOVE THE KEYBOARD"): the column
+  // reserved the home indicator under the composer even while the keyboard covered
+  // it. `--safe-bottom` is `0px` for exactly that moment (`useSafeBottomStyle`).
+  it("ends at the keyboard, not at a home indicator the keyboard covers", () => {
+    const { host, done } = mount("# Ship it\n\nWe cut on Friday.\n");
+    expect(host.innerHTML).toContain(
+      "pb-[var(--safe-bottom,env(safe-area-inset-bottom))]",
+    );
+    expect(host.innerHTML).not.toContain("pb-[env(safe-area-inset-bottom)]");
     done();
   });
 });

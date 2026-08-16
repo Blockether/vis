@@ -172,18 +172,21 @@ describe("an opened document", () => {
 
   it("owns the whole viewport", () => {
     const markup = overlay();
-    expect(markup).toContain("fixed inset-0");
-    expect(markup).toContain("h-[100dvh]");
+    expect(markup).toContain("inset-0");
+    expect(markup).toContain("h-full");
+    expect(markup).not.toContain("h-[100dvh]");
     expect(markup).toContain("flex-1");
     expect(markup).not.toContain("60vh");
     expect(markup).toContain("w-full");
     expect(markup).toContain('aria-label="Close report.pdf"');
   });
 
-  it("is portalled to the document body, so the composer cannot cover it", async () => {
+  // One document per test: `useStickyOverlay` remembers an opened document BY NAME
+  // across mounts, so a second test reusing the name opens on arrival.
+  const openPreview = async (name: string) => {
     const view = render(
       <DocPreview
-        name="report.pdf"
+        name={name}
         mime="application/pdf"
         sizeLabel="1.2 MB"
         url="blob:x"
@@ -191,15 +194,38 @@ describe("an opened document", () => {
         onNeeded={() => undefined}
       />,
     );
-
-    await userEvent.click(screen.getByText("report.pdf"));
-    const close = document.querySelector('[aria-label="Close report.pdf"]')!;
+    await userEvent.click(screen.getByText(name));
+    const close = document.querySelector(`[aria-label="Close ${name}"]`)!;
     expect(close).toBeTruthy();
-    // The opened document is a SCREEN, not a part of the transcript: it hangs off the
-    // body, so the composer strip the session screen pins to the bottom of the tree
-    // that rendered this row cannot paint on top of it.
-    expect(view.container.contains(close)).toBe(false);
-    expect(close.closest("body")).toBe(document.body);
+    return { view, screenEl: close.closest("div[class*=inset-0]") as HTMLElement };
+  };
+
+  // Regression, user report ("the input should be ABOVE THE KEYBOARD"): this screen
+  // hung off `document.body` at `100dvh`. The keyboard pins the app SHELL, not the
+  // glass (`useVisualViewportShell`), so the annotator's composer sat under the keys
+  // on iOS and on mobile web alike.
+  it("mounts inside the viewport-pinned shell, so a keyboard cannot bury it", async () => {
+    const shell = document.createElement("div");
+    shell.setAttribute("data-viewport-shell", "");
+    document.body.append(shell);
+
+    const { view, screenEl } = await openPreview("shelled.pdf");
+    expect(shell.contains(screenEl)).toBe(true);
+    expect(view.container.contains(screenEl)).toBe(false);
+    expect(screenEl.className).toContain("absolute");
+    expect(screenEl.className).not.toContain("fixed");
+
+    view.unmount();
+    shell.remove();
+  });
+
+  // No shell yet — the layer still leaves the transcript, so the composer strip the
+  // session screen pins to the bottom cannot paint on top of it.
+  it("falls back to the body, fixed, when there is no shell", async () => {
+    const { view, screenEl } = await openPreview("bodied.pdf");
+    expect(view.container.contains(screenEl)).toBe(false);
+    expect(screenEl.closest("body")).toBe(document.body);
+    expect(screenEl.className).toContain("fixed");
     view.unmount();
   });
 

@@ -20,6 +20,7 @@ import { Markdown } from "./ChatContent";
 import { readArtifactText } from "./TextArtifact";
 import { TrashIcon } from "./icons";
 import { BandButton, Button, IconButton } from "./ui";
+import { useSafeBottomStyle } from "../lib/viewport";
 
 /** The blocks a tap may quote: one paragraph, heading, item or cell. */
 const QUOTABLE_BLOCKS = "p,li,h1,h2,h3,h4,h5,h6,blockquote,pre,td,th";
@@ -220,6 +221,9 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
+  // The column carries `--safe-bottom` itself rather than inheriting it from the
+  // document root; see `useSafeBottomStyle`.
+  const safeBottomStyle = useSafeBottomStyle();
 
   // ON A PHONE A PASSAGE IS TAPPED, NOT DRAGGED — AND A SCROLL IS NOT A TAP.
   //
@@ -331,20 +335,24 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
         marks.push(mark);
       }
     }
-    // THE PICKED PASSAGE IS SHOWN AS PICKED.
+    // THE PICKED PASSAGE IS SHOWN AS PICKED — BY ITS PAPER, AND BY NOTHING ELSE.
     //
     // Between the tap and the "Add comment" the human had nothing to check
     // against: the composer quoted the text in a caption at the bottom of the
     // screen while the passage itself sat unmarked. The pending block wears the
-    // accent — the same ink the app uses for focus — until the remark lands or
-    // is dropped.
+    // accent — the same ink the app uses for focus — until the remark lands or is
+    // dropped.
+    //
+    // Reported: the rail down its leading edge was noise, and so was that
+    // caption. A WASH IS THE MARK — it covers the whole passage instead of
+    // pointing at it from the margin — which is exactly why the composer below
+    // says nothing about which passage this is: the reader is looking at it.
     if (quote) {
       for (const block of blocks) {
         if (painted.includes(block)) continue;
         if (quoteOf(block.textContent ?? "") !== quote) continue;
         block.style.backgroundColor =
-          "color-mix(in oklab, var(--accent) 18%, transparent)";
-        block.style.boxShadow = "inset 2px 0 0 0 var(--accent)";
+          "color-mix(in oklab, var(--accent) 24%, transparent)";
         block.style.borderRadius = "2px";
         block.style.paddingInline = "0.375rem";
         block.dataset.quotePending = "true";
@@ -380,10 +388,16 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   }, [onSave, body, comments]);
 
   const column = (
-    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden pb-[env(safe-area-inset-bottom)]">
+    <div
+      style={safeBottomStyle}
+      className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden pb-[var(--safe-bottom,env(safe-area-inset-bottom))]"
+    >
       {/* The prose is the only part that grows: everything under it is pinned, so
           a long note scrolls inside its own box. The column ends at the home
-          indicator on its own now that no verb is docked under it. */}
+          indicator on its own now that no verb is docked under it — and at the
+          KEYBOARD when one is up: `--safe-bottom` is `0px` while the keyboard
+          covers the home indicator, so the composer sits on the keys instead of
+          reserving a dead band above them (`useSafeBottomStyle`). */}
       <div
         ref={proseRef}
         onPointerDown={beginTap}
@@ -397,11 +411,16 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
 
       {quote !== null ? (
         <div className="flex shrink-0 flex-col gap-2 border-t border-dialog-edge bg-panel-2 px-3 py-3 sm:px-4">
-          <p className="text-meta text-dialog-hint">
-            {quote.length === 0
-              ? `Comment on the ${GENERAL_LABEL.toLowerCase()}`
-              : `Comment on “${quote}”`}
-          </p>
+          {/* A PICKED PASSAGE NEEDS NO CAPTION. It is painted in the accent two
+              lines above this field, so repeating it here spent a line of a
+              keyboard-sized screen saying what the reader is already looking at.
+              A remark about the WHOLE note has no passage to point at, and that
+              one still says so. */}
+          {quote.length === 0 ? (
+            <p className="text-meta text-dialog-hint">
+              Comment on the {GENERAL_LABEL.toLowerCase()}
+            </p>
+          ) : null}
           <textarea
             autoFocus
             value={draft}

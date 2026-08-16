@@ -16,7 +16,7 @@ import {
 import { PdfAnnotator } from "./PdfArtifact";
 import { TextFrame } from "./TextArtifact";
 import { ChevronIcon } from "./icons";
-import { DialogHeader, ListRow } from "./ui";
+import { DialogHeader, ListRow, overlayLayer } from "./ui";
 import { useStickyOverlay } from "../lib/sticky-overlay";
 
 /**
@@ -203,8 +203,20 @@ export const DocOverlay = memo(function DocOverlay({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  // THE OPENED DOCUMENT IS THE VIEWPORT-PINNED LAYER, NOT THE GLASS.
+  //
+  // Regression, user report: with the comment composer open the keyboard covered
+  // it. This screen was `fixed` on `document.body` at `100dvh`, and neither the
+  // native iOS keyboard (the webview is never resized) nor a mobile browser's
+  // `dvh` subtracts a keyboard — so the annotator's field sat under it. It is the
+  // same layer `Modal` is, and it mounts where `Modal` mounts: inside the shell
+  // the keyboard driver pins, `absolute` in it and `h-full` of it.
+  const { position } = overlayLayer();
+
   const chrome: DocumentChrome = ({ actions, note, body }) => (
-    <div className="fixed inset-0 z-50 flex h-[100dvh] min-h-0 min-w-0 flex-col overflow-hidden overscroll-contain bg-panel pt-[env(safe-area-inset-top)]">
+    <div
+      className={`${position} inset-0 z-50 flex h-full min-h-0 min-w-0 flex-col overflow-hidden overscroll-contain bg-panel pt-[env(safe-area-inset-top)]`}
+    >
       {/* The one header band, exactly as an artifact opened from the sheet or any
           other surface that opens over another wears it: the name is the title,
           what the file IS is the subtitle, and the way out is the header's own.
@@ -323,8 +335,10 @@ export const DocPreview = memo(function DocPreview({
         <ChevronIcon className="size-3 shrink-0 text-footer-muted opacity-70" />
       </ListRow>
       {/* The opened document is a SCREEN, not a part of the transcript: it is
-          portalled to the document body, so the composer strip the session screen
-          pins to the bottom cannot paint on top of it. */}
+          portalled out of the turn, so the composer strip the session screen pins
+          to the bottom cannot paint on top of it — into the viewport-pinned shell
+          (`overlayLayer`), so a keyboard raised over it does not bury the
+          annotator's own field. */}
       {opened &&
         createPortal(
           <DocOverlay
@@ -336,7 +350,7 @@ export const DocPreview = memo(function DocPreview({
             annotate={annotate}
             onClose={close}
           />,
-          document.body,
+          overlayLayer().host,
         )}
     </>
   );
