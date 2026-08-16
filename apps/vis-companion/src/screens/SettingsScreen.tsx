@@ -655,8 +655,6 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
   return (
     <SettingsPanel
       title="MCP servers"
-      description="Tools shared with every client; secrets stay on this machine."
-      meta={servers === null ? "loading" : `${servers.length} configured`}
     >
       <div className="divide-y divide-dialog-edge">
         {error && <Banner kind="err">{error}</Banner>}
@@ -790,9 +788,14 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
           </p>
         )}
         {!showForm ? (
-          <div className="p-2.5">
-            <Button onClick={() => openForm(null)}>Add MCP server</Button>
-          </div>
+          <Button
+            variant="primary"
+            density="panel"
+            className="w-full justify-center"
+            onClick={() => openForm(null)}
+          >
+            Add an MCP server
+          </Button>
         ) : (
           <div className="space-y-3 p-2.5">
             <div

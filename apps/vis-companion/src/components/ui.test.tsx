@@ -1434,6 +1434,21 @@ describe("settings is ONE dialog with two columns", () => {
     expect(providerButton).toContain("Add a provider");
   });
 
+  // Reported over the same screenshot: the same song for MCP.
+  it("strips the MCP band to its title and lands its verb as the list's last row", () => {
+    // MCP SERVERS carried a sentence and a "0 configured" counter over a list that
+    // states its own emptiness, and its verb was a chip floating in a padded box.
+    const mcp = settings.slice(
+      settings.indexOf('title="MCP servers"'),
+      settings.indexOf("MCP transport"),
+    );
+    expect(mcp).not.toContain("description=");
+    expect(mcp).not.toContain("meta=");
+    expect(mcp).toContain('variant="primary"');
+    expect(mcp).toContain("w-full justify-center");
+    expect(mcp).toContain("Add an MCP server");
+  });
+
   // Reported over this screenshot: why is that button not simply full width on a
   // phone, and the green dots do not line up with the text.
   it("gives a lone verb the phone's full width and rides each status dot on the name's line", () => {
@@ -3280,9 +3295,9 @@ describe("a call site positions, and the component paints", () => {
       "font-mono",
     );
     // The panel's two verbs became one row (`NotifyConnectionRow`), which carries
-    // its own; the one verb left in this screen is the door to the OS that row
-    // cannot open itself.
-    expect(settingsSource.match(/density="panel"/g)).toHaveLength(1);
+    // its own; what is left in this screen is the door to the OS that row cannot
+    // open itself, plus the MCP list's own last row.
+    expect(settingsSource.match(/density="panel"/g)).toHaveLength(2);
   });
 
   it("gives the spinner the app's waiting ink as a tone", () => {
