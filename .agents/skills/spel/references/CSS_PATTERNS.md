@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.25 -->
+<!-- spel-reference-version: 0.9.26 -->
 # CSS patterns for diagrams
 
 **Canonical design system.** All presenter output uses these fonts, colors, and patterns unless the user explicitly asks for a different aesthetic. Reference implementation: `spel-report.html`.

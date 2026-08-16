@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.25 -->
+<!-- spel-reference-version: 0.9.26 -->
 <!-- Adapted from visual-explainer (MIT, github.com/nicobailon/visual-explainer) -->
 # Presenter reference
 

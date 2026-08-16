@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.25 -->
+<!-- spel-reference-version: 0.9.26 -->
 # iOS provider — native applications and hybrid WKWebViews
 
 `--provider ios` binds Appium/XCUITest to an installed application by bundle

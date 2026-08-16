@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.25 -->
+<!-- spel-reference-version: 0.9.26 -->
 # spel Report - {APP_NAME}
 
 URL: {APP_URL}

@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.25 -->
+<!-- spel-reference-version: 0.9.26 -->
 # PDF generation, image stitching, video recording
 
 Three capabilities: page → PDF, multi-screenshot stitching, session video.

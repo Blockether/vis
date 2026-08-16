@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.25 -->
+<!-- spel-reference-version: 0.9.26 -->
 # Frames and input devices
 
 Working with iframes and low-level input (keyboard, mouse, touch).

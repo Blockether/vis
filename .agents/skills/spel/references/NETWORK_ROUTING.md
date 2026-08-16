@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.25 -->
+<!-- spel-reference-version: 0.9.26 -->
 # Network & routing
 
 Intercept, modify, inspect HTTP req/res. Handle WebSocket connections.

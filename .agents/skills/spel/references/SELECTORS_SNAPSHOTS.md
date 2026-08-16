@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.25 -->
+<!-- spel-reference-version: 0.9.26 -->
 # Selectors, snapshots, annotations
 
 Find elements, read page structure, produce visual overlays. Covers `eval-sci` (implicit page) + library (explicit `pg`).
