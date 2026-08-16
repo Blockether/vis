@@ -112,11 +112,17 @@
                   {:title "Turn finished"
                    :body "vis"
                    :data {:session_id "s1" :turn_id 7}
+                   :thread-id "s1"
                    :collapse-id "s1"}))]
     (is (= "TOK" (:token m)))
     (is (= {:title "Turn finished" :body "vis"} (:notification m)))
     (is (= "HIGH" (get-in m [:android :priority])))
     (is (= "s1" (get-in m [:android :collapse_key])))
+    (testing
+      "the tag is the Android badge: one live alert per session, and the
+              only identity a delivered notification keeps, since Firebase builds
+              the tray entry itself and never copies `data` into it"
+      (is (= {:sound "default" :tag "s1"} (get-in m [:android :notification]))))
     (testing "FCM rejects non-string data values, so every value is stringified"
       (is (= {"session_id" "s1" "turn_id" "7"} (:data m))))))
 

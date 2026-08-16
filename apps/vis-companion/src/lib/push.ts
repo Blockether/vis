@@ -14,6 +14,7 @@
 
 import { Capacitor } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
+import type { PushNotificationSchema } from '@capacitor/push-notifications';
 import { APP_NAME, APP_VERSION } from './compat';
 import type { PushDeviceInput } from './types';
 
@@ -196,6 +197,10 @@ export function onPushTap(handler: (tap: PushTap) => void): () => void {
  * arriving, and `lib/badge.ts` writes the same tally from the other side. So
  * the tray must hold exactly the answers still owed to the reader.
  *
+ * On Android the tray is the WHOLE badge: the launcher dots the icon while this
+ * app holds a notification and there is no number to write, so this tidy is the
+ * only thing that ever puts the dot out.
+ *
  * This used to clear it wholesale on every foreground, which threw away the
  * alerts for every session you had NOT opened and left the badge counting from
  * zero again.
@@ -206,7 +211,7 @@ export async function dropDeliveredPushes(
   if (!isPushSupported()) return 0;
   try {
     const { notifications } = await PushNotifications.getDeliveredNotifications();
-    const done = notifications.filter((notification) => isDone(str(notification.data?.session_id)));
+    const done = notifications.filter((notification) => isDone(deliveredSession(notification)));
     if (done.length > 0) await PushNotifications.removeDeliveredNotifications({ notifications: done });
     return notifications.length - done.length;
   } catch {
@@ -217,6 +222,20 @@ export async function dropDeliveredPushes(
 
 function str(v: unknown): string | undefined {
   return typeof v === 'string' && v ? v : undefined;
+}
+
+/**
+ * Which session a delivered alert belongs to.
+ *
+ * iOS keeps the whole payload, so it is in `data`. Android does not: Firebase
+ * builds the tray entry itself and copies only its own `android.*` keys into
+ * the notification, so by the time this app can list what was delivered the
+ * data map is gone. The gateway therefore sends the session id as the
+ * notification TAG, which survives — and, being a tag, keeps one live alert per
+ * session instead of a pile the reader has to swipe away one by one.
+ */
+function deliveredSession(notification: PushNotificationSchema): string | undefined {
+  return str(notification.data?.session_id) ?? str(notification.tag);
 }
 
 /** A name the user will recognise in the gateway's device list. */

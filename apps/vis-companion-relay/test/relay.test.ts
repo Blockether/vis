@@ -409,10 +409,16 @@ describe("pushing", () => {
     const deps = makeDeps(fcm.fn);
     const grant = await mint(env, deps, { device_token: ANDROID_TOKEN, platform: "android" });
 
-    expect((await handle(pushRequest(grant), env, deps)).status).toBe(200);
+    expect((await handle(pushRequest(grant, { thread_id: "s-1" }), env, deps)).status).toBe(200);
     expect(fcm.calls[1].url).toBe("https://fcm.googleapis.com/v1/projects/vis-companion/messages:send");
     expect(fcm.calls[1].headers.authorization).toBe("Bearer ya29.fake");
-    expect(JSON.parse(fcm.calls[1].body).message.token).toBe(ANDROID_TOKEN);
+    const message = JSON.parse(fcm.calls[1].body).message;
+    expect(message.token).toBe(ANDROID_TOKEN);
+    // The tag IS the Android badge. The launcher dots the icon while a
+    // notification of ours sits in the tray, and the tag is the only identity a
+    // delivered notification keeps — Firebase never copies `data` into it — so
+    // without it the phone can never drop the alert of a session it has read.
+    expect(message.android.notification.tag).toBe("s-1");
 
     const assertion = new URLSearchParams(fcm.calls[0].body).get("assertion") ?? "";
     expect(decodeJwt(assertion).header.alg).toBe("RS256");

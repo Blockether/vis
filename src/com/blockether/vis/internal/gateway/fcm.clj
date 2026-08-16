@@ -222,15 +222,27 @@
 ;; Sending
 
 (defn- message
-  "One FCM v1 message. `data` values must be STRINGS — FCM rejects anything else."
-  [token {:keys [title body data collapse-id]}]
+  "One FCM v1 message. `data` values must be STRINGS — FCM rejects anything else.
+
+   `thread-id` becomes the notification's TAG, and that tag is the whole Android
+   badge. A launcher there writes no number of its own: it dots the icon while
+   this app holds a notification, so the tray IS the badge and must hold one
+   live alert per session. The tag is also the only identity that survives
+   delivery — Firebase builds the tray entry itself and copies only its own
+   `android.*` keys into it, never this `data` map — so a phone tidying its tray
+   can tell which session a delivered alert came from by tag and nothing else."
+  [token {:keys [title body data thread-id collapse-id]}]
   {:message {:token token
              :notification {:title title :body body}
              :data (into {}
                          (map (fn [[k v]]
                                 [(name k) (str v)]))
                          (or data {}))
-             :android (cond-> {:priority "HIGH" :notification {:sound "default"}}
+             :android (cond->
+                        {:priority "HIGH"
+                         :notification (cond-> {:sound "default"}
+                                         thread-id
+                                         (assoc :tag (str thread-id)))}
                         collapse-id
                         (assoc :collapse_key (str collapse-id)))}})
 

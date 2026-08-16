@@ -80,7 +80,16 @@ export async function accessToken(cfg: FcmConfig, deps: Deps): Promise<string | 
  */
 export const FCM_MAX_PAYLOAD_BYTES = 4096;
 
-/** FCM rejects a `data` map whose values are not strings. */
+/**
+ * FCM rejects a `data` map whose values are not strings.
+ *
+ * `tag` is the Android badge. A launcher there paints no number: it dots the
+ * icon while the app holds a notification, so the tray IS the badge and must
+ * hold one live alert per session. The tag is also the only identity that
+ * survives delivery — Firebase builds the tray entry itself and never copies
+ * `data` into it — so a phone tidying its tray matches a delivered alert to a
+ * session by tag alone.
+ */
 export function fcmPayload(deviceToken: string, notification: Notification): string {
   const data: Record<string, string> = {};
   for (const [key, value] of Object.entries(notification.data ?? {})) data[key] = String(value);
@@ -91,7 +100,10 @@ export function fcmPayload(deviceToken: string, notification: Notification): str
       data,
       android: {
         priority: "HIGH",
-        notification: { sound: "default" },
+        notification: {
+          sound: "default",
+          ...(notification.threadId ? { tag: notification.threadId } : {}),
+        },
         ...(notification.collapseId ? { collapse_key: notification.collapseId } : {}),
       },
     },

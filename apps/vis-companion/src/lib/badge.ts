@@ -20,6 +20,12 @@
  * Both halves therefore count one set — the notifications still waiting — so
  * the number never jumps when one writes after the other. The list's own unread
  * marks decide what counts as dealt with.
+ *
+ * Android has no icon number at all: the launcher dots the icon while a
+ * notification of ours sits in the tray, so there the same tidy IS the badge —
+ * the dot goes out with the last alert of a session already read. The gateway
+ * tags every Android alert with its session id because that tag is the only
+ * identity a delivered notification keeps.
  */
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import type { FleetMachine } from './fleet';
@@ -34,8 +40,8 @@ interface VisBadgePlugin {
 const VisBadge = registerPlugin<VisBadgePlugin>('VisBadge');
 
 /**
- * iOS only. An Android launcher badges itself from the notification FCM
- * delivers, so writing a number there would be a second, competing source.
+ * Only iOS has a number to write. An Android launcher owns its badge and
+ * derives it from the tray, so there `syncBadge`'s tidy is the whole of it.
  */
 export function isBadgeSupported(): boolean {
   return Capacitor.getPlatform() === 'ios' && Capacitor.isPluginAvailable('VisBadge');
