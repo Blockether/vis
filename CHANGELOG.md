@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.40] - 2026-08-16
+
+### Changed
+- chore(release): v0.1.40
+- fix(build): copy every root classpath path into the native image
+- release: update release notes for v0.1.39
+
+### Package changes
+
+#### com.blockether/vis
+- chore(release): v0.1.40 (382410b19)
+- fix(build): copy every root classpath path into the native image (c1b39d0a1)
+- release: update release notes for v0.1.39 (ed3eeb944)
+
+
+
 ## [v0.1.39] - 2026-08-16
 
 ### Changed
@@ -5236,7 +5252,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.39...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.40...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -5268,3 +5284,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.37]: https://github.com/Blockether/vis/releases/tag/v0.1.37
 [v0.1.38]: https://github.com/Blockether/vis/releases/tag/v0.1.38
 [v0.1.39]: https://github.com/Blockether/vis/releases/tag/v0.1.39
+[v0.1.40]: https://github.com/Blockether/vis/releases/tag/v0.1.40

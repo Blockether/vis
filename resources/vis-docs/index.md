@@ -131,7 +131,7 @@ extension.
 
 ```clojure
 ;; deps.edn
-{:deps {com.blockether/vis {:mvn/version "0.1.39"}}}
+{:deps {com.blockether/vis {:mvn/version "0.1.40"}}}
 ```
 
 `com.blockether/vis` already depends on every bundled extension, so that single
