@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.38 (4319) — 2026-08-16
+<!-- commit: 8088f819e680b5526f62f9616b44f629a28029c9 -->
+
+- Brand the launch screen and name the Android channel
+- Reopen a session where the reader stopped reading
+- Read a paste mask's alpha band, not its blue channel
+- Redraw the Android launcher and notification icons from the iOS master
+- Ask the sessions list for one page when nothing moved
+- Tag Android alerts so the badge can clear
+- Address a fresh attachment in the block that made it
+- Regenerate the spel skill from spel 0.9.27
+- Badge the icon with the alerts still waiting
+- Put an opened note's Save in its header band
+- Wear the name's step on a status dot
+- Frame the destructive confirm around its own cost
+- Hold a spoken conversation instead of a speech toggle
+- Keep a project folded once you have folded it
+- Unbox the voice bands and drop the Off route
+- Plan making every capability an extension of one contract
+- Make the Python host an object, not a dict
+- Strip the MCP band and land its verb as the list's last row
+- Give the host contract its own package
+- Make the providers action amber and unpin the blocked banner
+
 ## 0.1.38 (4280) — 2026-08-16
 <!-- commit: 936e3be55930ab3eec07f34b255f2b9d6397a0b5 -->
 
