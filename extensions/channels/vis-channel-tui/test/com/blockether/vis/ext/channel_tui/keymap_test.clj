@@ -35,7 +35,8 @@
                  (expect (= :pick-model (keymap/prefix-action-for \c)))
                  (expect (= :show-sessions (keymap/prefix-action-for \s)))
                  (expect (= :fork-session (keymap/prefix-action-for \y)))
-                 (expect (nil? (keymap/prefix-action-for \b)))
+                 ;; `b` = the voice conversation MODE, one letter from `v` = one recording.
+                 (expect (= :toggle-voice-conversation (keymap/prefix-action-for \b)))
                  ;; C-x C-f search · C-x C-a attach · C-x C-v voice · C-x C-h help — the
                  ;; second key resolves the same with or without its own Ctrl.
                  (expect (= :search-open (keymap/prefix-action-for \f)))
@@ -98,7 +99,10 @@
                  (expect (= "C-x h" (keymap/label-for :toggle-help)))
                  ;; The plain `c` after C-x is distinct from the direct Ctrl+C quit chord.
                  (expect (= :pick-model (keymap/prefix-action-for keymap/quit-key)))
-                 (expect (= :open-magit (keymap/prefix-action-for keymap/abort-key))))
+                 (expect (= :open-magit (keymap/prefix-action-for keymap/abort-key)))
+                 ;; `v` records ONE utterance; `b` next to it arms the conversation
+                 ;; MODE - the thing the deleted `speech` feature toggle could not be.
+                 (expect (= "C-x b" (keymap/label-for :toggle-voice-conversation))))
              (it "every C-x prefix key is distinct, including the palette's second key"
                  (let [keys (mapv :key keymap/prefix-commands)]
                    (expect (= (count keys) (count (distinct keys))))
@@ -149,8 +153,11 @@
           (expect (not (contains? (ids {}) :fork-at-turn)))
           (expect (contains? (ids {:tabs [{:id :a} {:id :b}]}) :close-tab))
           (expect (contains? (ids {:messages [{:role :user}]}) :fork-at-turn))
-          ;; palette-only verbs are never painted
-          (expect (not (contains? (ids {:tabs [{:id :a} {:id :b}] :messages [{:role :user}]})
-                                  :fork-session)))))
+          ;; palette-only verbs are never painted. The voice conversation MODE is
+          ;; one of them ON PURPOSE: a fifth verb in Tools re-packs the hydra and
+          ;; costs six rows of transcript (see `band-top-row` in screen-test).
+          (let [painted (ids {:tabs [{:id :a} {:id :b}] :messages [{:role :user}]})]
+            (expect (not (contains? painted :fork-session)))
+            (expect (not (contains? painted :toggle-voice-conversation))))))
     (it "every verb declares a heading the hydra knows"
         (expect (every? (set keymap/prefix-groups) (map :group keymap/prefix-commands))))))

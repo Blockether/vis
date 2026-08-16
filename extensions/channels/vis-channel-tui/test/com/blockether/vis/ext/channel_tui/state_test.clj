@@ -203,7 +203,7 @@
                              :slash-command-hidden? true}}}
 
        next-db
-       (external-input-fn db [:external-input :append "rewrite" :first])]
+       (:db (external-input-fn db [:external-input :append "rewrite" :first]))]
 
       (expect (= "second draft" (input/input->text (:input next-db))))
       (expect (= :second-index (:input-history-index next-db)))
@@ -5330,3 +5330,96 @@
                    (expect (< (long hint-row) (- rows (long prompt-h))))
                    ;; and it never climbs over the header
                    (expect (= 4 min-row)))))
+
+
+;; Reported over the settings screen: the `speech` FEATURE TOGGLE was the wrong shape.
+;; A machine-wide on/off cannot answer the only question a human asks - should THIS
+;; conversation talk back - and the TUI had no way to hold a spoken conversation at
+;; all. The toggle is deleted; what follows pins the MODE that replaced it.
+(defdescribe
+  voice-conversation-test
+  (let
+    [ev (fn [id]
+          (:fn (get @@#'state/event-registry id)))]
+    (it "arms the tab it was pressed on, and the banner says so"
+        (with-redefs
+          [vis/notify! (fn [& _]
+                         nil)]
+          (reset! state/app-db {:active-tab-id :main
+                                :tabs [{:id :main :active? true}]
+                                :channel-status {}
+                                :render-version 0})
+          (state/dispatch [:toggle-voice-conversation])
+          (expect (true? (:voice-conversation? @state/app-db)))
+          (expect (= "◉ Voice conversation"
+                     (get-in @state/app-db [:channel-status :voice/conversation :text])))
+          (state/dispatch [:toggle-voice-conversation])
+          (expect (false? (:voice-conversation? @state/app-db)))
+          (expect (nil? (get-in @state/app-db [:channel-status :voice/conversation])))))
+    (it
+      "silences the answer being spoken the moment the mode is switched off"
+      (let
+        [toggle-fn (ev :toggle-voice-conversation)
+         armed {:active-tab-id :main :tabs [{:id :main :active? true}] :voice-conversation? true}]
+
+        (expect (some #(= [:stop-speaking] %) (:fx (toggle-fn armed [:toggle-voice-conversation]))))
+        (expect (not-any? #(= [:stop-speaking] %)
+                          (:fx (toggle-fn (assoc armed :voice-conversation? false)
+                                          [:toggle-voice-conversation]))))))
+    (it "belongs to ONE conversation: a background tab never inherits it"
+        ;; `empty-tab-state` must carry the key. `db-for-tab` only MERGES a snapshot
+        ;; over the root, so a key missing there hands the ACTIVE tab's arming to
+        ;; every other tab - and every tab would speak.
+        (let
+          [db {:active-tab-id :main
+               :tabs [{:id :main :active? true} {:id :other}]
+               :voice-conversation? true
+               :tab-locals {:other {:session {:id "s2"}}}}]
+          (expect (false? (boolean (:voice-conversation? (#'state/db-for-tab db :other)))))))
+    (it "speaks a finished answer on an armed tab, and only a real answer"
+        (let
+          [message-fn (ev :message-received)
+           armed {:active-tab-id :main
+                  :tabs [{:id :main :active? true}]
+                  :session {:id "s1"}
+                  :input (input/empty-input)
+                  :loading? true
+                  :messages [{:role :user :text "read me the plan"}
+                             {:role :assistant :pending? true}]
+                  :progress {:iterations []}
+                  :voice-conversation? true}
+           answer [:ast {} [:p {} [:span {} "the plan is two phases"]]]
+           fx-ids (fn [db completion]
+                    (set (map first
+                              (:fx (message-fn db [:message-received :main answer completion])))))]
+
+          (expect (contains? (fx-ids armed {:status :completed}) :speak-reply))
+          ;; A cancel or a failure is a VERDICT for the eye, not an answer to what was
+          ;; asked: reading it aloud is the machine talking about itself.
+          (expect (not (contains? (fx-ids armed {:status :cancelled}) :speak-reply)))
+          (expect (not (contains? (fx-ids armed {:status :failed}) :speak-reply)))
+          (expect (not (contains? (fx-ids (assoc armed :voice-conversation? false)
+                                          {:status :completed})
+                                  :speak-reply)))))
+    (it "sends what the microphone heard instead of waiting for Enter"
+        (let
+          [external-fn (ev :external-input)
+           armed {:active-tab-id :main
+                  :tabs [{:id :main :active? true}]
+                  :session {:id "s1"}
+                  :input (input/empty-input)
+                  :voice-conversation? true}
+           fx (fn [db source]
+                (:fx (external-fn db [:external-input :append "read me the plan" nil source])))]
+
+          (expect (= [[:dispatch [:send-message "read me the plan" :main]]
+                      [:dispatch [:reset-input]]]
+                     (fx armed :voice/input)))
+          ;; A busy tab queues it, exactly like Enter does.
+          (expect (= [[:dispatch [:enqueue-message "read me the plan" :main]]
+                      [:dispatch [:reset-input]]]
+                     (fx (assoc armed :loading? true) :voice/input)))
+          ;; Text from anything but the microphone still waits for a human Enter, and
+          ;; so does every tab that was never armed.
+          (expect (nil? (fx armed :agent/hook)))
+          (expect (nil? (fx (assoc armed :voice-conversation? false) :voice/input)))))))

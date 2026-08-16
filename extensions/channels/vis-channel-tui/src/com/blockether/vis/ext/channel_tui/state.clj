@@ -134,7 +134,10 @@
    :slash-command-hidden? :submitted-input :pending-sends :retracted-sends :queue-paused :pastes
    :paste-counter :loading? :cancel-token :cancelling? :cancelling-at-ms :cancel-awaiting-client-id
    :gateway-turn-id :live-turn-client-id :progress :turn-start-ms :detail-expansions
-   :mouse-selection :session-model-pref :human-input :human-input-queue])
+   :mouse-selection :session-model-pref :human-input :human-input-queue
+   ;; Arming a voice conversation belongs to ONE conversation, so it is per-tab: the
+   ;; tab you left must not keep speaking through the tab you entered.
+   :voice-conversation?])
 
 (defn- empty-tab-state
   []
@@ -173,7 +176,23 @@
    ;; A human-input pause belongs to ONE session, so the dialog belongs to ONE
    ;; tab: session A's form must never take over the tab showing session B.
    :human-input nil
-   :human-input-queue []})
+   :human-input-queue []
+   ;; Stated HERE on purpose: `restore-tab` only MERGES, so a tab that never armed
+   ;; would otherwise inherit the armed tab's flag from the root db.
+   :voice-conversation? false})
+
+(defn- sync-voice-conversation-status
+  "Mirror the ACTIVE tab's voice arming into the header's channel-status banner.
+
+   The banner is one line for the whole terminal while arming belongs to ONE
+   conversation, so both things that can disagree - toggling the mode and switching
+   tabs - come through here."
+  [db]
+  (if (:voice-conversation? db)
+    (assoc-in db
+      [:channel-status :voice/conversation]
+      {:text "◉ Voice conversation" :level :info :updated-at-ms (System/currentTimeMillis)})
+    (update db :channel-status dissoc :voice/conversation)))
 
 (defn- tab-snapshot [db] (merge (empty-tab-state) (select-keys db tab-state-keys)))
 
@@ -1197,12 +1216,13 @@
     ;; can null the denormalized top-level `:workspace/root`; backfill it from
     ;; the entry so every reader (footer, F2 context panel, `/cd` picker,
     ;; magit) keeps the ACTIVE session's root and never the vis process cwd.
-    (cond-> db'
-      (and (nil? (:workspace/root db')) (:workspace/root entry))
-      (assoc :workspace/root (:workspace/root entry))
+    (-> (cond-> db'
+          (and (nil? (:workspace/root db')) (:workspace/root entry))
+          (assoc :workspace/root (:workspace/root entry))
 
-      (and (nil? (:workspace db')) (:workspace entry))
-      (assoc :workspace (:workspace entry)))))
+          (and (nil? (:workspace db')) (:workspace entry))
+          (assoc :workspace (:workspace entry)))
+        sync-voice-conversation-status)))
 
 (defn- activate-tab
   [db workspace-id]
@@ -2697,9 +2717,37 @@
       :slash-command-index 0
       :slash-command-hidden? false)))
 
-(reg-event-db :external-input
-              (fn [db [_ op text workspace-id]]
-                (update-tab db workspace-id #(apply-external-input % op text))))
+(reg-event-fx :external-input
+              (fn [db [_ op text workspace-id source]]
+                (let
+                  [db'
+                   (update-tab db workspace-id #(apply-external-input % op text))
+
+                   active-id
+                   (current-tab-id db')
+
+                   ;; An ARMED conversation SENDS what it just heard. Making the human reach for
+                   ;; Enter after speaking is exactly the ceremony the mode exists to remove.
+                   ;;
+                   ;; Only the ACTIVE tab auto-submits, so the tab's state IS the db root here:
+                   ;; `:reset-input` clears the root, and submitting a BACKGROUND tab would fire
+                   ;; its text while leaving the words sitting in its editor.
+                   submit?
+                   (boolean (and (= :voice/input source)
+                                 (= active-id (or workspace-id active-id))
+                                 (:voice-conversation? db')
+                                 (:session db')
+                                 ;; Same rule as Enter: a turn being cancelled takes no new intent.
+                                 (not (:cancelling? db'))
+                                 (not (str/blank? (input/input->text (:input db'))))))]
+
+                  (cond-> {:db db'}
+                    submit?
+                    (assoc :fx
+                      [[:dispatch
+                        [(if (:loading? db') :enqueue-message :send-message)
+                         (input/input->text (:input db')) active-id]]
+                       [:dispatch [:reset-input]]])))))
 
 (reg-event-db
   :channel-status-set
@@ -2715,6 +2763,23 @@
                 (if (= until (get-in db [:channel-status id :until]))
                   (update db :channel-status dissoc id)
                   db)))
+
+(reg-event-fx :toggle-voice-conversation
+              ;; The voice MODE, not a setting. `speech` used to be a machine-wide feature toggle,
+              ;; which could never answer the only question anyone asks - should THIS conversation
+              ;; talk back - and left the TUI with no way to hold one at all.
+              (fn [db _]
+                (let [armed? (not (:voice-conversation? db))]
+                  {:db (sync-voice-conversation-status (assoc db :voice-conversation? armed?))
+                   :fx (cond->
+                         [[:notify
+                           (if armed?
+                             "Voice conversation on - answers are spoken here"
+                             "Voice conversation off") :info settings-notification-ttl-ms]]
+                         ;; Disarming SILENCES: the answer already playing is part of the
+                         ;; conversation being ended, not a recording to sit through.
+                         (not armed?)
+                         (conj [:stop-speaking]))})))
 
 (defn- human-input-target-tab
   "The tab a human-input form is allowed to appear on.
@@ -5218,6 +5283,15 @@
                                  (assoc :unread? true)))
                              entries))))
        :fx (cond-> []
+             ;; This is the whole mode: the tab you ARMED answers out loud. A
+             ;; cancelled or failed turn stays silent - that text is a verdict for the
+             ;; eye, not an answer to what was asked.
+             (and (:voice-conversation? (db-for-tab db' workspace-id))
+                  (not skip-identified-completion?)
+                  (not (#{:cancelled :failed} status))
+                  (not (str/blank? (str answer))))
+             (conj [:speak-reply answer])
+
              @drain?
              (conj [:dispatch [:drain-pending workspace-id]])
 
@@ -5242,6 +5316,34 @@
 (reg-fx :notify
         (fn [text level ttl-ms]
           (vis/notify! text :level level :ttl-ms ttl-ms)))
+
+;; Speaking lives in the voice extension and is resolved at CALL time, exactly like
+;; `toggle-recording!` in `screen.clj`: a build without foundation-voice simply cannot
+;; speak, and a build with it pays for the TTS classes only once an answer is spoken.
+(defn- voice-output-fn
+  [fn-name]
+  (try (requiring-resolve (symbol "com.blockether.vis.ext.foundation-voice.output" fn-name))
+       (catch Throwable t
+         (tel/log! {:level :error :id ::voice-output-unavailable :data {:fn fn-name :ex t}})
+         nil)))
+
+(reg-fx :speak-reply
+        (fn [text]
+          (if-let [speak! (voice-output-fn "speak!")]
+            (try (speak! text)
+                 (catch Throwable t
+                   (tel/log! {:level :error :id ::voice-speak-failed :data {:ex t}})
+                   (vis/notify! (str "Voice cannot speak: " (or (ex-message t) (str t)))
+                                :level :error
+                                :ttl-ms settings-notification-ttl-ms)))
+            (vis/notify! "Voice extension not loaded (foundation-voice)."
+                         :level :warn
+                         :ttl-ms settings-notification-ttl-ms))))
+
+(reg-fx :stop-speaking
+        (fn []
+          (when-let [stop! (voice-output-fn "stop!")]
+            (try (stop!) (catch Throwable _ nil)))))
 
 ;; Flip a cycling registry toggle OUTSIDE the dispatch swap. `toggle-cycle-value!`
 ;; fires the registry listener synchronously and that listener dispatches back

@@ -2,6 +2,7 @@
   "TUI voice input backed by local Parakeet-class ASR."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.foundation-voice.output :as output]
             [com.blockether.vis.ext.foundation-voice.recorder :as recorder]
             [com.blockether.vis.internal.voice :as voice]
             [taoensso.telemere :as tel]))
@@ -144,6 +145,10 @@
         (:recorder @state) (publish!
                              {:op :notify :text "Voice recording is already running" :level :warn})
         :else (let [workspace-id (ctx-workspace-id ctx)]
+                ;; Reaching for the microphone SILENCES the answer being spoken: a
+                ;; machine that keeps talking while the human talks is not holding a
+                ;; conversation. No-op when nothing is playing.
+                (output/stop!)
                 ;; A microphone that refuses (no input device, permission not
                 ;; granted) used to throw out of the keymap: the status line kept
                 ;; whatever it said and the human was told nothing at all.
@@ -271,7 +276,7 @@
 (defn tui-commands
   [_ctx]
   [{:id :voice/toggle-recording
-    :label "Voice: Toggle Recording (Ctrl+B)"
+    :label "Voice: Toggle Recording (C-x v)"
     :palette? false
     :run-fn toggle-recording!}])
 

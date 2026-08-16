@@ -1034,22 +1034,11 @@
                 (is (= 400 (:status (say "   ")))))
               (testing "a runaway line is refused rather than synthesized for minutes"
                 (is (= 413 (:status (say (apply str (repeat 21000 "x")))))))
-              (testing "the toggle refuses the WORK, never the readiness a client is watching"
-                (try (toggles/set-enabled! voice/speech-toggle-id false)
-                     (let [refused (say "hello")]
-                       (is (= 403 (:status refused)))
-                       (is (= "speech" (get (wire/parse-json (:body refused)) "toggle")))
-                       (is (= 403
-                              (:status ((rv 'speech-model-handler)
-                                         {:request-method :post :path-params {:sid sid}}))))
-                       (is (= 200
-                              (:status ((rv 'speech-model-handler)
-                                         {:request-method :get :path-params {:sid sid}}))))
-                       (is (false? (-> ((rv 'capabilities-handler) {})
-                                       :body
-                                       wire/parse-json
-                                       (get-in ["features" "speech" "is_enabled"])))))
-                     (finally (toggles/reset-to-default! voice/speech-toggle-id)))))))
+              (testing "capabilities publish ONE boolean: this machine HAS an engine that speaks"
+                (is (true? (-> ((rv 'capabilities-handler) {})
+                               :body
+                               wire/parse-json
+                               (get-in ["features" "speech" "is_enabled"]))))))))
         (testing "an engine that is still preparing answers 425 with its own state"
           (with-only-speech-engine! {:id :downloading
                                      :synthesize (constantly "/tmp/vis-never-written.wav")
@@ -2679,13 +2668,7 @@
               (is (= 200 (:status gone)))
               (is (true? (get (wire/parse-json (:body gone)) "is_forgotten"))))
             (is (empty? (get (wire/parse-json (:body (listed))) "voices")))
-            (is (= 404 (:status (forget "my-own")))))
-          (testing "the toggle refuses the upload without hiding the catalogue"
-            (try (toggles/set-enabled! voice/speech-toggle-id false)
-                 (is (= 403 (:status (upload {"name" "Later"} "RIFFclip"))))
-                 (is (= 403 (:status (forget "my-own"))))
-                 (is (= 200 (:status (listed))))
-                 (finally (toggles/set-enabled! voice/speech-toggle-id true)))))))
+            (is (= 404 (:status (forget "my-own"))))))))
     (testing "an engine that cannot clone refuses the upload by name, and it is not a 500"
       (with-only-speech-engine!
         (speaking-engine)

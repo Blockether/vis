@@ -533,8 +533,9 @@ export interface GatewayCapabilities {
     /**
      * SPEAKING back, which is a separate extension from listening: a gateway can
      * transcribe and not speak, speak and not transcribe, or neither. `is_enabled` is
-     * already the AND of "an engine exists" and "the operator left spoken replies on",
-     * so a client never has to remember to check both.
+     * exactly "this gateway has a synthesis engine". Whether a REPLY is spoken is a
+     * conversation MODE the client arms, never a machine-wide setting - the old
+     * `speech` feature toggle could not say "for this conversation" and is gone.
      */
     speech?: {
       is_enabled: boolean;

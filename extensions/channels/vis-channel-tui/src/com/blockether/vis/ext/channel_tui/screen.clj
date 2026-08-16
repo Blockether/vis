@@ -508,13 +508,16 @@
   [{:keys [op id text level ttl-ms] :as event}]
   (case op
     :input/replace
-    (state/dispatch [:external-input :replace text (:workspace-id event)])
+    (state/dispatch [:external-input :replace text (:workspace-id event) (:source event)])
 
     :input/append
-    (state/dispatch [:external-input :append text (:workspace-id event)])
+    ;; The SOURCE travels with the text: an armed voice conversation submits what the
+    ;; microphone appended and nothing else (a hook or an editor paste still waits for
+    ;; Enter). See `:external-input` in state.clj.
+    (state/dispatch [:external-input :append text (:workspace-id event) (:source event)])
 
     :input/insert
-    (state/dispatch [:external-input :insert text (:workspace-id event)])
+    (state/dispatch [:external-input :insert text (:workspace-id event) (:source event)])
 
     :status/set
     (let [status-id (or id (:source event) :external)]
@@ -7101,7 +7104,10 @@
                                                  :level :warn
                                                  :ttl-ms status-error-ttl-ms))
 
-                                  :pick-file
+                                   :toggle-voice-conversation
+                                   (state/dispatch [:toggle-voice-conversation])
+
+                                   :pick-file
                                   ;; `@` opens the INLINE file picker now (same as the
                                   ;; web); the modal is gone. This palette entry just
                                   ;; seeds an `@` at the caret to start it.
@@ -7391,7 +7397,14 @@
                                                              :ttl-ms status-error-ttl-ms)))))
                            (recur))
 
-                         :show-sessions
+                          :toggle-voice-conversation
+                          ;; The MODE (C-x b): while it is armed every answer on this
+                          ;; tab is spoken here and a transcription submits itself, so
+                          ;; the loop closes without a keystroke. Recording (C-x v) is
+                          ;; still one utterance and is unchanged.
+                          (do (state/dispatch [:toggle-voice-conversation]) (recur))
+
+                          :show-sessions
                          (do (show-sessions!) (recur))
 
                          :fork-session

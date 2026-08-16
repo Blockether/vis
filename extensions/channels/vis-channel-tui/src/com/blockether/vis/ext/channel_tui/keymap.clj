@@ -96,7 +96,17 @@
    {:action :search-open :key \f :label "search" :group "Buffer" :show-when :never}
    {:action :pick-file :key \a :label "attach file" :group "Tools"}
    {:action :toggle-voice-recording :key \v :label "voice" :group "Tools"}
-   {:action :open-drafts :key \d :label "drafts" :group "Session"}
+   ;; `b` = the conversation MODE, next to `v` = one recording. Arming is not a
+   ;; setting: it says SPEAK THE ANSWERS OF THIS CONVERSATION, and only this one.
+   ;; Palette-only because the Tools pane is FULL: a fifth verb there re-packs the
+   ;; hydra and costs six rows of transcript in a 30-row terminal (screen-test pins
+   ;; the band's top row). The chord, the palette and help still carry it, and while
+   ;; the mode is armed the header banner says so.
+   {:action :toggle-voice-conversation
+    :key \b
+    :label "voice conversation"
+    :group "Tools"
+    :show-when :never} {:action :open-drafts :key \d :label "drafts" :group "Session"}
    {:action :toggle-help :key \h :label "help" :group "Buffer"}
    {:action :new-session :key \n :label "new session" :group "Session"}
    {:action :show-sessions :key \s :label "switch session" :group "Session"}

@@ -29,8 +29,7 @@
       and no job exists yet — and is part of the vocabulary so every surface names the
       same things. Every change is PUSHED to [[watch!]] watchers, so the gateway streams
       a job as SSE and no surface ever polls."
-  (:require [clojure.string :as str]
-            [com.blockether.vis.internal.toggles :as toggles])
+  (:require [clojure.string :as str])
   (:import [java.io File]
            [java.util UUID]))
 
@@ -103,38 +102,6 @@
     (or (not-empty (str/trim (str (ex-message root))))
         (not-empty (str/trim (str root)))
         "Unknown error")))
-
-;; The `speech` feature toggle
-
-(def speech-toggle-id
-  "The feature toggle that decides whether Vis speaks at all. Registered HERE, at the
-   one door both spoken paths go through, so turning it off in a project's `vis.yml`
-   silences synthesis everywhere instead of in whichever surface remembered to ask."
-  "speech")
-
-;; Registered at load: `toggles/hydrate-from-config!` runs at process start and again on
-;; `/reload`, so a project override in the merged config applies without a restart.
-(toggles/register-toggle! {:id speech-toggle-id
-                           :label "Spoken replies"
-                           :description "Speak replies aloud through a text-to-speech engine."
-                           :default true
-                           :owner :vis
-                           :persist? true
-                           :group :voice})
-
-(defn speech-enabled?
-  "Is spoken output offered at all? Fail-closed, like every toggle."
-  []
-  (toggles/enabled? speech-toggle-id))
-
-(defn- check-speech-enabled!
-  []
-  (when-not (speech-enabled?)
-    (throw (ex-info "Spoken replies are turned off"
-                    {:type :vis/voice-direction-disabled
-                     :direction :synthesize
-                     :toggle speech-toggle-id})))
-  nil)
 
 ;; Engine registry
 
@@ -548,7 +515,6 @@
    `{:phase :progress}` to `on-progress`. Returns the file the engine wrote —
    `{:audio-path :media-type :bytes …}` — which the CALLER owns and deletes."
   [{:keys [engine-id on-progress] :as request}]
-  (check-speech-enabled!)
   (let
     [engine
      (resolve-engine :synthesize engine-id)
@@ -747,7 +713,6 @@
   "Resolve the engine and store the QUEUED job, or refuse BEFORE a job exists. Returns
    `[engine job]` — the private job, not the public one."
   [direction {:keys [engine-id voice-id]}]
-  (when (= :synthesize direction) (check-speech-enabled!))
   (let
     [engine
      (resolve-engine direction engine-id)

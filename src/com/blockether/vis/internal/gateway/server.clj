@@ -2736,17 +2736,6 @@
    answers 413 and the caller splits the text itself."
   20000)
 
-(defn- speech-disabled-response
-  "403 when spoken replies are turned off, else nil. The toggle gates WORK — a synthesis,
-   and the download that would enable one — never the READ routes, so a client can always
-   see the state it is being refused from."
-  []
-  (when-not (voice/speech-enabled?)
-    (json-response 403
-                   {:status "unavailable"
-                    :error "spoken replies are turned off"
-                    :toggle voice/speech-toggle-id})))
-
 (defn- voice-state->json
   [st]
   (cond-> {:status (name (:state st))}
@@ -2971,9 +2960,9 @@
      (try (voice/default-engine :synthesize) (catch Throwable _ nil))
 
      speech-caps
-     ;; ONE actionable boolean: an engine exists AND the operator left spoken replies on.
-     ;; A client that has to and-together two flags eventually forgets one of them.
-     (merge {:is-enabled (and (boolean speech-engine) (voice/speech-enabled?))
+     ;; ONE actionable boolean: this machine HAS an engine that can speak. Whether a
+     ;; reply is spoken belongs to the surface's voice conversation, never to a flag here.
+     (merge {:is-enabled (boolean speech-engine)
              :transport "audio/wav"
              :synthesis "gateway-local"
              :is-async true
@@ -3044,12 +3033,7 @@
 
 (defn- voice-model-handler [request] (model-handler :transcribe request))
 
-(defn- speech-model-handler
-  "[[model-handler]] for synthesis. Preparing an engine is WORK — it can start a model
-   download — so a POST is refused while spoken replies are off; the GET always answers."
-  [request]
-  (or (when (= :post (:request-method request)) (speech-disabled-response))
-      (model-handler :synthesize request)))
+(defn- speech-model-handler [request] (model-handler :synthesize request))
 
 (defn- voice-handler
   "POST /v1/sessions/:sid/voice — body is a recorded WAV blob. ACCEPTS the audio
@@ -3094,14 +3078,11 @@
                  (json-response 400 {:error (voice/error-message t)}))))))))
 
 (defn- speech-failure-response
-  "The refusal a THROWN synthesis deserves: 403 when the toggle went off underneath us,
-   otherwise 500 — the request was valid and the engine failed, which is the gateway's
-   fact to report rather than the caller's to fix."
+  "The refusal a THROWN synthesis deserves: 500. The request was valid and the engine
+   failed, which is the gateway's fact to report rather than the caller's to fix."
   [^Throwable t]
-  (if (= :vis/voice-direction-disabled (:type (ex-data t)))
-    (json-response 403 {:status "unavailable" :error (ex-message t) :toggle voice/speech-toggle-id})
-    (do (tel/log! {:level :error :id ::speech-synthesize-failed :data {:error (str t)}})
-        (json-response 500 {:error (voice/error-message t)}))))
+  (tel/log! {:level :error :id ::speech-synthesize-failed :data {:error (str t)}})
+  (json-response 500 {:error (voice/error-message t)}))
 
 (defn- file-bytes
   ^bytes [^java.io.File f]
@@ -3149,43 +3130,41 @@
    engine answers 425 (Too Early) with its state, NEVER blocking the request thread on a
    model download."
   [request]
-  (or
-    (speech-disabled-response)
-    (with-speech-engine
-      request
-      (fn [_sid engine]
-        (let
-          [body
-           (try (body-json request) (catch Throwable _ nil))
+  (with-speech-engine
+    request
+    (fn [_sid engine]
+      (let
+        [body
+         (try (body-json request) (catch Throwable _ nil))
 
-           text
-           (some-> (get body "text")
-                   str
-                   str/trim)
+         text
+         (some-> (get body "text")
+                 str
+                 str/trim)
 
+         voice-id
+         (some-> (get body "voice")
+                 str
+                 str/trim
+                 not-empty
+                 keyword)
+
+         work
+         (cond-> {:text text :engine-id (:id engine)}
            voice-id
-           (some-> (get body "voice")
-                   str
-                   str/trim
-                   not-empty
-                   keyword)
+           (assoc :voice-id voice-id))]
 
-           work
-           (cond-> {:text text :engine-id (:id engine)}
-             voice-id
-             (assoc :voice-id voice-id))]
-
-          (cond (str/blank? text)
-                (json-response 400 {:error "body must be JSON with a non-empty \"text\""})
-                (> (count text) (long speech-max-chars))
-                (json-response 413
-                               {:error (str "text is longer than " speech-max-chars " characters")})
-                (not (voice/ready? engine))
-                (json-response 425 (voice-state->json (voice/readiness engine)))
-                :else (try (if (> (count text) (long speech-inline-max-chars))
-                             (json-response 202 (voice/submit! :synthesize work))
-                             (inline-speech-response work))
-                           (catch Throwable t (speech-failure-response t)))))))))
+        (cond (str/blank? text)
+              (json-response 400 {:error "body must be JSON with a non-empty \"text\""})
+              (> (count text) (long speech-max-chars))
+              (json-response 413
+                             {:error (str "text is longer than " speech-max-chars " characters")})
+              (not (voice/ready? engine))
+              (json-response 425 (voice-state->json (voice/readiness engine)))
+              :else (try (if (> (count text) (long speech-inline-max-chars))
+                           (json-response 202 (voice/submit! :synthesize work))
+                           (inline-speech-response work))
+                         (catch Throwable t (speech-failure-response t))))))))
 
 (defn- job-handler
   "GET    /v1/sessions/:sid/{voice,speech}/jobs/:job-id — where this piece of work is:
@@ -3292,28 +3271,26 @@
    No session in the path: an imported clip belongs to the machine, and every session on
    it speaks with the same catalogue."
   [request]
-  (or (when (= :post (:request-method request)) (speech-disabled-response))
-      (with-engine
-        :synthesize
-        request
-        (fn [engine]
-          (if-not (= :post (:request-method request))
-            (json-response 200 {:engine (voice/public-engine engine) :voices (voice/voices engine)})
-            (let [tmp (java.io.File/createTempFile "vis-voice-clip" ".upload")]
-              (try (with-open
-                     [in ^java.io.InputStream (:body request)
-                      out (io/output-stream tmp)]
+  (with-engine
+    :synthesize
+    request
+    (fn [engine]
+      (if-not (= :post (:request-method request))
+        (json-response 200 {:engine (voice/public-engine engine) :voices (voice/voices engine)})
+        (let [tmp (java.io.File/createTempFile "vis-voice-clip" ".upload")]
+          (try (with-open
+                 [in ^java.io.InputStream (:body request)
+                  out (io/output-stream tmp)]
 
-                     (io/copy in out))
-                   (json-response 201
-                                  {:voice (voice/import-voice! engine
-                                                               {:path (str tmp)
-                                                                :voice-name (query-str request
-                                                                                       "name")
-                                                                :language (query-str request "lang")
-                                                                :text (query-str request "text")})})
-                   (catch Throwable t (voice-import-failure t))
-                   (finally (.delete tmp)))))))))
+                 (io/copy in out))
+               (json-response 201
+                              {:voice (voice/import-voice! engine
+                                                           {:path (str tmp)
+                                                            :voice-name (query-str request "name")
+                                                            :language (query-str request "lang")
+                                                            :text (query-str request "text")})})
+               (catch Throwable t (voice-import-failure t))
+               (finally (.delete tmp))))))))
 
 (defn- speech-voice-handler
   "DELETE /v1/speech/voices/:voice-id - forget an imported voice.
@@ -3321,14 +3298,13 @@
    404 when the engine has no such imported voice: a client that deleted a voice it
    could still see is looking at a stale catalogue, and that is worth being told."
   [request]
-  (or (speech-disabled-response)
-      (with-engine :synthesize
-                   request
-                   (fn [engine]
-                     (try (if (voice/forget-voice! engine (get-in request [:path-params :voice-id]))
-                            (json-response 200 {:is-forgotten true})
-                            (json-response 404 {:error "no imported voice with that id"}))
-                          (catch Throwable t (voice-import-failure t)))))))
+  (with-engine :synthesize
+               request
+               (fn [engine]
+                 (try (if (voice/forget-voice! engine (get-in request [:path-params :voice-id]))
+                        (json-response 200 {:is-forgotten true})
+                        (json-response 404 {:error "no imported voice with that id"}))
+                      (catch Throwable t (voice-import-failure t))))))
 (def ^:private JOB_QUEUE_CAP
   "Per-connection queue of job states. A transcription or a synthesis reports a handful
    of percentages per second at most, so anything the writer cannot keep up with is a

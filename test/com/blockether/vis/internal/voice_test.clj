@@ -10,7 +10,6 @@
    speaking."
   (:require [clojure.string :as str]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
-            [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.voice :as voice]))
 
 (defn- with-only-engines!
@@ -384,28 +383,23 @@
                           (is (= "Synthesis engine returned no audio file"
                                  (:error (voice/submit-sync! :synthesize {:text "anything"}))))))))
 
-(deftest spoken-replies-obey-their-feature-toggle
-  (with-only-engines!
-    {:synthesize [(speaker-engine :pocket-tts)]}
-    (fn []
-      (voice/reset-jobs!)
-      (try (toggles/set-enabled! voice/speech-toggle-id false)
-           (testing "with `speech` off nothing speaks, and no job is created to explain it"
-             (is (false? (voice/speech-enabled?)))
-             (is (= "Spoken replies are turned off"
-                    (refusal #(voice/submit! :synthesize {:text "quiet please"}))))
-             (is (= "Spoken replies are turned off"
-                    (refusal #(voice/synthesize! {:text "quiet please"})))))
-           (testing "listening is untouched by the SPEAKING toggle"
-             (is (= [] (voice/engines :transcribe))))
-           (finally (toggles/reset-to-default! voice/speech-toggle-id)))
-      (testing "and with the toggle back at its default the same call speaks"
-        (is (true? (voice/speech-enabled?)))
-        (let [spoken (voice/synthesize! {:text "out loud" :voice-id :javert})]
-          (is (= "audio/wav" (:media-type spoken)))
-          (let [f (java.io.File. (str (:audio-path spoken)))]
-            (is (= "javert|out loud" (slurp f)))
-            (.delete f)))))))
+(deftest synthesis-answers-whoever-asks-for-it
+  ;; The `speech` feature toggle is gone. Whether a reply is spoken belongs to the
+  ;; SURFACE's voice conversation (the TUI mode, the app's armed conversation); a
+  ;; global flag in front of every synthesis said "off" in a place nobody was speaking
+  ;; from and could not say "on, for this conversation only".
+  (with-only-engines! {:synthesize [(speaker-engine :pocket-tts)]}
+                      (fn []
+                        (voice/reset-jobs!)
+                        (testing
+                          "a line asked for is a line spoken - nothing global stands in front of it"
+                          (let [spoken (voice/synthesize! {:text "out loud" :voice-id :javert})]
+                            (is (= "audio/wav" (:media-type spoken)))
+                            (let [f (java.io.File. (str (:audio-path spoken)))]
+                              (is (= "javert|out loud" (slurp f)))
+                              (.delete f))))
+                        (testing "listening is a different direction and is unaffected"
+                          (is (= [] (voice/engines :transcribe)))))))
 
 (deftest progress-only-ever-moves-forward
   (with-only-engines!
