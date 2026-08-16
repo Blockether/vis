@@ -3,9 +3,8 @@
 `vis/__init__.py` is the extension API and nothing else: every call it makes goes
 through `_host`, the dict of callables the engine seeds before it execs the module
 inside an extension context. Installed from PyPI there is no engine, so this
-module answers the same thirteen names — and it answers them the way
-`vis/contract.json` says each one behaves outside the sandbox, never by guessing:
-
+module answers the same thirteen names — and it answers them the way the
+`vis-contract` package says each one behaves outside the sandbox, never by guessing:
   outside == "local"   the op has an honest local meaning, so do it locally:
                        state is a JSON file, `log`/`notify` are stderr lines,
                        `shell` is a real subprocess, secrets live in a vault that
@@ -19,9 +18,9 @@ module answers the same thirteen names — and it answers them the way
                        raises the refusal the CONTRACT states, by name.
 
 The contract is the document, this file is one implementation of it: an op added
-to `resources/vis-contract/python-host.edn` and left unimplemented here fails at
-import with the op named, rather than at the call site inside somebody's
-extension. That is the whole point of keeping the two apart.
+to `packages/vis-contract/resources/vis-contract/python-host.edn` and left
+unimplemented here fails at import with the op named, rather than at the call site
+inside somebody's extension. That is the whole point of keeping the two apart.
 
 Priming an answer instead of typing it (unit tests, CI):
 
@@ -47,22 +46,20 @@ import time
 import uuid
 from pathlib import Path
 
+import vis_contract
+
 __all__ = ["Refused", "answer_with", "contract", "host", "state_home"]
 
 
 # -- The contract -------------------------------------------------------------
 
 
-def _load_contract():
-    # Rendered from resources/vis-contract/python-host.edn by
-    # `internal.python-contract/write-package-document!` and shipped in the wheel.
-    with open(Path(__file__).with_name("contract.json"), encoding="utf-8") as fh:
-        return json.load(fh)
-
-
-contract = _load_contract()
-_OPS = {op["name"]: op for op in contract["ops"]}
-_HUMAN = contract["human_input"]
+# The DECLARATION is its own package (`pip install vis-contract`), so this host and
+# the engine that seeds the real one read one document. Nothing is transcribed
+# here: every op name, every refusal and the whole shell grammar come from it.
+contract = vis_contract.CONTRACT
+_OPS = vis_contract.OPS
+_HUMAN = vis_contract.HUMAN_INPUT
 
 
 class Refused(RuntimeError):
@@ -360,7 +357,7 @@ def _shell_vocabulary():
 def shell(opts):
     """Start a process, or drive one this host already started.
 
-    The op vocabulary is the CONTRACT's, not this file's: `vis/contract.json`
+    The op vocabulary is the CONTRACT's, not this file's: `vis_contract.SHELL`
     names which ops spawn and which drive a handle, so an extension written
     against the engine's `{"op": "run", …}` means the same thing out here.
     """

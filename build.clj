@@ -34,40 +34,42 @@
 
 ;; Package catalog
 
-(def ^:private extension-package-root "extensions")
+(def ^:private subproject-patterns
+  "Where a publishable subproject's own deps.edn sits, by tree: an extension is
+   `extensions/<kind>/<name>`, a library shared with the outside world is
+   `packages/<name>`. Both are jars on Clojars; neither is listed by hand."
+  {"extensions" #"extensions/[^/]+/[^/]+/deps\.edn" "packages" #"packages/[^/]+/deps\.edn"})
 
-(defn- extension-package-deps-file?
+(defn- subproject-deps-file?
   [^java.io.File f]
   (let [path (str/replace (.getPath f) "\\" "/")]
     (and (.isFile f)
          (= "deps.edn" (.getName f))
-         (some? (re-matches #"extensions/[^/]+/[^/]+/deps\.edn" path)))))
+         (boolean (some #(re-matches % path) (vals subproject-patterns))))))
 
-(defn- extension-package-dirs
-  "Every extension subproject that declares its own deps.edn. New extension
-  packages are publishable automatically — no hard-coded package list to
-  remember when adding `extensions/<kind>/<name>/deps.edn`."
+(defn- subproject-dirs
+  "Every subproject that declares its own deps.edn. New packages are publishable
+   automatically — no hard-coded package list to remember when adding
+   `extensions/<kind>/<name>/deps.edn` or `packages/<name>/deps.edn`."
   []
-  (->> (file-seq (io/file extension-package-root))
-       (filter extension-package-deps-file?)
+  (->> (mapcat #(file-seq (io/file %)) (keys subproject-patterns))
+       (filter subproject-deps-file?)
        (map #(-> ^java.io.File %
                  .getParentFile
                  .getPath))
        sort))
 
-(defn- extension-dir->package
+(defn- subproject-dir->package
   [dir]
   {:lib (symbol "com.blockether" (.getName (io/file dir))) :dir dir})
 
 (def packages
   "Every publishable jar in the monorepo. Deploy builds every selected package
   with local-root deps first, then rewrites publish POMs to same-version Maven
-  coords and pushes the jars to Clojars. Extension packages are discovered from
-  `extensions/**/deps.edn`, so adding a new extension package automatically
+  coords and pushes the jars to Clojars. Packages are discovered from
+  `extensions/**/deps.edn` and `packages/*/deps.edn`, so adding one automatically
   includes it in `jar`, `install`, and `deploy`."
-  (into [{:lib 'com.blockether/vis :dir "."}]
-        (map extension-dir->package)
-        (extension-package-dirs)))
+  (into [{:lib 'com.blockether/vis :dir "."}] (map subproject-dir->package) (subproject-dirs)))
 
 (def ^:private sibling-versions
   "Map of every monorepo lib -> mvn coord at the shared version. Passed

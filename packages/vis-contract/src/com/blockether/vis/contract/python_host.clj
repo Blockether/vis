@@ -1,22 +1,30 @@
-(ns com.blockether.vis.internal.python-contract
+(ns com.blockether.vis.contract.python-host
   "The Python host contract as DATA: `resources/vis-contract/python-host.edn`.
 
    Everything the `vis` Python module can ask its host to do is one entry in that
    document — the polyglot global the engine binds, how many positional arguments
    the callable takes, and what the op does when there is no Vis host at all. The
-   engine derives the names it binds from here, the packaged module derives its
-   `_host` dict from here, and the package's outside-the-sandbox host derives its
-   behavior from here, so a new host call is added to the document and nowhere
-   else. `python_contract_test` is what fails when a reader drifts.
+   engine derives the names it binds from here, the injected host is built from
+   here, and the package's outside-the-sandbox host derives its behavior from
+   here, so a new host call is added to the document and nowhere else.
+
+   This project is `com.blockether/vis-contract` and requires NO Vis namespace, so
+   an extension can compile against the declaration without the engine. Its PyPI
+   half ships [[package-document]] as `vis_contract/contract.json`.
+
+   The human-input vocabulary is the one part this project does not own:
+   `internal.human-input.spec` declares it and PASSES it to [[package-document]],
+   because a closed vocabulary with two definitions is exactly the bug a contract
+   exists to prevent.
 
    The document is validated the moment it is read: a malformed contract is a
-   broken build, not a runtime surprise inside somebody's extension."
+   broken build, not a runtime surprise inside somebody's extension.
+   `contract.python-host-test` is what fails when a reader drifts."
   (:require [charred.api :as json]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.spec.alpha :as s]
-            [clojure.string :as str]
-            [com.blockether.vis.internal.human-input.spec :as hi]))
+            [clojure.string :as str]))
 
 (set! *warn-on-reflection* true)
 
@@ -108,13 +116,39 @@
 ;; ---------------------------------------------------------------------------
 ;; The document the PACKAGE reads
 ;;
-;; `packages/vis-agent/src/vis/contract.json` is this document plus the human-input
+;; `python/src/vis_contract/contract.json` is this document plus the human-input
 ;; vocabulary, rendered for a Python reader that has no EDN and no JVM. It is
 ;; CHECKED IN because a wheel installed from PyPI has no repository to read, and
-;; GENERATED because [[hi/field-types]] and friends are the one definition of that
-;; vocabulary -- `doc("human-input")` forbids a second copy, so the package gets a
-;; rendering, never a transcription. `python_contract_test` fails on drift and
-;; names [[write-package-document!]] as the fix.
+;; GENERATED because the engine's `human-input.spec` holds the one definition of
+;; that vocabulary -- `doc("human-input")` forbids a second copy, so the package
+;; gets a rendering, never a transcription. `python_package_test` fails on drift
+;; and names [[write-package-document!]] as the fix.
+
+(s/def :human-input/strings
+  (s/and (s/coll-of non-blank-string? :kind vector? :distinct true) not-empty))
+(s/def :human-input/field-types :human-input/strings)
+(s/def :human-input/text-types :human-input/strings)
+(s/def :human-input/choice-types :human-input/strings)
+(s/def :human-input/secret-types :human-input/strings)
+(s/def :human-input/decor-types :human-input/strings)
+(s/def :human-input/group-type non-blank-string?)
+(s/def :human-input/group-directions :human-input/strings)
+(s/def :human-input/otp (s/keys :req-un [:human-input/length :human-input/ceiling]))
+(s/def :human-input/length pos-int?)
+(s/def :human-input/ceiling pos-int?)
+(s/def :human-input/range (s/keys :req-un [:human-input/min :human-input/max :human-input/step]))
+(s/def :human-input/min number?)
+(s/def :human-input/max number?)
+(s/def :human-input/step number?)
+(s/def :human-input/secret-handle-prefix non-blank-string?)
+;; The vocabulary the ENGINE hands in. Specced here because the contract is what
+;; the package trusts: a surface that drifts is caught rendering the document, not
+;; by an extension author reading a field type Python has never heard of.
+(s/def :contract/human-input
+  (s/keys :req-un [:human-input/field-types :human-input/text-types :human-input/choice-types
+                   :human-input/secret-types :human-input/decor-types :human-input/group-type
+                   :human-input/group-directions :human-input/otp :human-input/range
+                   :human-input/secret-handle-prefix]))
 
 (defn- op->json
   [{:op/keys [name global arity summary outside refusal]}]
@@ -127,40 +161,49 @@
     refusal
     (assoc "refusal" refusal)))
 
+(defn- human-input->json
+  [{:keys [field-types text-types choice-types secret-types decor-types group-type group-directions
+           otp range secret-handle-prefix]
+    :as vocabulary}]
+  (when-not (s/valid? :contract/human-input vocabulary)
+    (throw (ex-info "the human-input vocabulary handed to the contract is not one"
+                    {:type :vis/contract-invalid
+                     :explain (s/explain-str :contract/human-input vocabulary)})))
+  (array-map "field_types" field-types
+             "text_types" text-types
+             "choice_types" choice-types
+             "secret_types" secret-types
+             "decor_types" decor-types
+             "group_type" group-type
+             "group_directions" group-directions
+             "otp" (array-map "length" (:length otp) "ceiling" (:ceiling otp))
+             "range" (array-map "min" (:min range) "max" (:max range) "step" (:step range))
+             "secret_handle_prefix" secret-handle-prefix))
+
 (defn package-document
-  "The contract as `vis/contract.json`: snake_case string keys, ops in document
-   order, and the closed human-input vocabulary the outside host prompts with."
-  []
+  "The contract as `vis_contract/contract.json`: snake_case string keys, ops in
+   document order, and the closed human-input vocabulary the outside host prompts
+   with. `human-input` comes from the namespace that OWNS that vocabulary --
+   `(com.blockether.vis.internal.human-input.spec/contract-vocabulary)`."
+  [human-input]
   (array-map "version" (version)
              "ops" (mapv op->json (ops))
              "shell"
              (let [{:shell/keys [default-op spawn-ops handle-ops]} (shell-vocabulary)]
                (array-map "default_op" default-op "spawn_ops" spawn-ops "handle_ops" handle-ops))
-             "human_input" (array-map "field_types" (vec (sort (keys hi/field-types)))
-                                      "text_types" (mapv clojure.core/name (sort hi/text-types))
-                                      "choice_types" (mapv clojure.core/name (sort hi/choice-types))
-                                      "secret_types" (mapv clojure.core/name (sort hi/secret-types))
-                                      "decor_types" (vec (sort (keys hi/decor-types)))
-                                      "group_type" hi/group-type-name
-                                      "group_directions" (vec (sort (keys hi/group-directions)))
-                                      "otp" (array-map "length" (:length hi/otp-defaults)
-                                                       "ceiling" (:ceiling hi/otp-defaults))
-                                      "range" (array-map "min" (:min hi/range-defaults)
-                                                         "max" (:max hi/range-defaults)
-                                                         "step" (:step hi/range-defaults))
-                                      "secret_handle_prefix" hi/secret-handle-prefix)))
+             "human_input" (human-input->json human-input)))
 
 (def package-document-path
   "Where the rendered document is checked in, from the repository root."
-  "packages/vis-agent/src/vis/contract.json")
+  "packages/vis-contract/python/src/vis_contract/contract.json")
 
 (defn package-document-json
   "[[package-document]] as the checked-in file's exact bytes."
-  []
-  (str (json/write-json-str (package-document) {:indent-str "  "}) "\n"))
+  [human-input]
+  (str (json/write-json-str (package-document human-input) {:indent-str "  "}) "\n"))
 
 (defn write-package-document!
   "Re-render [[package-document-path]]. Run me after changing the contract or the
-   human-input vocabulary; `python_contract_test` is what notices you did not."
-  ([] (write-package-document! package-document-path))
-  ([path] (spit path (package-document-json)) path))
+   human-input vocabulary; `python_package_test` is what notices you did not."
+  ([human-input] (write-package-document! human-input package-document-path))
+  ([human-input path] (spit path (package-document-json human-input)) path))

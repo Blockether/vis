@@ -193,31 +193,45 @@ jobs:
           VIS_AUTO_INSTALL_GRAALVM: "0"
         run: clojure -T:build uber
 
-  # The `vis` module and its outside-the-sandbox host are what PyPI installs as
-  # `vis-agent`, and the harness cannot run their tests: vis' own embedded GraalPy
-  # resolves `vis` as a namespace package, so this is the one suite that needs a
-  # stock CPython. It depends on nothing the Clojure jobs build, so it runs beside
+  # The `vis` module, its outside-the-sandbox host and the declaration both of them
+  # read are what PyPI installs as `vis-agent` and `vis-contract`, and the harness
+  # cannot run their tests: vis' own embedded GraalPy resolves `vis` as a namespace
+  # package, so this is the one suite that needs a stock CPython. It depends on
+  # nothing the Clojure jobs build, so it runs beside them.
   # them. The interpreter is the FLOOR `pyproject.toml` advertises, and that floor is
   # the CPython level vis' own GraalPy implements: a module the engine execs cannot
   # be written in a Python the engine could not run.
   python-package:
-    name: tests / vis-agent (PyPI package)
+    name: tests / vis-agent + vis-contract (PyPI packages)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: packages/vis-agent
+        working-directory: packages
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
-      # The package itself has no dependencies and none are welcome; these are the
-      # test tools. ruff reads the repository's own ruff.toml, one directory up.
+      # Neither package depends on anything outside this directory and none is
+      # welcome; these are the test tools. ruff reads the repository's own ruff.toml,
+      # one directory up. `vis-agent` finds `vis-contract` where its conftest looks —
+      # the sibling checkout — so the pair is tested as written, never as last
+      # published.
       - name: Install the test tools
         run: python -m pip install --disable-pip-version-check pytest ruff
-      - name: Run the package suite
-        run: python -m pytest tests -q
-      - name: Lint and format-check the package
+      - name: Run both package suites
+        run: python -m pytest vis-agent/tests vis-contract/python/tests -q
+      - name: Lint and format-check both packages
         run: |
           python -m ruff check .
           python -m ruff format --check .
+      # The suites above run from source. This is the artifact check: both wheels
+      # BUILD and the installed pair imports. `vis-contract` is not on PyPI yet, so
+      # the API is installed against the sibling just built (`--no-deps`) instead of
+      # resolving its pin — the day it resolves, drop the flag.
+      - name: Build both wheels and import the installed pair
+        run: |
+          python -m pip install --disable-pip-version-check ./vis-contract/python
+          python -m pip install --disable-pip-version-check --no-deps ./vis-agent
+          cd "$RUNNER_TEMP"
+          python -c 'import vis, vis_contract; print(vis_contract.VERSION, len(vis_contract.OPS), vis.__file__)'

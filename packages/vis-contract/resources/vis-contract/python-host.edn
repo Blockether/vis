@@ -3,7 +3,7 @@
 ;; ONE document, three readers. The engine binds `:op/global` into every extension
 ;; context (`internal.python-extensions/host-member-names`); the packaged module
 ;; builds its `_host` dict from `:op/name`; and outside a Vis process the package
-;; answers the op the way `:op/outside` says. `python_contract_test` fails when any
+;; answers the op the way `:op/outside` says. `python_host_test` fails when any
 ;; reader drifts from this file, so a new host call is added HERE and nowhere else.
 ;;
 ;; `:op/arity` counts the POSITIONAL arguments the host callable receives. Values
@@ -90,7 +90,7 @@
  ;; implements for the three shell ops above. A SPAWN op starts a process and answers
  ;; its handle; a HANDLE op acts on the id that handle carries; an op named nowhere
  ;; here is refused BY NAME. The outside host dispatches from this list, so it cannot
- ;; answer a vocabulary the engine does not speak — `python_contract_test` runs every
+ ;; answer a vocabulary the engine does not speak — `python_host_test` runs every
  ;; name here past the engine's own dispatch.
  :contract/shell
  {:shell/default-op "run"

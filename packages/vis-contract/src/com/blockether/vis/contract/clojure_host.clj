@@ -1,7 +1,7 @@
-(ns com.blockether.vis.internal.clojure-contract
+(ns com.blockether.vis.contract.clojure-host
   "The Clojure host contract as DATA: `resources/vis-contract/clojure-host.edn`.
 
-   `com.blockether.vis.internal.python-contract` declares what a PYTHON extension may
+   [[com.blockether.vis.contract.python-host]] declares what a PYTHON extension may
    ask the host for. This is its symmetric half for CLOJURE extensions, which have no
    sandbox at all: an extension is a deps project with the whole engine on its
    classpath, so the facade `com.blockether.vis.core` is a promise nothing enforced.
@@ -9,7 +9,11 @@
    The document names the facade, where extension code lives, and the FROZEN set of
    internal namespaces extensions already require past it. This namespace reads and
    validates the document and re-derives the real coupling from the tree, so
-   `clojure_contract_test` can fail on drift in either direction."
+   `contract.clojure-host-test` can fail on drift in either direction.
+
+   It ships in `com.blockether/vis-contract` beside its Python twin and requires no
+   Vis namespace: a linter in somebody else's repository can read the same document
+   the engine's own suite enforces."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.spec.alpha :as s]

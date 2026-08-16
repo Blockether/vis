@@ -4,6 +4,12 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+# `vis-contract` is a dependency, not a copy: from a checkout it is the sibling
+# package, from a wheel it is whatever pip installed.
+sys.path.insert(
+    0,
+    str(Path(__file__).resolve().parents[2] / "vis-contract" / "python" / "src"),
+)
 
 # Whatever else claimed the name first — a Vis engine seeds its own `vis` into
 # `sys.modules`, and a bare `vis` directory beside the checkout makes an empty

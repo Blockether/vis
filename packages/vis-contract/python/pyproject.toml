@@ -1,0 +1,48 @@
+# The DECLARATION half of Vis: published as `vis-contract`, imported as `vis_contract`.
+#
+# `src/vis_contract/contract.json` is not written here and never by hand — it is
+# `resources/vis-contract/python-host.edn` (this package's Clojure half, one
+# directory up) rendered by `contract.python-host/write-package-document!` together
+# with the engine's own human-input vocabulary. `python_package_test` fails the
+# build when the checked-in rendering and the renderer disagree.
+#
+# `version` mirrors the repo-root `VIS_VERSION`, the one version source
+# (`build.clj`), and `vis-agent` depends on exactly this version: the API and the
+# declaration it was cut against always install as a pair.
+#
+# No dependencies, and none are welcome — a declaration everyone reads must be
+# cheap to install. `requires-python` is the CPython level vis' own GraalPy
+# implements, because the module this contract describes is a file that engine execs.
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vis-contract"
+version = "0.1.38"
+description = "The Vis extension contract — the ops a Vis host answers, as data, and the protocol they declare."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Blockether" }]
+keywords = ["vis", "agent", "extension", "contract", "protocol"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Software Development :: Build Tools",
+]
+
+[project.urls]
+Homepage = "https://github.com/Blockether/vis"
+Source = "https://github.com/Blockether/vis"
+Issues = "https://github.com/Blockether/vis/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vis_contract"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/vis_contract", "tests", "README.md", "LICENSE"]

@@ -2,7 +2,7 @@
 
 `import vis` inside a Vis extension gets this module FROM THE HOST: the engine
 builds it, seeds `_host` with the callables named by
-`resources/vis-contract/python-host.edn`, execs this source into it and registers
+`packages/vis-contract/resources/vis-contract/python-host.edn`, execs this source into it and registers
 it in `sys.modules`, so every call below reaches the live agent.
 
 Installed from PyPI (`pip install vis-agent`) there is no Vis process to seed

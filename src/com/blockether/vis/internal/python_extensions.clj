@@ -50,7 +50,7 @@
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [com.blockether.vis.internal.python-process-handler :as process-handler]
-            [com.blockether.vis.internal.python-contract :as contract]
+            [com.blockether.vis.contract.python-host :as contract]
             [com.blockether.vis.internal.security-policy :as security-policy]
             [com.blockether.vis.internal.toggles :as toggles]
             [taoensso.telemere :as tel])
@@ -489,12 +489,12 @@
 
 (def ^:no-doc host-member-names
   "Every `__vis_host_*` global the bootstrap reads out of a context's bindings, in
-   the order `resources/vis-contract/python-host.edn` declares them.
+   the order `packages/vis-contract/resources/vis-contract/python-host.edn` declares them.
 
    The bootstrap builds its `_host` dict at MODULE level, so a member nobody bound
    is a `NameError` before the extension's first line runs. The contract document
    is the ONE list — adding a host call means adding an op there, and
-   `python_contract_test` fails when this binder, that bootstrap or the packaged
+   `python_host_test` fails when this binder, that bootstrap or the packaged
    `vis` module drift apart."
   (contract/host-globals))
 

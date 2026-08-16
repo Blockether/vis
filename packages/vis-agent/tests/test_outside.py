@@ -1,7 +1,7 @@
 """The package outside a Vis session: the contract is the specification.
 
 Every test here asks the same question in a different place — does `vis` behave
-the way `vis/contract.json` says it behaves when no engine is in the room — so a
+the way `vis_contract`'s document says it behaves when no engine is in the room — so a
 contract op that grows, moves or changes its outside behavior fails HERE, in the
 package, and not in an extension somebody wrote against it.
 """

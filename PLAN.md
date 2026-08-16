@@ -86,13 +86,13 @@ generated from or checked against.
 
 **Acceptance criteria.**
 
-- `resources/vis-contract/python-host.edn` — the 13 ops, each with its global, arity, summary and
+- `packages/vis-contract/resources/vis-contract/python-host.edn` — the 13 ops, each with its global, arity, summary and
   outside behavior.
-- `src/com/blockether/vis/internal/python_contract.clj` — reads and validates the document; exposes
+- `packages/vis-contract/src/com/blockether/vis/contract/python_host.clj` — reads and validates the document; exposes
   `ops`, `op-names`, `host-globals`.
 - `src/com/blockether/vis/internal/python_extensions.clj` — `host-member-names` derives from the
   document instead of listing names.
-- `test/com/blockether/vis/internal/python_contract_test.clj` — the document conforms; its globals
+- `test/com/blockether/vis/contract/python_host_test.clj` — the document conforms; its globals
   are exactly what the binder binds; its op names are exactly the `_host` keys read out of
   `extension_bootstrap.py`.
 
@@ -135,7 +135,7 @@ imported; an author cannot unit-test a single tool function, and `vis.ask` has n
   subprocess, `jailed_shell*` refusing by name.
 - `packages/vis-agent/tests/` — pytest over every op with no host bound, plus a registration test
   that loads `resources/examples/python-extensions/todo.py` outside Vis.
-- `test/com/blockether/vis/internal/python_contract_test.clj` — every contract op has an outside
+- `test/com/blockether/vis/contract/python_host_test.clj` — every contract op has an outside
   implementation.
 
 **Unknowns.** Should `shell` outside be a real subprocess or a refusal? Current answer: real, since
@@ -183,8 +183,8 @@ on the engine artifact, or does the contract grow a channel section?
 **ACCEPTED.** Phases 1-3 landed together in `feat(python): ship the extension API as the vis-agent
 package`; a phase could not be split from the next one without leaving the module in two places.
 
-- Phase 1 — DONE. `resources/vis-contract/python-host.edn` declares all 13 host ops;
-  `internal.python-contract` reads, validates and serves them; `python_contract_test` reads a LIVE
+- Phase 1 — DONE. `packages/vis-contract/resources/vis-contract/python-host.edn` declares all 13 host ops;
+  `contract.python-host` reads, validates and serves them; `python_host_test` reads a LIVE
   extension context's `vis._host` back and fails on any drift.
 - Phase 2 — DONE. The module is `packages/vis-agent/src/vis/__init__.py` — on `:paths`, in the
   native image, and the file the engine execs; `resources/vis-python/extension_bootstrap.py` is
@@ -193,14 +193,23 @@ package`; a phase could not be split from the next one without leaving the modul
   verdict; 25 pytest cases prove it, the last of them running `resources/examples/python-extensions/todo.py`
   in a bare interpreter. The `shell` op vocabulary is contract data too, so both hosts dispatch
   from one list; 33 pytest cases.
-- Phase 4 — REQUIRES WORK. `scripts/version.mjs` mirrors `VIS_VERSION` into `pyproject.toml` and CI
-  runs the package suite on the interpreter floor the package advertises; nothing uploads yet, and
-  `vis-agent` is still unclaimed on PyPI.
-- Phase 5 — TODO.
+- Phase 4 — REQUIRES WORK. `scripts/version.mjs` mirrors `VIS_VERSION` into BOTH
+  `pyproject.toml`s and the `vis-contract==` pin between them, and CI builds both wheels and
+  imports the installed pair on the interpreter floor they advertise; nothing uploads yet, and
+  neither `vis-agent` nor `vis-contract` is claimed on PyPI.
+- Phase 5 — HALF DONE. The declaration is its own artifact: `packages/vis-contract` is a Clojars
+  jar (`com.blockether/vis-contract`, discovered by `build.clj` from `packages/*/deps.edn`) and a
+  PyPI distribution (`vis-contract`), holding both host contracts, their specs, the renderer and
+  the Python `Host` protocol. `vis-agent` depends on it instead of copying it. The 9 extension
+  `deps.edn` that name the aggregate still do.
 
 Remaining, in order:
 
 1. Phase 4 — settle the PyPI trusted-publisher identity, add the build/upload step to
-   `doc("release-vis")`, and claim the name. Publishing itself waits for an explicit request.
-2. Phase 5 — extract `com.blockether/vis-contract` and repoint the 9 extension `deps.edn` that name
-   the aggregate, so a provider extension stops resolving an ONNX runtime.
+   `doc("release-vis")`, and claim both names. Publishing itself waits for an explicit request.
+2. Phase 5 — repoint the 9 extension `deps.edn` that name the aggregate, so a provider extension
+   stops resolving an ONNX runtime. Only extensions that need nothing past the declaration can
+   move today; the rest need `com.blockether.vis.core` and therefore the engine.
+3. The Python host boundary is a `typing.Protocol` in `vis_contract`; the engine still injects a
+   plain `_host` dict. Make the injected host an object that satisfies it, so a wrong host fails
+   at the boundary instead of at the call.

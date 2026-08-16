@@ -1,16 +1,15 @@
-(ns com.blockether.vis.internal.python-contract-test
-  "The Python host contract (`resources/vis-contract/python-host.edn`) against its
-   readers.
+(ns com.blockether.vis.contract.python-host-test
+  "The Python host contract (`packages/vis-contract`) against its readers.
 
    The contract is data precisely so that no two readers can disagree in silence:
    the engine binds `:op/global` into every extension context, the `vis` module
-   builds its `_host` dict out of `:op/name`, and outside a Vis process the
+   builds its host out of `:op/name`, and outside a Vis process the
    packaged module answers by `:op/outside`. This file is the seam that fails when
    one of them drifts — including the one proof no regex can give, a live extension
    context whose `vis._host` is read back and compared to the document."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.foundation.shell :as fshell]
-            [com.blockether.vis.internal.python-contract :as contract]
+            [com.blockether.vis.contract.python-host :as contract]
             [com.blockether.vis.internal.python-extensions :as pyx]
             [lazytest.core :refer [defdescribe describe expect it]])
   (:import (org.graalvm.polyglot Context)))
@@ -34,7 +33,7 @@
           (expect (seq refusing))
           (expect (every? #(str/includes? (:op/refusal %) (str "vis." (:op/name %))) refusing))))
     (it "speaks the shell vocabulary the engine dispatches on"
-        ;; The outside host reads these names out of `vis/contract.json`; an op
+        ;; The outside host reads these names out of the `vis_contract` document; an op
         ;; the engine does not know would make an extension that runs inside Vis
         ;; refuse outside it (or the other way round).
         (let

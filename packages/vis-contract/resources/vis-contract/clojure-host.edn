@@ -9,7 +9,7 @@
 ;; already reach past the facade for. It may only SHRINK: export what the extension
 ;; really needs from `com.blockether.vis.core` and delete the entry. Adding a name
 ;; here is admitting new coupling to an unstable tree, so it needs a reason in review.
-;; `clojure_contract_test` fails on a name that is NOT here and on a name here that
+;; `clojure_host_test` fails on a name that is NOT here and on a name here that
 ;; nothing uses any more, so the debt can neither grow silently nor go stale.
 {:contract/version 1
 

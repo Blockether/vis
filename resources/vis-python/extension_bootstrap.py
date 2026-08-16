@@ -11,8 +11,8 @@ the polyglot callables the engine bound into this context, exec the body into a
 module dict of its own (so the extension file's globals stay clean), and register
 it in `sys.modules` so `import vis` works.
 
-Every key below is an op in `resources/vis-contract/python-host.edn`, and
-`python_contract_test` fails when this dict and that document disagree.
+Every key below is an op in `packages/vis-contract/resources/vis-contract/python-host.edn`, and
+`python_host_test` fails when this dict and that document disagree.
 """
 
 import sys as _vis_sys, types as _vis_types

@@ -44,12 +44,15 @@ For an app-only fix under the version that is already out, use
    State the version you are about to cut and what is in it.
 2. **Bump** `VIS_VERSION` to the bare `X.Y.Z` (no `v`, single line).
 3. **Mirror it**: `cd apps/vis-companion && npm run sync:version`. That is
-   `scripts/version.mjs`; it stamps `package.json`, `package-lock.json` and the
-   PyPI package's `packages/vis-agent/pyproject.toml`. Never hand-edit a version
+   `scripts/version.mjs`; it stamps `package.json`, `package-lock.json` and BOTH
+   PyPI distributions — `packages/vis-contract/python/pyproject.toml`,
+   `packages/vis-agent/pyproject.toml` and the `vis-contract==X.Y.Z` pin inside the
+   latter. Never hand-edit a version
    field it owns, and never override a store's marketing version.
-4. **Commit exactly those four files** with subject `chore(release): vX.Y.Z`
+4. **Commit exactly those five files** with subject `chore(release): vX.Y.Z`
    (`VIS_VERSION`, `apps/vis-companion/package.json`,
    `apps/vis-companion/package-lock.json`,
+   `packages/vis-contract/python/pyproject.toml`,
    `packages/vis-agent/pyproject.toml`). Hooks stay on: never `--no-verify`.
 5. **Push main**: `git push origin main`. The tag must point at a commit that is
    already on `origin/main` — CI verifies tag == `VIS_VERSION` == current `main`

@@ -119,6 +119,23 @@
   [value]
   (and (string? value) (str/starts-with? value secret-handle-prefix)))
 
+(defn contract-vocabulary
+  "This vocabulary as DATA, for `com.blockether.vis.contract.python-host` to render
+   into `vis_contract/contract.json` — the document every surface that cannot
+   require this namespace reads instead. The tables above stay the one definition:
+   a Python reader gets a rendering of them, never a transcription."
+  []
+  {:field-types (vec (sort (keys field-types)))
+   :text-types (mapv clojure.core/name (sort text-types))
+   :choice-types (mapv clojure.core/name (sort choice-types))
+   :secret-types (mapv clojure.core/name (sort secret-types))
+   :decor-types (vec (sort (keys decor-types)))
+   :group-type group-type-name
+   :group-directions (vec (sort (keys group-directions)))
+   :otp {:length (:length otp-defaults) :ceiling (:ceiling otp-defaults)}
+   :range {:min (:min range-defaults) :max (:max range-defaults) :step (:step range-defaults)}
+   :secret-handle-prefix secret-handle-prefix})
+
 ;; The keys — one table, and the parser reads it too
 ;;
 ;; Every map declared below is CLOSED, so each shape's key set is written down

@@ -127,7 +127,12 @@
  ;; com.github.k2-fsa.sherpa-onnx.
  :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
  :deps
- {com.blockether/vis-persistance-sqlite {:local/root
+ {;; The extension CONTRACT, published on its own so an extension — or a tool in
+  ;; somebody else's repository — can read what the host offers without depending
+  ;; on the engine. It carries `resources/vis-contract/*.edn`, so the engine reads
+  ;; its own contract off this dependency's classpath.
+  com.blockether/vis-contract {:local/root "packages/vis-contract"}
+  com.blockether/vis-persistance-sqlite {:local/root
                                          "extensions/persistance/vis-persistance-sqlite"}
   com.blockether/vis-provider-github-copilot {:local/root
                                               "extensions/providers/vis-provider-github-copilot"}

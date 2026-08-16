@@ -93,14 +93,14 @@ process — `pip install vis-agent` once a release has uploaded it, or
 `pip install ./packages/vis-agent` from a checkout of this repository.
 
 With no engine on the other side the module binds `vis._outside` instead — a
-local host implementing every op in the shipped `vis/contract.json`: state,
+local host implementing every op in the declaration `vis-contract` ships: state,
 secrets, logging and `shell` run against the machine you are on, the jailed
 sandbox ops refuse by name rather than pretend to be a sandbox, and
 `vis.ask(...)` prompts at the terminal. Prime those answers with
 `vis.outside.answer_with({...})` or the `VIS_OUTSIDE_ANSWERS` JSON object, or
 set `VIS_OUTSIDE_NONINTERACTIVE=1` to have every ask come back undeliverable.
 `vis.shell` speaks the engine's own op vocabulary out here — `run` (the default),
-`background`, `logs`, `wait`, `send`, `stop`, read out of `contract.json` — so a
+`background`, `logs`, `wait`, `send`, `stop`, read out of that declaration — so a
 file written against the sandbox drives a process the same way outside it.
 
 ### `vis.extension(...)`
@@ -1157,13 +1157,19 @@ my-extension/
 extension should require. The internal tree below it is not stable and is refactored
 without notice.
 
-This is enforced, not merely asked for: `resources/vis-contract/clojure-host.edn` is
+This is enforced, not merely asked for: `packages/vis-contract/resources/vis-contract/clojure-host.edn` is
 the Clojure twin of the Python `python-host.edn`. It names the facade and freezes the
 internal namespaces the in-tree extensions already reach past it for, and
-`clojure_contract_test` scans `extensions/**` on every run — a require of an internal
+`clojure_host_test` scans `extensions/**` on every run — a require of an internal
 namespace that is not frozen there fails the suite, and a frozen entry nothing uses
 any more fails it too. The list may only shrink: if your extension needs something the
 facade does not export, export it from `com.blockether.vis.core`.
+
+Both declarations are one artifact of their own — `com.blockether/vis-contract` on
+Clojars, `vis-contract` on PyPI, cut from `packages/vis-contract` at the same
+`VIS_VERSION` — so a linter, a code generator or somebody else's build reads the
+contract without depending on the engine that implements it.
+
 ### The extension spec
 
 `vis/extension` validates the map and fills defaults; `vis/register-extension!` puts it in the registry.

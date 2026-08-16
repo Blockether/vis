@@ -17,6 +17,9 @@ import sys
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "src"
+# The declaration is a dependency of this package; from a checkout, it is the
+# sibling one. A wheel-installed author gets both from pip and needs neither line.
+CONTRACT_SRC = Path(__file__).resolve().parents[2] / "vis-contract" / "python" / "src"
 EXAMPLE = (
     Path(__file__).resolve().parents[3]
     / "resources"
@@ -54,7 +57,7 @@ def test_the_example_extension_registers_and_runs_outside_vis(
 ):
     assert EXAMPLE.exists(), EXAMPLE
     env = os.environ.copy()
-    env["PYTHONPATH"] = str(SRC)
+    env["PYTHONPATH"] = os.pathsep.join([str(SRC), str(CONTRACT_SRC)])
     env["VIS_OUTSIDE_HOME"] = str(outside_home)
     done = subprocess.run(
         [sys.executable, "-c", DRIVER, str(EXAMPLE)],

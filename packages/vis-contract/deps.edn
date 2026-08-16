@@ -1,0 +1,14 @@
+;; The Vis extension CONTRACT, on its own — `com.blockether/vis-contract`.
+;;
+;; Everything an extension may ask the host for is DECLARED in
+;; `resources/vis-contract/*.edn`; this project reads it, validates it and renders
+;; it, and does nothing else. It requires no Vis namespace, so the engine, an
+;; extension and a tool in somebody else's repository read one declaration without
+;; dragging the whole agent along.
+;;
+;; `python/` is the same contract for the other ecosystem (`pip install
+;; vis-contract`): the rendered `contract.json` and the host protocol both Python
+;; hosts implement. One document, two registries, one version — VIS_VERSION.
+{:deps {com.cnuernber/charred {:mvn/version "1.041"}
+        org.clojure/clojure {:mvn/version "1.12.5"}}
+ :paths ["src" "resources"]}
