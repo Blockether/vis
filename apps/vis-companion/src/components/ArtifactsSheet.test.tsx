@@ -108,17 +108,21 @@ const sheet = (artifacts: SessionArtifact[]) =>
     />,
   );
 
-/** A gateway whose bytes can actually be read: the reader fetches the blob url. */
+/**
+ * A gateway whose bytes can actually be read: the reader fetches the blob url.
+ * The bytes arrive a TICK LATE, exactly as a real read does, so the overlay is
+ * always painted once in its loading pass before the note itself can be read.
+ */
 const readable = () =>
   vi.stubGlobal(
     "fetch",
-    vi.fn(
-      async () =>
-        new Response(
-          new TextEncoder().encode("# Note\n\nA read that works.\n"),
-          { headers: { "content-type": "text/markdown" } },
-        ),
-    ),
+    vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return new Response(
+        new TextEncoder().encode("# Note\n\nA read that works.\n"),
+        { headers: { "content-type": "text/markdown" } },
+      );
+    }),
   );
 
 /** Visible text of a rendered chunk: tags out, entities back. */
@@ -579,21 +583,29 @@ describe("an opened artifact", () => {
     await userEvent.click(
       screen.getByRole("button", { name: /^Open vis-issue-115-comment\.md/ }),
     );
-    const overlay = await screen.findByRole("dialog", {
+    // The overlay is painted TWICE: once while the bytes are still on the way
+    // (a `Loading…` dialog) and again as a FRESH NODE once the note can be read
+    // — a different component in that slot, so React drops the first node
+    // instead of reusing it. Waiting for the prose before taking the dialog is
+    // what keeps every assertion off the detached first paint; taking it any
+    // earlier made this file fail on a loaded CI runner and pass alone.
+    const prose = await screen.findByText("A read that works.", {
+      selector: "p",
+    });
+    const overlay = screen.getByRole("dialog", {
       name: "vis-issue-115-comment.md",
     });
-    return { view, overlay };
+    return { view, overlay, prose };
   };
 
   it("is given the whole height of the overlay", async () => {
     readable();
-    const { view, overlay } = await openNote();
-    const scroller = await screen.findByText("A read that works.", { selector: "p" });
+    const { view, overlay, prose } = await openNote();
     // Every box between the overlay and the prose grows and may shrink, so the
     // artifact reaches the bottom of the screen instead of stopping at its text.
     const chain: HTMLElement[] = [];
     for (
-      let box = scroller.parentElement;
+      let box = prose.parentElement;
       box && box !== overlay;
       box = box.parentElement
     ) {
@@ -613,7 +625,6 @@ describe("an opened artifact", () => {
   it("hands the filled body to the frame rather than padding around it", async () => {
     readable();
     const { view, overlay } = await openNote();
-    await screen.findByText("A read that works.", { selector: "p" });
     const body = overlay.lastElementChild as HTMLElement;
     expect(body.className).toContain("flex min-h-0 min-w-0 flex-1 flex-col");
     expect(body.className).not.toMatch(/\bp[xytblr]?-\d/);
