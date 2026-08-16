@@ -36,7 +36,9 @@
    question, so every conversion is memoized on the CONTENT hash of the bytes
    plus the options — an LRU with a per-entry budget, the same shape as
    `internal/fff-index`'s pool. Two questions about the same 200-file corpus
-   convert it once."
+   convert it once. The sandbox never sees that cache: there is no info door and
+   no clear door in the Python surface — it evicts least-recently-used and keeps
+   itself in budget."
   (:require [clojure.string :as str]
             [com.blockether.imaging :as im]
             [com.blockether.vis.core :as vis])
@@ -66,7 +68,10 @@
    one of those would evict the whole corpus around it."
   4000000)
 
-(defonce ^:private conversion-cache (atom {:entries {} :order [] :hits 0 :misses 0 :chars 0}))
+;; Nothing outside this namespace can see the cache: the sandbox has no door that
+;; reports or empties it, so it carries no counters for anybody to read - only
+;; what eviction itself needs.
+(defonce ^:private conversion-cache (atom {:entries {} :order []}))
 
 (defn- entry-chars
   "Approximate resident cost of one wire payload, in characters."
@@ -86,7 +91,6 @@
     [state
      (-> state
          (assoc-in [:entries key] payload)
-         (update :chars + (entry-chars payload))
          (cache-take key))
 
      over
@@ -95,7 +99,6 @@
     (if (pos? over)
       (let [evicted (take over (:order state))]
         (-> state
-            (update :chars - (reduce + 0 (map #(entry-chars (get-in state [:entries %])) evicted)))
             (update :entries #(apply dissoc % evicted))
             (update :order #(vec (drop over %)))))
       state)))
@@ -104,32 +107,13 @@
   "`(f)`, memoized on `key`. Misses that fit the budget become the new MRU entry."
   [key f]
   (if-let
-    [hit (get-in (swap! conversion-cache #(if (contains? (:entries %) key)
-                                            (-> %
-                                                (cache-take key)
-                                                (update :hits inc))
-                                            (update % :misses inc)))
+    [hit (get-in (swap! conversion-cache #(cond-> % (contains? (:entries %) key) (cache-take key)))
                  [:entries key])]
     hit
     (let [payload (f)]
       (when (<= (entry-chars payload) (long cache-entry-budget))
         (swap! conversion-cache cache-put key payload))
       payload)))
-
-(defn- cache-wire
-  "`info` reports the cache; `clear` empties it. Both answer with the counters,
-   so Python can prove a second search converted nothing."
-  [op]
-  (let
-    [state (if (= "clear" op)
-             (first (swap-vals! conversion-cache
-                                (constantly {:entries {} :order [] :hits 0 :misses 0 :chars 0})))
-             @conversion-cache)]
-    {"entries" (count (:entries state))
-     "chars" (:chars state)
-     "hits" (:hits state)
-     "misses" (:misses state)
-     "limit" cache-entries}))
 
 ;; Conversion
 
@@ -245,9 +229,7 @@
      (anydoc-envelope
        #(read-document-wire encoded format file-name with-assets max-assets with-blocks)))
    "__vis_anydoc_detect__" (fn [encoded format file-name]
-                             (anydoc-envelope #(detect-document-wire encoded format file-name)))
-   "__vis_anydoc_cache__" (fn [op]
-                            (anydoc-envelope #(cache-wire (str op))))})
+                             (anydoc-envelope #(detect-document-wire encoded format file-name)))})
 
 
 (def vis-extension
@@ -261,7 +243,7 @@
           "corpus that cites page, section, line and a snippet. "
           "Conversions are cached on the content hash, so a second question about a corpus "
           "converts nothing.")
-     :ext/version "0.2.0"
+     :ext/version "0.3.0"
      :ext/author "Blockether"
      :ext/owner "vis"
      :ext/license "Apache-2.0"
@@ -272,18 +254,17 @@
        :shim/description
        (str
          "Reads .doc .docx .odt .rtf .pdf .epub .ppt .pptx .odp .xls .xlsx .xlsm .xlsb .ods .csv "
-         "as Markdown from a path, raw bytes or an open file (`to_markdown`, `to_document`) and "
-         "BM25-searches one document or a whole directory with page/section/line citations "
-         "(`search`). Not supported: writing documents, OCR, embeddings. Query language and "
-         "`Citation` fields: `doc(\"anydoc\")`.")
+         "as Markdown from a path, bytes or an open file (`to_markdown`, `to_document`) and "
+         "BM25-searches one document or a directory with page/section/line citations (`search`). "
+         "No writing, OCR or embeddings. Query language and `Citation`: `doc(\"anydoc\")`.")
        :shim/docs
        (str "`anydoc.to_markdown(source)` renders .doc .docx .odt .rtf "
             ".pdf .epub .ppt .pptx .odp .xls .xlsx .xlsm .xlsb .ods .csv as GitHub-Flavored "
             "Markdown; `to_document` adds the detected format, embedded assets as "
             "bytes (`max_assets`: None every one, `0` none, N capped), the plain `text`, "
             "the `blocks` (heading path, table cells, PDF `page`) and `pages`. A source is "
-            "a path, raw bytes or an open binary file at every reading door - `to_markdown`, "
-            "`to_document` and `detect` all take whichever shape the caller happens to hold. "
+            "a path, raw bytes or an open binary file at both reading doors - `to_markdown` "
+            "and `to_document` take whichever shape the caller happens to hold. "
             "`anydoc.search(query, sources)` searches ONE document, a list, a {id: "
             "doc} mapping or a whole directory and returns BM25-ranked `Citation`s with "
             "`.document_id .page .section .line .column .snippet .highlight .score .text .match "
@@ -298,7 +279,7 @@
             "wrapped over two lines. `results.explain()` says exactly how the query parsed and "
             "why each document scored; `results.suggestions` answers a typo; `results.skipped` "
             "names files that could not be read; `results.total_matches`/`.is_truncated` never "
-            "lie about a capped search. Conversions are cached (`anydoc.cache_info()`), so "
+            "lie about a capped search. Conversions are cached in the host on the content "
             "`doc.search(...)` and a second corpus question cost no conversion. "
             "Errors are typed and catchable: `QueryError` (with the offending column), "
             "`DocumentError` (with `.document_id`), `SourceError`, all under `AnydocError`. "

@@ -4,7 +4,6 @@ def __vis_install_anydoc__():
     _bi = sys.modules["builtins"]
     _markdown = __vis_anydoc_markdown__
     _detect = __vis_anydoc_detect__
-    _cache = __vis_anydoc_cache__
 
     # Errors — every refusal says which document, which character, and what to
     # do about it. Each one is also the plain Python error a caller would have
@@ -1152,36 +1151,6 @@ def __vis_install_anydoc__():
             raise _document_error(error, path, format)
         return payload.get("markdown") or ""
 
-    def detect(source=b"", name=None, format=None):
-        """Identify a document without converting it: `{format, source, formats}`.
-
-        `source` is bytes, an open file or a path — a path is read only as far
-        as a signature reaches.
-
-        The container's own signature is asked first, because a signature cannot
-        lie and an extension routinely does; `format` is None when nothing
-        recognised the input.
-        """
-        data, name, _path = _source(source, name, head=4096)
-        return _call(_detect, _b64(data), _text(format), _text(name))
-
-    def formats():
-        """Every format this converter understands."""
-        return tuple(detect()["formats"])
-
-    def cache_info():
-        """The host conversion cache: `{entries, chars, hits, misses, limit}`.
-
-        Proof that a second question about a corpus converted nothing: `hits`
-        goes up, `misses` does not.
-        """
-        return _call(_cache, "info")
-
-    def clear_cache():
-        """Empty the host conversion cache and return its final counters."""
-        _documents.clear()
-        return _call(_cache, "clear")
-
     _known_extensions = {}
 
     def _extension_format(name):
@@ -1191,7 +1160,7 @@ def __vis_install_anydoc__():
             return None
         extension = extension.lower()
         if extension not in _known_extensions:
-            found = detect(b"", name="document." + extension)
+            found = _call(_detect, "", "", "document." + extension)
             _known_extensions[extension] = found["format"]
         return _known_extensions[extension]
 
@@ -1383,7 +1352,7 @@ def __vis_install_anydoc__():
     _DOCUMENT_CACHE = 64
 
     def _cached_read(path, format):
-        """`read` memoized on (path, mtime, size) for THIS sandbox session.
+        """`to_document` memoized on (path, mtime, size) for THIS sandbox session.
 
         The host caches the conversion itself; this also skips re-reading and
         re-encoding the bytes, which is what makes a second question about a
@@ -1696,31 +1665,6 @@ def __vis_install_anydoc__():
             options,
         )
 
-    def explain_query(query, **options):
-        """Parse a query and describe it, without reading a single document."""
-        text, clauses, filters = _parse_query(
-            query,
-            options.get("regex", False),
-            options.get("ignore_case", True),
-            options.get("fold", True),
-            options.get("stem", True),
-            options.get("whole_word", True),
-        )
-        lines = ["query: %s" % text] + ["  " + c.describe() for c in clauses]
-        for page in sorted(filters["pages"]):
-            lines.append("  filter: page %d only" % page)
-        for section in filters["sections"]:
-            lines.append("  filter: under a heading matching %r" % section)
-        return "\n".join(lines)
-
-    def __getattr__(name):
-        # Lazy so importing the module costs no host call at all.
-        if name == "FORMATS":
-            value = formats()
-            mod.FORMATS = value
-            return value
-        raise AttributeError("module 'anydoc' has no attribute %r" % name)
-
     mod = types.ModuleType("anydoc")
     mod.__doc__ = """Any document as Markdown, and any question about it as citations.
 
@@ -1738,15 +1682,15 @@ Asking:
     for c in hits:
         print(c)          # q1.pdf p.7 line 12 > Revenue: ...March broke...
 
-A document is a path, raw bytes or an open binary file, at every reading door:
-to_markdown, to_document and detect take any of the three. Bytes carrying no
-signature of their own need name="ledger.csv" or format="csv" to be read.
+A document is a path, raw bytes or an open binary file at both reading doors:
+to_markdown and to_document take any of the three. Bytes carrying no signature
+of their own need name="ledger.csv" or format="csv" to be read.
 
 `sources` is a path, a directory (walked), bytes, a Document, a list of any of
 those, or a {id: source} mapping to name the ids yourself.
 
-Query language — each line below is a WHOLE query, and `explain_query` parses
-one without reading a file:
+Query language — each line below is a WHOLE query, and `results.explain()` says
+exactly how one parsed:
 
     march revenue           bare terms, ANY may match (OR), ranked by BM25
     "quarterly revenue"     a phrase — crosses line wraps AND table cells
@@ -1775,8 +1719,9 @@ Results are ranked, and `.total_matches` / `.is_truncated` never lie about a
 `limit`. `results.explain()` prints the parse and the ranking; `.suggestions`
 answers a typo; `.skipped` names files that could not be read.
 
-Conversions are cached on the content hash (`anydoc.cache_info()`), so
-`doc.search(...)` and a second question about the same corpus convert nothing.
+Conversions are cached in the host on the content hash — a bounded LRU that
+evicts itself, with no door of its own — so `doc.search(...)` and a second
+question about the same corpus convert nothing.
 
 Errors are typed and catchable: QueryError (points at the character),
 DocumentError (carries `.document_id`), SourceError — all AnydocError, and all
@@ -1794,16 +1739,10 @@ also the plain builtin (ValueError / TypeError) you would have caught."""
         "SearchResults",
         "Skipped",
         "SourceError",
-        "cache_info",
-        "clear_cache",
-        "detect",
-        "explain_query",
-        "formats",
         "search",
         "to_document",
         "to_markdown",
     ]
-    mod.__getattr__ = __getattr__
     mod.AnydocError = AnydocError
     mod.Asset = Asset
     mod.Block = Block
@@ -1815,11 +1754,6 @@ also the plain builtin (ValueError / TypeError) you would have caught."""
     mod.SearchResults = SearchResults
     mod.Skipped = Skipped
     mod.SourceError = SourceError
-    mod.cache_info = cache_info
-    mod.clear_cache = clear_cache
-    mod.detect = detect
-    mod.explain_query = explain_query
-    mod.formats = formats
     mod.search = search
     mod.to_document = to_document
     mod.to_markdown = to_markdown

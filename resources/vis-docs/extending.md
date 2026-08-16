@@ -1072,7 +1072,7 @@ paragraph, list item, table row (with its cells), code, note — each carrying i
 page, line, breadcrumb path and character offsets. That is what makes a citation
 possible in a format that has no lines, and what a phrase crosses when it wraps.
 
-**Query language** — `anydoc.explain_query(q)` parses one without reading a file:
+**Query language** — `results.explain()` prints how one parsed:
 
 | Query | Means |
 | --- | --- |
@@ -1113,9 +1113,9 @@ lands in `results.skipped` with its reason. A term nothing matched comes back in
 `results.suggestions` (`{"marhc": ["march"]}`), which is how a typo answers.
 
 Conversions are cached in the host on the content HASH (LRU, byte-budgeted), so
-`doc.search(…)` and a second question about the same corpus convert nothing —
-`anydoc.cache_info()` is the proof (`hits` climbs, `misses` does not) and
-`anydoc.clear_cache()` empties it.
+`doc.search(…)` and a second question about the same corpus convert nothing. The
+cache has no door of its own: it evicts least-recently-used and stays in budget
+without anybody asking.
 
 ---
 

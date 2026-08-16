@@ -76,35 +76,31 @@
   anydoc-module-test
   (it "stays lazy and imports as a module"
       (with-fresh-python-context
-        (expect (true?
-                  (ev python-context
-                      (str "import sys\n"
-                           "before = 'anydoc' not in sys.modules\n" "import anydoc\n"
-                           "before and anydoc is sys.modules['anydoc'] "
-                           "and callable(anydoc.to_markdown) and callable(anydoc.to_document)"))))))
-  (it "reports the formats it understands, fetched from the host on first touch"
-      (with-python-context (expect (= [true true true]
-                                      (ev python-context
-                                          (str "import anydoc\n"
-                                               "fs = anydoc.FORMATS\n"
-                                               "['docx' in fs, 'pdf' in fs, 'csv' in fs]")))))))
+        (expect
+          (true? (ev python-context
+                     (str "import sys\n"
+                          "before = 'anydoc' not in sys.modules\n" "import anydoc\n"
+                          "before and anydoc is sys.modules['anydoc'] "
+                          "and callable(anydoc.to_markdown) and callable(anydoc.to_document)")))))))
 
-;; The reading doors are CLOSED, and small on purpose: `read`, `to_markdown_bytes`
-;; and the three `format_from_*` aliases each only forwarded to one of these
-;; eight - every one of them with its own idea of what a source is.
+;; The doors are CLOSED, and small on purpose. `read`, `to_markdown_bytes` and the
+;; three `format_from_*` aliases only forwarded to another door; `detect`,
+;; `formats` and the lazy `FORMATS` answered a question a caller can ask a
+;; `Document` it already holds; `explain_query` is what `results.explain()` says;
+;; and `cache_info` / `clear_cache` were knobs on a cache that manages itself.
 (defdescribe anydoc-surface-test
              (it "publishes one door per question and nothing that only forwards to another"
                  (with-python-context
                    (expect
-                     (= [["cache_info" "clear_cache" "detect" "explain_query" "formats" "search"
-                          "to_document" "to_markdown"] 5]
+                     (= [["search" "to_document" "to_markdown"] 11]
                         (ev python-context
                             (str "import anydoc\n"
                                  "public = sorted(n for n in anydoc.__all__ if n[0].islower())\n"
                                  "gone = 0\n"
                                  "for name in ('read', 'to_markdown_bytes', 'format_from_bytes',\n"
-                                 "             'format_from_path', 'format_from_extension'):\n"
-                                 "    try:\n"
+                                 "             'format_from_path', 'format_from_extension',\n"
+                                 "             'detect', 'formats', 'FORMATS', 'explain_query',\n"
+                                 "             'cache_info', 'clear_cache'):\n" "    try:\n"
                                  "        getattr(anydoc, name)\n" "    except AttributeError:\n"
                                  "        gone += 1\n" "[public, gone]")))))))
 
@@ -125,15 +121,7 @@
                                              "anydoc.to_markdown(b'city,people\\nOslo,700000\\n', "
                                              "name='cities.csv')"))]
                              (expect (str/includes? markdown "| city | people |"))
-                             (expect (str/includes? markdown "Oslo")))))
-  (it "identifies a document without converting it"
-      (with-python-context (expect (= ["docx" "content" "csv" nil]
-                                      (ev python-context
-                                          (str "import anydoc\n"
-                                               "found = anydoc.detect(" (py-bytes @docx-fixture)
-                                               ")\n" "[found['format'], found['source'],\n"
-                                               " anydoc.detect(name='cities.csv')['format'],\n"
-                                               " anydoc.detect(b'city,people\\n')['format']]")))))))
+                             (expect (str/includes? markdown "Oslo"))))))
 
 (defdescribe anydoc-document-test
              (it "returns a Document carrying the format, its evidence and its assets"
@@ -188,19 +176,16 @@
              (it "reads a document on disk in one call"
                  (let [dir (tmp-dir)]
                    (io/copy @docx-bytes (io/file dir "report.docx"))
-                   (with-fs-context dir
-                                    (expect (= [true true "docx" true]
-                                               (ev python-context
-                                                   (str "import anydoc\n"
-                                                        "path = '"
-                                                        dir
-                                                        "/report.docx'\n"
-                                                        "markdown = anydoc.to_markdown(path)\n"
-                                                        "doc = anydoc.to_document(path)\n"
-                                                        "['# **Quarterly Report**' in markdown,\n"
-                                                        " doc.markdown == markdown,\n"
-                                                        " anydoc.detect(path)['format'],\n"
-                                                        " doc.format == 'docx']")))))))
+                   (with-fs-context
+                     dir
+                     (expect (= [true true "docx"]
+                                (ev python-context
+                                    (str "import anydoc\n"
+                                         "path = '" dir
+                                         "/report.docx'\n" "markdown = anydoc.to_markdown(path)\n"
+                                         "doc = anydoc.to_document(path)\n"
+                                         "['# **Quarterly Report**' in markdown,\n"
+                                         " doc.markdown == markdown,\n" " doc.format]")))))))
              (it "identifies a signature-less .csv on disk by its own file name"
                  (let [dir (tmp-dir)]
                    (spit (io/file dir "cities.csv") "city,people\nOslo,700000\n")
@@ -212,7 +197,7 @@
                                          "path = '"
                                          dir
                                          "/cities.csv'\n"
-                                         "[anydoc.detect(path)['format'],\n"
+                                         "[anydoc.to_document(path).format,\n"
                                          " '| city | people |' in anydoc.to_markdown(path)]"))))))))
 
 ;; --- search: one document, a few, or a directory of many, with citations ---
@@ -435,24 +420,28 @@
                              " n('+March +nowhere')," " n('March -orders'),"
                              " n('NEAR(revenue rose, 4)')," " n('heading:Revenue'),"
                              " n('/Marc\\\\w+ orders/')," " n('section:Revenue orders')]")))))))
-  (it "explains a query before a single document is read"
-      (with-fresh-python-context
-        (expect (= [true true true]
-                   (ev python-context
-                       (py "import anydoc"
-                           "text = anydoc.explain_query('\\\"total revenue\\\" +march -draft')"
-                           "[ 'phrase' in text, 'required' in text, 'excluded' in text]"))))))
+  (it "says exactly how it parsed the query it just ran"
+      (let [dir (corpus {"report.docx" @report-docx-bytes})]
+        (with-fs-context
+          dir
+          (expect (= [true true true]
+                     (ev python-context
+                         (py "import anydoc" (str "doc = anydoc.to_document('" dir "/report.docx')")
+                             "text = doc.search('\\\"total revenue\\\" +March -draft').explain()"
+                             "['phrase' in text, 'required' in text, 'excluded' in text]")))))))
   (it "points at the character it choked on and suggests the spelling"
       (with-fresh-python-context
         (expect (= [true true true true true]
                    (ev python-context
-                       (py "import anydoc" "out = []"
-                           "probes = ('', '\\\"unclosed', 'NEAR(a b, x)', '-only', 'page:x foo')"
-                           "for probe in probes:"
-                           "    try:" "        anydoc.explain_query(probe)"
-                           "        out.append(False)" "    except anydoc.QueryError as err:"
-                           "        out.append(isinstance(err, ValueError) and bool(err.message))"
-                           "out")))))))
+                       (py
+                         "import anydoc" "out = []"
+                         "probes = ('', '\\\"unclosed', 'NEAR(a b, x)', '-only', 'page:x foo')"
+                         "for probe in probes:"
+                         "    try:"
+                         "        anydoc.search(probe, {'cities.csv': b'city,people\\nOslo,7\\n'})"
+                         "        out.append(False)" "    except anydoc.QueryError as err:"
+                         "        out.append(isinstance(err, ValueError) and bool(err.message))"
+                         "out")))))))
 
 (defdescribe
   anydoc-corpus-test
@@ -522,22 +511,49 @@
                              "[sorted(named.documents)," " sorted({c.document_id for c in named}),"
                              " raw.citations[0].document_id,"
                              " listed.documents[csv].format == 'csv']")))))))
+  ;; The cache is the host's own business now: nothing in the sandbox reports or
+  ;; empties it, and what a caller sees is only that a second question converts
+  ;; nothing.
   (it "converts a corpus once, however many questions it is asked"
       (let [dir (corpus {"report.docx" @report-docx-bytes "sales.csv" @march-csv-bytes})]
-        (with-fs-context
-          dir
-          (expect (= [2 0 1 1 0]
-                     (ev python-context
-                         (py "import anydoc"
-                             "anydoc.clear_cache()"
-                             (str "first = anydoc.search('March', '" dir "')")
-                             (str "again = anydoc.search('April', '" dir "')")
-                             (str "raw = {'ledger.csv': " (py-bytes (b64 @march-csv-bytes)) "}")
-                             "anydoc.clear_cache()" "anydoc.search('March', raw)"
-                             "one = anydoc.cache_info()" "anydoc.search('April', raw)"
-                             "two = anydoc.cache_info()" "[first.stats['converted'],"
-                             " again.stats['converted']," " one['misses'],"
-                             " two['hits'] - one['hits']," " two['misses'] - one['misses']]"))))))))
+        (with-fs-context dir
+                         (expect
+                           (= [2 0]
+                              (ev python-context
+                                  (py "import anydoc"
+                                      (str "first = anydoc.search('March', '" dir "')")
+                                      (str "again = anydoc.search('April', '" dir "')")
+                                      "[first.stats['converted'], again.stats['converted']]"))))))))
+
+;; There is no cache door in the sandbox at all, so the LRU is proven where it
+;; lives: one conversion per key, and a corpus larger than the cache never grows
+;; it past its bound.
+(defdescribe anydoc-host-cache-test
+             (it "converts once per key and evicts the least recently used"
+                 (let
+                   [calls
+                    (atom 0)
+
+                    key-for
+                    (fn [n]
+                      [(str "vis-anydoc-cache-test-" n)])
+
+                    converter
+                    (fn [n]
+                      (fn []
+                        (swap! calls inc)
+                        {"markdown" (str n) "text" ""}))
+
+                    convert-once
+                    (fn [n]
+                      (@#'shim-anydoc/cached (key-for n) (converter n)))]
+
+                   (expect (= {"markdown" "0" "text" ""} (convert-once 0) (convert-once 0)))
+                   (expect (= 1 @calls))
+                   (dotimes [n (* 4 (long @#'shim-anydoc/cache-entries))]
+                     (convert-once n))
+                   (expect (>= (long @#'shim-anydoc/cache-entries)
+                               (count (:entries @@#'shim-anydoc/conversion-cache)))))))
 
 (defdescribe anydoc-refusal-test
              (it "names the document, the source and the format when a document cannot be read"
@@ -580,10 +596,11 @@
                        "with open(path, 'rb') as handle:" "    raw = handle.read()"
                        "from_path = anydoc.to_markdown(path)" "with open(path, 'rb') as handle:"
                        "    from_file = anydoc.to_markdown(handle)"
+                       "with open(path, 'rb') as handle:"
+                       "    from_file_doc = anydoc.to_document(handle)"
                        "[anydoc.to_markdown(raw) == from_path,"
                        " from_file == from_path," " anydoc.to_document(path).markdown == from_path,"
-                       " anydoc.to_document(raw).markdown == from_path,"
-                       " anydoc.detect(path)['format'],"
+                       " anydoc.to_document(raw).markdown == from_path," " from_file_doc.format,"
                        " anydoc.to_document(raw).format,"
                        " anydoc.to_document(path).id == path]")))))))
   (it "keeps every refusal typed and points a caller at the door it wanted"
@@ -652,22 +669,32 @@
      "anydoc.__doc__" (ev python-context (py "import anydoc" "anydoc.__doc__"))
      "extending.md" @docs-anydoc-section}))
 
+(defn- extension-format
+  "The format the cdylib reads a `.name` file as, or nil. A `.docx` in the prose
+   is a promise about a FORMAT, not a member of any object, and the sandbox has no
+   door that lists the formats any more."
+  [name]
+  (:format (im/document-format (byte-array 0) {:name (str "document." name)})))
+
 (defn- unknown-members
   "The claimed names that are NEITHER a member of one of anydoc's own objects NOR
    a file extension anydoc really reads."
   [^Context python-context dir claimed]
-  (ev python-context
-      (py "import anydoc"
-          (str "doc = anydoc.to_document('" dir "/report.docx')")
-          "hits = doc.search('March revenue')"
-          "cell_hit = doc.search('table:March')[0]" (str "walk = anydoc.search('March', '" dir "')")
-          "known = set()"
-          "for obj in (anydoc, doc, hits, hits[0], cell_hit, cell_hit.cell, doc.blocks[0],"
-          "            walk, walk.skipped[0], anydoc.Asset, anydoc.Document, anydoc.Citation,"
-          "            anydoc.SearchResults, anydoc.Skipped, anydoc.Block, anydoc.Cell):"
-          "    known |= set(dir(obj))" (str "claimed = " (py-list claimed))
-          "missing = [name for name in claimed if name not in known]"
-          "[name for name in missing if not anydoc.detect(name='document.' + name)['format']]")))
+  (into []
+        (remove extension-format)
+        (ev python-context
+            (py "import anydoc"
+                (str "doc = anydoc.to_document('" dir "/report.docx')")
+                "hits = doc.search('March revenue')"
+                "cell_hit = doc.search('table:March')[0]"
+                (str "walk = anydoc.search('March', '" dir "')")
+                "known = set()"
+                "for obj in (anydoc, doc, hits, hits[0], cell_hit, cell_hit.cell, doc.blocks[0],"
+                "            walk, walk.skipped[0], anydoc.Asset, anydoc.Document, anydoc.Citation,"
+                "            anydoc.SearchResults, anydoc.Skipped, anydoc.Block, anydoc.Cell):"
+                "    known |= set(dir(obj))"
+                (str "claimed = " (py-list claimed))
+                "[name for name in claimed if name not in known]"))))
 
 (defn- documented-queries
   "Every query vis SHOWS somebody: the first cell of each row of the docs table,
@@ -694,16 +721,15 @@
     (into (sorted-set) (concat table listed))))
 
 (defn- query-report
-  "Per documented query: how `explain_query` parsed it, and whether a real search
-   over `dir` ran instead of refusing."
+  "Per documented query: how the results SAY the query parsed, and whether a real
+   search over `dir` ran instead of refusing."
   [^Context python-context dir queries]
   (ev python-context
       (py "import anydoc" (str "queries = " (py-list queries))
           "out = []" "for query in queries:"
-          "    try:" "        head = anydoc.explain_query(query).splitlines()[0]"
-          "    except anydoc.AnydocError as err:" "        head = 'REFUSED: %s' % err"
-          "    try:" (str "        ran = bool(anydoc.search(query, '" dir "').documents)")
-          "    except anydoc.AnydocError as err:" "        ran = 'REFUSED: %s' % err"
+          "    try:" (str "        found = anydoc.search(query, '" dir "')")
+          "        head = found.explain().splitlines()[0]" "        ran = bool(found.documents)"
+          "    except anydoc.AnydocError as err:" "        head = ran = 'REFUSED: %s' % err"
           "    out.append([query, head, ran])" "out")))
 
 (defdescribe
