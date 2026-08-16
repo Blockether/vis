@@ -1015,18 +1015,17 @@ export function Switch({
  * question — am I connected? — survived only as the verb on a button. Reported
  * as: same device, four entries, and no way to just see whether alerts arrive.
  *
- * THE STATE IS A SENTENCE AND THE CONTROL IS A VERB. The control used to be
- * `Switch`, whose entire face is the state it is ALREADY in, standing under two
- * lines that had just said it: `Not connected`, then `<machine> will not alert
- * this device.`, then a box reading `OFF` — the same no three times over, and
- * the one thing this row never said was how to say yes. Reported as: I am
- * disconnected and the button says OFF, it should be the ACTION — CONNECT. So
- * the left column REPORTS and the button COMMITS — `Connect` while this device
- * is not registered, `Disconnect` while it is — one control in one place
- * whatever the answer is, so nothing here has to be read twice. `Switch` still
- * belongs to a setting this device owns outright (a feature toggle, an MCP
- * server) where the press IS the new state; this one is a round trip to a
- * machine that can refuse, and a round trip is a verb.
+ * THE ROW IS THE VERB, AND NOTHING ELSE. The control used to be `Switch`, whose
+ * entire face is the state it is ALREADY in, standing under two lines that had
+ * just said it: `Not connected`, then `<machine> will not alert this device.`,
+ * then a box reading `OFF` — the same no three times over. Dropping the switch
+ * for a verb left the two lines behind, and they were reported again: the panel
+ * is too big, I want one Connect/Disconnect button there. `Disconnect` can only
+ * stand where this device IS connected, so the button's own word carries the
+ * state and the panel's title already names the machine. `Switch` still belongs
+ * to a setting this device owns outright (a feature toggle, an MCP server) where
+ * the press IS the new state; this one is a round trip to a machine that can
+ * refuse, and a round trip is a verb.
  *
  * The words live in this component rather than at each call site because native
  * APNs/FCM and Web Push are two transports for ONE question and must never
@@ -1049,23 +1048,21 @@ export function NotifyConnectionRow({
   disabled?: boolean;
   onClick: () => void;
 }) {
-  const verdict = isChecking
+  // ONE CONTROL, AND IT IS THE VERB. Reported over the settings dialog: the row
+  // carried a verdict line, a sentence naming the machine and the button — three
+  // ways to say the same yes or no, in a panel already titled with that machine.
+  // `Disconnect` can only stand where this device IS connected, so the button's
+  // own word is the state; only the not-yet-answered case needs saying, and it
+  // says it on the button.
+  const label = isChecking
     ? 'Checking…'
     : isBusy
       ? isOn
         ? 'Disconnecting…'
         : 'Connecting…'
       : isOn
-        ? 'Connected'
-        : 'Not connected';
-  const sentence = isChecking
-    ? `Asking ${machine} whether this device is registered.`
-    : isOn
-      ? `${machine} alerts this device when a turn finishes.`
-      : `${machine} will not alert this device.`;
-  // Nothing has been answered yet, so there is no direction to offer: the verb
-  // waits with the app's own waiting mark rather than guessing one.
-  const verb = isChecking ? '··' : isOn ? 'Disconnect' : 'Connect';
+        ? 'Disconnect'
+        : 'Connect';
   const isWaiting = isBusy || isChecking;
   const action = isChecking
     ? `Asking ${machine} whether this device is registered`
@@ -1074,11 +1071,7 @@ export function NotifyConnectionRow({
       : `Connect notifications from ${machine}`;
 
   return (
-    <div className="flex min-h-12 items-start gap-3 px-3 py-2">
-      <span className="min-w-0 flex-1">
-        <span className="block break-words font-mono text-ui font-bold text-white">{verdict}</span>
-        <span className="block break-words font-mono text-chip text-dialog-hint">{sentence}</span>
-      </span>
+    <div className="flex items-center justify-end px-3 py-2">
       {/* Connecting is the invitation and wears the amber; disconnecting is the
           way out of something already working and never shouts to be taken. */}
       <Button
@@ -1090,7 +1083,7 @@ export function NotifyConnectionRow({
         onClick={onClick}
         className="shrink-0"
       >
-        <span className={isWaiting ? 'animate-pulse' : ''}>{verb}</span>
+        <span className={isWaiting ? 'animate-pulse' : ''}>{label}</span>
       </Button>
     </div>
   );

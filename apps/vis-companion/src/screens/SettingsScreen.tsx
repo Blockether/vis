@@ -2433,8 +2433,15 @@ export function SettingsPanel({
           instead — the name is measured at its own width so a status that does
           not fit beside it drops to its own line, and the description always
           spans the whole band. */}
-      <header className="flex min-h-8 min-w-0 flex-wrap content-center items-baseline gap-x-3 gap-y-1 border-b border-dialog-edge bg-panel-2 px-3 py-1.5">
-        <h3 className="min-w-0 flex-auto truncate border-l-2 border-accent pl-2 font-mono text-meta font-black uppercase tracking-[0.12em] text-white">
+      {/* A NESTED BAND IS NOT A COLUMN BAND. Reported over this screen: Providers,
+          Notifications and MCP servers did not read as parts OF a machine — each
+          wore the same slab, the same white and nearly the same weight as the
+          `MACHINES` band above them, so four peers stood where there are two
+          levels. The column keeps the paper, the size and the white; a panel
+          inside a machine keeps only the accent tick and speaks in the hint
+          colour one step smaller. */}
+      <header className="flex min-h-8 min-w-0 flex-wrap content-center items-baseline gap-x-3 gap-y-1 border-b border-dialog-edge px-3 py-1.5">
+        <h3 className="min-w-0 flex-auto truncate border-l-2 border-accent pl-2 font-mono text-chip font-bold uppercase tracking-[0.14em] text-dialog-hint">
           {title}
         </h3>
         {meta && (

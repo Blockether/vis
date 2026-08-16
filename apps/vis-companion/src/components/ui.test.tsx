@@ -2728,14 +2728,14 @@ describe("the notifications row answers one question", () => {
       />,
     );
 
-  it("states whether this device is connected, and names the machine either way", () => {
+  it("states whether this device is connected — in the verb, and only there", () => {
     const on = row({ isOn: true });
-    expect(on).toContain("Connected");
-    expect(on).toContain("visgw alerts this device when a turn finishes.");
+    expect(on).toContain(">Disconnect<");
+    expect(on).not.toContain("visgw alerts this device when a turn finishes.");
 
     const off = row();
-    expect(off).toContain("Not connected");
-    expect(off).toContain("visgw will not alert this device.");
+    expect(off).toContain(">Connect<");
+    expect(off).not.toContain("visgw will not alert this device.");
   });
 
   it("presses the VERB, never the state it is already in", () => {
@@ -2769,9 +2769,6 @@ describe("the notifications row answers one question", () => {
 
     const checking = row({ isChecking: true });
     expect(checking).toContain("Checking…");
-    expect(checking).toContain(
-      "Asking visgw whether this device is registered.",
-    );
     // Neither a verdict nor a verb before the machine has answered: there is no
     // direction to offer yet.
     expect(checking).not.toContain("Not connected");
@@ -2779,12 +2776,16 @@ describe("the notifications row answers one question", () => {
     expect(checking).toContain('aria-busy="true"');
   });
 
-  it("stands a finger tall and lets a long machine name wrap", () => {
+  // Reported over the settings dialog: the notifications panel is too big, I want
+  // only one Connect/Disconnect button there.
+  it("is the button and nothing else — no verdict line, no sentence", () => {
     const markup = row({ machine: "gateway.example.com" });
-    expect(markup).toContain("min-h-12");
-    expect(markup).toContain("break-words");
-    expect(markup).not.toContain("truncate");
-    expect(markup).toContain("gateway.example.com will not alert this device.");
+    expect(markup).not.toContain("gateway.example.com will not alert this device.");
+    expect(markup).not.toContain("Not connected");
+    expect(markup).not.toContain("Connected");
+    expect(markup).toContain(">Connect<");
+    // One line of controls, so the row is the button's own height.
+    expect(markup).not.toContain("min-h-12");
   });
 });
 
@@ -3493,5 +3494,31 @@ describe("the machine's voices", () => {
     expect(panel).not.toContain("<button");
     // The one raw element is the file picker the platform owns; it is never seen.
     expect(panel.match(/<input/g)).toHaveLength(1);
+  });
+});
+
+
+// Reported over the settings dialog: PROVIDERS, NOTIFICATIONS and MCP SERVERS did
+// not stand apart from the MACHINES band above them, so the hierarchy read flat.
+describe("a panel band sits UNDER its column band, never beside it", () => {
+  const band = (marker: string) => {
+    const start = settingsSource.indexOf(marker);
+    return settingsSource.slice(start, settingsSource.indexOf("</header>", start));
+  };
+  const column = band("function SettingsColumn");
+  const panel = band("export function SettingsPanel");
+
+  it("keeps the paper, the size and the white for the column alone", () => {
+    expect(column).toContain("bg-level-machine");
+    expect(column).toContain("text-ui font-black");
+    expect(column).toContain("text-white");
+
+    expect(panel).not.toContain("bg-level-machine");
+    expect(panel).not.toContain("bg-panel-2");
+    expect(panel).not.toContain("text-white");
+    // One step smaller, in the hint colour, marked only by the accent tick.
+    expect(panel).toContain("text-chip font-bold uppercase");
+    expect(panel).toContain("text-dialog-hint");
+    expect(panel).toContain("border-l-2 border-accent");
   });
 });
