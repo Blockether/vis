@@ -588,27 +588,54 @@
                             "    d.point((i % 100, i // 100), fill=(255,0,0))\n"
                             "[list(im.getpixel(p)) for p in [(0,0),(50,20),(99,49)]]"))))))
   (it "a run of draws pays neither a canvas conversion nor a cdylib call per op"
+      ;; COUNTED, never timed -- the same lesson as the three stopwatches below: this
+      ;; run's wall-clock budget went red at 1056 ms on a loaded runner with nothing
+      ;; wrong. Converting the 480k-pixel canvas in and out per op cost ~80 ms each --
+      ;; about 160 s for this loop. Even sharing ONE live image, a cdylib `draw` call
+      ;; per op still cost ~1.4 ms (~3 s here) because the canvas round-trips through
+      ;; the renderer per call. Queued as ONE batch, the whole run crosses the boundary
+      ;; exactly once in each direction, and THAT is a property of the code.
       (with-python-context
         (let
-          [t0
-           (System/nanoTime)
+          [draw!
+           im/draw!
+
+           from-pixels
+           im/from-pixels
+
+           pixels
+           im/pixels
+
+           crossings
+           (atom {:draw 0 :in 0 :out 0})
 
            painted
-           (ev python-context
-               (str "from PIL import Image, ImageDraw\n" "im = Image.new('RGB',(800,600),(0,0,0))\n"
-                    "d = ImageDraw.Draw(im)\n" "for i in range(2000):\n"
-                    "    d.point((i % 800, i % 600), fill=(255,255,255))\n"
-                    "list(im.getpixel((200,400)))"))
+           (with-redefs
+             [im/draw!
+              (fn [& args]
+                (swap! crossings update :draw inc)
+                (apply draw! args))
 
-           ms
-           (/ (- (System/nanoTime) t0) 1e6)]
+              im/from-pixels
+              (fn [& args]
+                (swap! crossings update :in inc)
+                (apply from-pixels args))
+
+              im/pixels
+              (fn [& args]
+                (swap! crossings update :out inc)
+                (apply pixels args))]
+
+             (ev python-context
+                 (str "from PIL import Image, ImageDraw\n"
+                      "im = Image.new('RGB',(800,600),(0,0,0))\n"
+                      "d = ImageDraw.Draw(im)\n" "for i in range(2000):\n"
+                      "    d.point((i % 800, i % 600), fill=(255,255,255))\n"
+                      "list(im.getpixel((200,400)))")))]
 
           (expect (= [255 255 255] painted))
-          ;; Converting the 480k-pixel canvas in and out per op cost ~80 ms each -- about
-          ;; 160 s for this loop. Even sharing ONE live image, a cdylib `draw` call per op
-          ;; still cost ~1.4 ms (~3 s here) because the canvas round-trips through the
-          ;; renderer per call. Queued as ONE batch, the whole run is a few milliseconds.
-          (expect (< ms 1000) (str "2000 draws took " (long ms) " ms")))))
+          (expect (= {:draw 1 :in 1 :out 1} @crossings)
+                  (str "2000 draws crossed the cdylib as " (pr-str @crossings))))))
   ;; Regression: the flush converted the canvas with `aset-byte`, i.e.
   ;; `java.lang.reflect.Array/setByte` -- four reflective stores per pixel, 65 ms per
   ;; 800x600 flush against 1.8 ms for the inlined store. No stopwatch pins that

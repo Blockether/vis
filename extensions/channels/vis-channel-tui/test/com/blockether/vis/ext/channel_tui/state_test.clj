@@ -3637,51 +3637,72 @@
       ;; enqueue POST was inline, so one unreachable daemon froze the editor for
       ;; the whole `ensure-gateway!` respawn wait plus the request timeout — with
       ;; no cursor, no feedback, nothing. It now hands off to the FIFO queue thread.
-      (with-redefs
-        [vis/gateway-submit-turn!
-         (fn [_ _]
-           (Thread/sleep 800)
-           {:turn {"turn_id" "t-slow" "status" "queued"}})
+      ;;
+      ;; Pinned by PARKING the POST instead of by a stopwatch: the caller coming back
+      ;; while the request is still parked IS the contract, and a wall-clock budget for
+      ;; it goes red on a loaded runner over a GC pause with nothing wrong.
+      (flush-queue-io!)
+      (let
+        [release
+         (promise)
 
-         vis/notify!
-         (fn [& _]
-           nil)]
+         post-thread
+         (promise)
 
-        (reset! state/app-db {:session {:id "c1"}
-                              :active-tab-id :main
-                              :render-version 0
-                              :loading? true
-                              :pending-sends []})
-        (let
-          [t0
-           (System/currentTimeMillis)
+         finished
+         (promise)]
 
-           _
-           (state/dispatch [:enqueue-message "while busy"])
+        (with-redefs
+          [vis/gateway-submit-turn!
+           (fn [_ _]
+             (deliver post-thread (.getName (Thread/currentThread)))
+             ;; Bounded: an inline POST must fail the expectation below, never hang CI.
+             (deref release 10000 :timeout)
+             (deliver finished true)
+             {:turn {"turn_id" "t-slow" "status" "queued"}})
 
-           blocked
-           (- (System/currentTimeMillis) t0)]
+           vis/notify!
+           (fn [& _]
+             nil)]
 
-          (expect (< blocked 500))
+          (reset! state/app-db {:session {:id "c1"}
+                                :active-tab-id :main
+                                :render-version 0
+                                :loading? true
+                                :pending-sends []})
+          (state/dispatch [:enqueue-message "while busy"])
+          (expect (not (realized? finished)))
+          (deliver release true)
           ;; …and the row still lands, painted from the gateway ACK. Polled, not
           ;; slept: the contract is that it arrives, not how long the stub napped.
           (loop [n 0]
             (when (and (< n 300) (not= ["t-slow"] (mapv :turn-id (:pending-sends @state/app-db))))
               (Thread/sleep 10)
               (recur (inc n))))
-          (expect (= ["t-slow"] (mapv :turn-id (:pending-sends @state/app-db)))))))
+          (expect (= ["t-slow"] (mapv :turn-id (:pending-sends @state/app-db))))
+          (expect (= "vis-tui-gateway-queue" (deref post-thread 1000 nil))))
+        (flush-queue-io!)))
   (it "a lost round-trip is retried under the idempotency key, never duplicated"
       ;; The daemon can die mid-POST and respawn seconds later. Retrying is safe BY
       ;; CONSTRUCTION, not by hope: `:idempotency-key` is the gateway's dedup key,
       ;; so the second attempt replays THE SAME turn instead of queueing a twin.
+      ;;
+      ;; The queue lane is ONE FIFO thread the whole suite shares, so drain it first and
+      ;; count only the attempts carrying THIS submission's key: a job an earlier test
+      ;; left on the lane would otherwise spend an attempt against this stub.
+      (flush-queue-io!)
       (let [calls (atom 0)]
         (with-redefs
           [vis/gateway-submit-turn! (fn [_ opts]
-                                      (if (= 1 (swap! calls inc))
-                                        (throw (java.net.ConnectException. "Connection refused"))
-                                        {:turn {"turn_id" "t-same"
-                                                "status" "queued"
-                                                "idempotency_key" (:idempotency-key opts)}}))
+                                      (if (= "cid" (:idempotency-key opts))
+                                        (if (= 1 (swap! calls inc))
+                                          (throw (java.net.ConnectException. "Connection refused"))
+                                          {:turn {"turn_id" "t-same"
+                                                  "status" "queued"
+                                                  "idempotency_key" (:idempotency-key opts)}})
+                                        ;; Someone else's submission: answer it as already RUNNING
+                                        ;; so the stray job mirrors no queue row of its own.
+                                        {:turn {"turn_id" "t-other" "status" "running"}}))
            vis/notify! (fn [& _]
                          nil)]
 
@@ -3699,7 +3720,8 @@
                             {}
                             nil))
           (expect (= 2 @calls))
-          (expect (= ["t-same"] (mapv :turn-id (:pending-sends @state/app-db)))))))
+          (expect (= ["t-same"] (mapv :turn-id (:pending-sends @state/app-db)))))
+        (flush-queue-io!)))
   (it "a session with NO id stages the row instead of leaving it awaiting an ack"
       ;; `:awaiting-ack?` is what tells `:drain-pending` to leave the head alone. If the
       ;; fx just returned when there is no session to POST to, that flag would stay set
