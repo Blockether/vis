@@ -1403,6 +1403,28 @@ describe("settings is ONE dialog with two columns", () => {
       expect(description[1].length).toBeLessThanOrEqual(80);
   });
 
+  it("leaves the providers band its title and its verb, and nothing else", () => {
+    // Reported over this screenshot: the providers description says nothing the
+    // rows do not, and "8/8 SIGNED IN" is a count of a list already on screen —
+    // both crowded the one band whose rows each carry their own status. The
+    // band's word was also the widest thing in it, so the verb is `Add` and the
+    // band supplies the noun (the full phrase stays as the accessible name).
+    const panel = settings.slice(
+      settings.indexOf("function ProvidersPanel"),
+      settings.indexOf("<ProviderRows"),
+    );
+    expect(panel).toContain('title="Providers"');
+    expect(panel).not.toContain("description=");
+    expect(panel).not.toContain("meta=");
+    expect(panel).not.toContain("signed in`");
+    const band = settings.slice(
+      settings.indexOf("<SettingsColumn"),
+      settings.indexOf("{/* THE COG"),
+    );
+    expect(band).toContain('aria-label="Add a machine"');
+    expect(band).toContain(">\n                Add\n              </Button>");
+  });
+
   it("hides a machine's own verbs behind its row, and keeps no panel of them", () => {
     // `Saved connection` stood open under the list holding a name field, `Make
     // primary` and `Forget this machine`: three controls for ONE machine, always

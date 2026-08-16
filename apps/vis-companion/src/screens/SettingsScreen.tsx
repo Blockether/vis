@@ -97,7 +97,6 @@ import {
 import {
   AddProviderButton,
   ProviderRows,
-  isProviderAuthed,
   unscopedMessage,
   useProviderAuth,
 } from "../components/ProviderAuth";
@@ -1879,9 +1878,10 @@ export function SettingsDialog({
               <Button
                 variant="primary"
                 density="compact"
+                aria-label="Add a machine"
                 onClick={() => setIsAdding(true)}
               >
-                Add a machine
+                Add
               </Button>
             }
           >
@@ -2017,7 +2017,6 @@ export function SettingsDialog({
 function ProvidersPanel({ client }: { client: GatewayClient }) {
   const auth = useProviderAuth(client);
   const { providers, err, note } = auth;
-  const signedIn = providers?.filter(isProviderAuthed).length ?? 0;
   // A message that names a provider is painted inside THAT provider's row by
   // `ProviderNotice`; only what has no row left to live in surfaces here.
   const fleetErr = unscopedMessage(err, providers);
@@ -2026,10 +2025,6 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
   return (
     <SettingsPanel
       title="Providers"
-      description="Accounts this machine signs in with."
-      meta={
-        providers ? `${signedIn}/${providers.length} signed in` : "checking…"
-      }
       action={<AddProviderButton auth={auth} />}
     >
       {(fleetErr || fleetNote) && (

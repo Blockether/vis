@@ -880,12 +880,13 @@ export function AddProviderButton({ auth }: { auth: ProviderAuth }) {
       <Button
         variant="primary"
         density="compact"
+        aria-label="Add a provider"
         onClick={() => {
           setIsPicking(true);
           setChosen(null);
         }}
       >
-        Add a provider
+        Add
       </Button>
 
       {isPicking && (
