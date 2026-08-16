@@ -1489,6 +1489,13 @@ function FormLabel({
  * A column is the level ABOVE a `SettingsPanel`: it says whose settings these are —
  * this copy of Vis, or the machine — and every band under it belongs to that owner.
  * It is the sentence the two dialogs used to spend a whole header band saying.
+ *
+ * A BAND NAMES ITS GROUP AND NEVER EXPLAINS IT. Both levels took a `description`
+ * under the title, and every one of them said what the rows under it already say
+ * — "every palette Vis ships" over the list of palettes, "how many sessions a
+ * project lists" over 5/10/15 — so a group of 48px rows opened with two lines of
+ * grey prose nobody reads twice. Reported over this screen as pointless; the prop
+ * went with the last three call sites that used it.
  */
 /**
  * The two places a reply can be spoken. There is no `Off`: nothing here ever speaks
@@ -1643,13 +1650,11 @@ export function SpokenRepliesPanel() {
 
 function SettingsColumn({
   title,
-  description,
   meta,
   action,
   children,
 }: {
   title: string;
-  description?: string;
   meta?: ReactNode;
   /** The column's ONE verb, at the end of its band: `Add a machine`. */
   action?: ReactNode;
@@ -1685,18 +1690,17 @@ function SettingsColumn({
             <span className="flex shrink-0 items-center">{action}</span>
           )}
         </div>
-        {/* One LINE, not a paragraph. This column's own said what a machine stores,
-            how to swipe a row and what it shares with the TUI — 310 characters, six
-            lines on a 320px phone, a band 137px tall introducing a 48px row. */}
-        {description && (
-          <p
-            className={`px-3 pb-2 sm:px-4 ${PROSE} font-mono text-chip text-dialog-hint`}
-          >
-            {description}
-          </p>
-        )}
       </header>
-      <div className="min-w-0 divide-y divide-dialog-edge sm:min-h-0 sm:flex-1 sm:overflow-y-auto sm:overscroll-contain">
+      {/* A COLUMN CLOSES ITS OWN LAST GROUP. Reported over this screenshot: the
+          dialog's last panel simply stopped. On a phone the frame is full-bleed
+          and carries no bottom edge, so the selected amber cell of the last
+          choice ran out into paper with no hairline under it — measured at 390px,
+          the column body ended at the cell's own 2655px — and the two stacked
+          halves were told apart by the GRID rather than by the column that ends.
+          The body draws the rule it owes below itself; on `sm:` the columns stand
+          side by side and the frame's own 1px bottom border is that edge, so it
+          is dropped there rather than doubled. */}
+      <div className="min-w-0 divide-y divide-dialog-edge border-b border-dialog-edge sm:min-h-0 sm:flex-1 sm:overflow-y-auto sm:overscroll-contain sm:border-b-0">
         {children}
       </div>
     </section>
@@ -1877,7 +1881,7 @@ export function SettingsDialog({
             column a 1500px empty gutter: scrolling to a machine's Sandbox panel dragged
             Theme off the top of the screen for no reason. Below `sm:` the halves stack
             and the dialog body is the one scroller again. */}
-        <div className="grid min-w-0 grid-cols-1 divide-y divide-dialog-edge sm:min-h-0 sm:flex-1 sm:grid-cols-2 sm:divide-x sm:divide-y-0 sm:overflow-hidden">
+        <div className="grid min-w-0 grid-cols-1 divide-dialog-edge sm:min-h-0 sm:flex-1 sm:grid-cols-2 sm:divide-x sm:overflow-hidden">
           <SettingsColumn
             title="Machines"
             action={
@@ -1926,7 +1930,6 @@ export function SettingsDialog({
 
           <SettingsColumn
             title="Application"
-            description="These choices affect this copy of Vis only. They are never sent to a gateway."
             meta="this device"
           >
             {err && (
@@ -1937,7 +1940,6 @@ export function SettingsDialog({
 
             <SettingsPanel
               title="Theme"
-              description="Every palette Vis ships, saved on this device."
               meta={`${THEMES.length} available`}
             >
               <div className="grid grid-cols-1 gap-px bg-dialog-edge">
@@ -1956,7 +1958,6 @@ export function SettingsDialog({
 
             <SettingsPanel
               title="Sessions per project"
-              description="How many sessions a project lists before paging."
               meta="saved on this device"
             >
               <div className="grid grid-cols-1 gap-px bg-dialog-edge min-[420px]:grid-cols-3">
@@ -2412,13 +2413,11 @@ export function NativeNotificationsPanel({
 
 export function SettingsPanel({
   title,
-  description,
   meta,
   action,
   children,
 }: {
   title: string;
-  description?: string;
   meta?: ReactNode;
   /** One verb for the whole band, sitting in it — the panel's own ＋. */
   action?: ReactNode;
@@ -2439,8 +2438,7 @@ export function SettingsPanel({
           collapsed to 15px and clipped to one syllable, the sentence under it
           wrapped one word per line, and the band grew 213px tall. The row WRAPS
           instead — the name is measured at its own width so a status that does
-          not fit beside it drops to its own line, and the description always
-          spans the whole band. */}
+          not fit beside it drops to its own line. */}
       {/* A NESTED BAND IS NOT A COLUMN BAND. Reported over this screen: Providers,
           Notifications and MCP servers did not read as parts OF a machine — each
           wore the same slab, the same white and nearly the same weight as the
@@ -2461,13 +2459,6 @@ export function SettingsPanel({
           <span className="flex shrink-0 items-center self-center">
             {action}
           </span>
-        )}
-        {description && (
-          <p
-            className={`w-full pl-2 ${PROSE} font-mono text-chip text-dialog-hint`}
-          >
-            {description}
-          </p>
         )}
       </header>
       {/* A PANEL BODY DIVIDES ITS OWN PARTS. `divide-y` draws only BETWEEN

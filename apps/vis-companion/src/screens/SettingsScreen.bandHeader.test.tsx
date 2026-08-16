@@ -12,7 +12,6 @@ const band = (meta: string) => {
   render(
     <SettingsPanel
       title="Notifications"
-      description="Alerts from THIS machine only — every paired machine has its own switch."
       meta={meta}
     >
       <div />
@@ -44,11 +43,9 @@ describe("a settings band header carrying a long status", () => {
     expect(status?.className).toContain("max-w-full");
   });
 
-  it("gives the description the whole band, never a column beside the status", () => {
-    const header = band("0 devices · via relay.example.com");
-    const description = header.querySelector("p");
-
-    expect(description?.parentElement).toBe(header);
-    expect(description?.className).toContain("w-full");
+  it("carries no sentence under the name", () => {
+    // A band NAMES its group; the description that used to ride under the title
+    // said what the rows under it already say, and the prop is gone.
+    expect(band("0 devices · via relay.example.com").querySelector("p")).toBeNull();
   });
 });

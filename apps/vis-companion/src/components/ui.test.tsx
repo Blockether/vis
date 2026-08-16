@@ -1375,10 +1375,11 @@ describe("settings is ONE dialog with two columns", () => {
   it("puts the columns side by side with room, and stacks them on a phone", () => {
     expect(settings).toContain("grid-cols-1");
     expect(settings).toContain("sm:grid-cols-2");
-    // One rule between the columns on desktop, one between the stacked halves on
-    // a phone — never both at once.
+    // One rule between the columns on desktop. On a phone the rule between the
+    // stacked halves is the upper column's OWN closing border, so the grid never
+    // divides as well — see "closes the last group of a column" below.
     expect(settings).toContain("sm:divide-x");
-    expect(settings).toContain("sm:divide-y-0");
+    expect(settings).not.toContain("sm:divide-y-0");
   });
 
   it("pairs a machine from the band's own word, over the column rather than inside it", () => {
@@ -1404,19 +1405,36 @@ describe("settings is ONE dialog with two columns", () => {
     expect(settings).not.toContain("onPair");
   });
 
-  it("welds a machine's opened panels to its row with a rule, and keeps each band's line short", () => {
+  it("welds a machine's opened panels to its row with a rule, and closes the last group of a column", () => {
     // Reported: "providers don't look good, there is no border on top, some
     // overlong needless texts". The panel stack only DIVIDED between groups, so
     // the first band (Providers) met the machine row it belongs to with no
-    // hairline at all, and the two longest descriptions wrapped to three and four
-    // lines on a 390px phone above rows 48px tall.
+    // hairline at all.
     const stack = settings.slice(
       settings.indexOf("touch-pan-y"),
       settings.indexOf("<ProvidersPanel"),
     );
     expect(stack).toContain("border-t border-dialog-edge");
-    for (const description of settings.matchAll(/description="([^"]+)"/g))
-      expect(description[1].length).toBeLessThanOrEqual(80);
+    // Reported over the same dialog on a phone: the last group simply STOPPED.
+    // A full-bleed frame carries no bottom edge, so the amber cell of the last
+    // choice ran out into paper with no hairline under it — measured at 390px,
+    // the column body ended at the cell's own 2655px. The body closes itself; on
+    // `sm:` the frame's own 1px border is that edge, so the rule is dropped there
+    // rather than doubled.
+    expect(settings).toContain(
+      "divide-y divide-dialog-edge border-b border-dialog-edge",
+    );
+    expect(settings).toContain("sm:border-b-0");
+  });
+
+  it("names a group and never explains it", () => {
+    // Reported over this screenshot: the sentence under APPLICATION, THEME and
+    // SESSIONS PER PROJECT said what the rows under each of them already say, so
+    // a group of 48px rows opened with two lines of grey prose. Every band had
+    // lost its own sentence one report at a time; these were the last three, and
+    // the prop went with them.
+    expect(settings).not.toContain("description=");
+    expect(settings).not.toContain("description?: string;");
   });
 
   it("leaves the providers band its title and its verb, and nothing else", () => {
