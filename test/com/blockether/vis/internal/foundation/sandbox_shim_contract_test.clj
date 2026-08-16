@@ -194,3 +194,36 @@
               (str name " doc() does not serve :shim/docs"))
       (expect (not (str/includes? doc (:shim/description shim)))
               (str name " doc() still serves the pushed description")))))
+
+(defdescribe
+  shim-globals-name-their-call-test
+  "A prebound global is typed straight into a block — `ls(...)`, `nippy_decode(...)` — with
+   no import and no signature to inspect first, so its page is the only place its arguments
+   are ever stated. Every one of them shows its own call form; the two nippy globals were
+   pages of prose that named neither an argument nor a result."
+  (it "documents every shim global with its own call form"
+      (let
+        [names
+         (->> (registered-shims)
+              (mapcat :shim/globals)
+              (filter string?)
+              distinct
+              vec)
+
+         ^Context ctx
+         (:python-context (ep/create-python-context {}))
+
+         code
+         (str "_names = ["
+              (str/join ", " (map pr-str names))
+              "]\n"
+              "_docs = globals().get('__vis_docs__', {})\n"
+              "print([n for n in _names if (n + '(') not in str(_docs.get(n, ''))])")
+
+         undocumented
+         (try (:stdout (ep/run-python-block ctx code "t1/i1")) (finally (.close ctx)))]
+
+        ;; Guards the guard: an empty name list would make the check vacuous.
+        (expect (< 5 (count names)))
+        (expect (= "[]" (str/trim undocumented))
+                (str "shim globals whose page never shows a call: " undocumented)))))

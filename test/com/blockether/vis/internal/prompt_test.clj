@@ -117,13 +117,30 @@
       ;; forms inline is what makes the ordered fold executable; it is paid for by dropping
       ;; "Folding changes rendering, not storage" (the NOT-re-readable clause carries it), and
       ;; lands at 5 985.
-      (expect (< (count text) 6050))
+      ;; 6.05k → 6.1k for the three call shapes §3 was missing. The section names five code
+      ;; verbs and spelled a callable form for two (`cat`, `patch`); the three whose contract
+      ;; is a single options dict were named bare, so their shape had to be recalled or pulled
+      ;; mid-edit. Measured over 179 gateway journals (1 006 sandbox blocks, 326 of them calling
+      ;; a code verb): `grep` called with a bare string, `cat` with a dict, `struct_*` with a
+      ;; list, and `patch` edits keyed `from_anchor`/`to_anchor` — a key no release ever had.
+      ;; Each is a refused call and a wasted round trip; the literal dicts cost 71 characters
+      ;; and land at 6 056.
+      (expect (< (count text) 6100))
       (let
         [steps (mapv #(str/index-of text %)
                      ["`grep` locates unknown code" "`struct_index` every known file"
                       "read bodies in ONE call" "`struct_nodes`" "`struct_patch`"])]
         (expect (every? some? steps))
         (expect (apply < steps)))
+      ;; Regression, user report: a section that ORDERS a verb has to say how it is CALLED.
+      ;; Every code verb §3 names carries its literal call shape, and the options-dict ones
+      ;; name the keys inside it — the shape is read, never remembered or looked up.
+      (doseq
+        [shape ["`grep({\"query\": [needles], \"paths\": [scopes]})`"
+                "`struct_index` every known file (`{\"paths\": [f]}`)"
+                "`struct_nodes` (`{\"path\": f, \"nodes\": [names]}`)" "`cat(path, start, end)`"
+                "`patch(path, edits)`" "`[{\"from\": a, \"to\": b, \"replace\": text}]`"]]
+        (expect (str/includes? text shape)))
       (expect (str/includes? text "`grep(...)` FIRST"))
       ;; The verification rule must name a call the language surface accepts: a lone
       ;; string is the PAYLOAD, not a language, so `run_tests("python")` would run the

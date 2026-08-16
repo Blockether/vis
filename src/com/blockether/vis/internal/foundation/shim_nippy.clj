@@ -122,6 +122,19 @@
          "`nippy_decode`/`nippy_encode` round-trip trusted Vis Nippy bytes and plain Python data; "
          "Vectorz vectors decode as lists. Not supported: exact Clojure type preservation, Java "
          "Serializable fallback, encryption, untrusted input.")
+       :shim/docs
+       (str
+         "`nippy_decode(data)` -> the plain Python value inside TRUSTED Vis-owned Nippy bytes: "
+         "`data` is bytes/bytearray/memoryview out of a persistence BLOB "
+         "(`session_turn_iteration.forms`, `session_turn_state.ctx`/`error`) and comes back as "
+         "dicts, lists, strings and numbers — map keys as canonical snake_case strings, keywords "
+         "and symbols as strings, dates as epoch milliseconds, Vectorz vectors as lists, and "
+         "unsupported leaves stringified. `nippy_encode(value)` -> the Nippy bytes for plain "
+         "Python data (dict, list, str, int, float, bool, None), the exact inverse. A non-bytes "
+         "decode raises TypeError; `nippy.NippyError` names a value this codec will not read or "
+         "write. `import nippy` publishes the same two as `nippy.decode`/`nippy.loads` and "
+         "`nippy.encode`/`nippy.dumps`. Trusted bytes only: Java Serializable fallback is "
+         "disabled both ways, exact Clojure types are not preserved, there is no encryption.")
        :shim/bindings nippy-bridge-bindings
        :shim/source "vis-shims/nippy.py"}]}))
 

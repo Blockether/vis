@@ -47,10 +47,17 @@
        :shim/description
        (str
          "`urllib3` as a package: `PoolManager`/`ProxyManager`, `HTTPResponse`, `request`, `util`, "
-         "`fields`, `filepost`, `exceptions`. TLS options (`cert_reqs`, `ca_certs`, `assert_hostname`, "
-         "`ssl_context`, `ssl_minimum_version`/`ssl_maximum_version`, `util.ssl_.create_urllib3_context`) "
-         "reach the socket, and a certificate failure raises `exceptions.SSLError`; retries and pooling "
-         "are best-effort no-ops. Not supported: `assert_fingerprint`, `ciphers` (`NotImplementedError`).")
+         "`fields`, `filepost`, `exceptions`. TLS options reach the socket and a bad certificate "
+         "raises `exceptions.SSLError`; retries and pooling are best-effort no-ops. Not supported: "
+         "`assert_fingerprint`, `ciphers` (`NotImplementedError`).")
+       :shim/docs
+       (str
+         "`urllib3` as a package: `PoolManager`/`ProxyManager`, `HTTPResponse`, `request`, `util`, "
+         "`fields`, `filepost`, `exceptions`. The TLS options that reach the socket are "
+         "`cert_reqs`, `ca_certs`, `assert_hostname`, `ssl_context`, "
+         "`ssl_minimum_version`/`ssl_maximum_version` and `util.ssl_.create_urllib3_context`; a "
+         "certificate failure raises `exceptions.SSLError`. Retries and pooling are best-effort "
+         "no-ops. Not supported: `assert_fingerprint`, `ciphers` (`NotImplementedError`).")
        :shim/source "vis-shims/urllib3.py"}]}))
 
 (vis/register-extension! vis-extension)
