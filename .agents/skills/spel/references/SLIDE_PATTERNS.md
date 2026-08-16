@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.26 -->
+<!-- spel-reference-version: 0.9.27 -->
 <!-- Adapted from visual-explainer (MIT, github.com/nicobailon/visual-explainer) -->
 # Slide deck patterns
 

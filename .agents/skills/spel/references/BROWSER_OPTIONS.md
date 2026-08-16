@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.26 -->
+<!-- spel-reference-version: 0.9.27 -->
 # Browser options, page utilities & advanced locator actions
 
 ## Browser launch options

@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.26 -->
+<!-- spel-reference-version: 0.9.27 -->
 # Bridge — CDP-free in-page automation (`spel bridge`)
 
 The bridge lets spel drive a **real browser tab without CDP**. It works where

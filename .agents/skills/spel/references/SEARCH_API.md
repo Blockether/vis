@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.26 -->
+<!-- spel-reference-version: 0.9.27 -->
 # Google Search API
 
 Search Google from CLI, SCI `eval-sci`, or Clojure library — no API key required. Uses Playwright with stealth mode.

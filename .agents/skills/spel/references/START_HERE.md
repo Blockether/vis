@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.26 -->
+<!-- spel-reference-version: 0.9.27 -->
 # Start Here
 
 Quick map of spel skill.

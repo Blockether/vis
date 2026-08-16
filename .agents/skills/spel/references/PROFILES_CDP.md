@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.26 -->
+<!-- spel-reference-version: 0.9.27 -->
 # Browser profiles, device emulation, and CDP modes
 
 Use this guide to pick the right browser startup mode for automation.
