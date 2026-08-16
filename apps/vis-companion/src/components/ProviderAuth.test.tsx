@@ -9,10 +9,10 @@ import type {
   RouterProvider,
 } from '../lib/types';
 import {
-  AddProviderPanel,
+  AddProviderButton,
   ProviderNotice,
-  ProviderQuota,
-  ProviderRemoveButton,
+  ProviderRows,
+  providerQuotaMark,
   unscopedMessage,
   type ProviderAuth,
 } from './ProviderAuth';
@@ -74,18 +74,21 @@ const apiKeyFlow = (providerId: string): AuthFlow => ({
   instructions: ['Z.ai (Coding Plan) requires a static API key.'],
 });
 
-describe('AddProviderPanel', () => {
+describe('AddProviderButton', () => {
   it('offers nothing when every provider this machine knows is already configured', () => {
-    expect(renderToStaticMarkup(<AddProviderPanel auth={auth([])} />)).toBe('');
+    expect(renderToStaticMarkup(<AddProviderButton auth={auth([])} />)).toBe('');
   });
 
   it('stays silent until the gateway has said what is addable', () => {
-    expect(renderToStaticMarkup(<AddProviderPanel auth={auth(null)} />)).toBe('');
+    expect(renderToStaticMarkup(<AddProviderButton auth={auth(null)} />)).toBe('');
   });
 
-  it('offers the button when the machine can still add something', () => {
-    const html = renderToStaticMarkup(<AddProviderPanel auth={auth([preset('ollama')])} />);
-    expect(html).toContain('Add provider');
+  it('is one band verb, and the picker it opens is a sheet rather than a standing panel', () => {
+    const html = renderToStaticMarkup(<AddProviderButton auth={auth([preset('ollama')])} />);
+    expect(html).toContain('Add a provider');
+    // The list of presets belongs to the sheet, so nothing of it paints until
+    // the band verb is pressed.
+    expect(html).not.toContain('OLLAMA');
   });
 });
 
@@ -161,57 +164,125 @@ describe('unscopedMessage', () => {
 // Reported: the provider card carried four account buttons — "Sign in again",
 // "Check status", "Sign out" and "Remove" — where sign-out and remove destroyed
 // the same credential, and the quota only refreshed if the user tapped for it.
-describe('ProviderQuota', () => {
+describe('providerQuotaMark', () => {
   const reporting = (rows: ProviderLimitRow[]): RouterProvider => ({
     ...provider('github-copilot'),
     limits: { dynamic: { limits: rows } },
   });
-  const quiet = (): ProviderAuth => state({ recheck: async () => {} });
 
-  it('asks the gateway for the live quota the moment the card opens', () => {
+  it('wears the window closest to running out, because that is the one that decides', () => {
+    expect(
+      providerQuotaMark(
+        reporting([
+          { label: 'Chat', limit: 100, remaining: 62 },
+          { label: 'Completions', limit: 100, remaining: 16 },
+        ]),
+      ),
+    ).toBe('16%');
+  });
+
+  it('marks nothing rather than a fabricated zero when no window carries a number', () => {
+    expect(providerQuotaMark(reporting([{ label: 'Chat', is_unlimited: true }]))).toBeNull();
+    expect(providerQuotaMark(provider('anthropic'))).toBeNull();
+  });
+});
+
+// The same report, one layer up: a provider is a machine-sized thing, so its
+// verbs live under its own row's slide exactly as a machine's do, instead of
+// inside a body that had to be expanded to reach a `<select>` and four buttons.
+describe('ProviderRows', () => {
+  const signedIn = (fields: Partial<RouterProvider> = {}): RouterProvider => ({
+    ...provider('github-copilot'),
+    status: { is_authenticated: true, label: 'signed-in session' },
+    ...fields,
+  });
+
+  it('paints what the account has left in the row, with nothing to tap for it', () => {
+    render(
+      <ProviderRows
+        auth={state({
+          providers: [
+            signedIn({
+              limits: {
+                dynamic: {
+                  limits: [
+                    { label: 'Chat', limit: 100, remaining: 62 },
+                    { label: 'Completions', limit: 100, remaining: 16 },
+                  ],
+                },
+              },
+            }),
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByText('16%')).toBeTruthy();
+    expect(screen.queryByText('Check status')).toBeNull();
+  });
+
+  it('presses into a live re-check for an account that is already signed in', () => {
     const asked: string[] = [];
     render(
-      <ProviderQuota
+      <ProviderRows
         auth={state({
+          providers: [signedIn()],
           recheck: async (providerId: string) => {
             asked.push(providerId);
           },
         })}
-        provider={provider('github-copilot')}
       />,
     );
+    fireEvent.click(screen.getByText('GITHUB-COPILOT'));
     expect(asked).toEqual(['github-copilot']);
-    // The whole point of dropping "Check status": the answer costs no tap.
-    expect(screen.queryByRole('button')).toBeNull();
   });
 
-  it('reports every window the provider sent', () => {
+  it('presses into the sign-in of an account that has none', () => {
+    const started: string[] = [];
     render(
-      <ProviderQuota
-        auth={quiet()}
-        provider={reporting([
-          { label: 'Chat', is_unlimited: true },
-          { label: 'Completions', is_unlimited: true },
-        ])}
+      <ProviderRows
+        auth={state({
+          providers: [provider('anthropic')],
+          signIn: async (row: RouterProvider) => {
+            started.push(row.id);
+          },
+        })}
       />,
     );
-    expect(screen.getByText('Chat unlimited · Completions unlimited')).toBeTruthy();
+    expect(screen.getByText('Sign in')).toBeTruthy();
+    fireEvent.click(screen.getByText('ANTHROPIC'));
+    expect(started).toEqual(['anthropic']);
   });
 
-  it('says so out loud when a provider reports no window at all', () => {
-    render(<ProviderQuota auth={quiet()} provider={provider('anthropic')} />);
-    expect(screen.getByText('This provider reports no usage limits.')).toBeTruthy();
+  it('hangs that account’s own models under the rank verb instead of guessing one', () => {
+    render(
+      <ProviderRows
+        auth={state({ providers: [signedIn({ models: ['glm-5.3', 'glm-5.3-air'] })] })}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Run every turn on GITHUB-COPILOT' }));
+    expect(screen.getByText('glm-5.3-air')).toBeTruthy();
   });
-});
 
-describe('ProviderRemoveButton', () => {
-  it('is the one destructive action, and names the sign-out it performs', () => {
-    render(<ProviderRemoveButton auth={state({})} provider={provider('anthropic')} />);
+  it('never offers the fallback to the provider that already runs every turn', () => {
+    const html = renderToStaticMarkup(
+      <ProviderRows
+        auth={state({
+          providers: [signedIn({ is_default: true, default_model: 'gpt-5' })],
+        })}
+      />,
+    );
+    expect(html).toContain('Run every turn on GITHUB-COPILOT');
+    expect(html).not.toContain('Fall back to GITHUB-COPILOT');
+  });
+
+  it('keeps removal as the row’s last verb, and asks inside the row before it destroys', () => {
+    render(<ProviderRows auth={state({ providers: [provider('anthropic')] })} />);
     fireEvent.click(
       screen.getByRole('button', {
         name: 'Sign out of ANTHROPIC and remove it from this machine',
       }),
     );
-    expect(screen.getByText('Yes, sign out and remove')).toBeTruthy();
+    expect(screen.getByRole('group', { name: 'Remove ANTHROPIC?' })).toBeTruthy();
+    expect(screen.getByText('Yes, remove')).toBeTruthy();
   });
 });

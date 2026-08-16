@@ -9,7 +9,6 @@ import {
   GatewayClient,
   GatewayError,
 } from "../lib/gateway";
-import { ChevronIcon } from "../components/icons";
 import type {
   GatewayConn,
   PushDevice,
@@ -92,22 +91,15 @@ import {
   ConfirmRow,
   DialogFrame,
   Input,
-  ListRow,
   Modal,
   NotifyConnectionRow,
   PROSE,
   Switch,
 } from "../components/ui";
 import {
-  ProviderNotice,
-  ProviderQuota,
-  ProviderRemoveButton,
-  AddProviderPanel,
-  defaultFirstProviders,
+  AddProviderButton,
+  ProviderRows,
   isProviderAuthed,
-  preferredModelFirst,
-  providerStatusDot,
-  providerStatusLine,
   unscopedMessage,
   useProviderAuth,
 } from "../components/ProviderAuth";
@@ -1994,67 +1986,12 @@ export function SettingsDialog({
  */
 function ProvidersPanel({ client }: { client: GatewayClient }) {
   const auth = useProviderAuth(client);
-  const { providers, err, note, pending } = auth;
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [modelDrafts, setModelDrafts] = useState<Record<string, string>>({});
+  const { providers, err, note } = auth;
   const signedIn = providers?.filter(isProviderAuthed).length ?? 0;
-  // A message that names a provider is painted inside THAT provider's card by
-  // `ProviderNotice`; only what has no card left to live in surfaces here.
+  // A message that names a provider is painted inside THAT provider's row by
+  // `ProviderNotice`; only what has no row left to live in surfaces here.
   const fleetErr = unscopedMessage(err, providers);
   const fleetNote = unscopedMessage(note, providers);
-
-  const tagModel = async (
-    role: "default" | "fallback",
-    providerId: string,
-    model: string,
-  ) => {
-    if (!model) return;
-    auth.setPending(`${role}:${providerId}`);
-    auth.setErr(null);
-    auth.setNote(null);
-    try {
-      if (role === "fallback") {
-        await client.setFallbackModel(providerId, model);
-      } else {
-        await client.setDefaultModel(providerId, model);
-      }
-      await auth.reload(undefined, { force: true });
-      auth.setNote(
-        `${role === "fallback" ? "Fallback" : "Default"} set to ${providerId} / ${model}.`,
-        providerId,
-      );
-    } catch (e) {
-      auth.setErr(
-        e instanceof GatewayError ? e.message : String(e),
-        providerId,
-      );
-    } finally {
-      auth.setPending(null);
-    }
-  };
-
-  const setDefault = (providerId: string, model: string) =>
-    tagModel("default", providerId, model);
-  const setFallback = (providerId: string, model: string) =>
-    tagModel("fallback", providerId, model);
-
-  const clearFallback = async (providerId: string) => {
-    auth.setPending(`fallback:${providerId}`);
-    auth.setErr(null);
-    auth.setNote(null);
-    try {
-      await client.clearFallbackModel();
-      await auth.reload(undefined, { force: true });
-      auth.setNote("Fallback cleared.", providerId);
-    } catch (e) {
-      auth.setErr(
-        e instanceof GatewayError ? e.message : String(e),
-        providerId,
-      );
-    } finally {
-      auth.setPending(null);
-    }
-  };
 
   return (
     <SettingsPanel
@@ -2063,193 +2000,28 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
       meta={
         providers ? `${signedIn}/${providers.length} signed in` : "checking…"
       }
+      action={<AddProviderButton auth={auth} />}
     >
-      <div className="space-y-2 p-3">
-        {fleetErr && <Banner kind="err">{fleetErr.text}</Banner>}
-        {fleetNote && <Banner kind="ok">{fleetNote.text}</Banner>}
+      {(fleetErr || fleetNote) && (
+        <div className="space-y-2 p-3">
+          {fleetErr && <Banner kind="err">{fleetErr.text}</Banner>}
+          {fleetNote && <Banner kind="ok">{fleetNote.text}</Banner>}
+        </div>
+      )}
 
-        {providers === null && (
-          <p className="py-4 text-center font-mono text-meta text-dialog-hint">
-            Checking provider sign-in…
-          </p>
-        )}
+      {providers === null && (
+        <p className="py-4 text-center font-mono text-meta text-dialog-hint">
+          Checking provider sign-in…
+        </p>
+      )}
 
-        {providers?.length === 0 && (
-          <p className="py-4 text-center font-mono text-meta text-dialog-hint">
-            No providers configured on this machine.
-          </p>
-        )}
+      {providers?.length === 0 && (
+        <p className="py-4 text-center font-mono text-meta text-dialog-hint">
+          No providers configured on this machine.
+        </p>
+      )}
 
-        {defaultFirstProviders(providers ?? []).map((provider) => {
-          const dot = providerStatusDot(provider);
-          const authed = isProviderAuthed(provider);
-          const open = expanded === provider.id;
-          const orderedModels = preferredModelFirst(
-            provider.models,
-            provider.default_model ?? provider.fallback_model,
-          );
-          const selectedModel =
-            modelDrafts[provider.id] ??
-            provider.default_model ??
-            provider.fallback_model ??
-            orderedModels[0] ??
-            "";
-          const settingDefault = pending === `default:${provider.id}`;
-          const settingFallback = pending === `fallback:${provider.id}`;
-          const tagging = settingDefault || settingFallback;
-          const isDefaultModel =
-            provider.is_default && provider.default_model === selectedModel;
-          const isFallbackModel =
-            provider.is_fallback && provider.fallback_model === selectedModel;
-
-          return (
-            <div
-              key={provider.id}
-              className="border border-dialog-edge bg-panel-2"
-            >
-              <ListRow
-                onClick={() => setExpanded(open ? null : provider.id)}
-                aria-expanded={open}
-              >
-                <span
-                  className={`font-mono text-body ${dot.tone}`}
-                  aria-label={dot.label}
-                >
-                  {dot.glyph}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="flex min-w-0 items-center gap-2">
-                    <span className="truncate font-mono text-ui font-bold text-white">
-                      {provider.label}
-                    </span>
-                  </span>
-                  <span className="block truncate font-mono text-meta text-dialog-hint">
-                    {provider.is_default && provider.default_model
-                      ? `${provider.default_model} · default · ${providerStatusLine(provider)}`
-                      : provider.is_fallback && provider.fallback_model
-                        ? `${provider.fallback_model} · fallback · ${providerStatusLine(provider)}`
-                        : providerStatusLine(provider)}
-                  </span>
-                </span>
-                <ChevronIcon
-                  open={open}
-                  className="size-3.5 text-dialog-hint"
-                />
-              </ListRow>
-
-              <ProviderNotice auth={auth} provider={provider} />
-
-              {open && (
-                <div className="space-y-3 border-t border-dialog-edge p-3">
-                  <ProviderQuota auth={auth} provider={provider} />
-                  <p className="break-words font-mono text-chip text-dialog-hint">
-                    {provider.id} · {provider.models.length}{" "}
-                    {provider.models.length === 1 ? "model" : "models"}{" "}
-                    available
-                  </p>
-
-                  <div className="space-y-2">
-                    <label
-                      htmlFor={`model-${provider.id}`}
-                      className="block font-mono text-meta font-bold text-dialog-hint"
-                    >
-                      {settingDefault
-                        ? "Model · saving default…"
-                        : settingFallback
-                          ? "Model · saving fallback…"
-                          : "Model"}
-                    </label>
-                    <select
-                      id={`model-${provider.id}`}
-                      value={selectedModel}
-                      disabled={provider.models.length === 0 || tagging}
-                      onChange={(event) => {
-                        const model = event.target.value;
-                        setModelDrafts((drafts) => ({
-                          ...drafts,
-                          [provider.id]: model,
-                        }));
-                      }}
-                      className="min-h-10 w-full min-w-0 border border-dialog-edge bg-input px-3 font-mono text-ui text-white outline-none transition-colors focus:border-accent disabled:opacity-50"
-                    >
-                      {orderedModels.map((model) => (
-                        <option key={model} value={model}>
-                          {model}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="flex flex-col gap-2 sm:flex-row">
-                      <Button
-                        className="flex-1"
-                        variant={isDefaultModel ? "secondary" : "primary"}
-                        disabled={!selectedModel || tagging || isDefaultModel}
-                        onClick={() =>
-                          void setDefault(provider.id, selectedModel)
-                        }
-                      >
-                        {isDefaultModel ? "Default" : "Set as default"}
-                      </Button>
-                      <Button
-                        className="flex-1"
-                        variant="secondary"
-                        disabled={
-                          !selectedModel ||
-                          tagging ||
-                          provider.is_default ||
-                          isFallbackModel
-                        }
-                        onClick={() =>
-                          void setFallback(provider.id, selectedModel)
-                        }
-                      >
-                        {isFallbackModel ? "Fallback" : "Set as fallback"}
-                      </Button>
-                      {provider.is_fallback && (
-                        <Button
-                          className="flex-1"
-                          variant="secondary"
-                          disabled={tagging}
-                          onClick={() => void clearFallback(provider.id)}
-                        >
-                          Clear fallback
-                        </Button>
-                      )}
-                    </div>
-                    <p className="break-words font-mono text-chip text-dialog-hint">
-                      {provider.is_default
-                        ? "This is the default provider, so it cannot also hold the fallback — tag another provider instead."
-                        : "The default runs every turn; the fallback takes over on another provider when it cannot."}
-                    </p>
-                  </div>
-
-                  <div className="flex flex-col gap-2 sm:flex-row">
-                    {!authed && (
-                      <Button
-                        className="flex-1"
-                        disabled={pending === `auth:${provider.id}`}
-                        onClick={() => void auth.signIn(provider)}
-                      >
-                        {pending === `auth:${provider.id}`
-                          ? "Starting…"
-                          : "Sign in"}
-                      </Button>
-                    )}
-                    <ProviderRemoveButton
-                      auth={auth}
-                      provider={provider}
-                      className="flex-1"
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-        {providers !== null && (
-          <AddProviderPanel auth={auth} className="w-full" />
-        )}
-      </div>
+      <ProviderRows auth={auth} />
     </SettingsPanel>
   );
 }
@@ -2612,11 +2384,14 @@ export function SettingsPanel({
   title,
   description,
   meta,
+  action,
   children,
 }: {
   title: string;
   description?: string;
   meta?: ReactNode;
+  /** One verb for the whole band, sitting in it — the panel's own ＋. */
+  action?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -2644,6 +2419,9 @@ export function SettingsPanel({
           <span className="ms-auto min-w-0 max-w-full break-words text-right font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
             {meta}
           </span>
+        )}
+        {action && (
+          <span className="flex shrink-0 items-center self-center">{action}</span>
         )}
         {description && (
           <p className={`w-full pl-2 ${PROSE} font-mono text-chip text-dialog-hint`}>

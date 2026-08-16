@@ -2281,7 +2281,9 @@ describe("every screen uses the second vocabulary too", () => {
 
   it("files settings' toggles and rows under it as well", () => {
     expect(settingsSource).toContain("<Chip");
-    expect(settingsSource).toContain("<ListRow");
+    // The provider rows moved out of this screen and into the panel that owns
+    // them, so the row vocabulary is checked where the rows now live.
+    expect(providerAuthSource).toContain("<ListRow");
     expect(settingsSource).not.toContain("min-h-8 border px-2 py-0.5");
     expect(settingsSource).not.toContain(
       "flex min-h-12 w-full items-center gap-2 px-3 py-2",

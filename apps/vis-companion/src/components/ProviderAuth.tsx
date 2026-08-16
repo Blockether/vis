@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GatewayClient } from '../lib/gateway';
 import type { AuthFlow, ProviderLimitRow, ProviderPreset, RouterProvider } from '../lib/types';
-import { Banner, Button, Input, ListRow } from './ui';
-import { ChevronIcon, PlusIcon } from './icons';
+import { Banner, Button, ConfirmRow, DialogFrame, Input, ListRow, Modal } from './ui';
+import { ChevronIcon, PlusIcon, SortIcon, StarIcon, TrashIcon } from './icons';
+import { MENU_WIDTH, Menu, MenuHeading, MenuItem } from './Menu';
+import { SwipeActions, type SwipeAction } from './SwipeActions';
+import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
 
 /** How long to keep polling a device flow before giving up on our side. */
 const DEVICE_POLL_CEILING_MS = 15 * 60 * 1000;
@@ -163,6 +166,35 @@ export function providerLimitsLine(provider: RouterProvider): string | null {
   return text || null;
 }
 
+/** The two ranks the fleet has. A model wears one of them, or neither. */
+export type ModelRole = 'default' | 'fallback';
+
+/**
+ * What this account has LEFT in ONE number, for a row with no space for the
+ * report: the window closest to running out, because that is the window that
+ * decides whether the next turn runs. A provider that reports no percentage
+ * window gets no mark at all rather than a fabricated `0%`.
+ */
+export function providerQuotaMark(provider: RouterProvider): string | null {
+  const rows = provider.limits?.dynamic?.limits;
+  if (!rows?.length) return null;
+  const left = rows.map(percentRemaining).filter((value): value is number => value !== null);
+  return left.length ? `${Math.min(...left)}%` : null;
+}
+
+/**
+ * A provider row's second line: the model it runs when it holds a rank, and how
+ * this machine is signed in to it.
+ */
+function providerRowLine(provider: RouterProvider): string {
+  const model = provider.is_default
+    ? provider.default_model
+    : provider.is_fallback
+      ? provider.fallback_model
+      : null;
+  const status = providerStatusLine(provider);
+  return model ? `${model} · ${status}` : status;
+}
 /**
  * A banner and WHOSE it is.
  *
@@ -204,7 +236,10 @@ export interface ProviderFleet {
    */
   setErr: (text: string | null, providerId?: string | null) => void;
   setNote: (text: string | null, providerId?: string | null) => void;
-  /** `auth:<id>` · `remove:<id>` · `status:<id>` · `auth:complete` · `reload`. */
+  /**
+   * `auth:<id>` · `remove:<id>` · `status:<id>` · `default:<id>` ·
+   * `fallback:<id>` · `auth:complete` · `reload`.
+   */
   pending: string | null;
   setPending: (value: string | null) => void;
   reload: (signal?: AbortSignal, opts?: { force?: boolean }) => Promise<void>;
@@ -231,6 +266,14 @@ export interface ProviderAuth extends ProviderFleet {
   loadPresets: () => Promise<void>;
   addProvider: (preset: ProviderPreset, baseUrl?: string) => Promise<void>;
   removeProvider: (provider: RouterProvider) => Promise<void>;
+  /**
+   * Tag one of this provider's models with a rank. The rank belongs to a MODEL,
+   * not to an account — the gateway routes to `<provider>/<model>` — so the verb
+   * cannot be offered without one.
+   */
+  tagModel: (role: ModelRole, provider: RouterProvider, model: string) => Promise<void>;
+  /** Take the fallback rank back off: every turn then lives on the default. */
+  clearFallback: (provider: RouterProvider) => Promise<void>;
 }
 
 /**
@@ -572,6 +615,54 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
     [client, setErr, setNote, setPending, setProviders],
   );
 
+  /**
+   * Tag one of this provider's models with a rank.
+   *
+   * The tag lands on the DAEMON, so the fleet is re-read with `force` instead of
+   * patched here: a rank arrives at one provider by leaving another, and only
+   * the gateway knows which one that was.
+   */
+  const tagModel = useCallback(
+    async (role: ModelRole, provider: RouterProvider, model: string) => {
+      if (!model) return;
+      setPending(`${role}:${provider.id}`);
+      setErr(null);
+      setNote(null);
+      try {
+        if (role === 'fallback') await client.setFallbackModel(provider.id, model);
+        else await client.setDefaultModel(provider.id, model);
+        await reload(undefined, { force: true });
+        setNote(
+          `${role === 'fallback' ? 'Fallback' : 'Default'} set to ${provider.label} / ${model}.`,
+          provider.id,
+        );
+      } catch (e) {
+        setErr((e as Error).message, provider.id);
+      } finally {
+        setPending(null);
+      }
+    },
+    [client, reload, setErr, setNote, setPending],
+  );
+
+  const clearFallback = useCallback(
+    async (provider: RouterProvider) => {
+      setPending(`fallback:${provider.id}`);
+      setErr(null);
+      setNote(null);
+      try {
+        await client.clearFallbackModel();
+        await reload(undefined, { force: true });
+        setNote('Fallback cleared.', provider.id);
+      } catch (e) {
+        setErr((e as Error).message, provider.id);
+      } finally {
+        setPending(null);
+      }
+    },
+    [client, reload, setErr, setNote, setPending],
+  );
+
   return {
     ...fleet,
     flow,
@@ -588,6 +679,8 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
     loadPresets,
     addProvider,
     removeProvider,
+    tagModel,
+    clearFallback,
   };
 }
 
@@ -734,37 +827,6 @@ export function ProviderNotice({
   );
 }
 
-/**
- * What this account has LEFT, and never a button.
- *
- * Auth and quota are one question — "can this provider still run a turn" — so
- * opening a card ASKS it live instead of offering a re-check to tap. The line is
- * always painted: a provider that reports no window says so, because a missing
- * line reads as a screen that forgot to ask.
- */
-export function ProviderQuota({
-  auth,
-  provider,
-}: {
-  auth: ProviderAuth;
-  provider: RouterProvider;
-}) {
-  const { recheck } = auth;
-  const providerId = provider.id;
-  const isProbing = auth.pending === `status:${providerId}`;
-  const line = providerLimitsLine(provider);
-
-  useEffect(() => {
-    void recheck(providerId);
-  }, [providerId, recheck]);
-
-  return (
-    <p className="break-words font-mono text-meta text-dialog-hint">
-      {line ?? (isProbing ? 'Checking limits…' : 'This provider reports no usage limits.')}
-    </p>
-  );
-}
-
 /** What adding this preset will ask for next, in the user's words. */
 export function presetHint(preset: ProviderPreset): string {
   if (preset.is_local) return `Local runtime · ${preset.base_url ?? 'address on that machine'}`;
@@ -774,7 +836,7 @@ export function presetHint(preset: ProviderPreset): string {
 }
 
 /**
- * Add a provider TO THE GATEWAY'S MACHINE.
+ * Add a provider TO THE GATEWAY'S MACHINE, from the panel's own band.
  *
  * A provider is not a client setting: the daemon writes it into its own config
  * next to its own credentials, so this picker only offers what that machine
@@ -783,17 +845,14 @@ export function presetHint(preset: ProviderPreset): string {
  * LM Studio and Ollama listen wherever that machine put them, so the address is
  * editable before the add, and resolved THERE, not on this device.
  *
- * A machine with every provider already configured has no picker and no button:
- * the panel asks the gateway BEFORE it paints, and renders nothing until the
- * answer is a non-empty list.
+ * The picker is a SHEET the band's button opens, exactly as pairing is: it used
+ * to be a bordered panel standing permanently open under the provider list, so
+ * the accounts the panel was opened FOR ended below a form for an account that
+ * does not exist yet. A machine with every provider already configured has no
+ * button at all — the panel asks the gateway BEFORE it paints, and renders
+ * nothing until the answer is a non-empty list.
  */
-export function AddProviderPanel({
-  auth,
-  className = '',
-}: {
-  auth: ProviderAuth;
-  className?: string;
-}) {
+export function AddProviderButton({ auth }: { auth: ProviderAuth }) {
   const { presets, loadPresets, pending } = auth;
   const [isPicking, setIsPicking] = useState(false);
   const [chosen, setChosen] = useState<ProviderPreset | null>(null);
@@ -806,172 +865,370 @@ export function AddProviderPanel({
     if (presets === null && pending !== 'presets') void loadPresets();
   }, [presets, pending, loadPresets]);
 
+  function close() {
+    setIsPicking(false);
+    setChosen(null);
+  }
+
   // Unasked, or every provider this machine knows is already configured.
   if (presets === null || presets.length === 0) return null;
 
-  if (!isPicking) {
-    return (
+  const busy = chosen !== null && pending === `add:${chosen.id}`;
+
+  return (
+    <>
       <Button
-        className={className}
+        variant="primary"
+        density="compact"
         onClick={() => {
           setIsPicking(true);
           setChosen(null);
         }}
       >
-        Add provider
+        Add a provider
       </Button>
-    );
-  }
 
-  if (chosen) {
-    const busy = auth.pending === `add:${chosen.id}`;
-    return (
-      <div className={`space-y-3 border border-accent/50 bg-panel-2 p-3 ${className}`}>
-        <p className="font-mono text-body font-bold text-white">Add {chosen.label}</p>
-        <div className="space-y-2">
-          <label
-            className="block font-mono text-meta uppercase tracking-[0.1em] text-dialog-hint"
-            htmlFor="add-provider-base-url"
+      {isPicking && (
+        <Modal size="fit" onDismiss={close}>
+          <DialogFrame
+            title={chosen ? `Add ${chosen.label}` : 'Add a provider'}
+            subtitle={
+              chosen
+                ? 'A local runtime listens wherever that machine put it, so the gateway resolves this address — not this device.'
+                : 'Written into the gateway machine’s own config, next to its own credentials.'
+            }
+            onClose={close}
           >
-            Where it listens on that machine
-          </label>
-          <Input
-            id="add-provider-base-url"
-            value={baseUrl}
-            inputMode="url"
-            autoCapitalize="off"
-            autoCorrect="off"
-            spellCheck={false}
-            placeholder={chosen.base_url ?? 'http://localhost:1234/v1'}
-            onChange={(event) => setBaseUrl(event.target.value)}
-          />
-          <p className="break-words font-mono text-chip text-dialog-hint">
-            Resolved by the gateway, not by this device. Leave it blank for {chosen.base_url ?? 'the default'}.
-          </p>
-        </div>
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Button
-            className="flex-1"
-            disabled={busy}
-            onClick={() => {
-              void (async () => {
-                await auth.addProvider(chosen, baseUrl.trim() || undefined);
-                setIsPicking(false);
-                setChosen(null);
-                setBaseUrl('');
-              })();
-            }}
-          >
-            {busy ? 'Adding…' : `Add ${chosen.label}`}
-          </Button>
-          <Button variant="secondary" className="flex-1" disabled={busy} onClick={() => setChosen(null)}>
-            Back
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className={`space-y-2 border border-accent/50 bg-panel-2 p-3 ${className}`}>
-      <p className="font-mono text-body font-bold text-white">Add a provider to this machine</p>
-
-      {presets.map((preset) => {
-        const busy = auth.pending === `add:${preset.id}`;
-        return (
-          <ListRow
-            key={preset.id}
-            isFramed
-            disabled={busy}
-            onClick={() => {
-              if (preset.is_local) {
-                setBaseUrl('');
-                setChosen(preset);
-                return;
-              }
-              void (async () => {
-                await auth.addProvider(preset);
-                setIsPicking(false);
-              })();
-            }}
-          >
-            <span className="min-w-0 flex-1">
-              <span className="block truncate font-mono text-ui font-bold text-white">{preset.label}</span>
-              <span className="block truncate font-mono text-meta text-dialog-hint">
-                {busy ? 'Adding…' : presetHint(preset)}
-              </span>
-            </span>
-            <span className="shrink-0 text-dialog-hint" aria-hidden="true">
-              {preset.is_local ? <ChevronIcon /> : <PlusIcon />}
-            </span>
-          </ListRow>
-        );
-      })}
-
-      <Button
-        variant="secondary"
-        className="w-full"
-        onClick={() => {
-          setIsPicking(false);
-          setChosen(null);
-        }}
-      >
-        Cancel
-      </Button>
-    </div>
+            {chosen ? (
+              <div className="space-y-3 p-3 sm:p-4">
+                <div className="space-y-2">
+                  <label
+                    className="block font-mono text-meta uppercase tracking-[0.1em] text-dialog-hint"
+                    htmlFor="add-provider-base-url"
+                  >
+                    Where it listens on that machine
+                  </label>
+                  <Input
+                    id="add-provider-base-url"
+                    value={baseUrl}
+                    inputMode="url"
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    placeholder={chosen.base_url ?? 'http://localhost:1234/v1'}
+                    onChange={(event) => setBaseUrl(event.target.value)}
+                  />
+                  <p className="break-words font-mono text-chip text-dialog-hint">
+                    Leave it blank for {chosen.base_url ?? 'the default'}.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button
+                    className="flex-1"
+                    disabled={busy}
+                    onClick={() => {
+                      void (async () => {
+                        await auth.addProvider(chosen, baseUrl.trim() || undefined);
+                        setBaseUrl('');
+                        close();
+                      })();
+                    }}
+                  >
+                    {busy ? 'Adding…' : `Add ${chosen.label}`}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    className="flex-1"
+                    disabled={busy}
+                    onClick={() => setChosen(null)}
+                  >
+                    Back
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2 p-3 sm:p-4">
+                {presets.map((preset) => {
+                  const adding = pending === `add:${preset.id}`;
+                  return (
+                    <ListRow
+                      key={preset.id}
+                      isFramed
+                      disabled={adding}
+                      onClick={() => {
+                        if (preset.is_local) {
+                          setBaseUrl('');
+                          setChosen(preset);
+                          return;
+                        }
+                        void (async () => {
+                          await auth.addProvider(preset);
+                          close();
+                        })();
+                      }}
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-mono text-ui font-bold text-white">
+                          {preset.label}
+                        </span>
+                        <span className="block truncate font-mono text-meta text-dialog-hint">
+                          {adding ? 'Adding…' : presetHint(preset)}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-dialog-hint" aria-hidden="true">
+                        {preset.is_local ? <ChevronIcon /> : <PlusIcon />}
+                      </span>
+                    </ListRow>
+                  );
+                })}
+              </div>
+            )}
+          </DialogFrame>
+        </Modal>
+      )}
+    </>
   );
 }
 
 /**
- * Remove, two-step, and the ONE way an account leaves a machine.
+ * WHICH MODEL a rank runs on, hung under the cell that asked for it.
  *
- * The daemon runs the provider's logout AND drops its config entry, so this is
- * sign-out too — a separate "Sign out" button offered the same destruction under
- * a gentler word. Every client of that gateway loses the provider, which is why
- * a stray tap on a phone cannot do it: the first press only arms the second.
+ * A rank belongs to a model, not to an account — the gateway routes to
+ * `<provider>/<model>` — so the rank verb opens this list instead of committing
+ * a guess, the same way the machines panel binds an address. The model already
+ * holding the rank wears `in use`, and the fallback list carries the one verb
+ * that takes a rank back off.
  */
-export function ProviderRemoveButton({
-  auth,
+function ProviderModelMenu({
   provider,
-  className = '',
+  role,
+  at,
+  onDismiss,
+  onSelect,
+  onClear,
 }: {
-  auth: ProviderAuth;
   provider: RouterProvider;
-  className?: string;
+  role: ModelRole;
+  at: MenuPosition;
+  onDismiss: () => void;
+  onSelect: (model: string) => void;
+  onClear: () => void;
 }) {
-  const [isConfirming, setIsConfirming] = useState(false);
-  const busy = auth.pending === `remove:${provider.id}`;
+  const isHeld = role === 'fallback' ? provider.is_fallback : provider.is_default;
+  const held = role === 'fallback' ? provider.fallback_model : provider.default_model;
+  const models = preferredModelFirst(
+    provider.models,
+    held ?? provider.default_model ?? provider.fallback_model,
+  );
+  return (
+    <Menu label={`Models on ${provider.label}`} at={at} onDismiss={onDismiss}>
+      <MenuHeading>
+        {role === 'fallback'
+          ? `Fall back to ${provider.label} on…`
+          : `Run every turn on ${provider.label}…`}
+      </MenuHeading>
+      {models.map((model) => (
+        <MenuItem
+          key={model}
+          title={model}
+          badge={isHeld && model === held ? 'in use' : undefined}
+          icon={role === 'fallback' ? <SortIcon className="size-4" /> : <StarIcon className="size-4" />}
+          onSelect={() => onSelect(model)}
+        />
+      ))}
+      {role === 'fallback' && provider.is_fallback && (
+        <MenuItem
+          title="Clear fallback"
+          hint="Every turn stays on the default provider"
+          tone="danger"
+          onSelect={onClear}
+        />
+      )}
+    </Menu>
+  );
+}
 
-  if (!isConfirming) {
-    return (
-      <Button
-        variant="secondary"
-        className={className}
-        disabled={busy}
-        aria-label={`Sign out of ${provider.label} and remove it from this machine`}
-        onClick={() => setIsConfirming(true)}
-      >
-        {busy ? 'Removing…' : 'Remove'}
-      </Button>
-    );
+/**
+ * THE PROVIDER ACCOUNTS, one pressable row each — the same slab a machine gets,
+ * slid the same way.
+ *
+ * A provider IS a machine-sized thing: it is signed in or it is not, it holds a
+ * rank, and it can be dropped. Its verbs used to live in a body the row had to
+ * be expanded to reach — a `<select>` and four buttons for a decision that is
+ * one model — while the identical fleet above it answered a swipe. So the verbs
+ * moved under the row's trailing edge: `Default` and `Fallback` open that
+ * provider's models, and the last cell is the removal, exactly as `Forget` is a
+ * machine's.
+ *
+ * Pressing the row is its cheapest verb: sign in when the account is signed
+ * out, otherwise ask the gateway for this account's verdict and quota again.
+ */
+export function ProviderRows({ auth }: { auth: ProviderAuth }) {
+  const { providers, pending } = auth;
+  const [removing, setRemoving] = useState<string | null>(null);
+  /** The provider whose model list is open, the rank it will tag, and where it hangs. */
+  const [tagging, setTagging] = useState<{ id: string; role: ModelRole; at: MenuPosition } | null>(
+    null,
+  );
+
+  // Escape unwinds THIS row's own surface first. Settings closes itself on an
+  // Escape it hears on the window, so a menu opened inside it would leave with
+  // the whole dialog on one keystroke; a capture listener always runs before
+  // that one, whatever order the two mounted in.
+  useEffect(() => {
+    if (removing === null && tagging === null) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      setRemoving(null);
+      setTagging(null);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [removing, tagging]);
+
+  /** Hang this provider's models under the cell the press came from. */
+  function openModels(provider: RouterProvider, role: ModelRole, anchor: HTMLElement) {
+    const at = menuPosition(anchor.getBoundingClientRect(), MENU_WIDTH);
+    if (at) setTagging({ id: provider.id, role, at });
   }
 
+  const rows = defaultFirstProviders(providers ?? []);
+  // The open provider, re-read from the live list: the row it was opened from is
+  // replaced whenever a status answers or a rank moves.
+  const tagged = tagging ? (rows.find((row) => row.id === tagging.id) ?? null) : null;
+
   return (
-    <span className={`flex min-w-0 gap-2 ${className}`}>
-      <Button
-        variant="danger"
-        className="min-w-0 flex-1"
-        disabled={busy}
-        onClick={() => {
-          setIsConfirming(false);
-          void auth.removeProvider(provider);
-        }}
-      >
-        {busy ? 'Removing…' : 'Yes, sign out and remove'}
-      </Button>
-      <Button variant="secondary" className="min-w-0 flex-1" disabled={busy} onClick={() => setIsConfirming(false)}>
-        Cancel
-      </Button>
-    </span>
+    <div className="divide-y divide-dialog-edge">
+      {rows.map((provider) => {
+        const dot = providerStatusDot(provider);
+        const authed = isProviderAuthed(provider);
+        const isProbing = pending === `status:${provider.id}`;
+        const mark = providerQuotaMark(provider);
+
+        if (removing === provider.id)
+          return (
+            <div key={provider.id}>
+              {/* What removing COSTS, in the row it is being asked in: the daemon
+                  runs the provider's own logout AND drops its config entry, so
+                  this is the sign-out too, for every device on that machine. */}
+              <p className="px-3 pt-2 font-mono text-chip text-dialog-hint">
+                Signs out of {provider.label} on the gateway machine and deletes its entry there.
+                Every device paired with that machine loses it.
+              </p>
+              <ConfirmRow
+                question={`Remove ${provider.label}?`}
+                confirmLabel="Yes, remove"
+                isBusy={pending === `remove:${provider.id}`}
+                onKeep={() => setRemoving(null)}
+                onConfirm={() => {
+                  setRemoving(null);
+                  void auth.removeProvider(provider);
+                }}
+              />
+            </div>
+          );
+
+        // THE VERBS OF THIS ACCOUNT, waiting under its own row's trailing edge.
+        // A rank verb needs a model to land on, so a provider that reports none
+        // carries neither; the default provider cannot also hold the fallback,
+        // which is the whole point of a fallback.
+        const actions: SwipeAction[] = [];
+        if (provider.models.length > 0)
+          actions.push({
+            key: 'default',
+            label: 'Default',
+            name: `Run every turn on ${provider.label}`,
+            icon: <StarIcon className="size-4" />,
+            // A RANK rather than an edit, so it wears the amber every rank mark
+            // in this app wears — the same slab `Primary` has.
+            tone: 'accent',
+            onSelect: (anchor) => openModels(provider, 'default', anchor),
+          });
+        if (provider.models.length > 0 && !provider.is_default)
+          actions.push({
+            key: 'fallback',
+            label: 'Fallback',
+            name: `Fall back to ${provider.label}`,
+            icon: <SortIcon className="size-4" />,
+            onSelect: (anchor) => openModels(provider, 'fallback', anchor),
+          });
+        actions.push({
+          key: 'remove',
+          label: 'Remove',
+          name: `Sign out of ${provider.label} and remove it from this machine`,
+          icon: <TrashIcon className="size-4" />,
+          tone: 'danger',
+          onSelect: () => setRemoving(provider.id),
+        });
+
+        return (
+          <div key={provider.id}>
+            <SwipeActions label={provider.label} actions={actions}>
+              <div className="min-w-0">
+                <ListRow
+                  className="min-w-0 gap-3"
+                  onClick={() => {
+                    void (authed ? auth.recheck(provider.id) : auth.signIn(provider));
+                  }}
+                >
+                  <span
+                    className={`shrink-0 font-mono text-title ${dot.tone} ${isProbing ? 'animate-pulse' : ''}`}
+                    aria-hidden="true"
+                    title={dot.label}
+                  >
+                    {dot.glyph}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="truncate font-mono text-body font-bold text-white">
+                        {provider.label}
+                      </span>
+                      {provider.is_default && (
+                        <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
+                          Default
+                        </span>
+                      )}
+                      {provider.is_fallback && (
+                        <span className="shrink-0 font-mono text-chip font-black uppercase tracking-wider text-dialog-hint">
+                          Fallback
+                        </span>
+                      )}
+                    </span>
+                    <span className="block truncate font-mono text-meta text-dialog-hint">
+                      {providerRowLine(provider)}
+                    </span>
+                  </span>
+                  <span
+                    className="shrink-0 font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint"
+                    title={providerLimitsLine(provider) ?? dot.label}
+                  >
+                    {isProbing ? 'Checking…' : !authed ? 'Sign in' : (mark ?? '')}
+                  </span>
+                  {!authed && <ChevronIcon className="size-3 text-dialog-hint" aria-hidden />}
+                </ListRow>
+              </div>
+            </SwipeActions>
+            <ProviderNotice auth={auth} provider={provider} />
+          </div>
+        );
+      })}
+      {tagged && tagging && (
+        <ProviderModelMenu
+          provider={tagged}
+          role={tagging.role}
+          at={tagging.at}
+          onDismiss={() => setTagging(null)}
+          onSelect={(model) => {
+            setTagging(null);
+            void auth.tagModel(tagging.role, tagged, model);
+          }}
+          onClear={() => {
+            setTagging(null);
+            void auth.clearFallback(tagged);
+          }}
+        />
+      )}
+    </div>
   );
 }
