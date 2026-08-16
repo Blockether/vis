@@ -340,7 +340,7 @@
 ;; field set through ONE list (see internal/form.clj): `->display` outbound,
 ;; `<-wire` inbound (tolerant of the gateway wire's snake_case + keyword values).
 (import-vars [form->display form/->display]
-             [form-with-display-code form/with-display-code]
+             [form-with-display form/with-display]
              [form<-wire form/<-wire]
              [result-card form/result-card]
              [result-cards form/result-cards])
@@ -483,8 +483,6 @@
              [new-id persistance/new-id]
              [->json persistance/->json]
              [<-json persistance/<-json]
-             [restore-canonical persistance/restore-canonical]
-             [<-json-canonical-lazy persistance/<-json-canonical-lazy]
              [normalize-status persistance/normalize-status]
              [db-create-connection! persistance/db-create-connection!]
              [db-dispose-connection! persistance/db-dispose-connection!]

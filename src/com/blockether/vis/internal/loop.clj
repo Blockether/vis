@@ -1,48 +1,50 @@
 (ns com.blockether.vis.internal.loop
   (:refer-clojure)
-  (:require [charred.api :as json]
-            [clojure.set :as set]
-            [clojure.spec.alpha :as s]
-            [clojure.string :as str]
-            [com.blockether.anomaly.core :as anomaly]
-            [com.blockether.svar.core :as svar]
-            [com.blockether.svar.internal.llm :as svar-llm]
-            [com.blockether.svar.internal.router :as svar-router]
-            [com.blockether.svar.internal.util :as util]
-            [com.blockether.vis.internal.attachments :as attachments]
-            [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.security-policy :as security-policy]
-            [com.blockether.vis.internal.cancellation :as cancellation]
-            [com.blockether.vis.internal.content :as content]
-            [com.blockether.vis.internal.ctx-engine :as ctx-engine]
-            [com.blockether.vis.internal.ctx-loop :as ctx-loop]
-            [com.blockether.vis.internal.gateway.wire :as wire]
-            [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
-            [com.blockether.vis.internal.env-python :as env]
-            [com.blockether.vis.internal.egress-proxy :as egress]
-            [com.blockether.vis.internal.gateway-sandbox :as gateway-sandbox]
-            [com.blockether.vis.internal.process-jail :as process-jail]
-            [com.blockether.vis.internal.attachment-storage :as attachment-storage]
-            [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.python-extensions :as python-extensions]
-            [com.blockether.vis.internal.render :as render]
-            [com.blockether.vis.internal.persistance :as persistance]
-            [com.blockether.vis.internal.session-model :as session-model]
-            [com.blockether.vis.internal.prompt :as prompt]
-            [com.blockether.vis.internal.prompt-templates :as prompt-templates]
-            [com.blockether.vis.internal.provider-error :as perr]
-            [com.blockether.vis.internal.providers :as providers]
-            [com.blockether.vis.internal.registry :as registry]
-            [com.blockether.vis.internal.runtime-settings :as rt]
-            [com.blockether.vis.internal.resources :as resources]
-            [com.blockether.vis.internal.shell-log :as shell-log]
-            [com.blockether.vis.internal.slash :as slash]
-            [com.blockether.vis.internal.strutil :as strutil :refer [truncate]]
-            [com.blockether.vis.internal.titling :as titling]
-            [com.blockether.vis.internal.toggles :as toggles]
-            [com.blockether.vis.internal.workspace :as workspace]
-            [taoensso.telemere :as tel])
+  (:require
+    [charred.api :as json]
+    [clojure.set :as set]
+    [clojure.spec.alpha :as s]
+    [clojure.string :as str]
+    [com.blockether.anomaly.core :as anomaly]
+    [com.blockether.svar.core :as svar]
+    [com.blockether.svar.internal.llm :as svar-llm]
+    [com.blockether.svar.internal.router :as svar-router]
+    [com.blockether.svar.internal.util :as util]
+    [com.blockether.vis.internal.attachments :as attachments]
+    [com.blockether.vis.internal.config :as config]
+    [com.blockether.vis.internal.security-policy :as security-policy]
+    [com.blockether.vis.internal.cancellation :as cancellation]
+    [com.blockether.vis.internal.content :as content]
+    [com.blockether.vis.internal.ctx-engine :as ctx-engine]
+    [com.blockether.vis.internal.ctx-loop :as ctx-loop]
+    [com.blockether.vis.internal.gateway.wire :as wire]
+    [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
+    [com.blockether.vis.internal.env-python :as env]
+    [com.blockether.vis.internal.egress-proxy :as egress]
+    [com.blockether.vis.internal.form :as form]
+    [com.blockether.vis.internal.gateway-sandbox :as gateway-sandbox]
+    [com.blockether.vis.internal.process-jail :as process-jail]
+    [com.blockether.vis.internal.attachment-storage :as attachment-storage]
+    [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
+    [com.blockether.vis.internal.extension :as extension]
+    [com.blockether.vis.internal.python-extensions :as python-extensions]
+    [com.blockether.vis.internal.render :as render]
+    [com.blockether.vis.internal.persistance :as persistance]
+    [com.blockether.vis.internal.session-model :as session-model]
+    [com.blockether.vis.internal.prompt :as prompt]
+    [com.blockether.vis.internal.prompt-templates :as prompt-templates]
+    [com.blockether.vis.internal.provider-error :as perr]
+    [com.blockether.vis.internal.providers :as providers]
+    [com.blockether.vis.internal.registry :as registry]
+    [com.blockether.vis.internal.runtime-settings :as rt]
+    [com.blockether.vis.internal.resources :as resources]
+    [com.blockether.vis.internal.shell-log :as shell-log]
+    [com.blockether.vis.internal.slash :as slash]
+    [com.blockether.vis.internal.strutil :as strutil :refer [truncate]]
+    [com.blockether.vis.internal.titling :as titling]
+    [com.blockether.vis.internal.toggles :as toggles]
+    [com.blockether.vis.internal.workspace :as workspace]
+    [taoensso.telemere :as tel])
   (:import [java.util.concurrent ExecutionException ExecutorService Future SynchronousQueue
             ThreadFactory ThreadPoolExecutor TimeUnit]
            [java.util.concurrent.atomic AtomicLong]
@@ -3191,36 +3193,6 @@
         (and (sequential? pr) (seq pr) (every? patch-file-summary? pr)) "patch"))
 
 
-(def ^:private MAX_FORM_WIRE_CHARS
-  "Per-block printed-output ceiling. A block's stdout is head-clipped to this
-   many chars in the tool result — a universal backstop for a runaway print()
-   that tool-level caps don't catch (the model can `print(open-ended
-   composition)`). The block's values still live in the sandbox (persistent REPL
-   vars the model can re-slice and print less of). ~64KB ≈ 16k tokens: generous
-   for an intentional full-file read, tight enough that one runaway print can't
-   blow the request."
-  65536)
-
-(defn- clip-to-wire
-  "Head-clip one display string to `MAX_FORM_WIRE_CHARS`, announcing what it
-   dropped. nil for a string that is blank once trailing space is gone."
-  [^String s]
-  (let
-    [s
-     (str/trimr (str s))
-
-     n
-     (long (count s))]
-
-    (when (pos? n)
-      (if (> n (long MAX_FORM_WIRE_CHARS))
-        (str (subs s 0 MAX_FORM_WIRE_CHARS)
-             "\n# ⋯ output clipped at "
-             MAX_FORM_WIRE_CHARS
-             "/"
-             n
-             " chars")
-        s))))
 
 (def ^:private tally-keys
   "The sequential fields a result puts its ROWS under, in the order a headline
@@ -3260,87 +3232,9 @@
     {:op op
      :result-summary (printed-result-tally pr)
      :result-render (some-> (env/ctx->python-str pr)
-                            clip-to-wire
+                            form/clip-to-wire
                             (strutil/fenced "python"))}))
 
-(defn- printed-cards-result-render
-  "Keep python stdout as a fallback when printed cards have headlines only.
-   Cards with any body remain the canonical human display; summary-only cards do
-   not suppress the sole non-empty result surface."
-  [cards result-card]
-  (if (and (seq cards) (some :result-render cards)) nil (:body result-card)))
-
-
-(defn- tool-result-display
-  "The human-channel DISPLAY for one executed block as `{:summary :body}` — the
-   ONE surface both the TUI and the web render, so they're unified:
-     - the eval wall-clock BACKSTOP fired → a ⧖ TIMEOUT card carrying the FORM,
-       whatever it printed, and the message;
-     - a `:result` value → pretty-printed (Python-literal, fenced) as the body,
-       no summary;
-     - `:stdout` → verbatim as the body, no summary.
-   The body is head-clipped to `MAX_FORM_WIRE_CHARS`. Returns nil when there's
-   nothing to show. NO symbol is consulted: a card is built from the RESULT's own
-   data, so it can never drift from what actually ran."
-  [result* & [input]]
-  (let [clip clip-to-wire]
-    (cond
-      ;; The eval wall-clock BACKSTOP fired: there is no :result to render, but the
-      ;; card must still read as a TIMEOUT — a distinct ⧖ headline, not the raw error
-      ;; string. Sits FIRST so a timeout always wins its own display regardless of
-      ;; any partial stdout/error also present.
-      (:timeout? result*)
-      (let
-        [err (:error result*)
-         ms (some-> err
-                    :data
-                    :timeout-ms)
-         ;; The evaluated FORM/prompt that blew the wall — so a
-         ;; timeout card shows WHAT timed out, not just that it did.
-         code (some-> (or (get input "code") (get input :code))
-                      str
-                      str/trim
-                      not-empty)
-         msg (some-> (:message err)
-                     str
-                     not-empty)
-         ;; Partial output the block PRINTED before the wall fired. A backstop
-         ;; timeout is exactly when it matters: the work is gone, so the lines
-         ;; that did print are all that is left of it.
-         out (some-> (:stdout result*)
-                     str
-                     str/trim
-                     not-empty)
-         detail (->> [(when code (str "**FORM**\n" (strutil/fenced (clip code) "python")))
-                      (when out (str "**STDOUT**\n" (strutil/fenced (clip out))))
-                      (when msg (str "**TIMEOUT**\n" (strutil/fenced msg)))]
-                     (remove nil?)
-                     (str/join "\n\n")
-                     not-empty)]
-
-        {:summary (str "⧖ timed out" (when ms (str " after " ms "ms")))
-         :body (when detail (str "\n" detail))})
-      ;; a result value → monospaced Python-literal body, so a dict/list reads as
-      ;; structured data rather than reflowed prose.
-      (some? (:result result*)) (when-let [s (clip (env/ctx->python-str (:result result*)))]
-                                  {:body (strutil/fenced s "python")})
-      ;; A `vis-image` fence (matplotlib `plt.show()` → inline PNG, ASCII plot
-      ;; carried as its fallback body), a `vis-table` fence (a CSV/TSV artifact
-      ;; carried as its own grid) or a `vis-doc` fence (a PDF/HTML document,
-      ;; carrying only its host path) rides stdout as MARKDOWN so the channel
-      ;; paints it inline; wrapping it in a ``` block would escape the
-      ;; 4-backtick fence, so pass the stdout through verbatim (unclipped — the
-      ;; fence is self-bounded and row-capped at the source) whenever one is
-      ;; present.
-      (or (str/includes? (str (:stdout result*)) "````vis-image")
-          (str/includes? (str (:stdout result*)) "````vis-doc")
-          (str/includes? (str (:stdout result*)) "````vis-table"))
-      {:body (str (:stdout result*))}
-      ;; python_execution printed output → fenced so newlines are preserved verbatim
-      ;; (plain stdout is NOT markdown; bare \n collapses to a space through the
-      ;; CommonMark SoftLineBreak → :space path if left unwrapped).
-      (not (str/blank? (str (:stdout result*)))) {:body (strutil/fenced (clip (:stdout result*)))}
-      :else nil)))
 
 (defn- elide-table-fences
   "Drop the ROWS out of every ````vis-table` fence in model-facing output.
@@ -3456,10 +3350,10 @@
           n
           (long (count s))]
 
-         (if (> n (long MAX_FORM_WIRE_CHARS))
-           (str (subs s 0 MAX_FORM_WIRE_CHARS)
+         (if (> n (long form/MAX_FORM_WIRE_CHARS))
+           (str (subs s 0 form/MAX_FORM_WIRE_CHARS)
                 "\n# ⋯ output clipped at "
-                MAX_FORM_WIRE_CHARS
+                form/MAX_FORM_WIRE_CHARS
                 "/"
                 n
                 " chars — narrow next time (slice/filter before reading).")
@@ -3873,9 +3767,9 @@
 
 (defn- form-wire-chars
   "Approximate the wire SIZE (chars) one form contributes — error / native result
-   / stdout — capped at MAX_FORM_WIRE_CHARS exactly as the real renderer clips it,
-   so a giant read can't over-rank itself. Strings count directly; a non-string
-   result is serialized the way the wire renders it. Pure."
+   / stdout — capped at `form/MAX_FORM_WIRE_CHARS` exactly as the real renderer
+   clips it, so a giant read can't over-rank itself. Strings count directly; a
+   non-string result is serialized the way the wire renders it. Pure."
   [f]
   (let
     [n (long (cond (:summary? f) 0
@@ -3883,7 +3777,7 @@
                    (some? (:result f)) (let [r (:result f)]
                                          (if (string? r) (count r) (count (env/ctx->python-str r))))
                    :else (count (str (:stdout f)))))]
-    (long (min n (long MAX_FORM_WIRE_CHARS)))))
+    (long (min n (long form/MAX_FORM_WIRE_CHARS)))))
 
 ;; ── The model-facing surface: ONE tool ───────────────────────────────────────
 ;; `python_execution` is the only call the provider ever sees. Every capability is
@@ -4648,11 +4542,14 @@
                         :envelope envelope
                         :role block-role)
               ;; The rendered human display `{:summary :body}` (native-tool
-              ;; card, pretty result, or stdout) — computed ONCE and persisted
-              ;; so a DB-restored / post-turn trace shows the SAME card the live
-              ;; stream did, instead of pr-str'ing the raw result map. `:summary`
-              ;; is the op-card HEADLINE; `:body` (→ `:result-render`) the detail.
-              result-card (tool-result-display result*)
+              ;; card, pretty result, or stdout) — a PURE projection of the
+              ;; form's own fields, so it rides the LIVE stream but is never
+              ;; persisted: a restored trace re-derives the same card through
+              ;; `form/result-render` instead of keeping a second copy of what
+              ;; `:result`/`:stdout` already say. `:summary` is the op-card
+              ;; HEADLINE; `:body` (→ `:result-render`) the detail.
+              displayable (assoc result* :src expr)
+              result-card (form/result-display displayable)
               ;; RESULTS the model print()ed (each carrying its own :op) → one card
               ;; each, built from the VALUE alone. Each card is a CANONICAL MINI-FORM,
               ;; so the shared form projection handles it without a second shape.
@@ -4662,7 +4559,7 @@
               ;; so retain stdout as a fallback. Mixed text always keeps stdout too.
               only-results? (:only-printed-results? result*)
               cards (when (and only-results? (seq printed-cards)) printed-cards)
-              result-render (printed-cards-result-render cards result-card)
+              result-render (form/result-render (assoc displayable :cards cards))
               result-summary (if cards
                                (str (count cards) " printed result" (when (> (count cards) 1) "s"))
                                (:summary result-card))]
@@ -4714,7 +4611,6 @@
                   :repaired? (boolean (:repaired? result*))}))
              {:block expr
               :result result*
-              :result-render result-render
               :result-summary result-summary
               :cards cards
               :render-segments render-segments
@@ -4727,7 +4623,6 @@
        form-segments (mapv :render-segments executed)
        form-tool-ids (mapv :svar/tool-call-id executed)
        form-tool-names (mapv :vis/tool-name executed)
-       form-result-renders (mapv :result-render executed)
        form-result-summaries (mapv :result-summary executed)
        form-cards (mapv :cards executed)
        ;; Preflight gate → synthetic block carries `:vis/preflight? true`
@@ -4740,81 +4635,76 @@
                                      code-entries))
        blocks
        (validate-iteration-blocks!
-         (mapv
-           (fn [idx code result segments tool-call-id tool-name result-render result-summary cards]
-             (cond->
-               {:id idx
-                :code code
-                :result (:result result)
-                ;; What the block PRINTED — the python_execution
-                ;; result (a native call's result is :result).
-                ;; One block = one tool call, so this is the
-                ;; call's whole stdout (no per-form split).
-                :stdout (:stdout result)
-                ;; Artifacts the block PRODUCED (matplotlib
-                ;; show/savefig or an `attach` call),
-                ;; captured at the SOURCE into the sandbox sink —
-                ;; carried down so the DB attachment OWNS the bytes.
-                :attachments (:attachments result)
-                ;; Reinspection is ephemeral: it reaches the next request but
-                ;; is never written as a duplicate iteration artifact.
-                :reinspect-attachments (:reinspect-attachments result)
-                :error (op-error (:error result)
-                                 {:code code :phase (get-in result [:envelope :op])})
-                :envelope (:envelope result)
-                :role (:role result)
-                :timeout? (:timeout? result)
-                :repaired? (:repaired? result)
-                ;; Per-block resolve-symbol* LRU stamps:
-                ;; symbol-name -> current-turn-pos for every
-                ;; symbol the engine hook saw resolve during
-                ;; this block's eval. Iteration writer
-                ;; merges into the long-lived per-env LRU.
-                :lru (or (:lru result) {})
-                ;; If the engine auto-repaired delimiter
-                ;; mistakes (parinferish) before eval, the
-                ;; repaired source flows here so the trailer
-                ;; can disclose the diff and the model can
-                ;; correct itself if the repair was wrong.
-                :repaired-source (:repaired-source result)}
-               ;; Per-block render breakdown for channel display.
-               ;; Legacy channels that only read :code fall
-               ;; back to the full block source.
-               (seq segments)
-               (assoc :render-segments segments)
+         (mapv (fn [idx code result segments tool-call-id tool-name result-summary cards]
+                 (cond->
+                   {:id idx
+                    :code code
+                    :result (:result result)
+                    ;; What the block PRINTED — the python_execution
+                    ;; result (a native call's result is :result).
+                    ;; One block = one tool call, so this is the
+                    ;; call's whole stdout (no per-form split).
+                    :stdout (:stdout result)
+                    ;; Artifacts the block PRODUCED (matplotlib
+                    ;; show/savefig or an `attach` call),
+                    ;; captured at the SOURCE into the sandbox sink —
+                    ;; carried down so the DB attachment OWNS the bytes.
+                    :attachments (:attachments result)
+                    ;; Reinspection is ephemeral: it reaches the next request but
+                    ;; is never written as a duplicate iteration artifact.
+                    :reinspect-attachments (:reinspect-attachments result)
+                    :error (op-error (:error result)
+                                     {:code code :phase (get-in result [:envelope :op])})
+                    :envelope (:envelope result)
+                    :role (:role result)
+                    :timeout? (:timeout? result)
+                    :repaired? (:repaired? result)
+                    ;; Per-block resolve-symbol* LRU stamps:
+                    ;; symbol-name -> current-turn-pos for every
+                    ;; symbol the engine hook saw resolve during
+                    ;; this block's eval. Iteration writer
+                    ;; merges into the long-lived per-env LRU.
+                    :lru (or (:lru result) {})
+                    ;; If the engine auto-repaired delimiter
+                    ;; mistakes (parinferish) before eval, the
+                    ;; repaired source flows here so the trailer
+                    ;; can disclose the diff and the model can
+                    ;; correct itself if the repair was wrong.
+                    :repaired-source (:repaired-source result)}
+                   ;; Per-block render breakdown for channel display.
+                   ;; Legacy channels that only read :code fall
+                   ;; back to the full block source.
+                   (seq segments)
+                   (assoc :render-segments segments)
 
-               (:vis/silent result)
-               (assoc :vis/silent true)
+                   (:vis/silent result)
+                   (assoc :vis/silent true)
 
-               ;; Tool-call identity rides onto the block so
-               ;; `blocks->forms` stamps each form envelope with the
-               ;; tool_use it answers (per-call result pairing).
-               tool-call-id
-               (assoc :svar/tool-call-id tool-call-id)
+                   ;; Tool-call identity rides onto the block so
+                   ;; `blocks->forms` stamps each form envelope with the
+                   ;; tool_use it answers (per-call result pairing).
+                   tool-call-id
+                   (assoc :svar/tool-call-id tool-call-id)
 
-               tool-name
-               (assoc :vis/tool-name tool-name)
+                   tool-name
+                   (assoc :vis/tool-name tool-name)
 
-               result-render
-               (assoc :result-render result-render)
+                   result-summary
+                   (assoc :result-summary result-summary)
 
-               result-summary
-               (assoc :result-summary result-summary)
+                   (seq cards)
+                   (assoc :cards cards)
 
-               (seq cards)
-               (assoc :cards cards)
-
-               (get preflight-by-idx idx)
-               (assoc :vis/preflight? true)))
-           (range)
-           form-sources
-           form-results
-           form-segments
-           form-tool-ids
-           form-tool-names
-           form-result-renders
-           form-result-summaries
-           form-cards))]
+                   (get preflight-by-idx idx)
+                   (assoc :vis/preflight? true)))
+               (range)
+               form-sources
+               form-results
+               form-segments
+               form-tool-ids
+               form-tool-names
+               form-result-summaries
+               form-cards))]
 
       (if-let [{value :value} (:answer @turn-state-atom)]
         ;; FINAL path: a plain-text answer reply (svar `:stop-reason :end`),
@@ -7016,11 +6906,11 @@
                        :llm-provider (:provider it)
                        :llm-model (some-> (:model it)
                                           str)
-                       ;; Persisted assistant messages are intentionally NOT
-                       ;; replayed across user turns. Keep row diagnostics,
-                       ;; but `compatible-preserved-thinking-trailer-iters`
-                       ;; rejects this entry before replay.
-                       :assistant-message (force (:llm-assistant-message it))
+                       ;; The provider's assistant envelope is NOT persisted: the
+                       ;; signature inside it replays only to the same provider,
+                       ;; inside the session that earned it, and
+                       ;; `compatible-preserved-thinking-trailer-iters` rejects a
+                       ;; reseeded iteration before replay regardless.
                        ;; Its produced artifacts still ride to a vision model
                        ;; (see the `replay? false` branch of `conversation-suffix`),
                        ;; even though the assistant/thinking chain is dropped.
@@ -7647,7 +7537,6 @@
                                               (:provider resolved-model))
                             :llm-model (:llm-model iteration-result)
                             :llm-returned-empty-code? (:llm-returned-empty-code? iteration-result)
-                            :llm-assistant-message (:assistant-message iteration-result)
                             :llm-routing (llm-routing-summary pre-resolved-model iteration-result)
                             :cache-created-tokens (iteration-cache-created-tokens tc)}
                            tc
@@ -8373,7 +8262,7 @@
                    body
                    (some-> (:body card)
                            str
-                           clip-to-wire)]
+                           form/clip-to-wire)]
 
                   (when (or summary body) {:summary summary :body body}))))
             (catch Throwable _ nil)))

@@ -1199,7 +1199,7 @@
            ;; Carry the display fields the block already has while it RUNS — its
            ;; formatted source and pending headline — so the live bubble paints
            ;; the same card it keeps once the block lands.
-           (form/->display (form/with-display-code chunk))
+           (form/->display (form/with-display chunk))
            (cond-> {:block_id position :code code}
              (:svar/tool-call-id chunk)
              (assoc :tool_call_id (:svar/tool-call-id chunk))))
@@ -1208,7 +1208,7 @@
          (merge
            ;; The card fields (pre-rendered body + headline + the printed
            ;; result's own op) — projected from ONE canonical list.
-           (form/->display (form/with-display-code chunk))
+           (form/->display (form/with-display chunk))
            {:block_id position
             :code code
             :result result
@@ -1714,22 +1714,16 @@
          wire/canonical)))
 
 (defn- with-display-iteration
-  "Normalize reasoning and attach the same cached ruff-formatted Python that the
-   local TUI paints. The wire therefore remains identical after reconnects.
-
-   `:llm-assistant-message` is dropped: persistence hands it back as a
-   `<-json-lazy` DELAY (the raw provider envelope, forced only by a replay), and
-   a Delay JSON-encodes to the useless string `\"clojure.lang.Delay@1f2e3d\"` —
-   3031 of a real 247-turn session's 3098 iterations shipped exactly that. No
-   consumer needs the field; forcing it would instead paste every tool envelope onto the wire.
-   `transcript/transcript` already dissoc's it for the same reason."
+  "Normalize reasoning and attach the display projections the store does not
+   keep: the same cached ruff-formatted Python the local TUI paints, and the
+   rendered result BODY, re-derived from the result the row DID keep. The wire
+   therefore remains identical after reconnects."
   [iteration]
   (cond->
     (-> iteration
-        (dissoc :llm-assistant-message)
         (update :thinking strutil/settled-thinking-text))
     (seq (:forms iteration))
-    (update :forms #(mapv form/with-display-code %))))
+    (update :forms #(mapv form/with-display %))))
 
 (def ^:private in-flight-turn-statuses
   "Persisted turn statuses that mean the turn has NOT finished. The engine writes

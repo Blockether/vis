@@ -115,59 +115,6 @@
   [s]
   (when s (json/read-json s)))
 
-(def canonical-wire-key->key
-  "Inverse of `wire/canonical` for PERSISTED assistant messages: the canonical
-   snake_case wire key -> the keyword the engine/Svar serializers dispatch on.
-   Anything absent stays verbatim."
-  {"role" :role
-   "content" :content
-   "model" :model
-   "type" :type
-   "text" :text
-   "thinking" :thinking
-   "thinking_signature" :thinking-signature
-   "is_redacted" :redacted?
-   "data" :data
-   "id" :id
-   "name" :name
-   "input" :input
-   "tool_use_id" :tool-use-id
-   "is_error" :is-error
-   "image_url" :image_url
-   "source" :source
-   "url" :url
-   "detail" :detail
-   "media_type" :media_type
-   "cache_control" :cache_control})
-
-(defn restore-canonical
-  "Restore a persisted canonical wire envelope to the engine's keyword shape.
-   Tool `:input` stays opaque so user map keys are never rewritten.
-
-   Without this a replayed thinking block keeps `thinking_signature`/
-   `is_redacted` string keys, misses Svar's keyword serializer, and Anthropic
-   rejects the request with `Extra inputs are not permitted`."
-  ([value] (restore-canonical value false))
-  ([value opaque?]
-   (cond opaque? value
-         (vector? value) (mapv restore-canonical value)
-         (map? value)
-         (persistent! (reduce-kv
-                        (fn [out k v]
-                          (let [canonical-k (get canonical-wire-key->key k k)]
-                            (assoc! out canonical-k (restore-canonical v (= :input canonical-k)))))
-                        (transient {})
-                        value))
-         :else value)))
-
-(defn <-json-canonical-lazy
-  "Lazily restore ONE persisted canonical assistant message.
-   Storage holds wire strings; replay needs the keyword envelope."
-  [s]
-  (delay (some-> s
-                 <-json
-                 restore-canonical)))
-
 (defn normalize-status
   "Map runtime status keywords to the schema CHECK constraint values.
    Allowed: running, done, error, interrupted."

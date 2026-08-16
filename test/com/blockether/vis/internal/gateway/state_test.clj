@@ -1000,30 +1000,7 @@
             ;; And the page BEFORE it advances by one too, so a walk terminates.
             (let [page (state/transcript-page sid {:offset 4 :limit 5})]
               (expect (= ["turn-8"] (mapv #(get % "turn_id") (:turns page))))
-              (expect (= 8 (:offset page))))))))
-  (it "drops the lazy provider envelope instead of shipping a Delay"
-      (let [sid (java.util.UUID/randomUUID)]
-        (with-redefs-fn {#'lp/db-info (constantly ::db)
-                         #'persistance/db-list-session-turns (fn [_ _]
-                                                               [{:id "turn-0" :position 1}])
-                         #'persistance/db-list-turns-attachments (fn [_ ids]
-                                                                   (zipmap ids (repeat [])))
-                         #'persistance/db-list-session-turn-iterations
-                         (fn [_ _]
-                           [{:id "it-0"
-                             :position 1
-                             :llm-assistant-message (delay {:content [{:type "text"}]})}])}
-          (fn []
-            (let
-              [turn (first (:turns (state/transcript-page sid {})))
-               iteration (first (get turn "iterations"))]
-
-              ;; Guard against a swallowed hydration failure passing this vacuously.
-              (expect (= "it-0" (get iteration "id")))
-              ;; Persistence hands the envelope back as a `<-json-lazy` DELAY, which
-              ;; JSON-encodes to the useless string "clojure.lang.Delay@1f2e3d" —
-              ;; 3031 of a real 247-turn session's 3098 iterations shipped that.
-              (expect (not (contains? iteration "llm_assistant_message")))))))))
+              (expect (= 8 (:offset page)))))))))
 
 (defdescribe
   queued-update-payload-test

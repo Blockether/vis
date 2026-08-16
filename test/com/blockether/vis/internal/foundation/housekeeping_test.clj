@@ -3,10 +3,10 @@
    directories `sweep-stale!` deletes on its own.
 
    Everything here runs against throwaway directories bound through
-   `workspace/*drafts-home*`, `housekeeping/*events-home*` and — for every
-   sweep test, ALL THREE at once via `with-homes` — `*logs-home*`,
-   `*cache-home*` and `*rewind-home*`; no test may read, let alone delete,
-   anything under the real `~/.vis`."
+   `workspace/*drafts-home*` and — for every sweep test, ALL FOUR at once via
+   `with-homes` — `housekeeping/*logs-home*`, `*cache-home*`, `*rewind-home*`
+   and `*events-home*`; no test may read, let alone delete, anything under the
+   real `~/.vis`."
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
             [com.blockether.vis.internal.workspace :as workspace]
@@ -237,10 +237,10 @@
   (first (filter #(= id (:id %)) (:targets report))))
 
 (defn- with-homes
-  "Call `f` with ALL THREE sweep seams pointed at throwaway directories. A test
+  "Call `f` with ALL FOUR sweep seams pointed at throwaway directories. A test
    that bound only the seam it cares about would leave the other targets
    resolving to the operator's real `~/.vis` — and this sweep deletes."
-  [{:keys [logs cache rewind]} f]
+  [{:keys [logs cache rewind events]} f]
   (binding
     [housekeeping/*logs-home*
      (.getPath ^File (or logs (tmp-dir "vis-hk-idle-logs")))
@@ -249,22 +249,23 @@
      (.getPath ^File (or cache (tmp-dir "vis-hk-idle-cache")))
 
      housekeeping/*rewind-home*
-     (.getPath ^File (or rewind (tmp-dir "vis-hk-idle-rewind")))]
+     (.getPath ^File (or rewind (tmp-dir "vis-hk-idle-rewind")))
+
+     housekeeping/*events-home*
+     (.getPath ^File (or events (tmp-dir "vis-hk-idle-events")))]
 
     (f)))
 
 (defdescribe
   sweep-stale-test
-  (it "keeps three weeks for logs and rewind stores, a month for the display caches"
-      (expect (= 21 housekeeping/default-log-retention-days))
-      (expect (= 30 housekeeping/default-cache-retention-days))
-      (expect (= 21 housekeeping/default-rewind-retention-days))
+  (it "keeps two weeks of every derived kind, under one number"
+      (expect (= 14 housekeeping/default-retention-days))
       (expect (= (* 512 1024 1024) housekeeping/default-cache-budget-bytes)))
   (it "deletes only log files older than the retention window"
       (let [logs (tmp-dir "vis-hk-logs")]
         (touch! logs "vis-nrepl-fresh.log" 1 "fresh")
-        (touch! logs "vis-nrepl-edge.log" 20 "edge")
-        (touch! logs "vis-nrepl-old.log" 22 "old-content")
+        (touch! logs "vis-nrepl-edge.log" 13 "edge")
+        (touch! logs "vis-nrepl-old.log" 15 "old-content")
         (touch! logs "vis-nrepl-ancient.log" 400 "ancient")
         (let [report (target (with-homes {:logs logs} #(housekeeping/sweep-stale! nil)) :logs)]
           (expect (= 4 (:file-count report)))
@@ -321,7 +322,21 @@
         (with-homes {:logs logs} #(housekeeping/sweep-stale! nil))
         (expect (.exists outside))
         (expect (Files/exists (.toPath link) (into-array LinkOption [LinkOption/NOFOLLOW_LINKS])))))
-  (it "deletes display-cache pictures past a month and keeps the recent ones"
+  ;; Regression: gateway journals were swept only by `gateway.bus/sweep!`, from
+  ;; inside a running daemon's tailer loop, so the journals of every crashed,
+  ;; kill-9'd or never-restarted daemon were immortal — nothing bounded them at
+  ;; startup, which is exactly when no daemon is running.
+  (it "deletes the journals of daemons that never came back and keeps a live one"
+      (let [events (tmp-dir "vis-hk-events")]
+        (touch! events "live.ndjson" 1 "{}")
+        (touch! events "orphan.ndjson" 30 "{}")
+        (let
+          [report (target (with-homes {:events events} #(housekeeping/sweep-stale! nil))
+                          :gateway-events)]
+          (expect (= 2 (:file-count report)))
+          (expect (= 1 (:deleted report)))
+          (expect (= ["live.ndjson"] (mapv #(.getName ^File %) (.listFiles events)))))))
+  (it "deletes display-cache pictures past the window and keeps the recent ones"
       (let [cache (tmp-dir "vis-hk-cache")]
         (touch! cache (str "display" File/separator "fig-old.png") 40 "old")
         (touch! cache (str "display" File/separator "fig-new.png") 3 "new")
@@ -381,7 +396,8 @@
                             #(housekeeping/sweep-stale! nil))]
         (expect (zero? (:deleted report)))
         (expect (zero? (:bytes report)))
-        (expect (= [:logs :display :tui-attachments :rewind] (mapv :id (:targets report))))))
+        (expect (= [:logs :gateway-events :display :tui-attachments :rewind]
+                   (mapv :id (:targets report))))))
   (it "sweeps off-thread with the caller's bindings conveyed"
       (let [logs (tmp-dir "vis-hk-logs-async")]
         (touch! logs "old.log" 60 "old")

@@ -5,6 +5,7 @@
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.form :as form]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.prompt :as prompt]
@@ -443,33 +444,39 @@
         (expect (= :tool-result (reason-of 1)))
         (expect (= :tool-result (reason-of 7))))))
 
-(defdescribe tool-result-display-timeout-test
-             ;; The wall-clock BACKSTOP fires with :result nil but :timeout? true.
-             ;; The card must read as a distinct ⧖ TIMEOUT, not the raw
-             ;; :vis/native-tool-timeout error string, and surface the deadline.
-             (it "renders a distinct ⧖ card for a wall-clock timeout"
-                 (let
-                   [display
-                    (deref #'lp/tool-result-display)
-
-                    card
-                    (display {:result nil
-                              :timeout? true
-                              :error {:message "python_execution timed out after 30000ms"
-                                      :type :vis/eval-timeout
-                                      :data {:timeout-ms 30000}}})]
-
-                   (expect (= "⧖ timed out after 30000ms" (:summary card)))
-                   (expect (str/includes? (:body card) "timed out"))))
-             (it "omits the deadline when none was recorded"
-                 (let
-                   [display
-                    (deref #'lp/tool-result-display)
-
-                    card
-                    (display {:result nil :timeout? true :error {:message "boom"}})]
-
-                   (expect (= "⧖ timed out" (:summary card))))))
+(defdescribe persisted-form-omits-a-derivable-render-test
+             ;; Regression: every persisted form used to carry `:result-render` — a
+             ;; rendered copy of the `:result`/`:stdout` sitting right beside it in the
+             ;; same blob, 32% of `tool_calls`. The envelope must carry only what a
+             ;; reader cannot re-derive.
+             (it "drops a render the reader re-derives from the result"
+                 (let [block {:id 0
+                              :code "grep({})"
+                              :result {"files" ["a.clj"]}
+                              :result-render (form/result-render {:src "grep({})" :result {"files" ["a.clj"]}})}
+                       [envelope] (eng/blocks->forms [block] {:turn 1 :iter 1})]
+                   (expect (not (contains? envelope :result-render)))
+                   (expect (= {"files" ["a.clj"]} (:result envelope)))
+                   ;; …and the reader gets the very same body back
+                   (expect (= (:result-render block) (form/result-render envelope)))))
+             (it "keeps a render no projection reproduces"
+                 ;; A `!cmd` bubble: its body is the shell layer's own card markdown.
+                 (let [[envelope] (eng/blocks->forms [{:id 0
+                                                       :code "await shell({\"command\": \"ls\"})"
+                                                       :result {"ok" true}
+                                                       :result-render "**SHELL**\nls"}]
+                                                     {:turn 1 :iter 1})]
+                   (expect (= "**SHELL**\nls" (:result-render envelope)))))
+             (it "carries the timeout FLAG so the ⧖ card is re-derived instead of stored"
+                 (let [[envelope] (eng/blocks->forms [{:id 0
+                                                       :code "time.sleep(99)"
+                                                       :timeout? true
+                                                       :error {:message "python_execution timed out after 30000ms"
+                                                               :data {:timeout-ms 30000}}}]
+                                                     {:turn 1 :iter 1})]
+                   (expect (true? (:timeout? envelope)))
+                   (expect (not (contains? envelope :result-render)))
+                   (expect (= "⧖ timed out after 30000ms" (:summary (form/result-display envelope)))))))
 
 (defdescribe guest-interrupt-on-eval-timeout-test
              ;; REGRESSION: an eval timeout (and Esc cancel) only did `Future.cancel(true)`.
@@ -2103,7 +2110,10 @@
                         (finally (lp/dispose-environment! env)))))
              (it "extends the outer eval timeout when shell code asks for a longer timeout"
                  (expect (= 120000 (eval-timeout-ms-for-code 120000 "print(1)")))
-                 (expect (= 190000
+                 ;; Any `shell` call floors at the CAP, literal budget or not: the literal
+                 ;; bounds ONE call, and a second unannotated call in the same block owns
+                 ;; shell's default — which IS the cap.
+                 (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
                             (eval-timeout-ms-for-code
                               120000
                               "await shell({\"command\": \"clojure -M:test\", \"timeout_secs\": 180})")))
@@ -2111,6 +2121,11 @@
                             (eval-timeout-ms-for-code
                               120000
                               "subprocess.run([\"sleep\", \"1\"], timeout=300)"))))
+             (it "keeps the eval ceiling above the longest shell budget plus its grace"
+                 ;; The widener floors the watchdog at the shell cap + grace; a ceiling at or
+                 ;; below that would clamp the watchdog back UNDER the shell envelope and kill
+                 ;; a legal wait with a bare `Timeout` and no output.
+                 (expect (< (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000) rt/MAX_EVAL_TIMEOUT_MS)))
              (it "reads a millisecond budget too, so repl_eval's own timeout is not preempted"
                  ;; REGRESSION: the scan only understood seconds, so an explicitly long
                  ;; `timeout_ms` (repl_eval, MCP) died at the 120s watchdog instead.
@@ -2128,18 +2143,18 @@
                  ;; turn got a bare `Timeout (120s)` with no stdout instead of shell's
                  ;; structured envelope.
                  ;;
-                 ;; The floor is shell's CAP (`MAX_SHELL_TIMEOUT_SECS`, ten minutes), not
-                 ;; its default: a `wait` whose budget the scan cannot read may legally own
-                 ;; the full ten minutes, and the watchdog is a BACKSTOP, never a co-deadline.
+                 ;; The floor is shell's CAP (`MAX_SHELL_TIMEOUT_SECS`, thirty minutes), not
+                 ;; a shorter budget: a `wait` whose budget the scan cannot read may legally
+                 ;; own the full cap, and the watchdog is a BACKSTOP, never a co-deadline.
                  (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
                             (eval-timeout-ms-for-code 120000 "r = await shell(command=\"sleep 300\")")))
-                 (expect (= 610000
+                 (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
                             (eval-timeout-ms-for-code
                               120000
                               "secs = 600\nr = await shell(op=\"wait\", id=\"j\", timeout_secs=secs)")))
-                 ;; The cap is a floor for the UNREADABLE case only: a block that spells a
-                 ;; literal second budget keeps that tight watchdog.
-                 (expect (= 190000
+                 ;; A literal budget does not lower the floor either: it bounds ONE call, and
+                 ;; the next call in the block can still own shell's default.
+                 (expect (= (+ (* 1000 rt/MAX_SHELL_TIMEOUT_SECS) 10000)
                             (eval-timeout-ms-for-code
                               120000
                               "r = await shell(command=\"x\", timeout_secs=180)")))
@@ -2305,23 +2320,6 @@
         (let [tis [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "x"}]}]]]
           (expect (= tis (apply-summaries tis [])))))))
 
-(defdescribe
-  printed-cards-result-render-test
-  (let
-    [render
-     (var-get #'lp/printed-cards-result-render)
-
-     stdout-card
-     {:body "```\n{'files': []}\n```"}]
-
-    (it "retains stdout when every printed card is summary-only"
-        (expect (= (:body stdout-card)
-                   (render [{:result-summary "0 matching files" :result-render nil}] stdout-card))))
-    (it "lets a non-empty printed-card body replace stdout"
-        (expect (nil? (render [{:result-summary "1 matching file" :result-render "```\na.clj\n```"}]
-                              stdout-card))))
-    (it "keeps the normal stdout body when there are no printed cards"
-        (expect (= (:body stdout-card) (render nil stdout-card))))))
 
 (defdescribe
   native-tool-result-pairing-test
@@ -2456,7 +2454,7 @@
      (var-get #'lp/iteration-results-message)
 
      display
-     (var-get #'lp/tool-result-display)
+      form/result-display
 
      fence
      (str "````vis-table\n"

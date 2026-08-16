@@ -294,6 +294,37 @@
                  (.executeUpdate st (str "ALTER TABLE " table " ADD COLUMN " (:sql col))))
                (catch Throwable _ nil)))))))
 
+(def ^:private retired-columns
+  "Columns DELETED from the canonical V1 after stores already existed, as
+   `[table column]`. Named one by one on purpose: the additive pass's mirror
+   image — drop whatever the shipped SQL no longer lists — would let a single
+   downgrade delete the newer version's data.
+
+   `llm_assistant_message` held the provider's raw assistant envelope so
+   preserved thinking could survive a restart. It never was replayed from disk
+   (a reseeded cross-turn iteration carries `:preserved-thinking/replay? false`)
+   and the signature inside it is worthless to any other provider or to a later
+   day, so the column was write-only: 471 MB of a measured 2.4 GB store.
+
+   Cost, measured on that store: 3.7 s for the table rewrite, a transient WAL
+   the size of the table, and 372 MB handed back to the freelist — SQLite reuses
+   those pages, and only a `VACUUM` shrinks the file itself."
+  [["session_turn_iteration" "llm_assistant_message"]])
+
+(defn- drop-retired-columns!
+  "Drop every `retired-columns` entry a store still carries. Best effort and
+   once per store: a column SQLite refuses to drop stays put — dead but
+   harmless — rather than making the database unopenable."
+  [^DataSource ds]
+  (with-open [conn (.getConnection ds)]
+    (doseq
+      [[^String table ^String column] retired-columns
+       :when (contains? (existing-columns conn table) (str/lower-case column))]
+
+      (try (with-open [st (.createStatement conn)]
+             (.executeUpdate st (str "ALTER TABLE " table " DROP COLUMN " column)))
+           (catch Throwable _ nil)))))
+
 (defn migrate!
   "Install the single canonical V1 schema.
 
@@ -301,8 +332,8 @@
    into V1 self-heal through Flyway `repair`, then migration is retried. Repair
    changes only `flyway_schema_history`; persisted Vis rows and schema objects
    are preserved. Databases created by an older V1 are then topped up additively
-   by `reconcile-canonical-columns!`, so one canonical migration keeps serving
-   stores that already exist."
+   by `reconcile-canonical-columns!` and stripped of `retired-columns`, so one
+   canonical migration keeps serving stores that already exist."
   [^DataSource ds locations]
   (let
     [locs
@@ -332,4 +363,5 @@
         (catch Throwable e
           (if (repairable-validation-error? e) (do (.repair flyway) (.migrate flyway)) (throw e)))))
     (reconcile-canonical-columns! ds locs)
+    (drop-retired-columns! ds)
     ds))

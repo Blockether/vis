@@ -3,7 +3,7 @@
 
    The vis loop assembles a per-iteration provider request by combining
    the system prompt, the original user message, and a `trailer-iters`
-   vector of `[iteration-position {:thinking :blocks :assistant-message
+   vector of `[iteration-position {:thinking :blocks
    :preserved-thinking/replay? ...}]` entries built from persisted
    iterations. Most regressions show up at this seam:
      - preserved-thinking-replay drops messages it should have kept
@@ -45,20 +45,17 @@
    trailer-iters during a running turn."
   [iter]
   [(:position iter)
-   (cond->
-     {:thinking (:thinking iter)
-      :blocks (or (:llm-executable-blocks iter) [])
-      :llm-provider (:llm-actual-provider iter)
-      :llm-model (:llm-actual-model iter)
-      ;; Persisted iterations are durable evidence; the live loop
-      ;; never sets `:preserved-thinking/replay? false` on them
-      ;; until a NEW user turn opens, at which point trailer-iters
-      ;; is reseeded with the flag flipped. Replay tests reason
-      ;; per turn, so within one turn we treat everything as
-      ;; replay-eligible.
-      :preserved-thinking/replay? true}
-     (:llm-assistant-message iter)
-     (assoc :assistant-message (:llm-assistant-message iter)))])
+   {:thinking (:thinking iter)
+    :blocks (or (:llm-executable-blocks iter) [])
+    :llm-provider (:llm-actual-provider iter)
+    :llm-model (:llm-actual-model iter)
+    ;; Persisted iterations are durable evidence; the live loop
+    ;; never sets `:preserved-thinking/replay? false` on them
+    ;; until a NEW user turn opens, at which point trailer-iters
+    ;; is reseeded with the flag flipped. Replay tests reason
+    ;; per turn, so within one turn we treat everything as
+    ;; replay-eligible.
+    :preserved-thinking/replay? true}])
 
 (defn- replay-target
   "Build the `target` map that `compatible-preserved-thinking-trailer-iters`
@@ -74,8 +71,8 @@
 (defn- replay-counts-for-iter
   "Reconstruct the prefix of trailer-iters that the live loop would
    have had IN HAND when it dispatched iteration `idx`. Returns the
-   number of `:assistant-message`s the (current) preserved-thinking
-   replay fn would have appended to the wire request."
+   number of trailer entries the (current) preserved-thinking
+   replay fn would have kept for the wire request."
   [iters idx]
   (let
     [prefix

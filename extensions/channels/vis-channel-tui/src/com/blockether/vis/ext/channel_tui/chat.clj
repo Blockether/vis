@@ -136,7 +136,7 @@
    the derived `:duration-ms`/`:channel`, the computed op projections
    (`:result-kind`/`:result-detail`), and the restore-only status flags."
   [block]
-  (merge (vis/form->display (vis/form-with-display-code block))
+  (merge (vis/form->display (vis/form-with-display block))
          {:started-at-ms nil
           :duration-ms (or (:duration-ms block) 0)
           ;; Keep the raw sink slice so the shared `iteration/entry-ops` derives the

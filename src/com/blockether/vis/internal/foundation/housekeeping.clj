@@ -1,23 +1,26 @@
 (ns com.blockether.vis.internal.foundation.housekeeping
-  "Retention for the Vis-owned directories that grow without bound — the two
-   nobody may delete for you, and the four that delete themselves.
+  "Retention for the Vis-owned directories that grow without bound — the one
+   nobody may delete for you, and the five that delete themselves.
 
    ADVISORY (`scan` observes, `purge!` acts, `vis-agent doctor` renders): the
-   drafts store (`~/.vis/drafts`) and the gateway journals
-   (`~/.vis/gateway/events`). A draft clone is a full copy of a trunk and
+   drafts store (`~/.vis/drafts`). A draft clone is a full copy of a trunk and
    survives until someone applies or abandons it, so a machine that drafts daily
-   and never abandons accumulates gigabytes of dead clones. Gateway journals
-   self-sweep inside the tailer loop (`gateway.bus/sweep!`), but only while a
-   daemon is actually running — journals from crashed or never-restarted daemons
-   stay forever. Both hold recoverable work, so nothing here deletes them on its
-   own: `scan` is pure observation (no mutation, never throws) and `purge!` is
-   the explicit operator action behind `vis-agent doctor --purge`.
+   and never abandons accumulates gigabytes of dead clones. It holds recoverable
+   work, so nothing here deletes it on its own: `scan` is pure observation (no
+   mutation, never throws) and `purge!` is the explicit operator action behind
+   `vis-agent doctor --purge`. `scan` reports the gateway journals the same way,
+   because an operator asking what is reclaimable today should see them.
 
    SELF-DELETING (`sweep-stale!`, once per process at startup): diagnostic logs,
-   the display caches and the rewind stores. Those are DERIVED — a log of a
-   process that exited, a picture whose bytes are already DB-owned, the
-   pre-image of an edit nobody will rewind a month later — so they carry a
-   window instead of a report. `sweep-targets` is the one list of them.
+   the gateway journals, the display caches and the rewind stores. Those are
+   DERIVED — a log of a process that exited, the wire replay of a turn the DB
+   already owns, a picture whose bytes are already DB-owned, the pre-image of an
+   edit nobody will rewind a fortnight later — so they carry a window instead of
+   a report. `sweep-targets` is the one list of them. Journals also self-sweep
+   inside the tailer loop (`gateway.bus/sweep!`) after a single idle day, but
+   that is a LIVENESS rule and it only runs while a daemon does — journals from
+   crashed or never-restarted daemons used to stay forever, and startup is
+   exactly when no daemon is running.
 
    `purge!` routes deletions through `workspace/abandon!` for live draft rows so
    the DB transition, hooks, and backend root release all happen exactly as they
@@ -155,31 +158,21 @@
 ;; directory per command, and a single week of those outweighed everything the
 ;; sweep could see.
 
-(def default-log-retention-days
-  "Age past which a diagnostic log is deleted automatically. Three weeks: longer
-   than any plausible debugging window (a bug reported on Friday is still
-   readable the Monday after next), short enough that the directory stays
-   navigable and a `grep` over it does not walk a year of dead sessions."
-  21)
-
-(def default-cache-retention-days
-  "Age past which a rendered display artifact is deleted. Longer than the log
-   window because these files are what a terminal repaints HISTORY from: the
-   bytes themselves are DB-owned, but a bubble scrolled back to weeks later
-   repaints from its cache file or not at all."
-  30)
+(def default-retention-days
+  "Age past which any self-deleting derived artifact is deleted automatically —
+   diagnostic logs, gateway journals, the display caches, the rewind stores. Two
+   weeks: longer than any plausible debugging or rewind window (a bug reported on
+   Friday is still readable the Monday after next), short enough that a machine
+   which never restarts does not carry a quarter of dead sessions. ONE number for
+   every kind on purpose — a per-kind window is a promise nobody audits, and each
+   kind is reconstructible from the DB or from nothing at all."
+  14)
 
 (def default-cache-budget-bytes
   "Bytes one display cache may still hold once the age pass is done. Age alone
    does not bound an afternoon that renders thousands of figures, so the newest
    files up to this budget survive and the oldest go first."
   (* 512 1024 1024))
-
-(def default-rewind-retention-days
-  "Age past which a whole rewind store is deleted, judged by its NEWEST file. A
-   conversation still being rewound appends to its journal on every edit, so a
-   store untouched for three weeks belongs to one nobody will undo."
-  21)
 
 (def
   ^:dynamic
@@ -331,18 +324,19 @@
    `:mode` `:files` deletes stale FILES anywhere below the root and then the
    directories they emptied; `:stores` deletes a whole per-session subtree at a
    time. `:budget-bytes` additionally caps what survives the age pass."
-  [{:id :logs :mode :files :dir logs-dir :retention-days default-log-retention-days}
+  [{:id :logs :mode :files :dir logs-dir :retention-days default-retention-days}
+   {:id :gateway-events :mode :files :dir events-dir :retention-days default-retention-days}
    {:id :display
     :mode :files
     :dir #(cache-dir "display")
-    :retention-days default-cache-retention-days
+    :retention-days default-retention-days
     :budget-bytes default-cache-budget-bytes}
    {:id :tui-attachments
     :mode :files
     :dir #(cache-dir "tui-attachments")
-    :retention-days default-cache-retention-days
+    :retention-days default-retention-days
     :budget-bytes default-cache-budget-bytes}
-   {:id :rewind :mode :stores :dir rewind-dir :retention-days default-rewind-retention-days}])
+   {:id :rewind :mode :stores :dir rewind-dir :retention-days default-retention-days}])
 
 (defn sweep-stale!
   "Delete the aged-out derived state of every `sweep-targets` entry. Returns

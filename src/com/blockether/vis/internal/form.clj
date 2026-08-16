@@ -13,7 +13,9 @@
    renamed) stay as explicit gateway overrides — they are not carried verbatim, so
    they are NOT in this set."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.pyfmt :as pyfmt]))
+            [com.blockether.vis.internal.env-python :as env]
+            [com.blockether.vis.internal.pyfmt :as pyfmt]
+            [com.blockether.vis.internal.strutil :as strutil]))
 
 (def ^:private display-fields
   "Every field carried VERBATIM from the loop to a channel to render a form,
@@ -29,8 +31,10 @@
   [;; source
    [:code "code"] [:display-code "display_code"] [:display-language "display_language"]
    [:comment "comment"] [:scope "scope"] [:started-at-ms "started_at_ms"]
-   ;; result surfaces — the raw value, the pre-rendered op-card body, and the
-   ;; op-card HEADLINE (a tool-authored summary, never a first-line body slice)
+   ;; result surfaces — the raw value, the op-card BODY (a pure projection:
+   ;; `result-render` DERIVES it, and it is stored only for the rare card no
+   ;; projection reproduces) and the op-card HEADLINE (a tool-authored summary,
+   ;; never a first-line body slice)
    [:result "result"] [:result-render "result_render"] [:result-summary "result_summary"]
    ;; MULTI-card: canonical MINI-FORMS, recursively normalized by `<-wire`.
    [:cards "cards"]
@@ -101,21 +105,153 @@
       [c]
       [])))
 
-(defn with-display-code
-  "Attach the canonical cached ruff rendering of a form's Python source.
-   Channels render `:display-code` verbatim; local callers without it may use
-   the same formatter. Nested result cards are normalized recursively.
+(def MAX_FORM_WIRE_CHARS
+  "Per-block printed-output ceiling. A block's stdout is head-clipped to this
+   many chars in the tool result — a universal backstop for a runaway print()
+   that tool-level caps don't catch (the model can `print(open-ended
+   composition)`). The block's values still live in the sandbox (persistent REPL
+   vars the model can re-slice and print less of). ~64KB ≈ 16k tokens: generous
+   for an intentional full-file read, tight enough that one runaway print can't
+   blow the request."
+  65536)
 
-   An AUTHORED `:display-code` is never overwritten: a form that already carries
-   the source a channel must paint — paired with its `:display-language` — keeps
-   it verbatim."
+(defn clip-to-wire
+  "Head-clip one display string to `MAX_FORM_WIRE_CHARS`, announcing what it
+   dropped. nil for a string that is blank once trailing space is gone."
+  [^String s]
+  (let
+    [s
+     (str/trimr (str s))
+
+     n
+     (long (count s))]
+
+    (when (pos? n)
+      (if (> n (long MAX_FORM_WIRE_CHARS))
+        (str (subs s 0 MAX_FORM_WIRE_CHARS)
+             "\n# ⋯ output clipped at "
+             MAX_FORM_WIRE_CHARS
+             "/"
+             n
+             " chars")
+        s))))
+
+(defn result-display
+  "The human-channel DISPLAY for one executed form as `{:summary :body}` — the
+   ONE surface both the TUI and the web render, so they're unified:
+     - the eval wall-clock BACKSTOP fired → a ⧖ TIMEOUT card carrying the FORM,
+       whatever it printed, and the message;
+     - a `:result` value → pretty-printed (Python-literal, fenced) as the body,
+       no summary;
+     - `:stdout` → verbatim as the body, no summary.
+   The body is head-clipped to `MAX_FORM_WIRE_CHARS`. Returns nil when there's
+   nothing to show. NO symbol is consulted: a card is built from the FORM's own
+   data, so it can never drift from what actually ran.
+
+   A PURE projection of fields the form ALREADY carries (`:timeout?`, `:error`,
+   `:result`, `:stdout`, `:src`) — that is what lets the live loop and a
+   DB-restored envelope paint the same card without either of them storing the
+   rendered string."
+  [form]
+  (let [clip clip-to-wire]
+    (cond
+      ;; The eval wall-clock BACKSTOP fired: there is no :result to render, but the
+      ;; card must still read as a TIMEOUT — a distinct ⧖ headline, not the raw error
+      ;; string. Sits FIRST so a timeout always wins its own display regardless of
+      ;; any partial stdout/error also present.
+      (:timeout? form) (let
+                         [err (:error form)
+                          ms (some-> err
+                                     :data
+                                     :timeout-ms)
+                          ;; The evaluated FORM/prompt that blew the wall — so a
+                          ;; timeout card shows WHAT timed out, not just that it did.
+                          code (some-> (:src form)
+                                       str
+                                       str/trim
+                                       not-empty)
+                          msg (some-> (:message err)
+                                      str
+                                      not-empty)
+                          ;; Partial output the block PRINTED before the wall fired. A backstop
+                          ;; timeout is exactly when it matters: the work is gone, so the lines
+                          ;; that did print are all that is left of it.
+                          out (some-> (:stdout form)
+                                      str
+                                      str/trim
+                                      not-empty)
+                          detail (->> [(when code
+                                         (str "**FORM**\n" (strutil/fenced (clip code) "python")))
+                                       (when out (str "**STDOUT**\n" (strutil/fenced (clip out))))
+                                       (when msg (str "**TIMEOUT**\n" (strutil/fenced msg)))]
+                                      (remove nil?)
+                                      (str/join "\n\n")
+                                      not-empty)]
+
+                         {:summary (str "⧖ timed out" (when ms (str " after " ms "ms")))
+                          :body (when detail (str "\n" detail))})
+      ;; a result value → monospaced Python-literal body, so a dict/list reads as
+      ;; structured data rather than reflowed prose.
+      (some? (:result form)) (when-let [s (clip (env/ctx->python-str (:result form)))]
+                               {:body (strutil/fenced s "python")})
+      ;; A `vis-image` fence (matplotlib `plt.show()` → inline PNG, ASCII plot
+      ;; carried as its fallback body), a `vis-table` fence (a CSV/TSV artifact
+      ;; carried as its own grid) or a `vis-doc` fence (a PDF/HTML document,
+      ;; carrying only its host path) rides stdout as MARKDOWN so the channel
+      ;; paints it inline; wrapping it in a ``` block would escape the
+      ;; 4-backtick fence, so pass the stdout through verbatim (unclipped — the
+      ;; fence is self-bounded and row-capped at the source) whenever one is
+      ;; present.
+      (or (str/includes? (str (:stdout form)) "````vis-image")
+          (str/includes? (str (:stdout form)) "````vis-doc")
+          (str/includes? (str (:stdout form)) "````vis-table"))
+      {:body (str (:stdout form))}
+      ;; python_execution printed output → fenced so newlines are preserved verbatim
+      ;; (plain stdout is NOT markdown; bare \n collapses to a space through the
+      ;; CommonMark SoftLineBreak → :space path if left unwrapped).
+      (not (str/blank? (str (:stdout form)))) {:body (strutil/fenced (clip (:stdout form)))}
+      :else nil)))
+
+(defn result-render
+  "The detail BODY one form displays — `:result-render` DERIVED rather than read,
+   so the rendered string never has to be persisted alongside the data it is a
+   projection of.
+
+   Printed cards replace raw stdout only when at least one of them carries a
+   body: summary-only cards would otherwise suppress the sole non-empty result
+   surface, so stdout stays the fallback.
+
+   TOTAL where `result-display` is strict: the live loop renders the result as it
+   executes (and a value that cannot cross to Python still fails THERE, loudly),
+   but a READER is deriving the body of a row that was written long ago. A
+   forensic report or a reopened session must not die because one archived
+   result no longer renders — no body beats a throw."
+  [form]
+  (when-not (and (seq (:cards form)) (some :result-render (:cards form)))
+    (try (:body (result-display form)) (catch Throwable _ nil))))
+
+(defn with-display
+  "Attach the display projections a channel paints but the store does NOT keep:
+   the cached ruff rendering of the form's Python source, and the rendered
+   `:result-render` detail body. Nested result cards are normalized recursively.
+
+   An AUTHORED value is never overwritten: a form that already carries the
+   source a channel must paint — paired with its `:display-language` — keeps it
+   verbatim, and so does a `:result-render` no projection reproduces (a `!cmd`
+   bubble, whose body is the shell layer's own card markdown)."
   [form]
   (cond-> form
     (and (str/blank? (str (:display-code form))) (not (str/blank? (str (:code form)))))
     (assoc :display-code (pyfmt/beautify-python (:code form)))
 
+    (nil? (:result-render form))
+    (as-> f (let [body (result-render f)]
+              (cond-> f
+                body
+                (assoc :result-render body))))
+
     (seq (:cards form))
-    (update :cards #(mapv with-display-code %))))
+    (update :cards #(mapv with-display %))))
 
 (defn ->display
   "Project the canonical display fields off a source map (loop chunk/block, a

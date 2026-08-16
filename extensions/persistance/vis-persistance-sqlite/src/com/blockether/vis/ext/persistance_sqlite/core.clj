@@ -79,14 +79,21 @@
 
 (def <-json vis/<-json)
 
-;; Restore of persisted canonical assistant messages lives in the shared
-;; persistence facade so every backend replays the identical keyword shape.
-(def <-json-lazy vis/<-json-canonical-lazy)
+(def ^:private blob-freeze-opts
+  "Nippy options for every BLOB column. Zstd — `io.airlift/aircompressor`, pure
+   Java, already on Nippy's own classpath, no JNI — instead of Nippy's default
+   (LZ4 above 2 KiB, nothing below): on 250 real iterations' tool-call forms it
+   stores 315 KB where LZ4 stores 426 KB and the default stores 630 KB, for tens
+   of milliseconds more per 250 rows. Only `->blob` takes options. Nippy stamps
+   the compressor id into the header, so `thaw` with NO options reads every blob
+   written before this one existed; passing `:compressor` to `thaw` is exactly
+   what would break them."
+  {:compressor nippy/zstd-compressor})
 
 (defn- ->blob
   "Serialize a Clojure value to a Nippy byte array for BLOB columns."
   ^bytes [v]
-  (nippy/freeze v))
+  (nippy/freeze v blob-freeze-opts))
 
 (defn- <-blob
   "Deserialize a Nippy byte array from a BLOB column back to a Clojure value."
@@ -1648,9 +1655,8 @@
    `:in-request?` = the user's request (`session_turn_soul.user_request`) matched;
    `:in-reply?` = the assistant's ANSWER (`llm_assistant_prose`) matched;
    `:in-thinking?` = its reasoning aside (`llm_thinking`) matched — the weakest
-   band, since it is what neither of them said. The raw provider envelope
-   (`llm_assistant_message`) is deliberately NOT searched: it is wire JSON, not
-   what was said. Any of the four can be true together.
+   band, since it is what neither of them said. Any of the four can be true
+   together.
 
    The RESULT ORDER IS THE ANSWER, and the answer is FRESHNESS: sessions come
    back newest-first by the instant each one last moved (`session-activity-at`
@@ -3541,8 +3547,8 @@
   ;; unused-binding lint while staying documented here.
   [db-info
    {:keys [session-turn-id thinking assistant-prose answer llm-full-duration-ms error llm-routing
-           cache-created-tokens llm-provider llm-model llm-assistant-message
-           llm-returned-empty-code? tokens cost-usd attachments]
+           cache-created-tokens llm-provider llm-model llm-returned-empty-code? tokens cost-usd
+           attachments]
     :as opts}]
   (when (ds db-info)
     (sqlite-write-tx!
@@ -3617,11 +3623,6 @@
                                 :llm_assistant_prose (str/trim (or assistant-prose ""))
                                 :llm_full_duration_ms (long (or llm-full-duration-ms 0))
                                 :is_llm_returned_empty_code (if llm-returned-empty-code? 1 0)
-                                ;; Persisted in the canonical wire shape (snake_case
-                                ;; STRING keys) — svar's kebab keywords never reach the DB.
-                                :llm_assistant_message (when (some? llm-assistant-message)
-                                                         (->json (vis/wire-canonical
-                                                                   llm-assistant-message)))
                                 :created_at now
                                 :finished_at now}
                                iteration-cols)
@@ -4124,11 +4125,6 @@
 
       (some? (:is_llm_fallback row))
       (assoc :llm-fallback? (= 1 (long (:is_llm_fallback row))))
-
-      ;; Canonical assistant message svar emitted on this iteration; rehydrated
-      ;; on resume so preserved-thinking replay survives a vis restart.
-      (some? (:llm_assistant_message row))
-      (assoc :llm-assistant-message (<-json-lazy (:llm_assistant_message row)))
 
       (some? (:is_llm_returned_empty_code row))
       (assoc :returned-empty-code? (= 1 (long (:is_llm_returned_empty_code row))))

@@ -59,6 +59,7 @@
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.content :as content]
+            [com.blockether.vis.internal.form :as form]
             [com.blockether.vis.internal.format :as fmt])
   (:import [java.util Locale]
            [java.time ZoneId]
@@ -108,40 +109,45 @@
    `:stdout`, and a failing block may carry partial `:stdout` alongside
    `:error`). All are surfaced, plus a 0-based `:position` derived from the
    form's index in the iter's `:forms` vec."
-  [position envelope]
-  (cond-> {:position position :code (or (:src envelope) "")}
-    (:scope envelope)
-    (assoc :scope (:scope envelope))
+  [position raw-envelope]
+  ;; `:result-render` is DERIVED, never stored: `with-display` fills the body the
+  ;; live stream painted, out of the result this very row kept, and leaves an
+  ;; AUTHORED one (a `!cmd` card, whose body is the shell layer's own markdown)
+  ;; alone.
+  (let [envelope (form/with-display raw-envelope)]
+    (cond-> {:position position :code (or (:src envelope) "")}
+      (:scope envelope)
+      (assoc :scope (:scope envelope))
 
-    (:tag envelope)
-    (assoc :tag (:tag envelope))
+      (:tag envelope)
+      (assoc :tag (:tag envelope))
 
-    (contains? envelope :result)
-    (assoc :result (:result envelope))
+      (contains? envelope :result)
+      (assoc :result (:result envelope))
 
-    ;; Printed output — the primary content of a `python_execution` block.
-    ;; Rides `:stdout`, NOT `:result` (bare values aren't echoed), and also
-    ;; appears alongside `:error` when a failing block printed before it threw.
-    ;; Without this the forensic transcript shows `result: None` for every
-    ;; python block and loses what it actually printed.
-    (some? (:stdout envelope))
-    (assoc :stdout (:stdout envelope))
+      ;; Printed output — the primary content of a `python_execution` block.
+      ;; Rides `:stdout`, NOT `:result` (bare values aren't echoed), and also
+      ;; appears alongside `:error` when a failing block printed before it threw.
+      ;; Without this the forensic transcript shows `result: None` for every
+      ;; python block and loses what it actually printed.
+      (some? (:stdout envelope))
+      (assoc :stdout (:stdout envelope))
 
-    (contains? envelope :error)
-    (assoc :error (:error envelope))
+      (contains? envelope :error)
+      (assoc :error (:error envelope))
 
-    ;; Canonical card IR so the dialog renderer reuses the SAME descriptors the
-    ;; TUI/web build instead of re-parsing the invocation string. Gated on the
-    ;; CARD fields themselves: a block's own output carries no op, and losing its
-    ;; headline/body to a missing identity is exactly the drift this avoids.
-    (or (some? (:result-summary envelope)) (some? (:result-render envelope)))
-    (assoc :op
-      (:op envelope) :result-summary
-      (:result-summary envelope) :result-render
-      (:result-render envelope))
+      ;; Canonical card IR so the dialog renderer reuses the SAME descriptors the
+      ;; TUI/web build instead of re-parsing the invocation string. Gated on the
+      ;; CARD fields themselves: a block's own output carries no op, and losing its
+      ;; headline/body to a missing identity is exactly the drift this avoids.
+      (or (some? (:result-summary envelope)) (some? (:result-render envelope)))
+      (assoc :op
+        (:op envelope) :result-summary
+        (:result-summary envelope) :result-render
+        (:result-render envelope))
 
-    (seq (:cards envelope))
-    (assoc :cards (:cards envelope))))
+      (seq (:cards envelope))
+      (assoc :cards (:cards envelope)))))
 
 (defn- attachment-descriptor
   "Lean, byte-free descriptor for ONE persisted iteration attachment (an element
@@ -196,12 +202,6 @@
 
     (cond->
       (-> iter
-          ;; `:llm-assistant-message` is a `<-json-lazy` DELAY (an internal
-          ;; preserved-thinking replay blob, redundant with :blocks/:thinking/
-          ;; the turn's :content). An unrealized delay crosses the Clojure->Python
-          ;; boundary as a ForeignObject and breaks json.dumps on the transcript,
-          ;; so keep it out of this read-only projection entirely.
-          (dissoc :llm-assistant-message)
           (update :thinking visible-thinking)
           (assoc :blocks blocks)
           (assoc :failure-count (count (filter :error blocks))))

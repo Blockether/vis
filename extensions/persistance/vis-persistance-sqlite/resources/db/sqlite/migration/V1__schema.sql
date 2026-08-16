@@ -368,10 +368,6 @@ CREATE TABLE session_turn_iteration (
   is_llm_returned_empty_code         INTEGER NOT NULL DEFAULT 0
                                   CHECK (is_llm_returned_empty_code IN (0, 1)),
 
-  -- svar canonical assistant message (JSON) — preserved-thinking replay survives
-  -- a restart.
-  llm_assistant_message           TEXT,
-
   -- Canonical per-iteration token shape (NULL when the response surfaced no
   -- usage). input_tokens is TOTAL; detail columns are subsets; cost is
   -- provider-estimated USD at write time.
@@ -768,9 +764,7 @@ BEGIN
 END;
 
 -- Assistant iterations. Only HUMAN-READABLE reply text is indexed:
--- `llm_assistant_prose` and `llm_thinking`. The raw
--- `llm_assistant_message` provider envelope is wire JSON (tool args, results,
--- base64 payloads), not what was said, so it deliberately stays out.
+-- `llm_assistant_prose` and `llm_thinking`.
 CREATE VIRTUAL TABLE transcript_reply_fts USING fts5(
   llm_assistant_prose,
   llm_thinking,

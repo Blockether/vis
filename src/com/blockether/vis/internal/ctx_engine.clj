@@ -4,7 +4,8 @@
    The mutable session state lives outside this namespace; these functions only
    advance the turn/iteration cursor, project form envelopes for persisted
    result messages, and compute utilization metadata."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.form :as form]))
 
 (def DEFAULT_PROMPT_BUDGET_TOKENS
   "Soft per-call operating budget surfaced to the model as
@@ -1126,55 +1127,66 @@
       duration-ms
       (when-let [envelope (:envelope block)]
         (when (and (nat-int? (:started-at-ms envelope)) (nat-int? (:finished-at-ms envelope)))
-          (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))]
+          (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))
 
-     (cond-> {:scope scope :tag (classify-form-tag src head-tag-resolver) :src src}
-       (some? duration-ms)
-       (assoc :duration-ms duration-ms)
+      form-envelope
+      (cond-> {:scope scope :tag (classify-form-tag src head-tag-resolver) :src src}
+        (some? duration-ms)
+        (assoc :duration-ms duration-ms)
 
-       (contains? block :result)
-       (assoc :result result)
+        (contains? block :result)
+        (assoc :result result)
 
-       ;; PRINT-ONLY context: the model sees ONLY what it printed. Carry the
-       ;; form's captured stdout onto the envelope so iteration-results-message
-       ;; can surface it — without this, every print() reads back to the model as
-       ;; "(no output)" (it renders :stdout, not :result; bare values aren't echoed).
-       (some? (:stdout block))
-       (assoc :stdout (:stdout block))
+        ;; PRINT-ONLY context: the model sees ONLY what it printed. Carry the
+        ;; form's captured stdout onto the envelope so iteration-results-message
+        ;; can surface it — without this, every print() reads back to the model as
+        ;; "(no output)" (it renders :stdout, not :result; bare values aren't echoed).
+        (some? (:stdout block))
+        (assoc :stdout (:stdout block))
 
-       ;; Errors get realized too: an error's `:data` may carry a realized seq
-       ;; (e.g. the protected-name guard's `:names` from `sort`) that the
-       ;; persist path would otherwise flatten to a `{:vis/ref :expr}` placeholder.
-       (some? (:error block))
-       (assoc :error (realize-value (:error block)))
+        ;; Errors get realized too: an error's `:data` may carry a realized seq
+        ;; (e.g. the protected-name guard's `:names` from `sort`) that the
+        ;; persist path would otherwise flatten to a `{:vis/ref :expr}` placeholder.
+        (some? (:error block))
+        (assoc :error (realize-value (:error block)))
 
-       ;; Tool-call identity: which native tool-call (svar tool_use id) this form
-       ;; answers, plus its name. `iteration-results-message` groups forms by this
-       ;; id so EACH tool_use gets its OWN tool_result carrying its own output —
-       ;; the maki model where one of the calls may be `python_execution`.
-       (some? (:svar/tool-call-id block))
-       (assoc :svar/tool-call-id (:svar/tool-call-id block))
+        ;; Tool-call identity: which native tool-call (svar tool_use id) this form
+        ;; answers, plus its name. `iteration-results-message` groups forms by this
+        ;; id so EACH tool_use gets its OWN tool_result carrying its own output —
+        ;; the maki model where one of the calls may be `python_execution`.
+        (some? (:svar/tool-call-id block))
+        (assoc :svar/tool-call-id (:svar/tool-call-id block))
 
-       (some? (:vis/tool-name block))
-       (assoc :vis/tool-name (:vis/tool-name block))
+        (some? (:vis/tool-name block))
+        (assoc :vis/tool-name (:vis/tool-name block))
 
-       ;; The pre-rendered display STRING (native-tool card / pretty result) so a
-       ;; DB-restored trace shows the SAME card the live stream did — channels read
-       ;; this instead of pr-str'ing the raw `:result` map.
-       (some? (:result-render block))
-       (assoc :result-render (:result-render block))
+        ;; The eval wall-clock BACKSTOP fired. The ⧖ TIMEOUT card is DERIVED from
+        ;; this flag plus the form's own error/stdout, so the FLAG travels and the
+        ;; rendered card never has to.
+        (:timeout? block)
+        (assoc :timeout? true)
 
-       ;; The op-card HEADLINE (tool-authored summary) so a restored trace titles
-       ;; the card the same way the live stream did — not a first-line body slice.
-       (some? (:result-summary block))
-       (assoc :result-summary (:result-summary block))
+        ;; The op-card HEADLINE (tool-authored summary) so a restored trace titles
+        ;; the card the same way the live stream did — not a first-line body slice.
+        (some? (:result-summary block))
+        (assoc :result-summary (:result-summary block))
 
-       ;; MULTI-card: the pre-rendered per-result mini-forms a print-many block shows.
-       ;; nippy keeps the nested keywords, so a DB-restored trace paints the SAME
-       ;; separate colored cards the live stream did. DISPLAY-ONLY — never read into
-       ;; model context (that stays `:stdout`).
-       (seq (:cards block))
-       (assoc :cards (:cards block))))))
+        ;; MULTI-card: the pre-rendered per-result mini-forms a print-many block shows.
+        ;; nippy keeps the nested keywords, so a DB-restored trace paints the SAME
+        ;; separate colored cards the live stream did. DISPLAY-ONLY — never read into
+        ;; model context (that stays `:stdout`).
+        (seq (:cards block))
+        (assoc :cards (:cards block)))]
+
+     ;; The display BODY is a PURE PROJECTION of what the envelope already carries,
+     ;; so it is NOT stored: `form/result-render` re-derives the same string on the
+     ;; way out. Storing it made every persisted iteration carry a second copy of
+     ;; its own `:result`/`:stdout`. Only a render no projection reproduces — a
+     ;; `!cmd` bubble, whose body is the shell layer's own card markdown — is kept.
+     (cond-> form-envelope
+       (let [authored (:result-render block)]
+         (and (some? authored) (not= authored (form/result-render form-envelope))))
+       (assoc :result-render (:result-render block))))))
 
 (defn blocks->forms
   "Map a loop-side blocks vec into a vec of engine envelopes. `:cursor`
