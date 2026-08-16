@@ -1151,6 +1151,19 @@ my-extension/
  :deps  {com.blockether/vis {:local/root "../vis"}}}   ; or a released coordinate
 ```
 
+### The surface you may require
+
+`com.blockether.vis.core` is the whole Clojure host contract — the only namespace an
+extension should require. The internal tree below it is not stable and is refactored
+without notice.
+
+This is enforced, not merely asked for: `resources/vis-contract/clojure-host.edn` is
+the Clojure twin of the Python `python-host.edn`. It names the facade and freezes the
+internal namespaces the in-tree extensions already reach past it for, and
+`clojure_contract_test` scans `extensions/**` on every run — a require of an internal
+namespace that is not frozen there fails the suite, and a frozen entry nothing uses
+any more fails it too. The list may only shrink: if your extension needs something the
+facade does not export, export it from `com.blockether.vis.core`.
 ### The extension spec
 
 `vis/extension` validates the map and fills defaults; `vis/register-extension!` puts it in the registry.
