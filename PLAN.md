@@ -1,215 +1,261 @@
-# PLAN — Split the Vis extension contract from the engine and ship its Python half on PyPI
+# PLAN — Make every Vis capability an extension declared by one cross-language contract
 
-*The contract is a document both languages read; the engine is only its first implementation.*
+*If the engine can do it and an extension cannot, that is a bug in the contract, not a feature of the engine.*
 
 ## Context
 
 **State before.**
 
-- The whole Python extension surface — `vis.extension`, `vis.ask`, `vis.shell`, `vis.state`,
-  `vis.provider`, the HITL field builders — is a 658-line Python program held in a Clojure-loaded
-  string. `resources/vis-python/extension_bootstrap.py:3` opens `_vis_body = """`, `:662` closes it,
-  `:664-681` build a `ModuleType("vis")`, inject a 13-entry `_host` dict of `__vis_host_*` polyglot
-  globals and register `sys.modules["vis"]`. Nothing inside that string is importable, testable,
-  installable or lintable: ruff sees one assignment, and `import vis` works in exactly one place on
-  earth — inside a Vis extension context.
-- The 13 host callbacks are hand-written three times: the binder
-  `src/com/blockether/vis/internal/python_extensions.clj:332-462`, the static list
-  `host-member-names` at `:484-493`, and the `_host` dict at `extension_bootstrap.py:665-679`.
-  `doc("human-input")` can only state the drift rule as prose — "A new host callback is registered
-  in `host-member-names` or the static checker breaks with a `NameError`".
-- The extension VOCABULARY is 37 `s/def`s (`:ext/name` … `:ext/engine`, `:shim/name` …
-  `:shim/bindings`) inside the 3637-line implementation namespace
-  `src/com/blockether/vis/internal/extension.clj`. Nothing an author can depend on is smaller than
-  the engine.
-- 9 of the 16 `extensions/*/*/deps.edn` depend on `com.blockether/vis {:local/root "../../.."}` —
-  the AGGREGATE, which root `deps.edn:129-151` defines as all 16 extensions. So every extension
-  transitively drags every other one: `extension -> aggregate -> vis-foundation-voice ->
-  com.github.k2-fsa.sherpa-onnx` (`extensions/common/vis-foundation-voice/deps.edn:15`). That is why
-  all 16 extension `deps.edn` repeat `:mvn/repos {"jitpack" …}` (commit `0403732e6`) and why the
-  13-job classpath matrix downloads an ONNX runtime to check a provider extension.
-- The precedent for a cross-language contract in this repo is a test that READS the other language:
-  `human_input_cross_channel_test.clj` reads the companion's TypeScript and fails when a field type,
-  a bound or a choice glyph drifts from `internal/human_input/spec.clj`.
+- The contract now exists as its own artifact: `packages/vis-contract/` ships to Clojars as
+  `com.blockether/vis-contract` and to PyPI as `vis-contract` (commit `4cdcae1a4`). It declares
+  exactly ONE seam — the 13 host callbacks
+  (`packages/vis-contract/resources/vis-contract/python-host.edn`), now a real
+  `typing.Protocol` (`packages/vis-contract/python/src/vis_contract/__init__.py`, commit
+  `137d00650`). Everything an extension may CONTRIBUTE is still undeclared.
+- The contribution vocabulary is 28 `s/def :ext/*` forms buried in the 147,999-byte implementation
+  namespace `src/com/blockether/vis/internal/extension.clj:479-916`: `:ext/engine` (tool symbols),
+  `:ext/cli`, `:ext/channels`, `:ext/providers`, `:ext/persistance`, `:ext/attachment-storage`,
+  `:ext/sandbox-shims`, `:ext/hooks`, `:ext/op-hooks`, `:ext/slash-commands`,
+  `:ext/network-filters`, `:ext/settings`, `:ext/env`, `:ext/theme`, `:ext/doctor-fn`,
+  `:ext/channel-contributions`, `:ext/requires` and the rest. No document lists them; the only way
+  to learn the surface is to read a 3637-line file.
+- Slots — the mechanism that already makes the TUI and the GATEWAY extensible — are ad-hoc
+  keywords. The whole tree contains 5 of them:
+  `:tui.slot/commands` (10 uses), `:tui.slot/footer-segment` (8), `:gateway.slot/http-routes` (8),
+  `:tui.slot/header-row` (7), `:api.slot/preamble` (1)
+  (`src/com/blockether/vis/internal/gateway/server.clj:3510`,
+  `src/com/blockether/vis/internal/foundation/rewind.clj:1311`,
+  `extension.clj:654,3062`). Nothing declares a slot's id, its payload shape or its owner, so a
+  typo in a slot key contributes silently to nothing.
+- The languages are NOT at parity. A Python extension can declare 6 things —
+  `extension`, `symbol`, `slash`, `op_hook`, `network_filter`, `provider`, plus `host_env`
+  (`packages/vis-agent/src/vis/__init__.py`, 794 lines) — against the Clojure map's 28. Channels,
+  CLI commands, persistance backends, attachment storage, sandbox shims, settings, theme, doctor
+  checks and EVERY slot contribution (gateway routes, TUI rows) are Clojure-only. `doc("extending")`
+  documents the asymmetry as if it were a design.
+- The core is not minimal. `src/` is 155 files and 4,745,821 bytes, led by
+  `internal/loop.clj` (537,912), `foundation/editing/core.clj` (265,246),
+  `gateway/state.clj` (220,425), `internal/main.clj` (196,530), `gateway/server.clj` (196,334),
+  `internal/env_python.clj` (177,299). Against that, all 16 extensions together cover providers (8),
+  languages (3), channel/TUI (1), persistance (1), search, voice and bridge — the capabilities that
+  were EASY to externalize, not the ones a minimal core would demand.
+- Two capabilities already prove externalization works end to end:
+  `extensions/common/vis-foundation-search` registers tool symbols with
+  `:ext.engine/builtin? true`, and `vis-foundation-bridge` registers a whole alias namespace
+  (`.../foundation_bridge/core.clj:1110`).
 
-**Root problem.** Vis has a contract, but it exists only as implementation. Every mirror of it — the
-Clojure binder, the Python bootstrap, the static checker, the companion's TypeScript, an extension
-author's editor — is a hand copy kept honest by a reviewer's memory, and the only artifact anyone
-can depend on is the entire distribution, ONNX included.
+**Root problem.** Vis is extensible by accident of implementation. The engine and an extension are
+written in the same language against the same in-process maps, so every capability the engine kept
+for itself is unreachable from anywhere else — and a second language, a second host or a third
+ecosystem can only ever have the subset somebody remembered to bridge. There is no artifact that
+answers "what can an extension contribute?" without reading the engine.
 
-**What we solve.** One data document per contract seam, read by the engine at runtime and by every
-mirror in test; the Python half becomes a real package that installs from PyPI and runs with no Vis
-process at all, answering each host op with a declared outside behavior — a terminal prompt where
-Vis would have raised a HITL dialog, a local file where Vis would have used the session store, an
-explicit refusal where Vis would have jailed a process.
+**What we solve.** One declared document per SEAM — host ops (done), contribution points, slots —
+shipped in `vis-contract` to every registry; every language binding generated from and tested
+against those documents; the parity itself pinned by a test that fails when Clojure gains a
+contribution point Python cannot reach; and the capabilities that need not live in the engine moved
+out behind those same documents, so `core` shrinks by measurement rather than by taste.
 
-**What we do not solve.** No new schema library (`clojure.spec.alpha` only, `doc("human-input")`).
-No compatibility shim for the string bootstrap — it is deleted, not deprecated. Not the companion's
-TypeScript mirror, which already has its own drift test. Not a Python re-implementation of the
-engine: outside Vis the package is an authoring and testing surface, never a second agent runtime.
+**What we do not solve.** Not a plugin marketplace or remote/sandboxed extension loading. Not
+`fold_session` and the other agent tool VERBS — they are the third surface (parsed in
+`src/com/blockether/vis/internal/ctx_engine.clj:421`), not host ops, and a foreign host must never
+be required to fold a Vis session. Not a rewrite of `loop.clj`. Not a second schema library:
+`clojure.spec.alpha` only.
 
 **Alternatives considered.**
 
-- *Generate the Python from the Clojure specs at build time.* Lost: a generated file cannot be
-  edited by an extension author reading a traceback, and the generator becomes a fourth mirror.
-- *Publish the package by copying `_vis_body` into a `pyproject.toml` project.* Lost: two sources of
-  the same module, and the copy silently rots exactly like the three `__vis_host_*` lists do today.
-- *Keep the aggregate and give extensions a `:provided` alias that excludes voice.* Lost: it hides
-  the cycle instead of removing it, and every new extension has to remember the alias.
-- *Name the PyPI distribution `vis`.* Lost: taken on PyPI ("Simple Visualization Tools"). The
-  distribution is `vis-agent`, matching the `bin/vis-agent` CLI, and it provides the `vis` import
-  name every existing extension already writes (`resources/examples/python-extensions/todo.py:13`).
+- *A `defprotocol` facade for the whole engine.* Lost: `com.blockether.vis.core` has 493 public
+  vars, one of them a macro (measured in the managed REPL). A protocol carries neither.
+- *Let each language binding hand-write its own declaration API.* Lost: that is exactly the drift
+  the three `__vis_host_*` copies caused before Phase 1 of the previous plan.
+- *Keep slots as free keywords and document them in `extending.md`.* Lost: prose cannot fail CI, and
+  the 1-use `:api.slot/preamble` shows how a slot dies unnoticed.
+- *Move capabilities out of `src/` first, declare later.* Lost: an extension point discovered by
+  moving code is shaped by the code that moved; the document has to be able to refuse a shape.
+- *Node/TypeScript as the third binding vs. a JVM-free Clojure (Babashka) one.* TypeScript wins if
+  we do it: the companion already mirrors Vis contracts in TS, so the drift test has precedent.
 
-## Phase 1 — Declare the Python host contract as data
+## Phase 1 — Declare the contribution surface as data
 
-**Rationale.** Without it the 13 host callbacks stay hand-copied in three places with a prose rule
-guarding them, and neither the package nor its outside-the-sandbox behavior has anything to be
-generated from or checked against.
+**Rationale.** Without it "everything is an extension" is unverifiable: nobody can list what an
+extension may contribute, and no test can notice that a new `:ext/*` key reached Clojure only.
 
 **Data.**
 
 ```clojure
-(s/def :op/name (s/and non-blank-string? #(re-matches #"[a-z][a-z0-9_]*" %)))
-(s/def :op/global (s/and non-blank-string? #(re-matches #"__vis_host_[a-z0-9_]+__" %)))
-(s/def :op/arity (s/int-in 1 4))
-(s/def :op/summary non-blank-string?)
-(s/def :op/outside #{:outside/local :outside/prompt :outside/refuse})
-(s/def :op/refusal non-blank-string?)
-(s/def :contract/op
-  (s/and (s/keys :req [:op/name :op/global :op/arity :op/summary :op/outside]
-                 :opt [:op/refusal])
-         #(= (contains? % :op/refusal) (= :outside/refuse (:op/outside %)))))
-(s/def :contract/ops (s/coll-of :contract/op :kind vector? :distinct true :min-count 1))
-(s/def :contract/version pos-int?)
-(s/def :contract/python-host (s/keys :req [:contract/version :contract/ops]))
+(s/def :point/key qualified-keyword?)            ; :ext/channels
+(s/def :point/summary non-blank-string?)
+(s/def :point/cardinality #{:point/one :point/many})
+(s/def :point/carries #{:carries/data :carries/fn})   ; fn-valued points need a host callback
+(s/def :point/languages (s/coll-of #{:lang/clojure :lang/python :lang/typescript}
+                                   :kind set? :min-count 1))
+(s/def :point/gap non-blank-string?)             ; required when a language is absent: why, or the issue
+(s/def :contract/point
+  (s/and (s/keys :req [:point/key :point/summary :point/cardinality :point/carries
+                       :point/languages]
+                 :opt [:point/gap])
+         #(or (= (:point/languages %) #{:lang/clojure :lang/python :lang/typescript})
+              (contains? % :point/gap))))
+(s/def :contract/points (s/coll-of :contract/point :kind vector? :distinct true :min-count 1))
+(s/def :contract/extension-points (s/keys :req [:contract/version :contract/points]))
 ```
 
 **Acceptance criteria.**
 
-- `packages/vis-contract/resources/vis-contract/python-host.edn` — the 13 ops, each with its global, arity, summary and
-  outside behavior.
-- `packages/vis-contract/src/com/blockether/vis/contract/python_host.clj` — reads and validates the document; exposes
-  `ops`, `op-names`, `host-globals`.
-- `src/com/blockether/vis/internal/python_extensions.clj` — `host-member-names` derives from the
-  document instead of listing names.
-- `test/com/blockether/vis/contract/python_host_test.clj` — the document conforms; its globals
-  are exactly what the binder binds; its op names are exactly the `_host` keys read out of
-  `extension_bootstrap.py`.
+- `packages/vis-contract/resources/vis-contract/extension-points.edn` — all 28 points, each with
+  cardinality, what it carries and which languages reach it today.
+- `packages/vis-contract/src/com/blockether/vis/contract/extension_points.clj` — reads, validates,
+  exposes `points`, `point-keys`, `points-for-language`.
+- `packages/vis-contract/python/src/vis_contract/__init__.py` — `POINTS` rendered into
+  `contract.json`, pinned byte-for-byte like `OPS`.
+- `test/com/blockether/vis/contract/extension_points_test.clj` — the document's `:point/key` set is
+  EXACTLY the `:ext/*` `s/def`s in `src/com/blockether/vis/internal/extension.clj`; a new key in the
+  engine fails until it is declared with its languages or its `:point/gap`.
 
-**Unknowns.** None.
+**Unknowns.** Do `:ext/requires` and `:ext/version` count as contribution points or as manifest
+metadata? Current answer: manifest, declared in the document with `:point/carries :carries/data`
+so the set stays exactly the engine's.
 
-## Phase 2 — Turn the `vis` module into a real Python package
+## Phase 2 — Make slots a declared registry, not a keyword convention
 
-**Rationale.** While the module is a string, it cannot be linted, unit-tested, type-hinted, read in
-an editor or installed — and Phase 3 has no file to add a fallback host to.
+**Rationale.** Slots are the only mechanism by which the TUI and the gateway are already extensible;
+undeclared, a slot id typo contributes nothing silently, and no language other than Clojure can
+discover that `:gateway.slot/http-routes` exists.
 
-**Data.** None. The module body moves file-to-file; no persisted, wire or mirrored shape changes.
+**Data.**
 
-**Acceptance criteria.**
-
-- `packages/vis-agent/src/vis/__init__.py` — the former `_vis_body`, verbatim in behavior, with
-  `_host` taken from the injected module dict when present.
-- `resources/vis-python/extension_bootstrap.py` — shrinks to the injector: build the module, seed
-  `_host` from the contract's globals, exec the packaged source, register `sys.modules`.
-- `deps.edn`, `build.clj` — `packages/vis-agent/src` on `:paths`, the package in
-  `-H:IncludeResources`.
-- `test/com/blockether/vis/internal/python_extensions_test.clj` stays green; `ruff check` covers the
-  new package.
-
-**Unknowns.** Does GraalPy's `compile()` of the packaged source keep the ~100 ms context cost the
-existing test measures?
-
-## Phase 3 — Give the package a host for outside the sandbox
-
-**Rationale.** Installed from PyPI with no Vis process, `import vis` currently cannot even be
-imported; an author cannot unit-test a single tool function, and `vis.ask` has nowhere to ask.
-
-**Data.** None. Phase 1's `:op/outside` already carries the policy; this phase implements it.
+```clojure
+(s/def :slot/id qualified-keyword?)              ; :gateway.slot/http-routes
+(s/def :slot/host #{:host/tui :host/gateway :host/api})
+(s/def :slot/summary non-blank-string?)
+(s/def :slot/payload #{:payload/http-route :payload/command :payload/segment
+                       :payload/row :payload/text})
+(s/def :slot/ordered? boolean?)
+(s/def :contract/slot (s/keys :req [:slot/id :slot/host :slot/summary :slot/payload :slot/ordered?]))
+(s/def :contract/slots (s/coll-of :contract/slot :kind vector? :distinct true :min-count 1))
+```
 
 **Acceptance criteria.**
 
-- `packages/vis-agent/src/vis/_outside.py` — one implementation per op: `state_*` on a JSON file
-  under `.vis/`, `log`/`notify` on stderr, `request_input`/`check_input` as terminal prompts
-  (`input()`, `getpass` for secrets, the same field vocabulary), `reveal_secret`/`forget_secret` on
-  the in-process table those prompts fill, `declare_env` from `os.environ`, `shell` as a local
-  subprocess, `jailed_shell*` refusing by name.
-- `packages/vis-agent/tests/` — pytest over every op with no host bound, plus a registration test
-  that loads `resources/examples/python-extensions/todo.py` outside Vis.
-- `test/com/blockether/vis/contract/python_host_test.clj` — every contract op has an outside
-  implementation.
+- `packages/vis-contract/resources/vis-contract/slots.edn` — the 5 existing slots, typed.
+- `src/com/blockether/vis/internal/extension.clj` — `:ext/channel-contributions` validates its keys
+  against the document and REFUSES an undeclared slot id at registration.
+- `src/com/blockether/vis/internal/gateway/server.clj`, `internal/foundation/rewind.clj` — consume
+  the declared id, no literal keyword.
+- `test/com/blockether/vis/contract/slots_test.clj` — every `*.slot/*` keyword occurring anywhere in
+  `src/` and `extensions/` is declared; an extension contributing to `:tui.slot/typo` is refused.
 
-**Unknowns.** Should `shell` outside be a real subprocess or a refusal? Current answer: real, since
-the jail is what Vis adds and `jailed_shell` is the one that refuses.
+**Unknowns.** Does refusing an unknown slot break any extension in flight? None found: the 5 ids are
+all engine-side.
 
-## Phase 4 — Publish `vis-agent` to PyPI
+## Phase 3 — Close the Python parity gap against the document
 
-**Rationale.** Until it is installable, "write a Vis extension" still means "clone the repo".
+**Rationale.** Today a Python author cannot add a gateway route, a TUI row, a CLI command, a
+settings entry or a persistance backend. Until they can, "same things from both languages" is
+false and Phase 4 has nothing to copy.
 
-**Data.** None. Packaging metadata only.
-
-**Acceptance criteria.**
-
-- `packages/vis-agent/pyproject.toml`, `README.md`, `LICENSE` — distribution `vis-agent`, import
-  package `vis`, version stamped from `VIS_VERSION`.
-- `scripts/` — the version stamp, mirroring how the companion's mirrors are stamped.
-- A release step in `doc("release-vis")`'s sequence; publishing runs only on an explicit request.
-- A test that the stamped version equals `VIS_VERSION`.
-
-**Unknowns.** Which PyPI account and trusted-publisher identity ships it?
-
-## Phase 5 — Extract `com.blockether/vis-contract` and repoint the extensions
-
-**Rationale.** Until an extension can depend on something smaller than the distribution, a provider
-extension resolves an ONNX runtime, the classpath matrix pays for it 13 times, and all 16
-`deps.edn` carry a JitPack repo they have no use for.
-
-**Data.** None. The 37 `s/def`s move namespace; no key is added, renamed or removed.
+**Data.** None. Phases 1 and 2 declare the shapes; this phase implements the bindings against them.
 
 **Acceptance criteria.**
 
-- `contract/deps.edn`, `contract/src/com/blockether/vis/contract/*.clj` — the `:ext/*` and `:shim/*`
-  vocabulary and the registry, with no engine dependency.
-- `src/com/blockether/vis/internal/extension.clj` — requires the contract instead of declaring it.
-- The 9 extension `deps.edn` that name the aggregate name `com.blockether/vis-contract` instead;
-  the `:mvn/repos` JitPack repeat is deleted wherever the dependency is gone.
-- `.github/workflows/ci.yml` — the classpath matrix still resolves every directory.
-- The existing extension registration tests stay green.
+- `packages/vis-agent/src/vis/__init__.py` — one declarator per data-carrying point
+  (`vis.contribute(slot, …)`, `vis.channel`, `vis.cli`, `vis.setting`, `vis.theme`,
+  `vis.persistance`, `vis.attachment_storage`, `vis.doctor`), each validating against
+  `vis_contract.POINTS`/`SLOTS` and refusing an undeclared key by name.
+- `src/com/blockether/vis/internal/python_extensions.clj` — collects the new declarations into the
+  same `:ext/*` map a Clojure extension returns; no second registration path.
+- `resources/examples/python-extensions/` — one example that adds a gateway route and a TUI footer
+  segment from Python.
+- `test/com/blockether/vis/internal/python_extensions_test.clj` — that example registers and its
+  route answers; `packages/vis-agent/tests/` — every declarator refuses an unknown point.
+- `test/com/blockether/vis/contract/extension_points_test.clj` — after this phase every point
+  carrying DATA lists `:lang/python`; the remaining `:point/gap`s are exactly the fn-valued ones.
 
-**Unknowns.** `vis-channel-tui` requires 8 engine namespaces beyond the vocabulary — does it depend
-on the engine artifact, or does the contract grow a channel section?
+**Unknowns.** Can a fn-carrying point (`:ext/doctor-fn`, `:ext/activation-fn`) be reached from
+Python at all, or does it need a host op to call back in? Answer during Phase 3 by trying
+`:ext/doctor-fn` first — it is the smallest.
+
+## Phase 4 — Prove the contract with a third language
+
+**Rationale.** Two bindings written by the same people in the same repo can share a hidden Clojure
+assumption. A third, written only from the published documents, is the test of whether the contract
+is a contract.
+
+**Data.** None. The documents are already declared; this phase only reads them.
+
+**Acceptance criteria.**
+
+- `packages/vis-contract/typescript/` — npm package `@blockether/vis-contract`: `contract.json`,
+  `slots.json`, `extension-points.json` and generated types, built from the SAME EDN by
+  `packages/vis-contract/src/com/blockether/vis/contract/typescript_host.clj`.
+- `test/com/blockether/vis/contract/typescript_host_test.clj` — the emitted TS is byte-identical to
+  the committed file (the drift test pattern of `human_input_cross_channel_test.clj`).
+- One TypeScript extension under `extensions/` registering a tool symbol through the existing
+  `vis-language-typescript-bun` runtime, contributing to one slot.
+
+**Unknowns.** Does the Bun language extension already have a registration channel back into the
+engine, or does this need a new transport? Must be answered BEFORE the phase starts — it decides
+whether Phase 4 is a week or a month.
+
+## Phase 5 — Shrink the core to what only the engine can own
+
+**Rationale.** The documents make externalization possible; nothing yet makes it happen. `src/` is
+4.75 MB and holds capabilities — search, editing, attachments, voice, doctor checks — that the
+extension points now express.
+
+**Data.** None. Code moves; no persisted, wire or mirrored shape changes.
+
+**Acceptance criteria.**
+
+- A `core` that keeps only: the iteration loop, the context engine, the sandbox, the extension
+  registry, the gateway transport and the contract readers. Every other capability lands under
+  `extensions/common/vis-foundation-*` with `:ext.engine/builtin? true`, the way
+  `vis-foundation-search` already does.
+- `test/com/blockether/vis/internal/core_surface_test.clj` — a BUDGET test: `src/` byte count and
+  `core` public-var count may not grow; each phase records the new ceiling.
+- No behavior change visible to a session: the full suite passes unchanged.
+
+**Unknowns.** Which family moves first? Candidate order by size and independence: attachments
+(47 KB + 13 KB storage), editing (265 KB), doctor (23 KB). Decide with the budget test in front of
+us, one family per commit.
+
+## Phase 6 — Publish the contract and its bindings
+
+**Rationale.** Every phase above is unusable by anyone outside this repo until the artifacts are on
+the registries; `vis-contract`, `vis-agent` and `@blockether/vis-contract` are all unpublished, and
+the PyPI names are still free.
+
+**Data.** None. Packaging and identity only.
+
+**Acceptance criteria.**
+
+- Clojars `com.blockether/vis-contract`, PyPI `vis-contract` + `vis-agent`, npm
+  `@blockether/vis-contract`, all stamped from `VIS_VERSION` by
+  `apps/vis-companion/scripts/version.mjs`.
+- `.github/workflows/` — one release job per registry, triggered by the `vX.Y.Z` tag.
+- `.agents/skills/release-vis/SKILL.md` — the publish steps, in order.
+
+**Unknowns.** The publishing IDENTITY (owner account, org, license header) — the user's decision,
+outstanding since the previous plan and still blocking.
 
 ## State of the plan
 
-**ACCEPTED.** Phases 1-3 landed together in `feat(python): ship the extension API as the vis-agent
-package`; a phase could not be split from the next one without leaving the module in two places.
+**REQUIRES WORK** — awaiting the user's answer on Phase 4 (do we do the TypeScript binding now?)
+and on Phase 6's publishing identity.
 
-- Phase 1 — DONE. `packages/vis-contract/resources/vis-contract/python-host.edn` declares all 13 host ops;
-  `contract.python-host` reads, validates and serves them; `python_host_test` reads a LIVE
-  extension context's `vis._host` back and fails on any drift.
-- Phase 2 — DONE. The module is `packages/vis-agent/src/vis/__init__.py` — on `:paths`, in the
-  native image, and the file the engine execs; `resources/vis-python/extension_bootstrap.py` is
-  the injector alone.
-- Phase 3 — DONE. `packages/vis-agent/src/vis/_outside.py` answers every op by its `:op/outside`
-  verdict; 25 pytest cases prove it, the last of them running `resources/examples/python-extensions/todo.py`
-  in a bare interpreter. The `shell` op vocabulary is contract data too, so both hosts dispatch
-  from one list; 33 pytest cases.
-- Phase 4 — REQUIRES WORK. `scripts/version.mjs` mirrors `VIS_VERSION` into BOTH
-  `pyproject.toml`s and the `vis-contract==` pin between them, and CI builds both wheels and
-  imports the installed pair on the interpreter floor they advertise; nothing uploads yet, and
-  neither `vis-agent` nor `vis-contract` is claimed on PyPI.
-- Phase 5 — HALF DONE. The declaration is its own artifact: `packages/vis-contract` is a Clojars
-  jar (`com.blockether/vis-contract`, discovered by `build.clj` from `packages/*/deps.edn`) and a
-  PyPI distribution (`vis-contract`), holding both host contracts, their specs, the renderer and
-  the Python `Host` protocol. `vis-agent` depends on it instead of copying it. The 9 extension
-  `deps.edn` that name the aggregate still do.
+Done:
 
-Remaining, in order:
+- Predecessor plan, fully landed: Python host contract as data, the `vis` module as a real package,
+  the outside-Vis host, the Clojure host debt gate — commits `93e379fa0`, `67d8ffcc8`, `82a3220ff`.
+- Contract extracted into `packages/vis-contract`, released in both ecosystems' build paths —
+  commit `4cdcae1a4`.
+- Python host boundary declared as `typing.Protocol` with `check_host` — commit `137d00650`.
 
-1. Phase 4 — settle the PyPI trusted-publisher identity, add the build/upload step to
-   `doc("release-vis")`, and claim both names. Publishing itself waits for an explicit request.
-2. Phase 5 — repoint the 9 extension `deps.edn` that name the aggregate, so a provider extension
-   stops resolving an ONNX runtime. Only extensions that need nothing past the declaration can
-   move today; the rest need `com.blockether.vis.core` and therefore the engine.
-3. The Python host boundary is a `typing.Protocol` in `vis_contract`; the engine still injects a
-   plain `_host` dict. Make the injected host an object that satisfies it, so a wrong host fails
-   at the boundary instead of at the call.
+TODO, in order:
+
+1. Phase 1 — `extension-points.edn` + reader + drift test.
+2. Phase 2 — `slots.edn`, registration refuses undeclared slots.
+3. Phase 3 — Python declarators for every data-carrying point, parity test flips.
+4. Phase 4 — TypeScript binding (pending decision).
+5. Phase 5 — core budget test, then one capability family per commit.
+6. Phase 6 — publish (pending identity decision).
