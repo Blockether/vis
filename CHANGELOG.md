@@ -7,6 +7,470 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.1.39] - 2026-08-16
+
+### Changed
+- fix(shell): keep the output a pty child printed just before it exited
+- fix(shell): stop a pty child inheriting the parent's descriptors
+- docs(docs): regenerate the spel skill from spel 0.9.28
+- fix(ci): track the clj-kondo configs imported from dependencies
+- chore(release): v0.1.39
+- fix(companion): read the artifact overlay after its bytes arrive
+- build(ci): build the macOS asset on a hosted runner, never a self-hosted one
+- feat(build): let native-image size its own builder heap, and measure it
+- fix(companion): give the image viewer one Save, in the band beside the close
+- fix(companion): strip settings band sentences and close a column's last group
+- fix(ci): make the hosted macOS fallback fit the free runner
+- fix(companion): raise the annotator composer above the keyboard
+- feat(build): ship a beta track on free runners, not the mac builder
+- fix(companion): reconnect a dark machine off All, in the background
+- feat(build): stamp every native runtime with the commit that built it
+- fix(cli): resolve sandbox PIL colours per mode and replace drawn ink
+- fix(sandbox): answer two bands for an 'LA' image, as Pillow does
+- docs(companion): record TestFlight build 4319 in the app changelog
+- fix(companion): brand the launch screen and name the Android channel
+- fix(companion): reopen a session where the reader stopped reading
+- fix(sandbox): read a paste mask's alpha band, not its blue channel
+- fix(companion): redraw the Android launcher and notification icons from the iOS master
+- fix(companion): ask the sessions list for one page when nothing moved
+- fix(companion): tag Android alerts so the badge can clear
+- fix(sandbox): address a fresh attachment in the block that made it
+- docs(skills): regenerate the spel skill from spel 0.9.27
+- feat(companion): badge the icon with the alerts still waiting
+- fix(companion): put an opened note's Save in its header band
+- fix(companion): wear the name's step on a status dot
+- fix(companion): frame the destructive confirm around its own cost
+- feat(tui): hold a spoken conversation instead of a speech toggle
+- fix(companion): keep a project folded once you have folded it
+- fix(companion): unbox the voice bands and drop the Off route
+- docs(docs): plan making every capability an extension of one contract
+- refactor(contract): make the Python host an object, not a dict
+- fix(companion): strip the MCP band and land its verb as the list's last row
+- feat(contract): give the host contract its own package
+- fix(companion): make the providers action amber and unpin the blocked banner
+- fix(companion): make lone settings verbs full width and align status dots
+- fix(companion): anchor the sessions list across every fleet arrival
+- fix(companion): keep a live session following once the reader arrives
+- fix(companion): one verb in notifications, and demote nested panel bands
+- feat(extensions): gate the Clojure host surface with a contract
+- fix(companion): restore the machines verb and quiet the providers one
+- fix(companion): strip the providers band to its title and a short verb
+- refactor(loop): drop the native-tool leftovers from the one-tool wire
+- fix(companion): rule the machine panel stack and cut its band prose
+- feat(run-tests): give a test run ten minutes in every pack
+- feat(sandbox): give a Python block five minutes before the backstop
+- docs(python): write the package README example in the formatter's own shape
+- feat(gateway): flag a session parked on a human across the fleet
+- ci(python): verify the package on the floor the engine's GraalPy sets
+- fix(python): dispatch the outside shell from the contract's own vocabulary
+- feat(gateway): fold every window a fold_session key names
+- perf(companion): fill pulled-in history sixteen segments a frame, not two
+- docs(companion): record TestFlight build 4280 in the app changelog
+- fix(companion): drop the trace a command turn never wrote
+- fix(companion): disclose each machine's settings under its own row
+- fix(companion): keep a reader's place when the keyboard comes and goes
+- fix(tui): repoint the table card test at the display's new home
+- fix(shell): confirm an exited child's silence before reporting it
+- feat(gateway): reclaim the SQLite freelist once a fortnight
+- perf(companion): paint only the turns a session is showing
+- fix(gateway): drop a retired column SQLite was refusing to drop
+- feat(shell): raise the wait budget and cap to thirty minutes
+- perf(gateway): stop storing what a reader can re-derive
+- feat(python): ship the extension API as the vis-agent package
+- chore(repo): drop the TODO whose every item shipped
+- docs(cli): close item 1 and record the residues nothing schedules
+- test(bench): make the redaction test independent of the caller's environment
+- docs(cli): record the TODO state after the doc and ranker work
+- chore(repo): reformat every Clojure and Python source in place
+- test(ci): pin the two loaded-runner flakes without a stopwatch
+- test(ci): own the espeak and pty-log preconditions the runners lack
+- docs(docs): regenerate the spel agent skill for 0.9.26
+- docs(cli): name the keys a test run answers with
+- fix(ci): make the test suite green on both runners
+- feat(companion): give providers the machine row and its slide
+- feat(cli): give a helper's docstring a gist, a page and a search hit
+- docs(repo): delete banner rules and labels that repeat the code
+- docs(voice): trim manifest and JNI notes, drop the finished plan
+- perf(companion): make a long live session scroll without stalling
+- feat(voice): carry every Piper voice at the highest level published
+- docs(docs): show how a tool page renders and how apropos previews it
+- docs(cli): give every code verb in the core prompt its call shape
+- fix(cli): answer the ask a model types, not the one the page assumes
+- fix(persistance): bound the SQLite -wal sidecar with journal_size_limit
+- fix(cli): saturate the three ranked fields together, not one by one
+- fix(voice): hand sherpa a map the shipped binary can walk
+- chore(docs): drop the session-id marker from the commit trailer
+- fix(companion): rank a machine only where there is a fleet
+- fix(companion): release a pin the app itself had to break
+- docs(voice): say why the progress callback is a deftype
+- docs(cli): record what the tool pages answer today
+- test(cli): follow the auto-title order to the Alibaba plan
+- fix(cli): stamp the call proto for a tool that takes no arguments
+- chore(tui): reformat the command suggestion namespace
+- chore(cli): reformat three namespaces the formatter had drifted from
+- feat(gateway): keep the human's star on the gateway, not the device
+- feat(voice): recover from a failed engine without restarting Vis
+- feat(cli): teach every tool page its call line and required keys
+- perf(companion): stop the hidden sessions list polling the fleet
+- fix(cli): sweep every unbounded ~/.vis directory, not just the logs
+- feat(companion): swipe the image gallery instead of pressing arrows
+- perf(companion): stop a keystroke re-rendering the hidden sessions list
+- feat(companion): choose where a reply is spoken, and in which voice
+- fix(cli): reclaim the sandbox's sockets, the third door onto a descriptor
+- chore(lint): clear every ruff and reflection warning in the tree
+- refactor(cli): reclaim every shim's host handles in one runtime registry
+- feat(voice): render THIRD_PARTY_MODELS.md from the model manifest
+- fix(cli): answer a bare apropos() with the listing's own shape
+- chore(commits): minimal conventional commits that name their session
+- feat(grep): exclude globs drop files from the content sweep
+- A dropped PIL image gives its raster back
+- The ASR archive names its direction
+- The voice assets are named for what they are
+- A voice belongs to the machine, and the app can bring one
+- Fix iOS keyboard-safe companion modals
+- Namespace skill slash commands
+- Keep the inherited trace whole when the handover lands late
+- Give pocket-tts a voice: three clips we make, and any clip anyone brings
+- apropos: answer a row per hit, not a bare first line
+- Own the pocket-tts ONNX export: vendor the MIT layer, drop the clone
+- Export pocket-tts ourselves and publish it in the assets pack
+- A message keeps its ticker while its own POST is still on the wire
+- A parked run's push asks the question, not which session
+- A parked run's push says Action needed, and the body is the question
+- Rank documents on a stamped corpus instead of rebuilding it per call
+- The session heading keeps its row when the notch pushes it down
+- Ship only what we make: assets-only pack, espeak from the system
+- Companion: a machine row is one line, and its address is a swipe verb
+- bm25: extract the ranker and make it fast and shareable
+- Re-judge the live-to-persisted handover on every reconcile tick
+- Probe the router fleet in parallel so the phone's Providers screen paints
+- apropos: rank with BM25F instead of ANDing terms
+- Ship the voice assets pack and add Ryan as the first opt-in voice
+- Speak locally: a licence-carrying asset manifest, Piper voices, pocket-tts opt-in
+- Speak over HTTP: /v1/sessions/:sid/speech, its job stream and features.speech
+- voice: one registry for both directions, keyed by transcribe or synthesize
+- Primitive math in the balancer's hot loops, and no boxed math left in the tree
+- Fetch only this platform's sherpa-onnx native, and plan speech into voice.clj
+- balance: seat a repaired delimiter where the replaced text had it
+- voice: take upstream sherpa-onnx v1.13.5 and delete the ONNX Runtime pin
+- providers: add the Alibaba Coding Plan and Token Plan endpoints
+- Settle the pocket-tts gate and the shipped voice list in PLAN.md
+- Plan speech output as an engine registry on upstream sherpa-onnx
+- vis-agent: run the checkout it sits in when nothing is installed
+- format: the delimiter repair is add-only there too
+- cli: finish the vis -> vis-agent rename in text that tells you what to run
+- Delimiter repair adds only: never delete a closer the edit wrote
+- Run what is installed, never the checkout the command sits in
+- Re-read a swiped row's offset every frame it claims to be open
+- Remove the runtime selector: what is installed is what runs
+- Refuse a delimiter repair that moves or retypes what the caller wrote
+- Land every TUI duration and id badge on one right edge
+- Remove the dev runtime: vis-agent installs and runs under ~/.vis
+- Paint the call duration on every TUI result, not just carded ones
+- Record Companion TestFlight build 4179 in the app changelog
+- Repair an edit's delimiters from the file, never from the fragment
+- Ask which address a machine uses on the machine's own line
+- Close the gap the removed duration marker left in the marker tables
+- The TUI tells how long each tool call took, as the companion always has
+- A warm-up owns the failure of a load nobody is waiting for
+- Keep the direct push in the magit push transient (issue #144)
+- Companion: the model picker's verbs stand in its band, and the sheet stops at its content
+- Fix #145 in the app's last carrier: an answer promoted out of a content-less row
+- Fix #145: paint a settled answer exactly once, in the TUI and the companion
+- Every editor write is atomic, and a refused struct_patch batch is rolled back
+- A helper's `return` settles its tool calls, so the caller never gets a thunk
+- The gateway keeps "no AI provider" typed, so the TUI opens the dialog
+- release: update release notes for v0.1.38
+
+### Package changes
+
+#### com.blockether/vis
+- fix(shell): keep the output a pty child printed just before it exited (c162148a4)
+- fix(shell): stop a pty child inheriting the parent's descriptors (da26cafe3)
+- docs(docs): regenerate the spel skill from spel 0.9.28 (7aac609a6)
+- fix(ci): track the clj-kondo configs imported from dependencies (568592963)
+- chore(release): v0.1.39 (fea04e0c1)
+- fix(companion): read the artifact overlay after its bytes arrive (3f3288fdf)
+- build(ci): build the macOS asset on a hosted runner, never a self-hosted one (12775d58f)
+- feat(build): let native-image size its own builder heap, and measure it (4314130a0)
+- fix(companion): give the image viewer one Save, in the band beside the close (6c07f93d4)
+- fix(companion): strip settings band sentences and close a column's last group (7c7eebfad)
+- fix(ci): make the hosted macOS fallback fit the free runner (fb7927c9c)
+- fix(companion): raise the annotator composer above the keyboard (2141a57e1)
+- feat(build): ship a beta track on free runners, not the mac builder (4430c7404)
+- fix(companion): reconnect a dark machine off All, in the background (1273b10b2)
+- feat(build): stamp every native runtime with the commit that built it (c2abf4c10)
+- fix(cli): resolve sandbox PIL colours per mode and replace drawn ink (52a215b56)
+- fix(sandbox): answer two bands for an 'LA' image, as Pillow does (29fb1d4d1)
+- docs(companion): record TestFlight build 4319 in the app changelog (380806099)
+- fix(companion): brand the launch screen and name the Android channel (8088f819e)
+- fix(companion): reopen a session where the reader stopped reading (b5eb54df3)
+- fix(sandbox): read a paste mask's alpha band, not its blue channel (11879470e)
+- fix(companion): redraw the Android launcher and notification icons from the iOS master (a30ceb8f0)
+- fix(companion): ask the sessions list for one page when nothing moved (1a9f51080)
+- fix(companion): tag Android alerts so the badge can clear (fe187409f)
+- fix(sandbox): address a fresh attachment in the block that made it (ed8777994)
+- docs(skills): regenerate the spel skill from spel 0.9.27 (13c6f6f06)
+- feat(companion): badge the icon with the alerts still waiting (666fa4b03)
+- fix(companion): put an opened note's Save in its header band (cd2ba0705)
+- fix(companion): wear the name's step on a status dot (0ff682bd0)
+- fix(companion): frame the destructive confirm around its own cost (0aa7d76d9)
+- feat(tui): hold a spoken conversation instead of a speech toggle (3338a1d0c)
+- fix(companion): keep a project folded once you have folded it (581ed57c9)
+- fix(companion): unbox the voice bands and drop the Off route (55cb6ff67)
+- docs(docs): plan making every capability an extension of one contract (6ac932db4)
+- refactor(contract): make the Python host an object, not a dict (137d00650)
+- fix(companion): strip the MCP band and land its verb as the list's last row (b71ab6bd8)
+- feat(contract): give the host contract its own package (4cdcae1a4)
+- fix(companion): make the providers action amber and unpin the blocked banner (41e8c3a3f)
+- fix(companion): make lone settings verbs full width and align status dots (db909334e)
+- fix(companion): anchor the sessions list across every fleet arrival (012df177e)
+- fix(companion): keep a live session following once the reader arrives (1e79fb42c)
+- fix(companion): one verb in notifications, and demote nested panel bands (94024bc92)
+- feat(extensions): gate the Clojure host surface with a contract (82a3220ff)
+- fix(companion): restore the machines verb and quiet the providers one (705a52029)
+- fix(companion): strip the providers band to its title and a short verb (6f0a5c0d0)
+- refactor(loop): drop the native-tool leftovers from the one-tool wire (4647db9d9)
+- fix(companion): rule the machine panel stack and cut its band prose (4cd359424)
+- feat(run-tests): give a test run ten minutes in every pack (f01b6e98a)
+- feat(sandbox): give a Python block five minutes before the backstop (04be7c8eb)
+- docs(python): write the package README example in the formatter's own shape (2d96a8bd4)
+- feat(gateway): flag a session parked on a human across the fleet (ec56d8347)
+- ci(python): verify the package on the floor the engine's GraalPy sets (d85c63f4a)
+- fix(python): dispatch the outside shell from the contract's own vocabulary (67d8ffcc8)
+- feat(gateway): fold every window a fold_session key names (a9cf4dec3)
+- perf(companion): fill pulled-in history sixteen segments a frame, not two (19ecbe5db)
+- docs(companion): record TestFlight build 4280 in the app changelog (bad2fb19a)
+- fix(companion): drop the trace a command turn never wrote (ce5caf195)
+- fix(companion): disclose each machine's settings under its own row (936e3be55)
+- fix(companion): keep a reader's place when the keyboard comes and goes (6b8787d45)
+- fix(tui): repoint the table card test at the display's new home (dc0cc7852)
+- fix(shell): confirm an exited child's silence before reporting it (20f56cc4d)
+- perf(companion): paint only the turns a session is showing (e5ec15679)
+- feat(shell): raise the wait budget and cap to thirty minutes (04225aea2)
+- perf(gateway): stop storing what a reader can re-derive (77587a196)
+- feat(python): ship the extension API as the vis-agent package (93e379fa0)
+- chore(repo): drop the TODO whose every item shipped (81bc8f91d)
+- docs(cli): close item 1 and record the residues nothing schedules (155bb8094)
+- test(bench): make the redaction test independent of the caller's environment (8b83864e2)
+- docs(cli): record the TODO state after the doc and ranker work (27af056d8)
+- chore(repo): reformat every Clojure and Python source in place (2770d1cb5)
+- test(ci): pin the two loaded-runner flakes without a stopwatch (65b83f977)
+- test(ci): own the espeak and pty-log preconditions the runners lack (886b34bac)
+- docs(docs): regenerate the spel agent skill for 0.9.26 (0f7446c4b)
+- docs(cli): name the keys a test run answers with (98cda9046)
+- fix(ci): make the test suite green on both runners (0403732e6)
+- feat(companion): give providers the machine row and its slide (21ec0d43a)
+- feat(cli): give a helper's docstring a gist, a page and a search hit (851ac835f)
+- docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
+- docs(voice): trim manifest and JNI notes, drop the finished plan (6ff7b063e)
+- perf(companion): make a long live session scroll without stalling (e43f74c0d)
+- feat(voice): carry every Piper voice at the highest level published (6183aff27)
+- docs(docs): show how a tool page renders and how apropos previews it (ebf0441cd)
+- docs(cli): give every code verb in the core prompt its call shape (b2a63f670)
+- fix(cli): answer the ask a model types, not the one the page assumes (84140ba94)
+- fix(cli): saturate the three ranked fields together, not one by one (ae1f3f45a)
+- fix(voice): hand sherpa a map the shipped binary can walk (24ea302b0)
+- chore(docs): drop the session-id marker from the commit trailer (898dc0e4a)
+- fix(companion): rank a machine only where there is a fleet (f55919ee5)
+- fix(companion): release a pin the app itself had to break (7670b6908)
+- docs(voice): say why the progress callback is a deftype (297b36c4d)
+- docs(cli): record what the tool pages answer today (e39420f10)
+- test(cli): follow the auto-title order to the Alibaba plan (191551d7a)
+- fix(cli): stamp the call proto for a tool that takes no arguments (4192065fe)
+- chore(cli): reformat three namespaces the formatter had drifted from (63cac8ce9)
+- feat(gateway): keep the human's star on the gateway, not the device (da626a28c)
+- feat(voice): recover from a failed engine without restarting Vis (736fcb865)
+- feat(cli): teach every tool page its call line and required keys (4eb49268f)
+- perf(companion): stop the hidden sessions list polling the fleet (110112ccc)
+- fix(cli): sweep every unbounded ~/.vis directory, not just the logs (4f611f7e5)
+- feat(companion): swipe the image gallery instead of pressing arrows (d9956d02a)
+- perf(companion): stop a keystroke re-rendering the hidden sessions list (7dfd4e915)
+- feat(companion): choose where a reply is spoken, and in which voice (13e72b9a5)
+- fix(cli): reclaim the sandbox's sockets, the third door onto a descriptor (ca68b2335)
+- chore(lint): clear every ruff and reflection warning in the tree (f5ed3ed5d)
+- refactor(cli): reclaim every shim's host handles in one runtime registry (d483ce291)
+- feat(voice): render THIRD_PARTY_MODELS.md from the model manifest (12608da39)
+- fix(cli): answer a bare apropos() with the listing's own shape (0e63625aa)
+- chore(commits): minimal conventional commits that name their session (4841cc984)
+- feat(grep): exclude globs drop files from the content sweep (900411403)
+- A dropped PIL image gives its raster back (49d20b6cf)
+- The ASR archive names its direction (b584a7fd7)
+- The voice assets are named for what they are (b1f159997)
+- A voice belongs to the machine, and the app can bring one (ee7adde58)
+- Fix iOS keyboard-safe companion modals (46ed794b3)
+- Namespace skill slash commands (c947be7be)
+- Keep the inherited trace whole when the handover lands late (ef344cc60)
+- Give pocket-tts a voice: three clips we make, and any clip anyone brings (faaad441f)
+- apropos: answer a row per hit, not a bare first line (5e3ad668a)
+- Own the pocket-tts ONNX export: vendor the MIT layer, drop the clone (9be9db401)
+- Export pocket-tts ourselves and publish it in the assets pack (dce9af64b)
+- A message keeps its ticker while its own POST is still on the wire (6d9db565d)
+- A parked run's push asks the question, not which session (e5d640de6)
+- A parked run's push says Action needed, and the body is the question (d05986a09)
+- Rank documents on a stamped corpus instead of rebuilding it per call (d12f581b7)
+- The session heading keeps its row when the notch pushes it down (ba1c32522)
+- Ship only what we make: assets-only pack, espeak from the system (2f9e2c1a2)
+- Companion: a machine row is one line, and its address is a swipe verb (957f37054)
+- bm25: extract the ranker and make it fast and shareable (1d36ba9bd)
+- Re-judge the live-to-persisted handover on every reconcile tick (bcf95fcb2)
+- Probe the router fleet in parallel so the phone's Providers screen paints (7193aa3a9)
+- apropos: rank with BM25F instead of ANDing terms (84b53c5d8)
+- Ship the voice assets pack and add Ryan as the first opt-in voice (a939800c5)
+- Speak locally: a licence-carrying asset manifest, Piper voices, pocket-tts opt-in (19c5655a8)
+- Speak over HTTP: /v1/sessions/:sid/speech, its job stream and features.speech (a5864247a)
+- voice: one registry for both directions, keyed by transcribe or synthesize (40c9d2464)
+- Primitive math in the balancer's hot loops, and no boxed math left in the tree (7c40a20c3)
+- Fetch only this platform's sherpa-onnx native, and plan speech into voice.clj (4442a2df0)
+- balance: seat a repaired delimiter where the replaced text had it (08142bded)
+- voice: take upstream sherpa-onnx v1.13.5 and delete the ONNX Runtime pin (f99eaee39)
+- providers: add the Alibaba Coding Plan and Token Plan endpoints (25f540fb7)
+- Settle the pocket-tts gate and the shipped voice list in PLAN.md (4e98cbd64)
+- Plan speech output as an engine registry on upstream sherpa-onnx (54a0353c8)
+- vis-agent: run the checkout it sits in when nothing is installed (d7af0c84b)
+- format: the delimiter repair is add-only there too (5edf44475)
+- cli: finish the vis -> vis-agent rename in text that tells you what to run (ec7ce2942)
+- Delimiter repair adds only: never delete a closer the edit wrote (28636b45c)
+- Run what is installed, never the checkout the command sits in (b92a16d43)
+- Re-read a swiped row's offset every frame it claims to be open (6bea3d606)
+- Remove the runtime selector: what is installed is what runs (cf3ffd751)
+- Refuse a delimiter repair that moves or retypes what the caller wrote (53ca5ef96)
+- Remove the dev runtime: vis-agent installs and runs under ~/.vis (b7c4b29b3)
+- Record Companion TestFlight build 4179 in the app changelog (f324ec589)
+- Repair an edit's delimiters from the file, never from the fragment (1c55f10b2)
+- Ask which address a machine uses on the machine's own line (258f80c47)
+- A warm-up owns the failure of a load nobody is waiting for (3deb6f0df)
+- Companion: the model picker's verbs stand in its band, and the sheet stops at its content (d6e9309f1)
+- Fix #145 in the app's last carrier: an answer promoted out of a content-less row (fa2a29c36)
+- Fix #145: paint a settled answer exactly once, in the TUI and the companion (c70b46431)
+- Every editor write is atomic, and a refused struct_patch batch is rolled back (12d2ad319)
+- A helper's `return` settles its tool calls, so the caller never gets a thunk (2be4b0701)
+- The gateway keeps "no AI provider" typed, so the TUI opens the dialog (eefc71c0a)
+- release: update release notes for v0.1.38 (6b2f66de5)
+
+#### com.blockether/vis-channel-tui
+- feat(tui): hold a spoken conversation instead of a speech toggle (3338a1d0c)
+- feat(gateway): flag a session parked on a human across the fleet (ec56d8347)
+- fix(tui): repoint the table card test at the display's new home (dc0cc7852)
+- perf(gateway): stop storing what a reader can re-derive (77587a196)
+- test(ci): pin the two loaded-runner flakes without a stopwatch (65b83f977)
+- fix(ci): make the test suite green on both runners (0403732e6)
+- docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
+- chore(tui): reformat the command suggestion namespace (10296499f)
+- Namespace skill slash commands (c947be7be)
+- Primitive math in the balancer's hot loops, and no boxed math left in the tree (7c40a20c3)
+- cli: finish the vis -> vis-agent rename in text that tells you what to run (ec7ce2942)
+- Land every TUI duration and id badge on one right edge (7a8be54e8)
+- Paint the call duration on every TUI result, not just carded ones (7ac776bec)
+- Close the gap the removed duration marker left in the marker tables (f4636de51)
+- The TUI tells how long each tool call took, as the companion always has (4c98c7479)
+- Keep the direct push in the magit push transient (issue #144) (ec6eaaa70)
+- Fix #145: paint a settled answer exactly once, in the TUI and the companion (c70b46431)
+- The gateway keeps "no AI provider" typed, so the TUI opens the dialog (eefc71c0a)
+
+#### com.blockether/vis-foundation-bridge
+- fix(ci): make the test suite green on both runners (0403732e6)
+- docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
+- feat(cli): teach every tool page its call line and required keys (4eb49268f)
+
+#### com.blockether/vis-foundation-search
+- refactor(loop): drop the native-tool leftovers from the one-tool wire (4647db9d9)
+- fix(ci): make the test suite green on both runners (0403732e6)
+- docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
+- feat(cli): teach every tool page its call line and required keys (4eb49268f)
+
+#### com.blockether/vis-foundation-voice
+- feat(tui): hold a spoken conversation instead of a speech toggle (3338a1d0c)
+- test(ci): own the espeak and pty-log preconditions the runners lack (886b34bac)
+- docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
+- docs(voice): trim manifest and JNI notes, drop the finished plan (6ff7b063e)
+- feat(voice): carry every Piper voice at the highest level published (6183aff27)
+- fix(voice): hand sherpa a map the shipped binary can walk (24ea302b0)
+- feat(voice): recover from a failed engine without restarting Vis (736fcb865)
+- chore(lint): clear every ruff and reflection warning in the tree (f5ed3ed5d)
+- feat(voice): render THIRD_PARTY_MODELS.md from the model manifest (12608da39)
+- The ASR archive names its direction (b584a7fd7)
+- The voice assets are named for what they are (b1f159997)
+- Give pocket-tts a voice: three clips we make, and any clip anyone brings (faaad441f)
+- Own the pocket-tts ONNX export: vendor the MIT layer, drop the clone (9be9db401)
+- Export pocket-tts ourselves and publish it in the assets pack (dce9af64b)
+- Ship only what we make: assets-only pack, espeak from the system (2f9e2c1a2)
+- Ship the voice assets pack and add Ryan as the first opt-in voice (a939800c5)
+- Speak locally: a licence-carrying asset manifest, Piper voices, pocket-tts opt-in (19c5655a8)
+- voice: one registry for both directions, keyed by transcribe or synthesize (40c9d2464)
+- Fetch only this platform's sherpa-onnx native, and plan speech into voice.clj (4442a2df0)
+- voice: take upstream sherpa-onnx v1.13.5 and delete the ONNX Runtime pin (f99eaee39)
+
+#### com.blockether/vis-language-clojure
+- refactor(loop): drop the native-tool leftovers from the one-tool wire (4647db9d9)
+- feat(run-tests): give a test run ten minutes in every pack (f01b6e98a)
+- feat(shell): raise the wait budget and cap to thirty minutes (04225aea2)
+- fix(ci): make the test suite green on both runners (0403732e6)
+- docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
+- balance: seat a repaired delimiter where the replaced text had it (08142bded)
+- format: the delimiter repair is add-only there too (5edf44475)
+- Delimiter repair adds only: never delete a closer the edit wrote (28636b45c)
+- Refuse a delimiter repair that moves or retypes what the caller wrote (53ca5ef96)
+- Repair an edit's delimiters from the file, never from the fragment (1c55f10b2)
+
+#### com.blockether/vis-language-python
+- feat(run-tests): give a test run ten minutes in every pack (f01b6e98a)
+- fix(ci): make the test suite green on both runners (0403732e6)
+- docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
+
+#### com.blockether/vis-language-typescript-bun
+- fix(ci): make the test suite green on both runners (0403732e6)
+- docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
+
+#### com.blockether/vis-persistance-sqlite
+- fix(sandbox): address a fresh attachment in the block that made it (ed8777994)
+- feat(gateway): reclaim the SQLite freelist once a fortnight (9e2d5c230)
+- fix(gateway): drop a retired column SQLite was refusing to drop (2c4e59ee1)
+- perf(gateway): stop storing what a reader can re-derive (77587a196)
+- fix(ci): make the test suite green on both runners (0403732e6)
+- docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
+- fix(persistance): bound the SQLite -wal sidecar with journal_size_limit (e0aa37591)
+- feat(gateway): keep the human's star on the gateway, not the device (da626a28c)
+- Primitive math in the balancer's hot loops, and no boxed math left in the tree (7c40a20c3)
+- cli: finish the vis -> vis-agent rename in text that tells you what to run (ec7ce2942)
+
+#### com.blockether/vis-provider-alibaba
+- fix(ci): make the test suite green on both runners (0403732e6)
+- docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
+- providers: add the Alibaba Coding Plan and Token Plan endpoints (25f540fb7)
+
+#### com.blockether/vis-provider-anthropic
+- fix(ci): make the test suite green on both runners (0403732e6)
+- Primitive math in the balancer's hot loops, and no boxed math left in the tree (7c40a20c3)
+
+#### com.blockether/vis-provider-github-copilot
+- fix(ci): make the test suite green on both runners (0403732e6)
+- docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
+- Primitive math in the balancer's hot loops, and no boxed math left in the tree (7c40a20c3)
+
+#### com.blockether/vis-provider-openai-codex
+- fix(ci): make the test suite green on both runners (0403732e6)
+- docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
+- Primitive math in the balancer's hot loops, and no boxed math left in the tree (7c40a20c3)
+- cli: finish the vis -> vis-agent rename in text that tells you what to run (ec7ce2942)
+
+#### com.blockether/vis-provider-opencode-go
+- fix(ci): make the test suite green on both runners (0403732e6)
+- docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
+
+#### com.blockether/vis-provider-openrouter
+- fix(ci): make the test suite green on both runners (0403732e6)
+- docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
+
+#### com.blockether/vis-provider-standard
+- fix(ci): make the test suite green on both runners (0403732e6)
+
+#### com.blockether/vis-provider-zai
+- fix(ci): make the test suite green on both runners (0403732e6)
+- docs(repo): delete banner rules and labels that repeat the code (39eeb1718)
+
+
+
 ### Added
 - Credit every model the voice extension can install in `THIRD_PARTY_MODELS.md`, generated from the manifest
 - Choose where a reply is spoken — this device or the machine that answered — and in which voice, with the phone falling back to its own voice when the machine cannot speak
@@ -4772,7 +5236,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `github-copilot-provider-id?` omitted `:github-copilot-enterprise`, so
   enterprise models were filtered out of the visible catalog mapping.
 
-[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.38...HEAD
+[Unreleased]: https://github.com/Blockether/vis/compare/v0.1.39...HEAD
 [v0.1.1]: https://github.com/Blockether/vis/releases/tag/v0.1.1
 [v0.1.2]: https://github.com/Blockether/vis/releases/tag/v0.1.2
 [v0.1.3]: https://github.com/Blockether/vis/releases/tag/v0.1.3
@@ -4803,3 +5267,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [v0.1.35]: https://github.com/Blockether/vis/releases/tag/v0.1.35
 [v0.1.37]: https://github.com/Blockether/vis/releases/tag/v0.1.37
 [v0.1.38]: https://github.com/Blockether/vis/releases/tag/v0.1.38
+[v0.1.39]: https://github.com/Blockether/vis/releases/tag/v0.1.39

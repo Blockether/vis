@@ -36,7 +36,7 @@ vis-agent update            # move the command and its runtime to the newest com
 
 ```clojure
 ;; deps.edn
-{:deps {com.blockether/vis {:mvn/version "0.1.38"}}}
+{:deps {com.blockether/vis {:mvn/version "0.1.39"}}}
 ```
 
 ## Companion app (iPhone / Android)
