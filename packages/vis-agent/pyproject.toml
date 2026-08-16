@@ -27,13 +27,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vis-agent"
-version = "0.1.39"
+version = "0.1.40"
 description = "The Vis extension API — write a Vis extension in Python, and run it with or without Vis."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-dependencies = ["vis-contract==0.1.39"]
+dependencies = ["vis-contract==0.1.40"]
 authors = [{ name = "Blockether" }]
 keywords = ["vis", "agent", "extension", "automation", "human-in-the-loop"]
 classifiers = [
