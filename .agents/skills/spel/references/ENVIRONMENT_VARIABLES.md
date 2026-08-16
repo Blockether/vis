@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.27 -->
+<!-- spel-reference-version: 0.9.28 -->
 # Environment Variables Reference
 
 All spel env vars optional. **CLI flags always take priority over env vars.**

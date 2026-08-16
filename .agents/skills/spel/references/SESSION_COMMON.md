@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.27 -->
+<!-- spel-reference-version: 0.9.28 -->
 # Common session and automation patterns
 
 Shared conventions for reliable spel usage.

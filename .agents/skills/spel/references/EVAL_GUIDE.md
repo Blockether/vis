@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.27 -->
+<!-- spel-reference-version: 0.9.28 -->
 # eval-sci mode guide
 
 `eval-sci` runs Clojure inside a [SCI](https://github.com/babashka/sci) sandbox with full Playwright access. No JVM startup, no project setup.
