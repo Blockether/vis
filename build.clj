@@ -1205,6 +1205,12 @@
        ;; via io/resource -- e.g. the packaging-metadata reader `vis-agent python`
        ;; uses to discover a project's import roots.
        "-H:IncludeResources=vis-python/.*"
+       ;; The DISTRIBUTABLE `vis` module (packages/vis-agent/src/vis/*.py, on
+       ;; :paths as a resource root): the body every extension context execs, and
+       ;; the same file PyPI ships as `vis-agent`. `vis/VERSION` above is an
+       ;; exact resource, so the module needs its own pattern. The Python host
+       ;; contract beside it rides in on the `.*\\.edn$` pattern.
+       "-H:IncludeResources=vis/.*\\.py$"
        ;; vendored Prism highlighter, inlined into standalone HTML
        ;; transcript exports at RUNTIME via io/resource.
        "-H:IncludeResources=vis-transcript/.*"

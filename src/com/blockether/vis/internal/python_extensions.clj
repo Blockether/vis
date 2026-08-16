@@ -50,6 +50,7 @@
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [com.blockether.vis.internal.python-process-handler :as process-handler]
+            [com.blockether.vis.internal.python-contract :as contract]
             [com.blockether.vis.internal.security-policy :as security-policy]
             [com.blockether.vis.internal.toggles :as toggles]
             [taoensso.telemere :as tel])
@@ -78,10 +79,16 @@
    the extension file's globals stay clean. Host callbacks (`__vis_host_*`, bound
    as polyglot members before this runs) are handed in through the module dict.
 
-   The Python body is a real, lintable `.py` file under `vis-python/`, slurped
-   from the classpath and embedded in the native image by build.clj's
-   `-H:IncludeResources=vis-python/.*` (see `env-python/runtime-python-src`)."
-  (env/runtime-python-src "vis-python/extension_bootstrap.py"))
+   TWO real `.py` files, assembled here and nowhere else. The BODY is the
+   distributable package `packages/vis-agent/src/vis/__init__.py` — the very file
+   PyPI ships as `vis-agent`, so an author reads, lints and unit-tests the code
+   the sandbox runs — handed to the injector as the `_vis_body` literal, because
+   `exec` into a module dict is the one thing that keeps the API off the
+   extension's globals. The INJECTOR is `vis-python/extension_bootstrap.py`.
+   Both are embedded in the native image by build.clj's
+   `-H:IncludeResources` patterns (see `env-python/runtime-python-src`)."
+  (str "_vis_body = " (json/write-json-str (env/runtime-python-src "vis/__init__.py"))
+       "\n" (env/runtime-python-src "vis-python/extension_bootstrap.py")))
 
 (def ^:no-doc redirect-repair-python
   "The guest half of process containment, evaluated into every extension
@@ -481,16 +488,15 @@
                       (json/write-json-str resolved)))))))
 
 (def ^:no-doc host-member-names
-  "Every `__vis_host_*` global the bootstrap reads out of a context's bindings.
+  "Every `__vis_host_*` global the bootstrap reads out of a context's bindings, in
+   the order `resources/vis-contract/python-host.edn` declares them.
 
-   The bootstrap builds its `_host` dict at MODULE level, so a member nobody
-   bound is a `NameError` before the extension's first line runs. Both binders
-   are checked against this list by a test, which is why adding a host call means
-   adding it here."
-  ["__vis_host_state_get__" "__vis_host_state_put__" "__vis_host_state_del__" "__vis_host_log__"
-   "__vis_host_notify__" "__vis_host_shell__" "__vis_host_jailed_shell__"
-   "__vis_host_jailed_shell_session__" "__vis_host_request_input__" "__vis_host_check_input__"
-   "__vis_host_reveal_secret__" "__vis_host_forget_secret__" "__vis_host_declare_env__"])
+   The bootstrap builds its `_host` dict at MODULE level, so a member nobody bound
+   is a `NameError` before the extension's first line runs. The contract document
+   is the ONE list — adding a host call means adding an op there, and
+   `python_contract_test` fails when this binder, that bootstrap or the packaged
+   `vis` module drift apart."
+  (contract/host-globals))
 
 (defn ^:no-doc bind-inert-host!
   "Bind every host member as a REFUSAL, so the `vis` module can be BUILT without

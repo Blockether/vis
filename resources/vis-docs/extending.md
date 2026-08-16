@@ -84,6 +84,20 @@ Ready-to-copy examples — a todo list, a protected-paths guard, a dynamic
 prompt toggle, a GitHub issues integration — live in the repo under
 `resources/examples/python-extensions/`.
 
+### Outside Vis — `pip install vis-agent`
+
+The `vis` module is a real package: the same `vis/__init__.py` the engine
+injects into the sandbox is published to PyPI as `vis-agent`, so an extension
+file is importable, testable and lintable in an ordinary Python process.
+
+With no engine on the other side the module binds `vis._outside` instead — a
+local host implementing every op in the shipped `vis/contract.json`: state,
+secrets, logging and `shell` run against the machine you are on, the jailed
+sandbox ops refuse by name rather than pretend to be a sandbox, and
+`vis.ask(...)` prompts at the terminal. Prime those answers with
+`vis.outside.answer_with({...})` or the `VIS_OUTSIDE_ANSWERS` JSON object, or
+set `VIS_OUTSIDE_NONINTERACTIVE=1` to have every ask come back undeliverable.
+
 ### `vis.extension(...)`
 
 Exactly one call per file. Keyword arguments:

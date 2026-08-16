@@ -1,0 +1,48 @@
+# The Python half of Vis: published as `vis-agent`, imported as `vis`.
+#
+# NOTHING in this package is a copy kept in step by hand. `src/vis/__init__.py` is
+# the very file the engine execs inside every extension context — the repository's
+# `deps.edn` puts `packages/vis-agent/src` on the classpath and
+# `internal.python-extensions/bootstrap-python` slurps it from there — and
+# `src/vis/contract.json` is rendered from `resources/vis-contract/python-host.edn`
+# by `internal.python-contract/write-package-document!`. `python_contract_test`
+# fails the build when either drifts.
+#
+# `version` mirrors the repo-root `VIS_VERSION`, the one version source
+# (`build.clj`); `python_package_test` pins them equal, so a release bumps one file.
+#
+# No dependencies, and none are welcome: an extension author installs this to get
+# the API and its outside-the-sandbox host, not a tree of somebody else's code.
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vis-agent"
+version = "0.1.38"
+description = "The Vis extension API — write a Vis extension in Python, and run it with or without Vis."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Blockether" }]
+keywords = ["vis", "agent", "extension", "automation", "human-in-the-loop"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Software Development :: Build Tools",
+]
+
+[project.urls]
+Homepage = "https://github.com/Blockether/vis"
+Source = "https://github.com/Blockether/vis"
+Issues = "https://github.com/Blockether/vis/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vis"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/vis", "tests", "README.md", "LICENSE"]

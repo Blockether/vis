@@ -1,0 +1,87 @@
+;; THE PYTHON HOST CONTRACT — every op the `vis` Python module asks its host for.
+;;
+;; ONE document, three readers. The engine binds `:op/global` into every extension
+;; context (`internal.python-extensions/host-member-names`); the packaged module
+;; builds its `_host` dict from `:op/name`; and outside a Vis process the package
+;; answers the op the way `:op/outside` says. `python_contract_test` fails when any
+;; reader drifts from this file, so a new host call is added HERE and nowhere else.
+;;
+;; `:op/arity` counts the POSITIONAL arguments the host callable receives. Values
+;; cross as JSON strings unless the op says otherwise; `request_input` also takes a
+;; Python callable, because a validator runs back inside the extension's context.
+;;
+;; `:op/outside` is a closed vocabulary — what the op does with no Vis host at all:
+;;   :outside/local   a real local implementation: a file, stderr, a subprocess.
+;;   :outside/prompt  the terminal stands in for the human channel Vis would raise.
+;;   :outside/refuse  no honest local answer exists, and `:op/refusal` says why.
+{:contract/version 1
+ :contract/ops
+ [{:op/name "state_get"
+   :op/global "__vis_host_state_get__"
+   :op/arity 1
+   :op/summary "Read one value out of the extension's durable state."
+   :op/outside :outside/local}
+  {:op/name "state_put"
+   :op/global "__vis_host_state_put__"
+   :op/arity 2
+   :op/summary "Write one JSON value into the extension's durable state."
+   :op/outside :outside/local}
+  {:op/name "state_del"
+   :op/global "__vis_host_state_del__"
+   :op/arity 1
+   :op/summary "Drop one key from the extension's durable state."
+   :op/outside :outside/local}
+  {:op/name "log"
+   :op/global "__vis_host_log__"
+   :op/arity 2
+   :op/summary "Emit one engine log line at a level."
+   :op/outside :outside/local}
+  {:op/name "notify"
+   :op/global "__vis_host_notify__"
+   :op/arity 2
+   :op/summary "Show one notification on the user's channel."
+   :op/outside :outside/local}
+  {:op/name "shell"
+   :op/global "__vis_host_shell__"
+   :op/arity 1
+   :op/summary "Run one shell op — start, logs, type, wait or stop."
+   :op/outside :outside/local}
+  {:op/name "jailed_shell"
+   :op/global "__vis_host_jailed_shell__"
+   :op/arity 1
+   :op/summary "Run one shell op inside the workspace jail."
+   :op/outside :outside/refuse
+   :op/refusal
+   "vis.jailed_shell needs the Vis host's jail; nothing outside a Vis process can enforce it. Run the command with vis.shell when an unjailed process is what you meant, or run this extension under vis-agent."}
+  {:op/name "jailed_shell_session"
+   :op/global "__vis_host_jailed_shell_session__"
+   :op/arity 1
+   :op/summary "Run one shell op inside a persistent jailed session."
+   :op/outside :outside/refuse
+   :op/refusal
+   "vis.jailed_shell_session needs the Vis host's jail; nothing outside a Vis process can enforce it. Run the command with vis.shell when an unjailed process is what you meant, or run this extension under vis-agent."}
+  {:op/name "request_input"
+   :op/global "__vis_host_request_input__"
+   :op/arity 3
+   :op/summary "Ask the human, and block until the answer settles or is cancelled."
+   :op/outside :outside/prompt}
+  {:op/name "check_input"
+   :op/global "__vis_host_check_input__"
+   :op/arity 1
+   :op/summary "Judge a human-input request without asking anybody."
+   :op/outside :outside/local}
+  {:op/name "reveal_secret"
+   :op/global "__vis_host_reveal_secret__"
+   :op/arity 1
+   :op/summary "Resolve a `vis-secret:` handle to its plaintext."
+   :op/outside :outside/local}
+  {:op/name "forget_secret"
+   :op/global "__vis_host_forget_secret__"
+   :op/arity 1
+   :op/summary "Drop the plaintext a secret handle stands for."
+   :op/outside :outside/local}
+  {:op/name "declare_env"
+   :op/global "__vis_host_declare_env__"
+   :op/arity 1
+   :op/summary "Resolve the environment variables the extension declared."
+   :op/outside :outside/local}]}

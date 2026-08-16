@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "ops": [
+    {
+      "name": "state_get",
+      "global": "__vis_host_state_get__",
+      "arity": 1,
+      "summary": "Read one value out of the extension's durable state.",
+      "outside": "local"
+    },
+    {
+      "name": "state_put",
+      "global": "__vis_host_state_put__",
+      "arity": 2,
+      "summary": "Write one JSON value into the extension's durable state.",
+      "outside": "local"
+    },
+    {
+      "name": "state_del",
+      "global": "__vis_host_state_del__",
+      "arity": 1,
+      "summary": "Drop one key from the extension's durable state.",
+      "outside": "local"
+    },
+    {
+      "name": "log",
+      "global": "__vis_host_log__",
+      "arity": 2,
+      "summary": "Emit one engine log line at a level.",
+      "outside": "local"
+    },
+    {
+      "name": "notify",
+      "global": "__vis_host_notify__",
+      "arity": 2,
+      "summary": "Show one notification on the user's channel.",
+      "outside": "local"
+    },
+    {
+      "name": "shell",
+      "global": "__vis_host_shell__",
+      "arity": 1,
+      "summary": "Run one shell op \u2014 start, logs, type, wait or stop.",
+      "outside": "local"
+    },
+    {
+      "name": "jailed_shell",
+      "global": "__vis_host_jailed_shell__",
+      "arity": 1,
+      "summary": "Run one shell op inside the workspace jail.",
+      "outside": "refuse",
+      "refusal": "vis.jailed_shell needs the Vis host's jail; nothing outside a Vis process can enforce it. Run the command with vis.shell when an unjailed process is what you meant, or run this extension under vis-agent."
+    },
+    {
+      "name": "jailed_shell_session",
+      "global": "__vis_host_jailed_shell_session__",
+      "arity": 1,
+      "summary": "Run one shell op inside a persistent jailed session.",
+      "outside": "refuse",
+      "refusal": "vis.jailed_shell_session needs the Vis host's jail; nothing outside a Vis process can enforce it. Run the command with vis.shell when an unjailed process is what you meant, or run this extension under vis-agent."
+    },
+    {
+      "name": "request_input",
+      "global": "__vis_host_request_input__",
+      "arity": 3,
+      "summary": "Ask the human, and block until the answer settles or is cancelled.",
+      "outside": "prompt"
+    },
+    {
+      "name": "check_input",
+      "global": "__vis_host_check_input__",
+      "arity": 1,
+      "summary": "Judge a human-input request without asking anybody.",
+      "outside": "local"
+    },
+    {
+      "name": "reveal_secret",
+      "global": "__vis_host_reveal_secret__",
+      "arity": 1,
+      "summary": "Resolve a `vis-secret:` handle to its plaintext.",
+      "outside": "local"
+    },
+    {
+      "name": "forget_secret",
+      "global": "__vis_host_forget_secret__",
+      "arity": 1,
+      "summary": "Drop the plaintext a secret handle stands for.",
+      "outside": "local"
+    },
+    {
+      "name": "declare_env",
+      "global": "__vis_host_declare_env__",
+      "arity": 1,
+      "summary": "Resolve the environment variables the extension declared.",
+      "outside": "local"
+    }],
+  "human_input": 
+  {
+    "field_types": ["checkbox","multiline","multiselect","otp","password","plaintext","range","select"],
+    "text_types": ["multiline","password","plaintext"],
+    "choice_types": ["multiselect","select"],
+    "secret_types": ["otp","password"],
+    "decor_types": ["heading","paragraph"],
+    "group_type": "group",
+    "group_directions": ["column","row"],
+    "otp": 
+    {
+      "length": 6,
+      "ceiling": 12
+    },
+    "range": 
+    {
+      "min": 0,
+      "max": 100,
+      "step": 1
+    },
+    "secret_handle_prefix": "vis-secret:"
+  }
+}

@@ -230,4 +230,8 @@
   ;; registered; bcpkix builders use the default JCA signer (native-image friendly).
   org.bouncycastle/bcprov-jdk18on {:mvn/version "1.85"}
   org.bouncycastle/bcpkix-jdk18on {:mvn/version "1.85"}}
- :paths ["src" "resources"]}
+ ;; "packages/vis-agent/src" is a RESOURCE root, not Clojure source: it holds the
+ ;; distributable `vis` Python module (the one PyPI ships as `vis-agent`), which
+ ;; the engine slurps off the classpath as `vis/__init__.py` and execs into every
+ ;; extension context. One file, both distributions.
+ :paths ["src" "resources" "packages/vis-agent/src"]}
