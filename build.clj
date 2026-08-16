@@ -1177,23 +1177,47 @@
      (truffle-platform-tokens)
 
      ;; ── Builder JVM heap ────────────────────────────────────────────────
+     ;; WHO sizes the builder JVM is one env var, VIS_NATIVE_BUILDER_HEAP:
+     ;;   unset       this machine's RAM decides (75%, clamped 6-26 GiB), half
+     ;;               of it committed up front as -Xms.
+     ;;   "natural"   NEITHER -J flag is passed and native-image sizes its own
+     ;;               builder heap. This is the only way to measure the tool's
+     ;;               untuned configuration: every CI run so far recorded as
+     ;;               "no extra args" still carried the computed pair below,
+     ;;               so nothing has ever actually built on the defaults.
+     ;;   "<n>g"      exactly that ceiling (half of it as -Xms), for a runner
+     ;;               whose RAM is not the constraint its build is.
      ;; The points-to analysis live set for this image peaks around 12 GiB, and a
      ;; ceiling only a little above the live set is what kills the build: the old
      ;; generation fills, full GCs take over and native-image dies with "GC
-     ;; overhead limit exceeded" after ~20 wasted minutes. native-image's DEFAULT
-     ;; is 80% of physical RAM, which lets the builder page instead; GraalVM
-     ;; 25.2.x makes both failure modes dramatically worse (see .graalvm-version).
-     ;; So pin a deterministic, RAM-clamped ceiling with real headroom over the
-     ;; live set — 75% of RAM, up to 26 GiB — and start the heap high enough that
-     ;; the builder is not growing it while the analysis is already hot.
+     ;; overhead limit exceeded" after ~20 wasted minutes. native-image's own
+     ;; default derives the ceiling from physical RAM, which on a big machine
+     ;; lets the builder page instead; GraalVM 25.2.x makes both failure modes
+     ;; dramatically worse (see .graalvm-version). So the default here is a
+     ;; deterministic, RAM-clamped ceiling with real headroom over the live set,
+     ;; started high enough that the builder is not growing the heap while the
+     ;; analysis is already hot.
      ;; VIS_NATIVE_EXTRA_ARGS is spliced LAST and overrides both.
      total-ram
      (try (.getTotalMemorySize ^com.sun.management.OperatingSystemMXBean
                                (java.lang.management.ManagementFactory/getOperatingSystemMXBean))
           (catch Throwable _ 0))
 
+     builder-heap
+     (some-> (System/getenv "VIS_NATIVE_BUILDER_HEAP")
+             str/trim
+             not-empty
+             str/lower-case)
+
+     natural-heap?
+     (= "natural" builder-heap)
+
      heap-gib
-     (max 6 (min 26 (long (/ (* 0.75 (double total-ram)) 1073741824.0))))
+     (long (or (some-> builder-heap
+                       (->> (re-find #"^(\d+)g?$"))
+                       second
+                       parse-long)
+               (max 6 (min 26 (long (/ (* 0.75 (double total-ram)) 1073741824.0))))))
 
      init-gib
      (max 2 (quot heap-gib 2))
@@ -1359,9 +1383,10 @@
       :always
       (conj (str "-H:IncludeResources=sherpa-onnx/native/" tok "/.*"))
 
-      ;; Builder heap ceiling (see total-ram above); VIS_NATIVE_EXTRA_ARGS,
-      ;; spliced right after, can still override both -J flags.
-      :always
+      ;; Builder heap ceiling (see the block above); VIS_NATIVE_EXTRA_ARGS,
+      ;; spliced right after, can still override both -J flags. `natural` passes
+      ;; neither and leaves the sizing to native-image itself.
+      (not natural-heap?)
       (conj (str "-J-Xmx" heap-gib "g") (str "-J-Xms" init-gib "g"))
 
       (seq trust)

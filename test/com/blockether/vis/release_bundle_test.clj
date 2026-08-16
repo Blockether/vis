@@ -541,6 +541,35 @@
         ;; One dispatch input moves the job off the workstation builder for a
         ;; single run, without touching the repository variable.
         (expect (str/includes? stable "inputs.runner || vars.VIS_MACOS_ARM64_RUNNER") stable)))
+  ;; The tuning history in native-release.yml records runs labelled "no extra
+  ;; args" that still carried build.clj's computed `-J-Xmx`/`-J-Xms` pair, so
+  ;; native-image's OWN sizing has never actually been measured for this image.
+  ;; One dispatch must be able to try it, on one platform, without spending two
+  ;; hours of Linux builds to watch a macOS experiment.
+  (it "can measure native-image's own configuration from one dispatch"
+      (let
+        [stable
+         (slurp ".github/workflows/native-release.yml")
+
+         build
+         (slurp "build.clj")]
+
+        (doseq [input ["only:" "native_args:" "builder_heap:"]]
+          (expect (str/includes? stable input) input))
+        ;; Either job runs alone.
+        (expect (str/includes? stable "if: inputs.only != 'macos'") stable)
+        (expect (str/includes? stable "if: inputs.only != 'linux'") stable)
+        ;; A dispatched argument set wins over the automatic hosted fallback,
+        ;; which would otherwise silently put the measured heap back.
+        (expect (str/includes? stable "[ -z \"$args\" ] && [ -z \"$heap\" ] && [ \"$gib\" -lt 16 ]")
+                stable)
+        ;; And two experiments on one branch do not serialize behind each other.
+        (expect (str/includes? stable "group: native-release-${{ github.ref }}-${{ inputs.only }}")
+                stable)
+        ;; `natural` means NEITHER -J flag: an explicit ceiling is exactly what
+        ;; the measurement is trying to remove.
+        (expect (str/includes? build "(System/getenv \"VIS_NATIVE_BUILDER_HEAP\")") build)
+        (expect (re-find #"\(not natural-heap\?\)\s+\(conj \(str \"-J-Xmx\"" build) build)))
   (it
     "builds the beta track on free runners only, off a commit CI already passed"
     (let

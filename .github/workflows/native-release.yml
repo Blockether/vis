@@ -33,17 +33,31 @@ on:
         description: "Runner label for the macOS arm64 job (empty = VIS_MACOS_ARM64_RUNNER, then our own vis-macos-arm64 builder)"
         type: string
         default: ''
+      only:
+        description: "Which jobs to run — an experiment on one platform should not spend two hours of Linux builds"
+        type: choice
+        options: [all, linux, macos]
+        default: all
+      native_args:
+        description: "VIS_NATIVE_EXTRA_ARGS for this run (empty = the matrix defaults / the hosted-macOS fallback)"
+        type: string
+        default: ''
+      builder_heap:
+        description: "VIS_NATIVE_BUILDER_HEAP: 'natural' lets native-image size its own builder heap, '<n>g' pins one"
+        type: string
+        default: ''
 
 permissions:
   contents: write          # upload assets to the release
 
 concurrency:
-  group: native-release-${{ github.ref }}
+  group: native-release-${{ github.ref }}-${{ inputs.only }}-${{ inputs.runner }}-${{ inputs.builder_heap }}-${{ inputs.native_args }}
   cancel-in-progress: false
 
 jobs:
   native:
     name: native / ${{ matrix.asset }}
+    if: inputs.only != 'macos'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 350   # a swapping analysis is slow; only a 6 h job is hard-capped
     strategy:
@@ -177,7 +191,10 @@ jobs:
           free -h
       - name: Build native image
         env:
-          VIS_NATIVE_EXTRA_ARGS: ${{ matrix.extra_args }}
+          # A dispatch may replace the measured matrix arguments for ONE run, and
+          # `natural` hands the builder heap back to native-image (build.clj).
+          VIS_NATIVE_EXTRA_ARGS: ${{ inputs.native_args || matrix.extra_args }}
+          VIS_NATIVE_BUILDER_HEAP: ${{ inputs.builder_heap }}
           # setup-graalvm-25 installed the LOCKED pin (25.1.3). A mismatch here means
           # the setup step is broken; fail fast rather than SDKMAN-installing a JDK
           # in the middle of a 2 h release build.
@@ -303,6 +320,7 @@ jobs:
   # by hand on any 32 GB+ Mac produces the identical bundle.
   macos:
     name: native / vis-agent-macos-arm64-community.tar.gz
+    if: inputs.only != 'linux'
     # Unset - the default - is OUR labelled Apple-silicon builder.
     runs-on: ${{ inputs.runner || vars.VIS_MACOS_ARM64_RUNNER || 'vis-macos-arm64' }}
     timeout-minutes: 350
@@ -344,6 +362,10 @@ jobs:
       #                         binary - added on DRY RUNS only, so a hosted
       #                         experiment can prove the runner without ever
       #                         publishing an unoptimized asset
+      # A dispatch overrides all of this for ONE run: `native_args` replaces the
+      # arguments outright and `builder_heap=natural` hands the sizing back to
+      # native-image, which is the only way to measure the tool's own untuned
+      # configuration on a hosted builder.
       - name: Size the builder heap from the builder
         shell: bash
         run: |
@@ -352,14 +374,17 @@ jobs:
           echo "builder: $(sysctl -n hw.ncpu) cores / ${gib} GiB / $(uname -m)"
           sysctl -n vm.swapusage || true
           df -h / /System/Volumes/Data 2>/dev/null || df -h /
-          if [ "$gib" -lt 16 ]; then
+          heap='${{ inputs.builder_heap }}'
+          args='${{ inputs.native_args }}'
+          if [ -n "$heap" ]; then echo "VIS_NATIVE_BUILDER_HEAP=$heap" >> "$GITHUB_ENV"; fi
+          if [ -z "$args" ] && [ -z "$heap" ] && [ "$gib" -lt 16 ]; then
             args='--parallelism=2 -J-Xmx5g -J-Xms1g -J-XX:GCTimeRatio=19 -H:DeadlockWatchdogInterval=0'
             if [ '${{ steps.target.outputs.publish }}' != 'true' ]; then
               args="$args -Ob"
             fi
             echo "hosted builder under the ~13.7 GiB live set: $args"
-            echo "VIS_NATIVE_EXTRA_ARGS=$args" >> "$GITHUB_ENV"
           fi
+          if [ -n "$args" ]; then echo "VIS_NATIVE_EXTRA_ARGS=$args" >> "$GITHUB_ENV"; fi
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref }}
