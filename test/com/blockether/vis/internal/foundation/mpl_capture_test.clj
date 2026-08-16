@@ -65,7 +65,14 @@
                            (let [sink (atom [])]
                              (binding [cap/*attachment-sink* sink]
                                (cap/record-attachment! img))
-                             (expect (= [img] (cap/drain sink)))))
+                             (let [[rec] (cap/drain sink)]
+                               ;; Identity is stamped AT THE SINK — the id the
+                               ;; row is stored under and the cut this name
+                               ;; became — so the producer can address the
+                               ;; artifact inside the block that made it.
+                               (expect (= img (dissoc rec :id :version)))
+                               (expect (string? (:id rec)))
+                               (expect (= 1 (:version rec))))))
                        (it "returns nil for an empty sink (the block produced nothing)"
                            (expect (nil? (cap/drain (atom [])))))
                        (it "returns nil for a nil sink" (expect (nil? (cap/drain nil)))))

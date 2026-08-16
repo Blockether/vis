@@ -334,6 +334,62 @@
       ;; Unknown id -> nil.
       (expect (nil? (vis/db-read-attachment s (str (java.util.UUID/randomUUID))))))))
 
+
+;; Regression, session 55ed67f6: the sandbox now hands the producer an
+;; artifact's id INSIDE the block that made it, so a row minted with a fresh
+;; uuid at store time turned that id into a dangling reference one iteration
+;; later — `get_attachment(attach(...))` found nothing.
+(defdescribe
+  attachment-identity-passthrough-test
+  (it
+    "stores an artifact under the id and version the sandbox already handed out"
+    (let
+      [s
+       (h/store)
+
+       cid
+       (h/store-session! s {:channel :cli})
+
+       soul
+       (vis/db-store-session-turn! s {:parent-session-id cid :user-request "make a chart"})
+
+       given-id
+       (str (java.util.UUID/randomUUID))
+
+       iid
+       (h/store-iteration! s
+                           {:session-turn-id soul
+                            :status :done
+                            :code "attach(png, 'chart.png')"
+                            :attachments [{:id given-id
+                                           :version 3
+                                           :tool-call-id "call_A"
+                                           :media-type "image/png"
+                                           :base64 "AQID"
+                                           :filename "chart.png"
+                                           :size 3}
+                                          {:tool-call-id "call_A"
+                                           :media-type "image/png"
+                                           :base64 "AQID"
+                                           :filename "unstamped.png"
+                                           :size 3}]})
+
+       rows
+       (vis/db-list-iteration-attachments s iid)
+
+       by-name
+       (into {} (map (juxt :filename identity)) rows)]
+
+      ;; The stamped artifact keeps BOTH halves of the identity it was given.
+      (expect (= given-id (:id (get by-name "chart.png"))))
+      (expect (= 3 (:version (get by-name "chart.png"))))
+      ;; It reads back by that id, which is the whole point of handing it out.
+      (expect (= "chart.png" (:filename (vis/db-read-attachment s given-id))))
+      ;; An unstamped entry beside it still gets a fresh uuid and the
+      ;; allocator's next cut.
+      (expect (string? (:id (get by-name "unstamped.png"))))
+      (expect (not= given-id (:id (get by-name "unstamped.png"))))
+      (expect (= 1 (:version (get by-name "unstamped.png")))))))
 (defdescribe
   session-attachment-rollup-test
   (it

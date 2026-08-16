@@ -2,8 +2,8 @@
   "Built-in sandbox SHIM: `attach` — the GENERIC
    producer twin of the matplotlib capture. A tool running in `python_execution`
    writes any artifact (a PNG it rendered, a CSV/JSON/PDF/wav it built, whatever)
-   and hands it to `attach(path)` (or `attach(data, name)` for bytes it
-   never wrote out); the
+   and hands it to `attach(path)` (or `attach(data, filename)` for bytes it
+   never wrote out), getting back the stored artifact's DESCRIPTOR; the
    engine then OWNS the bytes as a durable `session_iteration_attachment` row,
    exactly like a matplotlib figure — surviving a web/TUI restart and (for image
    media-types) replayable to a vision model cross-turn.
@@ -17,7 +17,8 @@
    per-block `*image-sink*` (`mpl-capture/record-attachment!`). `run-python-block`
    drains that sink into the block outcome's `:attachments`; the loop stamps each with
    the producing block's tool-call-id and hands them to `db-store-iteration!`'s
-   `:attachments`.
+   `:attachments`. The artifact's `:id` and `:version` are minted at the sink, so
+   the block that produced it can address it immediately.
 
    Registered unconditionally as a foundation shim (like shim-yaml /
    shim-matplotlib): its `:ext/sandbox-shims` entry autoloads `attach` into
@@ -92,12 +93,64 @@
                      [(.getAbsolutePath f) w h])))))
        (catch Throwable _ nil)))
 
+(defn- pending-descriptor
+  "The `loop/attachment-descriptor` shape for ONE artifact the RUNNING block has
+   attached but the loop has not persisted yet. Same keys, same meaning, with
+   `:is-pending true` — the row is real, addressable and already carries the id
+   its database row will be inserted under; it simply is not in the database
+   until this iteration is stored."
+  [position att]
+  {:id (:id att)
+   :source "tool"
+   :filename (:filename att)
+   :version (:version att)
+   :media-type (:media-type att)
+   :kind (:kind att)
+   :size (:size att)
+   :position position
+   :is-pending true
+   :audience (attachments/attachment-audience att)})
+
+(defn- pending-descriptors
+  "Descriptors for everything the RUNNING block has attached so far, in call
+   order — what `list_attachments()` must show ON TOP of the stored rows, so a
+   producer never has to wait for the next iteration to see its own artifact."
+  []
+  (into [] (map-indexed pending-descriptor) (mpl-capture/pending-attachments)))
+
+(defn- pending-by-id
+  "The raw sink entry (BYTES included) this block recorded under `id`, or nil."
+  [id]
+  (first (filter #(= (str id) (str (:id %))) (mpl-capture/pending-attachments))))
+
+(defn- reinspect-pending
+  "`show_attachment` for an artifact the RUNNING block just attached. Its bytes
+   are already in this iteration's sink, so nothing is re-stored and nothing is
+   re-read: when the artifact's audience does not reach the model on its own
+   (`audience=\"user\"`) it is queued for exactly the next request; otherwise it
+   is on the wire already and this is a no-op. A non-image is refused exactly as
+   the stored path refuses one."
+  [att]
+  (if-not (and (str/starts-with? (str (:media-type att)) "image/")
+               (not (str/blank? (str (:base64 att)))))
+    (throw (ex-info (str "show_attachment: no image attachment with id "
+                         (:id att)
+                         " in this session")
+                    {}))
+    (do (when (= "user" (attachments/attachment-audience att))
+          (mpl-capture/queue-reinspection! att))
+        [(str (:id att)) (str (:filename att)) (str (:media-type att)) (long (or (:size att) 0))])))
+
 (defn- record-attachment-call
   "Body of `__vis_record_attachment__`: validate the already-decided attachment
-   fields and append the map to the active per-block artifact sink.
+   fields, append the map to the active per-block artifact sink, and hand the
+   shim back the stored artifact's DESCRIPTOR as JSON.
 
-   The image probe runs ONCE: its `[path w h]` is returned to the shim for the
-   inline `vis-image` fence."
+   The image probe runs ONCE: its `[path w h]` rides that descriptor under
+   `:display`, for the inline `vis-image` fence. Everything else is the identity
+   `record-attachment!` minted — `:id` and `:version` — so `attach` returns a
+   HANDLE to what it just stored and every read verb can address it inside the
+   same block."
   [kind media-type b64 filename size audience label]
   (attach-envelope
     #(cond (str/blank? (str b64)) (throw (ex-info "attach: empty payload (no bytes to persist)" {}))
@@ -114,33 +167,48 @@
                                 "python_execution block so the produced artifact can be "
                                 "attached to that iteration")
                            {}))
-           :else (let [info (display-info (str media-type) (str b64))]
-                   (mpl-capture/record-attachment! (cond->
-                                                     {:kind (or (not-empty (str kind)) "file")
-                                                      :media-type (str media-type)
-                                                      :base64 (str b64)
-                                                      :size (long (or size 0))
-                                                      ;; One funnel: a PDF/HTML document is clamped to "user" by
-                                                      ;; `attachment-audience` itself, so no caller can put a
-                                                      ;; document on the wire as an image block.
-                                                      :audience (attachments/attachment-audience
-                                                                  {:media-type (str media-type)
-                                                                   :audience audience})}
-                                                     (not (str/blank? (str filename)))
-                                                     (assoc :filename (str filename))
+           :else
+           (let
+             [info
+              (display-info (str media-type) (str b64))
 
-                                                     (not (str/blank? (str label)))
-                                                     (assoc :label (str/trim (str label)))))
-                   info))))
+              recorded
+              (mpl-capture/record-attachment!
+                (cond-> {:kind (or (not-empty (str kind)) "file")
+                         :media-type (str media-type)
+                         :base64 (str b64)
+                         :size (long (or size 0))
+                         ;; One funnel: a PDF/HTML document is clamped to "user" by
+                         ;; `attachment-audience` itself, so no caller can put a
+                         ;; document on the wire as an image block.
+                         :audience (attachments/attachment-audience
+                                     {:media-type (str media-type) :audience audience})}
+                  (not (str/blank? (str filename)))
+                  (assoc :filename (str filename))
+
+                  (not (str/blank? (str label)))
+                  (assoc :label (str/trim (str label)))))]
+
+             (json/write-json-str (cond-> (dissoc (pending-descriptor 0 recorded) :position)
+                                    (some? info)
+                                    (assoc :display (vec info))))))))
 
 (defn- attach-bridge-bindings
-  "Host callable the `attach` shim delegates to. `__vis_record_attachment__`
+  "Host callables the `attach` shim delegates to. `__vis_record_attachment__`
    takes the already-decided attachment fields (kind / media-type / base64 /
-   filename / size / audience / label) and appends the map to the
-   active per-block artifact sink via `mpl-capture/record-attachment!`. Returns
-   [true display-info] once recorded, or [false message] when there is no active
-   capture sink (called outside a driven `python_execution` block) or a field is
-   missing — surfaced to the model as a `RuntimeError`, never silently dropped.
+   filename / size / audience / label), appends the map to the active per-block
+   artifact sink via `mpl-capture/record-attachment!` and returns the stored
+   artifact's descriptor as JSON. Errors come back as [false message] — no
+   active capture sink (called outside a driven `python_execution` block) or a
+   missing field — and surface to the model as a `RuntimeError`, never silently
+   dropped.
+
+   ONE SESSION, TWO AGES. The read callables answer over BOTH the artifacts
+   already persisted (`*attachment-reader*`, database-backed) and the ones the
+   RUNNING block just attached (`*attachment-sink*`, not stored until the
+   iteration is): an artifact is addressable the moment it exists, which is what
+   makes `attach` + `get_attachment`/`read_attachment`/`show_attachment` inside
+   one block work.
 
    `audience` is WHO the artifact is for (`attachments/audiences`): `\"both\"`,
    `\"user\"` (the human sees it, the bytes never reach the wire — an image
@@ -154,33 +222,39 @@
    "__vis_list_attachments__"
    (fn []
      (attach-envelope
-       #(if-let [r mpl-capture/*attachment-reader*] (json/write-json-str (vec (or ((:list r)) [])))
-          (throw (ex-info (str "list_attachments: no active attachment reader — call it "
-                               "inside a python_execution block")
-                          {})))))
+       #(let [r mpl-capture/*attachment-reader*]
+          (when-not (or r mpl-capture/*attachment-sink*)
+            (throw (ex-info (str "list_attachments: no active attachment reader — call it "
+                                 "inside a python_execution block")
+                            {})))
+          (json/write-json-str (into (vec (when r (or ((:list r)) []))) (pending-descriptors))))))
    "__vis_read_attachment__"
    (fn [id]
      (attach-envelope
-       #(if-let [r mpl-capture/*attachment-reader*]
-          (if-let [a ((:read r) (str id))]
-            (:base64 a)
-            (throw (ex-info (str "read_attachment: no attachment with id " id " in this session")
-                            {})))
-          (throw (ex-info (str "read_attachment: no active attachment reader — call it "
-                               "inside a python_execution block")
-                          {})))))
+       #(if-let [pending (pending-by-id id)]
+          (:base64 pending)
+          (if-let [r mpl-capture/*attachment-reader*]
+            (if-let [a ((:read r) (str id))]
+              (:base64 a)
+              (throw (ex-info (str "read_attachment: no attachment with id " id " in this session")
+                              {})))
+            (throw (ex-info (str "read_attachment: no active attachment reader — call it "
+                                 "inside a python_execution block")
+                            {}))))))
    "__vis_reinspect_attachment__"
    (fn [id]
      (attach-envelope
-       #(if-let [r mpl-capture/*attachment-reader*]
-          (if-let [a ((:reinspect r) (str id))]
-            [(str (:id a)) (str (:filename a)) (str (:media-type a)) (long (or (:size a) 0))]
-            (throw (ex-info
-                     (str "show_attachment: no image attachment with id " id " in this session")
-                     {})))
-          (throw (ex-info (str "show_attachment: no active attachment reader — call it "
-                               "inside a python_execution block")
-                          {})))))})
+       #(if-let [pending (pending-by-id id)]
+          (reinspect-pending pending)
+          (if-let [r mpl-capture/*attachment-reader*]
+            (if-let [a ((:reinspect r) (str id))]
+              [(str (:id a)) (str (:filename a)) (str (:media-type a)) (long (or (:size a) 0))]
+              (throw (ex-info
+                       (str "show_attachment: no image attachment with id " id " in this session")
+                       {})))
+            (throw (ex-info (str "show_attachment: no active attachment reader — call it "
+                                 "inside a python_execution block")
+                            {}))))))})
 
 
 (def vis-extension
@@ -194,8 +268,9 @@
           "a transcript table whose rows never reach the model. "
           "SAME DOCUMENT, SAME NAME: a revision goes back under the filename it already had, "
           "as that artifact's next VERSION; a new name is a different document. "
-          "`list_attachments()`, `get_attachment` and `read_attachment` take the same target — "
-          "the filename, or an id out of a descriptor.")
+           "`attach` returns that artifact's descriptor; `list_attachments()`, `get_attachment` "
+           "and `read_attachment` take the same target — the filename, or an id out of a "
+           "descriptor — including an artifact attached in the very same block.")
      :ext/version "0.1.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -220,9 +295,11 @@
             "many images into one sheet per call; `audience='both'|'user'|'model'` routes who "
             "sees it. ONE ADDRESSING RULE on the read side: `get_attachment(target, "
             "version=None)`, `read_attachment` and `show_attachment` take the FILENAME (latest "
-            "cut unless you name a version) or an `id` from a descriptor. `read_attachment` is "
-            "the only door to the BYTES; `show_attachment` puts a stored image back in front of "
-            "the MODEL for the next request. Vis-native; no upstream library.")
+             "cut unless you name a version) or an `id` from a descriptor — `attach` RETURNS "
+             "that descriptor, and an artifact this block just attached is addressable at once. "
+             "`read_attachment` is "
+             "the only door to the BYTES; `show_attachment` puts a stored image back in front of "
+             "the MODEL for the next request. Vis-native; no upstream library.")
        :shim/bindings attach-bridge-bindings
        :shim/source "vis-shims/attach.py"}]}))
 

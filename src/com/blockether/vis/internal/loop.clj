@@ -694,7 +694,11 @@
    placed the same way and a rail can be grouped by turn without a second
    lookup. `:iteration-id` / `:tool-call-id` are the FINER grain only a tool
    artifact has, so a user image omits both instead of carrying nils that say
-   nothing."
+   nothing.
+
+   `:is-pending` is false here by construction: a stored row is stored. The
+   sandbox reader answers the same key `true` for an artifact the RUNNING block
+   just attached, which is not in the database yet."
   [a]
   (cond->
     {:id (:id a)
@@ -708,6 +712,7 @@
      :size (:size a)
      :position (:position a)
      :turn-id (:turn-soul-id a)
+     :is-pending false
      :audience (attachments/attachment-audience a)}
     (= :tool (:source a))
     (assoc :iteration-id
@@ -741,18 +746,19 @@
 
        (when (and d sid)
          {:list (fn []
-                  (try (mapv attachment-descriptor (persistance/db-list-session-attachments d sid))
+                  (try (mapv attachment-descriptor
+                             (persistance/db-list-session-attachments-meta d sid))
                        (catch Throwable _ [])))
           :read (fn [id]
                   ;; Never turn a UUID into cross-session read authority: prove it
                   ;; belongs to this active session before the indexed row lookup.
                   (when (some #(= (str id) (str (:id %)))
-                              (persistance/db-list-session-attachments d sid))
+                              (persistance/db-list-session-attachments-meta d sid))
                     (attachment-storage/hydrate (persistance/db-read-attachment d id))))
           :reinspect (fn [id]
                        (when-let
                          [a (when (some #(= (str id) (str (:id %)))
-                                        (persistance/db-list-session-attachments d sid))
+                                        (persistance/db-list-session-attachments-meta d sid))
                               (attachment-storage/hydrate (persistance/db-read-attachment d id)))]
                          (when (and (str/starts-with? (str (:media-type a)) "image/")
                                     ;; An externally stored image whose backend is unavailable

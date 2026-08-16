@@ -250,6 +250,12 @@ def __vis_install_attach__():
             return "user"
         return aud
 
+    def __vis_row(row):
+        # Descriptors cross the bridge with the engine's kebab-case keys; the
+        # sandbox speaks snake_case, and every accessor here returns the SAME
+        # shape.
+        return {str(k).replace("-", "_"): v for k, v in row.items()}
+
     def __vis_attach_data(data, name, kind, media_type, label, audience):
         mt = media_type or __vis_guess_media_type(name, data)
         knd = kind or __vis_kind_for(mt)
@@ -262,11 +268,17 @@ def __vis_install_attach__():
         env = rec(knd, mt, b64, name, len(data), aud, cap)
         if not env[0]:
             raise RuntimeError("attach: " + str(env[1]))
+        import json as _json
+
+        # The stored artifact's own DESCRIPTOR: its id and version exist from
+        # this moment, so the caller holds a handle to what it just made instead
+        # of having to go looking for it.
+        row = __vis_row(_json.loads(str(env[1])))
+        disp = row.pop("display", None)
         if aud == "model":
             # audience='model': the bytes ride the next request and NOTHING is
             # painted for the human. Staying silent here is the whole point.
-            return None
-        disp = env[1] if len(env) > 1 else None
+            return row
         if __vis_is_doc(mt):
             if not __vis_emit_doc_fence(disp, name, mt, len(data), cap):
                 print("[Attached: " + name + "]" + ((" " + cap) if cap else ""))
@@ -278,7 +290,7 @@ def __vis_install_attach__():
                 # the host could not probe): the caption still has to reach
                 # whoever reads the block.
                 print("[Attached: " + name + "] " + cap)
-        return None
+        return row
 
     # A Pillow image is the OTHER in-memory picture this sandbox produces
     # (`PIL` is a first-class shim here), so `attach(img, 'crop.png')` has to
@@ -319,6 +331,23 @@ def __vis_install_attach__():
         image.save(buf, format=fmt)
         return buf.getvalue()
 
+    __vis_attach_kwargs = ("filename", "kind", "media_type", "label", "audience")
+
+    __vis_attach_kwarg_hints = {
+        "name": "filename",
+        "file_name": "filename",
+        "fname": "filename",
+        "path": "source",
+        "title": "label",
+        "caption": "label",
+        "description": "label",
+        "alt": "label",
+        "mime": "media_type",
+        "mime_type": "media_type",
+        "content_type": "media_type",
+        "type": "kind",
+    }
+
     def attach(
         source,
         filename=None,
@@ -326,7 +355,23 @@ def __vis_install_attach__():
         media_type=None,
         label=None,
         audience="both",
+        **unknown,
     ):
+        # A wrong keyword is refused BY NAME, with the one that was meant: the
+        # interpreter reports only a COUNT once two of them are wrong, and
+        # `name=` / `title=` are what a caller reaches for first.
+        if unknown:
+            bad = sorted(unknown)[0]
+            hint = __vis_attach_kwarg_hints.get(bad)
+            raise TypeError(
+                "attach: no keyword '"
+                + bad
+                + "'"
+                + ((" - did you mean " + hint + "=?") if hint else "")
+                + " Keywords: "
+                + ", ".join(__vis_attach_kwargs)
+                + "."
+            )
         # ONE attach verb, four shapes of source: a confined PATH, in-memory
         # BYTES (a str is a path, so encode text you produced), anything with
         # `savefig` - the matplotlib idiom `attach(fig, 'plot.png')` - and a PIL
@@ -399,8 +444,10 @@ def __vis_install_attach__():
             raise RuntimeError("list_attachments: " + str(env[1]))
         import json as _json
 
-        rows = _json.loads(env[1])
-        return [{str(k).replace("-", "_"): v for k, v in r.items()} for r in rows]
+        # Stored artifacts AND the ones this very block attached: an artifact is
+        # addressable the moment it exists.
+        rows = _json.loads(str(env[1]))
+        return [__vis_row(r) for r in rows]
 
     def __vis_thread(rows, name):
         # One NAME is one artifact: every cut of it, oldest first.
@@ -416,9 +463,15 @@ def __vis_install_attach__():
         # ONE addressing rule for the whole family, so "is this an id or a name?"
         # is never a question the caller has to answer: an id names ONE stored
         # cut, a filename names the ARTIFACT and resolves to its latest cut, and
-        # a version only ever qualifies a filename.
+        # a version only ever qualifies a filename. A DESCRIPTOR addresses
+        # itself - attach() and get_attachment() hand one back, so passing it
+        # straight to the next call is the obvious move.
         rows = __vis_attachment_rows()
-        wanted = str(target)
+        wanted = (
+            str(target.get("id") or target.get("filename") or "")
+            if isinstance(target, dict)
+            else str(target)
+        )
         if version is None:
             for r in rows:
                 if str(r.get("id")) == wanted:
@@ -495,16 +548,19 @@ def __vis_install_attach__():
         "becomes a transcript table whose rows stay out of the model's context; "
         "a *.pdf/*.html is a human-only document and refuses audience='model'. "
         "kind, media_type and filename override inference; label is a one-line "
-        "caption. Returns None - call it, do not print it."
+        "caption. Returns that artifact's DESCRIPTOR - id, filename, version, "
+        "media_type, kind, size, audience - which every read verb here takes as "
+        "its target, in this same block."
     )
     list_attachments.__doc__ = (
-        "Descriptor dicts for this session's artifacts, or - given a filename - "
-        "that one artifact's versions, oldest first ([] if never attached)."
+        "Descriptor dicts for this session's artifacts - what this block just "
+        "attached included - or, given a filename, that one artifact's versions, "
+        "oldest first ([] if never attached)."
     )
     get_attachment.__doc__ = (
         "ONE artifact's descriptor dict, never its bytes. target is the filename "
         "you attached under (the artifact: latest cut unless you pass version, "
-        "negative counting back) or an id out of a descriptor (one exact cut). "
+        "negative counting back), an id, or a descriptor you already hold. "
         "LookupError when it does not exist."
     )
     read_attachment.__doc__ = (
@@ -515,7 +571,9 @@ def __vis_install_attach__():
         "Put a stored IMAGE in front of the model for exactly the NEXT request, "
         "then stored-only again; nothing is re-stored. Images replay only while "
         "they fit the request's image budget, and this is the way back to one "
-        "that dropped out. Same addressing as get_attachment."
+        "that dropped out. Same addressing as get_attachment - an image this "
+        "block attached for the model is on the wire already, so showing it is a "
+        "no-op."
     )
 
     g = globals()
@@ -538,18 +596,21 @@ def __vis_install_attach__():
         "compose many images into ONE sheet. audience='both'|'user'|'model' "
         "routes who sees it. CSV/TSV becomes a transcript table whose rows stay "
         "out of the model's context; *.pdf/*.html is a human-only document and "
-        "refuses audience='model'. label is a one-line caption. Returns None."
+        "refuses audience='model'. label is a one-line caption. Returns the "
+        "artifact's descriptor (id, filename, version, ...), addressable at once."
     )
     docs["list_attachments"] = (
         "list_attachments(name=None): descriptor dicts (id, filename, version, "
-        "media_type, kind, size, audience, turn_id, ...) for this session's "
-        "artifacts, or one filename's versions oldest first."
+        "media_type, kind, size, audience, turn_id, is_pending, ...) for this "
+        "session's artifacts - including the ones this block just attached - or "
+        "one filename's versions oldest first."
     )
     docs["get_attachment"] = (
         "get_attachment(target, version=None): ONE descriptor dict, no bytes. "
         "target is the FILENAME you attached under - the artifact, latest cut "
-        "unless you name a version (negative counts back) - or an id out of a "
-        "descriptor, one exact stored cut. That same addressing holds for every "
+        "unless you name a version (negative counts back) - an id, or a "
+        "descriptor attach() handed back, one exact cut. That same addressing "
+        "holds for every "
         "read call here. LookupError when it does not exist."
     )
     docs["read_attachment"] = (

@@ -3437,7 +3437,13 @@
    emit several figures, even same-named), matching the table's `UNIQUE`
    constraint. A `nil` tool-call-id (a whole-iteration artifact) forms its own
    group. Skips any inline entry whose base64 fails to decode - never aborts the
-   enclosing iteration insert."
+   enclosing iteration insert.
+
+   IDENTITY COMES WITH THE ARTIFACT: an entry that already carries an `:id` is
+   inserted under it, because the producer was handed that id the moment the
+   bytes were captured (`mpl-capture/record-attachment!`) and may already have
+   addressed the artifact by it, and the same holds for a stamped `:version`.
+   Only an entry with neither gets a fresh uuid and the allocator's next cut."
   [tx-info soul-id-s iteration-id-s attachments now]
   (let [next-version (version-allocator tx-info soul-id-s)]
     (doseq [[_call-id group] (group-by :tool-call-id (or attachments []))]
@@ -3445,7 +3451,9 @@
         (when-let [payload (attachment-payload-cols att)]
           (execute! tx-info
                     {:insert-into :session_attachment
-                     :values [(merge {:id (str (new-uuid))
+                     :values [(merge {:id (or (not-empty (some-> (:id att)
+                                                                 str))
+                                              (str (new-uuid)))
                                       :session_turn_soul_id soul-id-s
                                       :session_turn_iteration_id iteration-id-s
                                       :tool_call_id (some-> (:tool-call-id att)
@@ -3456,7 +3464,9 @@
                                                 "image")
                                       :media_type (str (:media-type att))
                                       :filename (:filename att)
-                                      :version (next-version (:filename att))
+                                      ;; Same rule, computed at the sink when the
+                                      ;; producer was told which cut this is.
+                                      :version (or (:version att) (next-version (:filename att)))
                                       :audience (attachments/normalize-audience (:audience att))
                                       :created_at now}
                                      payload)]}))))))

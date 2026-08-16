@@ -1003,10 +1003,15 @@ every `sub_loop` fork) and loaded lazily on first import:
 - Ops / testing — `paramiko`, `pytest` (the same shim the test runner installs).
 - Globals, no import needed — `attach`, `list_attachments`, `get_attachment`,
   `read_attachment`, `show_attachment`, plus `nippy_encode` / `nippy_decode`.
-  `list_attachments()` and `get_attachment(...)` return descriptor dicts (id,
+  `attach(...)` hands back the descriptor of what it just stored, and
+  `list_attachments()` / `get_attachment(...)` answer the same shape (id,
   filename, version, media type, kind, size, audience, and the `turn_id` it
   belongs to — a tool artifact adds `iteration_id` / `tool_call_id`);
-  `read_attachment(...)` returns the raw bytes and nothing else.
+  `read_attachment(...)` returns the raw bytes and nothing else. What the
+  RUNNING block attached is addressable inside that block: pass the returned
+  descriptor — or its filename — straight to `show_attachment`,
+  `read_attachment` or `get_attachment`, where it carries `is_pending` until
+  the iteration is stored.
   **Same document, same name**: a revision goes back under the filename it
   already had and is stored as that artifact's next **version**, never
   `report_v2.png` beside `report.png`; a fresh name is a different document, and

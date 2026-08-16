@@ -84,18 +84,67 @@
    are ephemeral: the loop consumes them once and never stores duplicate bytes."
   nil)
 
+(defn- attachment-versions-for
+  "Every version already handed out for `filename` in this session: the stored
+   cuts `*attachment-reader*` can see, plus the ones THIS block has already
+   recorded into `*attachment-sink*`. Empty for an anonymous artifact, or
+   outside a driven block."
+  [filename]
+  (let [name-s (str filename)]
+    (if (str/blank? name-s)
+      []
+      (->> (concat (try (when-let [r *attachment-reader*]
+                          ((:list r)))
+                        (catch Throwable _ nil))
+                   (some-> *attachment-sink*
+                           deref))
+           (filter #(= name-s (str (:filename %))))
+           (mapv #(long (or (:version %) 1)))))))
+
+(defn next-attachment-version
+  "The version the persistence layer will store `filename` under: 1 + the highest
+   cut of that name already in this session, and 1 for an anonymous artifact.
+
+   THE SAME RULE the insert allocator applies (`store-iteration-attachments!`),
+   evaluated here so the descriptor a producer gets back at `attach` time names
+   the cut its row will actually carry. Never throws."
+  ^long [filename]
+  (try (inc (long (reduce max 0 (attachment-versions-for filename)))) (catch Throwable _ 1)))
+
 (defn record-attachment!
   "Append ONE produced-artifact attachment map to the active per-block
    `*attachment-sink*` (a silent no-op when unbound — e.g. a call outside a driven
    block). Shape mirrors ONE element of `db-store-iteration!`'s `:attachments`,
    minus `:tool-call-id` which the loop stamps from the block that produced it:
    `{:kind <\"image\"|\"file\"|…> :media-type <mime> :base64 <b64> :size <bytes>
-     :filename <name> :dims <\"WxH\", images only>}`. NEVER throws — capture must not
-   break a turn."
+     :filename <name> :dims <\"WxH\", images only>}`.
+
+   IDENTITY IS MINTED HERE, at the source: an artifact gets its durable `:id` and
+   its `:version` the moment it is recorded, so the producer can address what it
+   just made (`get_attachment`/`read_attachment`/`show_attachment`) inside the
+   very block that made it, and the row the loop inserts later carries the same
+   id. Returns the recorded map (nil with no sink). NEVER throws — capture must
+   not break a turn."
   [m]
   (when-let [sink *attachment-sink*]
-    (try (swap! sink conj m) (catch Throwable _ nil)))
-  nil)
+    (try (let
+           [rec (cond-> m
+                  (str/blank? (str (:id m)))
+                  (assoc :id (str (java.util.UUID/randomUUID)))
+
+                  (nil? (:version m))
+                  (assoc :version (next-attachment-version (:filename m))))]
+           (swap! sink conj rec)
+           rec)
+         (catch Throwable _ nil))))
+
+(defn pending-attachments
+  "What THIS block has recorded into `*attachment-sink*` so far — artifacts the
+   loop has not persisted yet, each already carrying the `:id` and `:version`
+   [[record-attachment!]] minted. `[]` outside a driven block."
+  []
+  (vec (some-> *attachment-sink*
+               deref)))
 
 (defn queue-reinspection!
   "Queue one hydrated, session-owned image for exactly one provider request. A

@@ -37,23 +37,28 @@
 
 (defdescribe
   attach-in-memory-capture-test
-  (it "records an in-memory artifact without returning displayable metadata"
+  (it "records an in-memory artifact and hands back its descriptor"
       (let
         [pctx
          (ctx-with-root (temp-root))
 
          out
-         (block pctx "attach(b'a,b\\n1,2\\n', 'notes.txt')\n")
+         (block pctx
+                (str "d = attach(b'a,b\\n1,2\\n', 'notes.txt')\n"
+                     "print(d['filename'], d['version'], d['kind'], d['media_type'],\n"
+                     "      d['size'], d['is_pending'], d['source'], len(d['id']))\n"))
 
          [att]
          (:attachments out)]
 
         (expect (nil? (:error out)))
-        ;; Attachment APIs are side-effect-only: a bare call must not make the
-        ;; python_execution card show a summary dictionary.
-        (expect (nil? (:result out)))
-        (expect (empty? (str (:stdout out))))
+        ;; The producer is handed the artifact's IDENTITY, not a summary it has to
+        ;; go looking for: the id its stored row will carry, and the cut this
+        ;; filename just became.
+        (expect (re-find #"notes\.txt 1 file text/plain 8 True tool 36" (str (:stdout out))))
         (expect (= 1 (count (:attachments out))))
+        (expect (string? (:id att)))
+        (expect (= 1 (:version att)))
         (expect (= "text/plain" (:media-type att)))
         (expect (= "file" (:kind att)))
         (expect (= "notes.txt" (:filename att)))
@@ -676,20 +681,22 @@
 
         (expect (nil? (:error out)))
         (expect (re-find #"RAISED True" (str (:stdout out))))))
-  (it "raises when no attachment reader is bound (outside a driven read)"
+  (it "answers with the RUNNING block's own artifacts when no reader is bound"
       (let
         [pctx
          (ctx-with-root (temp-root))
 
          out
          (block pctx
-                (str "try:\n"
-                     "    list_attachments()\n" "    print('NO-RAISE')\n"
-                     "except Exception as e:\n"
-                     "    print('RAISED', 'no active attachment reader' in str(e))\n"))]
+                (str "attach(b'solo', 'solo.txt')\n"
+                     "print([r['filename'] for r in list_attachments()])\n"))]
 
         (expect (nil? (:error out)))
-        (expect (re-find #"RAISED True" (str (:stdout out)))))))
+        (expect (re-find #"solo\.txt" (str (:stdout out))))))
+  (it "raises where there is neither a reader nor a sink (outside a driven block)"
+      (let [env ((get (#'shim-attach/attach-bridge-bindings) "__vis_list_attachments__"))]
+        (expect (false? (first env)))
+        (expect (re-find #"no active attachment reader" (str (second env)))))))
 
 (defn- attach-out
   "Run ONE `attach*` call in a fresh sandbox; the block result with `:row`
@@ -827,3 +834,99 @@
           ;; ...and on the `doc()` entry the model actually looks up.
           (expect (true? (ev pctx (str "'SAME DOCUMENT, SAME NAME' in doc('" n "')")))
                   (str "doc('" n "') must state the same-name rule"))))))
+
+
+;; Regression, session 55ed67f6 (iOS companion work): `attach` returned None and
+;; the artifact it had just stored was invisible to `list_attachments`,
+;; `get_attachment`, `read_attachment` and `show_attachment` until the NEXT
+;; iteration — so `show_attachment(attach(path))` refused with "no attachment
+;; with id or filename 'None'", and addressing the fresh artifact by the very
+;; filename it was attached under refused too. A wrong keyword compounded it:
+;; `attach(p, name=..., title=...)` reported an unexpected keyword argument '2'.
+(defdescribe
+  attach-same-block-addressing-test
+  "AN ARTIFACT IS ADDRESSABLE THE MOMENT IT EXISTS. `attach` hands back the
+   stored artifact's descriptor — the id its database row will carry and the cut
+   this filename just became — and every read verb answers over the artifacts
+   this block just attached as well as the ones already persisted, because the
+   producer cannot wait a turn to look at what it produced."
+  (it "addresses a fresh artifact by descriptor, by filename and by id"
+      (let
+        [pctx
+         (ctx-with-root (temp-root))
+
+         out
+         (block pctx
+                (str "d = attach(b'a,b\\n1,2\\n', 'fresh.csv')\n"
+                     "print(get_attachment(d)['id'] == d['id'],\n"
+                     "      get_attachment('fresh.csv')['id'] == d['id'],\n"
+                     "      get_attachment(d['id'])['id'] == d['id'])\n"
+                     "print(read_attachment(d) == b'a,b\\n1,2\\n',\n"
+                     "      [r['filename'] for r in list_attachments()])\n"))]
+
+        (expect (nil? (:error out)))
+        (expect (re-find #"True True True" (str (:stdout out))))
+        (expect (re-find #"True \['fresh\.csv'\]" (str (:stdout out))))))
+  (it
+    "chains versions of one name inside a single block"
+    (let
+      [pctx
+       (ctx-with-root (temp-root))
+
+       out
+       (block pctx
+              (str
+                "attach(b'one', 'chart.png', media_type='image/png')\n"
+                "d2 = attach(b'two', 'chart.png', media_type='image/png')\n"
+                "print(d2['version'], [r['version'] for r in list_attachments('chart.png')])\n"))]
+
+      (expect (nil? (:error out)))
+      (expect (re-find #"2 \[1, 2\]" (str (:stdout out))))))
+  (it "show_attachment names a fresh image instead of refusing it"
+      (let
+        [pctx
+         (ctx-with-root (temp-root))
+
+         out
+         (block pctx
+                (str "d = attach(b'PNGDATA', 'shot.png', media_type='image/png')\n"
+                     "s = show_attachment(d)\n"
+                     "print(s['id'] == d['id'], s['filename'], s['size'])\n"))]
+
+        (expect (nil? (:error out)))
+        (expect (re-find #"True shot\.png 7" (str (:stdout out))))))
+  (it "queues a fresh user-only image for the next request, and never a wire one"
+      (let
+        [pctx
+         (ctx-with-root (temp-root))
+
+         sink
+         (atom [])
+
+         out
+         (binding [mpl-capture/*attachment-reinspection-sink* sink]
+           (block pctx
+                  (str "u = attach(b'PNGDATA', 'user.png', media_type='image/png', "
+                       "audience='user')\n"
+                       "b = attach(b'PNGDATA', 'both.png', media_type='image/png')\n"
+                       "show_attachment(u)\n" "show_attachment(b)\n")))]
+
+        (expect (nil? (:error out)))
+        ;; The one the human alone was shown is put in front of the model; the
+        ;; one already riding this request is not sent twice.
+        (expect (= ["user.png"] (mapv :filename @sink)))))
+  (it "refuses a wrong keyword BY NAME, naming the one that was meant"
+      (let
+        [pctx
+         (ctx-with-root (temp-root))
+
+         out
+         (block pctx
+                (str "try:\n"
+                     "    attach(b'x', name='a.txt', title='t')\n" "except TypeError as e:\n"
+                     "    print('RAISED', \"no keyword 'name'\" in str(e),\n"
+                     "          'filename' in str(e))\n"))]
+
+        (expect (nil? (:error out)))
+        (expect (re-find #"RAISED True True" (str (:stdout out))))
+        (expect (empty? (:attachments out))))))
