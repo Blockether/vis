@@ -1174,10 +1174,11 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
                 >
                   {/* THE DOT BELONGS TO THE NAME, NOT TO THE ROW. Centred in a
                       two-line row it floated 8px below the label it marks, between
-                      the name and its meta line, marking neither. `self-start` with
-                      the label's own 18px line box puts it on the name's line. */}
+                      the name and its meta line, marking neither. `self-start` plus
+                      the label's OWN type step — never a hand-set line-height —
+                      puts it on the name's 18px line. */}
                   <span
-                    className={`shrink-0 self-start font-mono text-title leading-[18px] ${dot.tone} ${isProbing ? 'animate-pulse' : ''}`}
+                    className={`shrink-0 self-start font-mono text-body ${dot.tone} ${isProbing ? 'animate-pulse' : ''}`}
                     aria-hidden="true"
                     title={dot.label}
                   >

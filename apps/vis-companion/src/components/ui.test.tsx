@@ -1488,11 +1488,12 @@ describe("settings is ONE dialog with two columns", () => {
     );
     expect(notify).toContain("w-full justify-center sm:w-auto");
     // And a dot centred in a two-line row sat between the name and its meta line,
-    // marking neither. Both lists give it the name's own 18px line box; the
+    // marking neither. Both lists give it the NAME's own type step — `text-body`
+    // is the 18px line box, so no hand-set `leading-*` is needed and the type
+    // scale keeps owning the rhythm (`scripts/touch-density.test.mjs`). The
     // two-line provider row also pins it to the first line.
-    for (const source of [providerAuthSource, machinesSource])
-      expect(source).toContain("font-mono text-title leading-[18px]");
-    expect(providerAuthSource).toContain("shrink-0 self-start font-mono text-title");
+    expect(machinesSource).toContain("shrink-0 font-mono text-body");
+    expect(providerAuthSource).toContain("shrink-0 self-start font-mono text-body");
   });
 
   it("hides a machine's own verbs behind its row, and keeps no panel of them", () => {

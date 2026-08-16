@@ -694,11 +694,13 @@ export function MachineRows({
                   aria-expanded={renderPanel ? isOpen : undefined}
                   aria-controls={renderPanel && isOpen ? panelId : undefined}
                 >
-                  {/* One rule with the provider rows: the dot takes the NAME's own
-                      18px line box. This row is one line, so it stays centred with
+                  {/* One rule with the provider rows: the dot wears the NAME's own
+                      type step, so it sits on the same 18px line box — a step and a
+                      hand-set line-height would put a 13px glyph on a 18px box and
+                      drift the rhythm. This row is one line, so it stays centred with
                       it; measured on a 390px phone both centres land on 198. */}
                   <span
-                    className={`shrink-0 font-mono text-title leading-[18px] ${hv.dotClass} ${hv.state === 'checking' ? 'animate-pulse' : ''}`}
+                    className={`shrink-0 font-mono text-body ${hv.dotClass} ${hv.state === 'checking' ? 'animate-pulse' : ''}`}
                     aria-hidden="true"
                     title={hv.label}
                   >
