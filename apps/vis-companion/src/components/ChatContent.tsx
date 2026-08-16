@@ -1892,23 +1892,27 @@ export const AttachmentRail = memo(function AttachmentRail({
 // the rest a chunk per frame, holding the reader's pixel while the page grows
 // above them (`overflow-anchor` is off on this scroller, so nobody else will).
 const SEGMENT_FIRST_PAINT = 8;
-// A fixed batch size cannot be right: segment weight spans three orders of
-// magnitude (a one-line reply vs. a run of 400 tool cards), so any constant is
-// either a stall on light turns or a dropped frame on heavy ones. Measured on
-// device a flat 12/frame cost 14-20 long frames and one 106 ms frame on a
-// 400-call session. Aim each step at a slice of the frame instead: bill it for
-// the render plus the forced layout the scroll hold already does, and back off
-// hard the moment the frame it landed in actually dropped — a pure "grow while
-// frames stay whole" window overshoots (it reached 24 and spent 15 frames over
-// 25 ms), because once the tree is memoised the cost really is roughly linear
-// in batch size.
-const SEGMENT_RAMP_START = 4;
-const SEGMENT_RAMP_MIN = 2;
-const SEGMENT_RAMP_MAX = 32;
-/** Per-step work budget, leaving the rest of a 60 Hz frame for style and paint. */
-const RAMP_BUDGET_MS = 6;
-/** A step whose whole frame took longer than this dropped one; halve on sight. */
-const RAMP_DROPPED_FRAME_MS = 32;
+// A step costs the same whatever its size — one reconcile of the whole trace,
+// one style pass, one paint — and only the nodes it mounts scale with it.
+// Measured on device (iPhone 17 Pro, a 30-turn session, "Load earlier"):
+// 140 nodes in a step cost 81 ms, 2 105 nodes in ONE commit cost 160 ms, so the
+// fixed part is ~70 ms and the marginal part ~0.05 ms per node. The step size
+// is therefore not a work budget at all: it counts how many times that 70 ms is
+// paid. The controller before this one aimed each step at 6 ms of "work" it
+// never measured (the field was written nowhere) and halved on any frame over
+// 32 ms — which EVERY step overruns — so it sat on its floor and paid the fixed
+// cost once per two segments: 20 000 nodes took 6.7 s of 30-200 ms frames, and
+// a reader scrolling up chased bare paper the whole way. Triple while a step
+// stays inside its target, halve only when one really hurt.
+const SEGMENT_RAMP_START = 16;
+const SEGMENT_RAMP_MIN = 8;
+const SEGMENT_RAMP_MAX = 128;
+/** Each whole step multiplies by this, so a 400-call turn lands in ~10 frames. */
+const RAMP_GROWTH = 3;
+/** A step is allowed to cost this much end to end; under it, grow. */
+const RAMP_STEP_TARGET_MS = 100;
+/** Over this the step really did hurt the scroll: halve and re-learn. */
+const RAMP_STEP_LONG_MS = 200;
 
 // A screen holds several traces (one per turn), and if they all ramp at once
 // every frame pays for several mounts and several forced layouts while each
@@ -2201,9 +2205,9 @@ export const IterationTrace = memo(function IterationTrace({
   // Identity in the ramp queue, so only the bottom-most trace backfills at once.
   const [rampId] = useState(() => Symbol("trace-ramp"));
   useEffect(() => () => releaseRamp(rampId), [rampId]);
-  // Adaptive ramp step: how many segments the next frame mounts, when the
-  // current one started (0 = none in flight), and what the last one cost.
-  const stepRef = useRef({ size: SEGMENT_RAMP_START, startedAt: 0, work: 0 });
+  // Adaptive ramp step: how many segments the next frame mounts, and when the
+  // current one started (0 = none in flight).
+  const stepRef = useRef({ size: SEGMENT_RAMP_START, startedAt: 0 });
 
   const segments = useMemo(
     () => buildSegments(iterations, answered),
@@ -2252,18 +2256,16 @@ export const IterationTrace = memo(function IterationTrace({
         return;
       }
       // One rAF to the next spans the previous step end to end, paint included.
-      // Grow on the measured work, but if that frame was actually dropped, the
-      // estimate was wrong about style/paint: halve and re-learn from there.
       // After waiting, that span is somebody else's work: do not price on it.
       const step = stepRef.current;
       if (step.startedAt > 0 && !waited) {
         const frameCost = performance.now() - step.startedAt;
-        const scaled = Math.round(
-          (step.size * RAMP_BUDGET_MS) / Math.max(step.work, 0.5),
-        );
-        const grown = Math.min(Math.ceil(step.size * 1.5), Math.max(1, scaled));
         const next =
-          frameCost > RAMP_DROPPED_FRAME_MS ? Math.floor(step.size / 2) : grown;
+          frameCost > RAMP_STEP_LONG_MS
+            ? Math.floor(step.size / 2)
+            : frameCost < RAMP_STEP_TARGET_MS
+              ? step.size * RAMP_GROWTH
+              : step.size;
         step.size = Math.min(
           SEGMENT_RAMP_MAX,
           Math.max(SEGMENT_RAMP_MIN, next),
