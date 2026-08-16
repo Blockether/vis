@@ -17,7 +17,16 @@
 
 (def MIN_EVAL_TIMEOUT_MS "Floor for :eval-timeout-ms." 3000)
 
-(def MAX_EVAL_TIMEOUT_MS "Hard ceiling for :eval-timeout-ms." (* 30 60 1000))
+(def MAX_EVAL_TIMEOUT_MS
+  "Hard ceiling for :eval-timeout-ms — 35 minutes.
+
+   It must sit ABOVE the longest bounded call a block may own plus the widener's
+   grace: [[MAX_SHELL_TIMEOUT_SECS]] (30 min) + `shell-timeout-eval-grace-ms`. A
+   ceiling equal to the shell cap would clamp the widened watchdog 10s BELOW the
+   shell envelope, so a legal 30-minute wait would die at the watchdog with a bare
+   `Timeout` and no output instead of shell's own structured envelope — the exact
+   defect [[DEFAULT_SHELL_TIMEOUT_SECS]] describes. Lift the two together."
+  (* 35 60 1000))
 
 (def ^:dynamic *eval-timeout-ms*
   "Dynamic timeout in milliseconds for Python code evaluation."
@@ -109,24 +118,32 @@
    read by `foundation.shell`, so ONE number governs both the tool and the
    watchdog above it.
 
+   Thirty minutes, the same as [[MAX_SHELL_TIMEOUT_SECS]]. The budget is a
+   CEILING on the WAIT, never a delay: a fast command returns the instant it
+   exits, so the only calls this number touches are the long ones — a native
+   image, a cold Gradle / npm build, a full suite — and at two minutes those were
+   killed precisely where their output started to matter, with the work already
+   paid for.
+
    It matters here because it used to EQUAL the 120s eval watchdog. A `shell`
    call that named no timeout therefore raced a watchdog that had already
    started, and the watchdog always won: the turn got a bare `Timeout (120s)`
    with NO output instead of shell's own envelope (partial stdout, `timed_out`
    true, a killed process tree). The widener below now floors the watchdog above
    this budget whenever an eval calls the shell at all."
-  120)
+  1800)
 
 (def MAX_SHELL_TIMEOUT_SECS
-  "Hard ceiling `foundation.shell` clamps EVERY `run` / `wait` budget to: ten
+  "Hard ceiling `foundation.shell` clamps EVERY `run` / `wait` budget to: thirty
    minutes. Declared here so the widener below can floor the eval watchdog above
-   the LONGEST budget a shell call may legally own, not merely above the default.
+   the LONGEST budget a shell call may legally own, and so
+   [[MAX_EVAL_TIMEOUT_MS]] can stay a grace period above THIS.
 
    A budget that is a variable or an expression is invisible to a text scan, so
-   flooring at the 120s default let the watchdog preempt a legal ten-minute wait
-   with a bare `Timeout (120s)` instead of shell's own envelope — the same defect
+   flooring at anything under the cap let the watchdog preempt a legal wait with a
+   bare `Timeout (120s)` instead of shell's own envelope — the same defect
    `DEFAULT_SHELL_TIMEOUT_SECS` describes, one spelling further out."
-  600)
+  1800)
 
 (def RUN_TESTS_FLOOR_SECS
   "Floor for an eval that calls `run_tests`. A test run carries its OWN multi-
@@ -199,20 +216,18 @@
    the watchdog silently preempts a call that owns a longer budget and answers
    timeouts itself.
 
-   A `shell` call the scan cannot read may legally own the FULL cap — a ten-minute
-   `wait` — so that is its floor. When the block DOES spell a second budget out the
-   scan already reads it, and the floor drops back to shell's default so a second,
-   unannotated call in the same block still cannot race the watchdog.
+   A `shell` call may legally own the FULL cap, so that is its floor even when the
+   block DOES spell a literal budget somewhere: that literal bounds ONE call, and a
+   second, unannotated call in the same block still owns shell's default — which is
+   the cap.
 
-   An HTTP call keeps its floor either way: a literal `timeout=` bounds ONE
-   request, and the block is almost always a LOOP of them."
+   An HTTP call keeps its floor for the same reason: a literal `timeout=` bounds
+   ONE request, and the block is almost always a LOOP of them."
   [code]
   (let [code (str code)]
-    (max-of
-      [(when (re-find run-tests-call-re code) RUN_TESTS_FLOOR_SECS)
-       (when (re-find http-call-re code) HTTP_CALL_FLOOR_SECS)
-       (when (re-find shell-call-re code)
-         (if (re-find timeout-secs-re code) DEFAULT_SHELL_TIMEOUT_SECS MAX_SHELL_TIMEOUT_SECS))])))
+    (max-of [(when (re-find run-tests-call-re code) RUN_TESTS_FLOOR_SECS)
+             (when (re-find http-call-re code) HTTP_CALL_FLOOR_SECS)
+             (when (re-find shell-call-re code) MAX_SHELL_TIMEOUT_SECS)])))
 
 (defn eval-timeout-ms-for-code
   "Eval watchdog for ONE Python block: the configured base, raised so it sits a

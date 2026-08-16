@@ -8,6 +8,7 @@
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.process-jail :as process-jail]
             [com.blockether.vis.internal.resources :as resources]
+            [com.blockether.vis.internal.runtime-settings :as rt]
             [com.blockether.vis.internal.shell-log :as shell-log]
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.workspace :as workspace]
@@ -347,7 +348,7 @@
             (expect (not-any? #(contains? r %)
                               ["started" "stopped" "is_truncated" "sent" "socket"]))
             (expect (not (contains? r "stdout_truncated")))
-            (expect (= 120 (:timeout-secs (meta r))))
+            (expect (= rt/DEFAULT_SHELL_TIMEOUT_SECS (:timeout-secs (meta r))))
             (expect (string? (:dir (meta r)))))))))
   (it "always carries a TOTAL stdout/exit (no output is \"\", not a missing key) and a real cwd"
       (with-shell-on (fn []
@@ -427,13 +428,14 @@
               ;; …including WHY a parser will now choke on it
               (expect (str/includes? (get r "note") "stdout truncated"))
               (expect (str/includes? (get r "note") "no longer parses")))))))
-  (it "honors a timeout above the 120s default (up to the 600s cap)"
+  (it "defaults and caps the wait at thirty minutes"
       ;; `timeout_secs` is group scope on the envelope now, so the clamp is
       ;; asserted on the helper directly instead of burning wall-clock.
       (let [clamp @#'shell/clamp-timeout-secs]
-        (expect (= 120 (clamp nil)))
+        (expect (= rt/DEFAULT_SHELL_TIMEOUT_SECS (clamp nil)))
+        (expect (= 1800 (clamp nil)))
         (expect (= 300 (clamp 300)))
-        (expect (= 600 (clamp 5000)))
+        (expect (= rt/MAX_SHELL_TIMEOUT_SECS (clamp 5000)))
         (expect (= 1 (clamp 0)))))
   (it "carries the timeout budget as entry metadata alongside timed_out"
       (with-shell-on (fn []
@@ -1201,7 +1203,7 @@
                 ;; little as `_shell-wait dev` did.
                 (expect (= "waiting up to 60s for: sleep 30"
                            ((ticker-of shell/shell-wait-symbol) env [{"id" "dev" "seconds" 60}])))
-                (expect (= "waiting up to 120s for: sleep 30"
+                (expect (= (str "waiting up to " rt/DEFAULT_SHELL_TIMEOUT_SECS "s for: sleep 30")
                            ((ticker-of shell/shell-wait-symbol) env [{"id" "dev"}])))
                 (expect (= "stopping: sleep 30"
                            ((ticker-of shell/shell-stop-symbol) env [{"id" "dev"}])))

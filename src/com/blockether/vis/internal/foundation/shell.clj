@@ -88,8 +88,9 @@
   rt/DEFAULT_SHELL_TIMEOUT_SECS)
 
 (def ^:private max-timeout-secs
-  ;; Ten minutes, shared with the Python eval watchdog: the watchdog floors itself
-  ;; above THIS, so no legal `run`/`wait` budget can be preempted from outside.
+  ;; Thirty minutes, shared with the Python eval watchdog: the watchdog floors
+  ;; itself above THIS, so no legal `run`/`wait` budget can be preempted from
+  ;; outside.
   rt/MAX_SHELL_TIMEOUT_SECS)
 
 (def ^:private max-sync-head-chars
@@ -664,7 +665,8 @@
 ;; BLOCKING runner — INTERNAL only (`run-blocking`, `run-argv`, the bang path)
 
 (defn- clamp-timeout-secs
-  "Effective wait in seconds from the opts value: default 120, floor 1, cap 600.
+  "Effective wait in seconds from the opts value: `rt/DEFAULT_SHELL_TIMEOUT_SECS`
+   when unset, floor 1, capped at `rt/MAX_SHELL_TIMEOUT_SECS`.
    `label` is the option the CALLER spelled, so a refusal names the key that was
    actually passed (`seconds` on a handle wait) instead of an internal one."
   (^long [v] (clamp-timeout-secs v "timeout_secs"))
@@ -3032,7 +3034,7 @@
                    str
                    str/trim
                    not-empty)
-           "120")
+           (str rt/DEFAULT_SHELL_TIMEOUT_SECS))
 
        ;; The spawn KNOWS its command — it is right there in the call — while a
        ;; lifecycle stage has to look up the shell it acts on.

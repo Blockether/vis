@@ -27,7 +27,7 @@
    native tool wall (see language-surface `run-tests`), so THIS is the real
    budget: an nREPL timeout surfaces as a structured test result instead of
    an opaque harness kill. Must stay well below the outside-wall wedge guard
-   (MAX_EVAL_TIMEOUT_MS, 30 min)."
+   (MAX_EVAL_TIMEOUT_MS, 35 min)."
   290000)
 
 (def ^{:private true} run-form
