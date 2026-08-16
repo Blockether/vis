@@ -125,7 +125,6 @@ export const PdfAnnotator = memo(function PdfAnnotator({
         <ImageViewer
           src={drawn}
           name={`${name} — page ${page}`}
-          applyLabel="Save as new version"
           onApply={apply}
           onClose={() => setDrawn(null)}
         />

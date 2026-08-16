@@ -37,7 +37,7 @@ import {
   PenToolbar,
   type AnnotationSurface,
 } from "./AnnotationLayer";
-import { Button, DialogHeader } from "./ui";
+import { BandButton, Button, DialogHeader } from "./ui";
 import { useGalleryStep, type GalleryPicture } from "../lib/gallery";
 import { useStickyOverlay } from "../lib/sticky-overlay";
 
@@ -71,10 +71,10 @@ interface ImageViewerProps {
   onClose: () => void;
   onApply?: (edited: Blob) => void | Promise<void>;
   /**
-   * What the primary button says when the picture can go back. "Use edit"
-   * replaces the attachment it came from; a capture of a document has no slot
-   * yet, so it says "Attach to message" instead — the promise made to the human
-   * has to match what actually happens.
+   * What the band's verb says when the picture can go back. "Save" replaces the
+   * attachment it came from; a capture of a document has no slot yet, so it says
+   * "Attach to message" instead — the promise made to the human has to match what
+   * actually happens.
    */
   applyLabel?: string;
   /**
@@ -178,7 +178,7 @@ export function ImageViewer({
   name,
   onClose,
   onApply,
-  applyLabel = "Use edit",
+  applyLabel = "Save",
   pictures,
   at,
 }: ImageViewerProps) {
@@ -619,6 +619,25 @@ export function ImageViewer({
     }
   }
 
+  /**
+   * Hand the drawn-on picture back to whoever opened the viewer, and leave. The
+   * caller owns the slot it came from, so an annotated attachment REPLACES itself
+   * instead of arriving as a second copy, and the original bytes are never mutated
+   * here.
+   *
+   * The pen is put down first, because saving IS the end of drawing — which is why
+   * the toggle below offers no second way to finish.
+   */
+  async function applyEdit() {
+    if (!onApply) return;
+    setDrawing(false);
+    await run("apply", "Could not save this edit", async (blob) => {
+      await onApply(blob);
+      onClose();
+      return "";
+    });
+  }
+
   const viewer = (
     <div
       className="fixed inset-0 z-[100] isolate bg-ink text-white"
@@ -627,13 +646,29 @@ export function ImageViewer({
       aria-label={`${shown.name} image viewer`}
     >
       {/* The picture's own title bar is the app's one dialog band — it only has to
-          float over the image and clear the notch. */}
+          float over the image and clear the notch.
+
+          SAVING IS A CELL OF THAT BAND, ONE HAIRLINE FROM THE ✕. It is the verb that
+          ENDS this screen, the way a note's Save does, so it stands where leaving
+          stands — not down in the strip of drawing tools, where it read as a SECOND
+          finish button beside the pen's own toggle and neither of the two said which
+          one kept the ink. */}
       <DialogHeader
         title={shown.name}
         closeLabel={`Close ${shown.name}`}
         onClose={onClose}
         isUnderNotch
         className="absolute inset-x-0 top-0 z-20"
+        actions={
+          onApply ? (
+            <BandButton
+              onClick={() => void applyEdit()}
+              disabled={busy !== null}
+            >
+              {busy === "apply" ? "Saving…" : applyLabel}
+            </BandButton>
+          ) : null
+        }
       />
 
       {/* THE PICTURE CLEARS THE BAND THAT CLEARS THE NOTCH.
@@ -726,7 +761,9 @@ export function ImageViewer({
             }}
             aria-pressed={drawing}
           >
-            {drawing ? "Done" : "Draw"}
+            {/* One toggle, one state: pressed IS drawing, so it never renames itself
+                into a finish verb that competes with the band's Save. */}
+            Draw
           </Button>
 
           <Button
@@ -766,10 +803,11 @@ export function ImageViewer({
             >
               {busy === "copy" ? "Copying…" : "Copy"}
             </Button>
-            {/* Exactly ONE primary button is on screen at a time: when the picture can go
-                back into the message, THAT is the primary action and sharing steps down. */}
+            {/* The strip's one primary is share. The picture's way BACK is the band's
+                own cell up top, which wears the band's ink instead of claiming a rank
+                down here, so exactly one primary button stands on the screen. */}
             <Button
-              variant={onApply ? "secondary" : "primary"}
+              variant="primary"
               onClick={() =>
                 run("share", "Could not share image", (blob) =>
                   shareImage(blob, shown.name),
@@ -779,25 +817,6 @@ export function ImageViewer({
             >
               {busy === "share" ? `${shareAction}…` : shareAction}
             </Button>
-            {onApply && (
-              <Button
-                variant="primary"
-                onClick={() =>
-                  // Hand the drawn-on picture back to whoever opened the viewer. The
-                  // caller owns the slot it came from, so an annotated attachment
-                  // REPLACES itself instead of arriving as a second copy — and the
-                  // original bytes are never mutated here.
-                  run("apply", "Could not use this edit", async (blob) => {
-                    await onApply(blob);
-                    onClose();
-                    return "";
-                  })
-                }
-                disabled={busy !== null}
-              >
-                {busy === "apply" ? "Applying…" : applyLabel}
-              </Button>
-            )}
           </div>
         </div>
 
@@ -819,7 +838,7 @@ export function ImageViewer({
           {status ||
             (drawing
               ? onApply
-                ? "Draw on the image, then use the edit in your message."
+                ? `Draw on the image, then ${applyLabel} at the top.`
                 : "Draw on the image, then copy or share it."
               : gallery
                 ? `${step + 1} of ${gallery.length} · swipe for the next image, or press ← and →.`

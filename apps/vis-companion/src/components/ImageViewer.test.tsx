@@ -168,7 +168,7 @@ describe("ImageViewer", () => {
   it("holds Trim while the pen is out", () => {
     act(() => named("Draw").click());
     expect(control("Trim to view").disabled).toBe(true);
-    act(() => named("Done").click());
+    act(() => named("Draw").click());
     expect(control("Trim to view").disabled).toBe(false);
   });
 
@@ -179,7 +179,7 @@ describe("ImageViewer", () => {
     expect(document.querySelector('[aria-label="Drawing tools"]')).toBeNull();
 
     act(() => named("Draw").click());
-    expect(named("Done").getAttribute("aria-pressed")).toBe("true");
+    expect(named("Draw").getAttribute("aria-pressed")).toBe("true");
     expect(
       document.querySelector("canvas")?.getAttribute("data-annotation"),
     ).toBe("active");
@@ -187,7 +187,7 @@ describe("ImageViewer", () => {
     const tools = document.querySelector('[aria-label="Drawing tools"]');
     expect(tools?.querySelectorAll("button[aria-pressed]")).toHaveLength(5);
 
-    act(() => named("Done").click());
+    act(() => named("Draw").click());
     expect(document.querySelector('[aria-label="Drawing tools"]')).toBeNull();
   });
 
@@ -217,6 +217,37 @@ describe("ImageViewer", () => {
   });
 });
 
+// Regression, user report: drawing on an artifact put TWO finish buttons on the same
+// strip — "Done" beside "Use edit" — and neither was named Save nor stood where a
+// screen is left from. The verb that keeps the ink is the band's cell now, one
+// hairline from the ✕, and the pen's toggle stays a toggle.
+it("keeps the ink through one Save in the band, one cell from the way out", () => {
+  const applied = vi.fn();
+  act(() =>
+    root.render(
+      <ImageViewer
+        src="blob:picture"
+        name="chart.png"
+        onClose={() => undefined}
+        onApply={applied}
+      />,
+    ),
+  );
+
+  const header = document.querySelector('[role="dialog"] header');
+  const save = named("Save");
+  expect(header?.contains(save)).toBe(true);
+  expect(save.nextElementSibling).toBe(control("Close chart.png"));
+
+  // The strip never grows a second way to finish: pressed IS drawing.
+  act(() => named("Draw").click());
+  expect(named("Draw").getAttribute("aria-pressed")).toBe("true");
+  expect([...document.querySelectorAll("button")].map((b) => b.textContent)).not.toContain("Done");
+
+  // And Save puts the pen down: it is the end of drawing, not a step beside it.
+  act(() => save.click());
+  expect(named("Draw").getAttribute("aria-pressed")).toBe("false");
+});
 // Regression: the CSS transition meant for button/reset snaps also applied
 // while a finger was dragging the picture every frame, fighting the direct
 // pointer-driven transform and reading as pinch/pan stutter and lag.

@@ -734,7 +734,8 @@ function ArtifactDetail({
         // Drawing on a picture is an ANSWER to it, so the ink is saved back
         // under the same filename — the next version of that artifact, the way
         // a commented note is — and the drawing is attached to the message too.
-        applyLabel="Save as new version"
+        // Its verb is the band's plain Save, like the note's: what saving MEANS
+        // here belongs to this comment, not to a longer word on a title bar.
         onApply={async (edited: Blob) => {
           await client.saveArtifactBytes(
             sid,
