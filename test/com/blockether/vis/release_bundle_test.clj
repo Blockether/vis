@@ -538,9 +538,27 @@
         ;; Quick build produces a slower binary, so it is for dry runs only.
         (expect (str/includes? fallback "-Ob") fallback)
         (expect (str/includes? fallback "steps.target.outputs.publish") fallback)
-        ;; One dispatch input moves the job off the workstation builder for a
+        ;; One dispatch input moves the job to a bigger CLOUD label for a
         ;; single run, without touching the repository variable.
         (expect (str/includes? stable "inputs.runner || vars.VIS_MACOS_ARM64_RUNNER") stable)))
+  ;; NO RELEASE MAY DEPEND ON A LAPTOP BEING AWAKE. A job whose label matches no
+  ;; online runner queues for 24 hours and then fails, so a self-hosted default
+  ;; shipped tags with no macOS asset and no error until the next day.
+  (it "runs every workflow on hosted runners, never a self-hosted label"
+      (doseq
+        [workflow (->> (file-seq (io/file ".github/workflows"))
+                       (filter #(str/ends-with? (.getName ^java.io.File %) ".yml")))]
+        (let
+          [directives (->> (str/split-lines (slurp workflow))
+                           (remove #(str/starts-with? (str/triml %) "#"))
+                           (str/join "\n")
+                           str/lower-case)]
+          (expect (not (str/includes? directives "self-hosted")) (.getPath ^java.io.File workflow))
+          (expect (not (str/includes? directives "vis-macos-arm64"))
+                  (.getPath ^java.io.File workflow))))
+      ;; And the macOS default is the free hosted Apple-silicon class.
+      (expect (str/includes? (slurp ".github/workflows/native-release.yml")
+                             "vars.VIS_MACOS_ARM64_RUNNER || 'macos-26'")))
   ;; The tuning history in native-release.yml records runs labelled "no extra
   ;; args" that still carried build.clj's computed `-J-Xmx`/`-J-Xms` pair, so
   ;; native-image's OWN sizing has never actually been measured for this image.

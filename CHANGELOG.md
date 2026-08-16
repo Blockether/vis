@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - A beta track: `vis-agent update --track beta` follows a rolling build cut from a green `main` commit every few hours, `--track stable` returns to releases, and an update never changes track on its own
 
 ### Changed
+- No release depends on a machine of ours being awake: the macOS ARM64 asset builds on GitHub's free hosted Apple-silicon runner, no workflow names a self-hosted label any more, and the builder shrinks the build to fit that machine instead of asking for a heap it does not have
 - Commits are `type(scope): summary` with a body of at most six WHY lines and a mandatory `Vis-Session: <uuid>` trailer
 - `/v1/voice/model` and `/v1/speech/model` hang off the machine, beside its voices, instead of off a session
 - Cori speaks from the high weights her author published: a quality level is a separate training run, not a setting, so every voice Vis carries is the best level published for that speaker

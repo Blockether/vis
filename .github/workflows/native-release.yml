@@ -30,7 +30,7 @@ on:
         type: string
         default: ''
       runner:
-        description: "Runner label for the macOS arm64 job (empty = VIS_MACOS_ARM64_RUNNER, then our own vis-macos-arm64 builder)"
+        description: "Runner label for the macOS arm64 job (empty = VIS_MACOS_ARM64_RUNNER, then the free hosted macos-26)"
         type: string
         default: ''
       only:
@@ -261,56 +261,44 @@ jobs:
           fail_on_unmatched_files: true
 
   # ── macOS arm64 ────────────────────────────────────────────────────────────
-  # OUR OWN APPLE-SILICON BUILDER BUILDS THIS, by decision, not by accident.
-  # The numbers are why. native-image's points-to analysis holds a ~13.7 GiB live
-  # set; GitHub's free `macos-26` is 3 cores / 7 GiB, so every heap that fits in
-  # its RAM is a known OOM (5g dies at 7 min, 8g at 9 min) and the only hosted
-  # configuration with a chance is a heap ABOVE physical RAM backed by macOS
-  # dynamic swap — v0.1.6 and v0.1.8 each burned 4 h on that class and shipped
-  # nothing. A 32 GiB+ Mac builds it in RAM, first try. The cost is real and
-  # accepted: the build pins every core and ~15 GiB for its duration, so the
-  # machine is unusable while a release is cutting.
+  # GITHUB'S FREE HOSTED MAC BUILDS THIS. NO SELF-HOSTED RUNNER, ANYWHERE.
+  # A release must never depend on one person's laptop being awake: a job whose
+  # label matches no online runner QUEUES FOR 24 h and then fails, so "the Mac
+  # was busy" used to mean a tag shipped with no macOS asset and no error until
+  # the next day. Free standard runners are free and UNLIMITED on public
+  # repositories (only LARGER runners are billed), so the only cost of building
+  # here is wall clock.
   #
-  # HOW THE RUNNER IS TARGETED. `runs-on` names ONE custom label, not the
-  # [self-hosted, macOS, ARM64] triple: cloud macOS vendors register in the
-  # organization's default runner group as self-hosted macOS ARM64 too, and a
-  # release must never land on a billed runner because a triple happened to
-  # match. Register the machine with that label and nothing else is needed:
+  # WHAT THE BUILDER IS, and why every flag below exists (specs re-checked
+  # 2026-08-17, sources: docs.github.com Actions billing + GitHub-hosted runners
+  # reference; timings from this workflow's own logs):
+  #   * The only standard macOS arm64 class is 3 cores (M1) / 7 GiB RAM /
+  #     14 GiB SSD — macos-latest, macos-14, macos-15, macos-26. There is no
+  #     bigger free Mac to find, and the paid macos-*-xlarge (M2, 5 cores) has
+  #     14 GiB — still under this image's ~13.7 GiB points-to live set.
+  #   * Measured on this class: -J-Xmx5g dies at 7 min, -J-Xmx8g at 9 min, both
+  #     OutOfMemoryError. A heap ABOVE physical RAM backed by macOS dynamic swap
+  #     is not an option either — the swap file shares those 14 GiB of TOTAL
+  #     disk with the checkout, ~/.m2 and the image, and native-image exits on
+  #     the FIRST OutOfMemoryError. v0.1.6 and v0.1.8 each burned 4 h that way.
+  #   * So the heap-sizing step below makes the BUILD smaller instead of the
+  #     heap bigger: fewer analysis threads, a heap that fits beside the OS, and
+  #     GraalVM's own peak-RSS knob. Everything left to win is IMAGE SIZE (the
+  #     ~465 MiB SVM image heap: embedded GraalPy stdlib, icu4j, charsets), not
+  #     another builder flag.
   #
-  #   ./config.sh --url https://github.com/Blockether/vis \
-  #               --labels vis-macos-arm64 --name <machine> --unattended
-  #   ./svc.sh install && ./svc.sh start     # survives reboot
-  #
-  # A job whose label matches no online runner QUEUES for 24 h and then fails,
-  # A job whose label matches no online runner QUEUES for 24 h and then fails,
-  # so when the Mac is off or busy, point the build elsewhere for that release:
-  # the `runner` dispatch input for ONE run, or the repository variable
-  # VIS_MACOS_ARM64_RUNNER (Settings -> Secrets and variables -> Actions ->
-  # Variables) for every run. Both override `runs-on` and nothing else.
-  #
-  # WHY THERE IS NO FREE APPLE-SILICON ESCAPE (re-checked 2026-08-17, sources:
-  # docs.github.com Actions billing + GitHub-hosted runners reference, vendor
-  # pricing pages):
-  #   * Actions is free on public repositories only for STANDARD hosted
-  #     runners, and the only standard macOS arm64 class is 3 cores (M1) /
-  #     7 GiB RAM / 14 GiB SSD - macos-latest, macos-14, macos-15, macos-26.
-  #     There is no bigger free Mac to find; every LARGER runner
-  #     (macos-*-xlarge, M2, 5 cores / 14 GiB) is billed per minute on public
-  #     repositories too.
-  #   * Those 14 GiB of TOTAL disk are why pointing this job at `macos-26`
-  #     never worked either: the old fallback asked for a 14 GiB heap and let
-  #     macOS dynamic swap back it, but the swap file shares the volume with
-  #     the checkout, ~/.m2 and the image, and native-image exits on the first
-  #     OutOfMemoryError. The heap-sizing step below therefore makes the BUILD
-  #     smaller instead of the heap bigger.
+  # ESCAPE HATCHES — none of them self-hosted:
+  #   * the `runner` dispatch input, for ONE run on a bigger CLOUD label;
+  #   * the repository variable VIS_MACOS_ARM64_RUNNER (Settings -> Secrets and
+  #     variables -> Actions -> Variables), for every run.
+  #     A cloud label needs that vendor's GitHub App installed on the
+  #     ORGANIZATION and its runner group set to "Allow public repositories"
+  #     FIRST, or the job just queues.
   #   * Paid Apple-silicon labels, prices from the vendors' own pricing pages:
   #       warp-macos-26-arm64-6x          WarpBuild M4 Pro 6 vCPU/22 GB $0.08/min
   #       warp-macos-26-arm64-12x         WarpBuild M4 Pro 12 vCPU/44 GB $0.16/min
   #       depot-macos-26                  Depot M2/M4 macOS, plans from $20/mo
   #       nscloud-macos-tahoe-arm64-6x28  Namespace M4 Pro 6 vCPU/28 GB $0.075/min
-  #     A cloud label needs that vendor's GitHub App installed on the
-  #     ORGANIZATION and its runner group set to "Allow public repositories"
-  #     FIRST, or the job just queues.
   #   * The free-for-open-source Mac offers are gone: Cirrus Runners is a flat
   #     $150/mo and Cirrus Labs is winding the product down (the team joined
   #     OpenAI), MacStadium's open-source page is a 404, Codemagic bills Mac
@@ -321,8 +309,8 @@ jobs:
   macos:
     name: native / vis-agent-macos-arm64-community.tar.gz
     if: inputs.only != 'linux'
-    # Unset - the default - is OUR labelled Apple-silicon builder.
-    runs-on: ${{ inputs.runner || vars.VIS_MACOS_ARM64_RUNNER || 'vis-macos-arm64' }}
+    # Unset — the DEFAULT — is GitHub's free hosted Apple-silicon runner.
+    runs-on: ${{ inputs.runner || vars.VIS_MACOS_ARM64_RUNNER || 'macos-26' }}
     timeout-minutes: 350
     env:
       VIS_ASSET: vis-agent-macos-arm64-community.tar.gz
@@ -347,8 +335,8 @@ jobs:
           esac
       # The builder's own numbers, and the heap sized FROM them - printed before
       # anything is downloaded so a failed run is diagnosable from its first
-      # step. Our own builder has 32 GiB+, so nothing is set here and build.clj
-      # sizes the heap from the machine's own RAM (0.6x, capped at 18g).
+      # step. A builder with 16 GiB or more sets nothing here and build.clj sizes
+      # the heap from the machine's own RAM (0.6x, capped at 18g).
       #
       # Under 16 GiB this is a free hosted Mac: 3 cores / 7 GiB / 14 GiB disk.
       # A heap above physical RAM is not an option there (see the runner notes
