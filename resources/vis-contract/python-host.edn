@@ -14,7 +14,7 @@
 ;;   :outside/local   a real local implementation: a file, stderr, a subprocess.
 ;;   :outside/prompt  the terminal stands in for the human channel Vis would raise.
 ;;   :outside/refuse  no honest local answer exists, and `:op/refusal` says why.
-{:contract/version 1
+{:contract/version 2
  :contract/ops
  [{:op/name "state_get"
    :op/global "__vis_host_state_get__"
@@ -84,4 +84,15 @@
    :op/global "__vis_host_declare_env__"
    :op/arity 1
    :op/summary "Resolve the environment variables the extension declared."
-   :op/outside :outside/local}]}
+   :op/outside :outside/local}]
+
+ ;; The `shell` verb's own lifecycle grammar — the one `foundation.shell/shell-dispatch`
+ ;; implements for the three shell ops above. A SPAWN op starts a process and answers
+ ;; its handle; a HANDLE op acts on the id that handle carries; an op named nowhere
+ ;; here is refused BY NAME. The outside host dispatches from this list, so it cannot
+ ;; answer a vocabulary the engine does not speak — `python_contract_test` runs every
+ ;; name here past the engine's own dispatch.
+ :contract/shell
+ {:shell/default-op "run"
+  :shell/spawn-ops ["run" "background"]
+  :shell/handle-ops ["logs" "wait" "send" "stop"]}}

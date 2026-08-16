@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "ops": [
     {
       "name": "state_get",
@@ -94,6 +94,12 @@
       "summary": "Resolve the environment variables the extension declared.",
       "outside": "local"
     }],
+  "shell": 
+  {
+    "default_op": "run",
+    "spawn_ops": ["run","background"],
+    "handle_ops": ["logs","wait","send","stop"]
+  },
   "human_input": 
   {
     "field_types": ["checkbox","multiline","multiselect","otp","password","plaintext","range","select"],

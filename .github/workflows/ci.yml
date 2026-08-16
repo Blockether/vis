@@ -192,3 +192,31 @@ jobs:
           # SDKMAN-installing a second GraalVM inside the runner.
           VIS_AUTO_INSTALL_GRAALVM: "0"
         run: clojure -T:build uber
+
+  # The `vis` module and its outside-the-sandbox host are what PyPI installs as
+  # `vis-agent`, and the harness cannot run their tests: vis' own embedded GraalPy
+  # resolves `vis` as a namespace package, so this is the one suite that needs a
+  # stock CPython. It depends on nothing the Clojure jobs build, so it runs beside
+  # them. The interpreter is the FLOOR `pyproject.toml` advertises — an extension
+  # author on the oldest supported Python is the one who must not be surprised.
+  python-package:
+    name: tests / vis-agent (PyPI package)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/vis-agent
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.9'
+      # The package itself has no dependencies and none are welcome; these are the
+      # test tools. ruff reads the repository's own ruff.toml, one directory up.
+      - name: Install the test tools
+        run: python -m pip install --disable-pip-version-check pytest ruff
+      - name: Run the package suite
+        run: python -m pytest tests -q
+      - name: Lint and format-check the package
+        run: |
+          python -m ruff check .
+          python -m ruff format --check .

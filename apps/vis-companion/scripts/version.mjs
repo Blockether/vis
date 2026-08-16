@@ -24,6 +24,7 @@ export const repoRoot = join(appDir, '..', '..');
 export const visVersionFile = join(repoRoot, 'VIS_VERSION');
 const packageFile = join(appDir, 'package.json');
 const packageLockFile = join(appDir, 'package-lock.json');
+const pyprojectFile = join(repoRoot, 'packages', 'vis-agent', 'pyproject.toml');
 
 /** The product version, straight from the repo-root VIS_VERSION file. */
 export function visVersion() {
@@ -68,6 +69,27 @@ export function syncPackageVersion({ quiet = false } = {}) {
   return version;
 }
 
+/**
+ * Mirror VIS_VERSION into the Python package published to PyPI as `vis-agent`.
+ * It is a MIRROR exactly like the npm metadata above — `python_package_test`
+ * fails the build when it drifts from VIS_VERSION, so never hand-edit it.
+ */
+export function syncPythonVersion({ quiet = false } = {}) {
+  const version = visVersion();
+  const text = readFileSync(pyprojectFile, 'utf8');
+  const next = text.replace(/^(version = )"[^"]*"/m, `$1"${version}"`);
+  if (!next.includes(`\nversion = "${version}"\n`)) {
+    throw new Error(`could not rewrite "version" in ${pyprojectFile}`);
+  }
+  if (next !== text) {
+    writeFileSync(pyprojectFile, next);
+    if (!quiet) console.log(`✓ vis-agent (PyPI) version mirrors ${version} (from VIS_VERSION)`);
+  }
+  return version;
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  console.log(syncPackageVersion());
+  const version = syncPackageVersion();
+  syncPythonVersion();
+  console.log(version);
 }

@@ -86,9 +86,11 @@ prompt toggle, a GitHub issues integration — live in the repo under
 
 ### Outside Vis — `pip install vis-agent`
 
-The `vis` module is a real package: the same `vis/__init__.py` the engine
-injects into the sandbox is published to PyPI as `vis-agent`, so an extension
-file is importable, testable and lintable in an ordinary Python process.
+The `vis` module is a real package: the same `vis/__init__.py` the engine injects
+into the sandbox is what `packages/vis-agent` publishes to PyPI as `vis-agent`,
+so an extension file is importable, testable and lintable in an ordinary Python
+process — `pip install vis-agent` once a release has uploaded it, or
+`pip install ./packages/vis-agent` from a checkout of this repository.
 
 With no engine on the other side the module binds `vis._outside` instead — a
 local host implementing every op in the shipped `vis/contract.json`: state,
@@ -97,6 +99,9 @@ sandbox ops refuse by name rather than pretend to be a sandbox, and
 `vis.ask(...)` prompts at the terminal. Prime those answers with
 `vis.outside.answer_with({...})` or the `VIS_OUTSIDE_ANSWERS` JSON object, or
 set `VIS_OUTSIDE_NONINTERACTIVE=1` to have every ask come back undeliverable.
+`vis.shell` speaks the engine's own op vocabulary out here — `run` (the default),
+`background`, `logs`, `wait`, `send`, `stop`, read out of `contract.json` — so a
+file written against the sandbox drives a process the same way outside it.
 
 ### `vis.extension(...)`
 

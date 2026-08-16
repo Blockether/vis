@@ -29,6 +29,18 @@
 (s/def :op/outside #{:outside/local :outside/prompt :outside/refuse})
 (s/def :op/refusal non-blank-string?)
 
+;; The `shell` verb's lifecycle grammar. `:shell/default-op` is the op an options
+;; map without one means, so it has to be one of the spawn ops, and no op may both
+;; spawn and drive a handle.
+(s/def :shell/default-op non-blank-string?)
+(s/def :shell/spawn-ops
+  (s/and (s/coll-of non-blank-string? :kind vector? :distinct true) not-empty))
+(s/def :shell/handle-ops
+  (s/and (s/coll-of non-blank-string? :kind vector? :distinct true) not-empty))
+(s/def :contract/shell
+  (s/and (s/keys :req [:shell/default-op :shell/spawn-ops :shell/handle-ops])
+         #(contains? (set (:shell/spawn-ops %)) (:shell/default-op %))
+         #(not-any? (set (:shell/handle-ops %)) (:shell/spawn-ops %))))
 ;; A refusal is REQUIRED exactly when the op refuses, and meaningless otherwise:
 ;; the reason an author reads in the traceback is part of the contract, not of the
 ;; implementation that happens to raise.
@@ -41,7 +53,7 @@
 ;; conformed value a vector and the reflection check quiet.
 (s/def :contract/ops (s/and (s/coll-of :contract/op :kind vector? :distinct true) not-empty))
 (s/def :contract/version pos-int?)
-(s/def :contract/python-host (s/keys :req [:contract/version :contract/ops]))
+(s/def :contract/python-host (s/keys :req [:contract/version :contract/ops :contract/shell]))
 
 (def ^:private resource-path "vis-contract/python-host.edn")
 
@@ -88,6 +100,11 @@
   []
   (:contract/version @document))
 
+(defn shell-vocabulary
+  "The `shell` verb's lifecycle grammar: the op an options map without one means,
+   the ops that SPAWN a process, and the ops that drive the handle one answered."
+  []
+  (:contract/shell @document))
 ;; ---------------------------------------------------------------------------
 ;; The document the PACKAGE reads
 ;;
@@ -116,6 +133,9 @@
   []
   (array-map "version" (version)
              "ops" (mapv op->json (ops))
+             "shell"
+             (let [{:shell/keys [default-op spawn-ops handle-ops]} (shell-vocabulary)]
+               (array-map "default_op" default-op "spawn_ops" spawn-ops "handle_ops" handle-ops))
              "human_input" (array-map "field_types" (vec (sort (keys hi/field-types)))
                                       "text_types" (mapv clojure.core/name (sort hi/text-types))
                                       "choice_types" (mapv clojure.core/name (sort hi/choice-types))

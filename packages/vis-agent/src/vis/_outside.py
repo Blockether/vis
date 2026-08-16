@@ -343,25 +343,50 @@ def _result(run, stage, **extra):
     return result
 
 
+_SHELL = contract["shell"]
+_SPAWN_OPS = tuple(_SHELL["spawn_ops"])
+_HANDLE_OPS = tuple(_SHELL["handle_ops"])
+
+
+def _shell_vocabulary():
+    """The ops this host answers, worded the way the engine words its own refusal."""
+    names = [
+        '"{}"{}'.format(op, " (default)" if op == _SHELL["default_op"] else "")
+        for op in _SPAWN_OPS + _HANDLE_OPS
+    ]
+    return ", ".join(names[:-1]) + " or " + names[-1]
+
+
 def shell(opts):
-    """Start a process, or drive one this host already started."""
+    """Start a process, or drive one this host already started.
+
+    The op vocabulary is the CONTRACT's, not this file's: `vis/contract.json`
+    names which ops spawn and which drive a handle, so an extension written
+    against the engine's `{"op": "run", …}` means the same thing out here.
+    """
     opts = dict(opts or {})
-    op = opts.get("op")
-    if not op:
+    op = str(opts.get("op") or _SHELL["default_op"]).strip()
+    if op in _SPAWN_OPS:
         run = _Run(
             opts.get("command"),
             opts.get("cwd"),
             opts.get("timeout_secs"),
             opts.get("env"),
         )
+        # A named spawn (the engine's `background`) keeps the id it was given, so
+        # the same name reaches the same process on the next call.
+        if opts.get("id"):
+            run.id = str(opts["id"])
         _RUNS[run.id] = run
         # Settle briefly so a command that finishes at once reports its exit, the
-        # way the engine's start does, without turning start into a blocking wait.
+        # way the engine's spawn does, without turning a spawn into a blocking wait.
         for _ in range(20):
             if run.poll() is not None:
                 break
             time.sleep(0.01)
-        return _result(run, "start")
+        return _result(run, op)
+    if op not in _HANDLE_OPS:
+        raise Refused(f"Unknown shell op {op!r} — use {_shell_vocabulary()}.")
     run = _RUNS.get(opts.get("id"))
     if run is None:
         raise Refused("no such shell in this process: {!r}".format(opts.get("id")))
@@ -388,7 +413,9 @@ def shell(opts):
         while time.time() < deadline and run.poll() is None:
             time.sleep(0.05)
         return _result(run, "wait")
-    raise Refused(f"unknown shell op: {op!r}")
+    # Reached only when the contract declares a handle op this host never grew a
+    # branch for: say so, instead of blaming the caller for the engine's vocabulary.
+    raise Refused(f"shell op {op!r} is declared in the contract but unimplemented here")
 
 
 # -- Asking a human, with no dialog surface -----------------------------------

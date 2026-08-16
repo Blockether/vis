@@ -191,15 +191,16 @@ package`; a phase could not be split from the next one without leaving the modul
   the injector alone.
 - Phase 3 — DONE. `packages/vis-agent/src/vis/_outside.py` answers every op by its `:op/outside`
   verdict; 25 pytest cases prove it, the last of them running `resources/examples/python-extensions/todo.py`
-  in a bare interpreter.
-- Phase 4 — REQUIRES WORK. The distribution, its README and its LICENSE exist and
-  `python_package_test` pins its version to `VIS_VERSION`; nothing publishes it yet.
+  in a bare interpreter. The `shell` op vocabulary is contract data too, so both hosts dispatch
+  from one list; 33 pytest cases.
+- Phase 4 — REQUIRES WORK. `scripts/version.mjs` mirrors `VIS_VERSION` into `pyproject.toml` and CI
+  runs the package suite on the interpreter floor the package advertises; nothing uploads yet, and
+  `vis-agent` is still unclaimed on PyPI.
 - Phase 5 — TODO.
 
 Remaining, in order:
 
-1. Phase 4 — mirror `VIS_VERSION` into `packages/vis-agent/pyproject.toml` from the release script
-   instead of by hand, add the build/publish step to `doc("release-vis")`, and settle the PyPI
-   trusted-publisher identity. Publishing itself waits for an explicit request.
+1. Phase 4 — settle the PyPI trusted-publisher identity, add the build/upload step to
+   `doc("release-vis")`, and claim the name. Publishing itself waits for an explicit request.
 2. Phase 5 — extract `com.blockether/vis-contract` and repoint the 9 extension `deps.edn` that name
    the aggregate, so a provider extension stops resolving an ONNX runtime.

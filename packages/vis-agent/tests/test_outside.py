@@ -118,6 +118,38 @@ def test_shell_reads_the_last_lines_from_a_negative_offset():
     assert run.logs(-2)["stdout"].splitlines() == ["two", "three"]
 
 
+@pytest.mark.parametrize("op", CONTRACT["shell"]["spawn_ops"])
+def test_every_spawn_op_the_engine_speaks_starts_a_process(op):
+    # The engine's `shell` takes `{"op": "run"|"background", …}`; an extension that
+    # writes what the engine documents must not be refused out here.
+    started = vis.shell({"op": op, "command": "printf hi"})
+    assert started["stage"] == op
+    run = started.wait(10)
+    assert run["exit"] == 0
+    assert run["stdout"] == "hi"
+
+
+def test_a_named_spawn_answers_the_same_handle_the_next_call_reaches():
+    run = vis.shell({"op": "background", "id": "tail-me", "command": "sleep 30"})
+    assert run["id"] == "tail-me"
+    assert run.stop()["status"] == "stopped"
+
+
+def test_an_op_no_engine_speaks_is_refused_by_the_whole_vocabulary():
+    with pytest.raises(_outside.Refused) as refusal:
+        vis.shell({"op": "detonate", "command": "printf hi"})
+    said = str(refusal.value)
+    assert "detonate" in said
+    for op in CONTRACT["shell"]["spawn_ops"] + CONTRACT["shell"]["handle_ops"]:
+        assert f'"{op}"' in said
+
+
+@pytest.mark.parametrize("op", CONTRACT["shell"]["handle_ops"])
+def test_a_handle_op_names_the_handle_it_cannot_find(op):
+    with pytest.raises(_outside.Refused, match="no such shell"):
+        vis.shell({"op": op, "id": "never-started"})
+
+
 # -- Asking a human ------------------------------------------------------------
 
 
