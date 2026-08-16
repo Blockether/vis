@@ -29,7 +29,7 @@
       :alive?   (fn [] <bool>)
       :destroy  (fn [force?])       SIGTERM (false) / SIGKILL (true) the child}"
   (:require [clojure.string :as str])
-  (:import (java.io PipedInputStream PipedOutputStream)
+  (:import (java.io File PipedInputStream PipedOutputStream)
            (java.lang ProcessHandle)
            (java.lang.foreign AddressLayout
                               Arena
@@ -118,6 +118,12 @@
 (def ^:private h-fa-chdir
   (delay (try (dh "posix_spawn_file_actions_addchdir_np" I [ADDR ADDR]) (catch Throwable _ nil))))
 
+;; addclosefrom_np: close every descriptor >= n in the child, in ONE action and
+;; without enumerating anything (glibc >= 2.34, FreeBSD). Absent on musl and on
+;; older glibc, where `close-inherited!` sweeps the kernel's fd listing instead.
+(def ^:private h-fa-closefrom
+  (delay (try (dh "posix_spawn_file_actions_addclosefrom_np" I [ADDR I]) (catch Throwable _ nil))))
+
 (defn- invoke
   ^Object [h & args]
   (.invokeWithArguments ^java.lang.invoke.MethodHandle h (object-array args)))
@@ -125,6 +131,14 @@
 ;; POSIX_SPAWN_SETSID makes the child a session leader (detached from vis's own
 ;; controlling terminal) — the value differs by platform.
 (def ^:private POSIX_SPAWN_SETSID (short (if mac? 0x0400 0x80)))
+
+;; POSIX_SPAWN_CLOEXEC_DEFAULT (Darwin only, <spawn.h>): the kernel closes EVERY
+;; descriptor in the child except the ones the file actions name. See
+;; `close-inherited!` for why a pty child must inherit nothing above stdio.
+(def ^:private POSIX_SPAWN_CLOEXEC_DEFAULT (short 0x4000))
+
+(def ^:private spawn-flags
+  (short (bit-or (int POSIX_SPAWN_SETSID) (int (if mac? POSIX_SPAWN_CLOEXEC_DEFAULT 0)))))
 
 (def ^:private SIGTERM (int 15))
 
@@ -149,6 +163,47 @@
       (.setAtIndex seg ADDR i (.allocateFrom arena ^String (nth strs i))))
     (.setAtIndex seg ADDR n MemorySegment/NULL)
     seg))
+
+(defn- open-fd-numbers
+  "Every descriptor this process holds RIGHT NOW, from the kernel's own listing.
+   nil when that directory is unreadable — then there is nothing to sweep."
+  []
+  (when-let [names (.list (File. ^String (if mac? "/dev/fd" "/proc/self/fd")))]
+    (keep (fn [^String n]
+            (try (Integer/parseInt n) (catch NumberFormatException _ nil)))
+          names)))
+
+(defn- close-inherited!
+  "Declare that the child inherits NOTHING above stdio, keeping only `keep` for
+   the file actions already queued ahead of this one.
+
+   `posix_spawn` is not `ProcessBuilder`. The JDK's own spawn path runs through
+   `jspawnhelper`, which closes every descriptor above 2 in the child before it
+   execs; `posix_spawn` performs ONLY the file actions it is handed. The JVM does
+   not set FD_CLOEXEC on the sockets it opens, so without this a pty child
+   inherits the entire descriptor table of the process that spawned it — the
+   gateway's LISTENING socket included. A child that outlives the gateway and
+   never exits on its own (`adb`'s daemon, a stray `python -m http.server`) then
+   holds that listen socket open forever, and the next `gateway start` fails to
+   bind a port that nothing is serving.
+
+   macOS does this in the kernel via POSIX_SPAWN_CLOEXEC_DEFAULT (`spawn-flags`),
+   which is atomic: it cannot race a descriptor another thread opens while these
+   actions are being built. Elsewhere prefer glibc's `addclosefrom_np` for the
+   same atomicity, and fall back to sweeping the fd listing. The sweep is the only
+   racy variant — a descriptor opened after the listing still leaks, and the
+   listing's OWN directory fd is already closed by the time the child replays the
+   action — which is why it is the last resort and not the default. A close action
+   on a stale but in-range fd is tolerated rather than fatal."
+  [fa keep]
+  (when-not mac?
+    (if-let [h @h-fa-closefrom]
+      (invoke h fa (int 3))
+      (doseq
+        [fd (open-fd-numbers)
+         :when (and (<= 3 (long fd)) (not (contains? keep (int fd))))]
+
+        (try (invoke @h-fa-close fa (int fd)) (catch Throwable _ nil))))))
 
 (defn- winsize
   ^MemorySegment [^Arena arena rows cols]
@@ -225,8 +280,11 @@
            (invoke @h-fa-dup2 fa slave (int 2))
            (invoke @h-fa-close fa master)
            (invoke @h-fa-close fa slave)
+           ;; AFTER the dup2s (which still need `slave`) and after the two closes
+           ;; above, which is why both are in the keep set.
+           (close-inherited! fa #{master slave})
            (invoke @h-at-init at)
-           (invoke @h-at-flags at POSIX_SPAWN_SETSID)
+           (invoke @h-at-flags at spawn-flags)
            (when dir
              (when-let [h @h-fa-chdir]
                (try (invoke h fa (.allocateFrom arena ^String dir)) (catch Throwable _ nil))))
