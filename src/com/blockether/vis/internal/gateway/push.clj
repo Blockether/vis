@@ -472,10 +472,18 @@
   ;; and silently ignores anything else, so these MUST be literal strings: the
   ;; wire encoder mechanically snake_cases keywords, which would ship
   ;; `thread_id` and cost us notification grouping without any error.
+  ;;
+  ;; `mutable-content` runs the phone's `VisNotify` service extension, which is
+  ;; the only place the icon badge can be counted: `aps.badge` is ABSOLUTE and
+  ;; this device is paired with several gateways, so a number sent from here
+  ;; would overwrite every other machine's. The device counts; we only ask.
   ^String [{:keys [title body data thread-id]}]
   (wire/json-str
     (merge {:aps (cond->
-                   {:alert {:title title :body body} :sound "default" "interruption-level" "active"}
+                   {:alert {:title title :body body}
+                    :sound "default"
+                    "interruption-level" "active"
+                    "mutable-content" 1}
                    thread-id
                    (assoc "thread-id" thread-id))}
            data)))

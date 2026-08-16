@@ -414,11 +414,139 @@ struct VisShortcuts: AppShortcutsProvider {
 }
 `;
 
+// ── 5. the icon badge ────────────────────────────────────────────────────────
+// No gateway can count it: `aps.badge` is ABSOLUTE, and this device is paired
+// with several machines that each know only their own sessions, so the last
+// push to land would overwrite everyone else's number. Two native pieces that
+// can see the whole device own it instead — a notification service extension
+// that runs inside every arriving alert (`mutable-content` in the payload asks
+// for it), and one plugin verb the app calls whenever it knows better.
+const notifyDir = join(root, 'ios', 'App', 'VisNotify');
+const notifyService = join(notifyDir, 'NotificationService.swift');
+const notifyPlist = join(notifyDir, 'Info.plist');
+const badgeSwift = join(appDir, 'VisBadge.swift');
+const capConfig = join(appDir, 'capacitor.config.json');
+
+const notifyServiceSource = `import UserNotifications
+
+/// The badge, decided on the device.
+///
+/// APNs never counts anything, so this extension does: it runs inside every
+/// alert Vis delivers, counts the alerts still waiting in Notification Center
+/// — that is exactly the answers the reader has not dealt with — and adds the
+/// one being delivered now, which is not in there yet.
+///
+/// Nothing else about the alert is touched. The app writes the same number
+/// from the other side while it is running (src/lib/badge.ts), and keeps the
+/// tray honest by dropping the alerts of sessions that have since been read.
+final class NotificationService: UNNotificationServiceExtension {
+  private var handler: ((UNNotificationContent) -> Void)?
+  private var pending: UNMutableNotificationContent?
+
+  override func didReceive(
+    _ request: UNNotificationRequest,
+    withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
+  ) {
+    handler = contentHandler
+    guard let content = request.content.mutableCopy() as? UNMutableNotificationContent else {
+      contentHandler(request.content)
+      return
+    }
+    pending = content
+    UNUserNotificationCenter.current().getDeliveredNotifications { delivered in
+      content.badge = NSNumber(value: delivered.count + 1)
+      contentHandler(content)
+    }
+  }
+
+  /// iOS gives an extension seconds, then delivers whatever it holds. Handing
+  /// back the copy being mutated keeps the alert; only the count is lost.
+  override func serviceExtensionTimeWillExpire() {
+    guard let handler = handler, let pending = pending else { return }
+    handler(pending)
+  }
+}
+`;
+
+const notifyPlistSource = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+\t<key>CFBundleDevelopmentRegion</key>
+\t<string>$(DEVELOPMENT_LANGUAGE)</string>
+\t<key>CFBundleDisplayName</key>
+\t<string>Vis</string>
+\t<key>CFBundleExecutable</key>
+\t<string>$(EXECUTABLE_NAME)</string>
+\t<key>CFBundleIdentifier</key>
+\t<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+\t<key>CFBundleInfoDictionaryVersion</key>
+\t<string>6.0</string>
+\t<key>CFBundleName</key>
+\t<string>$(PRODUCT_NAME)</string>
+\t<key>CFBundlePackageType</key>
+\t<string>XPC!</string>
+\t<key>CFBundleShortVersionString</key>
+\t<string>$(MARKETING_VERSION)</string>
+\t<key>CFBundleVersion</key>
+\t<string>$(CURRENT_PROJECT_VERSION)</string>
+\t<key>NSExtension</key>
+\t<dict>
+\t\t<key>NSExtensionPointIdentifier</key>
+\t\t<string>com.apple.usernotifications.service</string>
+\t\t<key>NSExtensionPrincipalClass</key>
+\t\t<string>$(PRODUCT_MODULE_NAME).NotificationService</string>
+\t</dict>
+</dict>
+</plist>
+`;
+
+// The app's half. `UNUserNotificationCenter.setBadgeCount` is the only way to
+// write the icon badge and no Capacitor plugin this app ships exposes it, so
+// this is the whole native surface: one verb, no state. Registered by name in
+// `capacitor.config.json`'s `packageClassList`, which is how Capacitor finds a
+// plugin that lives in the app target rather than in a package.
+const badgeSource = `import Capacitor
+import UIKit
+import UserNotifications
+
+@objc(VisBadgePlugin)
+public class VisBadgePlugin: CAPPlugin, CAPBridgedPlugin {
+  public let identifier = "VisBadgePlugin"
+  public let jsName = "VisBadge"
+  public let pluginMethods: [CAPPluginMethod] = [
+    CAPPluginMethod(name: "set", returnType: CAPPluginReturnPromise)
+  ]
+
+  @objc public func set(_ call: CAPPluginCall) {
+    let count = max(0, call.getInt("count") ?? 0)
+    if #available(iOS 16.0, *) {
+      UNUserNotificationCenter.current().setBadgeCount(count) { _ in call.resolve() }
+    } else {
+      DispatchQueue.main.async {
+        UIApplication.shared.applicationIconBadgeNumber = count
+        call.resolve()
+      }
+    }
+  }
+}
+`;
+
 const fileOk = (path, contents) => existsSync(path) && readFileSync(path, 'utf8') === contents;
 const shareFilesOk =
   fileOk(shareController, shareControllerSource)
   && fileOk(sharePlist, sharePlistSource)
   && fileOk(shortcutsSwift, shortcutsSource);
+const notifyFilesOk =
+  fileOk(notifyService, notifyServiceSource)
+  && fileOk(notifyPlist, notifyPlistSource)
+  && fileOk(badgeSwift, badgeSource);
+
+// `cap sync` rewrites this file from the INSTALLED packages, so a plugin class
+// that lives in the app target is dropped from it every time. Putting it back
+// is exactly what this hook is for — it runs as `postsync`.
+const capConfigJson = existsSync(capConfig) ? JSON.parse(readFileSync(capConfig, 'utf8')) : null;
+const capConfigOk = !capConfigJson || (capConfigJson.packageClassList ?? []).includes('VisBadgePlugin');
 
 let project = existsSync(pbxprojPath) ? readFileSync(pbxprojPath, 'utf8') : '';
 if (!project) die('no ios/App/App.xcodeproj/project.pbxproj — run `npm run add:ios` first');
@@ -448,27 +576,79 @@ const ids = {
   shortcutsBuild: objectId(18),
 };
 
+const notifyIds = {
+  swiftRef: objectId(19),
+  plistRef: objectId(20),
+  appexRef: objectId(21),
+  group: objectId(22),
+  sources: objectId(23),
+  frameworks: objectId(24),
+  resources: objectId(25),
+  target: objectId(26),
+  configList: objectId(27),
+  debug: objectId(28),
+  release: objectId(29),
+  swiftBuild: objectId(30),
+  embedBuild: objectId(31),
+  dependency: objectId(32),
+  proxy: objectId(33),
+  badgeRef: objectId(34),
+  badgeBuild: objectId(35),
+};
+
 const projectOk = project.includes(ids.target) && project.includes(ids.shortcutsRef);
+const notifyProjectOk = project.includes(notifyIds.target) && project.includes(notifyIds.badgeRef);
+
+const after = (pattern, addition, what) => {
+  const match = pattern.exec(project);
+  if (!match) die(`project.pbxproj: no ${what} to stamp an extension onto`);
+  const at = match.index + match[0].length;
+  project = project.slice(0, at) + addition + project.slice(at);
+};
+const before = (marker, addition) => {
+  const at = project.indexOf(marker);
+  if (at < 0) die(`project.pbxproj has no ${marker}`);
+  project = project.slice(0, at) + addition + project.slice(at);
+};
+
+const projectObject = /([0-9A-Fa-f]{24}) \/\* Project object \*\//.exec(project)?.[1];
+if (!projectObject) die('project.pbxproj has no Project object');
+// An extension ships inside the app, so it carries the app's version pair —
+// scripts/ios-release.mjs rewrites every occurrence of both before an archive.
+const marketing = /MARKETING_VERSION = ([^;]+);/.exec(project)?.[1] ?? '1.0';
+const buildVersion = /CURRENT_PROJECT_VERSION = ([^;]+);/.exec(project)?.[1] ?? '1';
+
+const shareTarget = { name: 'VisShare', bundleSuffix: 'share' };
+const notifyTarget = { name: 'VisNotify', bundleSuffix: 'notify' };
+
+// No CODE_SIGN_ENTITLEMENTS: the host's aps-environment on an app extension is
+// rejected outright, and neither extension needs a capability of its own — the
+// service extension is entitled by the notification it is handed, not by push.
+const extensionSettings = ({ name, bundleSuffix }, configId, configName, extra) => `\t\t${configId} /* ${configName} */ = {
+\t\t\tisa = XCBuildConfiguration;
+\t\t\tbuildSettings = {
+\t\t\t\tCODE_SIGN_STYLE = Automatic;
+\t\t\t\tCURRENT_PROJECT_VERSION = ${buildVersion};
+\t\t\t\tGENERATE_INFOPLIST_FILE = NO;
+\t\t\t\tINFOPLIST_FILE = ${name}/Info.plist;
+\t\t\t\tIPHONEOS_DEPLOYMENT_TARGET = 15.0;
+\t\t\t\tLD_RUNPATH_SEARCH_PATHS = (
+\t\t\t\t\t"$(inherited)",
+\t\t\t\t\t"@executable_path/Frameworks",
+\t\t\t\t\t"@executable_path/../../Frameworks",
+\t\t\t\t);
+\t\t\t\tMARKETING_VERSION = ${marketing};
+\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = ${bundleId}.${bundleSuffix};
+\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";
+\t\t\t\tSKIP_INSTALL = YES;
+${extra}\t\t\t\tSWIFT_VERSION = 5.0;
+\t\t\t\tTARGETED_DEVICE_FAMILY = "1,2";
+\t\t\t};
+\t\t\tname = ${configName};
+\t\t};
+`;
 
 if (!projectOk) {
-  const after = (pattern, addition, what) => {
-    const match = pattern.exec(project);
-    if (!match) die(`project.pbxproj: no ${what} to stamp the share extension onto`);
-    const at = match.index + match[0].length;
-    project = project.slice(0, at) + addition + project.slice(at);
-  };
-  const before = (marker, addition) => {
-    const at = project.indexOf(marker);
-    if (at < 0) die(`project.pbxproj has no ${marker}`);
-    project = project.slice(0, at) + addition + project.slice(at);
-  };
-
-  const projectObject = /([0-9A-Fa-f]{24}) \/\* Project object \*\//.exec(project)?.[1];
-  if (!projectObject) die('project.pbxproj has no Project object');
-  // The extension ships inside the app, so it carries the app's version pair —
-  // scripts/ios-release.mjs rewrites every occurrence of both before an archive.
-  const marketing = /MARKETING_VERSION = ([^;]+);/.exec(project)?.[1] ?? '1.0';
-  const buildVersion = /CURRENT_PROJECT_VERSION = ([^;]+);/.exec(project)?.[1] ?? '1';
 
   // App target first: the additions below carry the same shapes (an empty
   // `dependencies`, a `Resources` phase) and would otherwise be matched instead.
@@ -628,35 +808,10 @@ if (!projectOk) {
 
 `,
   );
-  // No CODE_SIGN_ENTITLEMENTS: the host's aps-environment on an app extension is
-  // rejected outright, and this extension needs no capability of its own.
-  const extensionSettings = (configId, configName, extra) => `\t\t${configId} /* ${configName} */ = {
-\t\t\tisa = XCBuildConfiguration;
-\t\t\tbuildSettings = {
-\t\t\t\tCODE_SIGN_STYLE = Automatic;
-\t\t\t\tCURRENT_PROJECT_VERSION = ${buildVersion};
-\t\t\t\tGENERATE_INFOPLIST_FILE = NO;
-\t\t\t\tINFOPLIST_FILE = VisShare/Info.plist;
-\t\t\t\tIPHONEOS_DEPLOYMENT_TARGET = 15.0;
-\t\t\t\tLD_RUNPATH_SEARCH_PATHS = (
-\t\t\t\t\t"$(inherited)",
-\t\t\t\t\t"@executable_path/Frameworks",
-\t\t\t\t\t"@executable_path/../../Frameworks",
-\t\t\t\t);
-\t\t\t\tMARKETING_VERSION = ${marketing};
-\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = ${bundleId}.share;
-\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";
-\t\t\t\tSKIP_INSTALL = YES;
-${extra}\t\t\t\tSWIFT_VERSION = 5.0;
-\t\t\t\tTARGETED_DEVICE_FAMILY = "1,2";
-\t\t\t};
-\t\t\tname = ${configName};
-\t\t};
-`;
   before(
     '/* End XCBuildConfiguration section */',
-    extensionSettings(ids.debug, 'Debug', '\t\t\t\tSWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;\n')
-      + extensionSettings(ids.release, 'Release', '\t\t\t\tSWIFT_ACTIVE_COMPILATION_CONDITIONS = "";\n'),
+    extensionSettings(shareTarget, ids.debug, 'Debug', '\t\t\t\tSWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;\n')
+      + extensionSettings(shareTarget, ids.release, 'Release', '\t\t\t\tSWIFT_ACTIVE_COMPILATION_CONDITIONS = "";\n'),
   );
   before(
     '/* End XCConfigurationList section */',
@@ -673,11 +828,176 @@ ${extra}\t\t\t\tSWIFT_VERSION = 5.0;
   );
 }
 
+// The same target once more, for notifications — with two differences that
+// matter: the app's dependency list and the Embed Foundation Extensions phase
+// already exist, so this one JOINS them instead of stamping a second copy, and
+// the badge plugin is a plain Swift file compiled into the APP target.
+if (!notifyProjectOk) {
+  after(
+    /\n(\s*)[0-9A-Fa-f]{24} \/\* AppDelegate\.swift in Sources \*\/,/,
+    `\n\t\t\t\t${notifyIds.badgeBuild} /* VisBadge.swift in Sources */,`,
+    'App Sources phase',
+  );
+  after(
+    /\n(\s*)[0-9A-Fa-f]{24} \/\* AppDelegate\.swift \*\/,/,
+    `\n\t\t\t\t${notifyIds.badgeRef} /* VisBadge.swift */,`,
+    'App group',
+  );
+  after(
+    new RegExp(`\\n(\\s*)${ids.dependency} \\/\\* PBXTargetDependency \\*\\/,`),
+    `\n\t\t\t\t${notifyIds.dependency} /* PBXTargetDependency */,`,
+    'App dependencies list',
+  );
+  after(
+    new RegExp(`\\n(\\s*)${ids.embedBuild} \\/\\* VisShare\\.appex in Embed Foundation Extensions \\*\\/,`),
+    `\n\t\t\t\t${notifyIds.embedBuild} /* VisNotify.appex in Embed Foundation Extensions */,`,
+    'Embed Foundation Extensions phase',
+  );
+  after(
+    /\n(\s*)[0-9A-Fa-f]{24} \/\* App\.app \*\/,/,
+    `\n\t\t\t\t${notifyIds.appexRef} /* VisNotify.appex */,`,
+    'Products group',
+  );
+  after(/\n(\s*)targets = \(/, `\n\t\t\t\t${notifyIds.target} /* VisNotify */,`, 'targets list');
+  after(
+    /TargetAttributes = \{/,
+    `\n\t\t\t\t\t${notifyIds.target} = {\n\t\t\t\t\t\tProvisioningStyle = Automatic;\n\t\t\t\t\t};`,
+    'TargetAttributes',
+  );
+  before(
+    '/* End PBXGroup section */',
+    `\t\t${notifyIds.group} /* VisNotify */ = {
+\t\t\tisa = PBXGroup;
+\t\t\tchildren = (
+\t\t\t\t${notifyIds.swiftRef} /* NotificationService.swift */,
+\t\t\t\t${notifyIds.plistRef} /* Info.plist */,
+\t\t\t);
+\t\t\tpath = VisNotify;
+\t\t\tsourceTree = "<group>";
+\t\t};
+`,
+  );
+  after(
+    /\n(\s*)[0-9A-Fa-f]{24} \/\* Products \*\/,/,
+    `\n\t\t\t\t${notifyIds.group} /* VisNotify */,`,
+    'main group',
+  );
+  before(
+    '/* End PBXBuildFile section */',
+    `\t\t${notifyIds.swiftBuild} /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = ${notifyIds.swiftRef} /* NotificationService.swift */; };
+\t\t${notifyIds.embedBuild} /* VisNotify.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = ${notifyIds.appexRef} /* VisNotify.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+\t\t${notifyIds.badgeBuild} /* VisBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = ${notifyIds.badgeRef} /* VisBadge.swift */; };
+`,
+  );
+  before(
+    '/* End PBXFileReference section */',
+    `\t\t${notifyIds.appexRef} /* VisNotify.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = VisNotify.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+\t\t${notifyIds.swiftRef} /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
+\t\t${notifyIds.plistRef} /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+\t\t${notifyIds.badgeRef} /* VisBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisBadge.swift; sourceTree = "<group>"; };
+`,
+  );
+  before(
+    '/* End PBXFrameworksBuildPhase section */',
+    `\t\t${notifyIds.frameworks} /* Frameworks */ = {
+\t\t\tisa = PBXFrameworksBuildPhase;
+\t\t\tbuildActionMask = 2147483647;
+\t\t\tfiles = (
+\t\t\t);
+\t\t\trunOnlyForDeploymentPostprocessing = 0;
+\t\t};
+`,
+  );
+  before(
+    '/* End PBXNativeTarget section */',
+    `\t\t${notifyIds.target} /* VisNotify */ = {
+\t\t\tisa = PBXNativeTarget;
+\t\t\tbuildConfigurationList = ${notifyIds.configList} /* Build configuration list for PBXNativeTarget "VisNotify" */;
+\t\t\tbuildPhases = (
+\t\t\t\t${notifyIds.sources} /* Sources */,
+\t\t\t\t${notifyIds.frameworks} /* Frameworks */,
+\t\t\t\t${notifyIds.resources} /* Resources */,
+\t\t\t);
+\t\t\tbuildRules = (
+\t\t\t);
+\t\t\tdependencies = (
+\t\t\t);
+\t\t\tname = VisNotify;
+\t\t\tproductName = VisNotify;
+\t\t\tproductReference = ${notifyIds.appexRef} /* VisNotify.appex */;
+\t\t\tproductType = "com.apple.product-type.app-extension";
+\t\t};
+`,
+  );
+  before(
+    '/* End PBXResourcesBuildPhase section */',
+    `\t\t${notifyIds.resources} /* Resources */ = {
+\t\t\tisa = PBXResourcesBuildPhase;
+\t\t\tbuildActionMask = 2147483647;
+\t\t\tfiles = (
+\t\t\t);
+\t\t\trunOnlyForDeploymentPostprocessing = 0;
+\t\t};
+`,
+  );
+  before(
+    '/* End PBXSourcesBuildPhase section */',
+    `\t\t${notifyIds.sources} /* Sources */ = {
+\t\t\tisa = PBXSourcesBuildPhase;
+\t\t\tbuildActionMask = 2147483647;
+\t\t\tfiles = (
+\t\t\t\t${notifyIds.swiftBuild} /* NotificationService.swift in Sources */,
+\t\t\t);
+\t\t\trunOnlyForDeploymentPostprocessing = 0;
+\t\t};
+`,
+  );
+  before(
+    '/* End PBXContainerItemProxy section */',
+    `\t\t${notifyIds.proxy} /* PBXContainerItemProxy */ = {
+\t\t\tisa = PBXContainerItemProxy;
+\t\t\tcontainerPortal = ${projectObject} /* Project object */;
+\t\t\tproxyType = 1;
+\t\t\tremoteGlobalIDString = ${notifyIds.target};
+\t\t\tremoteInfo = VisNotify;
+\t\t};
+`,
+  );
+  before(
+    '/* End PBXTargetDependency section */',
+    `\t\t${notifyIds.dependency} /* PBXTargetDependency */ = {
+\t\t\tisa = PBXTargetDependency;
+\t\t\ttarget = ${notifyIds.target} /* VisNotify */;
+\t\t\ttargetProxy = ${notifyIds.proxy} /* PBXContainerItemProxy */;
+\t\t};
+`,
+  );
+  before(
+    '/* End XCBuildConfiguration section */',
+    extensionSettings(notifyTarget, notifyIds.debug, 'Debug', '\t\t\t\tSWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;\n')
+      + extensionSettings(notifyTarget, notifyIds.release, 'Release', '\t\t\t\tSWIFT_ACTIVE_COMPILATION_CONDITIONS = "";\n'),
+  );
+  before(
+    '/* End XCConfigurationList section */',
+    `\t\t${notifyIds.configList} /* Build configuration list for PBXNativeTarget "VisNotify" */ = {
+\t\t\tisa = XCConfigurationList;
+\t\t\tbuildConfigurations = (
+\t\t\t\t${notifyIds.debug} /* Debug */,
+\t\t\t\t${notifyIds.release} /* Release */,
+\t\t\t);
+\t\t\tdefaultConfigurationIsVisible = 0;
+\t\t\tdefaultConfigurationName = Release;
+\t\t};
+`,
+  );
+}
+
 const shareOk = shareFilesOk && projectOk;
+const badgeOk = notifyFilesOk && notifyProjectOk && capConfigOk;
 
 if (check) {
-  if (delegateOk && boardOk && plistOk && appIconOk && shareOk) {
-    console.log('· ios: prepared stock Capacitor host with required app capabilities, branded icon, share extension and Shortcuts');
+  if (delegateOk && boardOk && plistOk && appIconOk && shareOk && badgeOk) {
+    console.log('· ios: prepared stock Capacitor host with required app capabilities, branded icon, share extension, Shortcuts and the badge extension');
     process.exit(0);
   }
   const missing = missingPlistEntries.map(([key]) => key).join(', ');
@@ -690,7 +1010,9 @@ if (check) {
           ? 'ios: stale viewport bridge — run `node scripts/ios-prepare.mjs`'
           : !shareOk
             ? 'ios: no share extension / Shortcuts target — run `node scripts/ios-prepare.mjs`'
-            : `ios: Info.plist is missing ${missing} — run \`node scripts/ios-prepare.mjs\``,
+            : !badgeOk
+              ? 'ios: no VisNotify badge extension / VisBadge plugin — run `node scripts/ios-prepare.mjs`'
+              : `ios: Info.plist is missing ${missing} — run \`node scripts/ios-prepare.mjs\``,
   );
 }
 
@@ -706,6 +1028,16 @@ if (!shareFilesOk) {
   writeFileSync(sharePlist, sharePlistSource);
   writeFileSync(shortcutsSwift, shortcutsSource);
 }
+if (!notifyFilesOk) {
+  mkdirSync(notifyDir, { recursive: true });
+  writeFileSync(notifyService, notifyServiceSource);
+  writeFileSync(notifyPlist, notifyPlistSource);
+  writeFileSync(badgeSwift, badgeSource);
+}
+if (!capConfigOk && capConfigJson) {
+  capConfigJson.packageClassList = [...(capConfigJson.packageClassList ?? []), 'VisBadgePlugin'];
+  writeFileSync(capConfig, `${JSON.stringify(capConfigJson, null, '\t')}\n`);
+}
 if (project !== projectBefore) writeFileSync(pbxprojPath, project);
 
 console.log(
@@ -714,5 +1046,5 @@ console.log(
   }; ${plistOk ? 'app capabilities already present' : `stamped ${missingPlistEntries.map(([key]) => key).join(', ')}`
   }; ${appIconOk ? 'branded icon already present' : 'stamped branded app icon'}; ${
     shareOk ? 'share extension + Shortcuts already present' : 'stamped VisShare extension + App Intents'
-  }`,
+  }; ${badgeOk ? 'badge extension already present' : 'stamped VisNotify extension + VisBadge plugin'}`,
 );

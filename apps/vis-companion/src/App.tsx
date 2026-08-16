@@ -63,7 +63,6 @@ import { App as CapacitorApp } from "@capacitor/app";
 import {
   acquirePushToken,
   cachedPushToken,
-  clearDeliveredPushes,
   deviceRegistration,
   isPushSupported,
   onPushTap,
@@ -801,7 +800,6 @@ export function App() {
   // the session it was about never appeared. See `lib/push-intent.ts`.
   const [pushIntent, setPushIntent] = useState<PushIntent | null>(null);
   useEffect(() => {
-    void clearDeliveredPushes();
     // Mount-once on purpose: re-subscribing whenever the active gateway changes
     // leaves a window with no listener attached, which is where the retained
     // launch tap arrives.

@@ -187,13 +187,31 @@ export function onPushTap(handler: (tap: PushTap) => void): () => void {
   };
 }
 
-/** Clear the OS badge/tray when the app comes back to the foreground. */
-export async function clearDeliveredPushes(): Promise<void> {
-  if (!isPushSupported()) return;
+/**
+ * Drop the delivered alerts the reader has dealt with, and answer how many are
+ * still waiting.
+ *
+ * Notification Center is what the badge counts — `VisNotify`, the service
+ * extension, sets the number to the alerts sitting in the tray plus the one
+ * arriving, and `lib/badge.ts` writes the same tally from the other side. So
+ * the tray must hold exactly the answers still owed to the reader.
+ *
+ * This used to clear it wholesale on every foreground, which threw away the
+ * alerts for every session you had NOT opened and left the badge counting from
+ * zero again.
+ */
+export async function dropDeliveredPushes(
+  isDone: (sessionId: string | undefined) => boolean,
+): Promise<number> {
+  if (!isPushSupported()) return 0;
   try {
-    await PushNotifications.removeAllDeliveredNotifications();
+    const { notifications } = await PushNotifications.getDeliveredNotifications();
+    const done = notifications.filter((notification) => isDone(str(notification.data?.session_id)));
+    if (done.length > 0) await PushNotifications.removeDeliveredNotifications({ notifications: done });
+    return notifications.length - done.length;
   } catch {
-    // Purely cosmetic — never let tray cleanup break a foreground resume.
+    // Purely cosmetic — never let tray housekeeping break a foreground resume.
+    return 0;
   }
 }
 

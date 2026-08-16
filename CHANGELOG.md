@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - LJ (en-US), a fourth voice Vis fetches by itself, trained from scratch on public-domain recordings
 - A session that stopped to ask you something says so where you are looking: the fleet list flags it `INPUT NEEDED` and floats it to the top, the terminal tints that tab and its row amber, and the phone gets the notification
 - Hold a spoken conversation in the terminal, as on the phone: `C-x b` arms it for the tab you are on, every answer that lands there is read aloud, and what you dictate sends itself — reaching for the microphone silences whatever is being spoken
+- The app icon says how many notifications are waiting: an extension counts them on the phone as each alert arrives, so the number is right whichever of your machines sent it, and reading a session takes its alerts back off the icon
 
 ### Changed
 - Commits are `type(scope): summary` with a body of at most six WHY lines and a mandatory `Vis-Session: <uuid>` trailer

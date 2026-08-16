@@ -43,6 +43,7 @@ import type { GatewayConn, Session, SessionUsage, WorkspaceDraft } from '../lib/
 import { homeifyPath } from '../lib/path';
 import { onWake } from '../lib/wake';
 import { seedReadMarks, unreadTurnCount, useReadMarks } from '../lib/unread';
+import { reassertBadge, syncBadge } from '../lib/badge';
 import { assignMachineColors, machineColor } from '../lib/machine-colors';
 import { menuPosition } from '../lib/anchored-menu';
 import {
@@ -426,6 +427,17 @@ export function SessionsScreen({
   useEffect(() => {
     for (const machine of machines) if (machine.sessions) seedReadMarks(machine.sessions);
   }, [machines]);
+
+  // The app icon's badge is the SAME tally as the dots on these rows: one per
+  // answer this device has not read. It is written from here because this is
+  // the only place that sees every machine at once — and said again on wake,
+  // because `VisNotify` moved the number while the app was away and told
+  // nobody. `syncBadge` also drops the delivered alerts of sessions that have
+  // since been read, which is what keeps the extension's count honest.
+  useEffect(() => {
+    void syncBadge(machines);
+  }, [machines, readMarks]);
+  useEffect(() => onWake(() => void reassertBadge()), []);
 
   // EVERY change to a machine's rows is anchored first.
   //

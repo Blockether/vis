@@ -142,8 +142,12 @@
 (defonce ^:private http-client (delay (http/client {:connect-timeout 10000})))
 
 (defn- payload
+  ;; `is_mutable` asks the relay for APNs' `mutable-content`, which runs the
+  ;; phone's `VisNotify` service extension — the only place that can count the
+  ;; icon badge, because `aps.badge` is absolute and no single gateway sees all
+  ;; of this device's machines.
   ^String [{:keys [title body data thread-id collapse-id badge]}]
-  (wire/json-str (cond-> {:title title :body body :data (or data {})}
+  (wire/json-str (cond-> {:title title :body body :data (or data {}) :is-mutable true}
                    thread-id
                    (assoc :thread-id thread-id)
 

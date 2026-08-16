@@ -65,6 +65,7 @@ const appDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const appBundleId = JSON.parse(readFileSync(join(appDir, 'capacitor.config.json'), 'utf8')).appId;
 const shareBundleId = `${appBundleId}.share`;
+const notifyBundleId = `${appBundleId}.notify`;
 
 const iosDir = join(appDir, 'ios');
 const projectDir = join(iosDir, 'App');
@@ -339,7 +340,7 @@ if (identity) {
       keyId,
       issuerId,
       privateKey: readFileSync(keyPath, 'utf8'),
-      bundleIds: [appBundleId, shareBundleId],
+      bundleIds: [appBundleId, shareBundleId, notifyBundleId],
       log: (message) => console.log(message),
     });
     for (const [id, profile] of Object.entries(profiles)) {
@@ -363,7 +364,7 @@ if (identity) {
 // a stale one signs a new archive with yesterday's decision. It is written HERE,
 // after the profiles above are resolved, so export reuses exactly what the archive
 // was signed with.
-const signing = signingPlan({ bundleIds: [appBundleId, shareBundleId], profileNames });
+const signing = signingPlan({ bundleIds: [appBundleId, shareBundleId, notifyBundleId], profileNames });
 if (signing.unnamed.length > 0) {
   console.log(`· no profile for ${signing.unnamed.join(', ')} — exporting with automatic signing`);
 }

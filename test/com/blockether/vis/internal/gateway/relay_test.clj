@@ -138,6 +138,9 @@
                                (is (= "Done." (get body "body")))
                                (is (= "s-1" (get body "collapse_id")))
                                (is (= {"session_id" "s-1"} (get body "data")))
+                               ;; The relay turns this into APNs' `mutable-content`,
+                               ;; which is what runs VisNotify and moves the badge.
+                               (is (true? (get body "is_mutable")))
                                (is (not (str/includes? (wire/json-str body) "token"))))))
                          (finally ((:stop! relay-server)))))))
 

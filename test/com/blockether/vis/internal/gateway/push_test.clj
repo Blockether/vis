@@ -368,6 +368,11 @@
       (is (nil? (get aps "interruption_level")))
       (is (= {"title" "Fix the gateway" "body" "Turn finished."} (get aps "alert")))
       (is (= "default" (get aps "sound")))
+      ;; Without `mutable-content` iOS never runs the VisNotify service
+      ;; extension, so the icon badge stays at whatever the last push left it —
+      ;; this one key is the whole feature.
+      (is (= 1 (get aps "mutable-content")))
+      (is (nil? (get aps "mutable_content")))
       ;; the custom payload beside `aps` stays snake_case: that half IS our wire
       (is (= "sess-1" (get parsed "session_id")))
       (is (= "turn.end" (get parsed "type"))))))
