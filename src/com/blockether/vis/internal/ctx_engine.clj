@@ -428,12 +428,13 @@
      `\"t1/i3-t4\"`   a window across turns (a bare `tN` bound covers all of turn N)
      `\"-t2/i56\"`    open start: every settled step at or before the cursor
      `\"t2/i5-\"`     open end: every settled step at or after it
-   Several keys union (`\"t1, t2/i1-i3\"`); at most ONE range per call, because one
-   intent carries one window. The parsed intent is what `expand-through` resolves;
+   Several keys union (`\"t1, t2/i1-i3\"`), RANGES INCLUDED: one window sits FLAT
+   on the intent, every window after it under `\"ranges\"` (`intent-ranges` reads
+   both). The parsed intent is what `expand-through` resolves;
    its string keys are a RECORDED shape (they persist in the ctx nippy blob),
    never something a caller passes in.
    Returns `{:intent … :label …}`, `{:error <model-facing refusal>}` for an
-   unparseable token, a second range or an argument that is not a key string, or
+   unparseable token or an argument that is not a key string, or
    nil when the key named nothing at all. Pure."
   [k]
   (if (map? k)
@@ -468,16 +469,34 @@
             (seq errors) {:error (str "fold_session: not a step key: "
                                       (str/join ", " (map pr-str errors))
                                       " — " fold-key-grammar)}
-            (< 1 (count ranges)) {:error (str "fold_session: one range per fold — "
-                                              (str/join " and " (map fold-range-label ranges))
-                                              " need separate calls")}
             :else {:intent (cond-> {}
                              (seq scopes)
                              (assoc "scopes" (into #{} scopes))
 
-                             (seq ranges)
-                             (merge (first ranges)))
+                             ;; ONE window rides FLAT on the intent — the shape
+                             ;; every persisted fold and hand-written selector
+                             ;; already uses; SEVERAL are listed instead, so a
+                             ;; single fold can carry disjoint spans.
+                             (= 1 (count ranges))
+                             (merge (first ranges))
+
+                             (< 1 (count ranges))
+                             (assoc "ranges" (vec ranges)))
                    :label (str/join ", " (concat scopes (map fold-range-label ranges)))}))))
+
+(defn intent-ranges
+  "Every RANGE selector one fold intent/summary carries, as a vector of range
+   maps (`\"through\"` / `\"since\"` / `\"from\"`+`\"to\"`). A key may name
+   SEVERAL windows (`\"t1/i61-i98, t3/i111-i135\"`): ONE window sits FLAT on the
+   intent itself, several travel under `\"ranges\"`, and both spellings read the
+   same here — this is the ONLY place that knows how ranges are carried, so
+   `expand-through` (resolution), the fold verb (freezing an unbounded window)
+   and `apply-summaries` (stale-cursor check) all ask it instead of reaching for
+   the raw keys. Pure."
+  [s]
+  (when (map? s)
+    (let [flat (select-keys s ["through" "from" "to" "since"])]
+      (into (if (seq flat) [flat] []) (filter map?) (get s "ranges")))))
 
 
 (defn expand-through
@@ -491,6 +510,8 @@
      `\"through\"` `tN/iN` cursor → every universe scope AT OR BEFORE it (start→cursor).
      `\"from\"`/`\"to\"` inclusive window — either bound optional (open start / end).
      `\"since\"`  `tN/iN` cursor → every universe scope AT OR AFTER it (cursor→newest).
+     `\"ranges\"` the windows AFTER the first (`intent-ranges`) — each resolved on
+                its own and UNIONED, so one fold may carry disjoint spans.
      A range cursor may also be a bare `tN` — a WHOLE-TURN boundary: `through`/`to tN`
      cover all of turn N (its last iteration), `from`/`since tN` its first.
    The range keys are dropped after resolution and the union lands in `\"scopes\"`.
@@ -536,7 +557,7 @@
            ukeys)
 
      selector?
-     #{"scopes" "through" "from" "to" "since"}]
+     #{"scopes" "through" "from" "to" "since" "ranges"}]
 
     (mapv
       (fn [s]
@@ -554,21 +575,41 @@
                    (when-let [tn (turn-key raw)]
                      [tn (if upper? Long/MAX_VALUE Long/MIN_VALUE)])))
 
-             thr
-             (when-let [r (get s "through")]
-               (cursor-key r true))
+             ;; ONE window → the universe scopes inside it. Each window resolves
+             ;; independently, so several disjoint spans in one intent can never
+             ;; blur into the gap between them.
+             window
+             (fn [r]
+               (let
+                 [thr
+                  (when-let [c (get r "through")]
+                    (cursor-key c true))
 
-             frm
-             (when-let [r (get s "from")]
-               (cursor-key r false))
+                  frm
+                  (when-let [c (get r "from")]
+                    (cursor-key c false))
 
-             to
-             (when-let [r (get s "to")]
-               (cursor-key r true))
+                  to
+                  (when-let [c (get r "to")]
+                    (cursor-key c true))
 
-             snc
-             (when-let [r (get s "since")]
-               (cursor-key r false))
+                  snc
+                  (when-let [c (get r "since")]
+                    (cursor-key c false))]
+
+                 (cond-> #{}
+                   thr
+                   (into (pick (fn [k]
+                                 (<= (compare k thr) 0))))
+
+                   (or frm to)
+                   (into (pick (fn [k]
+                                 (and (or (nil? frm) (>= (compare k frm) 0))
+                                      (or (nil? to) (<= (compare k to) 0))))))
+
+                   snc
+                   (into (pick (fn [k]
+                                 (>= (compare k snc) 0)))))))
 
              expl
              (into #{}
@@ -580,21 +621,9 @@
 
              ;; Scopes selected by RANGE selectors only — bulk intent, kept
              ;; separate so whole-turn coverage is derived from the RANGE, never
-             ;; from an enumerated iteration list.
+             ;; from an enumerated iteration list. Every window UNIONS.
              range-sel
-             (cond-> #{}
-               thr
-               (into (pick (fn [k]
-                             (<= (compare k thr) 0))))
-
-               (or frm to)
-               (into (pick (fn [k]
-                             (and (or (nil? frm) (>= (compare k frm) 0))
-                                  (or (nil? to) (<= (compare k to) 0))))))
-
-               snc
-               (into (pick (fn [k]
-                             (>= (compare k snc) 0)))))
+             (into #{} (mapcat window) (intent-ranges s))
 
              whole-turns
              (into (into #{} (keep turn-key) (get s "scopes"))
@@ -606,7 +635,7 @@
 
             (cond->
               (-> s
-                  (dissoc "through" "from" "to" "since")
+                  (dissoc "through" "from" "to" "since" "ranges")
                   (assoc "scopes" (into expl range-sel)))
               (seq whole-turns)
               (update "turns" (fnil into #{}) whole-turns)))))

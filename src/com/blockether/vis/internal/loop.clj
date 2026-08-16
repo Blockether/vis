@@ -2535,8 +2535,9 @@
     The verb takes exactly TWO arguments: a KEY and an optional GIST. The key is
     a STRING in the `ctx-engine/fold-key` grammar — \"t2/i5\" one step, \"t2\" a
     whole turn, \"t2/i1-i56\" a range, \"-t2/i56\"/\"t2/i5-\" an open one, commas
-    to union several (a list of key strings works too). Anything that is not a
-    step key, or that resolves to no settled step, is refused BY NAME with the
+    to union several — disjoint RANGES included (a list of key strings works
+    too). Anything that is not a step key, or that resolves to no settled step,
+    is refused BY NAME with the
     grammar. The gist is OPTIONAL: pass it to KEEP a one-line takeaway, OMIT it
     to simply DISCARD the step (this replaces the old `session_drop`; a
     gist-less fold collapses the step with no summary line). What it RECORDS is
@@ -2568,8 +2569,10 @@
        ;; bound blocks any new scope).
        (let
          [unbounded?
-          (or (contains? intent "since")
-              (and (contains? intent "from") (not (contains? intent "to"))))
+          (boolean (some (fn [r]
+                           (or (contains? r "since")
+                               (and (contains? r "from") (not (contains? r "to")))))
+                         (ctx-engine/intent-ranges intent)))
 
           universe
           (some-> ctx-atom
@@ -2983,8 +2986,9 @@
   "Wire-only rewrite of `trailer-iters` applying the model's `fold_session`/
    `session_drop` intents at ITERATION granularity. Each summary is
    `{\"scopes\" #{\"tN/iN\" …} \"gist\" <string|nil>}` (drop = nil gist), or a range
-   `{\"through\" \"tN/iN\" …}` which `expand-through` resolves to the trailer's own
-   iteration scopes ≤ the cursor. Every iteration whose `tN/iN` scope is
+   `{\"through\" \"tN/iN\" …}` (several windows ride in `\"ranges\"`) which
+   `expand-through` resolves to the trailer's own iteration scopes ≤ the cursor.
+   Every iteration whose `tN/iN` scope is
    summarized COLLAPSES: its output is removed and it's tagged `:collapsed? true`
    so `conversation-suffix` drops its assistant + tool_result pair entirely; at
    the EARLIEST iteration of each group one gist form is injected, rendered as
@@ -3023,10 +3027,13 @@
        cursor-turn-of
        (fn [s]
          (let
-           [turns (keep (fn [k]
-                          (when-let [c (get s k)]
-                            (or (first (ctx-engine/scope-key c)) (ctx-engine/turn-key c))))
-                        ["through" "to" "from" "since"])]
+           [turns (into []
+                        (comp (mapcat (fn [r]
+                                        (vals (select-keys r ["through" "to" "from" "since"]))))
+                              (keep (fn [c]
+                                      (or (first (ctx-engine/scope-key c))
+                                          (ctx-engine/turn-key c)))))
+                        (ctx-engine/intent-ranges s))]
            (when-let [turns (seq turns)]
              (apply max turns))))
 

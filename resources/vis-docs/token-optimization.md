@@ -154,7 +154,7 @@ The only step the runtime refuses to fold is the **live iteration you are emitti
 
 A useful gist records the durable finding, rationale or consequence, and a workspace-relative `path:line`, symbol, or test. Omit the gist when the folded steps contain no reusable information. Re-read any preserved line number before editing, because a write moves the lines under it.
 
-The key is a **string**: `"t2/i5"` one step, `"t2"` a whole turn, `"t2/i1-i56"` (or `"t2/i1..i56"`) a range, `"-t2/i56"` everything through it, `"t2/i5-"` everything since it — comma-separate several, and a list of key strings works too. A token that is not a step key, a second range, or a key matching no settled step is refused by name rather than folding nothing. A broader newer fold supersedes every fully covered narrower breadcrumb; equal scopes keep the newer gist. Partial overlaps remain separate.
+The key is a **string**: `"t2/i5"` one step, `"t2"` a whole turn, `"t2/i1-i56"` (or `"t2/i1..i56"`) a range, `"-t2/i56"` everything through it, `"t2/i5-"` everything since it — comma-separate several, disjoint ranges included (`"t1/i61-i98, t3/i111-i135, t4"` is ONE fold), and a list of key strings works too. A token that is not a step key, or a key matching no settled step, is refused by name rather than folding nothing. A broader newer fold supersedes every fully covered narrower breadcrumb; equal scopes keep the newer gist. Partial overlaps remain separate.
 
 ### Folding changes rendering, not storage
 

@@ -298,20 +298,32 @@
         (expect (= :vis/fold-session-key (:type (ex-data ex))))
         (expect (str/includes? (ex-message ex) "not a step key: \"ancient-history\""))
         (expect (nil? (get @ca "session_summaries")))))
-  (it "TWO ranges in one call are refused — one intent carries one window"
+  ;; Regression, user report: `fold_session("t1/i61-i98,t3/i111-i135,t4", …)` was refused
+  ;; with "one range per fold", so disjoint settled spans cost one call — and one repeated
+  ;; gist — per span.
+  (it "SEVERAL ranges in ONE call fold every window and record a single summary"
       (let
-        [ca
-         (atom {"session_turn" 99})
+        [[ca ev]
+         (with-verbs)
 
-         sf
-         (get (compaction-verbs ca) 'fold-session)
+         _
+         (swap! ca assoc
+           "engine_iter_universe"
+           ["t1/i1" "t1/i2" "t1/i3" "t2/i1" "t3/i1" "t3/i2" "t4/i1"])
 
-         ex
-         (try (sf "t1/i1-i3, t2/i1-i3" "two") nil (catch clojure.lang.ExceptionInfo e e))]
+         out
+         (ev "fold_session(\"t1/i1-i2, t3/i1-i2, t4\", \"two spans and a whole turn\")")
 
-        (expect (= :vis/fold-session-key (:type (ex-data ex))))
-        (expect (str/includes? (ex-message ex) "one range per fold"))
-        (expect (nil? (get @ca "session_summaries")))))
+         summaries
+         (get @ca "session_summaries")]
+
+        (expect (= 1 (count summaries)))
+        (expect (= [{"from" "t1/i1" "to" "t1/i2"} {"from" "t3/i1" "to" "t3/i2"}]
+                   (get (first summaries) "ranges")))
+        (expect (= #{"t1/i1" "t1/i2" "t3/i1" "t3/i2" "t4/i1"}
+                   (get (first (expand-through summaries (get @ca "engine_iter_universe")))
+                        "scopes")))
+        (expect (str/includes? out "folded"))))
   ;; Regression, same report: the fold that "saved 0 tokens" resolved to NOTHING
   ;; and was recorded anyway, so the ack claimed a fold the wire never made.
   (it "a key that matches NO settled step is refused instead of recording a silent no-op"
@@ -458,15 +470,24 @@
       (expect (nil? (eng/fold-key nil)))
       (expect (nil? (eng/fold-key "")))
       (expect (nil? (eng/fold-key []))))
-  (it "a token that is not a step key, a second range and a non-string key are refusals"
+  (it "a token that is not a step key and a non-string key are refusals"
       (expect (str/includes? (:error (eng/fold-key "t2/i1-i56x")) "not a step key"))
       (expect (str/includes? (:error (eng/fold-key "nonsense")) "not a step key"))
       (expect (str/includes? (:error (eng/fold-key "-")) "not a step key"))
-      (expect (str/includes? (:error (eng/fold-key "t1/i1-i2, t2/i1-i2")) "one range per fold"))
       ;; Regression, user report: the verb is `fold_session(key, gist)` and nothing else, so a
       ;; leftover selector structure is REFUSED with the grammar instead of folding nothing.
       (expect (str/includes? (:error (eng/fold-key {"through" "t1/i5"}))
                              "fold_session takes a key and a gist")))
+  ;; Regression, user report: the same key was refused with "one range per fold" — one
+  ;; intent used to carry one window, so a sweep spread across turns could not be one fold.
+  (it "SEVERAL ranges union into ONE intent: a lone window flat, the rest under `ranges`"
+      (expect (= {"scopes" #{"t4"}
+                  "ranges" [{"from" "t1/i61" "to" "t1/i98"} {"from" "t3/i111" "to" "t3/i135"}]}
+                 (:intent (eng/fold-key "t1/i61-i98,t3/i111-i135,t4"))))
+      (expect (= "t4, t1/i61-t1/i98, t3/i111-t3/i135"
+                 (:label (eng/fold-key "t1/i61-i98,t3/i111-i135,t4"))))
+      (expect (= {"ranges" [{"through" "t1/i5"} {"since" "t3/i2"}]}
+                 (:intent (eng/fold-key "-t1/i5, t3/i2-")))))
   (it "every refusal carries the whole grammar, so the caller reads it at once"
       (expect (str/includes? (:error (eng/fold-key "nonsense")) eng/fold-key-grammar))))
 
@@ -516,6 +537,15 @@
                  (expect (= #{"t1/i3"} (resolve1 {"from" "t1/i3" "to" "t1/i3"}))))
              (it "a selector naming a turn absent from the universe folds nothing"
                  (expect (= #{} (resolve1 {"scopes" #{"t7"}}))))
+             ;; Regression, user report: several windows in one key were refused, so
+             ;; disjoint spans could not share one fold.
+             (it "several windows resolve independently and UNION"
+                 (expect (= #{"t1/i1" "t2/i2"}
+                            (resolve1 {"ranges" [{"from" "t1/i1" "to" "t1/i1"}
+                                                 {"since" "t2/i2"}]})))
+                 (expect (= #{"t1/i1" "t1/i2" "t2/i2"}
+                            (resolve1 {"scopes" #{"t1/i1"}
+                                       "ranges" [{"through" "t1/i2"} {"since" "t2/i2"}]}))))
              (it "an intent with NO selector key passes through untouched"
                  (expect (= [{"drop" true}] (expand-through [{"drop" true}] universe)))))
 
@@ -535,6 +565,11 @@
         (expect (= #{1} (get out "turns")))))
   (it "a range selector past the newest records every universe turn"
       (let [out (first (expand-through [{"through" "t9/i9"}] universe))]
+        (expect (= #{1 2} (get out "turns")))))
+  (it "several windows record every turn any ONE of them fully covers"
+      (let
+        [out (first (expand-through [{"ranges" [{"from" "t1/i1" "to" "t1/i3"} {"since" "t2/i1"}]}]
+                                    universe))]
         (expect (= #{1 2} (get out "turns")))))
   (it "an ENUMERATED list covering every iteration records NO whole-turn intent"
       (let [out (first (expand-through [{"scopes" #{"t1/i1" "t1/i2" "t1/i3"}}] universe))]
