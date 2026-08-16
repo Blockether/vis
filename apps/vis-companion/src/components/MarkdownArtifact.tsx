@@ -16,6 +16,14 @@ import {
   renderAnnotated,
   type MarkdownComment,
 } from "../lib/markdown-annotations";
+import {
+  annotationDraftKey,
+  clearAnnotationDraft,
+  peekAnnotationDraft,
+  readAnnotationDraft,
+  sameComments,
+  writeAnnotationDraft,
+} from "../lib/annotation-drafts";
 import { Markdown } from "./ChatContent";
 import { readArtifactText } from "./TextArtifact";
 import { TrashIcon } from "./icons";
@@ -80,6 +88,17 @@ export function annotationWash(index: number): string {
  * version this document just became, or why it did not), and `body` is the
  * column that scrolls under it.
  */
+/**
+ * What the band REPORTS while remarks are waiting to be saved.
+ *
+ * A comment is added by one press and saved by another, so between them the
+ * document on screen is not the document on the gateway. The band says so under
+ * the name, in place of the file's kind and weight, until the save lands — and it
+ * says it again on the next open, because the remarks come back with it
+ * (`lib/annotation-drafts`).
+ */
+export const UNSAVED_NOTE = "Unsaved draft";
+
 export type DocumentChrome = (parts: {
   actions: ReactNode;
   note: string;
@@ -170,6 +189,7 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
       onSave={save}
       plain={plain}
       chrome={chrome}
+      draftKey={annotationDraftKey(client.base, sid, iterationId, name)}
     />
   );
 });
@@ -203,6 +223,7 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   onSave,
   plain,
   chrome,
+  draftKey,
 }: {
   text: string;
   /** Persists the document and answers with the version it became. */
@@ -211,19 +232,69 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   plain?: boolean;
   /** The band and the frame this document is read inside. */
   chrome: DocumentChrome;
+  /**
+   * WHICH document this is, for the device's own draft store
+   * (`lib/annotation-drafts`). Without it the annotator keeps its remarks in
+   * memory alone, and leaving the screen throws them away.
+   */
+  draftKey?: string;
 }) {
   const parsed = parseAnnotated(text);
   const proseRef = useRef<HTMLDivElement | null>(null);
   const [body] = useState(parsed.body);
-  const [comments, setComments] = useState<MarkdownComment[]>(parsed.comments);
+  // A DOCUMENT REOPENS ON THE WORK THAT WAS LEFT IN IT.
+  //
+  // Reported: add a comment, leave the artifact by accident, come back — and the
+  // remark was simply gone, because "Add comment" and "Save" are two presses and
+  // everything between them lived in this component's state. What the device kept
+  // is read ONCE, on the first render, and counts as a draft only while it still
+  // differs from what the file itself carries.
+  const [opened] = useState(() => {
+    const kept = draftKey ? peekAnnotationDraft(draftKey) : null;
+    const isDraft = kept !== null && !sameComments(kept, parsed.comments);
+    return { comments: isDraft ? kept : parsed.comments, isDraft };
+  });
+  const [comments, setComments] = useState<MarkdownComment[]>(opened.comments);
   const [quote, setQuote] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
-  const [dirty, setDirty] = useState(false);
+  /** The remark this composer is REWRITING, or `null` while it writes a new one. */
+  const [editing, setEditing] = useState<number | null>(null);
+  const [dirty, setDirty] = useState(opened.isDraft);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
   // The column carries `--safe-bottom` itself rather than inheriting it from the
   // document root; see `useSafeBottomStyle`.
   const safeBottomStyle = useSafeBottomStyle();
+
+  // The DURABLE half of that store answers later than the first frame — it is a
+  // native bridge call — and only matters when the synchronous mirror was empty,
+  // which is a webview data reset. It may land only on a screen nobody has
+  // touched yet: the cleanup drops an answer that arrives after the reader
+  // started working, and a leftover equal to the file is deleted rather than
+  // shown, because a draft that says what the document already says is not work.
+  const isUntouched = !dirty && comments === opened.comments;
+  useEffect(() => {
+    if (!draftKey || opened.isDraft || !isUntouched) return;
+    let alive = true;
+    void readAnnotationDraft(draftKey).then((kept) => {
+      if (!alive || kept === null) return;
+      if (sameComments(kept, opened.comments)) {
+        clearAnnotationDraft(draftKey);
+        return;
+      }
+      setComments(kept);
+      setDirty(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [draftKey, opened, isUntouched]);
+
+  // Unsaved work is written on the press that made it, never on a timer: the next
+  // thing that happens to a backgrounded phone app may be that it is killed.
+  useEffect(() => {
+    if (draftKey && dirty) writeAnnotationDraft(draftKey, comments);
+  }, [draftKey, dirty, comments]);
 
   // ON A PHONE A PASSAGE IS TAPPED, NOT DRAGGED — AND A SCROLL IS NOT A TAP.
   //
@@ -276,16 +347,52 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
     setStatus("");
   }, []);
 
-  const addComment = useCallback(() => {
+  const commit = useCallback(() => {
     if (quote === null || draft.trim().length === 0) return;
-    setComments((old) => [...old, { quote, body: draft.trim() }]);
+    const remark = { quote, body: draft.trim() };
+    setComments((old) =>
+      editing === null
+        ? [...old, remark]
+        : old.map((entry, at) => (at === editing ? remark : entry)),
+    );
     setQuote(null);
     setDraft("");
+    setEditing(null);
     setDirty(true);
-  }, [quote, draft]);
+  }, [quote, draft, editing]);
 
+  // A REMARK IS NOT WRITTEN ONCE AND FROZEN.
+  //
+  // Reported: the only thing a finished comment offered was the bin, so fixing a
+  // word meant deleting the remark and writing it again from the passage it was
+  // about. The card is therefore the way back INTO it — pressing it puts the same
+  // passage and the same words in the composer, and the next commit REPLACES that
+  // remark instead of appending a second one about the same line.
+  const editComment = useCallback(
+    (at: number) => {
+      const target = comments[at];
+      if (!target) return;
+      setEditing(at);
+      setQuote(target.quote);
+      setDraft(target.body);
+      setStatus("");
+    },
+    [comments],
+  );
+
+  const closeComposer = useCallback(() => {
+    setQuote(null);
+    setDraft("");
+    setEditing(null);
+  }, []);
+
+  // Removing shifts every ordinal after it, so an open composer can no longer be
+  // pointing at the remark it was opened on: it closes with the row.
   const removeComment = useCallback((at: number) => {
     setComments((old) => old.filter((_, index) => index !== at));
+    setQuote(null);
+    setDraft("");
+    setEditing(null);
     setDirty(true);
   }, []);
 
@@ -381,11 +488,13 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
     onSave(renderAnnotated(body, comments))
       .then((version) => {
         setDirty(false);
+        // The document now carries them: the device's copy is spent.
+        if (draftKey) clearAnnotationDraft(draftKey);
         setStatus(version ? `Saved as v${version}` : "Saved");
       })
       .catch(() => setStatus("Could not save this revision."))
       .finally(() => setSaving(false));
-  }, [onSave, body, comments]);
+  }, [onSave, body, comments, draftKey]);
 
   const column = (
     <div
@@ -430,46 +539,15 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
             className="min-h-24 w-full resize-y border border-dialog-edge bg-panel px-3 py-2 font-sans text-body text-foreground focus-visible:outline-2 focus-visible:outline-accent"
           />
           <div className="flex items-center gap-2 *:flex-1 sm:*:flex-none">
-            <Button type="button" onClick={addComment} disabled={!draft.trim()}>
-              Add comment
+            <Button type="button" onClick={commit} disabled={!draft.trim()}>
+              {editing === null ? "Add comment" : "Update comment"}
             </Button>
-            <Button
-              type="button"
-              variant="quiet"
-              onClick={() => {
-                setQuote(null);
-                setDraft("");
-              }}
-            >
+            <Button type="button" variant="quiet" onClick={closeComposer}>
               Cancel
             </Button>
           </div>
         </div>
-      ) : (
-        // A REMARK NEED NOT BE ABOUT A SENTENCE.
-        //
-        // "This plan is stale" is about the note, not about a line in it, and a
-        // reader with nothing to point at had no way to say it. The whole-note
-        // comment sits beside the invitation and opens the very same composer
-        // with an empty quote.
-        <div className="flex shrink-0 items-center justify-between gap-2 border-t border-dialog-edge px-3 py-2 sm:px-4">
-          <p className="min-w-0 flex-1 text-meta text-dialog-hint">
-            Tap a passage to comment on it.
-          </p>
-          <Button
-            type="button"
-            variant="quiet"
-            density="compact"
-            onClick={() => {
-              setQuote("");
-              setDraft("");
-              setStatus("");
-            }}
-          >
-            Comment on the note
-          </Button>
-        </div>
-      )}
+      ) : null}
 
       {comments.length > 0 ? (
         <ul
@@ -485,21 +563,36 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
                 backgroundColor: annotationWash(at),
               }}
             >
-              <sup
-                aria-hidden="true"
-                className="mt-1 shrink-0 font-mono text-chip font-bold"
-                style={{ color: annotationColor(at) }}
+              {/* THE CARD IS THE WAY BACK INTO THE REMARK. It presses like a list
+                  row and wears no box of its own, so the card keeps exactly one
+                  mark — the bin — and everything else on it opens the composer. */}
+              <button
+                type="button"
+                onClick={() => editComment(at)}
+                aria-label={`Edit comment ${at + 1}`}
+                className="flex min-w-0 flex-1 items-start gap-2 text-left"
               >
-                {at + 1}
-              </sup>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-meta text-dialog-hint">
-                  {comment.quote.length === 0
-                    ? GENERAL_LABEL
-                    : `“${comment.quote}”`}
-                </p>
-                <p className="text-body text-foreground">{comment.body}</p>
-              </div>
+                <sup
+                  aria-hidden="true"
+                  className="mt-1 shrink-0 font-mono text-chip font-bold"
+                  style={{ color: annotationColor(at) }}
+                >
+                  {at + 1}
+                </sup>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-meta text-dialog-hint">
+                    {comment.quote.length === 0
+                      ? GENERAL_LABEL
+                      : `“${comment.quote}”`}
+                  </span>
+                  {/* A REMARK IS SET AS QUOTED PROSE — italic, and justified to
+                      the card's own edges — so a stack of them reads as somebody
+                      TALKING BACK to the document rather than as more of it. */}
+                  <span className="block text-justify text-body italic text-foreground">
+                    {comment.body}
+                  </span>
+                </span>
+              </button>
               <IconButton
                 label={`Remove comment ${at + 1}`}
                 variant="quiet"
@@ -521,15 +614,46 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
   );
 
   return chrome({
-    // The document's one verb, in the band that names it: the band's own height,
-    // welded by its hairline, one cell from the way out.
+    // THE BAND HOLDS WHAT IS DONE TO THE WHOLE DOCUMENT, AND THE COLUMN HOLDS
+    // NOTHING.
+    //
+    // Reported: the strip under the prose read `Tap a passage to comment on it.`
+    // beside a `Comment on the note` button — an instruction for the gesture the
+    // reader had just performed, kept on screen forever, and the one remark that
+    // is NOT about a passage standing at the opposite end of the screen from
+    // Save, which is the other thing done to the whole document. The strip is
+    // gone and the whole-document remark is a cell beside Save, one hairline from
+    // the way out. It closes while the composer is open, because the composer it
+    // would open is already there.
     actions: (
-      <BandButton type="button" onClick={save} disabled={!dirty || saving}>
-        {saving ? "Saving…" : "Save"}
-      </BandButton>
+      <>
+        <BandButton
+          type="button"
+          onClick={() => {
+            setQuote("");
+            setDraft("");
+            setEditing(null);
+            setStatus("");
+          }}
+          disabled={quote !== null}
+          aria-label={`Comment on the ${GENERAL_LABEL.toLowerCase()}`}
+          title={`Comment on the ${GENERAL_LABEL.toLowerCase()}`}
+        >
+          Comment all
+        </BandButton>
+        <BandButton
+          type="button"
+          isPrimary
+          onClick={save}
+          disabled={!dirty || saving}
+        >
+          {saving ? "Saving…" : "Save"}
+        </BandButton>
+      </>
     ),
-    // What just happened to this document, said under its name.
-    note: status,
+    // What just happened to this document, said under its name — and until it
+    // does, that something is waiting to.
+    note: status || (dirty ? UNSAVED_NOTE : ""),
     body: column,
   });
 });

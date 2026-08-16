@@ -678,6 +678,21 @@ describe("BandButton", () => {
     expect(html({ disabled: true })).toContain("disabled:opacity-60");
   });
 
+  // Regression, user report ("we have a couple of those saves and when there is something to
+  // save they should look like the yellow buttons"): Save stood in the band's own quiet ink
+  // whether or not there was anything to save, so the band never said which of the two it was.
+  it("wears the accent while — and only while — it has something to commit", () => {
+    const live = html({ isPrimary: true });
+    // The same paint `Button variant="primary"` carries: one colour for "commit this".
+    expect(live).toContain("bg-accent");
+    expect(live).toContain("text-accent-foreground");
+    expect(live).toContain("hover:bg-accent-2");
+    // Nothing to commit: the COLOUR LEAVES, it does not merely fade.
+    expect(html({ isPrimary: true, disabled: true })).not.toContain("bg-accent");
+    expect(html()).not.toContain("bg-accent");
+    expect(html()).toContain("text-current");
+  });
+
   // Regression, user report ("why isn't the global save next to that whole close on the
   // header bar"): an opened note kept its own docked footer — a bordered `Button` under
   // the comments, at the far end of the column from the ✕ — after every other dialog verb
@@ -688,6 +703,9 @@ describe("BandButton", () => {
     expect(markdownArtifactSource.match(/onClick={save}/g)).toHaveLength(1);
     // Nothing is docked under the note any more, and the band reports the version.
     expect(markdownArtifactSource).not.toContain("border-t border-dialog-edge px-3 py-3 pb-[max(");
+    // And on both, that cell is the PRIMARY one: the band paints what is owed.
+    expect(markdownArtifactSource).toContain("isPrimary");
+    expect(imageViewerSource).toContain("isPrimary");
     for (const source of [docSource, artifactsSheetSource]) {
       expect(source).toContain("actions={actions}");
     }

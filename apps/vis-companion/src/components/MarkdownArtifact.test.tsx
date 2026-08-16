@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   ANNOTATION_COLORS,
@@ -10,7 +10,32 @@ import {
   annotationWash,
   type DocumentChrome,
   MarkdownAnnotator,
+  UNSAVED_NOTE,
 } from "./MarkdownArtifact";
+
+// The device's draft store is one bridge call away (`lib/annotation-drafts`), and these
+// tests own what it holds: the native half is a map they can empty.
+const native = vi.hoisted(() => ({ store: new Map<string, string>() }));
+
+vi.mock("@capacitor/preferences", () => ({
+  Preferences: {
+    get: async ({ key }: { key: string }) => ({
+      value: native.store.get(key) ?? null,
+    }),
+    set: async ({ key, value }: { key: string; value: string }) => {
+      native.store.set(key, value);
+    },
+    remove: async ({ key }: { key: string }) => {
+      native.store.delete(key);
+    },
+  },
+}));
+
+import {
+  annotationDraftKey,
+  resetAnnotationDraftCache,
+  writeAnnotationDraft,
+} from "../lib/annotation-drafts";
 
 const html = (node: Parameters<typeof renderToStaticMarkup>[0]) =>
   renderToStaticMarkup(node);
@@ -51,8 +76,79 @@ const flick = (element: Element) => {
   element.dispatchEvent(pointer("pointerup", 22, 40));
 };
 
+/** React reads a controlled field through the native setter, never `value =`. */
+const typeInto = (field: HTMLTextAreaElement, text: string) => {
+  const setter = Object.getOwnPropertyDescriptor(
+    HTMLTextAreaElement.prototype,
+    "value",
+  )!.set!;
+  act(() => {
+    setter.call(field, text);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+};
+
+/** WHICH document these remarks belong to, the way the app spells it. */
+const DRAFT_KEY = annotationDraftKey("http://10.0.0.5:7777", "s1", "i1", "PLAN.md");
+
+/** An annotator wired to the device's draft store, as an opened artifact is. */
+const mountAnnotator = (
+  text: string,
+  onSave: (body: string) => Promise<number | undefined> = noop,
+) => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  act(() => {
+    root.render(
+      <MarkdownAnnotator
+        text={text}
+        onSave={onSave}
+        chrome={chrome}
+        draftKey={DRAFT_KEY}
+      />,
+    );
+  });
+  return {
+    host,
+    band: () => host.querySelector("header")!,
+    comments: () => host.querySelector('ul[aria-label="Comments"]'),
+    verb: (label: string) =>
+      [...host.querySelectorAll("button")].find(
+        (button) => button.textContent === label,
+      )!,
+    done: () => {
+      act(() => root.unmount());
+      host.remove();
+    },
+  };
+};
+
+/** What a reader does: open the whole-document composer, type, commit. */
+const remark = (host: HTMLElement, body: string) => {
+  const open = host.querySelector<HTMLButtonElement>(
+    'button[aria-label="Comment on the whole document"]',
+  )!;
+  act(() => open.click());
+  typeInto(
+    host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Comment"]')!,
+    body,
+  );
+  const commit = [...host.querySelectorAll("button")].find((button) =>
+    /^(Add|Update) comment$/.test(button.textContent ?? ""),
+  )!;
+  act(() => commit.click());
+};
+
+beforeEach(() => {
+  native.store.clear();
+  globalThis.localStorage.clear();
+  resetAnnotationDraftCache();
+});
+
 describe("an opened markdown note", () => {
-  it("renders the note as prose and invites a selection", () => {
+  it("renders the note as prose, and instructs nobody", () => {
     const markup = html(
       <MarkdownAnnotator
         text={"# Ship it\n\n- one\n- two\n"}
@@ -63,8 +159,14 @@ describe("an opened markdown note", () => {
     expect(markup).toContain("<h1");
     expect(markup).toContain("Ship it");
     expect(markup).not.toContain("# Ship it");
-    expect(markup).toContain("Tap a passage to comment on it.");
+    // Regression, user report ("that tap something something has to go"): a standing
+    // instruction for the gesture the reader had just performed sat under the prose,
+    // on the one screen a keyboard is covering.
+    expect(markup).not.toContain("Tap a passage");
+    // The band offers both things done to the WHOLE document, side by side.
+    expect(markup).toContain("Comment all");
     expect(markup).toContain("Save");
+    expect(markup.indexOf("Comment all")).toBeLessThan(markup.indexOf("Save"));
   });
 
   it("shows the comments the note already carries, outside its prose", () => {
@@ -207,10 +309,11 @@ describe("marking up the passages a comment is about", () => {
     ).not.toBeNull();
 
     // The card's ordinal is a plain number in its comment's colour: no filled
-    // circle, no background, nothing that reads as a control.
+    // circle, no background, nothing that reads as a control — even though the card
+    // around it IS one now, since pressing it reopens the remark.
     const cardOrdinals = Array.from(
       host.querySelectorAll<HTMLElement>(
-        'ul[aria-label="Comments"] > li > sup',
+        'ul[aria-label="Comments"] li button[aria-label^="Edit comment"] sup',
       ),
     );
     expect(cardOrdinals.map((chip) => chip.textContent)).toEqual(["1", "2"]);
@@ -262,7 +365,7 @@ describe("an opened plain-text artifact", () => {
     expect(markup).toContain("second line");
     // Each line is a <p>, so a tap quotes it exactly as a paragraph is quoted.
     expect(markup.match(/<p /g)?.length ?? 0).toBeGreaterThanOrEqual(2);
-    expect(markup).toContain("Tap a passage to comment on it.");
+    expect(markup).not.toContain("Tap a passage");
   });
 });
 
@@ -283,8 +386,8 @@ describe("a comment on the whole note", () => {
       );
     });
 
-    const open = [...host.querySelectorAll("button")].find((button) =>
-      (button.textContent ?? "").includes("Comment on the note"),
+    const open = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Comment on the whole document"]',
     );
     expect(open).toBeTruthy();
     act(() => {
@@ -295,14 +398,7 @@ describe("a comment on the whole note", () => {
     const field = host.querySelector<HTMLTextAreaElement>(
       'textarea[aria-label="Comment"]',
     )!;
-    act(() => {
-      const setter = Object.getOwnPropertyDescriptor(
-        HTMLTextAreaElement.prototype,
-        "value",
-      )!.set!;
-      setter.call(field, "This plan is stale.");
-      field.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    typeInto(field, "This plan is stale.");
     const add = [...host.querySelectorAll("button")].find(
       (button) => button.textContent === "Add comment",
     )!;
@@ -409,8 +505,8 @@ describe("the tap that quotes a passage", () => {
   // composer still names what it is about.
   it("still names the whole-document remark, which marks nothing", () => {
     const { host, done } = mount("# Ship it\n\nWe cut on Friday.\n");
-    const open = [...host.querySelectorAll("button")].find((button) =>
-      (button.textContent ?? "").includes("Comment on the note"),
+    const open = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Comment on the whole document"]',
     );
     act(() => {
       open!.click();
@@ -430,5 +526,129 @@ describe("the tap that quotes a passage", () => {
     );
     expect(host.innerHTML).not.toContain("pb-[env(safe-area-inset-bottom)]");
     done();
+  });
+});
+
+// Regression, user report ("IN THE DEVICE MEMORY, IF I ADD A COMMENT BUT ACCIDENTALLY LEAVE
+// THE ARTIFACT AND COME BACK, IT SHOULD SAY THIS IS AN UNSAVED DRAFT"): adding a remark and
+// saving it are deliberately two presses — three remarks ship as one revision — and
+// everything between them lived in this component's state, so leaving the overlay threw the
+// typed remark away without a word.
+describe("a document reopened on unsaved work", () => {
+  const TEXT = "# Ship it\n\nWe cut on Friday.\n";
+
+  it("comes back carrying the remark, and the band says it is unsaved", () => {
+    const first = mountAnnotator(TEXT);
+    remark(first.host, "Stale.");
+    expect(first.band().textContent).toContain(UNSAVED_NOTE);
+    first.done();
+
+    // The overlay is gone. The device is not.
+    const again = mountAnnotator(TEXT);
+    expect(again.comments()!.textContent).toContain("Stale.");
+    expect(again.band().textContent).toContain(UNSAVED_NOTE);
+    again.done();
+  });
+
+  it("forgets the draft once the save lands", async () => {
+    const saved = mountAnnotator(TEXT, async () => 7);
+    remark(saved.host, "Stale.");
+    await act(async () => {
+      saved.verb("Save").click();
+      await Promise.resolve();
+    });
+    expect(saved.band().textContent).toContain("Saved as v7");
+    expect(saved.band().textContent).not.toContain(UNSAVED_NOTE);
+    saved.done();
+
+    const again = mountAnnotator(TEXT);
+    expect(again.comments()).toBeNull();
+    expect(again.band().textContent).not.toContain(UNSAVED_NOTE);
+    again.done();
+  });
+
+  it("does not call a leftover that says what the file says unsaved work", () => {
+    const carried =
+      "# Ship it\n\nWe cut on Friday.\n\n## Comments\n\n- **“We cut on Friday.”** — Stale.\n";
+    writeAnnotationDraft(DRAFT_KEY, [
+      { quote: "We cut on Friday.", body: "Stale." },
+    ]);
+    const opened = mountAnnotator(carried);
+    expect(opened.comments()!.textContent).toContain("Stale.");
+    expect(opened.band().textContent).not.toContain(UNSAVED_NOTE);
+    opened.done();
+  });
+});
+
+// Regression, user report ("apart from the trash icon there should be a way that I can click
+// the comment and EDIT it"): a written remark offered the bin and nothing else, so fixing one
+// word meant deleting it and writing it again from the passage it was about.
+describe("a remark already written", () => {
+  const TEXT = "# Ship it\n\nWe cut on Friday.\n";
+
+  it("opens in the composer when its card is pressed, and replaces itself", () => {
+    const opened = mountAnnotator(TEXT);
+    remark(opened.host, "Stale.");
+
+    const card = opened.host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Edit comment 1"]',
+    )!;
+    act(() => card.click());
+
+    const field = opened.host.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Comment"]',
+    )!;
+    // The same words, in the same composer, under a verb that says what it will do.
+    expect(field.value).toBe("Stale.");
+    expect(opened.verb("Update comment")).toBeTruthy();
+
+    typeInto(field, "Still stale.");
+    act(() => opened.verb("Update comment").click());
+
+    // REPLACED, not appended: one remark about the document, saying the new thing.
+    expect(opened.comments()!.querySelectorAll("li")).toHaveLength(1);
+    expect(opened.comments()!.textContent).toContain("Still stale.");
+    opened.done();
+  });
+
+  it("is set as quoted prose — italic, justified — and keeps its own bin", () => {
+    const opened = mountAnnotator(TEXT);
+    remark(opened.host, "Stale.");
+
+    const body = [...opened.comments()!.querySelectorAll("span")].find(
+      (span) => span.textContent === "Stale.",
+    )!;
+    expect(body.className).toContain("text-justify");
+    expect(body.className).toContain("italic");
+
+    // Pressing the card edits; the one mark on it still removes.
+    expect(
+      opened.host.querySelector('button[aria-label="Remove comment 1"]'),
+    ).not.toBeNull();
+    opened.done();
+  });
+});
+
+// Regression, user report ("that comment note should be called something like comment global
+// or comment whole, and it should be right next to save"): the one remark that is NOT about a
+// passage stood under the prose at the opposite end of the screen from Save, which is the
+// other thing done to the whole document.
+describe("the band of an opened document", () => {
+  it("stands the whole-document remark beside Save, one hairline away", () => {
+    const opened = mountAnnotator("# Ship it\n\nWe cut on Friday.\n");
+    const all = opened.host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Comment on the whole document"]',
+    )!;
+    const save = opened.verb("Save");
+
+    expect(all.closest("header")).toBe(opened.band());
+    expect(save.previousElementSibling).toBe(all);
+    // Nothing to save yet, and the cell says so by being unpressable.
+    expect(save.disabled).toBe(true);
+
+    // It closes while the composer is open: what it would open is already on screen.
+    act(() => all.click());
+    expect(all.disabled).toBe(true);
+    opened.done();
   });
 });

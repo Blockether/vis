@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(build): make `dev` a track of its own, refused as an update target
 - feat(companion): pull the sessions list down to open the fleet-wide search
 - fix(companion): draw the pull-to-search band with the finger instead of snapping it
+- feat(companion): keep an unsaved comment and let it be edited
 
 ## [v0.1.40] - 2026-08-16
 

@@ -664,6 +664,9 @@ export function ImageViewer({
             <BandButton
               onClick={() => void applyEdit()}
               disabled={busy !== null}
+              // Ink on the layer, or a trim taken: the cell wears the accent only
+              // when the picture on screen is no longer the picture on the gateway.
+              isPrimary={strokeCount > 0 || trimmed !== null}
             >
               {busy === "apply" ? "Saving…" : applyLabel}
             </BandButton>

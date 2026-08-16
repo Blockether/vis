@@ -5,6 +5,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { GatewayClient } from "../lib/gateway";
 import { DocOverlay } from "./DocArtifact";
+import { resetAnnotationDraftCache } from "../lib/annotation-drafts";
+
+// An opened document keeps unsaved remarks on the device (`lib/annotation-drafts`); these
+// tests own what it holds, so its native half is a map they can empty.
+const native = vi.hoisted(() => ({ store: new Map<string, string>() }));
+
+vi.mock("@capacitor/preferences", () => ({
+  Preferences: {
+    get: async ({ key }: { key: string }) => ({
+      value: native.store.get(key) ?? null,
+    }),
+    set: async ({ key, value }: { key: string; value: string }) => {
+      native.store.set(key, value);
+    },
+    remove: async ({ key }: { key: string }) => {
+      native.store.delete(key);
+    },
+  },
+}));
 
 // The pen and the rasteriser are the browser's job; what is under test is the
 // WIRING — that an artifact opened from the TRANSCRIPT reaches the annotator,
@@ -91,6 +110,9 @@ async function settle() {
 }
 
 beforeEach(() => {
+  native.store.clear();
+  globalThis.localStorage.clear();
+  resetAnnotationDraftCache();
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -121,7 +143,7 @@ describe("an artifact opened from the transcript", () => {
       );
     });
     await settle();
-    expect(host.textContent).toContain("Tap a passage to comment on it.");
+    expect(host.textContent).not.toContain("Tap a passage");
     expect(host.querySelector("h1")?.textContent).toBe("Release plan");
   });
 
@@ -159,7 +181,7 @@ describe("an artifact opened from the transcript", () => {
     expect(saves()[0].closest("header")).toBe(band());
     expect(saves()[0].disabled).toBe(true);
 
-    pressText("Comment on the note");
+    pressText("Comment all");
     type("Stale.");
     pressText("Add comment");
     expect(saves()[0].disabled).toBe(false);
