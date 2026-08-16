@@ -3212,9 +3212,7 @@
                  (expect (true? (deref closed 5000 false))))))
            (finally (deliver release true) (swap! registry dissoc sid))))))
 
-;; ---------------------------------------------------------------------------
 ;; Wedged session: `turn.started` with no terminal (issue #105)
-;; ---------------------------------------------------------------------------
 
 (defdescribe
   turn-launch-throw-lands-terminal-test

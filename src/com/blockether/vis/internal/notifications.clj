@@ -35,9 +35,7 @@
    of a richer system."
   (:require [taoensso.telemere :as tel]))
 
-;; =============================================================================
 ;; Defaults
-;; =============================================================================
 
 (def ^:private DEFAULT_TTL_MS
   "Default lifespan when caller doesn't pass `:ttl-ms`. 3 seconds is
@@ -47,9 +45,7 @@
 
 (def ^:private VALID_LEVELS #{:info :success :warn :error})
 
-;; =============================================================================
 ;; State
-;; =============================================================================
 
 (defonce ^:private notifications-atom
   ;; Vec ordered by insertion (newest last). Vec instead of map so
@@ -64,9 +60,7 @@
   ;; channel can never poison the pub-sub for everyone else.
   (atom {}))
 
-;; =============================================================================
 ;; Internal helpers
-;; =============================================================================
 
 (defn- now-ms ^long [] (System/currentTimeMillis))
 
@@ -89,9 +83,7 @@
            (tel/log! {:level :error :id ::watcher-error :data {:key k :error (ex-message t)}}
                      (str "Notifications watcher " k " threw: " (ex-message t)))))))
 
-;; =============================================================================
 ;; Public API
-;; =============================================================================
 
 (defn clear-expired!
   "Drop every entry whose `:until` has passed. Returns the new vec.
@@ -174,9 +166,7 @@
     (fire-watchers! next-vec)
     next-vec))
 
-;; =============================================================================
 ;; Watcher API
-;; =============================================================================
 
 (defn watch!
   "Register a watcher under `key`. The fn `f` is called with the

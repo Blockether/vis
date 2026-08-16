@@ -1011,7 +1011,6 @@
         (expect (= :add (:id (first (:items commands)))))
         (expect (str/includes? (:label (first (:items commands))) "http://localhost:11434")))))
 
-;; ---------------------------------------------------------------------------
 ;; Regression: success popups MUST stay silent.
 ;;
 ;; User feedback (Anthropic dialog session): the redundant
@@ -1019,7 +1018,6 @@
 ;; already-closed auth dialog was confusing. Anthropic was fixed first; this
 ;; suite asserts the same silence for Copilot, Codex, and the generic
 ;; api-key auth path that providers like zai-coding use.
-;; ---------------------------------------------------------------------------
 
 (defn- text-view-recorder
   [sink]
@@ -1559,13 +1557,11 @@
                    (expect (= ["Models"] (mapv :title (:groups spec))))
                    (expect (= ["a"] (mapv :key (:items (first (:groups spec)))))))))
 
-;; ---------------------------------------------------------------------------
 ;; API-key sign-in is a TRANSIENT, not a full-screen prompt.
 ;;
 ;; The old dialog painted a huge vis logo and made the user tab through an
 ;; input box. Now the provider's own guidance stays on screen and the popup
 ;; advertises exactly two keys: `k` reads the key inline, `a` submits it.
-;; ---------------------------------------------------------------------------
 
 (defdescribe
   api-key-transient-spec-test

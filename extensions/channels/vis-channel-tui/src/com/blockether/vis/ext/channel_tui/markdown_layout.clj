@@ -38,9 +38,7 @@
             [com.blockether.vis.ext.channel-tui.highlight :as hl]
             [com.blockether.vis.internal.render :as ir]))
 
-;; =============================================================================
 ;; Helpers
-;; =============================================================================
 
 (defn- node-tag [n] (when (vector? n) (first n)))
 
@@ -62,9 +60,7 @@
             (str/blank? (or text "")))
           (:runs line)))
 
-;; =============================================================================
 ;; Inline → flat run sequence
-;; =============================================================================
 
 ;; Mutual recursion: `inline->runs` dispatches per-node, then for
 ;; nested inline tags (`:strong`/`:em`/`:a` etc.) calls back into
@@ -134,9 +130,7 @@
   [children style href]
   (vec (mapcat #(inline->runs % style href) children)))
 
-;; =============================================================================
 ;; Word-wrap
-;; =============================================================================
 
 (defn- atomize-run
   "Split one run's text into atoms preserving whitespace/word
@@ -318,9 +312,7 @@
                   (recur (subvec runs 0 (dec n)))
                   runs))))))
 
-;; =============================================================================
 ;; Block walker
-;; =============================================================================
 
 ;; Mutual recursion: `block->lines` (final dispatch) calls
 ;; `blocks->lines`/`list->lines`/`quote->lines` for nested children;
@@ -1197,9 +1189,7 @@
       ;; unknown / leftover inline at block position
       [(assoc (empty-line) :block-tag :outer-margin)])))
 
-;; =============================================================================
 ;; Public API
-;; =============================================================================
 
 (defn ast->lines
   "Walk canonical IR (or any input that `ir/->ast` accepts) at a given
@@ -1440,9 +1430,7 @@
                           (:runs l))))
                  lines)))
 
-;; =============================================================================
 ;; Sentinel-string adapter — bridge to the existing bubble painter
-;; =============================================================================
 ;;
 ;; The pre-IR bubble painter consumes vectors of strings, where each
 ;; string starts with a block marker (`MARKER_MD_H1` / `MARKER_MD_BULLET`

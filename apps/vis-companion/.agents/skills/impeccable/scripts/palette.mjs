@@ -492,8 +492,6 @@ function hueWord(H) {
   return 'deep pink / rose';
 }
 
-// ---------------------------------------------------------------
-
 const args = parseArgs(process.argv.slice(2));
 const seed = pickSeed(SEEDS, args);
 const [L, C, H] = seed.oklch;
@@ -504,9 +502,7 @@ const [L, C, H] = seed.oklch;
 const moodHint = seed.mood ? ` (one read: "${seed.mood}")` : '';
 const strategyHint = seed.strategy ? `\n  - one example strategy: ${seed.strategy}` : '';
 
-// ---------------------------------------------------------------
 // Fat tool-exit response — what the model sees on stdout.
-// ---------------------------------------------------------------
 
 process.stdout.write(`BRAND SEED · ${seed.id}
 

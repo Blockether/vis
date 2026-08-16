@@ -236,7 +236,6 @@
     (p/put-str! g table-x header "│")
     (p/put-str! g (+ table-x (dec rendered-w)) header "│")
     (p/put-str! g table-x separator (table/boxed-border-line full-widths :middle))
-    ;; Body
     (dotimes [i body-h]
       (let
         [idx (+ scroll i)

@@ -17,9 +17,7 @@
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel]))
 
-;; =============================================================================
 ;; Iteration context assembly
-;; =============================================================================
 
 ;; Bounded plain-value rendering moved to `format.clj`.
 ;; (the right home for a bounded value-render helper — same neighborhood
@@ -43,9 +41,7 @@
   [ext f environment]
   (extension/with-context {:ext ext :env environment} (f environment)))
 
-;; =============================================================================
 ;; Initial messages
-;; =============================================================================
 
 (defn previous-turn-context-block
   "Render prior-turn RESUME entries. Normal entries retain their stable turn
@@ -201,10 +197,6 @@
                         text
                         (map #(svar/image (:base64 %) (:media-type %)) attached-images))
                       {:role "user" :content text})])))))
-
-;; =============================================================================
-;; System prompt
-;; =============================================================================
 
 (def ^:private CORE_SYSTEM_PROMPT
   "Cross-tool contract for an autonomous agent. `python_execution` is the only

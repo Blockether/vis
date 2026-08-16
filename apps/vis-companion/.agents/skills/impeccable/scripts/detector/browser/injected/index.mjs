@@ -469,7 +469,6 @@ if (IS_BROWSER) {
       });
       controls.appendChild(toggle);
 
-      // Close button
       const close = document.createElement('button');
       close.textContent = '\u00d7';
       close.title = 'Dismiss banner';

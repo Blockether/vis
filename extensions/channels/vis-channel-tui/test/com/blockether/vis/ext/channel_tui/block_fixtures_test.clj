@@ -57,9 +57,7 @@
   [lines]
   (some #(when (re-find counts-re %) %) lines))
 
-;; ---------------------------------------------------------------------------
 ;; Form builders.
-;; ---------------------------------------------------------------------------
 
 (defn- ok-form
   "One successful form whose printed output is `stdout`."
@@ -92,9 +90,7 @@
     (some? error)
     (assoc :error error)))
 
-;; ---------------------------------------------------------------------------
 ;; Fixture 1 — git status + add + commit! + push! : one fence, printed output.
-;; ---------------------------------------------------------------------------
 
 (def ^:private git-fence-code "(git/status)\n(git/add \".\")\n(git/commit! \"msg\")\n(git/push!)")
 
@@ -112,9 +108,7 @@
                              (expect (= :ok (:status block)))
                              (expect (nil? (:error block)))))))
 
-;; ---------------------------------------------------------------------------
 ;; Fixture 2 — nested `let`: (let [a (cat) b (cat)] (patch)).
-;; ---------------------------------------------------------------------------
 
 (defn- nested-let-entry
   []
@@ -132,9 +126,7 @@
                              (expect (= "t9/i2" (:scope block)))
                              (expect (= :ok (:status block)))))))
 
-;; ---------------------------------------------------------------------------
 ;; Fixture 3 — (def x (cat "x")): one block, printed output.
-;; ---------------------------------------------------------------------------
 
 (defn- def-bind-entry
   []
@@ -147,9 +139,7 @@
                              (expect (= "t3/i1" (:scope block)))
                              (expect (= :ok (:status block)))))))
 
-;; ---------------------------------------------------------------------------
 ;; Fixture 4 — plain value (+ 1 2): one block, no stdout, no header.
-;; ---------------------------------------------------------------------------
 
 (defn- plain-value-entry
   []
@@ -183,9 +173,7 @@
                              (expect (not (str/includes? body "ITERATION")))
                              (expect (not-any? #(= "3" (str/trim %)) lines))))))
 
-;; ---------------------------------------------------------------------------
 ;; Fixture 5 — value-only error (/ 1 0): inline caret + message.
-;; ---------------------------------------------------------------------------
 
 (defn- value-error-entry
   []
@@ -226,9 +214,7 @@
                              (expect (str/includes? body "^"))
                              (expect (str/includes? body "Divide by zero"))))))
 
-;; ---------------------------------------------------------------------------
 ;; Fixture 6 — cancellation mid-block → :cancelled.
-;; ---------------------------------------------------------------------------
 
 (defn- cancelled-entry
   []
@@ -251,9 +237,7 @@
                   (expect (not-any? #(str/includes? % (iteration/status-glyph :cancelled)) lines))
                   (expect (not-any? #(str/includes? % (iteration/status-glyph :ok)) lines))))))
 
-;; ---------------------------------------------------------------------------
 ;; Fixture 7 — timeout mid-block → :timeout.
-;; ---------------------------------------------------------------------------
 
 (defn- timeout-entry
   []
@@ -273,9 +257,7 @@
                      (expect (not-any? #(str/includes? % (iteration/status-glyph :timeout)) lines))
                      (expect (not-any? #(str/includes? % (iteration/status-glyph :ok)) lines))))))
 
-;; ---------------------------------------------------------------------------
 ;; Fixture 8 — merged multi-fence → flat block, both forms' stdout.
-;; ---------------------------------------------------------------------------
 
 (defn- merged-fences-entry
   []

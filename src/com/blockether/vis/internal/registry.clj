@@ -51,7 +51,6 @@
             [clojure.string :as str]
             [taoensso.telemere :as tel]))
 
-;; =============================================================================
 ;; Quiet boot
 ;;
 ;; Telemere ships with a `:default/console` handler that prints every
@@ -74,9 +73,7 @@
 
 (defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 
-;; =============================================================================
 ;; Channel descriptor - spec
-;; =============================================================================
 
 ;; Stable identity key for the channel, e.g. :tui, :cli, :api.
 ;; Used as the session-soul `channel` column and as the dedup key
@@ -139,9 +136,7 @@
                      :explain (s/explain-data ::channel spec)})))
   spec)
 
-;; =============================================================================
 ;; Provider descriptor - spec
-;; =============================================================================
 
 (s/def :provider/id keyword?)
 
@@ -208,9 +203,7 @@
                      :explain (s/explain-data ::provider spec)})))
   spec)
 
-;; =============================================================================
 ;; Command descriptor - spec
-;; =============================================================================
 
 (s/def :cmd/name non-blank-string?)
 
@@ -301,10 +294,6 @@
           :else (throw (ex-info ":cmd/subcommands must be a vector or 0-arg fn"
                                 {:got (type s) :command (:cmd/name cmd)})))))
 
-;; =============================================================================
-;; Channel registry
-;; =============================================================================
-
 (defonce channel-registry
   ;; Process-level atom: {:channel/id -> channel-map}. Public so tests
   ;; can `(reset! @#'channel-registry {})` between cases.
@@ -344,10 +333,6 @@
             (when (= (:channel/cmd c) cmd) c))
           (vals @channel-registry))))
 
-;; =============================================================================
-;; Provider registry
-;; =============================================================================
-
 (defonce provider-registry
   ;; {:provider/id -> provider-map}
   (atom {}))
@@ -373,10 +358,6 @@
   "Lookup a provider by `:provider/id`. Returns nil when absent."
   [id]
   (get @provider-registry id))
-
-;; =============================================================================
-;; Command registry
-;; =============================================================================
 
 (defonce command-registry
   ;; Vector preserves registration order, which then becomes the
@@ -438,14 +419,12 @@
   (let [k (vec parent-path)]
     (vec (filter #(= k (or (:cmd/parent %) [])) @command-registry))))
 
-;; =============================================================================
 ;; CLI mounting - the `vis-agent channels` parent
 ;;
 ;; The channel registry feeds the `vis-agent channels <cmd>` subcommand
 ;; tree. Loading this namespace registers the parent itself; subcommand
 ;; resolution is dynamic so newly registered channels appear without
 ;; a restart.
-;; =============================================================================
 
 (defn- channel->command
   "Adapt a `:channel/...`-keyed channel descriptor into a command map.

@@ -79,7 +79,6 @@
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.workspace :as workspace]))
 
-;; =============================================================================
 ;; Gateway (HTTP/SSE server over the session/turn runtime)
 ;;
 ;; `gateway-register-routes!` is the classpath auto-mount seam: an
@@ -88,7 +87,6 @@
 ;; manifest scan, so dropping the jar mounts the routes with zero wiring.
 ;; The gateway-session/turn helpers below are the host contract a route
 ;; contribution builds its handlers from.
-;; =============================================================================
 (import-vars [gateway-start! gateway/start!]
              [gateway-stop! gateway/stop!]
              [gateway-running? gateway/running?]
@@ -200,9 +198,6 @@
              [gateway-create-draft! gateway-client/create-draft!]
              [gateway-abandon-draft! gateway-client/abandon-draft!])
 
-;; =============================================================================
-;; Cancellation
-;; =============================================================================
 (import-vars [cancellation-token cancellation/cancellation-token]
              [cancellation-atom cancellation/cancellation-atom]
              [cancellation-set-future! cancellation/cancellation-set-future!]
@@ -214,9 +209,7 @@
              [worker-runtime cancellation/worker-runtime]
              [worker-future cancellation/worker-future])
 
-;; =============================================================================
 ;; Feature toggles (channels + extensions read this; TUI settings flips it)
-;; =============================================================================
 (import-vars [register-toggle! toggles/register-toggle!]
              [register-toggles! toggles/register-toggles!]
              [registered-toggles toggles/registered-toggles]
@@ -235,9 +228,6 @@
              [toggles-for-channel toggles/toggles-for-channel]
              [toggle-add-listener! toggles/add-listener!])
 
-;; =============================================================================
-;; Workspace
-;; =============================================================================
 (import-vars [workspace-cwd workspace/cwd]
              [workspace-root workspace/workspace-root]
              [workspace-normalize-root workspace/normalize-root]
@@ -267,9 +257,7 @@
 
 (import-vars [repository-inventory repositories/inventory])
 
-;; =============================================================================
 ;; Slash commands (declarative `:ext/slash-commands`)
-;; =============================================================================
 (import-vars [active-slashes slash/active-slashes]
              [registered-slashes slash/registered-slashes]
              [slash-by-path slash/slash-by-path]
@@ -278,9 +266,7 @@
              [slash-parse slash/parse]
              [slash-dispatch slash/dispatch])
 
-;; =============================================================================
 ;; Theme facade
-;; =============================================================================
 (import-vars [default-theme-id theme/default-theme-id]
              [default-theme theme/default-theme]
              [vis-light theme/vis-light]
@@ -301,17 +287,13 @@
              [theme->web-css-vars theme/theme->web-css-vars]
              [web-css-root theme/web-css-root])
 
-;; =============================================================================
 ;; Error formatting
-;; =============================================================================
 (import-vars [error-message error/error-message]
              [format-error error/format-error]
              [final-answer-code-error-message error/final-answer-code-error-message]
              [db-error->user-message persistance/db-error->user-message])
 
-;; =============================================================================
 ;; Format helpers
-;; =============================================================================
 (import-vars [format-date fmt/format-date]
              [format-clojure fmt/format-clojure]
              [format-duration fmt/format-duration]
@@ -330,7 +312,6 @@
 ;; against, exposed read-only so channel model pickers show the real charge.
 (import-vars [model-pricing lp/model-pricing])
 
-;; =============================================================================
 ;; Notifications
 ;;
 ;; Cross-channel ephemeral signals - \"copied\", \"tests passed\",
@@ -339,7 +320,6 @@
 ;; subscribe with `watch!` and surface entries in their own visual
 ;; idiom. Levels (`:info` / `:success` / `:warn` / `:error`) are
 ;; advisory metadata for the consumer.
-;; =============================================================================
 (import-vars [notify! notifications/notify!]
              [notifications notifications/notifications]
              [dismiss! notifications/dismiss!]
@@ -347,14 +327,12 @@
              [watch-notifications! notifications/watch!]
              [unwatch-notifications! notifications/unwatch!])
 
-;; =============================================================================
 ;; Markdown export
 ;;
 ;; Single host-runtime helper for projecting a persisted session
 ;; (every turn: user prompt + final answer + optional metadata) into a
 ;; Markdown parsing/rendering helpers. Parsed Markdown trees are renderer-local;
 ;; canonical answers are string-keyed content blocks.
-;; =============================================================================
 (import-vars [session->markdown ir/session->markdown])
 
 (import-vars [render ir/render] [->ast ir/->ast])
@@ -404,14 +382,9 @@
              [extract-text ir/extract-text]
              [parse-block-display ir/parse-block-display])
 
-;; =============================================================================
-;; Progress tracker
-;; =============================================================================
 (import-vars [make-progress-tracker progress/make-progress-tracker])
 
-;; =============================================================================
 ;; CLI dispatcher
-;; =============================================================================
 (import-vars [command registry/command]
              [resolve-subcommands registry/resolve-subcommands]
              [find-leaf commandline/find-leaf]
@@ -429,9 +402,6 @@
              [registered-commands registry/registered-commands]
              [registered-under registry/registered-under])
 
-;; =============================================================================
-;; Channel registry
-;; =============================================================================
 (import-vars [channel registry/channel]
              [register-channel! registry/register-channel!]
              [deregister-channel! registry/deregister-channel!]
@@ -439,9 +409,6 @@
              [channel-by-id registry/channel-by-id]
              [by-cmd registry/by-cmd])
 
-;; =============================================================================
-;; Provider registry
-;; =============================================================================
 (import-vars [provider registry/provider]
              [register-provider! registry/register-provider!]
              [deregister-provider! registry/deregister-provider!]
@@ -450,13 +417,11 @@
              [provider-limits provider-limits/provider-limits]
              [all-provider-limits provider-limits/all-provider-limits])
 
-;; =============================================================================
 ;; Provider management service (channel-neutral; internal/providers.clj)
 ;;
 ;; The SAME primitives behind the TUI Router dialog and the web
 ;; Providers modal: fleet, presets, status probing, account limits,
 ;; live model catalogs, persistence. Channels add only interaction.
-;; =============================================================================
 (import-vars [provider-auth-kind providers/auth-kind]
              [provider-command-minted? providers/command-minted?]
              [provider-oauth-ids providers/oauth-provider-ids]
@@ -501,12 +466,10 @@
              [limits-row-pressure limits-format/limit-row-pressure]
              [limits-prioritize-rows limits-format/prioritize-limit-rows])
 
-;; =============================================================================
 ;; Persistence facade
 ;;
 ;; The namespace and extension slot are spelled `persistance`; public
 ;; prose uses the correct domain word: Persistence.
-;; =============================================================================
 (import-vars [ds persistance/ds]
              [now-ms persistance/now-ms]
              [->id persistance/->id]
@@ -575,7 +538,6 @@
 ;; Full-text search
 (import-vars [db-search persistance/db-search])
 
-;; Turn history
 (import-vars [db-turn-history persistance/db-turn-history]
              [db-load-latest-ctx persistance/db-load-latest-ctx]
              [db-load-ctx-history persistance/db-load-ctx-history])
@@ -588,9 +550,7 @@
 ;; Process-restart cleanup
 (import-vars [db-sweep-orphaned-running-turns! lp/db-sweep-orphaned-running-turns!])
 
-;; =============================================================================
 ;; Extension contract
-;; =============================================================================
 (defmacro extension
   "Build extension spec and stamp caller namespace for reload/source tracking."
   [spec]
@@ -637,7 +597,6 @@
              [extension-delete-aggregate! extension-aggregate/extension-delete-aggregate!]
              [extension-update-aggregate! extension-aggregate/extension-update-aggregate!])
 
-;; =============================================================================
 ;; Doctor protocol
 ;;
 ;; Cross-cutting diagnostic surface. Every extension can declare
@@ -647,15 +606,12 @@
 ;; per-section grouping. `vis-agent doctor` aggregates across every registered
 ;; extension into a level-aware (info / warn / error) report with 0 / 1 / 2
 ;; exit code by max level. See plan §1 Q19 + §10.
-;; =============================================================================
 (import-vars [run-doctor-checks doctor/run-checks]
              [doctor-exit-code doctor/exit-code]
              [doctor-format-output doctor/format-output]
              [doctor-startup-hint doctor/startup-hint-line])
 
-;; =============================================================================
 ;; Configuration / paths / logging
-;; =============================================================================
 (import-vars [init! config/init!]
              [init-cli! config/init-cli!]
              [shutdown! config/shutdown!]
@@ -690,20 +646,16 @@
              [->svar-model config/->svar-model]
              [->svar-provider config/->svar-provider])
 
-;; =============================================================================
 ;; Python sandbox
-;; =============================================================================
 (import-vars [SYSTEM_VAR_NAMES env/SYSTEM_VAR_NAMES]
              [system-var-sym? env/system-var-sym?]
              [create-python-context env/create-python-context]
              [set-python-binding! env/set-python-binding!]
              [bind-and-bump! env/bind-and-bump!])
 
-;; =============================================================================
 ;; Stateful-resource registry — the canonical interface owners use to register a
 ;; long-lived thing vis manages (nREPL, daemon, watch…). Session-scoped: every
 ;; verb takes the owning session id. See `internal.resources`.
-;; =============================================================================
 
 (import-vars [register-resource! resources/register!]
              [update-resource! resources/update!]
@@ -718,9 +670,7 @@
 (import-vars [prepare-session-jail! process-jail/prepare-session-jail!]
              [session-process-launch process-jail/session-process-launch])
 
-;; =============================================================================
 ;; Turn runtime / iteration loop / environment / sessions
-;; =============================================================================
 (import-vars [turn! lp/turn!]
              [ask-code! lp/ask-code!]
              [llm-text! lp/llm-text!]
@@ -748,7 +698,6 @@
              [install-extension! lp/install-extension!]
              [sync-active-extension-symbols! lp/sync-active-extension-symbols!])
 
-;; Auto-archive
 (import-vars [auto-archive-hot-symbols! lp/auto-archive-hot-symbols!])
 
 ;; Sessions
@@ -771,9 +720,7 @@
              [delete! lp/delete!]
              [close-all! lp/close-all!])
 
-;; =============================================================================
 ;; Prompt builders
-;; =============================================================================
 (import-vars [active-extensions prompt/active-extensions]
              [assemble-stable-prompt-messages prompt/assemble-stable-prompt-messages]
              [build-system-prompt prompt/build-system-prompt]
@@ -782,9 +729,7 @@
 ;; callers must use `prompt/build-iteration-context` directly.
 
 (import-vars [assemble-initial-messages prompt/assemble-initial-messages])
-;; =============================================================================
 ;; Channel event bus
-;; =============================================================================
 (def add-channel-event-listener!
   (requiring-resolve 'com.blockether.vis.internal.channel-events/add-channel-event-listener!))
 
@@ -797,14 +742,12 @@
 (def channel-event-listeners
   (requiring-resolve 'com.blockether.vis.internal.channel-events/channel-event-listeners))
 
-;; =============================================================================
 ;; Human input — the typed pause an extension uses to ask the operator
 ;;
 ;; `request-human-input!` BLOCKS the calling extension until a channel calls
 ;; `submit-human-input!`/`cancel-human-input!`, or the request times out. The
 ;; dialog itself is a channel concern: a channel subscribes to the bus above and
 ;; renders the `:human-input/request` event, then answers by request id.
-;; =============================================================================
 (def request-human-input! (requiring-resolve 'com.blockether.vis.internal.human-input/request!))
 
 (def submit-human-input! (requiring-resolve 'com.blockether.vis.internal.human-input/submit!))
@@ -829,7 +772,6 @@
 (def forget-human-input-secret!
   (requiring-resolve 'com.blockether.vis.internal.human-input/forget-secret!))
 
-;; =============================================================================
 ;; Binary entry point
 ;;
 ;; `clojure -M:vis` invokes this `-main`. The dispatcher / built-in
@@ -837,6 +779,5 @@
 ;; `com.blockether.vis.internal.main`; this fn is a thin trampoline
 ;; so the binary entry has the same on-disk address as the public
 ;; library API.
-;; =============================================================================
 
 (defn -main [& args] (apply binary/-main args))

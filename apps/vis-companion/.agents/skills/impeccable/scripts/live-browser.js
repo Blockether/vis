@@ -2560,8 +2560,6 @@
     return row;
   }
 
-  // Generating row
-
   function buildGeneratingRow() {
     const row = el('div', {
       display: 'flex', alignItems: 'center', gap: '8px',
@@ -2576,10 +2574,8 @@
     label.textContent = configureKind === 'insert' ? 'Insert' : actionLabel();
     row.appendChild(label);
 
-    // Dots
     row.appendChild(buildDots(false));
 
-    // Status
     const status = el('span', {
       fontSize: '11px', color: BP.textDim, whiteSpace: 'nowrap',
       marginLeft: 'auto',
@@ -2640,7 +2636,6 @@
       padding: '1px 2px',
     });
 
-    // Prev
     const prev = navBtn('\u2190');
     prev.id = PREFIX + '-variant-prev';
     prev.addEventListener('click', (e) => { e.stopPropagation(); cycleVariant(-1); });
@@ -2650,7 +2645,6 @@
     // Dots (clickable)
     row.appendChild(buildDots(true));
 
-    // Counter
     const counter = el('span', {
       fontFamily: MONO, fontSize: '11px', fontWeight: '500',
       color: BP.textDim, minWidth: '24px', textAlign: 'center',
@@ -2659,7 +2653,6 @@
     counter.textContent = cyclingCounterText();
     row.appendChild(counter);
 
-    // Next
     const next = navBtn('\u2192');
     next.id = PREFIX + '-variant-next';
     next.addEventListener('click', (e) => { e.stopPropagation(); cycleVariant(1); });
@@ -2764,7 +2757,6 @@
     }
     row.appendChild(accept);
 
-    // Discard
     const discard = el('button', {
       padding: '4px 6px', borderRadius: '5px',
       border: '1px solid ' + BP.hairline, background: 'transparent',

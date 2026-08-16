@@ -272,9 +272,7 @@
   [:zai-coding-plan :alibaba-coding-plan :openai-codex :anthropic-coding-plan
    :github-copilot-individual :github-copilot-business :github-copilot-enterprise])
 
-;; -----------------------------------------------------------------------------
 ;; `titling:` config (Blockether/vis#71)
-;; -----------------------------------------------------------------------------
 ;;
 ;; Auto-titling is COSMETIC; the foreground turn is not. On a gateway with a
 ;; small shared RPM/concurrency budget the title `ask!` fired alongside the

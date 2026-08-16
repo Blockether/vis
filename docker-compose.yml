@@ -1,6 +1,4 @@
-# =============================================================================
 # vis — containerised gateway
-# =============================================================================
 # Everything vis needs is inside the image (JDK, clojure, maven, python, node,
 # chrome, spel + Playwright browsers, ffmpeg, the Parakeet ASR model). The
 # host contributes nothing but a port, a state volume and a workspace.
@@ -23,7 +21,6 @@
 # replace a systemd-run gateway with no change on the proxy side. Binding
 # 0.0.0.0 additionally exposes the gateway on every public NIC, bypassing that
 # proxy (and its TLS) entirely.
-# =============================================================================
 
 services:
   vis-gateway:

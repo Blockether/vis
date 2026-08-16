@@ -56,9 +56,7 @@
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]))
 
-;; =============================================================================
 ;; Selector specs
-;; =============================================================================
 
 ;; WHERE the tests are - files, directories, or `<path>::<test-name>` node ids.
 ;; The only way in: no second key ever names a test beside them. This is the WIRE
@@ -73,9 +71,7 @@
 ;; The selector map a runner tool accepts on its opts dict (all keys optional).
 (s/def ::selectors (s/keys :opt-un [::paths ::include ::exclude]))
 
-;; =============================================================================
 ;; Result specs
-;; =============================================================================
 
 (s/def ::language string?)
 
@@ -129,9 +125,7 @@
   (s/keys :opt-un [::language ::mode ::framework ::tool ::ns ::total ::pass ::fail ::errored
                    ::selected ::skipped ::failures ::output]))
 
-;; =============================================================================
 ;; Key vectors DERIVED from the specs (spec is the single source of truth)
-;; =============================================================================
 
 (defn- keys-spec-un-keys
   "Extract the unqualified :req-un + :opt-un keys, in order, from a registered
@@ -153,9 +147,7 @@
    from the `::result` spec."
   (keys-spec-un-keys ::result))
 
-;; =============================================================================
 ;; Normalization + selection (the shared runtime helpers)
-;; =============================================================================
 
 (defn- ->str-vec
   "Coerce nil / a single scalar / a sequential into a vec of trimmed,

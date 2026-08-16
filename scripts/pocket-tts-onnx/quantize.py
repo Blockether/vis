@@ -27,16 +27,13 @@ def quantize_file(input_path: Path, output_path: Path, op_types=['MatMul']):
 
     try:
         print(f"  Running shape inference...")
-        # Load model
         model = onnx.load(str(input_path))
-        # Infer shapes
         model = onnx.shape_inference.infer_shapes(model)
         
         # Save to temp file for quantization input
         temp_path = output_path.with_suffix(".temp.onnx")
         onnx.save(model, str(temp_path))
         
-        # Quantize
         quantize_dynamic(
             model_input=str(temp_path),
             model_output=str(output_path),

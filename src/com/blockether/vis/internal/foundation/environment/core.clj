@@ -31,12 +31,10 @@
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel]))
 
-;; ---------------------------------------------------------------------------
 ;; Snapshot cache. Keyed by canonical cwd so we recompute on
 ;; directory change. Recomputation is cheap (the language scan is
 ;; bounded) but redundant on every iteration of the same turn, so
 ;; we memoize at the extension boundary.
-;; ---------------------------------------------------------------------------
 
 ;; `defonce` so the atom survives a `(require :reload)` during an
 ;; extension reload (per plan caveat: extensions holding mutable
@@ -134,16 +132,12 @@
 (defonce ^:private _environment-reload-hook
   (extension/register-reload-hook! ::environment-refresh refresh!))
 
-;; ---------------------------------------------------------------------------
 ;; Extension definition.
-;; ---------------------------------------------------------------------------
 
-;; -----------------------------------------------------------------------------
 ;; Local thin wrappers around the snapshot accessors so each `v/` callable
 ;; corresponds to a real var with `:doc` + `:arglists` baked in. `vis/symbol`
 ;; reads both straight from the var meta - no separate side-map at the
 ;; registration callsite.
-;; -----------------------------------------------------------------------------
 
 (defn repositories
   "await repositories()
@@ -246,9 +240,7 @@ Returns {\"shape\": \"polylith\"|\"workspace\"|\"submodules\"|None, \"totals\": 
     (str "String-keyed `{shape, totals, files, is_truncated}`; `shape` is "
          "`polylith` | `workspace` | `submodules`, or None for a single-package repo.")))
 
-;; ---------------------------------------------------------------------------
 ;; Project guidance surface.
-;; ---------------------------------------------------------------------------
 
 (defn main-agent-instructions
   "The project's own guidance file — AGENTS.md or CLAUDE.md — whole, with where

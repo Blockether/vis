@@ -14,9 +14,7 @@
             [com.blockether.vis.internal.prompt :as prompt]
             [taoensso.telemere :as tel]))
 
-;; =============================================================================
 ;; Atom and constructor — ONE atom carries the entire engine state
-;; =============================================================================
 
 (defn make-ctx-atom
   "Initialize the CTX atom for a session. Uses the canonical empty scaffold.
@@ -25,13 +23,9 @@
   ([] (atom (eng/empty-ctx)))
   ([session-id] (atom (eng/empty-ctx session-id))))
 
-;; =============================================================================
 ;; Scope synthesis
-;; =============================================================================
 
-;; =============================================================================
 ;; Single turn-state atom
-;; =============================================================================
 ;;
 ;; Replaces the six-atom soup
 ;;   :current-turn-position-atom
@@ -111,9 +105,7 @@
      "iter" (normalize-iteration iteration)
      "next_form" (inc (long (or form-idx 0)))}))
 
-;; =============================================================================
 ;; Per-iter helpers used by the loop
-;; =============================================================================
 
 (defn drain-warnings!
   "Compatibility shim for the former warning drain. Always returns [] so the
@@ -249,11 +241,9 @@
     ;; not through mutable context.
     (renderer-fn {:ctx (enrich-ctx env ctx) :warnings []})))
 
-;; =============================================================================
 ;; rewind / lens / find — model-facing recovery bindings
 ;;
 ;; Scope grammar (matches the engine cursor):
 ;;   t<N>/i<M>       — iteration M of turn N
 ;;   t<N>/i<M>/f<K>  — form K (1-based) of iteration M of turn N
 ;; All DB-backed against `session_turn_iteration.forms`.
-;; =============================================================================

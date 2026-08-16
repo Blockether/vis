@@ -6,11 +6,9 @@ def __vis_install_anydoc__():
     _detect = __vis_anydoc_detect__
     _cache = __vis_anydoc_cache__
 
-    # -----------------------------------------------------------------------
     # Errors — every refusal says which document, which character, and what to
     # do about it. Each one is also the plain Python error a caller would have
     # written `except` for, so old code keeps working.
-    # -----------------------------------------------------------------------
 
     class AnydocError(Exception):
         """Base class: anything anydoc refuses."""
@@ -86,7 +84,6 @@ def __vis_install_anydoc__():
     def _text(value):
         return "" if value is None else str(value)
 
-    # -----------------------------------------------------------------------
     # Folding — the reason a search finds what a human means
     #
     # Both the corpus and the query go through the SAME fold, and every folded
@@ -97,7 +94,6 @@ def __vis_install_anydoc__():
     # line break healed (`quar-\nterly` -> `quarterly`), every whitespace run
     # (including newlines and NBSP) collapsed to one space so a phrase crosses a
     # wrap, and case folded (`Hauptstraße` == `HAUPTSTRASSE`).
-    # -----------------------------------------------------------------------
 
     _QUOTES = {
         "\u2018": "'",
@@ -205,9 +201,7 @@ def __vis_install_anydoc__():
             return low[:-1]
         return low
 
-    # -----------------------------------------------------------------------
     # Query language
-    # -----------------------------------------------------------------------
 
     _SCOPES = {
         "heading": ("heading",),
@@ -553,9 +547,7 @@ def __vis_install_anydoc__():
             )
         return query, _stamped(clauses), filters
 
-    # -----------------------------------------------------------------------
     # Documents
-    # -----------------------------------------------------------------------
 
     class Skipped:
         """A source a corpus walk could not read, and the reason it could not.
@@ -1053,9 +1045,7 @@ def __vis_install_anydoc__():
                 )
             )
 
-    # -----------------------------------------------------------------------
     # Conversion
-    # -----------------------------------------------------------------------
 
     def _asset(entry):
         raw = entry.get("bytes")
@@ -1189,9 +1179,7 @@ def __vis_install_anydoc__():
             )
         return _known_extensions[extension]
 
-    # -----------------------------------------------------------------------
     # Matching
-    # -----------------------------------------------------------------------
 
     _MAX_FILE_BYTES = 128 * 1024 * 1024
 
@@ -1373,9 +1361,7 @@ def __vis_install_anydoc__():
         norm = tf * (k1 + 1.0) / (tf + k1 * (1.0 - b + b * (length / (average or 1.0))))
         return idf * norm
 
-    # -----------------------------------------------------------------------
     # Sources
-    # -----------------------------------------------------------------------
 
     _documents = {}
     _DOCUMENT_CACHE = 64

@@ -32,9 +32,7 @@
            (java.nio.file AtomicMoveNotSupportedException Files StandardCopyOption)
            (java.security MessageDigest)))
 
-;; =============================================================================
 ;; Paths + registry key
-;; =============================================================================
 
 (defn- vis-home ^java.io.File [] (io/file (System/getProperty "user.home") ".vis"))
 
@@ -93,9 +91,7 @@
   ^java.io.File [db]
   (io/file (registry-dir) (str (registry-key db) ".edn")))
 
-;; =============================================================================
 ;; pid liveness
-;; =============================================================================
 
 (defn current-pid ^long [] (.pid (ProcessHandle/current)))
 
@@ -137,9 +133,7 @@
           (swap! pid-liveness-cache assoc pid [fresh now])
           fresh)))))
 
-;; =============================================================================
 ;; Registry read / write / delete
-;; =============================================================================
 
 (defonce ^:private registry-mutation-monitor (Object.))
 
@@ -237,9 +231,7 @@
                                           (and entry (pred entry) (delete-registry-file! f))))))
        (catch Throwable _ false)))
 
-;; =============================================================================
 ;; Freshness
-;; =============================================================================
 
 (defn registry-fresh?
   "True when `entry` describes a LIVE daemon: it has a pid, that pid is alive,
@@ -250,9 +242,7 @@
   ([{:keys [pid] :as entry} probe]
    (boolean (and (map? entry) pid (pid-alive? pid) (try (probe entry) (catch Throwable _ false))))))
 
-;; =============================================================================
 ;; Self-registration (called by the daemon at startup)
-;; =============================================================================
 
 (defn register-self!
   "Called by the daemon (`serve-main!`) once it is listening: write this process
@@ -269,9 +259,7 @@
   [db]
   (when-not (memory-db? db) (delete-registry-if! db #(= (:pid %) (current-pid)))))
 
-;; =============================================================================
 ;; One daemon per DB (split-brain guard)
-;; =============================================================================
 
 (def ^:private ENDPOINT_PROBE_TIMEOUT_MS 400)
 
@@ -329,9 +317,7 @@
                   (boolean (listening? host port)))
          entry)))))
 
-;; =============================================================================
 ;; Spawn argv + detached launch
-;; =============================================================================
 
 (defn native-image?
   "True when running as the compiled GraalVM binary rather than on the JVM."
@@ -463,9 +449,7 @@
     (.start pb)
     nil))
 
-;; =============================================================================
 ;; Cross-process spawn lock (thundering-herd guard)
-;; =============================================================================
 
 (defn lock-file
   "OS advisory-lock file guarding daemon SPAWN for `db`. Sits beside the registry
@@ -495,7 +479,6 @@
   (when channel (try (.close channel) (catch Throwable _ nil))))
 
 ;; Orchestration
-;; =============================================================================
 
 (defn await-registry!
   "Poll for a FRESH registry entry for `db` up to `timeout-ms`, checking every

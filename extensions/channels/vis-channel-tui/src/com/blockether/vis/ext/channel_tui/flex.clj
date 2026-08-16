@@ -153,8 +153,6 @@
                      kids)
              nil)))))
 
-;; ── render ────────────────────────────────────────────────────────────────────
-
 (defn render!
   "Paint node `n` at absolute cell (col,row) and return its width. Accepts a
    bare string (lifted to a `text` node) or nil (paints nothing, returns 0)."

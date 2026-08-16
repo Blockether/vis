@@ -27,9 +27,7 @@
   (:import [dev.kreuzberg.treesitterlanguagepack Highlighter TreeSitterLanguagePack]
            [java.util HashMap]))
 
-;; =============================================================================
 ;; Native availability (fail-open)
-;; =============================================================================
 
 (def ^:private native-ready?
   "True once the platform native lib is selected + loaded. The require is the
@@ -41,9 +39,7 @@
               true
               (catch Throwable _ false))))
 
-;; =============================================================================
 ;; capture → ANSI SGR (reuses the painter's existing theme fg slots)
-;; =============================================================================
 
 (def ^:private capture->sgr
   "Highlight capture → SGR foreground code. Codes are the ones
@@ -73,9 +69,7 @@
              (.put m ^String k ^String v))
            m)))
 
-;; =============================================================================
 ;; Fence lang → grammar
-;; =============================================================================
 
 (def ^:private lang->grammar
   "Fence `:lang` (lower-cased) → tree-sitter grammar name. Only langs we
@@ -111,9 +105,7 @@
   [lang]
   (when lang (get lang->grammar (str/lower-case lang))))
 
-;; =============================================================================
 ;; Highlight (delegates to the pack's JVM-native Highlighter)
-;; =============================================================================
 
 (def ^:private cache
   "Bounded [grammar source] → colored-string cache: renders re-run on every

@@ -962,7 +962,6 @@ function checkColors(opts) {
     }
   }
 
-  // Gradient text
   if (bgClip === 'text' && bgImage && bgImage.includes('gradient')) {
     findings.push({ id: 'gradient-text', snippet: 'background-clip: text + gradient' });
   }
@@ -1575,9 +1574,7 @@ function scanCssTextForRadialHalo(content) {
   return findings;
 }
 
-// ---------------------------------------------------------------------------
 // Text-level CSS rule-block scanners (pseudo-element stripes, pulsing dots)
-// ---------------------------------------------------------------------------
 
 // Iterate `selector { declarations }` pairs in raw CSS/HTML text. The block
 // body excludes braces, so nested structures (@media, @keyframes) naturally
@@ -5642,9 +5639,7 @@ function checkElementTextOverflowDOM(el) {
   return [];
 }
 
-// ---------------------------------------------------------------------------
 // Blinking cursor (browser-only)
-// ---------------------------------------------------------------------------
 
 // Block / underscore glyphs commonly used as a fake text cursor.
 const CURSOR_GLYPH_RE = /^[_|▀-▟■▮❙❚｜]$/;
@@ -5753,9 +5748,7 @@ function checkElementBlinkingCursorDOM(el) {
   }];
 }
 
-// ---------------------------------------------------------------------------
 // Content invisible at rest (browser-only, driven by the URL engine)
-// ---------------------------------------------------------------------------
 
 // Tags whose text never renders, or whose hidden state is legitimate UI
 // (templates, dialogs, native select options). Text inside them stays out of
@@ -5843,9 +5836,7 @@ function checkContentHiddenAtRest({ totalChars = 0, hiddenChars = 0, hiddenSampl
   }];
 }
 
-// ---------------------------------------------------------------------------
 // Edge-flush cards in horizontal scrollers (browser-only)
-// ---------------------------------------------------------------------------
 
 // A visually-defined card (own opaque background, or borders on 2+ sides)
 // inside a horizontal scroller, sitting flush against one edge of the
@@ -5908,9 +5899,7 @@ function checkEdgeFlushCardsDOM() {
   return findings;
 }
 
-// ---------------------------------------------------------------------------
 // Text occlusion / element overlap (browser-only)
-// ---------------------------------------------------------------------------
 
 // An opaque decorated box: a near-solid background fill or two-plus visible
 // borders make it hide whatever sits behind it. Gradient / image fills are
@@ -6186,9 +6175,7 @@ function checkTextOcclusionDOM() {
   return findings;
 }
 
-// ---------------------------------------------------------------------------
 // First-viewport column overflow — the stretched-hero signature (browser-only)
-// ---------------------------------------------------------------------------
 
 // A multi-column composition that opens the page (grid/flex with two or more
 // side-by-side columns, each a real share of the width) where one column's
@@ -6727,7 +6714,6 @@ if (IS_BROWSER) {
       });
       controls.appendChild(toggle);
 
-      // Close button
       const close = document.createElement('button');
       close.textContent = '\u00d7';
       close.title = 'Dismiss banner';

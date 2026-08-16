@@ -125,9 +125,7 @@
                         (range hi)))
          (when (not= (long lo) (long hi)) (str "  (" lo "–" hi " digits)")))))
 
-;; =============================================================================
 ;; Form model
-;; =============================================================================
 
 (defn- field-options [field] (vec (:options field)))
 
@@ -247,9 +245,7 @@
 
 (defn- clamp ^long [^long v ^long lo ^long hi] (max lo (min hi v)))
 
-;; =============================================================================
 ;; Text editing
-;; =============================================================================
 
 (defn- cursor-of
   ^long [form field-id]
@@ -348,9 +344,7 @@
                   (range-snap bounds (+ (double current) (* delta (double (:st bounds))))))
         (update :errors dissoc field-id))))
 
-;; =============================================================================
 ;; Toggling
-;; =============================================================================
 
 (defn- toggle-stop
   [form {:keys [kind field-id value]}]
@@ -382,9 +376,7 @@
 
     form))
 
-;; =============================================================================
 ;; Key handling
-;; =============================================================================
 
 (defn key->event
   "Normalize one Lanterna keystroke into the event map [[handle-event]] takes,
@@ -421,9 +413,7 @@
                                   :else {:kind :char :char (char c)}))
         nil))))
 
-;; =============================================================================
 ;; Errors
-;; =============================================================================
 
 (defn- focus-first-error
   "Park the cursor on the first stop the engine complained about, so a refused
@@ -559,9 +549,7 @@
   (let [errors (or errors {})]
     (assoc (focus-first-error form errors) :errors errors)))
 
-;; =============================================================================
 ;; Paint plan
-;; =============================================================================
 
 (defn- cursor-line-col
   "`[line col]` of `cursor` inside `text`."
@@ -967,9 +955,7 @@
       (multiline-focus? form)
       (conj ["Enter" "newline"]))))
 
-;; =============================================================================
 ;; Painting
-;; =============================================================================
 
 (defn- paint-plain!
   [g left row inner-w fg text]

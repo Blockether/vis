@@ -5,7 +5,6 @@
    writes when it means the character itself, and nothing else."
   (:require [clojure.string :as str]))
 
-;; =============================================================================
 ;; Drifted `\uXXXX` escapes in edit TEXT
 ;;
 ;; A model sometimes emits the six characters `\u2014` where it means an em
@@ -21,7 +20,6 @@
 ;; points in icon fonts; nothing decodes into invisible ink (bidi overrides,
 ;; zero width, a space that is not a space) or into an unassigned point. Every
 ;; one of those is written through verbatim.
-;; =============================================================================
 
 (defn- hex-digit-value
   "Value of the ASCII hex digit code unit `c`, or -1.

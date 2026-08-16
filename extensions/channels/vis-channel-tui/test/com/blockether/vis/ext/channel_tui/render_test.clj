@@ -3969,7 +3969,6 @@
                             {:forms [(result-form "rg" "x")] :error {:type :svar.core/http-error}}]
                            (tool 2 "rg" "c")]))))))
 
-;; ---------------------------------------------------------------------------
 ;; wrap-text* — the plain-text wrap path
 ;;
 ;; `wrap-text*` deliberately does NOT delegate to the lanterna fork's
@@ -3982,7 +3981,6 @@
 ;; (a) width measurement — already shared via `p/display-width` /
 ;; `p/col-prefix-end`, both TextCharacter-backed — and (b) greedy packing on
 ;; plain single-spaced prose, pinned below against `p/word-wrap` itself.
-;; ---------------------------------------------------------------------------
 
 (defdescribe wrap-text-lanterna-parity-test
              (it "packs plain single-spaced prose exactly like the lanterna fork's wordWrap"

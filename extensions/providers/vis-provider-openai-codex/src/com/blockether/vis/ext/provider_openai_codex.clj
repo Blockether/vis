@@ -26,9 +26,7 @@
            [java.security MessageDigest SecureRandom]
            [java.util Base64]))
 
-;; =============================================================================
 ;; Constants
-;; =============================================================================
 
 (def ^:private CLIENT_ID "app_EMoamEEZ73f0CkXaXp7hrann")
 
@@ -52,9 +50,7 @@
 
 (def ^:private ^:const REFRESH_MARGIN_MS (* 5 60 1000))
 
-;; =============================================================================
 ;; Encoding / crypto helpers
-;; =============================================================================
 
 (def ^:private secure-random (delay (SecureRandom.)))
 
@@ -169,9 +165,7 @@
 
     (when-not (str/blank? id) id)))
 
-;; =============================================================================
 ;; HTTP helpers
-;; =============================================================================
 
 (defn- post-form
   [url params]
@@ -242,9 +236,7 @@
                       {:status status :body body})))
     (token-result json)))
 
-;; =============================================================================
 ;; Token persistence
-;; =============================================================================
 
 (defn- auth-json-key
   "JSON key -> engine keyword. What we write is snake_case (`refresh_token`);
@@ -377,9 +369,7 @@
   ([] (force-refresh-token! nil))
   ([rejected-token] (refresh-and-persist! rejected-token)))
 
-;; =============================================================================
 ;; OAuth authorization flow
-;; =============================================================================
 
 (defn create-authorization-flow
   "Create PKCE verifier, CSRF state, and OpenAI authorization URL."
@@ -506,9 +496,7 @@
     (save-auth-file! (exchange-authorization-code! code verifier))
     {:status :ok}))
 
-;; =============================================================================
 ;; Public CLI helpers
-;; =============================================================================
 
 (defn authenticated? [] (some? (detect-credentials)))
 
@@ -608,7 +596,6 @@
                        :group :provider
                        :persist? true})
 
-;; ---------------------------------------------------------------------------
 ;; A new Codex model svar's pinned catalog doesn't know yet can still be offered
 ;; with its real window declared INLINE on `:default-models` as
 ;; `{:name "…" :context N}`: `default-model-configs` carries the map through,

@@ -28,12 +28,10 @@
 
 ;;; ── Shared theme tokens adapted to Lanterna ────────────────────────────────
 
-;; Terminal
 (def terminal-bg (rgb :terminal-bg))
 
 (def text-fg (rgb :text-fg))
 
-;; Header
 (def header-fg (rgb :header-fg))
 
 (def header-hover-fg (rgb :header-hover-fg))
@@ -55,7 +53,6 @@
 
 (def border-fg (rgb :border-fg))
 
-;; Dialog
 (def ^:dynamic dialog-bg
   "The paper the CURRENT surface paints on. Dynamic because a magit-style BAND is
    the same chrome on DIFFERENT paper: `transient/paint-layout!` and
@@ -192,7 +189,6 @@
 
 (def th-md-summary-fg (rgb :th-md-summary-fg))
 
-;; Link chrome
 (def link-chrome-fg (rgb :link-chrome-fg))
 
 (def link-chrome-arrow-fg (rgb :link-chrome-arrow-fg))
@@ -205,7 +201,6 @@
 
 (def link-chrome-blocked-fg (rgb :link-chrome-blocked-fg))
 
-;; Footer
 (def footer-fg (rgb :footer-fg))
 
 (def footer-fg-muted (rgb :footer-fg-muted))
@@ -329,7 +324,6 @@
 
 (def chat-min-width (width :chat-min-width))
 
-;; Spacing
 (def pad-x (spacing :pad-x))
 
 (def ^:private color-vars

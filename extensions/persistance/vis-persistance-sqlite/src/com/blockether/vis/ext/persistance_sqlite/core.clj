@@ -42,9 +42,7 @@
                        SQLiteConfig$TransactionMode
                        SQLiteDataSource)))
 
-;; =============================================================================
 ;; Helpers
-;; =============================================================================
 
 (def ds vis/ds)
 
@@ -95,9 +93,7 @@
   [^bytes bs]
   (when bs (nippy/thaw bs)))
 
-;; =============================================================================
 ;; Error translation + bootstrap error normalization
-;; =============================================================================
 
 (defn- causal-chain
   "Walk `(.getCause e)` until a fixed point or cycle is hit. Returns the
@@ -187,7 +183,6 @@
           (not (.canWrite dirf)) (str "The directory " dbdir " is not writable by this process.")
           :else "The handle was lost mid-session. Restart Vis to reconnect.")))))
 
-;; =============================================================================
 ;; Schema install
 ;;
 ;; The Flyway runner and canonical V*__schema.sql files live in this
@@ -198,13 +193,11 @@
 ;; consolidated back into the single canonical V1, and additively tops up columns
 ;; a store created by an older canonical V1 is missing (the DDL text still comes
 ;; from V1__schema.sql); it never recreates the DB.
-;; =============================================================================
 
 (def ^:private MIGRATIONS "classpath:db/sqlite/migration")
 
 (defn- install-schema! [^DataSource ds] (migration/migrate! ds MIGRATIONS))
 
-;; =============================================================================
 ;; Connection management
 ;;
 ;; xerial's `SQLiteConnectionPoolDataSource` is a JNDI-shaped façade
@@ -221,7 +214,6 @@
 ;; have no equivalent of a connection drop). `db-close!` actually
 ;; closes the pool now, so db-dispose-connection! releases handles
 ;; deterministically.
-;; =============================================================================
 
 (def ^:private wal-size-limit-bytes
   "Cap on the `-wal` sidecar file, in bytes (16 MiB).
@@ -675,9 +667,7 @@
         (and (:file-key-snapshot store)
              (not= (stable-db-file-key store) (:file-key-snapshot store))))))
 
-;; =============================================================================
 ;; SQLite write policy
-;; =============================================================================
 
 (def ^:private sqlite-write-retry-delays-ms [5 10 20 40 80 160])
 
@@ -748,9 +738,7 @@
                 (do (Thread/sleep (long (first delays))) (recur (inc attempt) (rest delays)))
                 (throw t)))))))))
 
-;; =============================================================================
 ;; Logging - log table
-;; =============================================================================
 
 (defn db-log!
   [db-info entry]
@@ -784,9 +772,7 @@
                               (assoc :session_turn_iteration_id
                                 (->id (:iteration-id entry))))]})))))
 
-;; =============================================================================
 ;; Workspace - trunk-native work units
-;; =============================================================================
 
 
 (defn- row->workspace
@@ -1066,9 +1052,7 @@
                         {:session-state-id (->uuid session-state-id)
                          :workspace-id (->uuid workspace-id)}))))
 
-;; =============================================================================
 ;; Session - session_soul + session_state
-;; =============================================================================
 
 (defn db-store-session!
   "Create session_soul + initial session_state (version 0).
@@ -2084,9 +2068,7 @@
       (fn [tx-info]
         (execute! tx-info {:delete-from :session_soul :where [:= :id (->id session-soul-id)]})))))
 
-;; =============================================================================
 ;; Projects (cross-channel) + movable project sessions + ownership  (V6/V7)
-;; =============================================================================
 
 (defn- row->project
   "Project a `project` row (with an optional `session_count` aggregate) into the
@@ -2369,9 +2351,7 @@
                            :where [:and [:= :id (->id sid)] [:= :project_id nil]]}))))
           (reorder-members-in-tx! tx-info pid session-ids))))))
 
-;; =============================================================================
 ;; Fork - branch a session at a point
-;; =============================================================================
 
 (defn db-list-session-states
   "List every `session_state` row for the soul behind `session-id`,
@@ -2529,9 +2509,7 @@
                            :where [:= :id (:id current)]}))
               new-id)))))))
 
-;; =============================================================================
 ;; State resolution
-;; =============================================================================
 
 (defn- latest-state-id
   [db-info session-id]
@@ -2557,14 +2535,12 @@
             (vec (reverse acc)))
           (vec (reverse acc)))))))
 
-;; =============================================================================
 ;; Runtime-value serialization helpers
 ;;
 ;; These live above any code that calls them (db-update-session-turn! snapshots
 ;; CTX through `freeze-safe`; the iteration writer does the same for per-form
 ;; results). Keep this block here — do not push it back down past consumers, or
 ;; you'll be tempted to `(declare freeze-safe)` again.
-;; =============================================================================
 
 (defn- runtime-object?
   "True when `v` is a runtime-only object (function, var, or other
@@ -2626,9 +2602,7 @@
          (if (zero? depth) {:vis/ref :depth-exceeded} (doall (map #(freeze-safe % (dec depth)) v)))
          :else v)))
 
-;; =============================================================================
 ;; Per-session model preference (session_soul.llm_pref_provider + llm_pref_model)
-;; =============================================================================
 
 (defn db-get-session-model-pref
   "The persisted model preference for a session (soul id) as
@@ -2673,9 +2647,7 @@
                  :where [:= :id (->ref session-id)]}))
     nil))
 
-;; =============================================================================
 ;; The human's star (session_soul.favorite_rank)
-;; =============================================================================
 
 (defn db-set-session-favorite!
   "Star (`true`) or unstar (`false`) the soul behind `session-id`. Returns the
@@ -2715,9 +2687,7 @@
 
           (execute! tx-info {:update :session_soul :set {:favorite_rank rank} :where [:= :id id]})
           rank)))))
-;; =============================================================================
 ;; Turn - session_turn_soul + session_turn_state
-;; =============================================================================
 
 (defn- attachment-payload-cols
   "Payload columns for ONE attachment row: EXTERNAL (`:storage_uri` set,
@@ -3317,9 +3287,7 @@
 
 ;; Extra workflow persistence removed.
 
-;; =============================================================================
 ;; Iteration - session_turn_iteration table
-;; =============================================================================
 
 (defn- require-iteration-code!
   [opts]
@@ -3708,9 +3676,7 @@
                        :values [(routing-event-row iteration-id-s now idx event)]}))
           iteration-id)))))
 
-;; =============================================================================
 ;; Read helpers
-;; =============================================================================
 
 (defn- row->turn
   [row]
@@ -4241,7 +4207,6 @@
       (if (seq via-soul) via-soul (iterations-for-state-id db-info id-s)))
     []))
 
-;; -----------------------------------------------------------------------------
 ;; `db-list-iteration-vars`, `db-latest-var-registry`, `db-var-history*`,
 ;; `db-store-dependency!`, `db-list-dependencies`, `db-restore-blocks`,
 ;; and `latest-visible-definition-rows` were retired together with the
@@ -4249,7 +4214,6 @@
 ;; Executed tool-call records live on `session_turn_iteration.tool_calls`;
 ;; cross-turn references flow through `:session/facts` and `introspect-iter` /
 ;; `introspect-turn` (DB reads against that BLOB).
-;; -----------------------------------------------------------------------------
 
 (defn db-turn-history
   "Per-turn history rows with canonical typed `:content`."
@@ -4272,9 +4236,7 @@
           (range)
           turns)))
 
-;; =============================================================================
 ;; Extension aggregate sidecars
-;; =============================================================================
 
 (defn- ->edn-text [v] (pr-str v))
 
@@ -4538,9 +4500,7 @@
                                                                          (:index-data current))
                                                          :content next-content)))))))
 
-;; =============================================================================
 ;; CTX snapshots (per-turn :session/* state)
-;; =============================================================================
 
 (defn db-load-latest-ctx
   "Load the CTX snapshot (Nippy BLOB) from the latest session_turn_state
@@ -4567,7 +4527,6 @@
                                :limit 1}))]
           (<-blob (:ctx row)))))))
 
-;; =============================================================================
 ;; Backend registration
 ;;
 ;; The extension is registered by the lightweight
@@ -4582,7 +4541,6 @@
 ;; Tests that need the SQLite backend registered should require the
 ;; `registrar` ns; tests that only need the fns can require this ns
 ;; directly without registering the extension.
-;; =============================================================================
 
 (defn db-load-ctx-history
   "Return a sorted-by-turn vec of `[turn-n ctx-map]` pairs for the session.

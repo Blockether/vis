@@ -95,7 +95,6 @@
 
                     (str m "m " s "s"))))))
 
-;; =============================================================================
 ;; Turn-summary helpers (CLI / TUI share these)
 ;;
 ;; Three different surfaces used to format the same data three
@@ -114,7 +113,6 @@
 ;; name; the CLI wraps in `[...]`. The
 ;; INNER content is identical so screenshots / pastes / chat history
 ;; all read the same way.
-;; =============================================================================
 
 (defn format-tokens
   "Render token counts in the canonical compact grouped form:
@@ -455,7 +453,6 @@
            note note
            :else ""))))
 
-;; =============================================================================
 ;; Bounded value rendering
 ;;
 ;; UI-level helper: stringify a plain Clojure value with size + nesting
@@ -463,7 +460,6 @@
 ;; `;; => …` lines never dump multi-megabyte payloads into a render buffer.
 ;; Renders *runtime values* via `clojure.pprint` for data shapes and
 ;; `pr-str` for scalar fallback.
-;; =============================================================================
 
 (def ^:const MAX_RESULT_DISPLAY_CHARS
   "Default char cap on bounded plain-value output when no `:max-chars`

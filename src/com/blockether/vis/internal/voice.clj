@@ -36,10 +36,6 @@
 
 (set! *warn-on-reflection* true)
 
-;; =============================================================================
-;; Directions
-;; =============================================================================
-
 (def directions
   "The two directions of speech, in the order a human meets them: audio in, audio out.
    Each is also the KEY its engines carry their work fn under."
@@ -60,10 +56,6 @@
              (str "Unknown speech direction: " (pr-str direction))
              {:type :vis/voice-unknown-direction :direction direction :available directions})))
   direction)
-
-;; =============================================================================
-;; Phases
-;; =============================================================================
 
 (def phases
   "Every phase of speech work, in order, both directions together. `:uploading` is
@@ -94,9 +86,7 @@
         (number? progress) (long (max 0 (min 100 (Math/round (double progress)))))
         :else 0))
 
-;; =============================================================================
 ;; Errors
-;; =============================================================================
 
 (defn error-message
   "One readable line for a Throwable: the DEEPEST cause's own sentence, so an
@@ -114,9 +104,7 @@
         (not-empty (str/trim (str root)))
         "Unknown error")))
 
-;; =============================================================================
 ;; The `speech` feature toggle
-;; =============================================================================
 
 (def speech-toggle-id
   "The feature toggle that decides whether Vis speaks at all. Registered HERE, at the
@@ -148,9 +136,7 @@
                      :toggle speech-toggle-id})))
   nil)
 
-;; =============================================================================
 ;; Engine registry
-;; =============================================================================
 
 (def engine-env-vars
   "Operator override naming the engine every surface should use, per direction. Two
@@ -389,9 +375,7 @@
 
 (defn ready? "Can this engine take work right now?" [engine] (= :ready (:state (readiness engine))))
 
-;; =============================================================================
 ;; Voices - the catalogue only a SPEAKING engine has
-;; =============================================================================
 
 (defn public-voice
   "One voice in the shape every surface reports: the id a caller sends back, a human
@@ -474,9 +458,7 @@
                        :id
                        name)}))
 
-;; =============================================================================
 ;; Synchronous work (the TUI's path - same engine, same progress)
-;; =============================================================================
 
 (defn- reporter
   "Wrap a caller's `on-progress` so only the two keys of the vocabulary travel and a
@@ -579,9 +561,7 @@
       (report {:phase :done :progress 100})
       (assoc audio :audio-path audio-path))))
 
-;; =============================================================================
 ;; Job store
-;; =============================================================================
 
 (def ^:private ^:const job-ttl-ms
   "How long a finished job stays readable — long enough for a client that
@@ -677,9 +657,7 @@
     (discard-dropped-audio! before after))
   nil)
 
-;; =============================================================================
 ;; Watchers - a job PUSHES, nobody polls
-;; =============================================================================
 
 (defonce ^:private watchers* (atom {}))
 

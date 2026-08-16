@@ -30,9 +30,7 @@
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel]))
 
-;; =============================================================================
 ;; Frontmatter — minimal `---` fenced `key: value`, no YAML dependency
-;; =============================================================================
 
 (defn parse-frontmatter
   "Split a markdown doc into `{:meta {kw str} :body str}`. A leading
@@ -57,9 +55,7 @@
                str/trim)]
     (when-not (str/blank? s) s)))
 
-;; =============================================================================
 ;; File template discovery
-;; =============================================================================
 
 (defn- name-stem [^String filename] (str/replace filename #"\.md\z" ""))
 
@@ -175,9 +171,7 @@
   (reset! cache {})
   (file-templates))
 
-;; =============================================================================
 ;; Providers — dynamic templates contributed by extensions
-;; =============================================================================
 
 (defonce ^:private providers (atom {}))
 
@@ -208,9 +202,7 @@
   []
   (dedup-by-name (into (file-templates) (provider-templates))))
 
-;; =============================================================================
 ;; Expansion
-;; =============================================================================
 
 (defn parse-invocation
   "Parse `/name args…` into `{:name \"name\" :args \"args…\"}` or nil.

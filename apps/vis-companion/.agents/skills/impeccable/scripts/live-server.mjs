@@ -102,9 +102,7 @@ const SESSION_CREATING_EVENT_TYPES = new Set(['generate', 'steer']);
 // and only they may drive variant_progress / the *_reviewable phases.
 const VARIANT_PROGRESS_CHECKPOINT_REASONS = new Set(VARIANT_PROGRESS_CHECKPOINT_REASON_LIST);
 
-// ---------------------------------------------------------------------------
 // Port detection
-// ---------------------------------------------------------------------------
 
 async function findOpenPort(start = 8400) {
   return new Promise((resolve) => {
@@ -117,9 +115,7 @@ async function findOpenPort(start = 8400) {
   });
 }
 
-// ---------------------------------------------------------------------------
 // Session state
-// ---------------------------------------------------------------------------
 
 const state = {
   token: null,
@@ -627,10 +623,6 @@ function getManualEditStatus() {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Load scripts
-// ---------------------------------------------------------------------------
-
 function loadBrowserScripts() {
   // Detection script: prefer the skill-bundled detector, then fall back to
   // source/npm package locations for local development and older installs.
@@ -684,7 +676,6 @@ function isLoopbackOrigin(origin) {
 }
 
 // HTTP request handler
-// ---------------------------------------------------------------------------
 
 function createRequestHandler({ detectScript, liveScriptParts }) {
   return (req, res) => {
@@ -1094,7 +1085,6 @@ function createRequestHandler({ detectScript, liveScriptParts }) {
       return;
     }
 
-    // --- Stop ---
     if (p === '/stop') {
       const token = url.searchParams.get('token');
       if (token !== state.token) { res.writeHead(401); res.end('Unauthorized'); return; }
@@ -1118,9 +1108,7 @@ function createRequestHandler({ detectScript, liveScriptParts }) {
   };
 }
 
-// ---------------------------------------------------------------------------
 // Agent poll endpoints (unchanged from WS version)
-// ---------------------------------------------------------------------------
 
 function parsePollTypes(value) {
   if (!value) return null;
@@ -1425,9 +1413,7 @@ function handlePollPost(req, res) {
   });
 }
 
-// ---------------------------------------------------------------------------
 // Lifecycle
-// ---------------------------------------------------------------------------
 
 let httpServer = null;
 
@@ -1511,9 +1497,7 @@ function applyLegacyDeferredAcceptsOnStartup() {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Main
-// ---------------------------------------------------------------------------
 
 const args = process.argv.slice(2);
 

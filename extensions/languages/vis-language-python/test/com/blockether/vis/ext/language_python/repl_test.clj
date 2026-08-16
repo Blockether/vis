@@ -282,7 +282,6 @@
             (expect (= "down" (get-in (core/py-start-repl-fn env "status" nil) [:result "status"])))
             (finally (repl/stop! dir)))))))
 
-;; ── activation ───────────────────────────────────────────────────────────────
 (def ^:private activation-fn @#'core/activation-fn)
 
 (defdescribe activation-test

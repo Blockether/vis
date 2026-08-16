@@ -26,9 +26,7 @@
             [com.blockether.vis.internal.oauth :as oauth]
             [taoensso.telemere :as tel]))
 
-;; =============================================================================
 ;; Constants
-;; =============================================================================
 
 (def ^:private CLIENT_ID
   "GitHub App client ID for VS Code Copilot Chat extension.
@@ -86,9 +84,7 @@
   "Refresh the Copilot API token 5 minutes before expiry."
   (* 5 60 1000))
 
-;; =============================================================================
 ;; HTTP helpers
-;; =============================================================================
 
 (defn- json-body [body] (json/read-json (or body "") :key-fn keyword))
 
@@ -140,9 +136,7 @@
       (throw (ex-info (str "GitHub API returned " status)
                       {:status status :body (:body resp) :url url})))))
 
-;; =============================================================================
 ;; Token persistence
-;; =============================================================================
 
 (defn- auth-json-key
   "JSON key -> engine keyword. What we write is snake_case (`oauth_token`);
@@ -200,9 +194,7 @@
   (let [f (io/file (auth-file))]
     (when (.exists f) (.delete f))))
 
-;; =============================================================================
 ;; Token detection - env vars, keychain, persisted file
-;; =============================================================================
 
 (defn- env-token
   "Check env vars in Copilot CLI priority order."
@@ -250,9 +242,7 @@
     (when-let [t (keychain-token)]
       {:oauth-token t :source :keychain})))
 
-;; =============================================================================
 ;; OAuth Device Flow
-;; =============================================================================
 
 (defn start-device-flow!
   "Start the GitHub OAuth device flow.
@@ -324,9 +314,7 @@
                                        (or (:error_description resp) (:error resp) "unknown error"))
                                      {:response resp}))))))))
 
-;; =============================================================================
 ;; Copilot API Token Exchange + Refresh
-;; =============================================================================
 
 (def ^:private COPILOT_POLICY_MODELS
   ["claude-haiku-4.5" "claude-sonnet-4" "claude-sonnet-4.5" "claude-sonnet-4.6" "claude-sonnet-5"
@@ -558,9 +546,7 @@
           :account-type account-type
           :llm-headers COPILOT_HEADERS})))))
 
-;; =============================================================================
 ;; CLI helpers
-;; =============================================================================
 
 (defn authenticated?
   "True if we have a usable OAuth token from any source."
@@ -608,9 +594,7 @@
   (delete-auth-file!)
   :logged-out)
 
-;; =============================================================================
 ;; Dynamic quota / limits
-;; =============================================================================
 
 (defn- parse-epoch-ms
   [value]
@@ -841,7 +825,6 @@
       :provider-id (account-provider-id account-type)
       :static COPILOT_STATIC_LIMITS)))
 
-;; =============================================================================
 ;; Provider registration
 ;;
 ;; Loading this namespace plugs the GitHub Copilot provider into the
@@ -849,7 +832,6 @@
 ;; provider; the runtime's token-resolution path looks providers up
 ;; by id. Drop this jar (or pick another `vis-provider-*` package)
 ;; to swap providers without touching vis-runtime.
-;; =============================================================================
 
 (require '[com.blockether.vis.core :as vis])
 

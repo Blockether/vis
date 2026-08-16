@@ -30,9 +30,7 @@
            (java.nio.file.attribute FileAttribute)
            (java.util.stream Collectors)))
 
-;; =============================================================================
 ;; Socket paths
-;; =============================================================================
 
 (defn- sanitize
   "Filesystem-safe slug for a session key / shell id."
@@ -125,9 +123,7 @@
                    (when-not live? (try (Files/deleteIfExists p) (catch Throwable _ nil)))))))))
        (catch Throwable _ nil)))
 
-;; =============================================================================
 ;; Server — expose a live PTY over an AF_UNIX socket
-;; =============================================================================
 
 (defn- write-all!
   "Write a byte[] fully to a SocketChannel (channels can short-write)."
@@ -231,9 +227,7 @@
              (try (.close server) (catch Throwable _ nil))
              (try (Files/deleteIfExists p) (catch Throwable _ nil)))}))
 
-;; =============================================================================
 ;; Client — the human's raw-terminal attach (`vis-agent extension shell attach <id>`)
-;; =============================================================================
 
 (def ^:private detach-byte
   "Ctrl-] (GS, 0x1d) — the telnet-style detach key. Leaves the child running."

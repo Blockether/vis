@@ -90,9 +90,7 @@
          :bytes total-bytes
          :content content}))))
 
-;; =============================================================================
 ;; Single-root scan (legacy shape — kept for the foundation shim + tests)
-;; =============================================================================
 
 (defn scan-in
   "Scan `root` for project-guidance files. Pure I/O. Single-directory,
@@ -121,9 +119,7 @@
                :warnings [{:source :claude-md-fallback :reason (:error r) :path (:path r)}]}))
           :else {:result {:found? false} :warnings []})))
 
-;; =============================================================================
 ;; Stacked scan (global → ancestors → workspace root)
-;; =============================================================================
 
 (defn- guidance-candidate
   "Pick the guidance file for one directory: AGENTS.md wins, CLAUDE.md
@@ -367,9 +363,7 @@
   []
   (scan-roots (global-config-dir) (repo-cwd) (extra-root-dirs)))
 
-;; =============================================================================
 ;; Marker cache — stat-only revalidation on the hot path
-;; =============================================================================
 
 (defonce ^:private state (atom {:cwd nil :marker nil :result nil :warnings nil}))
 

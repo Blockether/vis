@@ -220,9 +220,7 @@ describe('human input sheet', () => {
   });
 });
 
-// =============================================================================
 // A PAUSE IS ONLY AS TALL AS THE QUESTION
-// =============================================================================
 
 // Regression, user report ("when we are showing OTP cannot we make it less height,
 // like it goes from bottom only and occupies only the height its required?"): the
@@ -293,7 +291,6 @@ describe('a pause is only as tall as the question it asks', () => {
   });
 });
 
-// =============================================================================
 // FULL support, proved against the engine's own bytes
 //
 // `human-input.fixture.json` is `request->view` verbatim, and the Clojure suite
@@ -302,7 +299,6 @@ describe('a pause is only as tall as the question it asks', () => {
 // complete human-input support: a node type nobody wired up is a hole in a
 // dialog that has already stopped somebody's run, and it fails here instead of
 // in front of the operator.
-// =============================================================================
 describe('the engine’s whole node vocabulary', () => {
   const request = humanInputRequestFromWire(fixture);
   if (!request) throw new Error('the engine fixture must parse');

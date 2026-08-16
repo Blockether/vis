@@ -40,9 +40,7 @@
   (:import (java.io File InputStream OutputStream RandomAccessFile)
            (java.nio.charset StandardCharsets)))
 
-;; =============================================================================
 ;; Data
-;; =============================================================================
 
 (s/def ::id (s/and string? seq))
 (s/def ::offset (s/int-in 0 Long/MAX_VALUE))
@@ -65,9 +63,7 @@
    context window by asking for it."
   262144)
 
-;; =============================================================================
 ;; Where the bytes live
-;; =============================================================================
 
 (defn- vis-home ^File [] (io/file (System/getProperty "user.home") ".vis"))
 
@@ -174,9 +170,7 @@
       (try (.delete dir) (catch Throwable _ nil)))
     nil))
 
-;; =============================================================================
 ;; Reading a chunk
-;; =============================================================================
 
 (defn- continuation?
   "True when byte `b` continues a multi-byte UTF-8 sequence (`10xxxxxx`)."
@@ -329,9 +323,7 @@
       :is-eof (>= (+ off head keep-n) len)
       :is-truncated (< (+ off got) len)})))
 
-;; =============================================================================
 ;; The index row: which logs does this session have?
-;; =============================================================================
 
 (def index-extension-id
   "Owner of the sidecar rows. The shell extension owns its own index."

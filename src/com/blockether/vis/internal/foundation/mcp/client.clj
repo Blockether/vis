@@ -39,9 +39,7 @@
 
 (defn- now-ms [] (System/currentTimeMillis))
 
-;; ---------------------------------------------------------------------------
 ;; JSON helpers (charred). JSON-RPC keys stay STRINGS end to end.
-;; ---------------------------------------------------------------------------
 
 (defn- json-safe
   "Total JSON projection of `x`. Keywords/symbols become strings, map keys become
@@ -93,9 +91,7 @@
             :code (get err "code")
             :data (get err "data")}))
 
-;; ===========================================================================
 ;; stdio transport — async, full-duplex; correlate replies by id.
-;; ===========================================================================
 
 (defn- start-stderr-drain!
   "Spawn a daemon thread that drains `err-stream` line-by-line into the vis
@@ -247,10 +243,8 @@
      :alive-fn (fn []
                  (and (not @closed?) (.isAlive proc)))}))
 
-;; ===========================================================================
 ;; Streamable-HTTP transport — POST → JSON | SSE; DELETE on close;
 ;; optional GET listen loop for server-pushed notifications.
-;; ===========================================================================
 
 ;; HTTP client is shared with `oauth.clj` via `mcp-http/client` — one JDK
 ;; `HttpClient` for every MCP subsystem (selector pool + virtual-thread
@@ -498,9 +492,7 @@
                                    nil))
                              closed?))))))
 
-;; ===========================================================================
 ;; Public client surface
-;; ===========================================================================
 
 (defn- transport-of
   [{:keys [transport url]}]

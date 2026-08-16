@@ -180,11 +180,9 @@
                                  (make-array java.nio.file.OpenOption 0)))
     f))
 
-;; ---------------------------------------------------------------------------
 ;; Host-side media-type sniffing — mirrors the Python `__vis_guess_media_type`
 ;; in `shim-attach`, used by the filesystem outbox tap which only has path+bytes
 ;; (no Python `mimetypes`). Magic bytes → extension → utf-8 probe.
-;; ---------------------------------------------------------------------------
 
 (def ^:const max-capture-bytes
   "THE single per-artifact byte cap (32 MiB) — the one source of truth every

@@ -25,9 +25,7 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.surface-contract :as contract]))
 
-;; =============================================================================
 ;; Paths
-;; =============================================================================
 
 (def ^:private python-exts #{"py" "pyi"})
 
@@ -108,9 +106,7 @@
   (let [named (into [] (filter #(.isDirectory (io/file root %))) ["src" "tests" "test"])]
     (if (seq named) (mapv #(str (io/file root %)) named) [(str root)])))
 
-;; =============================================================================
 ;; Project config
-;; =============================================================================
 
 (defn config-for
   "The ruff configuration file governing `p` (a file or a directory), or nil when
@@ -210,9 +206,7 @@
     (not (:config opts))
     (assoc :config (find-config abs))))
 
-;; =============================================================================
 ;; Argument shapes (mirrors the Clojure pack)
-;; =============================================================================
 
 (defn- arg-code
   "The code snippet an `arg` carries, or nil. A BLANK `\"code\": \"\"` never
@@ -282,9 +276,7 @@
                  op
                  " the whole project")}}))
 
-;; =============================================================================
 ;; format_code
-;; =============================================================================
 
 (defn- format-one-file!
   [opts find-config ^String abs ^java.io.File root]
@@ -407,9 +399,7 @@
                                                 (not cfg)
                                                 (assoc "hint" no-config-hint)))}))))))
 
-;; =============================================================================
 ;; lint_code
-;; =============================================================================
 
 (def ^:private error-code-re
   "ruff codes that are genuine BREAKAGE, not style: a parse failure, the E9

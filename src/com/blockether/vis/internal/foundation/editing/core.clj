@@ -71,9 +71,7 @@
 ;; direct invokevirtual (type-hinted), never a reflective one. Keep this on.
 (set! *warn-on-reflection* true)
 
-;; =============================================================================
 ;; Tunables
-;; =============================================================================
 
 (def ^:private default-grep-limit 50)
 
@@ -314,9 +312,7 @@
 
 (def ^:private default-find-limit 50)
 
-;; =============================================================================
 ;; Path safety
-;; =============================================================================
 
 (def ^:private temp-roots
   "System temp dirs (`/tmp` and the JVM `java.io.tmpdir`, e.g. `$TMPDIR`) the file
@@ -704,9 +700,7 @@
          {:requested (str requested) :resolved (rel-path f) :absolute (.getPath f) :kind kind})
        (catch Throwable _ {:requested (str requested) :resolved nil :absolute nil :kind kind})))
 
-;; =============================================================================
 ;; The :fs/access gate
-;; =============================================================================
 
 ;; The vocabulary of what is protected belongs to an EXTENSION, never to the
 ;; engine: the engine only ASKS, through the `:fs/access` gate that the Python
@@ -1049,9 +1043,7 @@
                   :error error
                   :throwable (when-not error err)})})))
 
-;; =============================================================================
 ;; .gitignore (cheap, lazy)
-;; =============================================================================
 
 (def ^:private fff-ls-page-size
   "Native page width for `ls`. Pages are exhausted so the listing keeps its complete,
@@ -1091,9 +1083,7 @@
 
     (when (some seq (vals overlay)) overlay)))
 
-;; =============================================================================
 ;; Range windows — the `ranges` selector `struct_index` accepts
-;; =============================================================================
 
 (defn- coerce-range
   "Normalize ONE requested `[start end]` window instead of refusing it: a reversed
@@ -1628,9 +1618,7 @@
                              entry)))))]
       {"path" base "type" "dir" "entries" (children "" 1) "depth" levels})))
 
-;; =============================================================================
 ;; directory-walk cancellation
-;; =============================================================================
 
 (defn- check-interrupt!
   "Throw `InterruptedException` when the worker thread has been interrupted
@@ -1640,10 +1628,6 @@
   []
   (when (.isInterrupted (Thread/currentThread))
     (throw (InterruptedException. "directory walk cancelled"))))
-
-;; =============================================================================
-;; find
-;; =============================================================================
 
 (def ^:private find-min-score
   "Minimum per-token match density (0.0–1.0) a fuzzy hit must reach to survive.
@@ -2280,7 +2264,6 @@
                       (str path ":" line)))}))
   ([out needles _former-context] (content-result out needles)))
 
-;; -----------------------------------------------------------------------------
 ;; grep's TEXT projection
 ;;
 ;; `content-result` above stays the tested pure core and keeps returning the
@@ -2289,7 +2272,6 @@
 ;; four-level dict repr whose keys were bare line numbers. Every rendered line —
 ;; context lines included — carries its `<line>:<hash>` anchor, so a grep hit is
 ;; not "a place to go read" but a `patch` argument.
-;; -----------------------------------------------------------------------------
 
 (defn- count-phrase
   "`3 files` / `1 file` — the unit singularized on 1, so a count never reads as a
@@ -2707,9 +2689,7 @@
                               :hit-count (get out "hit_count")
                               :truncated-by (get out "truncated_by")}})))
 
-;; =============================================================================
 ;; rg
-;; =============================================================================
 
 (defn- parse-stringish-vector
   "Tolerate a value that arrives as a STRINGIFIED list literal — e.g.
@@ -3309,7 +3289,6 @@
          :total-file-count @total-files
          :total-file-count-exact? (and (not @breadth-capped?) (not @time-capped?))}))))
 
-;; -----------------------------------------------------------------------------
 ;; Per-path consecutive-failure tracker (Roo-style loop detector)
 ;;
 ;; A process-wide atom of `{absolute-path consecutive-fail-count}`. We bump
@@ -3317,7 +3296,6 @@
 ;; same path's write applies cleanly. Once the count crosses
 ;; `write-fail-loop-threshold`, the error message escalates with a hard
 ;; "stop blind retry" hint that nudges the model out of the loop.
-;; -----------------------------------------------------------------------------
 
 (def ^:private write-fail-counts (atom {}))
 
@@ -3341,7 +3319,6 @@
          ". Stop retrying: re-read the target once, then switch to struct_patch — it locates the"
          " definition by NAME (`target`), so nothing about the file's shape can go stale.")))
 
-;; =============================================================================
 ;; write-safe — whole-file write primitive (create or overwrite)
 ;;
 ;; INTERNAL: no native tool maps onto it. `struct_patch` reaches for it when a
@@ -3365,7 +3342,6 @@
 ;; temp file that carries the target's own mode and a rename publishes them, so
 ;; a failure ANYWHERE — including one mid-write — leaves the previous source
 ;; exactly as the caller last read it and answers `:reason :io-error`.
-;; =============================================================================
 
 (def ^:private write-required-keys #{"path" "content"})
 
@@ -3625,9 +3601,7 @@
                                :op (if exists? :update :add)
                                :existed? exists?}]}))))))))
 
-;; =============================================================================
 ;; Batch path specs + directory listing
-;; =============================================================================
 
 (defn- batch-path-specs
   "Normalize a BATCH argument — `ls`/`struct_index`'s `paths` — into ONE option
@@ -4227,7 +4201,6 @@
       (nil? diff-text)
       (dissoc "diff"))))
 
-;; =============================================================================
 ;; Symbol declarations
 ;;
 ;; Underlying `xxx-tool` defs retain developer docs + arglists. Each symbol
@@ -4236,7 +4209,6 @@
 ;; `struct_index`) for the model-facing surface; everything else (examples,
 ;; error hook, result spec) lives in opts because it has nothing to do with
 ;; the function's signature.
-;; =============================================================================
 
 (defn- def->wire
   "One `index/definitions` entry → snake_case wire map. It is the definition row in
@@ -4460,12 +4432,10 @@
       (tool-success {:op :struct_index :kind :file :result result}))))
 
 
-;; -----------------------------------------------------------------------------
 ;; Conditional advertising — the tree-sitter structural editors are only useful
 ;; when the project actually contains code in a supported language. Gate them on
 ;; the (cached) project language scan so a docs/config/unsupported-language repo
 ;; isn't handed tools it can't use.
-;; -----------------------------------------------------------------------------
 
 (def ^:private structural-scan-languages
   "The `environment/languages` SCAN vocabulary names whose files tree-sitter can
@@ -4497,7 +4467,6 @@
            true)) ;; nothing recognized → fail OPEN
        (catch Throwable _ true)))    ;; any failure → fail OPEN
 
-;; =============================================================================
 ;; cat / patch — the ANCHORED read/write pair
 ;;
 ;; An edit needs a COORDINATE. `struct_patch` supplies one for a named
@@ -4514,7 +4483,6 @@
 ;; The read is forgiving (a stale anchor falls back to its line number); the
 ;; WRITE is verified and refuses — a stale or misplaced anchor, or an edit that
 ;; would not parse, writes nothing and hands back the anchor that fixes it.
-;; =============================================================================
 
 ;; The refusal payload crosses the boundary as ex-data -> tool failure -> wire.
 (s/def :ext.editing.patch/reason
@@ -4754,9 +4722,7 @@
   ([path start] (cat-envelope path start nil))
   ([path start end] (cat-envelope path start end)))
 
-;; -----------------------------------------------------------------------------
 ;; patch
-;; -----------------------------------------------------------------------------
 
 (defn- anchor-window-hint
   "The `cat(...)` call that re-reads the neighbourhood of `line` — appended to a
@@ -5915,12 +5881,10 @@
      :tag :mutation
      :on-error-fn (tool-failure-on-error :struct_patch :file)}))
 
-;; -----------------------------------------------------------------------------
 ;; Structural ZIPPER — a language-neutral node cursor (tree-sitter), the synergy
 ;; partner to the name-based struct_patch ops: locate a def by name, then WALK
 ;; into it by path. Location = a vector of NAMED-child indices; relative moves
 ;; (down/up/next/prev) are path arithmetic. See editing.zipper.
-;; -----------------------------------------------------------------------------
 
 ;; Move resolution now lives in editing.zipper/navigate (tree-aware: validates
 ;; boundaries, supports leftmost/rightmost/root + single-letter directions).

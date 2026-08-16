@@ -34,9 +34,7 @@
 
 (def ^:const pocket-asset-id "pocket-tts-int8")
 
-;; =============================================================================
 ;; espeak-ng, which is the SYSTEM's to install and not Vis' to ship
-;; =============================================================================
 
 ;; Piper phonemizes through espeak-ng, whose tables Vis does not ship:
 ;; GPL-3.0-or-later, one package away, read from their own directory at run time
@@ -99,9 +97,7 @@
                        :searched espeak-data-candidates
                        :remediation (espeak-install-hint)}))))
 
-;; =============================================================================
 ;; Catalogue
-;; =============================================================================
 
 (defn piper-assets
   "Every Piper voice in the manifest, in manifest order. The FIRST is the default
@@ -187,9 +183,7 @@
     (or (first (filter #(= (:voice %) wanted) entries))
         (unknown-voice! :piper voice-id (mapv :voice entries)))))
 
-;; =============================================================================
 ;; Readiness - one entry per ASSET, so two engines sharing espeak share its state
-;; =============================================================================
 
 ;; `:ready` is DERIVED from what is on disk, never stored, so it can't go stale.
 ;; The atom only tracks an in-flight or failed download.
@@ -290,9 +284,7 @@
    (sherpa/ensure-native!)
    (mapv #(assets/install! % on-progress)
          (remove assets/installed? (required-assets family voice-id)))))
-;; =============================================================================
 ;; Synthesis
-;; =============================================================================
 
 (defn- num-threads ^long [] (max 1 (long (.availableProcessors (Runtime/getRuntime)))))
 

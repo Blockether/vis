@@ -1385,9 +1385,7 @@
 
         (expect (= [] failures)))))
 
-;; =============================================================================
 ;; Sliders and the request's own buttons (issue #108)
-;; =============================================================================
 
 (defn- slider-request
   "A text field so ↑/↓ has somewhere to come from, then a slider."
@@ -1552,9 +1550,7 @@
                                                  :is-cancellable true})))]
         (expect (not= "" (screen-row screen 28))))))
 
-;; =============================================================================
 ;; One-time codes, and errors that arrive ONLY from a confirmation
-;; =============================================================================
 
 (defn- otp-request
   "A view built by the ENGINE itself, so these tests pin the real contract and
@@ -1813,9 +1809,7 @@
         (expect (= :submit action))
         (expect (= "ops@example.com" (get (hi/submit-values form) "email"))))))
 
-;; =============================================================================
 ;; Layout groups
-;; =============================================================================
 
 (defn- grouped-request
   "A request whose first field is a LAYOUT GROUP, built by the engine so these
@@ -1953,9 +1947,7 @@
         (expect (= ["dev" "prod" "free" "paid"] (into [] (keep :value) (:stops form))))
         (expect (= [["dev"] ["prod"] ["free"] ["paid"]] (mapv focused (range 4)))))))
 
-;; =============================================================================
 ;; Decoration — the ink a form needs that answers nothing
-;; =============================================================================
 
 (defn- decorated-request
   "A view built by the ENGINE itself: two decorations, a field, and a heading

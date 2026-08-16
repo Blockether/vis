@@ -21,7 +21,6 @@ function arg(name, fallback = null) {
   return v && !v.startsWith('--') ? v : fallback;
 }
 
-// ---------------------------------------------------------------------------
 // Fake mode (IMPECCABLE_IMAGE_GEN_FAKE=1)
 //
 // Deterministic offline stand-in for the OpenAI call: same prompt -> identical
@@ -31,7 +30,6 @@ function arg(name, fallback = null) {
 // plus a "SYNTHETIC COMP" corner label. SVG carries the readable text; the
 // raster (.png/.webp/.jpg) fallback carries palette stripes and stows the
 // prompt + marker in a PNG tEXt chunk so downstream stays a valid image.
-// ---------------------------------------------------------------------------
 
 // FNV-1a 32-bit: tiny, dependency-free, stable across runs and platforms.
 function hash32(str) {

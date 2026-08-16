@@ -10,17 +10,13 @@
   (:require [com.blockether.vis.internal.iteration :as iteration]
             [lazytest.core :refer [defdescribe expect it]]))
 
-;; ---------------------------------------------------------------------------
 ;; Fixture: a plain iteration entry carrying `:forms` (no ops/sink shape).
-;; ---------------------------------------------------------------------------
 
 (defn- form [m] (merge {:tag :observation} m))
 
 (defn- entry [forms] {:position 0 :forms (vec forms)})
 
-;; ---------------------------------------------------------------------------
 ;; Block-level projections: scope / code / status / duration / error.
-;; ---------------------------------------------------------------------------
 
 (defdescribe block-scope-test
              (it "reduces a form/op scope to its block-level tN/iM"

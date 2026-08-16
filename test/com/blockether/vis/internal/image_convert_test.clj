@@ -20,9 +20,7 @@
            (java.util.zip GZIPOutputStream)
            (javax.imageio ImageIO)))
 
-;; =============================================================================
 ;; Helpers
-;; =============================================================================
 
 (defn- doc
   "An SVG document with `attrs` on the root and `body` inside it."
@@ -80,9 +78,7 @@
 (def ^:private red "ff0000")
 (def ^:private blue "0000ff")
 
-;; =============================================================================
 ;; Declared size -> raster size
-;; =============================================================================
 
 (def ^:private size-cases
   "[label markup expected-size]. Every expectation is the size a browser would
@@ -138,9 +134,7 @@
                      (expect (= [400 100] [(:width zipped) (:height zipped)]))
                      (expect (= (seq (:bytes plain)) (seq (:bytes zipped))))))))
 
-;; =============================================================================
 ;; No declared size -> framed by its own shapes
-;; =============================================================================
 
 (defn- about
   "Within `tol` px -- the ink is measured on a probe raster, so the frame carries
@@ -200,10 +194,7 @@
     (it "falls back to the SVG default canvas when there is nothing to measure"
         (expect (= [300 150] (size (doc "")))))))
 
-;; =============================================================================
-
 ;; The ceiling: scaled, never squashed
-;; =============================================================================
 
 (defdescribe
   raster-ceiling-test
@@ -229,9 +220,7 @@
                 (expect (= [16 8] (size (doc "width=\"16\" height=\"8\""))))
                 (expect (= [1 1] (size (doc "width=\"1\" height=\"1\"")))))))
 
-;; =============================================================================
 ;; Geometry: the drawing lands where the document put it
-;; =============================================================================
 
 (defdescribe
   rasterize-content-test
@@ -290,9 +279,7 @@
           (expect (some? r))
           (expect (= [200 40] [(:width r) (:height r)]))))))
 
-;; =============================================================================
 ;; Untrusted input: nothing renders is better than something escapes
-;; =============================================================================
 
 (defdescribe
   rasterize-safety-test
@@ -365,9 +352,7 @@
           (expect (or (nil? (:bytes r)) (= [40 20] [(:width r) (:height r)])))
           (expect (< elapsed-ms 5000) "finished promptly instead of expanding 10^9 nodes")))))
 
-;; =============================================================================
 ;; to-provider-safe
-;; =============================================================================
 
 (defdescribe
   to-provider-safe-test
@@ -444,9 +429,7 @@
                                                                 "image/png")))
                   (expect (nil? (raster (doc "width=\"10\" height=\"10\""))))))))
 
-;; =============================================================================
 ;; fit-dimensions
-;; =============================================================================
 
 (defdescribe
   fit-dimensions-test
@@ -520,9 +503,7 @@
       (let [junk (byte-array (map byte (range 1 40)))]
         (expect (identical? junk (:bytes (image-convert/fit-dimensions junk 100)))))))
 
-;; =============================================================================
 ;; Cross-validation: a decoder that is NOT the one that wrote the bytes
-;; =============================================================================
 
 (defn- io-image
   "The payload as read by `javax.imageio` -- the JDK's own decoder, a completely
@@ -662,9 +643,7 @@
                   ;; ... and the sound payload it was cut from passes both.
                   (expect (= [4 4] (io-size good)))))))
 
-;; =============================================================================
 ;; What vis delegates, and the two repairs it still owes
-;; =============================================================================
 
 (defn- probe-size
   "[w h] the RENDERER alone reports for a document, or nil when it refuses it."

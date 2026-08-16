@@ -36,9 +36,7 @@ export const LIVE_COMMANDS = [
 export const VISUAL_ACTIONS = LIVE_COMMANDS.map((c) => c.value);
 
 /*
- * ---------------------------------------------------------------------------
  * Protocol vocabulary
- * ---------------------------------------------------------------------------
  * The enums below are the wire contract between the browser overlay, the live
  * helper server, and the durable session journal. They live here rather than in
  * the modules that use them so a value cannot be added to the validator without

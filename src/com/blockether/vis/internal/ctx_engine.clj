@@ -13,9 +13,7 @@
    limit remains the hard ceiling. Compared against provider-reported input
    tokens (no local tokenizer) — see `utilization`."
   200000)
-;; =============================================================================
 ;; Scope parsing — deterministic, regex-driven
-;; =============================================================================
 ;; Iteration scope is `tN/iM`. The legacy per-form `/fK` tail is OPTIONAL (and no
 ;; longer emitted — one record = one tool call, keyed by `:svar/tool-call-id`).
 (def ^:private scope-form-re #"^t([1-9][0-9]*)/i([1-9][0-9]*)(?:/f([1-9][0-9]*))?$")
@@ -224,9 +222,7 @@
         (assoc "session_scope" {"turn" next-turn "iter" 1 "next_form" 1})
         (assoc "engine_blockers" [])
         gc-pass)))
-;; =============================================================================
 ;; Empty-ctx constructor — used by tests + scenario replayer
-;; =============================================================================
 (defn empty-ctx
   "A minimal CTX scaffold with all model-facing keys filled by empty /
    default values. Useful as the starting point for scenario replays.
@@ -260,9 +256,7 @@
           (remove (fn [[k _]]
                     (and (string? k) (str/starts-with? k "engine_"))))
           ctx)))
-;; =============================================================================
 ;; Iter-scope parsing + comparator
-;; =============================================================================
 (defn compact-src
   "One-line, length-capped form source for the `you ran:` scope index
    rendered in the cross-turn `<conversation-so-far>` resume block."
@@ -998,9 +992,7 @@
      (cond-> (select-keys ctx model-facing-keys)
        (seq util)
        (assoc "session_utilization" util)))))
-;; =============================================================================
 ;; Form tag classification — derive :tag from the form source string
-;; =============================================================================
 (def ^:private py-head-name-re
   "Matches the head call NAME of a Python top-level form: any number of
    leading blank or `#`-comment lines, then a bare `identifier(`. Captures
@@ -1057,10 +1049,8 @@
    (let [nm (form-head-name src)]
      (or (when (and nm head-tag-resolver) (try (head-tag-resolver nm) (catch Throwable _ nil)))
          (if (and nm (contains? core-mutation-heads nm)) :mutation :observation)))))
-;; =============================================================================
 ;; blocks→forms — project per-form data captured by the loop's eval pipeline
 ;; into the canonical engine envelope shape
-;; =============================================================================
 (defn- realize-value
   "Force-realize lazy seqs / nested IDeref refs in `v` so the envelope carries
    DATA, not computations: a `(def …)` result is a Var, a tool may return an

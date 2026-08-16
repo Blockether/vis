@@ -30,13 +30,11 @@
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture])
   (:import [java.util Base64 Locale]))
 
-;; ----------------------------------------------------------------------------
 ;; Host renderer — `com.blockether/imaging` vector ops. Input is the pyplot
 ;; figure spec (string-keyed map marshalled from the sandbox); output is a
 ;; base64 PNG string. Every drawing primitive is an op map handed to
 ;; `imaging/draw!` in ONE batch per figure, which keeps FFI chatter out of the
 ;; plotting loops.
-;; ----------------------------------------------------------------------------
 
 (def ^:private sans
   "The embedded font family used for every label (present in the cdylib's own

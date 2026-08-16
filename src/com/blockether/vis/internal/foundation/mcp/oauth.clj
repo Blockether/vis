@@ -135,9 +135,7 @@
     {:status (:status resp)
      :body (try (json/read-json (:body resp)) (catch Throwable _ (:body resp)))}))
 
-;; ---------------------------------------------------------------------------
 ;; Discovery (RFC 9728 + RFC 8414 fallbacks)
-;; ---------------------------------------------------------------------------
 
 (defn- parse-www-authenticate
   "Extract `resource_metadata` URL from a `WWW-Authenticate: Bearer …` header."
@@ -173,9 +171,7 @@
                     (assoc ::url u)))
           candidates)))
 
-;; ---------------------------------------------------------------------------
 ;; Dynamic Client Registration (RFC 7591)
-;; ---------------------------------------------------------------------------
 
 (defn- register-client!
   [{registration-url "registration_endpoint"} redirect-uri]
@@ -190,9 +186,7 @@
                                               "scope" "openid profile offline_access"})]
       (when (and (< (long status) 400) (map? body) (get body "client_id")) body))))
 
-;; ---------------------------------------------------------------------------
 ;; Loopback callback (PKCE authorization-code)
-;; ---------------------------------------------------------------------------
 
 
 (defn- start-loopback!
@@ -251,9 +245,7 @@
      :result result}))
 
 
-;; ---------------------------------------------------------------------------
 ;; Token store — one EDN file per server under ~/.vis/mcp-tokens/
-;; ---------------------------------------------------------------------------
 
 (defn- token-file
   ^java.io.File [server-name]
@@ -305,9 +297,7 @@
             :expires-at-ms (when expires-in (+ now (long (* 1000 (long expires-in)))))
             :saved-at-ms now})))
 
-;; ---------------------------------------------------------------------------
 ;; Auth-code flow (first time)
-;; ---------------------------------------------------------------------------
 
 (defn- auth-context
   "Discovery (RFC 9728 → RFC 8414) plus fresh PKCE material for `server-name`.
@@ -435,9 +425,7 @@
                       {:type :mcp/oauth-refresh :server server-name :status status :body body})))
     (write-tokens! server-name (->tokens body creds))))
 
-;; ---------------------------------------------------------------------------
 ;; Public: a 0/1-arg `bearer-fn` for the HTTP transport
-;; ---------------------------------------------------------------------------
 
 (defn- oauth-required
   "The one refusal for `server-name` when only a HUMAN can move things forward:
@@ -499,7 +487,6 @@
      "expires_at_ms" (:expires-at-ms creds)
      "scope" (:scope creds)}))
 
-;; ---------------------------------------------------------------------------
 ;; Headless flows — authorizing from a client that is NOT this daemon's terminal
 ;;
 ;; This is the ONLY authorization path. The Companion app and the TUI are
@@ -508,7 +495,6 @@
 ;; user authorizes in THEIR browser, and the flow lands either by itself (the
 ;; browser did reach the loopback listener on this host) or by POSTing back the
 ;; redirect URL they were dumped on. Nothing on a request path waits for a human.
-;; ---------------------------------------------------------------------------
 
 (def ^:private flow-ttl-ms
   "How long an unfinished headless flow stays resumable. Long enough to unlock a

@@ -109,9 +109,7 @@
                                  (expect (str/includes? (get-in out [:result :slash/title])
                                                         "session not ready")))))))
 
-;; =============================================================================
 ;; Specs shape
-;; =============================================================================
 (defdescribe
   specs-shape-test
   (it "exposes the full slash spec set (/draft tree, /draft clean, /cd)"
@@ -137,9 +135,7 @@
         (expect (some? (slash/slash-by-path env ["draft" "apply"])))
         (expect (some? (slash/slash-by-path env ["cd"]))))))
 
-;; =============================================================================
 ;; Dispatch
-;; =============================================================================
 (defn- setup!
   "Seed + pin a session, then mint a real draft (clone of `base`) as its
    active draft. Returns [env state-id draft]."
@@ -404,9 +400,7 @@
                                       (catch Throwable _ nil)))))))))))
         (finally (delete-tree! base))))))
 
-;; =============================================================================
 ;; /cd — path helpers (~ expansion)
-;; =============================================================================
 (defdescribe expand-home-test
              (it "expands a bare ~ to the user's home directory"
                  (expect (= (System/getProperty "user.home") (paths/expand-home "~"))))

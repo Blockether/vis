@@ -41,9 +41,7 @@
                    (expect (= :help (:status result)))
                    (expect (str/includes? @printed "vis-agent providers list")))))
 
-;; =============================================================================
 ;; Help rendering -- split COMMANDS / EXTENSION COMMANDS + extra sections.
-;; =============================================================================
 
 (defn- mixed-children-cmd
   []
@@ -113,9 +111,7 @@
           (expect (str/includes? out "DYNAMIC"))
           (expect (str/includes? out "body line"))))))
 
-;; =============================================================================
 ;; render-tree -- the root doc owns its own layout.
-;; =============================================================================
 
 (defn- sectioned-root
   []

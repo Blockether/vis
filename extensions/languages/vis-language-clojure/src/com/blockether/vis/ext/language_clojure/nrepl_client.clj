@@ -40,9 +40,7 @@
   (:import (java.io IOException)
            (java.net InetSocketAddress Socket)))
 
-;; ---------------------------------------------------------------------------
 ;; Connection cache
-;; ---------------------------------------------------------------------------
 
 (defonce ^:private connections
   ;; { [host port] -> {:conn <conn> :session <sid> :health-session <sid> :opened-at ms} }
@@ -171,9 +169,7 @@
     (doseq [[_ {:keys [conn]}] m]
       (try (.close ^java.io.Closeable conn) (catch Throwable _ nil)))))
 
-;; ---------------------------------------------------------------------------
 ;; eval
-;; ---------------------------------------------------------------------------
 
 (defn- terminal-error-output?
   "True when nREPL has already emitted a terminal eval/source error on *err* but
@@ -324,9 +320,7 @@
              "root_ex" rx''}
             (recur (next rs) values' out-acc err-acc ns'' new-status ex'' rx'')))))))
 
-;; ---------------------------------------------------------------------------
 ;; error enrichment — a beautiful, structured stacktrace on the eval-error path
-;; ---------------------------------------------------------------------------
 
 (defn- eval-error?
   "True when a combined eval result carries a runtime/eval error worth enriching.
@@ -859,9 +853,7 @@
                                 :port port
                                 :cause (.getMessage t)}))))))))
 
-;; ---------------------------------------------------------------------------
 ;; probe — cheap liveness check (no code execution)
-;; ---------------------------------------------------------------------------
 
 (defn- describe-versions
   "Pull a flat `{:clojure :clojurescript :nrepl :java}` version-string map out

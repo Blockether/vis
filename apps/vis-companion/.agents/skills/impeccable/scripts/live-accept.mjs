@@ -70,10 +70,6 @@ function markPreviewFailure(result) {
   return result;
 }
 
-// ---------------------------------------------------------------------------
-// CLI
-// ---------------------------------------------------------------------------
-
 export async function acceptCli() {
   const args = process.argv.slice(2);
 
@@ -351,10 +347,6 @@ function scrubManualEditsAgainstFile(_targetFile, cwd = process.cwd(), originalB
   return scrubManualEditsAgainstOriginalBlock(originalBlockText, cwd, pageUrl);
 }
 
-// ---------------------------------------------------------------------------
-// Discard
-// ---------------------------------------------------------------------------
-
 function handleDiscard(id, _lines, targetFile) {
   return withSourceLockSync(targetFile, 'discard:' + id, () => {
     const lines = fs.readFileSync(targetFile, 'utf-8').split('\n');
@@ -388,9 +380,7 @@ function handleDiscardUnlocked(id, lines, targetFile) {
   return {};
 }
 
-// ---------------------------------------------------------------------------
 // Accept
-// ---------------------------------------------------------------------------
 
 /**
  * Build carbonize stitch-in lines. JSX targets occupy a single child slot
@@ -555,9 +545,7 @@ function decodeHtmlAttr(value) {
     .replace(/&amp;/g, '&');
 }
 
-// ---------------------------------------------------------------------------
 // Parsing helpers
-// ---------------------------------------------------------------------------
 
 /**
  * Find the start/end marker lines for a session.

@@ -12,9 +12,7 @@ from pocket_tts.modules.transformer import StreamingMultiheadAttention
 from pocket_tts.modules.mimi_transformer import MimiStreamingMultiheadAttention, KVCacheResult
 from onnx_export.export_utils import get_state_structure, flatten_state
 
-# ==============================================================================
 # 1. MONKEYPATCHES
-# ==============================================================================
 
 def patched_init_state(self, batch_size: int, sequence_length: int) -> dict[str, torch.Tensor]:
     dim_per_head = self.embed_dim // self.num_heads
@@ -96,9 +94,7 @@ def patched_stateful_increment_step(self, state: dict, increment = 1):
     return state
 StatefulModule.increment_step = patched_stateful_increment_step
 
-# ==============================================================================
 # 2. WRAPPERS
-# ==============================================================================
 
 class FlowLMMainWrapper(nn.Module):
     """
@@ -185,9 +181,7 @@ class FlowNetWrapper(nn.Module):
         return self.flow_net(c, s, t, x)
 
 
-# ==============================================================================
 # 3. EXPORT SCRIPT
-# ==============================================================================
 
 def main():
     torch.manual_seed(42)
@@ -222,7 +216,6 @@ def main():
     state_input_names = [f"state_{i}" for i in range(len(flat_state))]
     state_output_names = [f"out_state_{i}" for i in range(len(flat_state))]
     
-    # -------------------------------------------------------------
     # 1. Main Flow Model (Backbone)
     print("\nExporting FlowLM Main Model (Backbone)...")
     main_wrapper = FlowLMMainWrapper(tts.flow_lm, structure)

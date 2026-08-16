@@ -21,9 +21,7 @@
   (:import [com.googlecode.lanterna.terminal.image TerminalImage TerminalImage$Protocol]
            [java.util Base64]))
 
-;; =============================================================================
 ;; Capability detection
-;; =============================================================================
 
 (defn- proto->kw
   [^TerminalImage$Protocol p]
@@ -64,13 +62,9 @@
   (when-let [wh (TerminalImage/parseCellSizeReport s)]
     {:w (aget ^ints wh 0) :h (aget ^ints wh 1)}))
 
-;; =============================================================================
 ;; Intrinsic pixel-dimension sniffing
-;; =============================================================================
 
-;; =============================================================================
 ;; Video (poster frames) — resolved lazily to break a namespace cycle
-;; =============================================================================
 
 (def ^:private video-ns 'com.blockether.vis.ext.channel-tui.video)
 
@@ -118,9 +112,7 @@
           (let [{:keys [width height]} (probe path)]
             (when (and width height) {:w width :h height}))))))
 
-;; =============================================================================
 ;; Cell-box sizing
-;; =============================================================================
 
 (defn cell-size
   "Fit an image of `{:w :h}` px into `max-cols` × `max-rows` cells,
@@ -150,9 +142,7 @@
   [cols rows]
   (TerminalImage/boxPixels (int (or cols 0)) (int (or rows 0))))
 
-;; =============================================================================
 ;; Escape encoding
-;; =============================================================================
 
 (defn encode-kitty
   "Kitty graphics `\\x1b_G` transmit+display sequence for `data`, sized to
@@ -416,9 +406,7 @@
            (video-paste-descriptor text workspace-root))
        (catch Throwable _ nil)))
 
-;; =============================================================================
 ;; Persisted-attachment materialization (durable history re-render)
-;; =============================================================================
 
 (defn attachment-cache-dir
   "Durable cache dir (`~/.vis/cache/tui-attachments`) for persisted image

@@ -3,12 +3,10 @@
             [com.blockether.vis.internal.format :as fmt]
             [lazytest.core :refer [defdescribe expect it]]))
 
-;; =============================================================================
 ;; strip-def-docstrings — channel-side rendering helper that removes the
 ;; mandatory docstring slot from `(def NAME "doc" …)` shapes so human
 ;; readers do not see the model-forced doc noise. Persisted source
 ;; (with docstring) stays intact; this is a render-time transform.
-;; =============================================================================
 
 (defdescribe humanize-fact-key-test
              (it "renders turn_<N> as Turn <N>, capitalizing other keys"
@@ -38,12 +36,10 @@
                             (fmt/format-tokens
                               {"input" 112 "output" 69 "cached" 70 "cache_created" 8777})))))
 
-;; =============================================================================
 ;; Shared humanized turn-summary line — the SAME formatter the CLI bracket and
 ;; TUI bubble footer render. `meta-summary-line` is the
 ;; clean main line; `meta-fallback-note` is the routing note the TUI floats on a
 ;; second row and `format-meta-line` folds inline.
-;; =============================================================================
 
 (def ^:private normal-result
   {:llm-actual {:provider :openai :model "gpt-4o"}

@@ -30,9 +30,7 @@
            [org.graalvm.polyglot.io ProcessHandler ProcessHandler$ProcessCommand
             ProcessHandler$Redirect]))
 
-;; =============================================================================
 ;; Harness
-;; =============================================================================
 
 (defn- recorder
   "An `emit` plus the atom it appends `[stream line]` pairs to."
@@ -83,9 +81,7 @@
                  (= stream s)))
        (mapv second)))
 
-;; =============================================================================
 ;; A stream the guest does not read is drained, never inherited
-;; =============================================================================
 
 (defdescribe
   uncaptured-streams-test
@@ -147,9 +143,7 @@
       (expect (zero? (.exitValue process)))
       (expect (wait-until 60000 #(= 20000 (count (lines-of seen "stdout"))))))))
 
-;; =============================================================================
 ;; A stream the guest DOES read is passed through untouched
-;; =============================================================================
 
 (defdescribe captured-streams-test
              (it "passes a piped stream to the guest and logs nothing"
@@ -219,9 +213,7 @@
                    (expect (= "STDIN-OK" (slurp-stream (.getInputStream process))))
                    (expect (zero? (.waitFor process))))))
 
-;; =============================================================================
 ;; A pipe the guest asked for is drained too — the CPython deadlock
-;; =============================================================================
 
 (defdescribe
   guest-backlog-test
@@ -307,9 +299,7 @@
         (.close stream)
         (expect (.waitFor process 30 TimeUnit/SECONDS) "the child died on a broken pipe"))))
 
-;; =============================================================================
 ;; Everything else about the process is the guest's, unchanged
-;; =============================================================================
 
 (defdescribe
   process-contract-test
@@ -355,9 +345,7 @@
         (expect (.waitFor process 20 TimeUnit/SECONDS))
         (expect (not (.isAlive process))))))
 
-;; =============================================================================
 ;; The extension context is wired to it — the hygiene gate
-;; =============================================================================
 
 (defdescribe
   extension-context-containment-test
@@ -398,9 +386,7 @@
             (finally (.close ctx true))))))))
 
 
-;; =============================================================================
 ;; The guest half — a redirect GraalPy discards
-;; =============================================================================
 
 (defn- guest-value
   "Eval `code` in a real extension context; answer its `__vis_res__` string.
@@ -531,9 +517,7 @@
                  (finally (.close ctx true))))))))
 
 
-;; =============================================================================
 ;; The pid on the handle
-;; =============================================================================
 
 (defdescribe pid-handoff-test
              ;; Regression, issue #142: the real pid never left the host handler, so the

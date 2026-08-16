@@ -21,9 +21,7 @@
  * slices except the rules deliberately changed.
  */
 
-// ---------------------------------------------------------------------------
 // Parsing
-// ---------------------------------------------------------------------------
 
 /**
  * Parse a stylesheet into a flat tree.
@@ -204,9 +202,7 @@ export function normalizeSelector(prelude) {
     .trim();
 }
 
-// ---------------------------------------------------------------------------
 // Reconciliation
-// ---------------------------------------------------------------------------
 
 /**
  * Merge variant CSS into existing CSS. Rules whose (at-context, normalized
@@ -280,9 +276,7 @@ export function reconcileCss(existingCss, variantCss) {
   return { css: serializeNodes(existing), replaced, appended };
 }
 
-// ---------------------------------------------------------------------------
 // Parameter baking
-// ---------------------------------------------------------------------------
 
 /**
  * Replace every `var(--p-<id>, fallback)` / `var(--p-<id>)` occurrence with a
@@ -465,9 +459,7 @@ export function splitSelectorList(prelude) {
   return selectors.map((s) => s.trim()).filter(Boolean);
 }
 
-// ---------------------------------------------------------------------------
 // Compiler-driven pruning
-// ---------------------------------------------------------------------------
 
 /**
  * Remove selectors the framework compiler reports as unused from a full

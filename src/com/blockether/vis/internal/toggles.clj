@@ -44,9 +44,7 @@
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]))
 
-;; =============================================================================
 ;; Specs
-;; =============================================================================
 
 (defn toggle-id?
   "True only for canonical toggle ids: plain lower-case snake_case strings.
@@ -113,9 +111,7 @@
              :enum
              (and (sequential? choices) (some? default) (contains? (set choices) default))))))
 
-;; =============================================================================
 ;; Registries
-;; =============================================================================
 
 (defonce
   ^:private
@@ -145,9 +141,7 @@
   listeners
   (atom []))
 
-;; =============================================================================
 ;; Registry ops
-;; =============================================================================
 
 (defn- ->str-choice
   "Canonicalise one enum choice / default to a plain lower-case string:
@@ -284,9 +278,7 @@
 
 (defn toggle-spec "Lookup the registered spec for `id`, or nil." [id] (get @registry id))
 
-;; =============================================================================
 ;; State ops
-;; =============================================================================
 
 (defn- notify!
   [event]
@@ -506,9 +498,7 @@
           (try (set-value! id (coerce-config-value id v))
                (catch clojure.lang.ExceptionInfo _ nil)))))))
 
-;; =============================================================================
 ;; Listener ops
-;; =============================================================================
 
 (defn add-listener!
   "Register a no-arg-or-event listener fn. Returns a `dispose!` thunk
@@ -532,9 +522,7 @@
                                                          ::key))
                                   xs))))))))
 
-;; =============================================================================
 ;; Reset (dev / test helper)
-;; =============================================================================
 
 (defn clear-state!
   "Wipe live overrides so every id resolves to its registered default.
@@ -549,7 +537,6 @@
   (reset! state {})
   nil)
 
-;; =============================================================================
 ;; Host-owned canonical toggles
 ;;
 ;; Internal toggles ship registered at load time so the TUI settings
@@ -557,7 +544,6 @@
 ;; extension lands its own toggles. `defonce` keeps re-loads (clj-reload
 ;; / `:reload`) idempotent: the live registry stays intact and any
 ;; user override in `state` survives.
-;; =============================================================================
 
 (defonce
   ^{:doc

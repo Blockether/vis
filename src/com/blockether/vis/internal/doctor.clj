@@ -22,9 +22,7 @@
             [com.blockether.vis.internal.extension :as extension]
             [taoensso.telemere :as tel]))
 
-;; ---------------------------------------------------------------------------
 ;; Run.
-;; ---------------------------------------------------------------------------
 
 (defn- format-bytes
   [^long n]
@@ -80,9 +78,7 @@
            {:level :info :message (str "Memory: " (format-bytes used) " / " (format-bytes max-mem))}
            {:level :info :message (str "DB path: " db-path)}])))
 
-;; ---------------------------------------------------------------------------
 ;; ::sandbox-deps - the Python sandbox's dependency surface actually RESOLVES
-;; ---------------------------------------------------------------------------
 
 (defn- shim-binding-map
   "A shim's host `:shim/bindings` — either the literal `{py-name -> fn}` map or
@@ -460,9 +456,7 @@
         (some #(= :warn (:level %)) messages) 1
         :else 0))
 
-;; ---------------------------------------------------------------------------
 ;; Format.
-;; ---------------------------------------------------------------------------
 
 (def ^:private ICONS "Plan §10: UTF-8 by default." {:info "ℹ" :warn "⚠" :error "✗"})
 
@@ -588,10 +582,8 @@
                         "\n\n" (string/join "\n\n" sections)
                         "\n\n" summary))))))
 
-;; ---------------------------------------------------------------------------
 ;; Startup hint - one-line warning printed before non-doctor commands
 ;; when issues exist. Plan §10 last subsection.
-;; ---------------------------------------------------------------------------
 
 (defn startup-hint-line
   "Return a single-line string like `⚠ vis-agent: 2 issues detected - run

@@ -16,10 +16,8 @@
   (:import [java.sql DriverManager Connection PreparedStatement ResultSet]
            [java.util ArrayList Base64]))
 
-;; ---------------------------------------------------------------------------
 ;; Host-side connection registry: handle (long) -> java.sql.Connection.
 ;; The Python Connection/Cursor are just handles; the DB lives on the JVM.
-;; ---------------------------------------------------------------------------
 
 (defonce ^:private db-registry (atom {}))
 
@@ -38,9 +36,7 @@
 
 (def ^:private blob-tag "__vis_blob__")
 
-;; ---------------------------------------------------------------------------
 ;; Parameter binding + value marshaling across the strings-only boundary.
-;; ---------------------------------------------------------------------------
 
 (defn- rewrite-named
   "Rewrite :name / @name / $name placeholders to positional `?` (outside string
@@ -147,9 +143,7 @@
         (str/starts-with? s "with")
         (str/starts-with? s "explain"))))
 
-;; ---------------------------------------------------------------------------
 ;; DB-API operations.
-;; ---------------------------------------------------------------------------
 
 (defn- op-connect
   [database]

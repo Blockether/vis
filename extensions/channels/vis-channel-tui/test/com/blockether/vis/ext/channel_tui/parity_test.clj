@@ -18,11 +18,9 @@
 (def ^:private it->iteration-entry
   (var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/it->iteration-entry)))
 
-;; ---------------------------------------------------------------------------
 ;; Shared fixture: ONE fence that ran `(git/status)` then `(git/add ".")` and
 ;; printed some output. `:stdout` is the SINGLE display surface both paths
 ;; carry — that is the whole point; everything downstream must agree.
-;; ---------------------------------------------------------------------------
 
 (def ^:private fence-stdout "STATUS  clean\nADD  .")
 

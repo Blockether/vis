@@ -442,9 +442,7 @@ function globToRegex(pattern) {
   return new RegExp('^' + re + '$');
 }
 
-// ---------------------------------------------------------------------------
 // Core operations
-// ---------------------------------------------------------------------------
 
 function validateConfig(cfg) {
   if (!cfg || typeof cfg !== 'object') throw new Error('config.json must be an object');
@@ -473,9 +471,7 @@ function validateConfig(cfg) {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Auto-execute
-// ---------------------------------------------------------------------------
 
 const _running = process.argv[1];
 if (_running?.endsWith('live-inject.mjs') || _running?.endsWith('live-inject.mjs/')) {

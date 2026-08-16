@@ -25,10 +25,6 @@
             [clojure.tools.build.api :as b]
             [deps-deploy.deps-deploy :as dd]))
 
-;; =============================================================================
-;; Version
-;; =============================================================================
-
 (def version
   "Single source of truth for the published version: the repo-root VIS_VERSION
    file, verbatim. No env override, no snapshot suffix, no git sha — the jar
@@ -36,9 +32,7 @@
    report this one string."
   (str/trim (slurp "VIS_VERSION")))
 
-;; =============================================================================
 ;; Package catalog
-;; =============================================================================
 
 (def ^:private extension-package-root "extensions")
 
@@ -113,10 +107,6 @@
 
     {:class-dir cls-dir :jar-file jar-file}))
 
-;; =============================================================================
-;; POM data
-;; =============================================================================
-
 (def ^:private base-pom-data
   "Fields shared by every published POM."
   [[:url "https://github.com/Blockether/vis"]
@@ -139,9 +129,7 @@
   (into [[:description (or (get package-descriptions lib) (str lib " - vis monorepo package."))]]
         base-pom-data))
 
-;; =============================================================================
 ;; Per-package build
-;; =============================================================================
 
 (defn- absolute-local-root
   "Resolve a `:local/root` coord relative to its package deps.edn dir."
@@ -248,9 +236,7 @@
   [pkgs]
   (sort-by #(if (= 'com.blockether/vis (:lib %)) 1 0) pkgs))
 
-;; =============================================================================
 ;; Public tasks
-;; =============================================================================
 
 (defn clean
   "Remove the entire `target/` tree."
@@ -290,7 +276,6 @@
                   :pom-file (b/pom-path {:lib lib :class-dir class-dir})})
       (println "  -> deployed" lib version "to Clojars"))))
 
-;; =============================================================================
 ;; GraalVM native-image build
 ;;
 ;; The Vis Agent application (`bin/vis-agent` = `clojure -M:vis`) compiles to a
@@ -301,7 +286,6 @@
 ;; Embedded GraalPy + dynamic extension loading make this non-trivial; see the
 ;; `:native` alias (graal-build-time) and `native-image-args`. Cross-platform:
 ;; the same `uber`/`native` tasks run on Linux/macOS; CI matrixes them.
-;; =============================================================================
 
 (def ^:private native-class-dir "target/native-classes")
 

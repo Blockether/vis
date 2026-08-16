@@ -434,9 +434,7 @@
                                          "(defn f [] 1)\n"
                                          {:op :rename :target "nope" :code "x"})))))
 
-;; ---------------------------------------------------------------------------
 ;; Many languages: every one should outline its function `add` and rename it.
-;; ---------------------------------------------------------------------------
 (def ^:private lang-cases
   [{:ext "clj" :src "(defn add [a b] (+ a b))\n"}
    {:ext "py" :src "def add(a, b):\n    return a + b\n"}
@@ -528,9 +526,7 @@
                      (expect (throws?
                                #(edit "demo.clj" s {:op :add-doc :target "add" :code "\"x\""})))))))
 
-;; =============================================================================
 ;; Body docstrings (Python) — lookup cost
-;; =============================================================================
 
 (defn- py-doc-source
   "`n` documented top-level Python defs — the shape that makes the pack emit a

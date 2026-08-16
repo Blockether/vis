@@ -14,10 +14,8 @@
             [com.blockether.vis.internal.foundation.editing.zipper :as z]
             [lazytest.core :refer [defdescribe it expect]]))
 
-;; ---------------------------------------------------------------------------
 ;; ~46 languages, one tiny valid snippet each — every grammar in the pack we
 ;; lean on. detect-language maps the extension; inspect/edit drive the grammar.
-;; ---------------------------------------------------------------------------
 (def ^:private lang-bank
   [["clj" "(defn add [a b] (+ a b))\n"] ["py" "def add(a, b):\n    return a + b\n"]
    ["rs" "fn add(a: i32, b: i32) -> i32 { a + b }\n"]
@@ -151,11 +149,9 @@
 
                      (expect (= :syntax-broken (get-in r [:error :reason])))))))
 
-;; ===========================================================================
 ;; SUBTLE / DEEP coverage — not just top-level nodes: nested classes, methods,
 ;; for-loops, if-conditions, comments. Snippets each carry a class/fn + a for
 ;; loop + an `if acc > 10` + line comments, so we can drill into sub-expressions.
-;; ===========================================================================
 (def ^:private deep-bank
   [["py"
     "# count things\nclass Counter:\n    def total(self, items):\n        acc = 0\n        for x in items:\n            acc += x  # add x\n        if acc > 10:\n            return acc\n        return 0\n"]
@@ -261,13 +257,11 @@
             (expect (:ok? r))
             (expect (= src (:new-source r))))))))
 
-;; ===========================================================================
 ;; E. STRUCTURAL INTELLIGENCE per language — `index/file-index` must return real
 ;;    definitions (name + kind + nesting) and imports, not just a parse tree.
 ;;    Guards the pack's intel modules (ts-pack-core/src/intel/lang/*.rs) and
 ;;    vis's `code-languages` allowlist for the languages added in
 ;;    tree-sitter-language-pack 1.12.3-blockether.27.
-;; ===========================================================================
 (def ^:private intel-bank
   [{:path "a.hs"
     :lang "haskell"
@@ -363,14 +357,12 @@
                      ;; the skeleton renders and mentions the file
                      (expect (str/includes? (:skeleton idx) lang))))))
 
-;; ===========================================================================
 ;; F. KIND LABELS — Rust's `StructureKind::Other("resource")` carries a payload
 ;;    a Java enum cannot hold. Until tree-sitter-language-pack
 ;;    1.12.3-blockether.28 the binding dropped it, so a GraphQL `type`, a
 ;;    Terraform `resource` and an Elixir `defmacro` all collapsed into one
 ;;    indistinguishable `other` bucket. `StructureItem/kindLabel` restores it and
 ;;    `index/item-kind` prefers it — for display AND for kind-targeted edits.
-;; ===========================================================================
 (def ^:private kind-label-bank
   [{:path "a.graphql"
     :src "type Query { me: User }\n\ninput NewUser { name: String }\n"
@@ -483,13 +475,11 @@
                    (expect (str/includes? out "def add(a, b)"))
                    (expect (str/includes? out "class Greeter {")))))
 
-;; ---------------------------------------------------------------------------
 ;; SPAN TORTURE — the property behind the `endLineOf` fix, checked over layouts
 ;; designed to break it: blank rows before a closing delimiter, several blank
 ;; rows between definitions, no blank rows at all, nested definitions, heredocs
 ;; and template literals holding blank lines, unicode, CRLF, a leading gap and a
 ;; trailing gap.
-;; ---------------------------------------------------------------------------
 
 (def ^:private span-torture-bank
   {"a.groovy"
@@ -647,7 +637,6 @@
                                      {:op :replace :target "Alpha" :kind "class" :code overshoot})
                                    (catch Exception _ :refused)))))))
 
-;; ---------------------------------------------------------------------------
 ;; LINE-ENDING FIDELITY. A structural edit is line surgery: it must return the
 ;; file's own terminator (and its own CR) untouched. Two real regressions this
 ;; guards: `StructuralApi.splice` trimmed the trailing "" element that IS the
@@ -655,7 +644,6 @@
 ;; language, and Groovy — whose grammar demands a terminating newline — had the
 ;; edit REFUSED outright), and vis' own `move-source` rebuilt the file with
 ;; `str/split-lines`, which drops both the final newline and every CR.
-;; ---------------------------------------------------------------------------
 (def ^:private newline-bank
   {"a.py" "def alpha(x):\n    return x + 1\n\n\ndef beta():\n    return 2\n"
    "a.groovy"

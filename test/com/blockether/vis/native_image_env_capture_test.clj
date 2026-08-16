@@ -19,10 +19,8 @@
             [com.blockether.vis.internal.config :as config]
             [lazytest.core :refer [defdescribe expect it]]))
 
-;; =============================================================================
 ;; A tiny top-level-form reader (no classpath, no tools.reader: the scan must see
 ;; the SOURCE, including namespaces this test never loads).
-;; =============================================================================
 
 (defn- form-end
   "Index just past the balanced form that starts at `start` (a `(` in `text`).

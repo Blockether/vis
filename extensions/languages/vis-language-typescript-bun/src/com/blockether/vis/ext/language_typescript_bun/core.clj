@@ -18,9 +18,7 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.test-contract :as contract]))
 
-;; =============================================================================
 ;; Activation
-;; =============================================================================
 
 (def ^:private source-extensions
   "File suffixes Bun runs natively — TS/TSX/JS/JSX plus the .mjs/.cjs module
@@ -50,9 +48,7 @@
 
 (defn- activation-fn [env] (boolean (workspace-has-bun? env)))
 
-;; =============================================================================
 ;; Helpers
-;; =============================================================================
 
 (defn- env-root
   ^String [env]
@@ -96,9 +92,7 @@
                                         (repl/stop! dir))})
     (vis/notify! (str "● bun REPL up — " (.getName (io/file dir))) :level :success :ttl-ms 4000)))
 
-;; =============================================================================
 ;; Language-facade handlers
-;; =============================================================================
 
 (defn- monorepo-root-hint
   "When `cwd` IS the workspace root and its package.json declares `workspaces`,
@@ -359,9 +353,7 @@
                                           "output" (tail-str s 8000)}
                                          (bun-counts s))}))))
 
-;; =============================================================================
 ;; Manifest
-;; =============================================================================
 
 ;; No :ext/prompt-fn — the foundation advertises repl_eval / repl /
 ;; run_tests through the AUTO capability matrix; repl_eval's own result

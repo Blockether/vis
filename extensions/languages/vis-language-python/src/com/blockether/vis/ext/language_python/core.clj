@@ -17,9 +17,7 @@
             [com.blockether.vis.internal.python-test-runner :as ptr]
             [com.blockether.vis.internal.test-contract :as contract]))
 
-;; =============================================================================
 ;; Activation
-;; =============================================================================
 
 (defn- workspace-has-python?
   [env]
@@ -36,9 +34,7 @@
 
 (defn- activation-fn [env] (boolean (workspace-has-python? env)))
 
-;; =============================================================================
 ;; Helpers
-;; =============================================================================
 
 (defn- env-root
   ^String [env]
@@ -85,9 +81,7 @@
                  :level :success
                  :ttl-ms 4000)))
 
-;; =============================================================================
 ;; Language-facade handlers
-;; =============================================================================
 
 (defn py-start-repl-fn
   "repl handler for Python. Positional `op` (default \"start\") + opts
@@ -166,9 +160,7 @@
                                     (map? res)
                                     (assoc "code" code))}))))
 
-;; =============================================================================
 ;; run_tests
-;; =============================================================================
 
 (def ^:private output-char-cap
   "Chars of the pytest transcript carried back in `output`. A long run prints
@@ -671,9 +663,7 @@
                                   (:warning layout)
                                   (assoc "warning" (:warning layout)))})))
 
-;; =============================================================================
 ;; Manifest
-;; =============================================================================
 
 ;; No :ext/prompt-fn — the foundation advertises repl_eval / repl through
 ;; the AUTO capability matrix; repl_eval's own result ({ok,out,value,data,type,

@@ -39,9 +39,7 @@
 
 (set! *warn-on-reflection* true)
 
-;; =============================================================================
 ;; The one validation seam
-;; =============================================================================
 
 (defn- checked
   "`node` itself, once the engine has agreed it is a node.
@@ -61,9 +59,7 @@
              :type type-name
              :name field-name)))
 
-;; =============================================================================
 ;; Fields — every node that holds exactly one answer
-;; =============================================================================
 
 (defn plaintext
   "One typed line, answered as a string.
@@ -133,9 +129,7 @@
   ([value] {:value value})
   ([value label] {:value value :label label}))
 
-;; =============================================================================
 ;; Groups — upper control flow, no answer of their own
-;; =============================================================================
 
 (defn row
   "Lay `nodes` out side by side. A group holds no value and never appears in
@@ -149,9 +143,7 @@
   [& nodes]
   (checked {:type "group" :direction "column" :fields (vec nodes)}))
 
-;; =============================================================================
 ;; Decoration — ink, so a long form reads like a page instead of a list
-;; =============================================================================
 
 (defn heading
   "A section title: bold, unfocusable, answers nothing."
@@ -163,9 +155,7 @@
   [text]
   (checked {:type "paragraph" :text text}))
 
-;; =============================================================================
 ;; The request
-;; =============================================================================
 
 (defn form
   "The request map `com.blockether.vis.core/request-human-input!` takes, built

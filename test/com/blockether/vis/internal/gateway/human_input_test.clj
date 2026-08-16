@@ -199,13 +199,11 @@
           (is (= "Vis is waiting on your answer." (:body n)))))
       (finally (push/set-session-describer! prev)))))
 
-;; =============================================================================
 ;; The endpoints the phone actually calls
 ;;
 ;; `gw-hi/submit!` is the in-process seam; the app only ever sees the HTTP
 ;; handlers and their JSON. These drive the real ring handlers so a routing,
 ;; path-param or encoding slip cannot hide behind a green in-process test.
-;; =============================================================================
 
 (defn- rv
   "Resolve a (private) handler var in the gateway server namespace."
@@ -300,14 +298,12 @@
            (is (empty? (gw-hi/pending sid))))
          (finally (hi/cancel! rid "cleanup")))))
 
-;; =============================================================================
 ;; Cross-language contract
 ;;
 ;; The companion's own unit tests parse `human-input.fixture.json`. That file is
 ;; the engine's projection, byte for byte — so a change to `request->view` that
 ;; the app cannot read fails HERE, in Clojure, instead of silently shipping a
 ;; dialog the phone renders empty.
-;; =============================================================================
 
 (def ^:private fixture-spec
   "The request whose wire projection the companion app's fixture holds."

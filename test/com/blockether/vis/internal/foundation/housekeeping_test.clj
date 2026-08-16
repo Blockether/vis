@@ -15,9 +15,7 @@
            [java.nio.file Files LinkOption]
            [java.nio.file.attribute FileAttribute]))
 
-;; ---------------------------------------------------------------------------
 ;; Fixtures
-;; ---------------------------------------------------------------------------
 
 (defn- tmp-dir
   ^File [prefix]
@@ -45,9 +43,7 @@
 
 (defn- kinds [report] (frequencies (map :kind (:reclaimable (:drafts report)))))
 
-;; ---------------------------------------------------------------------------
 ;; scan — drafts
-;; ---------------------------------------------------------------------------
 
 (defdescribe
   scan-drafts-test
@@ -120,9 +116,7 @@
 
           (expect (zero? (:count (housekeeping/scan {:days 14}))))))))
 
-;; ---------------------------------------------------------------------------
 ;; scan — gateway journals
-;; ---------------------------------------------------------------------------
 
 (defdescribe scan-journals-test
              (it "reports only `.ndjson` journals older than the cutoff"
@@ -142,9 +136,7 @@
                        (expect (= ["old.ndjson"] (mapv :label (:reclaimable journals))))
                        (expect (= 1 (:count report))))))))
 
-;; ---------------------------------------------------------------------------
 ;; purge!
-;; ---------------------------------------------------------------------------
 
 (defdescribe
   purge-test
@@ -230,10 +222,6 @@
           (housekeeping/purge! {:days 14}))
         (expect (.exists victim)))))
 
-;; ---------------------------------------------------------------------------
-;; format-bytes
-;; ---------------------------------------------------------------------------
-
 (defdescribe format-bytes-test
              (it "renders locale-stable, unit-scaled sizes"
                  (expect (= "512 B" (housekeeping/format-bytes 512)))
@@ -241,9 +229,7 @@
                  (expect (= "1.0 MB" (housekeeping/format-bytes (* 1024 1024))))
                  (expect (= "2.5 GB" (housekeeping/format-bytes (long (* 2.5 1024 1024 1024)))))))
 
-;; ---------------------------------------------------------------------------
 ;; sweep-stale! — the self-deleting surface
-;; ---------------------------------------------------------------------------
 
 (defn- target
   "The one target report named `id` inside a `sweep-stale!` result."

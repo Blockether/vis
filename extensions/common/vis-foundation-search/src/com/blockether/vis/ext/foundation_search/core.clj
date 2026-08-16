@@ -834,14 +834,12 @@
     (get opts "tokens_num")
     (assoc :tokensNum (get opts "tokens_num"))))
 
-;; ----------------------------------------------------------------------------
 ;; Envelope helpers
 ;;
 ;; Every search/* fn returns a tool envelope so the channel layer
 ;; gets a structured payload AND a custom
 ;; render-fn that paints citation cards instead of dumping the raw
 ;; markdown blob. Python itself sees the unwrapped `:result` map.
-;; ----------------------------------------------------------------------------
 
 (defn- search-result-payload
   "Canonical Python-facing :result map for a successful search call.
@@ -1152,9 +1150,7 @@
                                                  " — use auto | exa | github")
                                             {:provider provider})})))))
 
-;; =============================================================================
 ;; GitHub source archive download (public codeload)
-;; =============================================================================
 
 (def ^:private github-codeload-base "https://codeload.github.com")
 (def ^:private github-archive-max-bytes (* 10 1024 1024))
@@ -1532,9 +1528,7 @@
                                 :metadata {:tool "github-codeload" :endpoint url}}))))))
 
 
-;; =============================================================================
 ;; arxiv papers (Atom feed)
-;; =============================================================================
 
 (def ^:private ARXIV_API_BASE "https://export.arxiv.org/api/query")
 
@@ -1671,9 +1665,7 @@
                              :citation-type :paper
                              :throwable t}))))))
 
-;; =============================================================================
 ;; Unified entry point — ONE search, three kinds
-;; =============================================================================
 
 (defn search
   "await search(\\\"query\\\")  # web by default
@@ -1714,9 +1706,7 @@
                                                  " — use web | code | papers")
                                             {:kind kind})})))))
 
-;; =============================================================================
 ;; Symbol entries
-;; =============================================================================
 
 (def web-symbol
   (vis/symbol

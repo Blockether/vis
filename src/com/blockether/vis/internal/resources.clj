@@ -5,19 +5,15 @@
    processes belong to the gateway and die when the gateway dies."
   (:import (java.lang ProcessHandle)))
 
-;; ---------------------------------------------------------------------------
 ;; In-memory registry: { session-id -> { id -> {:data {..} :stop-fn
 ;; :alive-fn} } }. defonce so a `(require :reload)` during dev never drops live
 ;; resources.
-;; ---------------------------------------------------------------------------
 
 (defonce ^:private registry (atom {}))
 
 (defn- skey [session] (str session))
 
-;; ---------------------------------------------------------------------------
 ;; Liveness — generic pid check; owners may supply a richer `:alive-fn`.
-;; ---------------------------------------------------------------------------
 
 (defn pid-alive?
   "Best-effort: is OS process `pid` still running? nil pid -> true (can't tell,
@@ -33,13 +29,11 @@
   (cond alive-fn (boolean (try (alive-fn) (catch Throwable _ false)))
         :else (pid-alive? (get data "pid"))))
 
-;; ---------------------------------------------------------------------------
 ;; Data shape — STRING-KEYED. The DATA map is what ctx carries into
 ;; `session["resources"]`, so it crosses the Python boundary: keys and enum
 ;; values (kind/status/owner/language) are strings, never keywords. Callers
 ;; still hand a keyword-keyed INPUT map (a host-side API arg); `->data` and
 ;; `normalize-patch` are the single construction boundary that stringifies it.
-;; ---------------------------------------------------------------------------
 
 (defn- sval
   "Stringify a keyword enum VALUE so it can cross the boundary; other scalars
@@ -91,9 +85,7 @@
     language
     (assoc "language" (sval language))))
 
-;; ---------------------------------------------------------------------------
 ;; Public API — every verb is scoped to the owning `session`.
-;; ---------------------------------------------------------------------------
 
 (defn- replace-record-if-current!
   "Atomically transform `expected` only while it is still the exact record stored
@@ -475,14 +467,12 @@
     (reset! registry {})
     result))
 
-;; ---------------------------------------------------------------------------
 ;; Agent surface — B-dispatch. The sandbox gets ONE engine-builtin tool,
 ;; CLOSED OVER the owning session, that acts on a resource purely by its `:id`.
 ;; The id comes from the caller that started the resource — a `shell` handle or
 ;; a `repl` status result — never from ctx, which carries no resource at all.
 ;; Wired by the loop via env/set-python-binding!,
 ;; which snake-cases the symbol: `resource-stop` -> `resource_stop(id)`.
-;; ---------------------------------------------------------------------------
 
 (defn- ->model-result
   "Project an internal `stop!` result map (`{:result :stopped

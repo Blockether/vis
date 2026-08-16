@@ -172,7 +172,6 @@
                  (expect (contains? #{0 nil} (get-in r [:result "failed"]))))
                (finally (cleanup root)))))))
 
-;; ── activation ───────────────────────────────────────────────────────────────
 (def ^:private activation-fn @#'core/activation-fn)
 
 (defdescribe activation-test

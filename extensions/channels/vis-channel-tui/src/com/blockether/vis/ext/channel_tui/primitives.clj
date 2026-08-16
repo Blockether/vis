@@ -30,8 +30,6 @@
   ^long [^long x ^long lo ^long hi]
   (TerminalTextUtils/clamp x lo hi))
 
-;;; ── Color ──────────────────────────────────────────────────────────────────
-
 (defn set-fg! [^TextGraphics g color] (.setForegroundColor g color) g)
 
 (defn set-bg! [^TextGraphics g color] (.setBackgroundColor g color) g)
@@ -1105,8 +1103,6 @@
       (draw-centered! g left row width text))
     (clear-styles! g)
     layout))
-
-;;; ── Cursor ─────────────────────────────────────────────────────────────────
 
 (defn cursor-pos
   "Create a TerminalPosition for cursor placement."

@@ -52,9 +52,7 @@
   (let [digest (.digest (MessageDigest/getInstance "SHA-256") raw)]
     (str/join (map #(format "%02x" %) digest))))
 
-;; ---------------------------------------------------------------------------
 ;; Conversion cache — LRU by content hash
-;; ---------------------------------------------------------------------------
 
 (def ^:private cache-entries
   "How many converted documents stay resident. A corpus larger than this still
@@ -132,9 +130,7 @@
      "misses" (:misses state)
      "limit" cache-entries}))
 
-;; ---------------------------------------------------------------------------
 ;; Conversion
-;; ---------------------------------------------------------------------------
 
 (defn- present
   "Trimmed `value`, or nil when Python passed nothing (`None` / empty string)."

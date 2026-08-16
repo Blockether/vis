@@ -36,9 +36,7 @@
   (:require [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.loop :as lp]))
 
-;; -----------------------------------------------------------------------------
 ;; Trailer reconstruction (mirrors the live-loop's `:trailer-iters` shape)
-;; -----------------------------------------------------------------------------
 
 (defn- iteration->trailer-entry
   "Project one persisted iteration row to the canonical `[position
@@ -132,9 +130,7 @@
             :llm-model (:llm-actual-model iter)}
            replay)))
 
-;; -----------------------------------------------------------------------------
 ;; Public API
-;; -----------------------------------------------------------------------------
 
 (defn replay-turn
   "Per-iteration replay metrics for a single persisted turn. Callers

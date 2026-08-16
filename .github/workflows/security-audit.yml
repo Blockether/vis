@@ -120,7 +120,6 @@ jobs:
       #     clojure -M:clj-watson scan -p deps.edn -a '*' \
       #       -t github-advisory -o stdout-simple -f
 
-  # ---------------------------------------------------------------------------
   # DEEPER SCAN — NIST NVD via OWASP Dependency-Check (full CVSS scoring).
   #
   # The github-advisory job above is the fast, zero-setup default on every

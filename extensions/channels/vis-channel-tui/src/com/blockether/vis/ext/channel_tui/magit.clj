@@ -27,9 +27,7 @@
             [com.blockether.vis.internal.workspace :as workspace])
   (:import [java.io File]))
 
-;; ============================================================================
 ;; MAGIT KEYBINDINGS — the TUI status buffer (C-x g), key-for-key
-;; ============================================================================
 ;;
 ;; This is the reference for every key the magit status buffer answers to.
 ;; The keys themselves are DISPATCHED in the dialog layer, not here:
@@ -87,7 +85,6 @@
 ;;   a/v apply/reverse · t tag · w/W am/patch · !/: run-git · i/I gitignore ·
 ;;   j jump · +/-/0 diff-context · G refresh-all · SPC/DEL scroll ·
 ;;   M-n/M-p sibling motion · ^ parent · C-TAB/S-TAB visibility cycling.
-;; ============================================================================
 
 (set! *unchecked-math* :warn-on-boxed)
 
@@ -129,9 +126,7 @@
   [ok-msg result]
   (if (= 0 (:exit result)) {:ok? true :msg ok-msg} {:ok? false :msg (first-error-line result)}))
 
-;; =============================================================================
 ;; Model
-;; =============================================================================
 
 (def ^:private recent-commit-count 10)
 
@@ -404,9 +399,7 @@
       (action-result (str "Unstaged hunk in " path) (apply-hunk-patch! root (into header h) true))
       {:ok? false :msg "No such hunk to unstage"})))
 
-;; =============================================================================
 ;; Actions — all return {:ok? bool :msg str}
-;; =============================================================================
 
 (defn stage-file! [root path] (action-result (str "Staged " path) (git! root ["add" "--" path])))
 
@@ -673,9 +666,7 @@
   [root ref]
   (action-result (str "Dropped " ref) (git! root ["stash" "drop" (str ref)])))
 
-;; =============================================================================
 ;; Pure status-buffer rows
-;; =============================================================================
 
 (def ^:private default-collapsed-sections
   "Sections magit folds shut on entry, shown as a header only until TAB opens
@@ -974,9 +965,7 @@
            (take-while #(not (contains? #{:section :repo} (:kind %))))
            (filterv #(and (= :file (:kind %)) (= area (:area %)) (= root (:root %))))))))
 
-;; =============================================================================
 ;; Multi-root workspaces (trunk + extra filesystem roots, drafts)
-;; =============================================================================
 
 (defn- wget
   "Read `k` from a map tolerating BOTH key shapes the workspace record travels

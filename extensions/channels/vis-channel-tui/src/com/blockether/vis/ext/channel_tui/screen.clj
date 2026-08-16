@@ -4667,7 +4667,6 @@
   (try (input/restore-software-flow-control!) (catch Throwable _ nil))
   (try (input/restore-literal-next!) (catch Throwable _ nil)))
 
-;; ---------------------------------------------------------------------------
 ;; Encrypted SSH key passphrase prompt — retired.
 ;;
 ;; git auth (ssh keys, credential helpers, passphrase prompts) is now handled
@@ -4675,7 +4674,6 @@
 ;; so the TUI no longer registers an in-app passphrase provider. Kept as a
 ;; no-op returning nil so the screen lifecycle (which vresets a cleanup thunk
 ;; from this call) stays unchanged.
-;; ---------------------------------------------------------------------------
 (defn- install-ssh-passphrase-prompt!
   "No-op: the host `git` binary owns credential prompting now. Returns nil
    (no cleanup thunk to run)."

@@ -208,9 +208,7 @@ export default function ImpeccableLiveRoot() {
 `;
 }
 
-// ---------------------------------------------------------------------------
 // helpers
-// ---------------------------------------------------------------------------
 
 // The managed mount component carries the `impeccable-live-tanstack` marker in
 // its leading comment and its script data-attribute; user files never do.

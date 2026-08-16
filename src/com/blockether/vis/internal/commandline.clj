@@ -30,9 +30,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.registry :as registry]))
 
-;; =============================================================================
 ;; Lookup
-;; =============================================================================
 
 (defn- by-name
   [children nm]
@@ -73,9 +71,7 @@
   [root args]
   (find-leaf root (cons (:cmd/name root) args)))
 
-;; =============================================================================
 ;; Argument parsing
-;; =============================================================================
 
 (defn- flag-arg? [s] (str/starts-with? (str s) "--"))
 
@@ -218,7 +214,6 @@
          (when (seq names) (str "\n\nAccepted flags: " (str/join ", " names)))
          "\n\nAlso accepted: --help, -h.")))
 
-;; =============================================================================
 ;; Help rendering
 ;;
 ;; Two public entry points:
@@ -236,7 +231,6 @@
 ;; stdout is not a TTY (tests, pipes), or when `NO_COLOR` is set, or
 ;; when `TERM=dumb` - callers can also force it via
 ;; `(binding [*color-enabled?* false] ...)`.
-;; =============================================================================
 
 (defn pad-right
   [s ^long w]
@@ -259,8 +253,6 @@
      (long (count s))]
 
     (if (>= c w) s (str (apply str (repeat (- w c) \space)) s))))
-
-;; ---- Color ------------------------------------------------------------------
 
 (defn- detect-color?
   "TTY attached + no `NO_COLOR` + `TERM` not `dumb`, decided NOW.
@@ -565,9 +557,7 @@
                            (:cmd/name root)
                            " <command> --help\" for more information about a command."))]))))
 
-;; =============================================================================
 ;; Top-level dispatch
-;; =============================================================================
 
 (defn dispatch!
   "Resolve the command for `args` against `root`, parse the residual

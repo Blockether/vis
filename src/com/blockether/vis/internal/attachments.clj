@@ -39,9 +39,7 @@
            [java.security MessageDigest]
            [java.util Base64]))
 
-;; =============================================================================
 ;; Limits
-;; =============================================================================
 
 (def max-image-bytes
   "Per-image cap on the WIRE PAYLOAD, in bytes of BASE64 -- which is what a
@@ -101,9 +99,7 @@
    the PNG chunk walk that rejects animated PNGs)."
   4100)
 
-;; =============================================================================
 ;; Magic-byte MIME sniffing (pi utils/mime.ts parity)
-;; =============================================================================
 
 (defn- u8 ^long [^bytes b ^long i] (bit-and (long (aget b i)) 0xff))
 
@@ -291,9 +287,7 @@
            (detect-media-mime buf)))
        (catch Throwable _ nil)))
 
-;; =============================================================================
 ;; Path-candidate extraction
-;; =============================================================================
 
 (def ^:private media-extension-pattern
   "Cheap pre-filter before any filesystem access: only tokens that END in
@@ -389,9 +383,7 @@
 
         (when (and (.isFile f) (.canRead f)) f)))))
 
-;; =============================================================================
 ;; Collection
-;; =============================================================================
 
 (defn size-label
   [^long n]
@@ -661,9 +653,7 @@
   [text]
   (not-empty (str/trim (str/replace (text->inline-chips text) #"\s+" " "))))
 
-;; =============================================================================
 ;; Send-time wire gate
-;; =============================================================================
 
 (def ^:private no-vision-reason
   "Why an image the user really attached is nevertheless not on the wire."

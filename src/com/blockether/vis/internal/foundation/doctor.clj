@@ -34,9 +34,7 @@
             [com.blockether.vis.internal.image-convert :as image-convert])
   (:import (java.nio.charset StandardCharsets)))
 
-;; ---------------------------------------------------------------------------
 ;; ::agents-md - project guidance presence
-;; ---------------------------------------------------------------------------
 
 (defn- agents-md-diagnostics
   [_environment]
@@ -63,9 +61,7 @@
         :remediation
         "Add `AGENTS.md` to your repo root with the rules / conventions you want vis to follow every turn."}])))
 
-;; ---------------------------------------------------------------------------
 ;; ::provider-env - unresolved ${NAME} references in provider config
-;; ---------------------------------------------------------------------------
 
 (defn- provider-env-diagnostics
   [_environment]
@@ -84,9 +80,7 @@
              :data {:provider provider-id :env-vars env-vars}})
           gaps)))
 
-;; ---------------------------------------------------------------------------
 ;; ::housekeeping - stale drafts and gateway journals
-;; ---------------------------------------------------------------------------
 
 (defn- housekeeping-diagnostics
   "Vis owns two directories that only ever grow: `~/.vis/drafts` (a full
@@ -128,15 +122,11 @@
                :drafts-root (:root drafts)
                :journals-root (:root journals)}}])))
 
-;; ---------------------------------------------------------------------------
 ;; The single fn the foundation extension wires into
 ;; `:ext/doctor-fn`. Order is intentional and scoped to foundation-owned
 ;; diagnostics. Each section stamps its own `:check-id` for formatter labels.
-;; ---------------------------------------------------------------------------
 
-;; ---------------------------------------------------------------------------
 ;; ::image-render - the imaging rasterizer actually works in THIS binary
-;; ---------------------------------------------------------------------------
 
 (def ^:private probe-svg
   "Smallest document that still exercises the whole rasterizer: a shape (the

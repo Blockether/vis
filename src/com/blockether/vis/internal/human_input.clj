@@ -71,9 +71,7 @@
 
 (defonce ^:private secrets (atom {}))
 
-;; =============================================================================
 ;; Secret vault
-;; =============================================================================
 
 (def ^:private max-secrets
   "The vault only has to bridge a submitted secret to the extension that asked
@@ -112,9 +110,7 @@
   (let [[old _] (reset-vals! secrets {})]
     (count old)))
 
-;; =============================================================================
 ;; Normalization — request/field specs
-;; =============================================================================
 
 (defn- pick
   "First non-nil value among `ks`. Specs arrive either string-keyed (from the
@@ -769,9 +765,7 @@
         (trimmed (pick request "source" :source))
         (assoc :source (trimmed (pick request "source" :source)))))))
 
-;; =============================================================================
 ;; Value coercion — one implementation for defaults and submissions
-;; =============================================================================
 
 (defn- coerce-text
   [{:keys [type is-required min-length max-length]} value]
@@ -1020,9 +1014,7 @@
                                      (transient (:values result))
                                      (input-fields fields)))))))
 
-;; =============================================================================
 ;; Channel projection
-;; =============================================================================
 
 (defn request->view
   "The channel/wire-facing projection of a pending request: the spec a dialog
@@ -1069,9 +1061,7 @@
   [channel-ids event]
   (transduce (map #(channel-events/publish-channel-event! % event)) + 0 channel-ids))
 
-;; =============================================================================
 ;; Registry
-;; =============================================================================
 
 (defn pending-requests
   "Snapshot of the currently pending requests, oldest first. Views only."
@@ -1275,9 +1265,7 @@
               @(:promise entry))
           result)))))
 
-;; =============================================================================
 ;; Strings-only boundary — what a Python extension actually calls
-;; =============================================================================
 
 (defn answer->wire
   "Wire projection of a [[request!]] answer: snake_case string keys, JSON-safe

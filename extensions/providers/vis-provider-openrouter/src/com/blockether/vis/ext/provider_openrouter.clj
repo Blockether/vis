@@ -30,9 +30,7 @@
             [com.blockether.vis.core :as vis]
             [taoensso.telemere :as tel]))
 
-;; =============================================================================
 ;; Constants
-;; =============================================================================
 
 (defn- auth-file
   "Persisted auth state for the single OpenRouter key. A FUNCTION: native-image folds
@@ -65,9 +63,7 @@
 
 (def ^:private key-info-url "https://openrouter.ai/api/v1/key")
 
-;; =============================================================================
 ;; Persistence
-;; =============================================================================
 
 (defn- auth-json-key
   "JSON key -> engine keyword. What we write is snake_case (`api_key`); the
@@ -95,9 +91,7 @@
   (let [f (io/file (auth-file))]
     (when (.exists f) (.delete f))))
 
-;; =============================================================================
 ;; Token detection / resolution
-;; =============================================================================
 
 (defn- env-key
   []
@@ -148,9 +142,7 @@
                          ".")
                     {:type :vis/openrouter-not-authenticated :provider-id PROVIDER_ID}))))
 
-;; =============================================================================
 ;; Status / logout
-;; =============================================================================
 
 (defn- key-preview
   "Short non-secret preview. OpenRouter keys look like `sk-or-v1-...`."
@@ -173,9 +165,7 @@
   (tel/log! {:level :info :id ::openrouter-logout :msg "Cleared persisted OpenRouter key"})
   :logged-out)
 
-;; =============================================================================
 ;; Limits (credits)
-;; =============================================================================
 
 (defn- object-map [value] (when (and (map? value) (not (record? value))) value))
 
@@ -264,9 +254,7 @@
                 {:limits [] :note (str LABEL " is not authenticated.")}
                 (key-info->dynamic-limits (fetch-key-info! (:api-key detected))))}))
 
-;; =============================================================================
 ;; Interactive auth
-;; =============================================================================
 
 (defn- auth-instruction-lines
   []
@@ -313,9 +301,7 @@
                       (print! line))
                     :no-credentials))))
 
-;; =============================================================================
 ;; Live model catalog
-;; =============================================================================
 
 (def ^:private catalog-url "https://openrouter.ai/api/v1/models")
 
@@ -382,9 +368,7 @@
                   (merge (get by-slug (:name m)) m))
                 models))))))
 
-;; =============================================================================
 ;; Public helpers
-;; =============================================================================
 
 (defn authenticated?
   "True when a usable key is resolvable from any source."
@@ -395,9 +379,7 @@
 
 (defn logout! "Clear the persisted key." [] (logout-fn))
 
-;; =============================================================================
 ;; Provider registration
-;; =============================================================================
 
 (vis/register-extension!
   (vis/extension

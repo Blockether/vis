@@ -4,9 +4,7 @@ import path from 'node:path';
 import { profileStep, recordProfileEvent } from '../../profile/profiler.mjs';
 import { CSS_NAMED_COLORS, collectCssCustomProps, cssLengthToPx, parseAnyColor, resolveLengthPx, resolveVarRefs } from '../../rules/checks.mjs';
 
-// ---------------------------------------------------------------------------
 // jsdom CSS-variable border override map
-// ---------------------------------------------------------------------------
 //
 // jsdom's CSSOM silently drops any border shorthand that contains a var()
 // reference — the computed style for the element then shows empty width,
@@ -218,9 +216,7 @@ function unwrapCssAtLayer(source) {
   return out;
 }
 
-// ---------------------------------------------------------------------------
 // Static HTML/CSS detection (default for local HTML files)
-// ---------------------------------------------------------------------------
 
 const STATIC_INHERITED_PROPS = new Set([
   'color', 'fontFamily', 'fontSize', 'fontStyle', 'fontWeight', 'fontVariant',

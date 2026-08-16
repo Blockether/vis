@@ -35,9 +35,7 @@
 
 (set! *unchecked-math* :warn-on-boxed)
 
-;; =============================================================================
 ;; Region shape
-;; =============================================================================
 ;;
 ;; A region is a plain map:
 ;;
@@ -72,9 +70,7 @@
 ;; the highlight should persist until the next MOVE event.
 (defonce ^:private hover-atom (atom nil))
 
-;; =============================================================================
 ;; Mutators
-;; =============================================================================
 
 (defn begin-frame!
   "Open a new paint pass: drop every staged region. Call once at the
@@ -118,9 +114,7 @@
   (clojure.core/reset! staging-atom [])
   (clojure.core/reset! hover-atom nil))
 
-;; =============================================================================
 ;; Readers
-;; =============================================================================
 
 (defn current
   "Snapshot of every currently-registered region, in paint order.
@@ -185,9 +179,7 @@
         (let [region (nth v i)]
           (if (contains-point? (:bounds region) col row) region (recur (dec i))))))))
 
-;; =============================================================================
 ;; Hover pointer
-;; =============================================================================
 
 (defn hovered
   "Return the currently-hovered region or nil. Read by the renderer

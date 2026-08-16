@@ -42,9 +42,7 @@
            (java.util.jar JarEntry JarFile)))
 
 (defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
-;; =============================================================================
 ;; Tool-result contract
-;; =============================================================================
 (def ^:private max-trace-frames 12)
 
 (defn- now-ms [] (System/currentTimeMillis))
@@ -88,7 +86,6 @@
 (s/def ::error
   (s/nilable (s/keys :req-un [:op.error/message]
                      :opt-un [:op.error/trace :op.error/hint :op.error/block])))
-;; ---- the envelope ----
 (s/def ::envelope
   (s/and (s/keys :opt-un [::symbol ::tag ::result ::success? ::error ::metadata])
          ;; Distinguishing-marker requirement: a real envelope MUST carry
@@ -368,9 +365,7 @@
 
       tool-error-data
       (assoc :data tool-error-data))))
-;; =============================================================================
 ;; Symbol entry spec
-;; =============================================================================
 ;; Symbol name bound in the Python sandbox.
 (s/def :ext.symbol/symbol symbol?)
 ;; Implementation function the LLM calls from :code blocks.
@@ -479,9 +474,7 @@
 (s/def ::symbol-entry
   (s/or :fn ::fn-symbol-entry
         :val ::val-symbol-entry))
-;; =============================================================================
 ;; Extension spec
-;; =============================================================================
 ;; Logical extension id, e.g. "foundation" or "github-copilot".
 (s/def :ext/name non-blank-string?)
 ;; Extension-level documentation - describes what this bundle provides.
@@ -528,7 +521,6 @@
 ;; torn down on deregister.
 (s/def :ext/network-filters (s/coll-of ifn?))
 
-;; ----------------------------------------------------------------------------
 ;; Hooks: the single mechanism extensions use to plug into the turn lifecycle.
 ;; A hook is a named callback that fires at a declared `:phase`; its `:fn`
 ;; receives a phase-shaped context map.
@@ -553,7 +545,6 @@
 ;; Start hooks do NOT block evaluation. They emit advisory
 ;; `(get-in ctx [:session :hints])` entries. For HARD final-answer
 ;; rejection, use :turn.answer/validate.
-;; ----------------------------------------------------------------------------
 (def canonical-hook-phases
   "Canonical namespaced lifecycle phases accepted by `:ext/hooks`."
   #{:turn.iteration/start :turn.answer/validate})
@@ -662,7 +653,6 @@
 
 (s/def :ext/channel-contributions
   (s/map-of channel-slot? (s/coll-of ::channel-contribution :kind vector?)))
-;; ----------------------------------------------------------------------------
 ;; Slash commands
 ;;
 ;; Declarative cross-channel slash surface, mirroring `:ext/hooks` /
@@ -676,7 +666,6 @@
 ;; `:parent ["workspace"]`, etc.). The canonical full path of a slash
 ;; is `(conj parent name)`. `register-extension!` refuses two
 ;; extensions declaring the same `[parent name]`.
-;; ----------------------------------------------------------------------------
 (s/def :slash/name non-blank-string?)
 
 (s/def :slash/parent (s/coll-of non-blank-string? :kind vector?))
@@ -766,9 +755,7 @@
 (s/def :ext/owner non-blank-string?)
 ;; SPDX license identifier.
 (s/def :ext/license non-blank-string?)
-;; ============================================================================
 ;; Surface slots
-;; ============================================================================
 ;; CLI commands exported by this extension.
 (s/def :ext/cli (s/coll-of :com.blockether.vis.internal.registry/command :kind vector?))
 ;; Channels exported by this extension.
@@ -832,7 +819,6 @@
 ;;    :check-id ::keyword     ; optional; renders as the prefix
 ;;    :data {...}}              ; optional; passthrough for callers
 (s/def :ext/doctor-fn fn?)
-;; ----------------------------------------------------------------------------
 ;; Sandbox Python SHIMS / AUTOLOADS. An extension may publish one or more
 ;; "shims": a host-backed Python module (optionally auto-loaded onto builtins)
 ;; installed into EVERY model sandbox context — the main session AND every
@@ -1024,9 +1010,7 @@
                        :ext/doctor-fn :ext/sandbox-shims])
          ns-alias-required-when-symbols?
          kind-required-when-symbols?))
-;; =============================================================================
 ;; Symbol helpers (builder fns)
-;; =============================================================================
 (defn- validate-symbol-entry!
   "Assert a symbol entry conforms to ::symbol-entry. Throws on violation."
   [entry]
@@ -1462,9 +1446,7 @@
                                                      (str " (" (str/join "; " header-notes) ")")))]
                                              body-lines
                                              extra-lines)))))
-;; =============================================================================
 ;; Normalization + validation
-;; =============================================================================
 (defn- normalize-prompt
   [prompt]
   (cond (nil? prompt) nil
@@ -1531,9 +1513,7 @@
                        :name (:ext/name ext)
                        :explain (s/explain-data ::extension ext)})))
     (validate-symbol-op-tags! ext)))
-;; =============================================================================
 ;; Hook execution - runtime wrappers with output validation + logging
-;; =============================================================================
 (defn- validate-hook-return!
   [hook-name sym returned]
   (when-not (map? returned)
@@ -2399,9 +2379,7 @@
                            (invoke-symbol-wrapper ext sym-entry (vec args) env)))))]
                   [sym (:ext.symbol/val sym-entry)]))))
           entries)))
-;; =============================================================================
 ;; Public API - extension builder
-;; =============================================================================
 (defn- derive-kind
   "Auto-derive `:ext/kind` for the categorical cases when the author
    didn't set one. Extensions that contribute providers, channels,
@@ -2491,12 +2469,8 @@
         (not (:ext/doctor-fn spec))
         (assoc :ext/doctor-fn (constantly [])))
       (validate!)))
-;; =============================================================================
 ;; Extension source markers
-;; =============================================================================
-;; ---------------------------------------------------------------------------
 ;; Hash + mtime primitives.
-;; ---------------------------------------------------------------------------
 (defn- sha256-digest ^MessageDigest [] (MessageDigest/getInstance "SHA-256"))
 
 (defn- bytes->hex
@@ -2524,9 +2498,7 @@
         (let [n (.read in buf)]
           (when (pos? n) (.write out buf 0 n) (recur)))))
     (.toByteArray out)))
-;; ---------------------------------------------------------------------------
 ;; Resolve one namespace -> entry map.
-;; ---------------------------------------------------------------------------
 (defn- ns->resource-path
   "Convert `clojure.core` to `clojure/core.clj`. Tries .clj first;
    .cljc / .cljs fallback if the .clj resolves to nothing."
@@ -2643,9 +2615,7 @@
        (catch Throwable t
          (tel/log! {:level :warn :id ::resolve-failed :data {:url (str url) :error (ex-message t)}})
          nil)))
-;; ---------------------------------------------------------------------------
 ;; Public API.
-;; ---------------------------------------------------------------------------
 (defn resolve-markers
   "Resolve every namespace in `ns-syms` to its source on the classpath
    and compute aggregate markers.
@@ -2711,9 +2681,7 @@
                          seq
                          vec))]
     (resolve-markers (or ns-syms []))))
-;; =============================================================================
 ;; Global Extension Registry
-;; =============================================================================
 (defonce ^:private extension-registry
   ;; Process-level atom holding all globally registered extensions.
   ;; Keyed by :ext/name to prevent duplicates.
@@ -3054,12 +3022,10 @@
   (let [registry @extension-registry]
     (into [] (keep registry) @extension-order)))
 
-;; ---------------------------------------------------------------------------
 ;; Reload hooks — the seam `/reload` uses to refresh EXTENSION-owned resource
 ;; caches (harness skills/agents discovery, …) without core knowing about the
 ;; extension namespaces. Core-owned resources (project guidance, prompt
 ;; templates) are reloaded directly by the `/reload` slash.
-;; ---------------------------------------------------------------------------
 
 (defonce ^:private reload-hooks (atom {}))
 
@@ -3184,14 +3150,12 @@
                       {:type :extension/no-registration
                        :namespace ns-sym
                        :registered (vec (keys @extension-registry))})))))
-;; =============================================================================
 ;; Extension manifest catalog
 ;;
 ;; Filled by `discover-extensions!` from every
 ;; `META-INF/vis-extension/vis.edn` on the classpath. Multiple jars
 ;; that declare the same id are merged with `:nses` deduped while
 ;; preserving first-occurrence order.
-;; =============================================================================
 (defn registered-extension-ids
   "Sorted vector of every extension id known to the manifest registry."
   []
@@ -3666,10 +3630,8 @@
       (slurp u)
       (throw (ex-info (str "sandbox shim source not found on classpath: " res)
                       {:shim/name (:shim/name shim) :shim/source res})))))
-;; =============================================================================
 ;; CLI bridge -- the `vis-agent extension` parent lives in `internal.main` next to the
 ;; other top-level built-in parents (`providers`, `sessions`, `doctor`,
 ;; `update`). Extensions populate it via `:ext/cli` on `extension`;
 ;; `register-extension!` above forwards each entry through `mount-under-ext`
 ;; to `register-cmd!`.
-;; =============================================================================

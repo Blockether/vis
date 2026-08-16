@@ -144,21 +144,15 @@
                futs)
          (catch InterruptedException e (cancel-all!) (throw e)))))
 
-;; =============================================================================
 ;; Single-iteration runner
-;; =============================================================================
 
-;; ---------------------------------------------------------------------------
 ;; Core helpers
-;; ---------------------------------------------------------------------------
 
-;; ---------------------------------------------------------------------------
 ;; Per-iteration `(def ...)` discovery / dependency tracking was retired
 ;; together with the `definition_*` sidecar tables. Python defs are NOT scratch:
 ;; they persist for the whole session and, via `env/persist-session-defs!`, into
 ;; the next PROCESS; cross-turn evidence is read from persisted
 ;; `session_turn_iteration.forms` rows.
-;; ---------------------------------------------------------------------------
 
 (def ^:private MINI_STACK_DEPTH 12)
 
@@ -413,7 +407,6 @@
   (if (seq retry-events)
     (update result :routed/trace #(vec (concat retry-events (or % []))))
     result))
-;; ---------------------------------------------------------------------------
 
 (defn- log-stage-level
   "Severity for loop-stage telemetry.
@@ -645,14 +638,12 @@
          (extension/ex->op-error e {:form-source code}))
        (catch Throwable _ {:message (or (ex-message e) (.getName (class e)))})))
 
-;; =============================================================================
 ;; ONE persistent interpreter per session. The GraalPy sandbox is created ONCE
 ;; (`create-environment`) and reused across every turn, so the model's globals
 ;; (defs, imports, variables) carry across calls and turns NATURALLY, REPL-style.
 ;; (Resuming a session in a FRESH process starts with an empty sandbox; durable
 ;; file edits and conversation history persist, so the model recomputes what it
 ;; needs.)
-;; =============================================================================
 
 (def ^:private GUEST_INTERRUPT_GRACE_MS
   "How long [[interrupt-guest!]] waits for the GraalPy safepoint to unwind a
@@ -972,9 +963,7 @@
 ;; an unbounded JVM string before truncation. Override per call site
 ;; when a tighter or looser bound is required.
 
-;; ---------------------------------------------------------------------------
 ;; Error normalization
-;; ---------------------------------------------------------------------------
 
 (defn- op-error
   "Coerce engine/model error values into the canonical structured :error map.
@@ -1198,9 +1187,7 @@
       fatal?
       (assoc ::fatal-iteration-error true))))
 
-;; ---------------------------------------------------------------------------
 ;; get-locals (read sandbox vars)
-;; ---------------------------------------------------------------------------
 
 (defn get-locals
   "User-defined sandbox vars surface. Live-vars introspection is cosmetic-off
@@ -1216,9 +1203,7 @@
   [_environment _code result]
   result)
 
-;; ---------------------------------------------------------------------------
 ;; Parsed form helpers
-;; ---------------------------------------------------------------------------
 
 ;; Replay-dedup keys hash via `extension/sha256-hex` — the ONE
 ;; string-digest helper.
@@ -2140,9 +2125,7 @@
                          :explain (s/explain-data ::iteration-block block)}))))
     blocks))
 
-;; ---------------------------------------------------------------------------
 ;; run-iteration
-;; ---------------------------------------------------------------------------
 
 (defn- token-number
   [tokens ks]
@@ -2498,7 +2481,6 @@
                     (assistant-message-compatible-with-replay-target? target assistant-message)))
       (or trailer-iters []))))
 
-;; -----------------------------------------------------------------------------
 ;; Frozen result messages — prefix-cache-friendly form-result history.
 ;;
 ;; Form results used to render inside the regenerated `<context>` user message
@@ -2519,7 +2501,6 @@
 ;; Compaction (`fold_session`) REWRITES pins → the frozen
 ;; messages change → one deliberate cache bust, paid only under window
 ;; pressure instead of on every call.
-;; -----------------------------------------------------------------------------
 
 (defn- iter-of-scope
   "Form scope `\"t1/i2/f3\"` → its iteration scope `\"t1/i2\"` (drops the `/fN`).
@@ -4095,7 +4076,6 @@
   (mapv #(update % :input normalize-tool-input) (vec tool-calls)))
 
 
-;; ---------------------------------------------------------------------------
 ;; Prompt-cache breakpoints (Anthropic `cache_control`; OpenAI-style strips the
 ;; marker and uses implicit prefix caching). TWO breakpoints, pi/maki-style:
 ;;   1. the last SYSTEM message — the FROZEN `session={…}` prefix (long-lived,
@@ -4104,7 +4084,6 @@
 ;;      append-only transcript up to here (grows each iteration).
 ;; Manual placement makes svar skip its auto-cache-last-system-block (so we own
 ;; both slots); svar honours ≤4 breakpoints per call.
-;; ---------------------------------------------------------------------------
 (defn- tag-block-cached
   "Mark the LAST content block of message `m` with `:svar/cache true`. Coerces a
    bare-string `:content` into a text block first; leaves other shapes untouched."
@@ -4924,13 +4903,9 @@
          :llm-returned-empty-code? (empty? blocks)
          :assistant-message (:assistant-message ask-result)}))))
 
-;; =============================================================================
 ;; Multi-iteration turn engine
-;; =============================================================================
 
-;; -----------------------------------------------------------------------------
 ;; Core helpers
-;; -----------------------------------------------------------------------------
 
 (defn- stream-output-overflow?
   [err]
@@ -5071,9 +5046,7 @@
 ;; `com.blockether.vis.internal.provider-error` (shared with the TUI trace
 ;; renderer so a failure reads identically on every surface).
 
-;; -----------------------------------------------------------------------------
 ;; Router lifecycle + model helpers (turn single-file API)
-;; -----------------------------------------------------------------------------
 
 (defonce ^:private router-atom (atom nil))
 
@@ -6151,19 +6124,16 @@
   [_subctx]
   {})
 
-;; -----------------------------------------------------------------------------
 ;; System var helpers
 ;;
 ;; There is no cross-turn var snapshotting: the engine does not parse the
 ;; iteration's block source for `(def NAME …)` shapes to materialize and
 ;; persist sandbox locals. Sandbox state is intra-turn scratch only.
-;; ----------------------------------------------------------------------------
 ;; Auto-archive was retired together with the `definition_*` sidecar
 ;; tables: there is no cross-turn var registry to drive eviction off,
 ;; and the Python sandbox is fresh every turn anyway. `auto-archive-hot-
 ;; symbols!` is a no-op stub kept so call sites compile while we sweep
 ;; them out.
-;; ----------------------------------------------------------------------------
 
 (defn auto-archive-hot-symbols!
   "Deprecated NOOP. Cross-turn def survival was removed when the
@@ -6172,9 +6142,7 @@
   [_environment]
   nil)
 
-;; -----------------------------------------------------------------------------
 ;; Iteration loop + run-turn! (inlined from former base)
-;; -----------------------------------------------------------------------------
 
 ;; Forward reference: defined in the environment lifecycle section
 ;; ~1500 lines below. Removing this declare requires extracting
@@ -6964,7 +6932,6 @@
        (let [cache-created (long (or (get-in token-cost [:tokens "cache_created"]) 0))]
          (when (pos? cache-created) cache-created)))]
 
-    ;; -----------------------------------------------------------------
     ;; Turn-start state.
     ;;
     ;; The Python `context` dict is bound separately from tool bindings. The
@@ -7688,9 +7655,7 @@
                              (:tokens tc) :cost-usd
                              (:cost-usd tc)))))
                      _ (ctx-loop/set-turn-state! environment :iteration-id iteration-id)
-                     ;; =====================================================
                      ;; Context end-of-iter bookkeeping.
-                     ;; =====================================================
                      ctx-atom-ref (:ctx-atom environment)
                      _ (when ctx-atom-ref
                          (swap! ctx-atom-ref (fn [c]
@@ -8604,9 +8569,7 @@
           deref
           :custom-bindings))
 
-;; -----------------------------------------------------------------------------
 ;; Prepare turn context
-;; -----------------------------------------------------------------------------
 
 (defn- forced-routing-for-pref
   "svar routing that FORCES a per-session provider+model preference.
@@ -8963,10 +8926,6 @@
        :workspace-overrides workspace-overrides
        :messages messages})))
 
-;; -----------------------------------------------------------------------------
-;; Run iteration phase
-;; -----------------------------------------------------------------------------
-
 (defn- run-iteration-phase
   "Runs the main iteration loop via run-turn!.
    Returns iteration-result, session-turn-id, cost atoms, and merge-cost! fn."
@@ -9028,10 +8987,6 @@
      :total-tokens-atom total-tokens-atom
      :total-cost-atom total-cost-atom
      :merge-cost! merge-cost!}))
-
-;; -----------------------------------------------------------------------------
-;; Finalize turn result
-;; -----------------------------------------------------------------------------
 
 (defn- finalize-turn-result
   "Updates DB turn record, builds result map.
@@ -9121,9 +9076,7 @@
             (some? reasoning)
             (assoc :reasoning reasoning))))))
 
-;; -----------------------------------------------------------------------------
 ;; Public entry point
-;; -----------------------------------------------------------------------------
 
 (defn turn!
   "Runs one session turn on an RLM environment using iterative LLM code evaluation.
@@ -9238,17 +9191,11 @@
 
            result))))))
 
-;; =============================================================================
 ;; Environment lifecycle + system prompt
-;; =============================================================================
 
-;; =============================================================================
 ;; Helpers
-;; =============================================================================
 
-;; =============================================================================
 ;; Public env accessors
-;; =============================================================================
 
 ;; `db-info` (the env accessor) was a thin wrapper over `(:db-info env)`
 ;; that no caller actually invoked - every consumer either destructured
@@ -9375,9 +9322,7 @@
   (sync-active-extension-symbols! environment)
   environment)
 
-;; =============================================================================
 ;; Environment Lifecycle
-;; =============================================================================
 
 ;; The sub_loop RUNTIME (dispose-environment! + helpers + sub-loop! + the
 ;; composite runners) is defined BELOW, before create-environment, so verbs
@@ -9406,7 +9351,6 @@
   (when (and (:db-info environment) (not (false? (:owns-db? environment))))
     (persistance/db-dispose-connection! (:db-info environment))))
 
-;; =============================================================================
 ;; sub_loop runtime — a child agentic loop (slice C). The model writes Python:
 ;; it slices `context` into a focused `subctx` and calls
 ;; `sub_loop(prompt, subctx, {"model": …})`. The child is a CHILD session reusing
@@ -9414,7 +9358,6 @@
 ;; on its OWN workspace (rift clone where supported, else shared root), optionally
 ;; on a cheaper proposed model. On close its workspace diff merges back and the
 ;; result (status + evidence + produced facts + what-changed) returns to the parent.
-;; =============================================================================
 
 (def ^:private MAX-SUBLOOP-DEPTH
   "Recursion cap: a coordinator → child → grandchild … chain may nest at most this
@@ -10488,13 +10431,9 @@
     (extension/register-extensions! env install-extension!)
     env))
 
-;; =============================================================================
 ;; Session env cache
-;; =============================================================================
 
-;; ---------------------------------------------------------------------------
 ;; In-process session cache + channel utilities
-;; ---------------------------------------------------------------------------
 
 (defonce
   ^{:doc
@@ -10542,7 +10481,6 @@
   [id]
   (persistance/->uuid id))
 
-;; ---------------------------------------------------------------------------
 ;; Idle-env reaper — authoritative backstop against unbounded GraalPy Context
 ;; growth. Every cached session env pins a GraalPy `Context` (see
 ;; `dispose-environment!`); the cache itself is never bounded and the tab-close
@@ -10553,7 +10491,6 @@
 ;; turn holds it, so `tryLock` failing means "busy, skip") so an eval is never
 ;; killed mid-flight. Evicting a resident env is SAFE: the transcript lives in
 ;; the DB and `ensure-env!` transparently rebuilds the Context on the next touch.
-;; ---------------------------------------------------------------------------
 
 (def ^:private env-idle-ttl-ms
   "Idle window before a cached session env's GraalPy Context is disposed by the
@@ -11399,9 +11336,7 @@
   [project-id session-ids]
   (persistance/db-adopt-and-reorder-project-sessions! (db-info) project-id session-ids))
 
-;; =============================================================================
 ;; Host title setter + public env accessor
-;; =============================================================================
 
 (defn env-for [id] (:environment (ensure-env! id)))
 

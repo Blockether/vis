@@ -46,9 +46,7 @@
             [com.blockether.vis.internal.gateway.wire :as wire]
             [taoensso.telemere :as tel]))
 
-;; =============================================================================
 ;; Constants
-;; =============================================================================
 
 (defn- auth-file
   "Persisted auth state. Shared file for both plans, keyed by
@@ -90,9 +88,7 @@
             "qwen3.7-max" "qwen3.7-plus" "qwen3.6-flash" "glm-5.2" "deepseek-v4-pro"]
            :env-keys ["ALIBABA_TOKEN_PLAN_API_KEY"]}})
 
-;; =============================================================================
 ;; Persistence
-;; =============================================================================
 
 (defn- auth-json-key
   "JSON key -> engine keyword. What we write is snake_case (`api_key`); the
@@ -136,9 +132,7 @@
         (when (.exists f) (.delete f))))
     next-state))
 
-;; =============================================================================
 ;; Token detection / resolution
-;; =============================================================================
 
 (defn- env-key-for-plan
   "First non-blank env var from the plan's `:env-keys` priority
@@ -208,9 +202,7 @@
                     ".")
                {:type :vis/alibaba-not-authenticated :plan plan-tag :provider-id provider-id})))))
 
-;; =============================================================================
 ;; Per-plan provider fns
-;; =============================================================================
 
 (defn- make-detect-fn
   [plan-tag]
@@ -342,9 +334,7 @@
                     (print! line))
                   :no-credentials)))))
 
-;; =============================================================================
 ;; Public CLI helpers (used by both auth-fn and `vis-agent providers`)
-;; =============================================================================
 
 (defn authenticated?
   "True if any plan has a usable key from any source. Convenience for
@@ -369,7 +359,6 @@
     (when (.exists f) (.delete f)))
   :logged-out)
 
-;; =============================================================================
 ;; Provider registration
 ;;
 ;; Loading this namespace registers ONE extension entry per plan.
@@ -378,7 +367,6 @@
 ;; `vis-agent providers status alibaba-token-plan`, per-plan logout, etc. all
 ;; work. The TUI's add-provider picker shows them as two separate cards driven
 ;; by each provider's preset metadata.
-;; =============================================================================
 
 (require '[com.blockether.vis.core :as vis])
 

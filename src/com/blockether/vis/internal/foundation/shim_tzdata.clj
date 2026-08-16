@@ -17,11 +17,9 @@
   (:import [java.time LocalDateTime ZoneId ZoneOffset]
            [java.util Locale TimeZone]))
 
-;; ---------------------------------------------------------------------------
 ;; Host bridge: java.time IANA zone rules. The Python side holds only zone-id
 ;; strings + wall-clock [y m d H M S] vectors; every offset/DST/name lookup
 ;; happens here on the JVM, so no tz data files (and no getcwd) are ever needed.
-;; ---------------------------------------------------------------------------
 
 (defn- zone-exists?
   "True when `key` names a resolvable java.time zone."

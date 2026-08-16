@@ -26,9 +26,7 @@
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]))
 
-;; ---------------------------------------------------------------------------
 ;; The closed vocabulary
-;; ---------------------------------------------------------------------------
 
 (def field-types
   "Wire type name -> internal field type. A CLOSED set: an unknown name is
@@ -121,9 +119,7 @@
   [value]
   (and (string? value) (str/starts-with? value secret-handle-prefix)))
 
-;; ---------------------------------------------------------------------------
 ;; The keys — one table, and the parser reads it too
-;; ---------------------------------------------------------------------------
 ;;
 ;; Every map declared below is CLOSED, so each shape's key set is written down
 ;; exactly once here, and the snake_case spelling a wire spec may use is derived
@@ -183,9 +179,7 @@
 
 (def ^:private answer-keys #{:is-submitted :reason :request-id :values})
 
-;; ---------------------------------------------------------------------------
 ;; Predicates
-;; ---------------------------------------------------------------------------
 
 (defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 
@@ -258,9 +252,7 @@
                              (<= (long min-length) (count default) (long max-length)))
           :else false)))
 
-;; ---------------------------------------------------------------------------
 ;; A field — the leaf that holds one answer
-;; ---------------------------------------------------------------------------
 
 (s/def ::id non-blank-string?)
 (s/def ::name non-blank-string?)
@@ -338,9 +330,7 @@
 
 (s/def ::field (s/multi-spec field-form :type))
 
-;; ---------------------------------------------------------------------------
 ;; A group — the control flow above the fields
-;; ---------------------------------------------------------------------------
 ;;
 ;; A request carries a TREE of three kinds of node, not a list of ten kinds of
 ;; field: a group ARRANGES children, a decoration is READ, a field HOLDS one
@@ -359,9 +349,7 @@
          (s/keys :req-un [::id ::name ::direction ::fields] :opt-un [::label ::description])
          one-identity?))
 
-;; ---------------------------------------------------------------------------
 ;; A decoration — ink that answers nothing
-;; ---------------------------------------------------------------------------
 
 (s/def ::decor
   ;; No `:id` and no `:name`: a decoration is never keyed, so it carries its own
@@ -371,9 +359,7 @@
          decoration?
          (s/keys :req-un [::text])))
 
-;; ---------------------------------------------------------------------------
 ;; A node — the one place the three contracts meet
-;; ---------------------------------------------------------------------------
 
 (defmulti ^:private node-form
   "Which of the three contracts one node of the field tree answers to."
@@ -389,9 +375,7 @@
 
 (s/def ::fields (s/and (s/coll-of ::node :kind vector?) non-empty?))
 
-;; ---------------------------------------------------------------------------
 ;; A request
-;; ---------------------------------------------------------------------------
 
 (s/def ::title non-blank-string?)
 (s/def ::source non-blank-string?)
@@ -431,9 +415,7 @@
                  :opt-un [::description ::source ::session-id])
          distinct-names?))
 
-;; ---------------------------------------------------------------------------
 ;; An answer
-;; ---------------------------------------------------------------------------
 
 (s/def ::is-submitted boolean?)
 (s/def ::reason non-blank-string?)
@@ -458,9 +440,7 @@
          (s/keys :req-un [::is-submitted ::reason ::request-id] :opt-un [::values])
          values-iff-submitted?))
 
-;; ---------------------------------------------------------------------------
 ;; An answered VALUE — the field's own domain
-;; ---------------------------------------------------------------------------
 ;;
 ;; [[::answer-value]] says what a value may LOOK like; these say what it may BE
 ;; for the field that asked the question. Coercion is hand-written per type and
@@ -550,9 +530,7 @@
                   :else [node]))
           fields))
 
-;; ---------------------------------------------------------------------------
 ;; Explaining a violation
-;; ---------------------------------------------------------------------------
 
 (defn- brief
   [x]

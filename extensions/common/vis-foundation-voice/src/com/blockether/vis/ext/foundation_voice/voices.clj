@@ -59,9 +59,7 @@
               (str/replace #"-+$" ""))]
     (when-not (str/blank? slug) (subs slug 0 (min 48 (count slug))))))
 
-;; =============================================================================
 ;; RIFF/WAVE - the one format read without help
-;; =============================================================================
 
 (defn- four-cc
   [^bytes data ^long offset]
@@ -228,9 +226,7 @@
       (.putShort buf (aget samples i)))
     (io/copy (.array buf) file)))
 
-;; =============================================================================
 ;; The store
-;; =============================================================================
 
 (defn- clip-file ^File [id] (io/file (voices-dir) (str (name id) ".wav")))
 

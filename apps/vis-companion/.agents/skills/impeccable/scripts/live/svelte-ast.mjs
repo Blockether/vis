@@ -47,9 +47,7 @@ export function loadSvelteCompiler(appRoot) {
   }
 }
 
-// ---------------------------------------------------------------------------
 // ESTree helpers
-// ---------------------------------------------------------------------------
 
 /**
  * Collect the root identifiers an ESTree expression reads. Walks generically;
@@ -120,9 +118,7 @@ export function collectPatternNames(pattern, out = new Set()) {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Template analysis
-// ---------------------------------------------------------------------------
 
 class Analysis {
   constructor(source) {
@@ -740,9 +736,7 @@ function describeElementProbe(fragment) {
   return { tag: rootEl.name, classes };
 }
 
-// ---------------------------------------------------------------------------
 // Public API
-// ---------------------------------------------------------------------------
 
 /**
  * Analyze a markup block and produce the prop-substituted scaffold markup and

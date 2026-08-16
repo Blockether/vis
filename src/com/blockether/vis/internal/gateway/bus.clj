@@ -94,9 +94,7 @@
       (Files/createDirectories dir (make-array FileAttribute 0)))
     dir))
 
-;; ---------------------------------------------------------------------------
 ;; Fleet liveness index
-;; ---------------------------------------------------------------------------
 
 (def ^:private ^:const LIVE_CACHE_MS
   "How long ONE scan of the liveness directory is reused. A fleet listing asks for
@@ -305,9 +303,7 @@
          (read-head! raf (.length f)))
        (catch Throwable _ nil)))
 
-;; ---------------------------------------------------------------------------
 ;; Producer
-;; ---------------------------------------------------------------------------
 
 (declare start!)
 
@@ -488,9 +484,7 @@
     (swap! tails dissoc k))
   nil)
 
-;; ---------------------------------------------------------------------------
 ;; Consumer (tailer)
-;; ---------------------------------------------------------------------------
 
 (defonce ^:private deliver-fn (atom nil))
 

@@ -1652,10 +1652,8 @@
                       (io/delete-file secret true)
                       (io/delete-file ws true)))))))
 
-;; =============================================================================
 ;; The PYTHON SANDBOX surface — `python_execution` is the model's main hand, so
 ;; the shell has to be usable from ordinary Python, not only as a native tool.
-;; =============================================================================
 
 (defn- py-ctx
   "A real sandbox Context wired with the REAL built-in bindings, so `shell` here

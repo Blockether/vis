@@ -310,9 +310,7 @@ function globToRegex(pattern) {
   return new RegExp('^' + re + '$');
 }
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 function runScript(name, args, options = {}) {
   const scriptPath = path.join(__dirname, name);
@@ -349,9 +347,7 @@ function ensureServerRunning(cwd = process.cwd()) {
   return safeParse(out);
 }
 
-// ---------------------------------------------------------------------------
 // Auto-execute
-// ---------------------------------------------------------------------------
 
 const _running = process.argv[1];
 if (_running?.endsWith('live.mjs') || _running?.endsWith('live.mjs/')) {

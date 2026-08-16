@@ -45,9 +45,7 @@
 
 (defn- now-ms [] (System/currentTimeMillis))
 
-;; ---------------------------------------------------------------------------
 ;; Config — declared servers from ~/.vis/state.yml :mcp :servers
-;; ---------------------------------------------------------------------------
 
 (defn- transport-of
   "Canonical internal transport. `http` is accepted only as a legacy persisted
@@ -199,11 +197,9 @@
         (reset! servers-cache {:hash h :value coerced})
         coerced))))
 
-;; ---------------------------------------------------------------------------
 ;; Live connections — ONE daemon-wide pool shared across every session. MCP
 ;; servers are gateway infrastructure, not per-session backgrounds: the pool is
 ;; reconciled to `:mcp :servers` proactively per turn and on every `/reload`.
-;; ---------------------------------------------------------------------------
 
 (defonce ^:private conns (atom {})) ; {server {:conn conn :spec spec}}
 
@@ -439,9 +435,7 @@
            "is_connected" (boolean (get-in @session-conns [[session-id nm] :conn]))})
         (sort-by key (get @session-specs session-id))))
 
-;; ---------------------------------------------------------------------------
 ;; Gateway management — persisted on the gateway, never in a Companion client.
-;; ---------------------------------------------------------------------------
 
 (defn- raw-servers [] (or (get-in (or (config/load-config-raw) {}) ["mcp" "servers"]) {}))
 
@@ -764,13 +758,11 @@
     (ensure-connected! name)
     (server-summary name spec (contains? (machine-servers) name))))
 
-;; ---------------------------------------------------------------------------
 ;; Headless OAuth — the Companion app and the TUI are CLIENTS of this gateway,
 ;; possibly on another device, so they cannot use the loopback browser dance the
 ;; daemon runs for itself. They start a flow, show the URL, and either the flow
 ;; lands by itself (the browser did reach this host's listener) or they hand back
 ;; the redirect URL the user was dumped on.
-;; ---------------------------------------------------------------------------
 
 (defn- oauth-server-spec
   "The live client spec for an HTTP `name`, or a typed refusal."
@@ -868,9 +860,7 @@
                         (mcp/list-tools conn))}
          (finally (mcp/close conn)))))
 
-;; ---------------------------------------------------------------------------
 ;; Verb implementations (env injected by the gate as the first arg)
-;; ---------------------------------------------------------------------------
 
 (defn- ok [op result] (extension/success {:op op :result result}))
 
@@ -1083,9 +1073,7 @@
        (unavailable-err env server))
      (catch Throwable t (call-failed-err env server tool t)))))
 
-;; ---------------------------------------------------------------------------
 ;; Error envelope
-;; ---------------------------------------------------------------------------
 
 (defn- mcp-on-error
   [op]
@@ -1096,11 +1084,9 @@
                                  {:started-at-ms (now-ms) :finished-at-ms (now-ms) :duration-ms 0}
                                  :throwable err*})}))
 
-;; ---------------------------------------------------------------------------
 ;; Public vars retain developer examples and fallback docs. Native symbols
 ;; below own compact model-facing semantics and exact schemas. Under alias
 ;; `mcp` the Python names use one underscore; direct native names use two.
-;; ---------------------------------------------------------------------------
 
 
 
@@ -1111,9 +1097,7 @@
   mcp-call
   mcp-call-impl)
 
-;; ---------------------------------------------------------------------------
 ;; Symbols + ctx + extension
-;; ---------------------------------------------------------------------------
 
 ;; Tool NAMES use a `mcp__` (DOUBLE-underscore) prefix, never `mcp_`.
 ;; Anthropic's Claude-subscription OAuth endpoint reserves the

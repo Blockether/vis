@@ -158,9 +158,7 @@ async function runVisualContrastFallback(page, serializedGroups, options, profil
   return findings;
 }
 
-// ---------------------------------------------------------------------------
 // Puppeteer detection (for URLs)
-// ---------------------------------------------------------------------------
 
 async function detectUrl(url, options = {}) {
   const profile = options?.profile;

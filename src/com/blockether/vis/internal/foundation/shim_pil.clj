@@ -26,10 +26,8 @@
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture])
   (:import [java.util Base64]))
 
-;; ---------------------------------------------------------------------------
 ;; Host-side image registry: handle (long) -> {:img Raster :mode String}.
 ;; The Python Image is just a handle; the pixels stay on the host.
-;; ---------------------------------------------------------------------------
 
 (defonce ^:private registry (atom {}))
 
@@ -52,12 +50,10 @@
 
 (declare flush-draws! take-draw! run-draws!)
 
-;; ---------------------------------------------------------------------------
 ;; The raster. `getRGB`/`setRGB`/`getWidth`/`getHeight` keep exactly the
 ;; BufferedImage shape the pixel algorithms below were written against:
 ;; `getRGB` hands back an UNSIGNED packed 0xAARRGGBB value, and `amask` forces
 ;; alpha to 255 for the opaque modes, mirroring TYPE_INT_RGB.
-;; ---------------------------------------------------------------------------
 
 (definterface IRaster
               (^long getWidth [])
@@ -106,9 +102,7 @@
   (swap! registry dissoc (long h))
   nil)
 
-;; ---------------------------------------------------------------------------
 ;; Pixel / colour helpers. Pixels are handled as packed 0xAARRGGBB longs.
-;; ---------------------------------------------------------------------------
 
 (defn- ch ^long [^long p ^long sh] (bit-and (bit-shift-right p sh) 0xff))
 
@@ -326,10 +320,8 @@
                          (clamp255 (+ (* (ch p 0) a) (* 255.0 (- 1.0 a)))))))))
     out))
 
-;; ---------------------------------------------------------------------------
 ;; Core ops. Each returns a value the Python shim understands: a meta vector
 ;; [handle w h mode] for image-producing ops, else a scalar / base64 string.
-;; ---------------------------------------------------------------------------
 
 (defn- op-new
   [mode w h fill]
@@ -687,12 +679,10 @@
 
 (defn- lum ^long [^long p] (clamp255 (+ (* 0.299 (ch p 16)) (* 0.587 (ch p 8)) (* 0.114 (ch p 0)))))
 
-;; ---------------------------------------------------------------------------
 ;; Palette ("P") images. A P raster keeps the QUANTISED RGB in its pixels, so
 ;; every downstream op and codec just works; the registry entry additionally
 ;; carries `:palette` (packed 0xRRGGBB per index) and `:indices` (one byte per
 ;; pixel) -- what `getpalette`, `getpixel`, `tobytes` and the GIF writer report.
-;; ---------------------------------------------------------------------------
 
 
 
@@ -1679,11 +1669,9 @@
             (.setRGB out x y (unchecked-int fill-argb))))))
     (meta-of (put-img! out mode))))
 
-;; ---------------------------------------------------------------------------
 ;; ImageDraw dispatcher. `xy` is a flat [x0 y0 x1 y1 ...] seq; `opts` is a
 ;; string-keyed map with resolved fill/outline colours (lists/ints), width and
 ;; arc start/end. Colours are resolved Python-side via ImageColor.
-;; ---------------------------------------------------------------------------
 
 (def ^:private sans-family
   "Fallback face. Text used to be PINNED to it -- the font a caller asked for
@@ -2118,12 +2106,10 @@
 
     [0 0 (long (Math/ceil (double (:width m 0)))) (long (Math/round (* 1.2 (double size))))]))
 
-;; ---------------------------------------------------------------------------
 ;; Bridge: name -> Clojure fn. Wrapped by `wrap-ifn` at install time (positional
 ;; Python args marshalled to Clojure, result back to Python). Every call is
 ;; enveloped [true payload] / [false message] so a host failure crosses as DATA
 ;; the Python shim can raise as a catchable OSError.
-;; ---------------------------------------------------------------------------
 
 (defn- pil-envelope
   ;; Every host image op funnels through this envelope; failures come back to

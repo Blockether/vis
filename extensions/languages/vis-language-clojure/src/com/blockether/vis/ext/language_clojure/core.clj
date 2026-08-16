@@ -27,9 +27,7 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.surface-contract :as contract]))
 
-;; =============================================================================
 ;; Activation
-;; =============================================================================
 
 (defn- workspace-has-clojure?
   "Cheap activation check. Strategy, in order of preference:
@@ -64,9 +62,7 @@
 
 (defn- activation-fn [env] (boolean (workspace-has-clojure? env)))
 
-;; =============================================================================
 ;; Tool fns
-;; =============================================================================
 
 (defn- env-root
   ^String [env]
@@ -965,9 +961,7 @@
                                                       (seq targets)
                                                       (assoc "targets" (vec targets))))})))))
 
-;; =============================================================================
 ;; Extension manifest
-;; =============================================================================
 
 ;; No :ext/prompt-fn — the foundation advertises this pack's verbs through the
 ;; AUTO capability matrix (language_surface/capability-matrix). :ext/ctx-fn syncs

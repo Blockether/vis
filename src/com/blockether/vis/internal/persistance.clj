@@ -18,9 +18,7 @@
   (:import (java.time Instant)
            (java.util Date UUID)))
 
-;; =============================================================================
 ;; Storage base helpers
-;; =============================================================================
 
 (defn ds [db-info] (:datasource db-info))
 
@@ -75,9 +73,7 @@
 
 (defn new-id [] (->id (new-uuid)))
 
-;; =============================================================================
 ;; Column codecs (shared by EVERY backend)
-;; =============================================================================
 
 (defn- json-key
   "A map key charred can actually write. Keyword/symbol/string keys keep their
@@ -191,9 +187,7 @@
 
     (->kw (or status :done))))
 
-;; =============================================================================
 ;; Backend registry
-;; =============================================================================
 
 (defonce ^:private backends
   ;; {:sqlite {:ns 'com.blockether.vis.ext.persistance-sqlite.core}}
@@ -220,7 +214,6 @@
 
 (defn registered-backends "Map of registered backends keyed by id." [] @backends)
 
-;; ----------------------------------------------------------------------------
 ;; Auto-discovery
 ;;
 ;; There is no backend-specific scanner. The single source of truth
@@ -230,7 +223,6 @@
 ;; entries lands in this registry as a side effect. The facade triggers a
 ;; scan on the first `db-create-connection!` so callers reach the registered backend
 ;; without wiring discovery themselves.
-;; ----------------------------------------------------------------------------
 
 (defn- pick-backend-id
   "Decide which backend handles this call. Honors an explicit
@@ -329,9 +321,7 @@
     (some-> (ns-resolve ns-sym fn-name)
             deref)))
 
-;; =============================================================================
 ;; Connection lifecycle
-;; =============================================================================
 
 (defn db-create-connection!
   "Open a persistence connection from `db-spec`.
@@ -375,13 +365,11 @@
     (let [f @(resolve-impl store 'db-close!)]
       (f store))))
 
-;; =============================================================================
 ;; Delegated API
 ;;
 ;; Every fn delegates to the selected backend adapter's var of the same
 ;; name. Keep this as a compact, readable index; add a new entry here only
 ;; after the matching fn lands in at least one backend.
-;; =============================================================================
 
 (defmacro ^:private defdelegate
   "Define a facade fn whose body resolves the matching backend var
@@ -489,7 +477,6 @@
 ;; --- Logging ---
 (defdelegate db-log! [db-info opts])
 
-;; --- Workspace ---
 (defdelegate db-workspace-insert! [db-info opts])
 
 (defdelegate db-workspace-update-state! [db-info workspace-id new-state])
@@ -706,13 +693,11 @@
 
 (defdelegate db-swap-extension-aggregate! [db-info opts f args])
 
-;; =============================================================================
 ;; Error translation
 ;;
 ;; Frontends (TUI, CLI) all surface persistence exceptions in
 ;; chat bubbles. The facade stays backend-agnostic: adapters may expose
 ;; `db-error->user-message`; the first non-empty translation wins.
-;; =============================================================================
 
 (defn- backend-error-translators
   []
@@ -735,7 +720,6 @@
       (ex-message e)
       "Internal error"))
 
-;; =============================================================================
 ;; Process-wide shared connection (singleton helper)
 ;;
 ;; vis runs every channel (TUI, CLI) against one persistence
@@ -743,7 +727,6 @@
 ;; particular frontend - keeps the DB lifecycle behind the persistence
 ;; facade. Backend adapters may expose `db-store-stale?` for
 ;; adapter-specific file/handle replacement detection.
-;; =============================================================================
 
 (defonce ^:private shared-conn (atom nil))
 

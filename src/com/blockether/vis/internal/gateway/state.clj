@@ -286,9 +286,7 @@
   (swap! turns-executing dec)
   (.release ^java.util.concurrent.Semaphore @turn-permits))
 
-;; =============================================================================
 ;; Event log + fan-out
-;; =============================================================================
 
 (defn- trim-ring
   "Keep the newest replay events in a persistent queue. `subvec` is deliberately
@@ -690,9 +688,7 @@
                                             name)))
                        (vals (:turns entry)))))))
 
-;; =============================================================================
 ;; Per-session model preference
-;; =============================================================================
 
 (defn set-session-model!
   "Set (or clear, with blank model) the per-session PROVIDER + MODEL
@@ -965,9 +961,7 @@
         (workspace/abandon! db {:workspace-id workspace-id :reason reason}))))
   (session-workspace-info sid))
 
-;; =============================================================================
 ;; Chunk -> event translation (§8)
-;; =============================================================================
 
 (defn- error->wire-text
   "LEAN client-facing text for a form error: the message (+ python line/col
@@ -1319,10 +1313,6 @@
          (some? iteration)
          (assoc :iteration iteration))])))
 
-;; =============================================================================
-;; Context
-;; =============================================================================
-
 (defn context-snapshot
   "The read-only ctx mirror the model sees as its bound `session`
    (`ctx-loop/session-snapshot`), for an existing session, ENRICHED for
@@ -1342,9 +1332,7 @@
     (when-let [utilization (get snapshot "session_utilization")]
       (append-event! sid "context.updated" {:utilization utilization}))))
 
-;; =============================================================================
 ;; Turn records
-;; =============================================================================
 
 (defn- answer-content
   "Normalize the engine's final answer into canonical typed content blocks."
@@ -2220,9 +2208,7 @@
                                        (update :cost-total + cost-total)))
                                  {:turns 0 :tokens-input 0 :tokens-output 0 :cost-total 0.0})))))))
 
-;; =============================================================================
 ;; Turn execution
-;; =============================================================================
 
 (declare drain-next-queued!
          drop-cancelled-backlog!
@@ -4094,9 +4080,7 @@
           0
           (vals @registry)))
 
-;; =============================================================================
 ;; Session lifecycle + souls
-;; =============================================================================
 
 (def ^:private PREWARM_POOL_DEPTH
   "Empty, fully-built sessions retained per channel. One removes cold-start

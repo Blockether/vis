@@ -37,9 +37,7 @@
             [com.blockether.vis.ext.provider-opencode-go.limits :as go-limits]
             [taoensso.telemere :as tel]))
 
-;; =============================================================================
 ;; Constants
-;; =============================================================================
 
 (defn- auth-file
   "Persisted auth state for the single OpenCode Go key. A FUNCTION: native-image
@@ -93,9 +91,7 @@
             model))
         (:models svar-provider)))
 
-;; =============================================================================
 ;; Persistence
-;; =============================================================================
 
 (defn- auth-json-key
   "JSON key -> engine keyword. What we write is snake_case (`api_key`); the
@@ -123,9 +119,7 @@
   (let [f (io/file (auth-file))]
     (when (.exists f) (.delete f))))
 
-;; =============================================================================
 ;; Token detection / resolution
-;; =============================================================================
 
 (defn- env-key
   []
@@ -175,9 +169,7 @@
                          ".")
                     {:type :vis/opencode-go-not-authenticated :provider-id PROVIDER_ID}))))
 
-;; =============================================================================
 ;; Status / logout
-;; =============================================================================
 
 (defn- key-preview
   "Short non-secret preview."
@@ -200,9 +192,7 @@
   (tel/log! {:level :info :id ::opencode-go-logout :msg "Cleared persisted OpenCode Go key"})
   :logged-out)
 
-;; =============================================================================
 ;; Limits
-;; =============================================================================
 
 (defn- usage-error-note
   [status]
@@ -244,9 +234,7 @@
             :dynamic (go-limits/dynamic-limits! (:api-key detected))}
            (catch Throwable t (usage-error-report t))))))
 
-;; =============================================================================
 ;; Interactive auth
-;; =============================================================================
 
 (defn- auth-instruction-lines
   []
@@ -296,9 +284,7 @@
                   (print! line))
                 :no-credentials))))
 
-;; =============================================================================
 ;; Public helpers
-;; =============================================================================
 
 (defn authenticated?
   "True when a usable key is resolvable from any source."
@@ -309,9 +295,7 @@
 
 (defn logout! "Clear the persisted key." [] (logout-fn))
 
-;; =============================================================================
 ;; Provider registration
-;; =============================================================================
 
 (vis/register-extension!
   (vis/extension

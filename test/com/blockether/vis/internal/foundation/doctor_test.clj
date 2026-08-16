@@ -8,9 +8,7 @@
   (:require [com.blockether.vis.internal.foundation.doctor :as doctor]
             [lazytest.core :refer [defdescribe expect it]]))
 
-;; ---------------------------------------------------------------------------
 ;; ::agents-md
-;; ---------------------------------------------------------------------------
 
 (defdescribe agents-md-check-test
              ;; Removed: "emits one :info message when AGENTS.md found". The AGENTS.md
@@ -20,9 +18,7 @@
              (it "placeholder — AGENTS.md doctor message covered by agents scanner tests"
                  (expect true)))
 
-;; ---------------------------------------------------------------------------
 ;; Composite doctor-fn shape
-;; ---------------------------------------------------------------------------
 
 (defdescribe
   doctor-fn-shape-test

@@ -25,9 +25,7 @@
 
 (def ^:private ^:const JWT_TTL_SECONDS 3600)
 
-;; =============================================================================
 ;; Credentials
-;; =============================================================================
 
 (defn- vis-home
   ^File []
@@ -130,9 +128,7 @@
   []
   (:is-configured (config)))
 
-;; =============================================================================
 ;; OAuth access token (RS256 JWT -> Google token endpoint)
-;; =============================================================================
 
 (defn- b64url ^String [^bytes b] (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) b))
 
@@ -223,9 +219,7 @@
                              :client-email (get sa "client_email")})
         t))))
 
-;; =============================================================================
 ;; Sending
-;; =============================================================================
 
 (defn- message
   "One FCM v1 message. `data` values must be STRINGS — FCM rejects anything else."

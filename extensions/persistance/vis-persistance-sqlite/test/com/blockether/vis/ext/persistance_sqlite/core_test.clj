@@ -1057,9 +1057,7 @@
         (expect (= :ok result))
         (expect (= 2 @attempts)))))
 
-;; =============================================================================
 ;; Session
-;; =============================================================================
 
 (defdescribe
   session-test
@@ -1138,12 +1136,10 @@
         (vis/db-update-session-title! s id "New")
         (expect (= "New" (:title (vis/db-get-session s id)))))))
 
-;; =============================================================================
 ;; Transcript search (db-search-session-ids) - matches USER request + assistant
 ;; iteration text, case-insensitive, so the session picker can find a session by
 ;; anything said in it (not just the title). Server-side so the assistant text
 ;; never crosses the wire.
-;; =============================================================================
 
 (defdescribe
   session-transcript-search-test
@@ -1504,11 +1500,9 @@
       (expect (= [a] (vis/db-search-session-ids s :tui "needle")))
       (expect (= #{a b} (set (vis/db-search-session-ids s :all "needle")))))))
 
-;; =============================================================================
 ;; Adoption marker (V5 claimed_at) - warm-pool scaffolding stays out of the
 ;; cross-channel list until a tab claims it (explicitly at creation, or via its
 ;; first turn).
-;; =============================================================================
 
 (defdescribe
   session-adoption-claimed-test
@@ -1553,9 +1547,7 @@
         (expect (= ["pool"] (mapv :title (vis/db-list-sessions s :all))))
         (expect (= 1 (raw-count s :session_soul))))))
 
-;; =============================================================================
 ;; List session states (fork tree introspection)
-;; =============================================================================
 
 (defdescribe
   subloop-child-session-test
@@ -1656,9 +1648,7 @@
       (let [s (h/store)]
         (expect (= [] (vis/db-list-session-states s nil))))))
 
-;; =============================================================================
 ;; List turn states (retry history introspection)
-;; =============================================================================
 
 (defdescribe
   db-list-session-turn-states-test
@@ -1720,9 +1710,7 @@
       (let [s (h/store)]
         (expect (= [] (vis/db-list-session-turn-states s nil))))))
 
-;; =============================================================================
 ;; Fork
-;; =============================================================================
 
 (defdescribe
   fork-test
@@ -1834,9 +1822,7 @@
       (let [s (h/store)]
         (expect (nil? (h/fork-session! s (random-uuid) {}))))))
 
-;; =============================================================================
 ;; Turn
-;; =============================================================================
 
 (defdescribe
   turn-test
@@ -1902,9 +1888,7 @@
       (vis/db-update-session-turn! s qid {:status :error})
       (expect (= :error (:status (first (vis/db-list-session-turns s cid))))))))
 
-;; =============================================================================
 ;; Dedicated ctx stores (task/fact/archive) — write-through + per-session id
-;; =============================================================================
 
 (defdescribe retry-test
              (it "creates session_turn_state version 1 with forked_from ref"
@@ -1945,9 +1929,7 @@
                    (expect (= 2 (raw-count s :session_turn_iteration)))
                    (expect (= 1 (count (vis/db-list-session-turn-iterations s qid)))))))
 
-;; =============================================================================
 ;; Iteration + stateless blocks
-;; =============================================================================
 
 (defdescribe
   iteration-block-test
@@ -2354,9 +2336,7 @@
                      (catch Throwable _ true))]
           (expect (true? thrown?))))))
 
-;; =============================================================================
 ;; Stateful vars
-;; =============================================================================
 
 (defdescribe
   cascade-delete-test
@@ -2381,9 +2361,7 @@
         (expect (= 0 (raw-count s :session_turn_state)))
         (expect (= 0 (raw-count s :session_turn_iteration))))))
 
-;; =============================================================================
 ;; Turn history
-;; =============================================================================
 
 (defdescribe
   turn-history-test
@@ -2411,9 +2389,7 @@
         (expect (= "What?" (:user-request (first h))))
         (expect (= 2 (:iteration-count (first h)))))))
 
-;; =============================================================================
 ;; Soul/state FK integrity
-;; =============================================================================
 
 (defdescribe
   soul-state-integrity-test
@@ -2558,9 +2534,7 @@
           (expect (= "(+ 1 1)" (:code iteration)))
           (expect (= 2 (:result form)))))))
 
-;; =============================================================================
 ;; Answer lifecycle (placeholder; live behaviour exercised in loop tests)
-;; =============================================================================
 
 (defdescribe answer-lifecycle-test
              ;; Removed: "session_turn_state stores answer on update" and

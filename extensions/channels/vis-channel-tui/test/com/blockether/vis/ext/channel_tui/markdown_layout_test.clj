@@ -17,9 +17,7 @@
             [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
             [lazytest.core :refer [defdescribe expect it]]))
 
-;; ---------------------------------------------------------------------------
 ;; small helpers
-;; ---------------------------------------------------------------------------
 
 (defn- texts
   [lines]
@@ -42,9 +40,7 @@
 
 (defn- bodies [strings] (mapv #(subs % 1) strings))
 
-;; ---------------------------------------------------------------------------
 ;; basic blocks
-;; ---------------------------------------------------------------------------
 
 (defdescribe paragraph-test
              (it "paragraph emits one line for short content"
@@ -68,13 +64,9 @@
                    (expect (styled? lines :bold))
                    (expect (styled? lines :italic)))))
 
-;; ---------------------------------------------------------------------------
 ;; lists
-;; ---------------------------------------------------------------------------
 
-;; ---------------------------------------------------------------------------
 ;; heading hierarchy
-;; ---------------------------------------------------------------------------
 
 ;; A terminal has ONE font size. Without a rule + gutter ladder every
 ;; heading level collapses onto the slate colour ramp alone, and `##`
@@ -176,9 +168,7 @@
                            (str "no continuation may begin with 3-space indent: "
                                 (vec continuations))))))
 
-;; ---------------------------------------------------------------------------
 ;; code blocks
-;; ---------------------------------------------------------------------------
 
 (defdescribe code-block-test
              (it "code block preserves whitespace verbatim, never wraps"
@@ -197,9 +187,7 @@
                    (expect (every? #(contains? (or (:style %) #{}) :code)
                                    (mapcat :runs (filter #(seq (:runs %)) lines)))))))
 
-;; ---------------------------------------------------------------------------
 ;; tables
-;; ---------------------------------------------------------------------------
 
 (defdescribe table-test
              (it "renders IR tables as boxed rows with semantic table tags"
@@ -334,9 +322,7 @@
         (expect (pos? (count ts)))
         (expect (every? #(<= (p/display-width %) 8) ts) (str "got: " ts)))))
 
-;; ---------------------------------------------------------------------------
 ;; table links (issue #91)
-;; ---------------------------------------------------------------------------
 
 (defn- link-spans
   "Body text + link spans of every entry that carries clickable links,
@@ -405,9 +391,7 @@
       (let [entries (layout/ast->entries [:ast [:table [:tr [:th "A"]] [:tr [:td "1"]]]] 40)]
         (expect (empty? (link-spans entries))))))
 
-;; ---------------------------------------------------------------------------
 ;; bdc79ae9 fixture — end-to-end regression
-;; ---------------------------------------------------------------------------
 
 (defn- fixture-ir
   []
@@ -452,9 +436,7 @@
                     "główny koń roboczy. Z :source-contains i :symbol znajduje nodes wiarygodnie")
                   (str "joined snippet not found; sample lines: " (vec (take 5 ts))))))))
 
-;; ---------------------------------------------------------------------------
 ;; block-tag enrichment + sentinel-string adapter
-;; ---------------------------------------------------------------------------
 
 (defdescribe block-tag-test
              (it ":p block stamps :block-tag :p on every produced line"
@@ -576,9 +558,7 @@
                      ;; the bug-paragraph still flows on one wrap chunk
                      (expect (some #(str/includes? % "znajduje nodes wiarygodnie") out))))))
 
-;; ---------------------------------------------------------------------------
 ;; Retired disclosure tags stay out of answer rendering
-;; ---------------------------------------------------------------------------
 
 (defdescribe retired-disclosure-tags-test
              (it ":details/:summary input is flattened without toggle metadata"
@@ -613,9 +593,7 @@
                                      w)))
                            (str "diverged from p/word-wrap for " (pr-str [s w]))))))
 
-;; ---------------------------------------------------------------------------
 ;; `:justify?` — flush-both-margins prose (op-card bodies, e.g. a fold receipt)
-;; ---------------------------------------------------------------------------
 
 (defn- plain-lines
   "Entry `:line` strings with every PUA style/block sentinel removed."

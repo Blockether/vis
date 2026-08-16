@@ -992,7 +992,6 @@
      ;; Background
      (p/set-bg! g t/dialog-bg)
      (p/fill-rect! g box-left box-top box-w box-h)
-     ;; Border
      (p/set-colors! g t/dialog-border t/dialog-bg)
      (p/draw-box! g box-left box-top box-w box-h)
      ;; Title bar - full-width accent stripe with centered title
@@ -1554,7 +1553,6 @@
   [^TerminalScreen screen title items]
   (list-dialog! screen title items {}))
 
-;;; ── Multi-select dialog ─────────────────────────────────────────────────────
 (defn multi-select-dialog!
   "Checkbox multi-select over `items` (vec of strings). Space toggles the
    cursor row, `a` toggles all, Enter confirms, Esc cancels. Returns the vec
@@ -6898,7 +6896,6 @@
                    :enter-label "choose"
                    :height :content})))
 
-;;; ── Text viewer dialog ─────────────────────────────────────────────────────────
 (defn text-viewer-dialog!
   "Show a scrollable read-only text viewer dialog.
    `title` is the dialog header. `text` is a string (may contain newlines)

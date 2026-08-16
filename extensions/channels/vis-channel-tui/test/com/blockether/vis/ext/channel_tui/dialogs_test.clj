@@ -1549,13 +1549,11 @@
                  (expect (= :ok (:status @inventory))))))
            (finally (reset! inventory original))))))
 
-;; ---------------------------------------------------------------------------
 ;; `transient-dialog!`: a magit popup hosted in its OWN modal.
 ;;
 ;; This replaced the API-key prompt that painted a full-screen vis logo above a
 ;; text box. The caller's guidance stays visible, the key is read INLINE on the
 ;; hint row, and the armed credential renders as dots — never as text.
-;; ---------------------------------------------------------------------------
 
 (defdescribe
   transient-dialog-test

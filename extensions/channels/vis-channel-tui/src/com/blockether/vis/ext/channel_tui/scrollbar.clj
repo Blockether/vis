@@ -21,7 +21,6 @@
 
 (def ^:const THUMB_H 1)
 
-;;; ── Geometry ───────────────────────────────────────────────────────────────
 (defn geometry
   "Compute thumb geometry for a vertical scrollbar.
 

@@ -18,9 +18,7 @@
     (is true "conditional skip: inherited Seatbelt forbids test listeners")
     (f)))
 
-;; ---------------------------------------------------------------------------
 ;; Registry + resolver — pure, cross-platform (runs on Linux CI too)
-;; ---------------------------------------------------------------------------
 
 (deftest register-resolve-fail-closed
   (try (testing "unknown token ⇒ auth-required deny-all sentinel"
@@ -62,9 +60,7 @@
          (is (:deny-all? (gs/resolve-policy "sess-A"))))
        (finally (gs/shutdown!))))
 
-;; ---------------------------------------------------------------------------
 ;; Wire round-trip — token attribution through the ONE shared proxy
-;; ---------------------------------------------------------------------------
 
 (defn- start-origin!
   "A one-request-per-connection HTTP origin on 127.0.0.1 that always answers 200 `ok`."

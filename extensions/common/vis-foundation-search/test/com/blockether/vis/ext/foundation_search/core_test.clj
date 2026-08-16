@@ -22,9 +22,7 @@
            (java.util.zip GZIPOutputStream)
            (org.apache.commons.compress.archivers.tar TarArchiveEntry TarArchiveOutputStream)))
 
-;; ---------------------------------------------------------------------------
 ;; arxiv Atom sample
-;; ---------------------------------------------------------------------------
 
 (def ^:private SAMPLE_ATOM
   "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
@@ -101,9 +99,7 @@
                     (expect (= 1 (count (get r "citations"))))
                     (expect (true? (get (first (get r "citations")) "error"))))))))
 
-;; ---------------------------------------------------------------------------
 ;; web / code — Exa MCP layer
-;; ---------------------------------------------------------------------------
 
 (def ^:private SAMPLE_EXA_TEXT
   ;; Two entries matching Exa MCP's actual reply format.

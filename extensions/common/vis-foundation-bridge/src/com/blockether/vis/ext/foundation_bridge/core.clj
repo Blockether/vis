@@ -887,7 +887,6 @@
 ;; Tags carried INLINE on each `vis/symbol` opts map above;
 ;; register-extension! auto-populates the op registry.
 
-;; =============================================================================
 ;; CLI surface -- `vis-agent extension bridge <subcommand>`
 ;;
 ;; Mirrors the `br/` tool alias (`br/init`, `br/check`, ...) so the binary
@@ -896,7 +895,6 @@
 ;; env (workspace-root throws if :workspace/root is missing), prints the resulting
 ;; map as EDN, and exits non-zero on tool failure or open Bridge
 ;; obligations.
-;; =============================================================================
 
 (defn- println-original! [s] (.println ^java.io.PrintStream System/out (str s)))
 

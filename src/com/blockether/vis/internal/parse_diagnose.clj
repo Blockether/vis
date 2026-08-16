@@ -26,9 +26,7 @@
        so the model sees 'did you mean ...?' instead of 'X is undefined'."
   (:require [clojure.string :as str]))
 
-;; ---------------------------------------------------------------------------
 ;; Quote balance
-;; ---------------------------------------------------------------------------
 
 (defn count-unescaped-quotes
   "Count double-quote characters in `s` that are NOT preceded by a backslash.
@@ -331,9 +329,7 @@
 
         (when (and candidate (nil? (diagnose-bracket-balance (:fixed candidate)))) candidate)))))
 
-;; ---------------------------------------------------------------------------
 ;; Unresolved symbol
-;; ---------------------------------------------------------------------------
 
 (defn- levenshtein
   "Simple Levenshtein distance. Capped at 100-char input pair."

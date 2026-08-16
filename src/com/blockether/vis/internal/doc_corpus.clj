@@ -50,9 +50,7 @@
 
 (set! *warn-on-reflection* true)
 
-;; =============================================================================
 ;; Data — what crosses the Clojure -> GraalPy boundary
-;; =============================================================================
 
 (s/def :vis.doc/name string?)
 (s/def :vis.doc/text string?)
@@ -84,9 +82,7 @@
 (s/def :vis.apropos/hit (s/merge :vis.doc/entry (s/keys :req-un [:vis.apropos/score])))
 (s/def :vis.apropos/result (s/coll-of :vis.apropos/hit :kind vector?))
 
-;; =============================================================================
 ;; Rendering a gist, comparing a name
-;; =============================================================================
 
 (def ^:private index-gist-max-len
   "Tighter cap for a curated-index row: twenty rows of 240 characters is a wall,
@@ -372,9 +368,7 @@
       (str/replace #"(?i)\.md$" "")
       str/lower-case))
 
-;; =============================================================================
 ;; Sources — registered, never required in
-;; =============================================================================
 
 (defonce ^:private sources
   ;; `[[id {:stamp f :entries g}] ...]` in registration order, so precedence is
@@ -513,9 +507,7 @@
         (reset! corpus-cache {:stamps stamps :entries built})
         built))))
 
-;; =============================================================================
 ;; Search — one call into the BM25F ranker
-;; =============================================================================
 
 (defn- ranked-docs
   "The corpus as the ranker's three fields, carrying the entry itself as the
@@ -553,9 +545,7 @@
   ([es query] (bm25/search (ranked-docs es) query))
   ([es query opts] (bm25/search (ranked-docs es) query opts)))
 
-;; =============================================================================
 ;; The curated index — `doc()` with no argument
-;; =============================================================================
 
 (def curated
   "What `doc()` prints: a hand-ordered short list of the verbs a session starts
@@ -568,9 +558,7 @@
    "struct_nodes" "struct_patch" "shell" "run_tests" "repl_eval" "lint_code" "format_code" "attach"
    "mcp__call"])
 
-;; =============================================================================
 ;; The three things the two verbs PRINT
-;; =============================================================================
 
 (defn entry-text
   "What `doc(target)` answers for one entry: the handle, the expression that

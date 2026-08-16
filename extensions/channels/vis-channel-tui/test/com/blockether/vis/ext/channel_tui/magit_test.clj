@@ -64,8 +64,6 @@
     (git-run! dir "remote" "add" "origin" remote)
     remote))
 
-;;; ── status-model ────────────────────────────────────────────────────────────
-
 (defdescribe status-model-test
              (it "reads head facts of a fresh repo"
                  (let
@@ -113,8 +111,6 @@
              (it "returns nil outside a repository"
                  (expect (nil? (magit/status-model (temp-dir!))))))
 
-;;; ── stage / unstage ─────────────────────────────────────────────────────────
-
 (defdescribe stage-unstage-test
              (it "stages and unstages one file"
                  (let [dir (init-repo!)]
@@ -152,8 +148,6 @@
                    (let [m (magit/status-model dir)]
                      (expect (empty? (:staged m)))
                      (expect (= ["f.txt"] (:untracked m)))))))
-
-;;; ── discard ─────────────────────────────────────────────────────────────────
 
 (defdescribe discard-test
              (it "deletes an untracked file"
@@ -218,8 +212,6 @@
                           \x)]
                      (expect (:ok? r))
                      (expect (= "one\n" (slurp (str dir "/a.txt"))))))))
-
-;;; ── commit ──────────────────────────────────────────────────────────────────
 
 (defdescribe commit-test
              (it "commits staged changes"
@@ -391,8 +383,6 @@
                      (expect (false? (:ok? r)))
                      (expect (string? (:msg r))))
                    (expect (:ok? (magit/delete-branch! dir "wip" {:force? true}))))))
-
-;;; ── stash ───────────────────────────────────────────────────────────────────
 
 (defdescribe stash-test
              (it "reports the no-op stash on a clean tree as a failure"

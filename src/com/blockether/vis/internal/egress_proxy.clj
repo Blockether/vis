@@ -33,11 +33,9 @@
            (java.util.concurrent.atomic AtomicLong)
            (javax.net.ssl SSLContext SSLSocket SSLSocketFactory)))
 
-;; ============================================================================
 ;; Policy: normalize vis.yml :network into a matcher, then decide per request.
 ;; Mirrors env_python/normalize-network-rules (the interpreter method-guard) so the
 ;; shell proxy and the Python guard read ONE config with the SAME semantics.
-;; ============================================================================
 
 (defn- nm
   "Trim a keyword/string to a non-blank string, or nil."
@@ -281,7 +279,6 @@
   [policy host]
   (boolean (some #(host-matches? % host) (:exclude-domains policy))))
 
-;; ============================================================================
 ;; SSRF deny-floor. The proxy runs UNJAILED with full host network, so it is a
 ;; confused deputy: a jailed child (whose only door is this proxy) could ask it
 ;; to fetch the host's OWN trust plane — loopback services, the gateway's control
@@ -289,7 +286,6 @@
 ;; floor is INDEPENDENT of the domain allowlist: `allowed-domains ["*"]` means
 ;; "any PUBLIC host," never the box itself. It applies even when the policy is
 ;; nil (the friendly default-allow-public posture).
-;; ============================================================================
 
 (defn- cgnat-address?
   "100.64.0.0/10 — carrier-grade-NAT / shared address space (RFC 6598)."
@@ -561,9 +557,7 @@
 
     {:tier1 tier1 :filters (or per []) :final final}))
 
-;; ============================================================================
 ;; Wire protocol helpers
-;; ============================================================================
 
 (defn- read-line-bytes
   "Read one CRLF-terminated line from `in` as a String (sans CRLF). nil at EOF."
@@ -808,9 +802,7 @@
                               "\r\n"))
               (copy-until-eof uin cout)))))))
 
-;; ============================================================================
 ;; Connection handling
-;; ============================================================================
 
 (defn- parse-request-line
   "\"METHOD TARGET VERSION\" → [method target version] (or nil)."
@@ -1080,7 +1072,6 @@
                               (catch Throwable _ nil)))
                        (finally (try (.close upstream) (catch Throwable _ nil))))))))
 
-;; ============================================================================
 ;; SOCKS5 lane (RFC 1928 + RFC 1929) — the generic-TCP door for ssh / git+ssh /
 ;; databases / any raw TCP the jail's net-off-except-loopback wall would block.
 ;; Multiplexed on the SAME loopback port as the HTTP proxy: the first byte of a
@@ -1088,7 +1079,6 @@
 ;; ONE listener serves both and the jail profile needs only one allowed port.
 ;; Enforcement = host-level allow/deny + the SSRF floor (same policy as an HTTPS
 ;; CONNECT). No verb/path — ssh/postgres/raw TCP carry none.
-;; ============================================================================
 
 (defn- read-n
   "Read exactly `n` bytes from `in` into a fresh array, or nil on early EOF."
@@ -1280,9 +1270,7 @@
        (catch Throwable _ nil)
        (finally (try (.close client) (catch Throwable _ nil)))))
 
-;; ============================================================================
 ;; Lifecycle
-;; ============================================================================
 
 (def ^:private thread-seq (AtomicLong. 0))
 

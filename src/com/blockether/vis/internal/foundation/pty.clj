@@ -43,9 +43,7 @@
                               ValueLayout$OfInt
                               ValueLayout$OfShort)))
 
-;; =============================================================================
 ;; FFM plumbing
-;; =============================================================================
 
 (def ^:private ^AddressLayout ADDR ValueLayout/ADDRESS)
 
@@ -132,9 +130,7 @@
 
 (def ^:private SIGKILL (int 9))
 
-;; =============================================================================
 ;; spawn!
-;; =============================================================================
 
 (defn- build-strv
   "Allocate a NULL-terminated C `char*[]` from a seq of strings in `arena`."

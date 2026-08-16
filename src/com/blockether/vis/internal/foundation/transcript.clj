@@ -67,9 +67,7 @@
            [org.commonmark.parser Parser]
            [org.commonmark.renderer.html HtmlRenderer]))
 
-;; =============================================================================
 ;; Data layer.
-;; =============================================================================
 
 (def ^:private encrypted-reasoning-placeholder
   "[provider returned encrypted reasoning; plaintext reasoning is unavailable]")
@@ -565,10 +563,8 @@
          :timeline (transcript-timeline turns calls)
          :turns turns}))))
 
-;; =============================================================================
 ;; Markdown renderer. Pure transformation over `transcript`'s data
 ;; shape - no DB calls, no side effects.
-;; =============================================================================
 
 (defn- one-line
   [s]
@@ -1301,14 +1297,12 @@
     (render-summary-md data)
     ""))
 
-;; =============================================================================
 ;; HTML renderer. Renders the Markdown transcript to a STANDALONE HTML
 ;; document styled with the vis-light theme's shared web CSS variables
 ;; (`vis/web-css-root`), so an exported transcript reads the same colors
 ;; as the web TUI. Pure transformation over the Markdown surface - no DB
 ;; calls, no side effects. Every channel (web, TUI, CLI) exports through
 ;; here so the output is byte-identical across surfaces.
-;; =============================================================================
 
 (defn- html-escape
   [s]

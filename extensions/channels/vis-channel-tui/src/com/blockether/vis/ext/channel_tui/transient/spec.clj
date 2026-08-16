@@ -33,9 +33,7 @@
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]))
 
-;; ---------------------------------------------------------------------------
 ;; The vocabulary — one table, every surface reads it
-;; ---------------------------------------------------------------------------
 
 (def item-types
   "Every kind of row a transient offers, and what that kind MEANS:
@@ -73,9 +71,7 @@
   "Types that fire once and close the popup: `#{:action}`."
   (types-with :is-command))
 
-;; ---------------------------------------------------------------------------
 ;; The keys — one table per shape
-;; ---------------------------------------------------------------------------
 
 (def value-keys
   "The keys only a VALUED item may carry: how its value is asked for and whether
@@ -113,9 +109,7 @@
   "The whole run state: which flags are armed, and what the options hold."
   #{:switches :options})
 
-;; ---------------------------------------------------------------------------
 ;; Predicates
-;; ---------------------------------------------------------------------------
 
 (defn- closed?
   "True when `m` carries no key outside `allowed`. A producer's typo is a row
@@ -171,9 +165,7 @@
   [{:keys [is-sideless cols]}]
   (or (not is-sideless) (some? cols)))
 
-;; ---------------------------------------------------------------------------
 ;; An item — one row, one keystroke
-;; ---------------------------------------------------------------------------
 
 (s/def ::key single-keystroke?)
 (s/def ::type (set (keys item-types)))
@@ -190,9 +182,7 @@
          flag-only-arg?
          valued-only-value-keys?))
 
-;; ---------------------------------------------------------------------------
 ;; A group, and the spec that arranges them
-;; ---------------------------------------------------------------------------
 
 (s/def ::title string?)
 (s/def ::items (s/and (s/coll-of ::item :kind sequential?) some-items?))
@@ -206,9 +196,7 @@
          distinct-keys?
          distinct-ids?))
 
-;; ---------------------------------------------------------------------------
 ;; The region a band paints into
-;; ---------------------------------------------------------------------------
 
 (s/def ::left nat-int?)
 (s/def ::inner-w pos-int?)
@@ -224,9 +212,7 @@
                  :opt-un [::min-row ::cols ::is-sideless ::restore!])
          sideless-knows-width?))
 
-;; ---------------------------------------------------------------------------
 ;; The host that owns the terminal
-;; ---------------------------------------------------------------------------
 
 (s/def ::g some?)
 ;; Callbacks, and callbacks only: `ifn?` would accept a keyword or a map, and a
@@ -237,18 +223,14 @@
 
 (s/def ::host (s/keys :req-un [::g ::hint-bar! ::refresh! ::read-key!]))
 
-;; ---------------------------------------------------------------------------
 ;; The run state, and the values an OPTION brings into it
-;; ---------------------------------------------------------------------------
 
 (s/def ::option-value non-blank-string?)
 (s/def ::switches (s/coll-of some? :kind set?))
 (s/def ::options (s/map-of some? ::option-value))
 (s/def ::state (s/and #(closed? state-keys %) (s/keys :req-un [::switches ::options])))
 
-;; ---------------------------------------------------------------------------
 ;; Explaining a violation
-;; ---------------------------------------------------------------------------
 
 (defn- brief
   [x]

@@ -50,9 +50,7 @@
            [java.nio.file CopyOption Files LinkOption StandardCopyOption]
            [java.security MessageDigest]))
 
-;; =============================================================================
 ;; Tunables
-;; =============================================================================
 
 (def ^:dynamic *enabled?*
   "Master switch. Bound false in tests that must observe an unhooked tool."
@@ -95,9 +93,7 @@
    keyword spellings so the walker is agnostic to the caller's convention."
   #{"path" "paths" "src" "dest" "file" "files" "target_path" "dest_path"})
 
-;; =============================================================================
 ;; Store layout
-;; =============================================================================
 
 (defn- default-store-root ^File [] (io/file (System/getProperty "user.home") ".vis" "rewind"))
 
@@ -145,9 +141,7 @@
 
 (defn- blob-file ^File [^File dir ^String hex] (io/file dir "objects" (subs hex 0 2) hex))
 
-;; =============================================================================
 ;; Content-addressed pool
-;; =============================================================================
 
 (defn- put-blob!
   "Store `b` in the pool; return its sha256. Idempotent — identical bytes from
@@ -174,10 +168,6 @@
   ^bytes [^File dir ^String hex]
   (let [f (blob-file dir hex)]
     (when (.isFile f) (Files/readAllBytes (.toPath f)))))
-
-;; =============================================================================
-;; Journal
-;; =============================================================================
 
 (defonce ^:private journal-lock (Object.))
 
@@ -236,9 +226,7 @@
                    (line-seq r))))
       [])))
 
-;; =============================================================================
 ;; Path helpers
-;; =============================================================================
 
 (def ^:private nofollow (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
 
@@ -290,9 +278,7 @@
     (step x)
     (into [] (distinct) (persistent! @acc))))
 
-;; =============================================================================
 ;; Pre-image capture
-;; =============================================================================
 
 (defn- missing-ancestors
   "Ancestor directories of `f` that do not exist YET, deepest first. Writing
@@ -402,9 +388,7 @@
   (reset! baselines {})
   nil)
 
-;; =============================================================================
 ;; git baseline
-;; =============================================================================
 
 (defn- run-git
   [root args]
@@ -514,9 +498,7 @@
         (forget-other-turns! baselines k)
         base))))
 
-;; =============================================================================
 ;; Recording
-;; =============================================================================
 
 (defn record-pre!
   "Snapshot the pre-mutation state of `paths` for this session/turn. The FIRST
@@ -603,9 +585,7 @@
         (append-entries! dir entries))
       entries)))
 
-;; =============================================================================
 ;; Rewind points / plan / restore
-;; =============================================================================
 
 (defn points
   "Rewind targets for a session, newest last: one entry per turn that changed
@@ -837,9 +817,7 @@
       "deleted" (count (filter #(= "deleted" (get % "action")) applied))
       "failed" (filterv #(#{"failed" "skipped"} (get % "action")) applied))))
 
-;; =============================================================================
 ;; The op hook
-;; =============================================================================
 
 (defn- env->ctx
   [env op]
@@ -916,9 +894,7 @@
           {:op op :phase :around :fn #'around-hook})
         (concat mutation-ops sweep-ops)))
 
-;; =============================================================================
 ;; Slash command
-;; =============================================================================
 
 (defn- err [msg & {:as extras}] (merge {:slash/status :error :slash/title msg} extras))
 
@@ -1277,9 +1253,7 @@
     :slash/requires #{:session}
     :slash/run-fn handle-rewind}])
 
-;; =============================================================================
 ;; Gateway routes — rewind is available from every channel, not one keybinding
-;; =============================================================================
 
 (defn- json-response
   [status body]
@@ -1322,9 +1296,7 @@
    :routes (fn [_token]
              ["/v1/rewind/:sid" {:get points-handler :post restore-handler}])})
 
-;; =============================================================================
 ;; Registration
-;; =============================================================================
 
 (def vis-extension
   (vis/extension {:ext/name "rewind"

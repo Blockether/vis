@@ -22,9 +22,7 @@
    to its result spec."
   (:require [clojure.spec.alpha :as s]))
 
-;; =============================================================================
 ;; Shared: the directory-nested grouping BOTH format and lint expose
-;; =============================================================================
 
 ;; `{<dir> {<basename> <payload-map>}}` — the long directory prefix is written
 ;; ONCE per group (dir), then each file's basename under it. `<payload>` is a
@@ -40,9 +38,7 @@
   (fn [m]
     (or (not (contains? m k)) (nil? (get m k)) (pred (get m k)))))
 
-;; =============================================================================
 ;; format_code result
-;; =============================================================================
 
 (s/def ::format-file
   (s/and map?
@@ -69,9 +65,7 @@
          (opt "repairs" #(s/valid? (s/coll-of string?) %))
          (opt "unbalanced" string?)))
 
-;; =============================================================================
 ;; lint_code result
-;; =============================================================================
 
 (s/def ::finding
   (s/and map?
@@ -95,9 +89,7 @@
          (opt "snippet" string?)
          (opt "by-cwd" #(s/valid? ::by-cwd %))))
 
-;; =============================================================================
 ;; run_tests result
-;; =============================================================================
 
 ;; One failing test. The map carries \"ns\"/\"test\"/\"type\"/\"message\"/\"file\"/
 ;; \"line\". Like `::finding`, every present field is type-pinned (strings for
@@ -139,9 +131,7 @@
          (opt "failures" #(s/valid? (s/coll-of ::test-failure) %))
          (opt "by-cwd" #(s/valid? ::by-cwd %))))
 
-;; =============================================================================
 ;; run_tests: the TOTAL key set
-;; =============================================================================
 
 (def test-result-base
   "TOTAL key set of EVERY `run_tests` result — one tool, ONE result shape across
@@ -283,9 +273,7 @@
                  "failures" faults
                  "by-cwd" (or (get result "by-cwd") {}))))))
 
-;; =============================================================================
 ;; Capability -> spec + the check the packs run
-;; =============================================================================
 
 (def capability->spec
   "Maps a language-tool capability keyword to the spec its result must satisfy.

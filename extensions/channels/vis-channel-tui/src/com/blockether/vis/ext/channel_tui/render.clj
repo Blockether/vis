@@ -489,7 +489,6 @@
         (str (subs bar 0 start) label (subs bar end)))
       bar)))
 
-;; ----------------------------------------------------------------------------
 ;; Sideless box-border padding
 ;;
 ;; The input box uses a sideless variant of `draw-box-border!` (top +
@@ -590,7 +589,6 @@
     (.setBackgroundColor g t/box-bg)
     (.fillRectangle g (TerminalPosition. 1 text-top) (TerminalSize. inner-w rows) \space)))
 
-;;; ── Messages box ───────────────────────────────────────────────────────────
 (defn draw-messages-box!
   "Draw bordered message area with top-anchored scrollable messages."
   [^TextGraphics g messages box-top box-bottom cols scroll]
@@ -1305,7 +1303,6 @@
                              :scroll first-idx
                              :thumb-fg t/dialog-title-bg})))))))
 
-;;; ── Background fill ────────────────────────────────────────────────────────
 (defn fill-background!
   "Fill entire screen with the terminal background color."
   [^TextGraphics g cols rows]
@@ -1313,7 +1310,6 @@
   (.setForegroundColor g t/text-fg)
   (.fillRectangle g (TerminalPosition. 0 0) (TerminalSize. cols rows) \space))
 
-;;; ── Dialog ─────────────────────────────────────────────────────────────────
 (defn draw-dialog!
   "Draw a centered confirmation dialog with text wrapping.
    `body` can be a string or vec of strings. Long lines are wrapped to fit.
@@ -1361,16 +1357,13 @@
       h-bar
       (repeat-str Symbols/SINGLE_LINE_HORIZONTAL inner-w)]
 
-     ;; Shadow
      (.setBackgroundColor g t/dialog-shadow)
      (.fillRectangle g
                      (TerminalPosition. (+ (long box-left) 2) (inc (long box-top)))
                      (TerminalSize. box-w box-h)
                      \space)
-     ;; Background
      (.setBackgroundColor g t/dialog-bg)
      (.fillRectangle g (TerminalPosition. box-left box-top) (TerminalSize. box-w box-h) \space)
-     ;; Border
      (.setForegroundColor g t/dialog-border)
      (.setBackgroundColor g t/dialog-bg)
      (.setCharacter g (int box-left) (int box-top) Symbols/SINGLE_LINE_TOP_LEFT_CORNER)
@@ -1382,7 +1375,6 @@
      (doseq [r (range (inc (long box-top)) box-bottom)]
        (.setCharacter g (int box-left) (int r) Symbols/SINGLE_LINE_VERTICAL)
        (.setCharacter g (int box-right) (int r) Symbols/SINGLE_LINE_VERTICAL))
-     ;; Title
      (.setForegroundColor g t/dialog-title-bg)
      (let [title-x (+ (long box-left) (quot (- (long box-w) (count title)) 2))]
        (.putString g (int title-x) (int (inc (long box-top))) ^String title))
@@ -1773,8 +1765,6 @@
                    (+ col-pos g-cols)
                    (or seg-start-char char-pos)
                    (or seg-start-col col-pos))))))))
-
-;; ---------------------------------------------------------------------------
 
 (defn- result-row-bg
   "Result rows (collapsible headline + expanded body) all share the quiet

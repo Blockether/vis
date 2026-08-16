@@ -2217,9 +2217,7 @@
                                  {:answer "done"}
                                  nil)))))
 
-;; ---------------------------------------------------------------------------
 ;; def-sink -> vars-snapshot (per-var precise source extraction)
-;; ---------------------------------------------------------------------------
 
 (defdescribe
   gather-builtin-test

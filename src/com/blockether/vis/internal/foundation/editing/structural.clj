@@ -294,14 +294,12 @@
   ;; reference AND no definition, so the whole batch below is skippable.
   (if (str/includes? source name) (get (occurrences-in path source [name]) name []) []))
 
-;; -----------------------------------------------------------------------------
 ;; Batch scanning — the fan-out lives in the PACK, next to the parse.
 ;;
 ;; `StructuralApi/mapParallel` and the many-file `findReferences` own the worker
 ;; pool, the request ordering and the per-file failure rows, so every JVM consumer
 ;; of the pack gets the same scheduler, and vis keeps only what is vis's: which
 ;; paths, how to read them (`safe-path` confinement) and the vis entry shape.
-;; -----------------------------------------------------------------------------
 
 (defn scan-mapv
   "`mapv` over `items` across the pack's scan pool, in REQUEST ORDER.

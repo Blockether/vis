@@ -45,9 +45,7 @@
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [taoensso.telemere :as tel]))
 
-;; =============================================================================
 ;; Aggregation
-;; =============================================================================
 
 (defn active-slashes
   "Aggregate `:ext/slash-commands` from every active extension for `env`.
@@ -169,9 +167,7 @@
                     (= parent (vec (:slash/parent s)))))
           vec))))
 
-;; =============================================================================
 ;; Parsing
-;; =============================================================================
 
 (defn- slash-text?
   "True when `text` begins with `/` followed by a command-shaped token:
@@ -231,9 +227,7 @@
               {:path prefix :args (vec (subvec tokens n)) :slash chosen})
             (recur (dec n))))))))
 
-;; =============================================================================
 ;; Dispatch
-;; =============================================================================
 
 (defn- missing-requires
   "Return the set of `:slash/requires` entries unsatisfied by `ctx`."

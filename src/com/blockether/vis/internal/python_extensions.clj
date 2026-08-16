@@ -62,7 +62,6 @@
 
 (set! *warn-on-reflection* true)
 
-;; =============================================================================
 ;; The `vis` Python module (bootstrap source)
 ;;
 ;; Evaluated in each extension context BEFORE the extension file. Builds a
@@ -71,7 +70,6 @@
 ;; file's globals stay clean. Host callbacks (`__vis_host_*`, bound as
 ;; polyglot members before this runs) are handed in through the module
 ;; dict.
-;; =============================================================================
 
 (def ^:no-doc bootstrap-python
   "The `vis` module bootstrap. Evaluated in each extension context BEFORE the
@@ -99,9 +97,7 @@
    child-slot index."
   (env/runtime-python-src "vis-python/process_redirect.py"))
 
-;; =============================================================================
 ;; Marshalling helpers
-;; =============================================================================
 
 (defn- ->executable
   "Wrap a Clojure fn as a Python callable: positional Python args marshal
@@ -180,7 +176,6 @@
                       {:type ::host-tool-failed :error (stringify-deep (:error envelope))})))
     (stringify-deep envelope)))
 
-;; =============================================================================
 ;; Durable state (`vis.state`) — backed by the `extension_aggregate` table
 ;; (one row per key, kind "py-state", :global scope), NOT the filesystem.
 ;; State is owned by the extension NAME and survives `/reload` and restarts.
@@ -190,7 +185,6 @@
 ;; carries none) falls back to the process-wide shared DB connection (the same
 ;; vis.db sessions use) — all :global scope needs. Values are the boundary view
 ;; of Python data (plain EDN data).
-;; =============================================================================
 
 (def ^:private state-kind "py-state")
 
@@ -221,11 +215,8 @@
   (aggregate/extension-delete-aggregate! (state-env) {:key (str k) :kind state-kind :scope :global})
   nil)
 
-;; =============================================================================
 ;; Trusted extension context
-;; =============================================================================
 
-;; =============================================================================
 ;; Declared host environment (`vis.extension(env=["NAME", ...])`)
 ;;
 ;; An extension DECLARES the environment variables it needs; the host resolves
@@ -237,7 +228,6 @@
 ;; variables are the exception, and an explicit one: a name written under
 ;; `environment:` or in the workspace's `.env` belongs to the project the
 ;; extension is running in, so it is offered alongside the declared names.
-;; =============================================================================
 
 (def ^:private env-name-re #"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -528,12 +518,10 @@
                                     (str "host call " member " is not available while checking")
                                     {:type :vis/extension-check-inert :member member}))))))))))
 
-;; =============================================================================
 ;; Adapters — Python callables wrapped as the Clojure fns the extension
 ;; registry expects. Every adapter is defensive: a closed context (after
 ;; `/reload`) or a Python error surfaces as a failure envelope / logged
 ;; warning, never an unhandled throw into the engine.
-;; =============================================================================
 
 (defn- slim-env
   "The read-only env dict Python activation/prompt callables receive.
@@ -823,9 +811,7 @@
           (assoc :error @err))
         {:allow? true}))))
 
-;; =============================================================================
 ;; Registration dict -> extension spec
-;; =============================================================================
 
 (defn- symbol-base-name
   "Symbol name for the registry: `name or fn.__name__` with a leading
@@ -1301,9 +1287,7 @@
       (seq declared-env)
       (assoc :ext/env declared-env))))
 
-;; =============================================================================
 ;; Loader
-;; =============================================================================
 
 (defonce ^:private loaded
   ;; canonical path -> {:sha :ext-name :context}
@@ -1819,9 +1803,7 @@
   ([] (reload-python-extensions! nil))
   ([opts] (reset! last-fingerprint nil) (load-python-extensions! opts)))
 
-;; =============================================================================
 ;; The loader's own host extension: `/reload` + doctor surface
-;; =============================================================================
 
 (def ^:private diffed-config-keys [:network :filesystem :jail :toggles])
 

@@ -13,9 +13,7 @@
   pixels -- exactly the shape the old [[decode]] produced."
   (:require [com.blockether.imaging :as im]))
 
-;; ---------------------------------------------------------------------------
 ;; Signature + pixel packing
-;; ---------------------------------------------------------------------------
 
 (defn gif?
   "True when `data` starts with a GIF87a/GIF89a signature."
@@ -57,9 +55,7 @@
         (recur (+ i 4) (inc j))))
     out))
 
-;; ---------------------------------------------------------------------------
 ;; Decode / encode -- thin bridges to the native cdylib
-;; ---------------------------------------------------------------------------
 
 (defn decode
   "Decode every frame of `data` via the native `imaging` cdylib.

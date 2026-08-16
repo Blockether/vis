@@ -86,10 +86,8 @@
       (vis/db-update-session-turn! s q2 {:status :error}))
     cid))
 
-;; ---------------------------------------------------------------------------
 ;; Data - the canonical contract every consumer (CLI, agent, future
 ;; JSON exporter) reads against.
-;; ---------------------------------------------------------------------------
 
 (defdescribe
   transcript-data-test
@@ -277,10 +275,8 @@
             (expect (= call tool-row))))
         (finally (vis/db-dispose-connection! s))))))
 
-;; ---------------------------------------------------------------------------
 ;; Markdown renderer - spot-check a few literals the CLI relies on.
 ;; The data tests above are the real contract.
-;; ---------------------------------------------------------------------------
 
 (defdescribe
   transcript-md-test
@@ -406,7 +402,6 @@
   ;; renderer output is covered by the structural data tests above and
   ;; the huge/mixed-block render tests here.
 
-;; ---------------------------------------------------------------------------
 ;; No UUID leaks in the turn-by-turn BODY.
 ;;
 ;; The summary header intentionally shows the session `ID` (a UUID) - that's a
@@ -414,7 +409,6 @@
 ;; BODY must still render `position` (int), never a turn/message `:id` (uuid).
 ;; This test pins the rule against the markdown transcript body; the sister
 ;; test in render_test.clj (TUI) covers that channel.
-;; ---------------------------------------------------------------------------
 
 (def ^:private uuid-pattern
   ;; Canonical 36-char UUID with hyphens. The fixture's seed-generated UUIDs

@@ -24,9 +24,7 @@
 
 (set! *warn-on-reflection* true)
 
-;; =============================================================================
 ;; The anchor token — the ONE string that crosses Clojure -> GraalPy -> the model
-;; =============================================================================
 
 (def hash-width
   "Hex chars in a line's content hash. The line number locates; this hash
@@ -53,9 +51,7 @@
 (s/def :ext.editing.hashline/parsed
   (s/keys :req-un [:ext.editing.hashline/line :ext.editing.hashline/hash]))
 
-;; =============================================================================
 ;; Blob <-> coordinates
-;; =============================================================================
 
 (defn split-content-lines
   "Split a file blob into a vec of lines. A trailing empty element (from the
@@ -88,9 +84,7 @@
       (let [nl (str/index-of content "\n" pos)]
         (if nl (recur (inc (long nl)) (inc i)) (count content))))))
 
-;; =============================================================================
 ;; Minting an anchor
-;; =============================================================================
 
 (def ^:private hash-mask
   "Low `hash-width` hex digits as a bit mask: (16^hash-width) - 1."
@@ -223,9 +217,7 @@
                  (str indent (line-anchor ln s) hashline-gutter s))))
         (str/join "\n"))))
 
-;; =============================================================================
 ;; Resolving an anchor against LIVE content
-;; =============================================================================
 
 (defn indices-matching-hash
   "0-based indices of `lines` whose `line-hash` equals the bare hash `h`. Pure

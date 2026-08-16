@@ -26,9 +26,7 @@
            [java.nio.file.attribute FileAttribute]
            [org.graalvm.polyglot Context]))
 
-;; =============================================================================
 ;; Harness
-;; =============================================================================
 
 (defn- temp-dir
   ^java.io.File []
@@ -162,9 +160,7 @@ vis.extension(
 )
 ")
 
-;; =============================================================================
 ;; Loading + registry
-;; =============================================================================
 
 (defdescribe
   load-and-register-test
@@ -195,9 +191,7 @@ vis.extension(
                        (expect (= false (:changed? again)))
                        (expect (= 1 (:loaded again))))))))
 
-;; =============================================================================
 ;; Tool adapter — envelope semantics
-;; =============================================================================
 
 (defdescribe tool-envelope-test
              (it "return value = success payload"
@@ -285,9 +279,7 @@ vis.extension(
                        (expect (= 1 (get-in result [:result "payload" "a"])))
                        (expect (= 2 (get-in result [:result "payload" "b"]))))))))
 
-;; =============================================================================
 ;; Declared host environment -- issue #129
-;; =============================================================================
 
 (def ^:private env-py
   "\"\"\"Declared host env allowlist fixture.\"\"\"
@@ -369,9 +361,7 @@ vis.extension(name=\"env-bad\", description=\"bad env fixture.\", env=\"PATH\")
                      (let [errs (map :error (pyx/load-failures))]
                        (expect (some #(str/includes? (str/lower-case %) "env") errs)))))))
 
-;; =============================================================================
 ;; State — durable across reloads
-;; =============================================================================
 
 (defdescribe state-durability-test
              (it "vis.state survives a full reload (fresh contexts, same DB)"
@@ -383,10 +373,6 @@ vis.extension(name=\"env-bad\", description=\"bad env fixture.\", env=\"PATH\")
                                   (pyx/reload-python-extensions! {:dirs [(str ext-dir)]})
                                   (let [read (symbol-fn (registered "counter") 'read)]
                                     (expect (= 7 (get-in (read) [:result "count"])))))))))
-
-;; =============================================================================
-;; Prompt + slash
-;; =============================================================================
 
 (defdescribe prompt-and-slash-test
              (it "a string prompt normalizes into :ext/prompt-fn"
@@ -412,9 +398,7 @@ vis.extension(name=\"env-bad\", description=\"bad env fixture.\", env=\"PATH\")
                        ;; :slash/data holds the Python-crossed dict — STRING keys
                        (expect (= ["a" "b"] (get-in res [:slash/data "args"]))))))))
 
-;; =============================================================================
 ;; Dynamic prompt + activation callables
-;; =============================================================================
 
 (def ^:private moods-py
   "\"\"\"Dynamic prompt/activation fixture.\"\"\"
@@ -458,9 +442,7 @@ vis.extension(
                               (fn [_ _]
                                 (expect (true? ((:ext/activation-fn (registered "moods")) {})))))))
 
-;; =============================================================================
 ;; Ctx contribution — vis.extension(ctx=...) folds into the session bag
-;; =============================================================================
 
 (def ^:private ctxer-py
   "\"\"\"Ctx-contribution fixture.\"\"\"
@@ -513,9 +495,7 @@ vis.extension(
                      (expect (= 1 (:failed result)))
                      (expect (str/includes? (:error (first (pyx/load-failures))) "ctx="))))))
 
-;; =============================================================================
 ;; Op hooks — before(=guard) blocks, after observes
-;; =============================================================================
 
 (def ^:private guard-py
   "\"\"\"Guard fixture.\"\"\"
@@ -579,9 +559,7 @@ vis.extension(
                        (fn [_]
                          :ran)))))))))
 
-;; =============================================================================
 ;; Gate hooks — a Python extension guards the FILESYSTEM, not a tool's arguments
-;; =============================================================================
 
 (def ^:private fs-gate-py
   "\"\"\"Filesystem gate fixture.\"\"\"
@@ -734,9 +712,7 @@ vis.extension(
               (:allow?
                 (pf {:phase :http-response :status 200 :host "x.com" :path "/" :headers {}}))))))))
 
-;; =============================================================================
 ;; Failure containment
-;; =============================================================================
 
 (defdescribe load-failure-test
              (it "a broken file is a recorded load failure, never a crash"
@@ -761,9 +737,7 @@ vis.extension(
                      (expect (= 1 (:failed result)))
                      (expect (str/includes? (:error (first (pyx/load-failures))) "docstring"))))))
 
-;; =============================================================================
 ;; Reload + project-over-global precedence
-;; =============================================================================
 
 (defdescribe
   reload-test
@@ -836,9 +810,7 @@ vis.extension(
                (finally (pyx/reload-python-extensions! {:dirs []})
                         (ps/db-dispose-connection! store)))))))
 
-;; =============================================================================
 ;; Multi-file project — an extension imports a sibling package (sys.path sugar)
-;; =============================================================================
 
 (def ^:private pkgext-py
   "\"\"\"Package-backed fixture: imports a sibling package next to it.\"\"\"
@@ -882,9 +854,7 @@ vis.extension(
                          (expect (= 5 (get-in res [:result "sum"])))
                          (expect (= "1.2.3" (get-in res [:result "version"])))))))))
 
-;; =============================================================================
 ;; Package-extension convention — a subdir holding extension.py = ONE extension
-;; =============================================================================
 
 (defdescribe
   package-extension-convention-test
@@ -910,9 +880,7 @@ vis.extension(
             (let [add (symbol-fn ext 'add)]
               (expect (= 3 (get-in (add 1 2) [:result "sum"])))))))))
 
-;; =============================================================================
 ;; Python-level self-tests — test_*.py / *_test.py run through the pytest shim
-;; =============================================================================
 
 (defdescribe
   python-self-test-test
@@ -957,9 +925,7 @@ vis.extension(
                  (expect (false? (get by-name "foo_test.py")))))
              (finally (ps/db-dispose-connection! store)))))))
 
-;; =============================================================================
 ;; Structured counts — outcomes come from the shim, never scraped from stdout
-;; =============================================================================
 
 (defdescribe
   structured-counts-test
@@ -984,9 +950,7 @@ vis.extension(
                  (expect (false? (:ok? res))))
                (finally (ps/db-dispose-connection! store)))))))
 
-;; =============================================================================
 ;; /test slash + `vis-agent extension test` CLI — the user-facing surface for the runner
-;; =============================================================================
 
 (defdescribe
   cli-and-slash-wiring-test
@@ -1043,9 +1007,7 @@ vis.extension(
                  (expect (str/includes? report "foo_test.py")))
                (finally (ps/db-dispose-connection! store)))))))
 
-;; =============================================================================
 ;; Per-test granularity — the runner reports EACH test, not just a file verdict
-;; =============================================================================
 
 (defdescribe
   per-test-granularity-test
@@ -1076,9 +1038,7 @@ vis.extension(
                    (expect (str/includes? report "test_beta"))))
                (finally (ps/db-dispose-connection! store)))))))
 
-;; =============================================================================
 ;; `vis-agent extension test` exit signal — a :vis/user-error ex-info, NEVER System/exit
-;; =============================================================================
 
 (defdescribe
   cli-exit-signal-test
@@ -1090,9 +1050,7 @@ vis.extension(
   (it "produces no exit signal (nil) when every test passed"
       (expect (nil? (#'runner/failure-ex {:ok? true :passed 3})))))
 
-;; =============================================================================
 ;; Providers — a `vis.provider(...)` registers a first-class provider descriptor
-;; =============================================================================
 
 (def ^:private provider-py
   "'''Acme provider fixture.'''
@@ -1642,9 +1600,7 @@ vis.extension(
         (let [s (report nil "   ")]
           (expect (re-find #"\"error\"" s))))))
 
-;; =============================================================================
 ;; /reload re-hydrates feature toggles
-;; =============================================================================
 
 (defdescribe
   reload-slash-toggles-test
@@ -1691,9 +1647,7 @@ vis.extension(
            (expect (false? (toggles/enabled? "shell")))
            (finally (toggles/set-value! "shell" before))))))
 
-;; =============================================================================
 ;; Human input — `vis.ask` blocks the extension until a channel answers
-;; =============================================================================
 
 (defn- answer-pending!
   "Wait for a human-input request titled `title` to show up, then run `answer-fn`
@@ -1915,9 +1869,7 @@ vis.extension(name='asker', description='asker', alias='a',
                        (expect (some? (re-find #"is_required" (str (get result "message")))))
                        (expect (empty? (human-input/pending-requests))))))))
 
-;; =============================================================================
 ;; Hook callbacks run inside the caller's session env (issue #101)
-;; =============================================================================
 
 (def ^:private hook-asker-py
   "
@@ -1962,9 +1914,7 @@ vis.extension(name='hookasker', description='hookasker', alias='hk', prompt=hook
                                   (expect (= "sess-hook" (:session-id @drawn)))
                                   (expect (empty? (human-input/pending-requests))))))))
 
-;; =============================================================================
 ;; Torn-down contexts heal instead of dying (issues #102, #103)
-;; =============================================================================
 
 (def ^:private rebuilder-py
   "import vis
@@ -2043,9 +1993,7 @@ vis.extension(name='rebuilder', description='rebuilder', alias='rb',
                        (expect (str/includes? (get-in res [:error :message]) "kaboom"))
                        (expect (identical? before (:context (first (vals @@#'pyx/loaded))))))))))
 
-;; =============================================================================
 ;; Human-input form builders on the `vis` module
-;; =============================================================================
 
 (def ^:private forms-py
   "'''Form builder fixture: composes a request and checks it without asking.'''
@@ -2222,9 +2170,7 @@ vis.extension(
                                   (expect (true? (:is-hidden (:provider/preset p))))
                                   (expect (nil? (:hidden? (:provider/preset p)))))))))
 
-;; =============================================================================
 ;; Freshness — only a process start and `/reload` put new bytes live
-;; =============================================================================
 
 (def ^:private sidecar-py
   "import vis

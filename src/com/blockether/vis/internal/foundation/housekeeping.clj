@@ -69,10 +69,8 @@
   ^File []
   (io/file (or *events-home* (io/file (System/getProperty "user.home") ".vis" "gateway" "events"))))
 
-;; ---------------------------------------------------------------------------
 ;; Filesystem helpers. Every one of these swallows IO failure: housekeeping is
 ;; advisory, and a permission-denied subtree must not take `vis-agent doctor` down.
-;; ---------------------------------------------------------------------------
 
 (defn- canonical
   [^File f]
@@ -143,7 +141,6 @@
   [^File f]
   (try (Files/exists (.toPath f) (into-array LinkOption [])) (catch Throwable _ false)))
 
-;; ---------------------------------------------------------------------------
 ;; The self-deleting sweep
 ;;
 ;; UNLIKE drafts and journals, everything below is DERIVED and nothing anyone
@@ -157,7 +154,6 @@
 ;; where the shell logs are not: `shell` writes `logs/shell/<run>/<id>.log`, one
 ;; directory per command, and a single week of those outweighed everything the
 ;; sweep could see.
-;; ---------------------------------------------------------------------------
 
 (def default-log-retention-days
   "Age past which a diagnostic log is deleted automatically. Three weeks: longer
@@ -426,9 +422,7 @@
      (.start))))
 
 
-;; ---------------------------------------------------------------------------
 ;; Drafts
-;; ---------------------------------------------------------------------------
 
 (defn- draft-activity-ms
   "Most recent moment the workspace was demonstrably alive. `last-focused-at-ms`
@@ -530,9 +524,7 @@
      :reclaimable (vec (sort-by (comp - long #(or (:bytes %) 0)) reclaimable))
      :bytes (reduce + 0 (map #(long (or (:bytes %) 0)) reclaimable))}))
 
-;; ---------------------------------------------------------------------------
 ;; Gateway journals
-;; ---------------------------------------------------------------------------
 
 (defn- scan-journals
   [^long cutoff-ms ^long now-ms]
@@ -562,9 +554,7 @@
      :reclaimable (vec (sort-by (comp - long #(or (:bytes %) 0)) stale))
      :bytes (reduce + 0 (map #(long (or (:bytes %) 0)) stale))}))
 
-;; ---------------------------------------------------------------------------
 ;; Public surface
-;; ---------------------------------------------------------------------------
 
 (defn scan
   "Observe stale drafts and gateway journals. Pure: touches no state and never

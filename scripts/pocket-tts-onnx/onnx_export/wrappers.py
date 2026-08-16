@@ -20,7 +20,6 @@ class FlowLMWrapper(nn.Module):
         self.eos_threshold = -4.0
 
     def forward(self, sequence, text_embeddings, flat_state):
-        # unflatten state
         model_state, _ = unflatten_state(flat_state, self.state_structure)
 
         if torch.jit.is_tracing():
@@ -140,7 +139,6 @@ class MimiWrapper(nn.Module):
             
             model_state, _ = unflatten_state(flat_state, self.state_structure)
             
-            # Decode
             audio_frame = self.mimi.decode_from_latent(quantized, model_state)
 
             if torch.jit.is_tracing():

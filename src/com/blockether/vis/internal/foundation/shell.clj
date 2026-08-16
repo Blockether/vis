@@ -79,9 +79,7 @@
            (java.util HashMap)
            (java.util.concurrent TimeUnit)))
 
-;; =============================================================================
 ;; Limits
-;; =============================================================================
 
 (def ^:private default-timeout-secs
   ;; ONE source of truth, shared with the Python eval watchdog: the watchdog must
@@ -126,9 +124,7 @@
 
 (defn- now-ms ^long [] (System/currentTimeMillis))
 
-;; =============================================================================
 ;; Small helpers
-;; =============================================================================
 
 (defn- capped-capture
   "A capture of ONE stream that can be READ WHILE IT IS STILL FILLING.
@@ -665,9 +661,7 @@
        (catch Throwable t (cancellation/preserve-interrupt! t) nil))
   nil)
 
-;; =============================================================================
 ;; BLOCKING runner — INTERNAL only (`run-blocking`, `run-argv`, the bang path)
-;; =============================================================================
 
 (defn- clamp-timeout-secs
   "Effective wait in seconds from the opts value: default 120, floor 1, cap 600.
@@ -935,9 +929,7 @@
     line))
 
 
-;; =============================================================================
 ;; BACKGROUND — Python sandbox: `await shell({"command": "npm run dev", "id": "dev"})`
-;; =============================================================================
 
 (defonce ^:private bg-procs
   ;; { session-key -> { id -> {:proc :buffer :exit :pump :stopped? :cmd :dir
@@ -1693,9 +1685,7 @@
                                  "\"} as one shell map.")
                             {:type ::missing-command :op "background" :id id}))))))))
 
-;; =============================================================================
 ;; RUN as a handle — a timeout is a WAIT that expired, not a lost process
-;; =============================================================================
 
 (defn- process-handle
   "A spawned `java.lang.Process` in the PTY handle SHAPE (`:pid :in :alive? :wait
@@ -2267,9 +2257,7 @@
                              :metadata
                              {:id id :started-at-ms t :finished-at-ms t :duration-ms 0}}))))))
 
-;; -----------------------------------------------------------------------------
 ;; Internal lifecycle grammar — the model calls `shell` /
-;; -----------------------------------------------------------------------------
 
 (defn- opts-arg?
   "Is `x` the trailing OPTIONS map rather than a positional string? A Python dict
@@ -2624,9 +2612,7 @@
   (shell-dispatch (assoc env :shell-origin "jailed-session") opts))
 
 
-;; =============================================================================
 ;; Env injection — the before-fn hands the impl its env as first arg
-;; =============================================================================
 
 (defn- op-label
   "Human call name from a registered op keyword: :_shell-logs -> \"_shell_logs\"."
@@ -2659,11 +2645,9 @@
                                                         " the spawned process tree was killed.")})
                   :throwable (when-not interrupted? err)})})))
 
-;; =============================================================================
 ;; Public, doc-bearing vars retain developer examples and fallback docs. Native
 ;; symbols below provide compact model-facing semantics; their schemas provide
 ;; exact inputs. The injected `env` first arg is hidden from both.
-;; =============================================================================
 
 (defn- shell-call-opts
   "ONE options map from a call's arguments. Each shell tool takes named positional
@@ -2730,12 +2714,10 @@
   [env & args]
   (shell-dispatch env (assoc (shell-call-opts ["id"] args) "op" "stop")))
 
-;; =============================================================================
 ;; The `!cmd` bang card — `:result` → `{:summary :body}`, built by
 ;; `render-shell-run-result` below and called directly by the loop's bang path.
 ;; The result arrives string-keyed snake_case (strings-only boundary); the card
 ;; is the keyword `{:summary :body}` IR (that part is internal).
-;; =============================================================================
 
 (def ^:private shell-chip-max
   "Display-width-ish budget for the command on the collapsed shell chip. Keep this
@@ -2990,10 +2972,8 @@
     {:summary summary :body (when (seq body) body)}))
 
 
-;; =============================================================================
 ;; Symbols + prompt + extension. ONE builtin symbol — `shell` — bound bare in the
 ;; flat Python sandbox next to `ls` / `grep`.
-;; =============================================================================
 
 (defn- live-bg-script
   "The bash the LIVE background shell `id` is already running. A `logs`/`send`/

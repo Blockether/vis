@@ -806,7 +806,6 @@
         (sequential? v) (mapv runtime-config v)
         :else v))
 
-;; =============================================================================
 ;; `${NAME}` environment interpolation
 ;;
 ;; A config file must never have to CARRY a secret. `api_key: ${OPENAI_API_KEY}`
@@ -825,7 +824,6 @@
 ;; the moment a user EXPLICITLY selects such a provider
 ;; (`providers/save-default-selection!`). Fail at the point of intent, never
 ;; globally.
-;; =============================================================================
 
 (def ^:private env-ref-pattern
   "`${NAME}` — the ONE supported spelling. Bare `$NAME` is deliberately NOT
@@ -1707,7 +1705,6 @@
                runtime-config)
        (default-db-spec))))
 
-;; =============================================================================
 ;; Active provider state
 ;;
 ;; The active provider config is mirrored from disk into the
@@ -1717,7 +1714,6 @@
 ;; session env so long-lived envs stop talking to the previous
 ;; model). The router-rebuild and cached-env reseat are owned by
 ;; the runtime; this namespace owns the on-disk + atom state.
-;; =============================================================================
 
 (defonce active-config
   ;; Public atom (no #'private guard) so the iteration loop's
@@ -1733,7 +1729,6 @@
         (reset! active-config cfg)
         cfg)))
 
-;; =============================================================================
 ;; Environment resolution: the workspace's `.env`, then `environment:`
 ;;
 ;; TWO sources, in one order, for every child of Vis and every surface that
@@ -1760,7 +1755,6 @@
 ;; once: it is what every CHILD process of Vis is handed, so there is no second
 ;; list to keep in sync (`jail.env` used to be one, and could only ever re-admit
 ;; an ambient variable — never a `dotenv:`/`keychain:`/`command:` value).
-;; =============================================================================
 
 (def ^:private env-var-name-pattern #"[A-Za-z_][A-Za-z0-9_]*")
 

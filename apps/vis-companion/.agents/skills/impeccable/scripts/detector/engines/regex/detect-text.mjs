@@ -8,9 +8,7 @@ import { applyInlineIgnores } from '../../shared/inline-ignores.mjs';
 import { finding } from '../../findings.mjs';
 import { profileFindings, profileStep } from '../../profile/profiler.mjs';
 
-// ---------------------------------------------------------------------------
 // Regex fallback (non-HTML files: CSS, JSX, TSX, etc.)
-// ---------------------------------------------------------------------------
 
 const hasRounded = (line) =>
   /\brounded(?:-\w+)?\b/.test(line.replace(/\brounded-none\b/g, ''));
@@ -351,7 +349,6 @@ function isNeutralBorderColor(str) {
 }
 
 const REGEX_MATCHERS = [
-  // --- Side-tab ---
   { id: 'side-tab', regex: /\bborder-[lrse]-(\d+)\b/g,
     test: (m, line) => { const n = +m[1]; return hasRounded(line) ? n >= 2 : n >= 4; },
     fmt: (m) => m[0] },

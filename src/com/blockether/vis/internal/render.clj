@@ -20,9 +20,7 @@
             SoftLineBreak StrongEmphasis Text ThematicBreak]
            [org.commonmark.parser Parser]))
 
-;; =============================================================================
 ;; Tag taxonomy
-;; =============================================================================
 
 (def ^:private block-tags #{:p :h :code :ul :ol :li :quote :table :tr :th :td})
 
@@ -38,9 +36,7 @@
 
 (defn- inline? [x] (and (vector? x) (contains? inline-tags (first x))))
 
-;; =============================================================================
 ;; Canonicalization
-;; =============================================================================
 
 (defn- collapse-soft-breaks
   "Replace every run of `\\s*\\n\\s*` with a single space. Non-newline
@@ -538,9 +534,7 @@
 
 (defn ast? "True when x is a canonical [:ast ...] AST." [x] (and (vector? x) (= :ast (first x))))
 
-;; =============================================================================
 ;; markdown->ast — commonmark-java parser → transient renderer tree
-;; =============================================================================
 ;;
 ;; Used at the boundaries that DON'T have IR upstream:
 ;;   - LLM-emitted thinking strings (`:thinking` field on iterations);
@@ -828,9 +822,7 @@
   [text]
   (markdown->ast (normalize-reasoning text) {:soft-break :hard}))
 
-;; =============================================================================
 ;; Walker helpers (canonical inputs)
-;; =============================================================================
 
 (defn- node-tag [node] (when (vector? node) (first node)))
 
@@ -872,9 +864,7 @@
       (str/replace "[" "\\[")
       (str/replace "]" "\\]")))
 
-;; =============================================================================
 ;; HTML walker
-;; =============================================================================
 
 ;; render-html <-> render-html-children mutual: html walker dispatches per
 ;; tag, recursing into children via the helper which itself recurses back
@@ -1101,9 +1091,7 @@
             ;; unknown tag — pass through children
             (render-html-children children opts)))))
 
-;; =============================================================================
 ;; Markdown walker
-;; =============================================================================
 
 ;; render-md <-> render-md-children mutual; same pattern as html.
 (declare ^:private render-md)
@@ -1317,9 +1305,7 @@
 
             (render-md-children children opts)))))
 
-;; =============================================================================
 ;; Plain walker
-;; =============================================================================
 
 ;; render-plain <-> render-plain-children mutual; same pattern as html.
 (declare ^:private render-plain)
@@ -1504,9 +1490,7 @@
 
             (render-plain-children children opts)))))
 
-;; =============================================================================
 ;; Public render entry
-;; =============================================================================
 
 (defn render
   "Render any answer input into a flavor.
@@ -1549,9 +1533,7 @@
          (str (subs output 0 cut) "…"))
        output))))
 
-;; =============================================================================
 ;; Code & text extraction
-;; =============================================================================
 
 (defn extract-code
   "Walk the AST and return a vector of strings, one per [:code ...] block,
@@ -1628,9 +1610,7 @@
                     :else nil))]
       (walk ast) (str/join "\n\n" (remove str/blank? @out)))))
 
-;; =============================================================================
 ;; Session exporter — DB → Markdown document
-;; =============================================================================
 
 (def ^:private DEFAULT_EXPORT_OPTS {:include-system? false :include-meta? true :flavor :markdown})
 
@@ -1703,14 +1683,11 @@
 
            (str header (str/join "\n" (map (partial render-export-turn opts) turns)))))))))
 
-;; ============================================================================
 ;; Block source rendering.
 ;;
 ;; `parse-block-display` is a pure helper that returns the block source as one
 ;; verbatim `:code` segment. Channels read the segment at display time.
-;; ============================================================================
 
-;; ---------------------------------------------------------------------------
 ;; Channel-render policy: CONTEXT vs CHANNEL split
 ;;
 ;; CONTEXT (model surface): the full transcript — the model reads whatever
@@ -1721,7 +1698,6 @@
 ;;
 ;; Channels render the model's raw `:code` directly and unconditionally (the
 ;; canonical contract — TUI and web's `block-code` paint identical source).
-;; ---------------------------------------------------------------------------
 
 ;; Display wrap width for ruff (chat bubbles are narrow; ruff's default is 88).
 (def ^:private prettify-line-length 84)

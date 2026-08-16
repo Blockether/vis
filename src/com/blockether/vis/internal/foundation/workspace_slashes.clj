@@ -27,9 +27,7 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.workspace :as workspace]))
 
-;; =============================================================================
 ;; Helpers
-;; =============================================================================
 (defn- ctx-session-state-id [ctx] (:session/state-id ctx))
 
 (defn- ctx-db [ctx] (or (:db-info ctx) (:db ctx)))
@@ -100,9 +98,7 @@
   {:insertions (reduce + 0 (map (comp long #(or % 0) :insertions) changes))
    :deletions (reduce + 0 (map (comp long #(or % 0) :deletions) changes))})
 
-;; =============================================================================
 ;; Handlers
-;; =============================================================================
 (defn- handle-create
   "Shared `/draft new` + `/draft clean` implementation. `clean?` false clones cwd
    exactly as it stands (uncommitted work included); true clones, then rewinds the
@@ -438,9 +434,7 @@
                        (err (str "Can't change root to '" path
                                  "': " (or (ex-message e) (str e)))))))))
 
-;; =============================================================================
 ;; Specs vec
-;; =============================================================================
 (defn- build-specs
   "Slash specs vec. Commands are always discoverable; handlers report runtime
    capability availability for the active workspace."

@@ -322,9 +322,7 @@
                                                  ["gateway: idle reaper failed" (ex-message t)]))
                                      (finally (reset! idle-reaper nil)))))))
 
-;; =============================================================================
 ;; Bearer token (§3)
-;; =============================================================================
 
 (defn- default-token-path ^Path [] (.toPath (discovery/default-token-file)))
 
@@ -354,9 +352,7 @@
                    ^"[Ljava.nio.file.OpenOption;" (make-array OpenOption 0))
       token)))
 
-;; =============================================================================
 ;; Ring helpers
-;; =============================================================================
 
 (defn- json-response
   ([body] (json-response 200 body))
@@ -421,9 +417,7 @@
   [tail]
   (str "/sessions/:sid" (or tail "")))
 
-;; =============================================================================
 ;; SSE (§6.3)
-;; =============================================================================
 
 (defn- sse-cursor
   [request]
@@ -779,9 +773,7 @@
                              (request-client-pid request))}
       (error-response 400 :bad-request "no valid sids"))))
 
-;; =============================================================================
 ;; /metrics (§6.5)
-;; =============================================================================
 
 (defn- prometheus-text
   [snapshot]
@@ -834,9 +826,7 @@
        :headers {"Content-Type" "text/plain; version=0.0.4"}
        :body (prometheus-text snapshot)})))
 
-;; =============================================================================
 ;; Route handlers (§5-§6)
-;; =============================================================================
 
 (defn- health-handler
   [request]
@@ -1854,9 +1844,7 @@
   [pid-str]
   (error-response 404 :project-not-found "unknown project" :project_id (str pid-str)))
 
-;; =============================================================================
 ;; Filesystem browse — picking a workspace root
-;; =============================================================================
 ;;
 ;; A machine OWNS its projects, so the only place that knows which folders exist
 ;; is the machine itself. The companion's "Switch project" sheet walks THIS tree;
@@ -2654,12 +2642,10 @@
     (json-response {:events (state/events-since sid (sse-cursor request))})
     (session-404 (get-in request [:path-params :sid]))))
 
-;; =============================================================================
 ;; Voice — canonical transcription through the LOCAL Parakeet model
 ;; (vis-foundation-voice / sherpa-onnx, soft-resolved so a build without the
 ;; extension answers 501 instead of failing to load). Lives on the GATEWAY so
 ;; every client — web, iOS, TUI — hits the SAME canonical /v1 route.
-;; =============================================================================
 
 (defn- requested-engine-id
   "`?engine=whisper-server` names the engine for THIS request; absent means the
@@ -3276,9 +3262,7 @@
                                "Cache-Control" "no-store"}
                      :body f})))))
 
-;; =============================================================================
 ;; Speech voices - the ones somebody brings, not the ones that shipped
-;; =============================================================================
 
 (defn- voice-import-failure
   "The refusal an import deserves: 409 when the selected engine cannot learn a voice at
@@ -3458,13 +3442,9 @@
 
         (error-response 400 :invalid-request (str "unknown suggest kind: " kind))))))
 
-;; =============================================================================
 ;; Router + middleware
-;; =============================================================================
 
-;; =============================================================================
 ;; Route contributions — the whiteboard pattern (pull, not push)
-;; =============================================================================
 ;;
 ;; The gateway core serves ONLY the JSON API. Anything else (the /ui web
 ;; companion, a future surface) is a contribution the gateway PULLS at
@@ -3918,9 +3898,7 @@
       (handler request)
       (do (rebuild-app!) ((:handler @live-app) request)))))
 
-;; =============================================================================
 ;; Lifecycle
-;; =============================================================================
 
 (defonce ^:private toggle-persist-listener-installed? (atom false))
 

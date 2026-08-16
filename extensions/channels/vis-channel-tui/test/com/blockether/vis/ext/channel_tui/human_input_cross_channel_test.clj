@@ -516,7 +516,6 @@
                  (is (= "ops@example.com" (get-in result [:values "notify"])))))
              (finally (engine/cancel! rid "cleanup")))))))
 
-;; =============================================================================
 ;; One vocabulary, three surfaces
 ;;
 ;; The terminal reads the engine's own tables (`human-input.spec`) at runtime,
@@ -526,7 +525,6 @@
 ;; tables and the terminal's own glyphs — a type the engine gains and the app
 ;; never learns fails this test instead of shipping a form the phone renders as
 ;; a hole.
-;; =============================================================================
 
 (defn- repo-file
   "A path under the repository root, found from the working directory upwards so
@@ -613,7 +611,6 @@
         (is (not (str/includes? sheet "'[x]'")))
         (is (str/includes? sheet "HUMAN_INPUT_CHOICE_MARKS"))))))
 
-;; =============================================================================
 ;; A request parked in the SERVE DAEMON (issue #122)
 ;;
 ;; `internal/human-input` publishes on the IN-PROCESS channel bus. That bus does
@@ -624,7 +621,6 @@
 ;; the ONE projection of that stream into the terminal, had no case for it. The
 ;; operator watched a turn that never moved, and `publish!` counting the gateway
 ;; listener meant the engine's "undeliverable" escape hatch never fired either.
-;; =============================================================================
 
 (defn- daemon-view
   "A request VIEW built the way the engine builds one, without parking a thread."

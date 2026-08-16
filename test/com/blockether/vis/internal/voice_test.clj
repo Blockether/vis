@@ -89,9 +89,7 @@
                               text))
                    {:audio-path (str f) :sample-rate 24000}))})
 
-;; =============================================================================
 ;; The engine is a REGISTRATION, not a hardcoded namespace
-;; =============================================================================
 
 (deftest an-engine-is-registered-not-hardcoded
   (with-only-engines!
@@ -149,9 +147,7 @@
                           (voice/unregister-engine! :transcribe :whisper-server)
                           (is (= :parakeet-local (:id (voice/default-engine :transcribe))))))))
 
-;; =============================================================================
 ;; Two directions, one registry - and neither may answer for the other
-;; =============================================================================
 
 (deftest speaking-and-listening-are-separate-entries-in-one-registry
   (with-only-engines!
@@ -287,9 +283,7 @@
                                      :voices (fn []
                                                (throw (ex-info "the voice list is gone" {}))))))))))
 
-;; =============================================================================
 ;; The job: where the work IS
-;; =============================================================================
 
 (deftest a-job-walks-the-shared-phase-vocabulary
   (testing "the phases are ordered and the surfaces share them"
@@ -516,9 +510,7 @@
          (voice/error-message (java.io.IOException. (RuntimeException. "root cause")))))
   (is (string? (voice/error-message (NullPointerException.)))))
 
-;; =============================================================================
 ;; A job PUSHES - watchers, not polls
-;; =============================================================================
 
 (defn- wait-done!
   "Block until `job-id` is terminal (or 5s pass) and return its public job."
@@ -657,9 +649,7 @@
                           (is (= 60 (:progress job)))
                           (is (= "the decoder died" (:error job)))))))
 
-;; =============================================================================
 ;; A voice can be BROUGHT: the engine that clones learns one from a recording
-;; =============================================================================
 
 (defn- cloning-engine
   "A speaking engine that learns a voice from a recording, as a local cloning model

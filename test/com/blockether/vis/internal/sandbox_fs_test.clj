@@ -63,7 +63,6 @@
         ;; allowed
         (expect (= (str root "/inside.txt") (str (confine (str root "/inside.txt")))))
         (expect (= (str root "/sub/new.txt") (str (confine (str root "/sub/new.txt")))))
-        ;; denied
         (expect (denied? #(confine "/etc/passwd")))
         (expect (denied? #(confine (str root "/../etc/passwd")))) ; .. escape
         (expect (denied? #(confine "/tmp")))))

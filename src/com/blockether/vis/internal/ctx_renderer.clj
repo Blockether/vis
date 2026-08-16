@@ -8,26 +8,20 @@
             [com.blockether.vis.internal.ctx-engine :as eng]
             [com.blockether.vis.internal.env-python :as env]))
 
-;; =============================================================================
 ;; Knobs
-;; =============================================================================
 
 ;; Context rendering is intentionally narrow: stable session identity,
 ;; workspace/env/access/routing/symbols, and utilization. Tool outputs are
 ;; rendered as append-only `r["tN/iN/fN"] = …` assignments by the loop, not here.
 
-;; =============================================================================
 ;; The single value printer
 ;;
 ;; `env/ctx->python-str` is a pure JVM serializer for the bounded data boundary:
 ;; deterministic Python literals, insertion order, and no GraalPy Context/GIL.
 ;; `env/bind-ctx!` converts the SAME projected map into the live session dict, so
 ;; rendering cannot stall an eval and never allocates a process-global printer.
-;; =============================================================================
 
-;; =============================================================================
 ;; Top-level
-;; =============================================================================
 
 (def ^:private workspace-drop-keys
   "Internal ids the model never uses — dropped from the model-facing `workspace`

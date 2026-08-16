@@ -54,10 +54,6 @@
   (:require [clojure.string :as str]
             [com.blockether.imaging :as imaging]))
 
-;; =============================================================================
-;; Media types
-;; =============================================================================
-
 (def svg-media-types
   "Vector containers vis RASTERIZES on the way in instead of refusing. No
    provider reads SVG -- it is markup, not pixels -- but unlike a HEIC the
@@ -74,9 +70,7 @@
    no imaging cdylib looks like)."
   true)
 
-;; =============================================================================
 ;; SVG rendering
-;; =============================================================================
 
 (def wire-safe-media-types
   "Containers no vision wire needs CONVERTED (mirrors
@@ -181,9 +175,7 @@
          ;; the caller gets the renderer's own words instead of a silent drop.
          {:reason (str "the SVG could not be rendered: " (failure-reason t))})))))
 
-;; =============================================================================
 ;; Raster re-containering
-;; =============================================================================
 
 (defn- transcode-png
   "Decode `data` and write it back out as PNG, pixel for pixel -- same

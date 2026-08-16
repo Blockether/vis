@@ -40,9 +40,7 @@
   ^File []
   (.getCanonicalFile (workspace/cwd)))
 
-;; =============================================================================
 ;; git subprocess primitive
-;; =============================================================================
 
 (defn- git-argv
   "Argv for `git <args>`. EVERY Vis invocation is prefixed with
@@ -138,9 +136,7 @@
   (let [{:keys [exit out]} (run-git dir args)]
     (when (= 0 exit) out)))
 
-;; =============================================================================
 ;; exact-index commit operation
-;; =============================================================================
 
 (def ^:private git-global-options-with-value
   #{"-C" "-c" "--attr-source" "--config-env" "--git-dir" "--namespace" "--super-prefix"
@@ -344,9 +340,7 @@
     (commit! dir args opts)
     (run-git dir args opts)))
 
-;; =============================================================================
 ;; repository discovery
-;; =============================================================================
 
 (defn repo-work-tree
   "Canonical work-tree directory (top level) of the repository containing
@@ -383,9 +377,7 @@
   (some-> (repo-work-tree start)
           .getName))
 
-;; =============================================================================
 ;; porcelain v2 status parsing
-;; =============================================================================
 ;; `git status --porcelain=v2 --branch -z` gives, NUL-separated:
 ;;   # branch.oid <sha|(initial)>
 ;;   # branch.head <name|(detached)>
@@ -497,9 +489,7 @@
         (str/blank? branch) "unknown"
         :else branch))
 
-;; =============================================================================
 ;; environment-facing counters (env block + footer)
-;; =============================================================================
 
 (defn- count-buckets
   "Split porcelain entries into JGit-equivalent counters. Staged side (X):
@@ -570,9 +560,7 @@
      :created (+ (long added) (long untracked))
      :deleted (+ (long missing) (long removed))}))
 
-;; =============================================================================
 ;; porcelain-like status entries + snapshot
-;; =============================================================================
 
 (defn- entry-code
   "Compact status code for one parsed entry (`M`/`A`/`D`/`??`/`UU`)."
@@ -628,9 +616,7 @@
                             (and (seq line) (not (str/starts-with? line "??"))))
                           (remove empty? (str/split (or out "") #"\u0000"))))))))
 
-;; =============================================================================
 ;; working-tree status (footer) + cache
-;; =============================================================================
 
 (defn working-tree-status
   "Return git facts for `start` (default cwd).
@@ -716,9 +702,7 @@
             (tel/log! :warn ["git: workspace-status failed" (str root) (ex-message t)])
             nil)))))
 
-;; =============================================================================
 ;; file-picker helper: per-path status + ignore snapshot
-;; =============================================================================
 
 (defn git-status-snapshot
   "One-shot status + ignore snapshot for the repo containing `top` (a

@@ -1818,12 +1818,10 @@
       ;; And the fix did not slide the targets down onto the summary row.
       (expect (nil? (hit-at summary-row))))))
 
-;; ---------------------------------------------------------------------------
 ;; A `/draft …` line asks exactly what the draft band asks, so the BAND answers
 ;; it — inside the session's own frame, with the command the slash named already
 ;; pressed. Typing `/draft new` and pressing `d` on the band are one path now;
 ;; the modal text-input window that used to read the label is gone.
-;; ---------------------------------------------------------------------------
 
 (defdescribe draft-slash-band-test
              (it "a `/draft …` line opens the band, on the command it already named"

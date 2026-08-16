@@ -60,13 +60,9 @@
             [com.blockether.vis.internal.toggles :as toggles]
             [taoensso.telemere :as tel]))
 
-;; =============================================================================
 ;; Persistence-backed Telemere :db handler
-;; =============================================================================
 
-;; =============================================================================
 ;; Signal -> log entry
-;; =============================================================================
 
 (defn- signal->entry
   "Transform a telemere signal into the entry map accepted by the
@@ -115,10 +111,6 @@
       (:iteration-id ctx)
       (assoc :iteration-id (:iteration-id ctx)))))
 
-;; =============================================================================
-;; Handler
-;; =============================================================================
-
 (defn handler:db
   "Telemere handler that persists every signal through the
    `com.blockether.vis.core/log!` facade.
@@ -156,9 +148,7 @@
                     (handler:db)
                     {:async {:mode :dropping :buffer-size 2048 :n-threads 1} :min-level :info}))
 
-;; =============================================================================
 ;; Extension CLI dispatcher
-;; =============================================================================
 
 ;;; ── Extension introspection ─────────────────────────────────────────────
 
@@ -320,7 +310,6 @@
                        pos-idx
                        (assoc result (:name spec) (coerce-arg (first more) (:type spec)))))
               (recur more pos-idx result))
-            ;; Positional
             (if (< pos-idx (count positional))
               (let [spec (nth positional pos-idx)]
                 (recur more
@@ -423,9 +412,7 @@
           (if err {:error (str err "\n\n" (format-cmd-help cmd))} {:ok ((:fn cmd) parsed)}))))
     {:error (str "Unknown command: " cmd-name "\n\n" (extension-help))}))
 
-;; =============================================================================
 ;; Agent helper (root one-shot run)
-;; =============================================================================
 
 ;;; ── Agent Definition ─────────────────────────────────────────────────────
 
@@ -843,9 +830,7 @@
 
 (defn result->json [result] (json/write-json-str (json-safe result)))
 
-;; =============================================================================
 ;; Built-in CLI commands
-;; =============================================================================
 
 ;;; ── Output helpers ──────────────────────────────────────────────────────
 
@@ -1263,7 +1248,6 @@
                  (when-let [err (:error result)]
                    (str "Error: " err))]))))
 
-;; ---------------------------------------------------------------------------
 ;; Append-only pretty trace printer.
 ;;
 ;; Strictly append-only (no cursor-erase redraw): dedups iteration headers per
@@ -1272,7 +1256,6 @@
 ;; each reasoning character is emitted exactly once across the whole run.
 ;; Output is identical in a TTY, a pipe, or a pty wrapper, and non-TTY
 ;; consumers (CI logs, `vis-agent ... | tee`) get the full stream.
-;; ---------------------------------------------------------------------------
 
 (defn- make-pretty-trace-printer
   []
@@ -4321,11 +4304,8 @@
           :cmd/run-fn cli-extension-check!}]]
   (registry/register-cmd! spec))
 
-;; =============================================================================
 ;; Dispatcher entry point (-main)
-;; =============================================================================
 
-;; =============================================================================
 ;; Logging routing
 ;;
 ;; Telemere ships with a `:default/console` handler that prints EVERY
@@ -4338,7 +4318,6 @@
 ;;
 ;; Pass `--debug` / `--verbose` / `-v` (or set `VIS_DEBUG=1`) to KEEP
 ;; the console handler in addition to the file handler.
-;; =============================================================================
 
 (def ^:private debug-flags #{"--debug" "--verbose" "-v"})
 
@@ -4382,11 +4361,9 @@
     ;; one does.
     (try (setup-db-handler!) (catch Throwable _ nil))))
 
-;; =============================================================================
 ;; Extension discovery
 ;;
 ;; ONE call. The unified loader lives in the extension facade.
-;; =============================================================================
 
 (defn- print-extension-load-failures!
   "Print every classpath extension namespace whose `(require)` blew
@@ -4431,7 +4408,6 @@
   (print-extension-load-failures!)
   nil)
 
-;; =============================================================================
 ;; Root command
 ;;
 ;; The dispatcher's root has NO hard-coded subcommands. Every entry
@@ -4440,7 +4416,6 @@
 ;; `vis-agent extension` parents are registered by the channel and extension
 ;; facades. Add a third-party jar with its own `register-cmd!`
 ;; calls and its commands appear here without any code change.
-;; =============================================================================
 
 (def ^:private HELP_COL
   "Column - relative to the two-space body indent - where every description in
@@ -4501,7 +4476,6 @@
   (registry/command
     {:cmd/name "vis-agent" :cmd/doc DEFAULT_DOC :cmd/subcommands #(registry/registered-under [])}))
 
-;; =============================================================================
 ;; Pre-redirect stderr for TTY-owning channels
 ;;
 ;; Some leaves (TUI, ncurses) take over the controlling terminal and
@@ -4509,7 +4483,6 @@
 ;; triggers JVM warnings. The check is data-driven via
 ;; `:cmd/owns-tty?`. Channels mark themselves through the channel
 ;; bridge; nothing here is channel-aware.
-;; =============================================================================
 
 (defn- pre-redirect-stderr!
   [args]
@@ -4520,9 +4493,7 @@
         (System/setErr (java.io.PrintStream. (java.io.FileOutputStream. ^String log-path true)
                                              true))))))
 
-;; =============================================================================
 ;; Main
-;; =============================================================================
 
 (defn- root-help-request?
   "True when args ask only for the root help screen. This path can skip

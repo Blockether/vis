@@ -71,7 +71,6 @@
 
     (str (apply str (repeat left \space)) text (apply str (repeat right \space)))))
 
-;; ── close button ────────────────────────────────────────────────────────────
 (def ^{:const true} close-button-width
   "Cells a `close-button!` occupies: a leading space + 1-col `✕` + a\n  trailing space. No divider — the bare ✕ reads as a button, not `|x`."
   3)
@@ -595,7 +594,6 @@
       (p/put-str! g col row shown)
       (p/clear-styles! g))))
 
-;; ── nav arrow ───────────────────────────────────────────────────────────────
 (defn nav-arrow!
   "Paint a workspace-overflow navigation arrow `glyph` at (col,row) as a FILLED
    BUTTON CHIP - routed through the shared `button!`, so the < > read as the

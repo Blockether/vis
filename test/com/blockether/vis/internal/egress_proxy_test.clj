@@ -20,9 +20,7 @@
     (is true "conditional skip: inherited Seatbelt forbids test listeners")
     (f)))
 
-;; ---------------------------------------------------------------------------
 ;; Policy brain — pure, cross-platform
-;; ---------------------------------------------------------------------------
 
 (deftest compile-policy-shape
   (testing "no restriction ⇒ nil (caller skips the proxy entirely)"
@@ -134,9 +132,7 @@
       (is (:allow? (ep/decide pol nil "good.com" nil)))
       (is (not (:allow? (ep/decide pol nil "evil.com" nil)))))))
 
-;; ---------------------------------------------------------------------------
 ;; In-process wire round-trip — hermetic (local origin, no external network)
-;; ---------------------------------------------------------------------------
 
 (defn- start-origin!
   "A one-request-per-connection HTTP origin on 127.0.0.1 that always answers 200 `ok`.
@@ -228,9 +224,7 @@
                (is (= 403 (http-through-proxy (:port proxy) "POST" (:port origin) "/"))))
              (finally ((:stop! proxy)) ((:stop! origin))))))))
 
-;; ---------------------------------------------------------------------------
 ;; MITM (TLS-terminating) round-trip — HTTPS verb enforcement for shell children
-;; ---------------------------------------------------------------------------
 
 (defn- start-tls-origin!
   "A one-request-per-connection HTTPS origin on 127.0.0.1 using `server-ctx`. Records
@@ -485,7 +479,6 @@
                       ((:close! cap))))))))
 
 ;; Tier-2 network filters — the extension escape valve above :rules
-;; ---------------------------------------------------------------------------
 
 (deftest filter-registries
   (testing "request filter denies via the decrypted request; decide+filter honors it"
@@ -546,10 +539,8 @@
                         ((:stop! proxy))
                         ((:stop! origin)))))))))
 
-;; ---------------------------------------------------------------------------
 ;; SSRF deny-floor — pure, cross-platform. The proxy is an UNJAILED deputy, so
 ;; `allowed-domains ["*"]` must never mean "fetch the host's own trust plane."
-;; ---------------------------------------------------------------------------
 
 (deftest ssrf-deny-floor
   (testing "always-blocked (non-overridable even with allow-private?)"
@@ -684,11 +675,9 @@
       (is (< elapsed-ms 5000.0)
           (str "50k policy decisions exceeded the 5s regression budget: " elapsed-ms "ms")))))
 
-;; ---------------------------------------------------------------------------
 ;; SOCKS5 lane — generic-TCP door (ssh / git+ssh / db / raw TCP), multiplexed on
 ;; the SAME loopback port as the HTTP proxy (first byte 0x05). Host allow/deny +
 ;; SSRF floor + token attribution, no verb/path.
-;; ---------------------------------------------------------------------------
 
 (defn- socks5-http
   "Through the SOCKS5 lane at `proxy-port`, negotiate (no-auth, or user/pass when
@@ -874,9 +863,7 @@
              (is (false? (:allow? final))))
            (finally (ep/unregister-network-filters-for-owner! o))))))
 
-;; ---------------------------------------------------------------------------
 ;; CONNECT tunnel liveness — a read timeout is a POLL, not an EOF
-;; ---------------------------------------------------------------------------
 
 (defn- start-tunnel-origin!
   "A raw (non-HTTP) origin for CONNECT-tunnel tests: accepts, NEVER reads, and

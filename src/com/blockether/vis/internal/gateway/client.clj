@@ -782,12 +782,10 @@
       (refresh-session-model! sid k))
     val))
 
-;; ---------------------------------------------------------------------------
 ;; Managed resources (backgrounds) — the daemon owns the registry (the agent's
 ;; tools register here while a turn runs IN THE DAEMON), so a client in another
 ;; process reads/controls them over HTTP. An in-process client uses the
 ;; local registry directly and never touches these.
-;; ---------------------------------------------------------------------------
 
 (defn list-resources
   "Vector of the session's live resource DATA maps from the daemon's registry
@@ -1765,7 +1763,6 @@
     (swap! subscriptions dissoc sub-id))
   nil)
 
-;; ---------------------------------------------------------------------------
 ;; Multiplexed subscription: ONE SSE connection for MANY sessions.
 ;;
 ;; A channel watching N sessions previously opened N SSE sockets (+N client
@@ -1773,7 +1770,6 @@
 ;; watched session down a SINGLE process-wide connection to `/v1/events?sids=…`,
 ;; demuxed by each event's `:session_id`. Opening/closing a tab just edits the
 ;; session set and reconnects (resuming each session from its advanced cursor).
-;; ---------------------------------------------------------------------------
 
 (defonce ^:private mux
   ;; {:subs {sid {:sinks {sub-id fn} :cursor-atom atom<long>}}

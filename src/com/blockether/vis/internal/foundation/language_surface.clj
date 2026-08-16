@@ -420,11 +420,9 @@
                                                 true
                                                 vec)}}))))
 
-;; =============================================================================
 ;; Call-selection helpers — what a CALL asked for, read off its input map. A pack
 ;; reports what it RAN; only the call knows what was SELECTED, so `run_tests`
 ;; stamps `test-target` into the result metadata.
-;; =============================================================================
 
 (defn- input-list
   "Comma-joined non-blank entries of list-ish call key `k`, else nil — how a

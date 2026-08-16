@@ -27,9 +27,7 @@
       :error       error-map-or-nil}"
   (:require [clojure.string :as str]))
 
-;; ---------------------------------------------------------------------------
 ;; Status enum — standardised across engine / progress / restore.
-;; ---------------------------------------------------------------------------
 
 (def statuses
   "The canonical iteration / op status enum."
@@ -41,10 +39,8 @@
   "Glyph for each status, matching the REVAMP target UX header."
   {:ok "✓" :error "✗" :running "↻" :cancelled "⊘" :timeout "⏱"})
 
-;; ---------------------------------------------------------------------------
 ;; Block-level scope: strip the per-form `/fK` (or `/bK`) tail so the BLOCK
 ;; header reports `tN/iM`, never `tN/iM/fK`.
-;; ---------------------------------------------------------------------------
 
 (defn block-scope
   "Reduce a form/op scope (`tN/iM/fK`) to its block-level `tN/iM`.
@@ -65,9 +61,7 @@
           (block-scope (:scope f)))
         forms))
 
-;; ---------------------------------------------------------------------------
 ;; Op status: per-op success?/error → enum.
-;; ---------------------------------------------------------------------------
 
 (defn op-status
   [{:keys [success? error]}]
@@ -75,17 +69,13 @@
         (false? success?) :error
         :else :ok))
 
-;; ---------------------------------------------------------------------------
 ;; Stdout — the SINGLE display surface for a code block. Whatever the program
 ;; PRINTED is what both the model (its tool_result) and the human channels
 ;; (TUI / web bubbles) see. Bare return values are never echoed; render-fn op
 ;; cards are gone. Each block carries its OWN `:stdout` directly (live:
 ;; progress chunk forms; resume: persisted envelope `:forms`).
-;; ---------------------------------------------------------------------------
 
-;; ---------------------------------------------------------------------------
 ;; Block-level merged code + duration + status + error.
-;; ---------------------------------------------------------------------------
 
 (defn entry-code
   "The block's source. Uses the entry's `:code` when present, else joins
@@ -129,11 +119,9 @@
         :running
         :else :ok))
 
-;; ---------------------------------------------------------------------------
 ;; Canonicalisation — fill the block-level fields on an entry that already
 ;; carries `:forms` (+ legacy per-form fields). Both pipelines call this as
 ;; their final step so the parity invariant compares fully-canonical entries.
-;; ---------------------------------------------------------------------------
 
 (defn canonicalize
   "Layer the canonical block-level fields onto an iteration entry that

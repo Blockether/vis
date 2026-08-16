@@ -37,18 +37,14 @@
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.foundation.harness.discovery :as d]))
 
-;; =============================================================================
 ;; Small utilities
-;; =============================================================================
 
 (defn- clip
   [s ^long n]
   (let [s (str s)]
     (if (> (count s) n) (str (subs s 0 (max 0 (dec n))) "…") s)))
 
-;; =============================================================================
 ;; Skill ownership — the nested project a SKILL.md was written for
-;; =============================================================================
 
 (defn- canonical-path
   [p]
@@ -88,9 +84,7 @@
         (subs owner (inc (count root)))
         owner))))
 
-;; =============================================================================
 ;; /skill:<name> — user-invokable skill templates
-;; =============================================================================
 
 (defn- skill-template-text
   "Expanded user-message text for a `/skill:<name> [task]` invocation: the SENTENCE
@@ -168,9 +162,7 @@
 ;; sources a stat can miss and gives the user an explicit big hammer).
 (extension/register-reload-hook! ::discovery d/reload!)
 
-;; =============================================================================
 ;; agent(name, prompt) — dispatch a sub-AGENT as a sub_loop CHILD
-;; =============================================================================
 
 (defn- agent-result
   "Run the named agent as a sub_loop child: its markdown body becomes the
@@ -231,9 +223,7 @@
                :inject-env? true
                :tag :mutation}))
 
-;; =============================================================================
 ;; Prompt fragment — the CHEAP progressive listings (name — description)
-;; =============================================================================
 
 (defn- skills-prompt
   [_env]
@@ -271,10 +261,6 @@
   [env]
   (let [parts (remove str/blank? [(skills-prompt env) (agents-prompt env)])]
     (if (seq parts) (str/join "\n\n" parts) "")))
-
-;; =============================================================================
-;; Extension
-;; =============================================================================
 
 (def vis-extension
   (vis/extension

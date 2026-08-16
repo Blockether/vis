@@ -29,9 +29,7 @@
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.state :as state]))
 
-;; -----------------------------------------------------------------------------
 ;; Model / provider display
-;; -----------------------------------------------------------------------------
 
 (defn- chosen-model-info
   []
@@ -141,9 +139,7 @@
                  :fg-role :warn
                  :join-left? true}))))))
 
-;; -----------------------------------------------------------------------------
 ;; Contribution map
-;; -----------------------------------------------------------------------------
 
 (def channel-contributions
   {:tui.slot/footer-segment [{:id :tui.builtin.model/footer :fn #'model-footer-render}]})

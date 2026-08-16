@@ -37,9 +37,7 @@
 
 (def ^:private manifest-resource "vis-docs/vis-docs.edn")
 
-;; ---------------------------------------------------------------------------
 ;; commonmark markdown -> HTML
-;; ---------------------------------------------------------------------------
 
 (def ^:private extensions [(TablesExtension/create) (StrikethroughExtension/create)])
 
@@ -106,9 +104,7 @@
 
     [html' @toc]))
 
-;; ---------------------------------------------------------------------------
 ;; classpath discovery
-;; ---------------------------------------------------------------------------
 
 (defn- classloader
   ^ClassLoader []
@@ -241,9 +237,7 @@
   []
   (:generation (ensure-pages!)))
 
-;; ---------------------------------------------------------------------------
 ;; theme (VIS palette) — enterprise docs layout
-;; ---------------------------------------------------------------------------
 
 (def ^:private font-tokens
   {"hanken-grotesk.woff2" "FONTPATH_hanken" "jetbrains-mono.woff2" "FONTPATH_jbm"})
@@ -566,7 +560,6 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
       "</style></head><body>"
       ;; CSS-only mobile nav toggle (checkbox precedes .shell so it can target .side)
       "<input type=\"checkbox\" id=\"navtoggle\" class=\"navtoggle\" aria-label=\"Toggle navigation\">"
-      ;; header
       "<header class=\"top\">"
       "<label for=\"navtoggle\" class=\"hamburger\" title=\"Menu\"><span></span><span></span><span></span></label>"
       "<a class=\"brand\" href=\""
@@ -658,9 +651,7 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
       "p.hidden=p.getAttribute('data-tabpanel')!==which})})" "})();"
       "</script>" "</body></html>")))
 
-;; ---------------------------------------------------------------------------
 ;; static site
-;; ---------------------------------------------------------------------------
 
 (def ^:private asset-files
   {"vis-docs/assets/logo.png" "assets/logo.png"
@@ -690,9 +681,7 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
       (spit (io/file out-dir "index.html") (page-html site-data home :static)))
     {:out out-dir :pages (mapv :slug pages)}))
 
-;; ---------------------------------------------------------------------------
 ;; live serving — Ring handler for the gateway `:gateway.slot/http-routes` slot.
-;; ---------------------------------------------------------------------------
 
 ;; `collect` is memoized on a stat pass, so the handler simply calls it: an
 ;; edit under `resources/vis-docs` shows on the next refresh and an unchanged

@@ -35,9 +35,7 @@
            (java.nio.file.attribute FileAttribute)
            (java.util Base64 UUID)))
 
-;; =============================================================================
 ;; Backend registry (mirrors internal.workspace's backend registry)
-;; =============================================================================
 
 (defonce ^:private backends (atom {}))
 
@@ -104,9 +102,7 @@
   []
   (first (registered-backends)))
 
-;; =============================================================================
 ;; Offload decision (pure)
-;; =============================================================================
 
 (def ^:const default-offload-floor-bytes
   "Size floor below which the engine default keeps an artifact inline (256 KiB).
@@ -135,9 +131,7 @@
                (try (pred (select-keys att [:size :media-type :kind :tool-call-id]))
                     (catch Throwable _ false))))))
 
-;; =============================================================================
 ;; Write side: offload store-bound attachments
-;; =============================================================================
 
 (defn- decode-b64
   ^bytes [att]
@@ -216,9 +210,7 @@
   [atts]
   (mapv offload-attachment atts))
 
-;; =============================================================================
 ;; Read side: resolve + hydrate
-;; =============================================================================
 
 (defn scheme-of
   "URI scheme of a `storage-uri` (`\"<scheme>://...\"`), or nil."
@@ -257,9 +249,7 @@
   [atts]
   (mapv hydrate (or atts [])))
 
-;; =============================================================================
 ;; Reference backend: local-disk `file://`
-;; =============================================================================
 
 (defn file-backend
   "Reference storage backend that offloads bytes to a local DIRECTORY, one file

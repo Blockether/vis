@@ -58,9 +58,7 @@
    without bound. Oldest-seen devices are evicted first."
   200)
 
-;; =============================================================================
 ;; Paths + credentials
-;; =============================================================================
 
 (defn- vis-home
   ;; `vis.push.home` redirects the whole push home (registry + APNs key dir) so a
@@ -188,9 +186,7 @@
 (defn configured? "True when this gateway can deliver an APPLE push." [] (:is-configured (config)))
 
 
-;; =============================================================================
 ;; ES256 provider token (JWT)
-;; =============================================================================
 
 (defn- b64url ^String [^bytes b] (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) b))
 
@@ -294,9 +290,7 @@
         (reset! jwt-cache {:token t :at (System/currentTimeMillis) :key-id (:key-id cfg)})
         t))))
 
-;; =============================================================================
 ;; Device registry
-;; =============================================================================
 
 (defn mask
   "A device token is a secret. This is the ONLY form allowed into a log."
@@ -430,9 +424,7 @@
       (tel/log! {:level :info :id ::device-unregistered :data {:token (mask token)}}))
     present?))
 
-;; =============================================================================
 ;; Sending
-;; =============================================================================
 
 (defonce ^:private http-client (delay (http/client {:connect-timeout 10000 :version :http2})))
 
@@ -577,9 +569,7 @@
                    (select-keys (send-to-device! d notification) [:is-delivered :status :reason])))
           ds)))
 
-;; =============================================================================
 ;; The turn-finished trigger
-;; =============================================================================
 
 (defonce ^:private describe-session
   ;; [sid tid] -> {:title … :answer …} — injected by the server so this ns stays

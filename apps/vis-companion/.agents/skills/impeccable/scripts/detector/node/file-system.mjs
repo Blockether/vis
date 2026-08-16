@@ -1,9 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-// ---------------------------------------------------------------------------
 // File walker
-// ---------------------------------------------------------------------------
 
 // Hidden directories are skipped wholesale during recursion (below), which
 // covers .git / .next / .nuxt / .svelte-kit / .turbo / .vercel and — the
@@ -52,9 +50,7 @@ function walkDir(dir) {
 }
 
 
-// ---------------------------------------------------------------------------
 // Import graph (multi-file awareness)
-// ---------------------------------------------------------------------------
 
 function resolveImport(specifier, fromDir, fileSet) {
   if (!/^[./]/.test(specifier)) return null; // skip bare specifiers
@@ -93,9 +89,7 @@ function buildImportGraph(files) {
   return graph;
 }
 
-// ---------------------------------------------------------------------------
 // Framework dev server detection
-// ---------------------------------------------------------------------------
 
 const FRAMEWORK_CONFIGS = [
   { name: 'Next.js', files: ['next.config.js', 'next.config.mjs', 'next.config.ts'], defaultPort: 3000,

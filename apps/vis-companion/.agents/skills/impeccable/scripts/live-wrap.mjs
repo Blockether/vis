@@ -456,9 +456,7 @@ The agent should insert variant HTML at insertLine.`);
   }));
 }
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 function argVal(args, flag) {
   const prefix = flag + '=';

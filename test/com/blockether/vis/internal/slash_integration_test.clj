@@ -58,9 +58,7 @@
    :slash/run-fn (fn [_ctx]
                    {:slash/status :ok :slash/title (str "ran /" name) :slash/body body})})
 
-;; =============================================================================
 ;; Short-circuit
-;; =============================================================================
 
 (defdescribe
   run-turn-slash-short-circuit-test
@@ -155,9 +153,7 @@
                (finally (prompt-templates/register-provider! ::workspace-template
                                                              (constantly nil)))))))))
 
-;; =============================================================================
 ;; IR-shaped :slash/body persists as Markdown
-;; =============================================================================
 
 (defdescribe slash-body-ir-test
              (it "IR :slash/body renders to Markdown for answer_markdown column"
@@ -185,9 +181,7 @@
                        (expect (str/includes? (:answer result) "Hello"))
                        (expect (str/includes? (:answer result) "**world**")))))))
 
-;; =============================================================================
 ;; Slash-emitted task / fact land on CTX engine
-;; =============================================================================
 
 (defdescribe slash-error-envelope-test
              (it "unknown slash persists as :user-slash with error in result"

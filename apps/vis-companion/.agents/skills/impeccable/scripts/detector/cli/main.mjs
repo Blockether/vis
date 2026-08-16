@@ -20,9 +20,7 @@ import {
   walkDir,
 } from '../node/file-system.mjs';
 
-// ---------------------------------------------------------------------------
 // Output formatting
-// ---------------------------------------------------------------------------
 
 function formatFindingSummary(count) {
   return `${count} anti-pattern${count === 1 ? '' : 's'} found.`;
@@ -98,9 +96,7 @@ function formatFindings(findings, jsonMode) {
   return out.join('\n');
 }
 
-// ---------------------------------------------------------------------------
 // Stdin handling
-// ---------------------------------------------------------------------------
 
 // `optionsFor` maps a local path to scan options carrying that path's own
 // project design system (or base options when null). Falls back to a plain
@@ -123,9 +119,7 @@ async function handleStdin(optionsFor = () => ({})) {
 }
 
 
-// ---------------------------------------------------------------------------
 // CLI
-// ---------------------------------------------------------------------------
 
 async function confirm(question) {
   const rl = (await import('node:readline')).default.createInterface({

@@ -309,9 +309,7 @@ def export_models(output_dir="onnx_models", weights_path="weights/tts_b6369a24.s
 
     tts_model.eval()
     
-    # ---------------------------------------------------------
     # Export Mimi Encoder (audio -> latents)
-    # ---------------------------------------------------------
     print("Exporting Mimi Encoder...")
     
     mimi_encoder_wrapper = MimiEncoderWrapper(
@@ -337,14 +335,11 @@ def export_models(output_dir="onnx_models", weights_path="weights/tts_b6369a24.s
     )
     print(f"Mimi Encoder exported to {encoder_onnx_path}")
     
-    # ---------------------------------------------------------
     # Export Text Conditioner (tokens -> embeddings)
-    # ---------------------------------------------------------
     print("Exporting Text Conditioner...")
     
     text_conditioner_wrapper = TextConditionerWrapper(tts_model.flow_lm.conditioner)
     
-    # Dummy tokens
     dummy_tokens = torch.randint(0, 1000, (1, 20))
     
     conditioner_onnx_path = os.path.join(output_dir, "text_conditioner.onnx")
@@ -368,9 +363,7 @@ def export_models(output_dir="onnx_models", weights_path="weights/tts_b6369a24.s
     
     flow_lm_onnx_path = None
     
-    # ---------------------------------------------------------
     # Export Mimi
-    # ---------------------------------------------------------
     print("Exporting Mimi...")
     
     mimi_state = init_states(tts_model.mimi, batch_size=1, sequence_length=STATIC_SEQ_LEN)
@@ -391,7 +384,6 @@ def export_models(output_dir="onnx_models", weights_path="weights/tts_b6369a24.s
     mimi_input_names = ["latent"] + [f"state_{i}" for i in range(len(flat_mimi_state))]
     mimi_output_names = ["audio_frame"] + [f"out_state_{i}" for i in range(len(flat_mimi_state))]
     
-    # Mimi dynamic axes
     mimi_dynamic_axes = {
         "latent": {1: "seq_len"}
     }
@@ -419,9 +411,7 @@ def verify_export(flow_lm_path, mimi_path, tts_model, output_dir="onnx_models"):
     conditioner_path = os.path.join(output_dir, "text_conditioner.onnx")
     
     if os.path.exists(encoder_path):
-        # ---------------------------------------------------------
         # Verify Mimi Encoder
-        # ---------------------------------------------------------
         print("Verifying Mimi Encoder...")
         ort_encoder = ort.InferenceSession(encoder_path)
         
@@ -436,7 +426,6 @@ def verify_export(flow_lm_path, mimi_path, tts_model, output_dir="onnx_models"):
         with torch.no_grad():
             pt_encoder_out = encoder_wrapper(test_audio)
         
-        # ONNX run
         onnx_encoder_out = ort_encoder.run(None, {"audio": test_audio.numpy()})[0]
         
         np.testing.assert_allclose(
@@ -446,9 +435,7 @@ def verify_export(flow_lm_path, mimi_path, tts_model, output_dir="onnx_models"):
         print("Mimi Encoder output matches!")
     
     if os.path.exists(conditioner_path):
-        # ---------------------------------------------------------
         # Verify Text Conditioner
-        # ---------------------------------------------------------
         print("Verifying Text Conditioner...")
         ort_conditioner = ort.InferenceSession(conditioner_path)
         
@@ -460,7 +447,6 @@ def verify_export(flow_lm_path, mimi_path, tts_model, output_dir="onnx_models"):
         with torch.no_grad():
             pt_conditioner_out = conditioner_wrapper(test_tokens)
         
-        # ONNX run
         onnx_conditioner_out = ort_conditioner.run(None, {"token_ids": test_tokens.numpy()})[0]
         
         np.testing.assert_allclose(
@@ -470,9 +456,7 @@ def verify_export(flow_lm_path, mimi_path, tts_model, output_dir="onnx_models"):
         print("Text Conditioner output matches!")
     
     if mimi_path and os.path.exists(mimi_path):
-        # ---------------------------------------------------------
         # Verify Mimi
-        # ---------------------------------------------------------
         ort_session_mimi = ort.InferenceSession(mimi_path)
         
         mimi_state = init_states(tts_model.mimi, batch_size=1, sequence_length=1000)

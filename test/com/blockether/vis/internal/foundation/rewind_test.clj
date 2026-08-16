@@ -17,9 +17,7 @@
            (java.nio.file Files LinkOption)
            (java.nio.file.attribute FileAttribute)))
 
-;; =============================================================================
 ;; Fixtures
-;; =============================================================================
 
 (defn- tmp-dir
   ^File [prefix]
@@ -93,9 +91,7 @@
     (io/make-parents f)
     (spit f (str line "\n") :append true)))
 
-;; =============================================================================
 ;; Round trips
-;; =============================================================================
 
 (defdescribe round-trip-test
              (it "restores the exact pre-mutation bytes"
@@ -191,9 +187,7 @@
                                (rw/restore! s 1)
                                (expect (= "ORIGINAL" (slurp f)))))))
 
-;; =============================================================================
 ;; Turn semantics
-;; =============================================================================
 
 (defdescribe
   turn-semantics-test
@@ -299,9 +293,7 @@
                     (rw/record-pre! (ctx s 2 :patch) [(abs f)])
                     (expect (= 2 (count (filter #(= "pre" (get % "kind")) (rw/journal s)))))))))
 
-;; =============================================================================
 ;; Store integrity
-;; =============================================================================
 
 (defdescribe
   store-integrity-test
@@ -400,9 +392,7 @@
                       (expect (= 1 (count (objects s))))
                       (expect (= before (.lastModified ^File o))))))))
 
-;; =============================================================================
 ;; Nasty filesystem shapes
-;; =============================================================================
 
 (defdescribe
   filesystem-shapes-test
@@ -536,9 +526,7 @@
                       (rw/record-pre! (ctx s 1 :patch) [(abs f)])
                       (expect (= 1 (get (first (rw/points s)) "uncovered"))))))))
 
-;; =============================================================================
 ;; Dry runs
-;; =============================================================================
 
 (defdescribe dry-run-test
              (it "reports the plan without touching a single byte"
@@ -563,9 +551,7 @@
                                  (expect (= "WRECKED" (slurp f)))
                                  (expect (.exists gone)))))))
 
-;; =============================================================================
 ;; The op-hook must be transparent
-;; =============================================================================
 
 (defn- env-for
   [session turn]
@@ -706,9 +692,7 @@
         (expect (every? hooked rw/sweep-ops))
         (expect (every? #(= :around (:phase %)) rw/op-hooks)))))
 
-;; =============================================================================
 ;; Concurrency
-;; =============================================================================
 
 (defdescribe
   concurrency-test
@@ -761,9 +745,7 @@
                     (expect (= 1 (count (objects s))))
                     (expect (= 1 (count (get (rw/plan s 1) "restore"))))))))
 
-;; =============================================================================
 ;; Extension contract
-;; =============================================================================
 
 (defdescribe extension-shape-test
              (it "exposes a /rewind slash command"
@@ -777,13 +759,11 @@
                  (expect (map? rw/vis-extension))
                  (expect (seq (:ext/op-hooks rw/vis-extension)))))
 
-;; =============================================================================
 ;; Slash rendering — the SAME Markdown is painted by the TUI bubble and by the
 ;; companion's react-markdown, so the shape of the body is a contract, not
 ;; cosmetics. These pin the three bugs that made `/rewind` unusable:
 ;; a prompt-arg that hid the list, fixed-width columns Markdown collapsed, and
 ;; plan bullets whose verb came from a key only `apply-entry!` ever writes.
-;; =============================================================================
 
 (defn- rewind-spec [] (first (filter #(= "rewind" (:slash/name %)) rw/slash-specs)))
 
@@ -914,13 +894,11 @@
                     (expect (= :error (:slash/status r)))
                     (expect (str/includes? (pr-str r) "/rewind [<turn>] [--dry-run]"))))))
 
-;; =============================================================================
 ;; Context reporting — the journal knows FILES; what a turn cost the
 ;; CONVERSATION lives in the session store and is joined on `position`. A
 ;; rewind list reads as "undo everything", so the slash has to show that cost
 ;; AND say the conversation is never rewound. The store is best-effort: when it
 ;; is absent or broken the command still works, minus one column.
-;; =============================================================================
 
 (defn- run-rewind-with-store
   "`run-rewind` with a session store behind it. `rows-fn` stands in for
@@ -1059,9 +1037,7 @@
             (expect (str/includes? body "rewinding moved files only") body)
             (expect (= 1 (:turns (:context (:slash/data r))))))))))
 
-;; =============================================================================
 ;; Round 2 regressions: invented directories, store isolation, hostile types
-;; =============================================================================
 
 (defdescribe invented-directory-test
              (it "removes the directories the turn invented, not just the file"
@@ -1192,9 +1168,7 @@
         (rw/restore! s 1)
         (expect (= "ORIGINAL" (slurp f)))))))
 
-;; =============================================================================
 ;; Round 3 regression: a write through a SYMLINK lands on the resolved file
-;; =============================================================================
 
 (defdescribe
   symlink-test
@@ -1247,9 +1221,7 @@
                       (expect (Files/isSymbolicLink (.toPath dangling)))
                       (expect (Files/isSymbolicLink (.toPath a))))))))
 
-;; =============================================================================
 ;; Plan shape at scale
-;; =============================================================================
 
 (defdescribe
   plan-uncovered-dedup-test

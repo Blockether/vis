@@ -117,7 +117,6 @@ export function removeTag(content, _syntax) {
   return content;
 }
 
-// ---------------------------------------------------------------------------
 // Content-Security-Policy meta-tag patcher
 //
 // When the user's HTML carries `<meta http-equiv="Content-Security-Policy">`,
@@ -135,7 +134,6 @@ export function removeTag(content, _syntax) {
 // shared helpers) is NOT patched here — those need framework-specific config
 // edits and are handled via the existing detect-csp.mjs reference output.
 // Only the in-source meta-tag form gets the auto-patch.
-// ---------------------------------------------------------------------------
 
 const CSP_MARKER_ATTR = 'data-impeccable-csp-original';
 

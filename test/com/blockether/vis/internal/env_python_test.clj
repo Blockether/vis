@@ -1418,9 +1418,7 @@
                             (ep/->clj (.eval (tpc/context ::indefinite-park) "python" "1 + 1"))))))
 
 
-;; -----------------------------------------------------------------------------
 ;; Helper definitions that outlive the PROCESS
-;; -----------------------------------------------------------------------------
 
 (defn- restore-into-fresh-sandbox
   "Persist one sandbox's definitions and restore them into a FRESH one, exactly

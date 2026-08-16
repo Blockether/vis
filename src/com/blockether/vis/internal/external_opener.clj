@@ -26,9 +26,7 @@
   (:import (java.io File)
            (java.nio.file Path Paths)))
 
-;; =============================================================================
 ;; Scheme classification
-;; =============================================================================
 
 (def ^:private scheme-re
   "Match the scheme-and-colon prefix of a URI, RFC-3986 style:
@@ -64,9 +62,7 @@
 
                               :rejected)))))
 
-;; =============================================================================
 ;; cwd-anchored path safety
-;; =============================================================================
 
 (defn- cwd-path
   "Normalized absolute explicit workspace cwd as a Path. Indirected
@@ -166,9 +162,7 @@
 
           (when (under-cwd? f) {:scheme :rel :target (.getAbsolutePath f) :line line}))))))
 
-;; =============================================================================
 ;; OS dispatch
-;; =============================================================================
 
 (defn os-name
   "Lower-cased `os.name` system property. Indirected so tests can
@@ -211,9 +205,7 @@
   (let [t (editor-target target line)]
     [["code" "-g" t] ["cursor" "-g" t] ["cursor" "--goto" t] ["zed" t]]))
 
-;; =============================================================================
 ;; Side-effecting spawn
-;; =============================================================================
 
 (defn- spawn!
   "Spawn `argv` with stdio redirected to /dev/null. Returns nil on

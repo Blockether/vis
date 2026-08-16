@@ -21,9 +21,7 @@
             [com.blockether.vis.internal.fff-index :as fff-index]
             [com.blockether.vis.internal.workspace :as workspace]))
 
-;; =============================================================================
 ;; Frontmatter parsing — minimal, no YAML dependency
-;; =============================================================================
 
 (defn- fold-value
   "Normalize one folded frontmatter value. Frontmatter is YAML-ISH, not YAML:
@@ -73,9 +71,7 @@
                str/trim)]
     (when-not (str/blank? s) s)))
 
-;; =============================================================================
 ;; Pure entry builders (string in, entry out — testable without the fs)
-;; =============================================================================
 
 (defn parse-agent
   "Build an agent entry from raw markdown `content`. `name-default` (the
@@ -128,9 +124,7 @@
                [#{} []])
        second))
 
-;; =============================================================================
 ;; Source roots (filesystem)
-;; =============================================================================
 
 (defn- home
   "`user.home` read per call — a top-level `def` is folded at native-image build time."
@@ -294,9 +288,7 @@
        (remove #(= "SKILL.md" (peek (str/split % #"/"))))
        (sort)
        (vec)))
-;; =============================================================================
 ;; Discovery (filesystem → deduped entries)
-;; =============================================================================
 
 (defn discover-agents
   "Parse every agent file across `agent-dirs`, first-name-wins, tagged by tool."
@@ -480,11 +472,9 @@
 
                    e)))
 
-;; =============================================================================
 ;; Cache + accessors — marker-revalidated, so a skill/agent added (or edited)
 ;; mid-session is picked up without a process restart. The marker is a cheap
 ;; stat pass over the candidate files; content is re-parsed only on change.
-;; =============================================================================
 
 (defonce ^:private cache (atom {}))
 

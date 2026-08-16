@@ -33,9 +33,7 @@
             StandardCopyOption]
            [java.nio.file.attribute BasicFileAttributes FileAttribute PosixFilePermission]))
 
-;; =============================================================================
 ;; Dynamic cwd binding
-;; =============================================================================
 
 (def ^:dynamic *workspace-root*
   "Canonical workspace root for the current tool call. Bound per-turn
@@ -412,9 +410,7 @@
 
     (str name "-" hash)))
 
-;; =============================================================================
 ;; Rift copy-on-write workspace backend — the only backend, hardcoded
-;; =============================================================================
 
 (defn- rift-linked-git-worktree-source?
   [root]
@@ -860,9 +856,7 @@
 
                (try (discard-root! backend root) (catch Throwable _ nil))))))
 
-;; =============================================================================
 ;; Since-fork diff — pure mtime, git-free
-;; =============================================================================
 
 (def ^:private prune-dir-names
   "Directory names pruned from the since-fork diff AT ANY DEPTH: VCS internals
@@ -1046,10 +1040,6 @@
                             (visitFileFailed [_file _exc] FileVisitResult/CONTINUE)))
       (vec acc))))
 
-;; =============================================================================
-;; Hooks
-;; =============================================================================
-
 (defonce ^:private hooks (atom {:on-spawn [] :on-apply [] :on-discard []}))
 
 (defn register-hook!
@@ -1064,9 +1054,7 @@
   (doseq [f (clojure.core/get @hooks hook-id)]
     (try (apply f args) (catch Throwable _ nil))))
 
-;; =============================================================================
 ;; Lookup
-;; =============================================================================
 
 (defn get
   "Return the workspace with `workspace-id`, or nil."
@@ -1088,9 +1076,7 @@
   [db-info session-state-id]
   (p/db-workspace-for-session db-info session-state-id))
 
-;; -----------------------------------------------------------------------------
 ;; Label + focus + hydration
-;; -----------------------------------------------------------------------------
 
 (defn set-label!
   "Set the workspace's human-friendly `:label`. Empty/nil clears it."
@@ -1269,9 +1255,7 @@
                            file-path)
                    (trunk-root))}))
 
-;; =============================================================================
 ;; Mutations
-;; =============================================================================
 
 (defn draft?
   "True when a workspace carries an apply baseline and therefore represents
