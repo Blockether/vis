@@ -28,7 +28,7 @@ def __vis_install_anydoc__():
             self.format = format
 
     class SourceError(AnydocError, TypeError):
-        """Something handed to `search` cannot be a document."""
+        """Something handed to anydoc cannot be read as a document."""
 
     class QueryError(AnydocError, ValueError):
         """A query the parser refused, pointing at the character it choked on."""
@@ -75,7 +75,47 @@ def __vis_install_anydoc__():
         if isinstance(data, (bytes, bytearray, memoryview)):
             return bytes(data)
         raise SourceError(
-            "anydoc needs bytes-like document data, not %s" % type(data).__name__
+            "anydoc needs bytes-like document data, not %s; a document on disk "
+            "is anydoc.to_markdown(path) / anydoc.read(path)" % type(data).__name__
+        )
+
+    def _source(source, name=None, head=0):
+        """`(bytes, name, path)` for a document however the caller holds it.
+
+        A `str`/`os.PathLike` is a file to open, and its base name is what tells
+        the converter that a signature-less `.csv` is a spreadsheet; bytes are
+        the document itself; an open binary file is read. Which of the three a
+        caller has is an accident of where the document came from, so every
+        reading door takes all three instead of making the caller convert.
+        Opening a path that is not there raises the usual `OSError`, naming it.
+        """
+        if isinstance(source, (bytes, bytearray, memoryview)):
+            return bytes(source), name, None
+        if isinstance(source, str) or hasattr(source, "__fspath__"):
+            path = os.fspath(source) if hasattr(source, "__fspath__") else source
+            with open(path, "rb") as handle:
+                data = handle.read(head) if head else handle.read()
+            return data, name or os.path.basename(path) or None, path
+        if hasattr(source, "read"):
+            data = _as_bytes(source.read())
+            opened = getattr(source, "name", None)
+            if name is None and isinstance(opened, str):
+                name = os.path.basename(opened) or None
+            return data, name, None
+        raise SourceError(
+            "anydoc needs a path, bytes or an open binary file, not %s"
+            % type(source).__name__
+        )
+
+    def _document_error(error, path, format, id=None):
+        """The same refusal, told with the file it came from."""
+        if path is None:
+            return error
+        return DocumentError(
+            "%s: %s" % (path, error.message),
+            document_id=str(id) if id is not None else path,
+            source=path,
+            format=format,
         )
 
     def _b64(data):
@@ -1058,26 +1098,38 @@ def __vis_install_anydoc__():
         )
 
     def to_document(
-        data, format=None, name=None, assets=True, max_assets=0, id=None, blocks=True
+        source,
+        format=None,
+        name=None,
+        assets=True,
+        max_assets=0,
+        id=None,
+        blocks=True,
     ):
-        """Convert document bytes into a `Document`.
+        """Convert a document into a `Document`: a path, bytes or an open file.
 
         `blocks=True` (the default) also asks for the plain `text`, the block
         structure and — for a PDF — the page count, which is what citations are
         addressed in. The host caches every conversion on the CONTENT hash of
         the bytes, so converting the same document twice is free.
         """
-        payload = _call(
-            _markdown,
-            _b64(data),
-            _text(format),
-            _text(name),
-            bool(assets),
-            int(max_assets or 0),
-            bool(blocks),
-        )
+        data, name, path = _source(source, name)
+        try:
+            payload = _call(
+                _markdown,
+                _b64(data),
+                _text(format),
+                _text(name),
+                bool(assets),
+                int(max_assets or 0),
+                bool(blocks),
+            )
+        except DocumentError as error:
+            raise _document_error(error, path, format, id)
         return Document(
-            str(id) if id is not None else (str(name) if name else "document"),
+            str(id)
+            if id is not None
+            else (path or (str(name) if name else "document")),
             payload.get("format"),
             payload.get("source"),
             payload.get("chars"),
@@ -1095,48 +1147,41 @@ def __vis_install_anydoc__():
         )
         return payload.get("markdown") or ""
 
-    def to_markdown(path, format=None):
-        """GitHub-Flavored Markdown for a document on disk."""
-        with open(path, "rb") as handle:
-            data = handle.read()
-        return to_markdown_bytes(data, format=format, name=os.path.basename(str(path)))
+    def to_markdown(source, format=None, name=None):
+        """GitHub-Flavored Markdown for a document: a path, bytes or an open file."""
+        data, name, path = _source(source, name)
+        try:
+            return to_markdown_bytes(data, format=format, name=name)
+        except DocumentError as error:
+            raise _document_error(error, path, format)
 
     def read(path, format=None, assets=True, max_assets=0, id=None, blocks=True):
         """`to_document` for a document on disk; its id is the path you gave."""
-        path = os.fspath(path) if hasattr(path, "__fspath__") else str(path)
-        with open(path, "rb") as handle:
-            data = handle.read()
-        try:
-            document = to_document(
-                data,
-                format=format,
-                name=os.path.basename(path),
-                assets=assets,
-                max_assets=max_assets,
-                blocks=blocks,
-            )
-        except DocumentError as error:
-            raise DocumentError(
-                "%s: %s" % (path, error.message),
-                document_id=str(id) if id is not None else path,
-                source=path,
-                format=format,
-            )
-        document.id = path if id is None else str(id)
-        return document
+        return to_document(
+            path,
+            format=format,
+            assets=assets,
+            max_assets=max_assets,
+            id=id,
+            blocks=blocks,
+        )
 
-    def detect(data=b"", name=None, format=None):
+    def detect(source=b"", name=None, format=None):
         """Identify a document without converting it: `{format, source, formats}`.
+
+        `source` is bytes, an open file or a path — a path is read only as far
+        as a signature reaches.
 
         The container's own signature is asked first, because a signature cannot
         lie and an extension routinely does; `format` is None when nothing
         recognised the input.
         """
+        data, name, _path = _source(source, name, head=4096)
         return _call(_detect, _b64(data), _text(format), _text(name))
 
     def format_from_bytes(data):
         """The format a document's own signature reports, or None."""
-        return detect(data)["format"]
+        return detect(_as_bytes(data))["format"]
 
     def format_from_extension(extension):
         """The format a file extension claims, or None."""
@@ -1144,9 +1189,7 @@ def __vis_install_anydoc__():
 
     def format_from_path(path):
         """The format of a file on disk: signature first, extension second."""
-        with open(path, "rb") as handle:
-            head = handle.read(4096)
-        return detect(head, name=os.path.basename(str(path)))["format"]
+        return detect(path)["format"]
 
     def formats():
         """Every format this converter understands."""
@@ -1711,6 +1754,7 @@ def __vis_install_anydoc__():
 Reading:
 
     anydoc.to_markdown("q1.pdf")                 -> str
+    anydoc.to_markdown(raw, name="q1.pdf")       -> str
     doc = anydoc.read("q1.pdf")                  -> Document
     doc.markdown / doc.text / doc.blocks / doc.pages / doc.assets
     doc.outline()                                -> the headings, indented
@@ -1720,6 +1764,10 @@ Asking:
     hits = anydoc.search("March", "/data/reports")
     for c in hits:
         print(c)          # q1.pdf p.7 line 12 > Revenue: ...March broke...
+
+A document is a path, raw bytes or an open binary file, at every reading door:
+to_markdown, to_document, read and detect take any of the three. Bytes carrying
+no signature of their own need name="ledger.csv" or format="csv" to be read.
 
 `sources` is a path, a directory (walked), bytes, a Document, a list of any of
 those, or a {id: source} mapping to name the ids yourself.

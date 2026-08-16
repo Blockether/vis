@@ -548,6 +548,58 @@
                                   "    out.append('not int' in str(err) or 'not 42' in str(err))"
                                   "out"))))))))
 
+;; Regression, session 5c1a7e9f-30cc-443f-903a-9545a7c84704: `to_document(path)`
+;; refused the path as "not bytes-like" and `to_markdown(raw_bytes)` handed the
+;; bytes to `open`, so a caller holding the wrong one of the two shapes got a
+;; SourceError or a stray ValueError instead of the document.
+(defdescribe
+  anydoc-source-shape-test
+  (it "reads a path, raw bytes or an open file at every reading door"
+      (let [dir (corpus {"report.docx" @report-docx-bytes})]
+        (with-fs-context
+          dir
+          (expect
+            (= [true true true true "docx" "docx" true]
+               (ev python-context
+                   (py "import anydoc" (str "path = '" dir "/report.docx'")
+                       "with open(path, 'rb') as handle:" "    raw = handle.read()"
+                       "from_path = anydoc.to_markdown(path)" "with open(path, 'rb') as handle:"
+                       "    from_file = anydoc.to_markdown(handle)"
+                       "[anydoc.to_markdown(raw) == from_path,"
+                       " from_file == from_path," " anydoc.to_document(path).markdown == from_path,"
+                       " anydoc.to_document(raw).markdown == from_path,"
+                       " anydoc.detect(path)['format'],"
+                       " anydoc.read(raw).format," " anydoc.to_document(path).id == path]")))))))
+  (it "keeps every refusal typed and points a caller at the door it wanted"
+      (let [dir (corpus {"report.docx" @report-docx-bytes})]
+        (with-fs-context
+          dir
+          (expect
+            (= [true true true true true]
+               (ev python-context
+                   (py "import anydoc"
+                       "out = []"
+                       "try:"
+                       "    anydoc.to_markdown_bytes('already a string')"
+                       "    out.append(False)"
+                       "except anydoc.SourceError as err:"
+                       "    out.append('to_markdown(path)' in str(err))"
+                       "try:"
+                       "    anydoc.to_markdown(b'\\x00\\x01not a document')"
+                       "    out.append(False)"
+                       "except anydoc.DocumentError as err:"
+                       "    out.append(bool(err.message))"
+                       "try:"
+                       (str "    anydoc.to_document('" dir "/missing.docx')")
+                       "    out.append(False)"
+                       "except OSError as err:" "    out.append('missing.docx' in str(err))"
+                       "try:" "    anydoc.to_markdown(42)"
+                       "    out.append(False)" "except anydoc.SourceError as err:"
+                       "    out.append('not int' in str(err))"
+                       ;; Bytes have no name of their own, so the caller lends
+                       ;; them one - exactly as a file on disk does.
+                       "out.append('| city | people |' in anydoc.to_markdown("
+                       "    b'city,people\\nOslo,700000\\n', name='cities.csv'))" "out"))))))))
 ;; --- the prose is CHECKED: what vis SAYS anydoc does, anydoc does -----------
 
 (def ^:private docs-anydoc-section

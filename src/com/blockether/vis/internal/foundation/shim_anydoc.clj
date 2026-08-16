@@ -11,7 +11,8 @@
    work; only base64 blobs and small string-keyed maps cross the strings-only
    sandbox boundary.
 
-   Reading a document is one call — `anydoc.to_markdown(path)` — and the richer
+   Reading a document is one call — `anydoc.to_markdown(source)`, where a source
+   is a path, raw bytes or an open file — and the richer
    `anydoc.to_document(...)` additionally returns the format that was detected,
    the evidence that identified it, every embedded binary (`Asset`) as real
    Python `bytes`, and — the part search is built on — the document's own
@@ -271,15 +272,18 @@
        :shim/description
        (str
          "Reads .doc .docx .odt .rtf .pdf .epub .ppt .pptx .odp .xls .xlsx .xlsm .xlsb .ods .csv "
-         "as Markdown (`to_markdown`, `to_document`) and BM25-searches one document or a whole "
-         "directory with page/section/line citations (`search`). Not supported: writing documents, "
-         "OCR, embeddings. Query language and `Citation` fields: `doc(\"anydoc\")`.")
+         "as Markdown from a path, raw bytes or an open file (`to_markdown`, `to_document`) and "
+         "BM25-searches one document or a whole directory with page/section/line citations "
+         "(`search`). Not supported: writing documents, OCR, embeddings. Query language and "
+         "`Citation` fields: `doc(\"anydoc\")`.")
        :shim/docs
-       (str "`anydoc.to_markdown(path)` / `to_markdown_bytes(data)` render .doc .docx .odt .rtf "
+       (str "`anydoc.to_markdown(source)` renders .doc .docx .odt .rtf "
             ".pdf .epub .ppt .pptx .odp .xls .xlsx .xlsm .xlsb .ods .csv as GitHub-Flavored "
-            "Markdown; `to_document`/`read(path)` add the detected format, embedded assets as "
+            "Markdown; `to_document`/`read` add the detected format, embedded assets as "
             "bytes, the plain `text`, the `blocks` (heading path, table cells, PDF `page`) and "
-            "`pages`. `anydoc.search(query, sources)` searches ONE document, a list, a {id: "
+            "`pages`. A source is a path, raw bytes or an open binary file at every reading "
+            "door, `detect` included; `to_markdown_bytes(data)` is the bytes-only one. "
+            "`anydoc.search(query, sources)` searches ONE document, a list, a {id: "
             "doc} mapping or a whole directory and returns BM25-ranked `Citation`s with "
             "`.document_id .page .section .line .column .snippet .highlight .score .text .match "
             ".block_kind .cell`; `str(citation)` is `id p.N line L › Section: "
