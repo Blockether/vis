@@ -85,33 +85,45 @@ describe('GatewayClient session-list paging', () => {
     Array.from({ length: count }, (_, index) => ({
       id: `session-${index}`,
       title: `Session ${index}`,
+      // Freshest content first, which is the order the gateway ranks them in.
+      modified_at: 1_000_000 - index,
     }));
 
-  /** The window `url` asks for, stamped with the ordering it was cut from. */
-  const listing = (rows: unknown[], url: string, order: string) => {
-    const offset = Number(new URL(url).searchParams.get('offset') ?? 0);
-    const page = rows.slice(offset, offset + 100);
+  type Row = { id: string; title: string; modified_at: number };
+
+  /** The cursor that NAMES a row: `<recency>:<id>`, exactly the gateway's own form. */
+  const cursorOf = (row: Row) => `${row.modified_at}:${row.id}`;
+
+  /**
+   * The window `url` asks for: the rows AFTER its cursor. The validator covers the rows
+   * and the total, as the gateway's does, so a rename or a deletion is a 200 and an
+   * untouched head is a 304.
+   */
+  const listing = (rows: Row[], url: string) => {
+    const after = new URL(url, 'http://gateway.example.com').searchParams.get('after');
+    const from = after ? rows.findIndex((row) => cursorOf(row) === after) + 1 : 0;
+    const page = rows.slice(from, from + 100);
+    const hasMore = from + page.length < rows.length;
     return new Response(
       JSON.stringify({
         sessions: page,
         total: rows.length,
-        has_more: offset + page.length < rows.length,
+        has_more: hasMore,
+        next_cursor: hasMore && page.length ? cursorOf(page[page.length - 1]!) : null,
       }),
       {
         headers: {
-          ETag: `"${order}-${offset}"`,
-          'X-Vis-Sessions-Order': order,
+          ETag: `"${rows.length}-${page.map((row) => `${row.id}@${row.title}`).join('|')}"`,
         },
       },
     );
   };
 
-  const gateway = (rows: unknown[], order: string) =>
-    vi.fn((url: string) => Promise.resolve(listing(rows, url, order)));
+  const gateway = (rows: Row[]) => vi.fn((url: string) => Promise.resolve(listing(rows, url)));
 
-  it('asks only for the head when the ordering has not moved', async () => {
+  it('asks only for the head when nothing below it moved', async () => {
     const rows = fleet(150);
-    const cold = gateway(rows, 'ordering-1');
+    const cold = gateway(rows);
     vi.stubGlobal('fetch', cold);
     const { GatewayClient } = await import('./gateway');
     const client = new GatewayClient(conn);
@@ -120,14 +132,10 @@ describe('GatewayClient session-list paging', () => {
     expect(first).toHaveLength(150);
     expect(cold).toHaveBeenCalledTimes(2);
 
-    // The head answers with a row that changed. The digest is the one those windows
-    // were cut from, so nothing below the head can have moved.
-    const renamed = rows.map((row, index) =>
-      index === 0 ? { ...row, title: 'Renamed' } : row,
-    );
-    const poll = vi.fn((url: string) =>
-      Promise.resolve(listing(renamed, url, 'ordering-1')),
-    );
+    // The head answers with a row that changed. Its LAST row is the join: whatever moved
+    // above it, the rows after it are the ones this client already holds.
+    const renamed = rows.map((row, index) => (index === 0 ? { ...row, title: 'Renamed' } : row));
+    const poll = vi.fn((url: string) => Promise.resolve(listing(renamed, url)));
     vi.stubGlobal('fetch', poll);
 
     const second = await client.listSessions();
@@ -138,23 +146,49 @@ describe('GatewayClient session-list paging', () => {
     expect(second[149]).toBe(first[149]);
   });
 
-  it('walks the rest of the list again when the ordering moved', async () => {
+  it('walks the rest of the list again when the count below the head changed', async () => {
     const rows = fleet(150);
-    const cold = gateway(rows, 'ordering-1');
+    const cold = gateway(rows);
     vi.stubGlobal('fetch', cold);
     const { GatewayClient } = await import('./gateway');
     const client = new GatewayClient(conn);
 
     await client.listSessions();
-    // A session re-ranked: the offsets the cached tail was cut at no longer address
-    // the same rows, so the walk is the only honest answer.
-    const moved = [rows[149], ...rows.slice(0, 149)];
-    const poll = gateway(moved, 'ordering-2');
+    // A session deleted deep in the fleet leaves the head untouched, so only `total`
+    // says so — and the spliced list would come out one row too long. The walk is then
+    // the only honest answer.
+    const deleted = rows.slice(0, 149);
+    const poll = gateway(deleted);
     vi.stubGlobal('fetch', poll);
 
     const second = await client.listSessions();
     expect(poll).toHaveBeenCalledTimes(2);
-    expect(second[0]?.id).toBe('session-149');
+    expect(second).toHaveLength(149);
+  });
+
+  // Regression, user report (paraphrased: "the list keeps jumping while I read it"): a
+  // window used to be an OFFSET into an ordering recomputed per request, so a turn
+  // finishing while the client walked shifted every row below it - one session arrived
+  // twice (a duplicate React key) and another vanished, while the merged count still
+  // equalled `total` so nothing downstream could notice.
+  it('never serves one row twice when a turn lands mid-walk', async () => {
+    const rows = fleet(150);
+    let live = rows;
+    let served = 0;
+    const poll = vi.fn((url: string) => {
+      served += 1;
+      // Between the head and the window after it, the oldest session finishes a turn and
+      // ranks to the very top of the fleet.
+      if (served === 1) live = [{ ...rows[149]!, modified_at: 2_000_000 }, ...rows.slice(0, 149)];
+      return Promise.resolve(listing(live, url));
+    });
+    vi.stubGlobal('fetch', poll);
+    const { GatewayClient } = await import('./gateway');
+
+    const list = await (new GatewayClient(conn)).listSessions();
+
+    expect(new Set(list.map((row) => row.id)).size).toBe(list.length);
+    expect(list.filter((row) => row.id === 'session-99')).toHaveLength(1);
   });
 });
 

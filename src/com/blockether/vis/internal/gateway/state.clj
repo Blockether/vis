@@ -4441,9 +4441,10 @@
   ^long [record st]
   (->epoch-ms (or (:latest-turn-at st) (:created-at record))))
 
-(defn- session-order
-  "Session ids for `channel` in navigator order, computed from CHEAP facts only:
-   the persisted record and the one grouped turn-stats query.
+(defn- session-ranking
+  "Sessions of `channel` in navigator order as `[[^long recency-ms ^String id] ...]`,
+   computed from CHEAP facts only: the persisted record and the one grouped
+   turn-stats query.
 
    The key is `[recency DESC, id ASC]` and nothing else. It used to LEAD with a
    band - parked on a human 0, turn in flight 1, everything else 2 - so the
@@ -4457,6 +4458,11 @@
    its window (`awaiting-summaries`) - so a dot and a strip can report them. They
    no longer decide where a row sits; only durable content time does.
 
+   The recency travels WITH the id because a window is addressed by a keyset
+   CURSOR and not by an offset (`list-sessions-page`): the cursor is this pair,
+   so \"the page after the last row I hold\" is answerable without any
+   server-side walk state.
+
    It deliberately does NOT touch `soul` or workspace resolution. That
    per-session decoration is where a listing's time actually goes (measured on a
    448-session store: 120ms of `soul` + 40ms of workspace lookups inside a 257ms
@@ -4465,15 +4471,64 @@
    sources, so the cut is the one a fully decorated sort would have made."
   [channel stats]
   (->> (lp/by-channel channel)
-       (sort-by (fn [record]
-                  [(unchecked-negate (record-recency-ms record (get stats (str (:id record)))))
-                   (str (:id record))]))
-       (mapv :id)))
+       (mapv (fn [record]
+               [(record-recency-ms record (get stats (str (:id record)))) (str (:id record))]))
+       (sort-by (fn [pair]
+                  [(unchecked-negate (long (nth pair 0))) (nth pair 1)]))
+       vec))
+
+(def ^:private session-cursor-separator
+  "Between a session cursor's recency and its id. Session ids are UUIDs, so the
+   FIRST colon always ends the number and the rest is the id."
+  ":")
+
+(defn- ->session-cursor
+  "The cursor that NAMES row `pair` (`[recency-ms id]`): `\"<recency-ms>:<id>\"`."
+  ^String [pair]
+  (str (long (nth pair 0)) session-cursor-separator (nth pair 1)))
+
+(defn parse-session-cursor
+  "`\"<recency-ms>:<id>\"` back to `[^long recency-ms ^String id]`, or nil when the
+   string is not a cursor.
+
+   Public because the SERVER refuses an unparsable `?after=` with a 400 rather
+   than silently answering the head of the list (`server/list-sessions-handler`);
+   `list-sessions-page` takes the wire string and treats anything else as no
+   cursor at all, so it stays total."
+  [cursor]
+  (when-let
+    [^String s (some-> cursor
+                       str
+                       not-empty)]
+    (let [cut (.indexOf s ^String session-cursor-separator)]
+      (when (pos? cut)
+        (let
+          [recency (try (Long/parseLong (subs s 0 cut)) (catch Exception _ nil))
+           id (not-empty (subs s (inc cut)))]
+
+          (when (and recency id) [(long recency) id]))))))
+
+(defn- after-session-cursor?
+  "Does row `pair` sit strictly AFTER `cursor` under `[recency DESC, id ASC]`?
+
+   The whole point of a keyset window: this answer depends only on the row and
+   the cursor, never on how many rows the gateway happened to rank in front of
+   them, so a page cannot shift under a client that is still walking."
+  [cursor pair]
+  (let
+    [cursor-recency
+     (long (nth cursor 0))
+
+     recency
+     (long (nth pair 0))]
+
+    (or (< recency cursor-recency)
+        (and (= recency cursor-recency) (pos? (compare (str (nth pair 1)) (str (nth cursor 1))))))))
 
 (defn- order-session-summaries
   "Gateway-owned navigator order for DECORATED sessions: freshest content first,
    the id breaking every tie so repeated polls are deterministic. Same key as
-   `session-order`, for the same reason - no band, so no row moves because a turn
+   `session-ranking`, for the same reason - no band, so no row moves because a turn
    started or ended."
   [sessions]
   (->> sessions
@@ -4494,13 +4549,23 @@
 
 (defn list-sessions-page
   "A WINDOW of `list-sessions`, in the same gateway-owned navigator order:
-   `{:sessions rows :awaiting rows :total n :offset o :limit l :order-digest s
-     :has-more bool}`.
+   `{:sessions rows :awaiting rows :total n :limit l :next-cursor s :has-more bool}`.
+
+   The window is a KEYSET, not an offset: `:after` is the cursor of the last row
+   a client already holds (`:next-cursor` of its previous answer) and the answer
+   is the rows that sort strictly after it. An offset indexes a list that is
+   RECOMPUTED per request, so content moving during a walk - another machine
+   finishes a turn - made one row arrive twice (a duplicate id) and dropped
+   another entirely, with the merged count still equal to `total` so nothing
+   downstream could notice. A cursor names a ROW, so the same page comes back
+   however much the fleet moved meanwhile: the tear is not detected, it cannot
+   happen. An unparsable cursor is no cursor here (the server answers 400 first,
+   see `parse-session-cursor`).
 
    `:awaiting` stands BESIDE the window: the sessions parked on an unanswered
    human-input request, complete however deep in the fleet they sit, because a
    client pins them above the list instead of the ordering lifting them into it
-   (see `session-order`).
+   (see `session-ranking`).
 
    `nil` limit means \"the rest\", so `(list-sessions-page channel nil)` is the
    whole fleet and older callers keep their full list.
@@ -4510,13 +4575,13 @@
    downloading the fleet and slicing it locally. `total`/`has-more` then describe
    that project, which is what a pager prints.
 
-   The window is cut BEFORE decoration: `session-order` ranks every session from
+   The window is cut BEFORE decoration: `session-ranking` ranks every session from
    cheap facts, and only the ids that survive the cut pay for `soul` + workspace
    resolution. A 100-row page of a 448-session store therefore costs about a
    fifth of the full build (~257ms) and a fifth of its ~300KB, which is what
    makes a polled session list affordable."
   ([opts] (list-sessions-page :all opts))
-  ([channel {:keys [limit offset root]}]
+  ([channel {:keys [limit after root]}]
    (let
      [db
       (try (lp/db-info) (catch Throwable _ nil))
@@ -4525,37 +4590,28 @@
       stats
       (if db (try (persistance/db-session-turn-stats db) (catch Throwable _ {})) {})
 
-      ordered
-      (cond->> (session-order channel stats)
+      ranked
+      (cond->> (session-ranking channel stats)
         (and db (seq root))
-        (filterv (fn [id]
-                   (= root (session-project-root db id)))))
+        (filterv (fn [pair]
+                   (= root (session-project-root db (nth pair 1))))))
 
       total
-      (count ordered)
+      (count ranked)
 
-      ;; Digest of the ORDERING this window was cut from. Offsets index a list that
-      ;; is RECOMPUTED per request, and content still moves under a walk - another
-      ;; machine finishes a turn and every window below that session shifts - so a
-      ;; client paging across such a change merges one row twice (duplicate id) and
-      ;; skips another entirely (a session silently missing from the list), with the
-      ;; merged count still equal to `total` so nothing looks wrong. Stamping the
-      ;; ordering makes that DETECTABLE with no server-side cursor state: two windows
-      ;; carrying different digests were cut from different fleets, and the client
-      ;; re-walks.
-      order-digest
-      (Integer/toUnsignedString (int (hash ordered)) 16)
+      cursor
+      (parse-session-cursor after)
 
-      from
-      (min total (max 0 (long (or offset 0))))
+      tail
+      (if cursor
+        (into [] (drop-while (complement (partial after-session-cursor? cursor))) ranked)
+        ranked)
 
       window
-      (if (some? limit)
-        (subvec ordered from (min total (+ from (max 0 (long limit)))))
-        (subvec ordered from))
+      (if (some? limit) (into [] (take (max 0 (long limit))) tail) (vec tail))
 
       rows
-      (-> (into [] (keep soul) window)
+      (-> (into [] (comp (map #(nth % 1)) (keep soul)) window)
           (session-summary-extras db stats)
           order-session-summaries)
 
@@ -4568,7 +4624,7 @@
       ;; order never flinches. Bounded by the runs blocked on a human right now,
       ;; which is a handful, and cut to the same channel/root as the listing.
       awaiting
-      (let [listed (into #{} (map str) ordered)]
+      (let [listed (into #{} (map #(nth % 1)) ranked)]
         (-> (into [] (comp (filter listed) (keep soul)) (keys (bus/waiting-requests)))
             (session-summary-extras db stats)
             order-session-summaries))]
@@ -4576,11 +4632,12 @@
      {:sessions rows
       :awaiting awaiting
       :total total
-      :offset from
       :limit (some-> limit
                      long)
-      :order-digest order-digest
-      :has-more (< (+ from (count window)) total)})))
+      ;; The cursor of the LAST row in this window - what a client asks for next.
+      ;; Absent when there is nothing left, so a walk ends on the answer itself.
+      :next-cursor (when (< (count window) (count tail)) (->session-cursor (peek window)))
+      :has-more (< (count window) (count tail))})))
 
 (defn list-sessions
   "Wire souls for every persisted session, each decorated with the bulk
@@ -4591,7 +4648,7 @@
    The gateway owns navigator ordering: freshest content first, the id breaking
    ties. Clients must preserve this order. Liveness and a run parked on a human
    are FIELDS on the row (`live`, `is_awaiting_input`), never a lift - see
-   `session-order`.
+   `session-ranking`.
 
    CROSS-CHANNEL by default (`channel` = `:all`): a conversation started
    in one channel is visible in the others and vice-versa. Pass a specific

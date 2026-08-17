@@ -2551,21 +2551,21 @@
         [state/list-sessions-page
          (fn [channel opts]
            (reset! seen [channel opts])
-           {:sessions [] :total 0 :offset 0 :limit 20 :order-digest "x" :has-more false})]
+           {:sessions [] :total 0 :limit 20 :next-cursor nil :has-more false})]
         (let
           [response ((rv 'list-sessions-handler)
-                      {:query-params {"limit" "20" "offset" "0" "root" "/Users/dev/vis"}})
+                      {:query-params {"limit" "20" "root" "/Users/dev/vis"}})
            body (wire/parse-json (:body response))]
 
           (is (= 200 (:status response)))
-          (is (= [:all {:limit 20 :offset 0 :root "/Users/dev/vis"}] @seen))
+          (is (= [:all {:limit 20 :after nil :root "/Users/dev/vis"}] @seen))
           (is (= "/Users/dev/vis" (get body "root")))))
       (testing "and a listing with no `root` is still the whole fleet"
         (with-redefs
           [state/list-sessions-page
            (fn [channel opts]
              (reset! seen [channel opts])
-             {:sessions [] :total 0 :offset 0 :limit nil :order-digest "x" :has-more false})]
+             {:sessions [] :total 0 :limit nil :next-cursor nil :has-more false})]
           ((rv 'list-sessions-handler) {:query-params {}})
           (is (nil? (:root (second @seen)))))))))
 
@@ -2583,11 +2583,10 @@
                                      {:sessions [{"id" "a" "server_time_ms" 1}]
                                       :awaiting awaiting
                                       :total 1
-                                      :offset 0
                                       :limit 20
-                                      :order-digest "x"
+                                      :next-cursor nil
                                       :has-more false})]
-         ((rv 'list-sessions-handler) {:query-params {"limit" "20" "offset" "0"}})))
+         ((rv 'list-sessions-handler) {:query-params {"limit" "20"}})))
 
      quiet
      (answer [])
@@ -2600,6 +2599,49 @@
       (is (= ["a"] (mapv #(get % "id") (get (wire/parse-json (:body parked)) "sessions")))))
     (testing "and a demand nobody has answered cannot hide behind a 304"
       (is (not= (get-in quiet [:headers "ETag"]) (get-in parked [:headers "ETag"]))))))
+
+;; Regression, user report (paraphrased: "the list keeps jumping while I read it"): windows
+;; were addressed by an OFFSET into an ordering recomputed per request, so a turn landing
+;; mid-walk made one session arrive twice and another vanish. A window is now addressed by
+;; the CURSOR of the last row a client holds.
+(deftest sessions-window-is-addressed-by-a-cursor
+  (let [seen (atom nil)]
+    (with-redefs
+      [state/list-sessions-page (fn [channel opts]
+                                  (reset! seen [channel opts])
+                                  {:sessions [{"id" "b" "server_time_ms" 1}]
+                                   :awaiting []
+                                   :total 9
+                                   :limit 20
+                                   :next-cursor "3000:b"
+                                   :has-more true})]
+      (testing "`after` is handed down and the next cursor comes back"
+        (let
+          [response ((rv 'list-sessions-handler) {:query-params {"limit" "20" "after" "4000:a"}})
+           body (wire/parse-json (:body response))]
+
+          (is (= 200 (:status response)))
+          (is (= [:all {:limit 20 :after "4000:a" :root nil}] @seen))
+          (is (= "3000:b" (get body "next_cursor")))
+          (is (true? (get body "has_more")))
+          ;; The offset is gone from the wire, not renamed.
+          (is (nil? (get body "offset")))
+          ;; The ordering digest went with it: a cursor cannot be torn, so there is
+          ;; nothing for a client to detect.
+          (is (nil? (get-in response [:headers "X-Vis-Sessions-Order"])))))
+      (testing "a cursor that is present but not a cursor is a 400, never the head of the list"
+        (let [response ((rv 'list-sessions-handler) {:query-params {"limit" "20" "after" "nope"}})]
+          (is (= 400 (:status response)))
+          (is (= "invalid-window" (get-in (wire/parse-json (:body response)) ["error" "type"])))))
+      (testing "the window a client asked for is part of its validator"
+        (let
+          [etag (fn [after]
+                  (get-in ((rv 'list-sessions-handler)
+                            {:query-params (cond-> {"limit" "20"}
+                                             after
+                                             (assoc "after" after))})
+                          [:headers "ETag"]))]
+          (is (not= (etag nil) (etag "4000:a"))))))))
 ;; Regression, issue #146: `wrap-errors` answered EVERY throwable with a generic
 ;; `engine-error` 500, so a request that failed only because no AI provider was
 ;; configured reached the TUI as an ordinary crash — `vis-agent tui` printed a

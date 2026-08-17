@@ -80,6 +80,16 @@ export function listSession(overrides: Partial<Session> = {}): Session {
   } as Session;
 }
 
+/**
+ * The cursor that NAMES a row, in the gateway's own form: `<recency_ms>:<id>`, where
+ * the recency is content time (`state/list-sessions-page`). A window is asked for with
+ * the cursor of the last row a client holds, never with an offset.
+ */
+function listCursor(row: Session): string {
+  const stamp = row.modified_at ?? row.created_at ?? null;
+  const millis = stamp ? Date.parse(String(stamp)) : 0;
+  return `${Number.isFinite(millis) ? millis : 0}:${row.id}`;
+}
 export function renderSessionsScreen({
   machines = [{}] as MachineFixture[],
   query = "",
@@ -195,7 +205,7 @@ export function renderSessionsScreen({
       if ((init?.method ?? "GET") === "POST")
         return answer({ id: `created-${++created}`, channel: "web", title: null });
       if (held) await held;
-      if (machine.holdsPages && Number(url.searchParams.get("offset") ?? 0) > 0) {
+      if (machine.holdsPages && url.searchParams.has("after")) {
         if (!heldPages)
           heldPages = new Promise<void>((resolve) => {
             releasePagesFn = resolve;
@@ -205,14 +215,21 @@ export function renderSessionsScreen({
       const sessions = machine.sessions ?? [];
       // A real gateway answers a WINDOW, and a machine with more history than one
       // page makes the client come back for the rest — which is what paints a
-      // second machine's rows a beat after the first machine's.
+      // second machine's rows a beat after the first machine's. The window is a
+      // KEYSET: `after` is the cursor of the last row the client holds, so the page
+      // after it is the same page however much the fleet moved meanwhile
+      // (`state/list-sessions-page`).
       const limit = Number(url.searchParams.get("limit") ?? sessions.length);
-      const offset = Number(url.searchParams.get("offset") ?? 0);
-      const window = sessions.slice(offset, offset + (limit || sessions.length));
+      const after = url.searchParams.get("after");
+      const from = after ? sessions.findIndex((row) => listCursor(row) === after) + 1 : 0;
+      const window =
+        after && from === 0 ? [] : sessions.slice(from, from + (limit || sessions.length));
+      const last = window[window.length - 1];
       return answer({
         sessions: window,
         total: sessions.length,
-        has_more: offset + window.length < sessions.length,
+        has_more: from + window.length < sessions.length,
+        next_cursor: from + window.length < sessions.length && last ? listCursor(last) : null,
         // The real gateway answers the parked runs BESIDE the window and COMPLETE,
         // however deep in the fleet they sit (`state/list-sessions-page`), because the
         // ordering no longer lifts them into the first page.

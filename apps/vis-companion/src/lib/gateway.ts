@@ -435,16 +435,21 @@ function sameJson(a: unknown, b: unknown): boolean {
 /**
  * One page of the session list, pinned to the exact rows its ETag was issued for.
  *
- * The gateway hashes `[total offset limit rows]` into the validator, so a 304
- * revalidates the whole record — the counts may be reused, not just the rows.
+ * The gateway hashes `[total limit root after rows awaiting]` into the validator, so a
+ * 304 revalidates the whole record — the counts may be reused, not just the rows.
  */
 type SessionsWindow = {
   etag: string;
-  /** The gateway's digest of the ORDERING this window was cut from. */
-  order: string;
+  /** The cursor this window was ASKED for; `HEAD_CURSOR` is the top of the list. */
+  after: string;
   rows: Session[];
   total: number;
   hasMore: boolean;
+  /**
+   * The cursor of this window's LAST row — what the next page is asked for. A cursor
+   * names a ROW (`state/list-sessions-page`), which is why a walk cannot tear.
+   */
+  nextCursor: string;
   /**
    * The sessions this gateway says are PARKED on an unanswered human-input request,
    * complete and from OUTSIDE the window (`state/list-sessions-page`). It rides the
@@ -461,12 +466,8 @@ type SessionsWindow = {
  */
 const SESSIONS_PAGE = 100;
 
-/**
- * Header stamping the session ordering a window was cut from (`server.clj`).
- * Sent on 200 AND 304, so a walk can tell whether the fleet was re-ranked under
- * it without giving up the 304s that make the walk cheap.
- */
-const SESSIONS_ORDER_HEADER = "X-Vis-Sessions-Order";
+/** The first window of the list: the one page that is asked for with no cursor. */
+const HEAD_CURSOR = "";
 
 function reconcileRows<T>(previous: T[] | null, next: T[]): T[] {
   if (!previous) return next;
@@ -592,15 +593,16 @@ export class GatewayClient {
   // that is on screen must never be the one handed back to the collector.
   private readonly attachmentHolds = new Map<string, number>();
   // Last conditional-GET validators for the session LIST, per gateway: one per
-  // page window, plus the merged array they were built from. Static because the
-  // screens build a throwaway client whenever the connection object changes, and
-  // the snapshot cache it pairs with is module-level too. Pinning by IDENTITY is
-  // what makes it safe: any other code path that rewrites the sessions snapshot
-  // (a local delete, a rename) swaps that array, every pin misses, and the next
-  // poll is an unconditional walk instead of 304s restoring stale rows.
+  // page window keyed by the CURSOR it was asked for, plus the merged array they
+  // were built from. Static because the screens build a throwaway client whenever
+  // the connection object changes, and the snapshot cache it pairs with is
+  // module-level too. Pinning by IDENTITY is what makes it safe: any other code path
+  // that rewrites the sessions snapshot (a local delete, a rename) swaps that array,
+  // every pin misses, and the next poll is an unconditional walk instead of 304s
+  // restoring stale rows.
   private static readonly sessionsValidators = new Map<
     string,
-    { full: Session[]; windows: Map<number, SessionsWindow> }
+    { full: Session[]; windows: Map<string, SessionsWindow> }
   >();
 
   /** Backing store of `parkedSessions`, refreshed by every list read. */
@@ -2063,10 +2065,10 @@ export class GatewayClient {
   }
 
   /**
-   * The session list — paged, and revalidated rather than re-downloaded.
+   * The session list — paged by CURSOR, and revalidated rather than re-downloaded.
    *
    * This is the app's most frequent poll and by far its largest payload (~315 KB
-   * across a few hundred sessions). Two things keep it cheap:
+   * across a few hundred sessions). Three things keep it cheap:
    *
    * - **Paging.** Only `SESSIONS_PAGE` rows are asked for at a time. The first
    *   window answers in ~71 ms with more rows than fit on any screen, is handed
@@ -2074,6 +2076,9 @@ export class GatewayClient {
    * - **Conditional GETs.** Every window carries a weak `ETag`, so an unchanged
    *   window costs one 304 with an empty body: nothing transferred, nothing
    *   parsed, nothing reconciled.
+   * - **Cursors, not offsets.** Each window is asked for with the cursor of the last
+   *   row of the one before it, so the page after that row is the same page however
+   *   much the fleet moved in between.
    *
    * The list is recency-ordered and `total` is part of the validator, so any
    * arrival, answer, deletion or rename moves the FIRST window. An unchanged head
@@ -2106,13 +2111,18 @@ export class GatewayClient {
           full: cached,
           windows: new Map([
             [
-              0,
+              HEAD_CURSOR,
               {
                 etag: persisted.etag,
-                order: "",
+                after: HEAD_CURSOR,
                 rows: cached.slice(0, SESSIONS_PAGE),
                 total: persisted.total,
-                hasMore: cached.length > SESSIONS_PAGE,
+                // A remembered pin is only ever ANSWERED by a 304, and a 304 on the
+                // head of a list this client holds in full returns below without
+                // walking, so it never needs a cursor to continue from. Anything else
+                // is a 200 that carries the gateway's own.
+                hasMore: false,
+                nextCursor: HEAD_CURSOR,
                 // The remembered pin says nothing about who is waiting on a human: a
                 // demand is a fact of the CURRENT answer, so it starts empty and the
                 // first read fills it.
@@ -2129,29 +2139,27 @@ export class GatewayClient {
     const known =
       pinned && pinned.full === cached
         ? pinned.windows
-        : new Map<number, SessionsWindow>();
+        : new Map<string, SessionsWindow>();
 
-    const fetchWindow = async (offset: number): Promise<SessionsWindow> => {
-      const pin = known.get(offset);
+    const fetchWindow = async (after: string): Promise<SessionsWindow> => {
+      const pin = known.get(after);
       const res = await this.requestFull<{
         sessions?: Session[];
         total?: number;
         has_more?: boolean;
+        next_cursor?: string | null;
         awaiting?: Session[];
       }>(
         "GET",
-        `/v1/sessions?limit=${SESSIONS_PAGE}&offset=${offset}`,
+        `/v1/sessions?limit=${SESSIONS_PAGE}${
+          after ? `&after=${encodeURIComponent(after)}` : ""
+        }`,
         undefined,
         signal,
         pin ? { "If-None-Match": pin.etag } : undefined,
       );
-      // The ordering stamp is read from THIS response, never from the pin: a 304
-      // says these ROWS are unchanged, not that the fleet around them is.
-      const order = res.headers.get(SESSIONS_ORDER_HEADER) ?? "";
-      if (res.status === 304 && pin) return { ...pin, order };
+      if (res.status === 304 && pin) return pin;
       const rows = res.data?.sessions ?? [];
-      // Every row names the model it runs on, so opening any of them paints the
-      // right chip on the FIRST frame instead of after a per-session round trip.
       const awaiting = res.data?.awaiting ?? [];
       // Every row names the model it runs on, so opening any of them paints the
       // right chip on the FIRST frame instead of after a per-session round trip. A
@@ -2159,159 +2167,139 @@ export class GatewayClient {
       this.seedSessionModels(rows.concat(awaiting));
       return {
         etag: res.etag ?? "",
-        order,
+        after,
         rows,
         total: res.data?.total ?? rows.length,
         hasMore: Boolean(res.data?.has_more),
+        nextCursor: res.data?.next_cursor ?? HEAD_CURSOR,
         awaiting,
       };
     };
 
-    const head = await fetchWindow(0);
+    const head = await fetchWindow(HEAD_CURSOR);
     // The demand is answered by the HEAD and is complete there, so it is known before
     // the walk below decides whether there is anything left to read.
     this.parked = head.awaiting;
-    const headPin = known.get(0);
-    // THE ORDERING DECIDES WHETHER THERE IS A WALK AT ALL.
+    const headPin = known.get(HEAD_CURSOR);
+    const holdsWholeList = cached !== null && cached.length === head.total;
+
+    // THE HEAD DECIDES WHETHER THERE IS A WALK AT ALL.
     //
     // Only the FIRST window moves minute to minute: the list is ordered by content
     // time, so every arrival, answer and rename lands at the top. The windows below
-    // it then cost a conditional round trip EACH to be told 304 — measured against a
-    // 1192-session store, 12 serial requests every ten seconds per machine, eleven
-    // of them proving nothing had changed. That cascade is what a reader sees the
-    // moment the list is opened.
+    // it would each cost a conditional round trip to be told 304 — measured against a
+    // 1192-session store, 12 serial requests every ten seconds per machine, eleven of
+    // them proving nothing had changed. That cascade is what a reader sees the moment
+    // the list is opened.
     //
-    // `X-Vis-Sessions-Order` digests the WHOLE ordering — every id, in order (see
-    // `state/list-sessions-page`) — so a digest equal to the one these pins were cut
-    // from is proof that no session below this window moved, arrived or left: the
-    // offsets the cached tail was cut at still address the same rows, and the head
-    // is the only window worth having. The poll costs ONE request.
+    // `total` rides INSIDE the head's validator (`server/sessions-etag`), and that is
+    // what makes one request enough: a session created or deleted anywhere changes the
+    // count, and a session that gains content ranks to the very top, so it lands in
+    // this window. An unchanged head over a list held in full is therefore proof that
+    // nothing below it moved.
     //
-    // What the digest does NOT prove is CONTENT below the head, and the trade is
-    // deliberate: a session renamed without re-ranking keeps its cached title until
-    // the ordering next moves. Everything else re-ranks or re-counts by construction
-    // — a turn, a deletion, a new session — and a mutation made HERE swaps the
-    // snapshot array, which misses every pin and walks for real.
+    // What it does NOT prove is CONTENT below the head, and the trade is deliberate: a
+    // session renamed without re-ranking keeps its cached title until the ordering next
+    // moves. Everything else re-ranks or re-counts by construction — a turn, a
+    // deletion, a new session — and a mutation made HERE swaps the snapshot array,
+    // which misses every pin and walks for real.
+    if (headPin && holdsWholeList && head.etag !== "" && head.rows === headPin.rows) {
+      return cached;
+    }
+
+    // A HEAD THAT CHANGED STILL REJOINS THE LIST IT ALREADY HAS.
+    //
+    // A cursor names a ROW, so the head's last row is a JOIN: whatever moved above it,
+    // the rows after it are the rows already held here. That is the common case by far
+    // — a turn finishes, its session ranks to the top, and the head is the only window
+    // that changed — and splicing at the join answers it in ONE request where an offset
+    // could only re-walk the fleet. The promoted session is still in the cached tail at
+    // the place it left, so ids are de-duplicated with the head winning; and the result
+    // must come out at `total`, or something below the head moved after all and the
+    // honest answer is the walk.
     if (
-      headPin &&
-      cached &&
-      cached.length === head.total &&
-      head.etag !== "" &&
-      head.order !== "" &&
-      head.order === headPin.order &&
-      // A window can come back SHORT (a session deleted between the ordering and the
-      // decoration of its page). Splicing a short head onto the tail would shift
-      // every row below it by the difference.
+      cached?.length &&
       head.rows.length === Math.min(SESSIONS_PAGE, head.total)
     ) {
-      // Nothing moved and the head itself did not change: hand back the identical
-      // array, which React bails out on, and keep every pin.
-      if (head.rows === headPin.rows) return cached;
-      const rows = reconcileRows(
-        cached,
-        head.rows.concat(cached.slice(head.rows.length)),
-      );
-      writeSnapshot(key, rows);
-      // Re-pin the one window that was actually re-read, onto the reconciled rows.
-      // The windows below keep the pins they already have: they describe rows this
-      // list still holds at the offsets they were cut from.
-      const windows = new Map(known);
-      windows.set(0, { ...head, rows: rows.slice(0, head.rows.length) });
-      GatewayClient.sessionsValidators.set(key, { full: rows, windows });
-      writeSnapshot(this.snapshotKey("sessions-pin"), {
-        etag: head.etag,
-        total: head.total,
-      });
-      return rows;
+      const join = head.rows[head.rows.length - 1];
+      const at = join ? cached.findIndex((row) => row.id === join.id) : -1;
+      if (at >= 0) {
+        const held = new Set(head.rows.map((row) => row.id));
+        const spliced = head.rows.concat(
+          cached.slice(at + 1).filter((row) => !held.has(row.id)),
+        );
+        if (spliced.length === head.total) {
+          const rows = reconcileRows(cached, spliced);
+          writeSnapshot(key, rows);
+          // Re-pin the one window that was actually re-read, onto the reconciled rows.
+          // The windows below keep the pins they already have: a pin is only ever
+          // ANSWERED when its ETag still matches, which is the gateway's own word that
+          // those rows are unchanged.
+          const windows = new Map(known);
+          windows.set(HEAD_CURSOR, { ...head, rows: rows.slice(0, head.rows.length) });
+          GatewayClient.sessionsValidators.set(key, { full: rows, windows });
+          writeSnapshot(this.snapshotKey("sessions-pin"), {
+            etag: head.etag,
+            total: head.total,
+          });
+          return rows;
+        }
+      }
     }
 
     const progressive = !cached || cached.length === 0;
 
     /**
-     * ONE walk over the windows.
+     * ONE walk over the windows, each asked for with the CURSOR of the last row of
+     * the one before it.
      *
-     * Windows are addressed by their SERVER offset — an index into the gateway's
-     * ORDERING, not into the rows it handed back. The two come apart in two ways:
-     *
-     * - A window can be SHORT (a session deleted between the ordering and the
-     *   decoration of that page), so stepping by rows-received would re-request
-     *   ids already merged. Hence stepping by the page size, with each window's
-     *   landing place in `merged` remembered separately.
-     * - The ordering itself is recomputed per request, so it can MOVE between two
-     *   windows: a session starting a turn jumps to the top of the list and shifts
-     *   everything below it. One shift makes one row arrive twice (a duplicate
-     *   React key) and drops another entirely (a session that vanishes from the
-     *   list) while `merged.length` still equals `total`, so nothing downstream
-     *   can notice. Every window is stamped with the ordering it was cut from,
-     *   which makes exactly that detectable; ids are also de-duplicated here, so
-     *   a gateway too old to send the stamp still cannot produce a duplicate key.
+     * Windows used to be addressed by their offset into the gateway's ordering, which
+     * is recomputed per request: a session starting a turn jumped to the top and
+     * shifted everything below it, so one row arrived twice (a duplicate React key)
+     * and another dropped out entirely while `merged.length` still equalled `total`,
+     * and nothing downstream could notice. Every window was stamped with the ordering
+     * it was cut from only to make that detectable, and a torn walk was thrown away
+     * and re-walked. A cursor names a ROW instead of a count, so the page after it is
+     * the same page whatever moved: there is nothing left to stamp, detect, retry or
+     * de-duplicate. A SHORT window (a session deleted between the ordering and the
+     * decoration of its page) is no longer a special case either — the next cursor is
+     * the last row that actually arrived.
      */
     const drain = async (first: SessionsWindow) => {
-      const fetched: {
-        offset: number;
-        start: number;
-        window: SessionsWindow;
-      }[] = [];
-      const seen = new Set<string>();
+      const fetched: SessionsWindow[] = [];
       let merged: Session[] = [];
-      let torn = false;
-      let dropped = 0;
       let window = first;
-      let offset = 0;
       for (;;) {
-        if (window.order !== first.order) torn = true;
-        const fresh: Session[] = [];
-        for (const row of window.rows) {
-          if (seen.has(row.id)) {
-            dropped += 1;
-            continue;
-          }
-          seen.add(row.id);
-          fresh.push(row);
-        }
-        fetched.push({ offset, start: merged.length, window });
-        merged = merged.length ? merged.concat(fresh) : fresh;
+        fetched.push(window);
+        merged = merged.length ? merged.concat(window.rows) : window.rows;
         if (progressive && merged.length) onPage?.(merged);
-        offset += SESSIONS_PAGE;
-        if (!window.hasMore || offset >= window.total) break;
-        window = await fetchWindow(offset);
+        if (!window.hasMore || !window.nextCursor) break;
+        window = await fetchWindow(window.nextCursor);
         // A window that comes back empty ends the walk rather than looping forever.
         if (!window.rows.length) break;
       }
-      return { fetched, merged, torn, dropped };
+      return { fetched, merged };
     };
 
-    let pass = await drain(head);
-    // A torn walk is a real answer to the wrong question. Ask it again — two
-    // re-rankings landing inside two consecutive walks is rare enough to accept,
-    // and the de-duplicated list below is still coherent when it happens.
-    if (pass.torn) pass = await drain(await fetchWindow(0));
-
+    const pass = await drain(head);
     const rows = reconcileRows(cached, pass.merged);
     writeSnapshot(key, rows);
     // Re-pin each window onto the RECONCILED rows, so a later 304 restores the
     // identities the screen is already rendering instead of the raw wire copies.
-    // A torn or de-duplicated walk pins NOTHING: those windows no longer describe
-    // what the gateway would send, and revalidating against them would keep
-    // restoring a list with a hole in it. Unpinned, the next poll walks for real
-    // and heals — and the steady-state early return above cannot fire either,
-    // because it needs the head pin these lines just refused to write.
-    const windows = new Map<number, SessionsWindow>();
-    if (!pass.torn && pass.dropped === 0) {
-      for (const { offset, start, window } of pass.fetched) {
-        if (!window.etag) continue;
-        windows.set(offset, {
-          ...window,
-          rows: rows.slice(start, start + window.rows.length),
-        });
-      }
+    const windows = new Map<string, SessionsWindow>();
+    let start = 0;
+    for (const window of pass.fetched) {
+      const slice = rows.slice(start, start + window.rows.length);
+      start += window.rows.length;
+      if (!window.etag) continue;
+      windows.set(window.after, { ...window, rows: slice });
     }
     if (windows.size) {
       GatewayClient.sessionsValidators.set(key, { full: rows, windows });
-      const head = windows.get(0);
+      const pin = windows.get(HEAD_CURSOR);
       writeSnapshot(
         this.snapshotKey("sessions-pin"),
-        head ? { etag: head.etag, total: head.total } : null,
+        pin ? { etag: pin.etag, total: pin.total } : null,
       );
     } else {
       GatewayClient.sessionsValidators.delete(key);

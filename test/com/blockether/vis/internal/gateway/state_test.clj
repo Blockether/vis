@@ -2072,11 +2072,90 @@
                   (fn [sid]
                     {"id" (str sid) "created_at" 1000 "is_awaiting_input" (= "parked" (str sid))})]
 
-                 (let [page (state/list-sessions-page :all {:limit 1 :offset 0})]
+                 (let [page (state/list-sessions-page :all {:limit 1})]
                    (expect (= ["fresh"] (mapv #(get % "id") (:sessions page))))
                    (expect (= 3 (:total page)))
                    ;; Deep in the fleet, absent from the window, and still complete here.
                    (expect (= ["parked"] (mapv #(get % "id") (:awaiting page))))))))
+
+;; Regression, user report (paraphrased: "the list keeps jumping while I read it"): a
+;; window was an OFFSET into an ordering RECOMPUTED per request, so a turn landing while a
+;; client walked the pages shifted every row below it - one session arrived twice (a
+;; duplicate id) and another vanished from the list, with the merged count still equal to
+;; `total`, so nothing downstream could notice.
+(defdescribe
+  gateway-session-keyset-window-test
+  (it
+    "pages by the CURSOR of the last row, so a turn landing mid-walk cannot duplicate or drop one"
+    (let
+      [fleet (atom [{:id "e" :created-at 5000} {:id "d" :created-at 4000} {:id "c" :created-at 3000}
+                    {:id "b" :created-at 2000} {:id "a" :created-at 1000}])]
+      (with-redefs
+        [lp/db-info (constantly nil)
+         persistance/db-session-turn-stats (constantly nil)
+         lp/by-channel (fn [_]
+                         @fleet)
+         bus/waiting-requests (constantly {})
+         state/soul (fn [sid]
+                      ;; The decoration reports the same content time the ranking read,
+                      ;; so the window is the cut a fully decorated sort would have made.
+                      (let [id (str sid)]
+                        {"id" id
+                         "created_at" (some #(when (= id (:id %)) (:created-at %)) @fleet)}))]
+
+        (let [head (state/list-sessions-page :all {:limit 2})]
+          (expect (= ["e" "d"] (mapv #(get % "id") (:sessions head))))
+          (expect (= "4000:d" (:next-cursor head)))
+          (expect (:has-more head))
+          ;; A turn lands in the OLDEST session while the client is still
+          ;; walking. Its content time is now the freshest in the fleet, so it
+          ;; ranks to the very top - which under an offset pushed every row
+          ;; below the head down one place.
+          (swap! fleet (fn [rows]
+                         (mapv #(if (= "a" (:id %)) (assoc % :created-at 9000) %) rows)))
+          (let [page (state/list-sessions-page :all {:limit 2 :after (:next-cursor head)})]
+            ;; `d` is not served twice and `c` is not skipped: the cursor names
+            ;; a ROW, so the page after it is the same page whatever moved.
+            (expect (= ["c" "b"] (mapv #(get % "id") (:sessions page))))
+            (expect (= 5 (:total page)))
+            (expect (not (:has-more page)))
+            (expect (nil? (:next-cursor page))))))))
+  (it "breaks a recency tie by id, so a cursor never skips the row beside it"
+      (with-redefs
+        [lp/db-info
+         (constantly nil)
+
+         persistance/db-session-turn-stats
+         (constantly nil)
+
+         lp/by-channel
+         (fn [_]
+           [{:id "y" :created-at 2000} {:id "x" :created-at 2000}])
+
+         bus/waiting-requests
+         (constantly {})
+
+         state/soul
+         (fn [sid]
+           {"id" (str sid) "created_at" 1000})]
+
+        (let [head (state/list-sessions-page :all {:limit 1})]
+          (expect (= ["x"] (mapv #(get % "id") (:sessions head))))
+          (expect (= "2000:x" (:next-cursor head)))
+          (expect (= ["y"]
+                     (mapv #(get % "id")
+                           (:sessions (state/list-sessions-page :all
+                                                                {:limit 1 :after "2000:x"}))))))))
+  (it "reads a cursor back, and answers nil for anything that is not one"
+      (expect (= [4000 "d"] (state/parse-session-cursor "4000:d")))
+      ;; Only the FIRST colon ends the number; the rest is the id.
+      (expect (= [1 "a:b"] (state/parse-session-cursor "1:a:b")))
+      (expect (nil? (state/parse-session-cursor "4000")))
+      (expect (nil? (state/parse-session-cursor "nope:d")))
+      (expect (nil? (state/parse-session-cursor "4000:")))
+      (expect (nil? (state/parse-session-cursor ":d")))
+      (expect (nil? (state/parse-session-cursor "")))
+      (expect (nil? (state/parse-session-cursor nil)))))
 
 ;; Regression, user report (paraphrased: "clicking a session suddenly makes it the
 ;; freshest thing and it jumps to the top, and after the gateway restarts the empty

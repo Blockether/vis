@@ -1648,20 +1648,16 @@
                                            :workspace-id (get body "workspace_id")
                                            :root (get body "root")}))))
 
-(def ^:private sessions-order-header
-  "Response header carrying `state/list-sessions-page`'s ordering digest.
-
-   Deliberately a HEADER and not a body field: the ordering moves whenever ANY
-   session anywhere in the fleet is touched, while a given window's rows usually
-   do not. In the payload it would land inside `sessions-etag` and turn every
-   unrelated change into a full re-download of every window; as a header it also
-   rides along on the 304 that keeps those windows free."
-  "X-Vis-Sessions-Order")
-
 (defn- sessions-etag
   "Conditional-GET validator for a session-list ANSWER: SHA-256 over the rows
-   MINUS `server_time_ms`, together with the window frame (total/offset/limit)
-   that identifies WHICH answer they are.
+   MINUS `server_time_ms`, together with the window frame (total/limit/root and
+   the cursor it was cut after) that identifies WHICH answer they are.
+
+   `total` inside the validator is what lets an unchanged FIRST window prove the
+   whole list: a session created or deleted anywhere changes the count, and a
+   session that gains content ranks to the very top and so lands in this window.
+   A client holding a full list can therefore stop after one 304 instead of
+   revalidating every window behind it (see `GatewayClient.listSessions`).
 
    `server_time_ms` is a per-request clock sample (`state/soul` takes it fresh on
    every call), so hashing it would make every poll a guaranteed miss and no
@@ -1670,7 +1666,7 @@
   ^String [payload]
   (let
     [stable
-     (wire/json-str [(:total payload) (:offset payload) (:limit payload) (:root payload)
+     (wire/json-str [(:total payload) (:limit payload) (:root payload) (:after payload)
                      (mapv #(dissoc % "server_time_ms") (:sessions payload))
                      ;; The parked strip rides the same answer, so it must ride the
                      ;; same validator: a run that starts or stops waiting on its
@@ -1684,15 +1680,24 @@
     (str "W/\"" (subs (.formatHex (java.util.HexFormat/of) ^bytes raw) 0 32) "\"")))
 
 (defn- list-sessions-handler
-  "GET /v1/sessions[?limit=&offset=&root=] — sessions in navigator order, WINDOWED on
+  "GET /v1/sessions[?limit=&after=&root=] — sessions in navigator order, WINDOWED on
    request, with a validator so a poller can revalidate instead of re-downloading.
 
    Without `limit` this is still the whole fleet, so every existing client keeps
-   working. With it, the reply carries `total` / `offset` / `limit` / `has_more`
-   and the gateway only decorates the rows it returns: the ordering is derived
-   from cheap facts (see `state/list-sessions-page`), so a 100-row first page of
-   a 448-session store costs roughly a fifth of the ~257ms full build and a fifth
-   of its ~300KB — the app paints its first screen without waiting for the tail.
+   working. With it, the reply carries `total` / `limit` / `next_cursor` /
+   `has_more` and the gateway only decorates the rows it returns: the ordering is
+   derived from cheap facts (see `state/list-sessions-page`), so a 100-row first
+   page of a 448-session store costs roughly a fifth of the ~257ms full build and
+   a fifth of its ~300KB — the app paints its first screen without waiting for
+   the tail.
+
+   A window is addressed by a CURSOR, never an offset: `after` is the
+   `next_cursor` of the previous answer, which names the last ROW the client
+   holds, so the page after it is the same page however much the fleet moved in
+   between. Offsets indexed an ordering recomputed per request, which duplicated
+   one row and dropped another whenever a turn landed mid-walk. A cursor that is
+   PRESENT but unparsable is a 400, exactly like a bad `limit`, never a silent
+   fallback to the head of the list.
 
    `awaiting` carries the sessions parked on an unanswered human-input request,
    complete and OUTSIDE the window, so a client pins them above a list that no
@@ -1701,8 +1706,7 @@
    The companion refreshes this on a timer and the payload is BIG while the
    content is identical until a turn moves. With `If-None-Match` the steady state
    collapses to a 304 with no body: nothing transferred, nothing parsed, nothing
-   reconciled, nothing repainted. A window param that is PRESENT but unparsable
-   is a 400, never a silent fallback to the full fleet."
+   reconciled, nothing repainted."
   [request]
   (let
     [given?
@@ -1712,8 +1716,10 @@
      limit
      (query-long request "limit")
 
-     offset
-     (query-long request "offset")
+     after
+     (some-> (get-in request [:query-params "after"])
+             str
+             not-empty)
 
      ;; One PROJECT's window. The companion pages a project header in place, and a
      ;; page it slices locally is not a page: it needs the whole fleet downloaded
@@ -1724,11 +1730,14 @@
              str
              not-empty)]
 
-    (if (or (and (given? "limit") (nil? limit)) (and (given? "offset") (nil? offset)))
-      (error-response 400 :invalid-window "limit and offset must be integers")
+    (if (or (and (given? "limit") (nil? limit))
+            (and (some? after) (nil? (state/parse-session-cursor after))))
+      (error-response 400
+                      :invalid-window
+                      "limit must be an integer and after must be a <recency_ms>:<id> cursor")
       (let
         [page
-         (state/list-sessions-page :all {:limit limit :offset offset :root root})
+         (state/list-sessions-page :all {:limit limit :after after :root root})
 
          payload
          {:sessions (:sessions page)
@@ -1736,19 +1745,18 @@
           :awaiting (:awaiting page)
           :root root
           :total (:total page)
-          :offset (:offset page)
           :limit (:limit page)
+          ;; Echoed so the validator identifies WHICH window these rows are, and
+          ;; handed on so the next request is the client's own last row.
+          :after after
+          :next-cursor (:next-cursor page)
           :has-more (:has-more page)}
 
          etag
          (sessions-etag payload)
 
-         ;; Same ordering digest on 200 and 304 alike: a client draining several
-         ;; windows compares them to see whether the fleet was re-ranked under it
-         ;; mid-walk (see `state/list-sessions-page`), and a revalidated window
-         ;; that answers 304 must not leave that comparison blind.
          base
-         {"ETag" etag "Cache-Control" "no-cache" sessions-order-header (:order-digest page)}]
+         {"ETag" etag "Cache-Control" "no-cache"}]
 
         (if (= etag (get-in request [:headers "if-none-match"]))
           {:status 304 :headers base :body nil}
@@ -3642,9 +3650,8 @@
                                           "Authorization, Content-Type, X-Vis-Gateway-Secret")
        ;; Without this a browser fetch can read the BODY but not the `ETag`
        ;; header, so the app could never send `If-None-Match` and every session
-       ;; list poll would re-download the whole fleet. The session-list ordering
-       ;; digest is read the same way, and on 304s where there is no body at all.
-       "Access-Control-Expose-Headers" (str "ETag, " sessions-order-header)
+       ;; list poll would re-download the whole fleet.
+       "Access-Control-Expose-Headers" "ETag"
        "Access-Control-Max-Age" "600"
        "Vary" "Origin"}
       origin
