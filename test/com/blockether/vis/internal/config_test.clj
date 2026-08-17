@@ -699,7 +699,20 @@
                        (first (:providers (config/runtime-config
                                             {"providers" [{"id" "gw" "is_stateless" true}]}))))))
       (expect (not (contains? (config/->svar-provider {:id :gw :api-key "k" :models [{:name "m"}]})
-                              :stateless-items?)))))
+                              :stateless-items?))))
+  (it "carries `is_image_input` through to svar as :image-input?"
+      ;; A gateway can proxy multimodal models and still refuse an image content
+      ;; part itself (HTTP 400 `unknown variant image_url, expected text`), so a
+      ;; user must be able to veto image input for one provider.
+      (expect (false? (:image-input?
+                        (config/->svar-provider
+                          {:id :gw :api-key "k" :models [{:name "m"}] :image-input? false}))))
+      (expect (false? (:image-input? (first (:providers (config/runtime-config {"providers"
+                                                                                [{"id" "gw"
+                                                                                  "is_image_input"
+                                                                                  false}]}))))))
+      (expect (not (contains? (config/->svar-provider {:id :gw :api-key "k" :models [{:name "m"}]})
+                              :image-input?)))))
 
 (defn- with-declared-environment
   "Run `f` with `block` DECLARED as the active config's `environment:` block."

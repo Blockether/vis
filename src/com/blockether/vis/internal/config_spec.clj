@@ -83,7 +83,7 @@
 (def model-keys #{"name" "context" "output_limit" "is_tool_call" "api_style"})
 (def provider-keys
   #{"id" "api_key" "api_key_command" "models" "base_url" "compatibility" "api_style"
-    "responses_path" "llm_headers" "extra_body" "is_stateless"})
+    "responses_path" "llm_headers" "extra_body" "is_stateless" "is_image_input"})
 
 (def compatibility-values
   "The wire dialects a provider may declare. `api_style` remains the raw svar
@@ -127,7 +127,11 @@
    ;; resolve an item id minted by another replica; replaying one is a hard
    ;; HTTP 400. `is_stateless: true` stops sending server-minted item ids
    ;; (reasoning id + encrypted_content, function_call id) for this provider.
-   "is_stateless" boolean?})
+   "is_stateless" boolean?
+   ;; A gateway can proxy a multimodal model and still refuse an image content
+   ;; part itself (HTTP 400 `unknown variant image_url, expected text`).
+   ;; `is_image_input: false` vetoes vision for every model it serves.
+   "is_image_input" boolean?})
 
 (s/def ::provider #(closed-map? provider-schema #{"id"} %))
 (s/def ::providers (s/coll-of ::provider :kind vector?))

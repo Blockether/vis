@@ -124,6 +124,95 @@
                                       "\n"
                                       (or (ex-message err) (:message err) (str err))))))
 
+(def ^:private IMAGE_WIRE_REJECTION_PATTERN
+  "How an ENDPOINT says its request SCHEMA has no image part at all: a
+   deserialization complaint about the content variant itself, naming no model.
+   A real one, HTTP 400: `unknown variant `image_url`, expected `text``."
+  #"(?i)unknown variant [`'\"]?image_url|image_url[^.\n]{0,60}expected [`'\"]?text|(?:invalid|unknown|unsupported) (?:content )?(?:type|variant|part)[^.\n]{0,40}image_url")
+
+(def ^:private IMAGE_MODEL_REJECTION_PATTERN
+  "How a provider says THIS MODEL cannot read pixels while its wire carries them
+   for the other models it serves: `The model gpt-5-mini does not support image
+   input`, `Vision is not supported for this model`."
+  #"(?i)(?:does not|doesn't|do not|cannot|can't) support (?:image|vision|multimodal)|(?:image|vision)[^.\n]{0,40}(?:is|are) not supported|images? (?:is|are) not (?:supported|allowed)|no support for images?|image_url[^.\n]{0,40}(?:not supported|unsupported|not allowed)")
+
+(defn- error-payload
+  "The data map and the searchable text of one error, whichever shape it arrives
+   in: a thrown `ex-info`, an svar `:attempts` row, or a plain response map."
+  [err]
+  (let [data (or (:data err) (ex-data err) err)]
+    [data
+     (str (some-> (:body data)
+                  str)
+          "\n"
+          (or (ex-message err) (:message err) (:error data) (str err)))]))
+
+(defn image-rejection-scope
+  "How far an image refusal generalizes, or nil when the error is not one.
+
+   `:wire` — the ENDPOINT's own request schema has no image variant, so NOTHING
+   it serves can be shown a picture. A gateway can proxy a multimodal model and
+   still answer `unknown variant image_url, expected text` with HTTP 400: the
+   capability tables are not wrong about the MODEL, they simply do not describe
+   the endpoint, and only the wire settles that.
+
+   `:model` — that MODEL cannot read pixels. It is a fact about the model
+   wherever it is served from, and never about its provider's other models:
+   blinding a whole provider for it takes a fleet's eyes down over one small
+   model that was never meant to see.
+
+   Structural like a schema defect either way — an unchanged retry fails
+   identically. A corrupt or oversized picture is a different failure and must
+   not read as one of these."
+  [err]
+  (let [[data text] (error-payload err)]
+    (when (contains? #{400 415 422} (:status data))
+      (cond (re-find IMAGE_WIRE_REJECTION_PATTERN text) :wire
+            (re-find IMAGE_MODEL_REJECTION_PATTERN text) :model))))
+
+(defn image-input-rejection?
+  "True when a request failed because the image could not be carried at all."
+  [err]
+  (some? (image-rejection-scope err)))
+
+(defn image-rejections
+  "Rows `{:provider … :model … :scope :wire|:model}` for everything `err` proves
+   about carrying images. Empty when it proves nothing.
+
+   Two shapes answer this and both happen. A single provider's failure names
+   itself in `:provider-id` and its model in `:model`. svar's
+   `all-providers-exhausted` carries one `:attempts` row per provider it tried,
+   and a turn that sends an image to a text-only gateway usually fails as the
+   second — every row is a different provider, so only the rows whose own error
+   says the image was the problem count."
+  [err]
+  (let
+    [[data _]
+     (error-payload err)
+
+     row
+     (fn [provider model scope]
+       (when scope
+         {:provider (cond (keyword? provider) provider
+                          (some? provider) (keyword (str provider))
+                          :else nil)
+          :model (some-> model
+                         str
+                         not-empty)
+          :scope scope}))
+
+     attempted
+     (into #{}
+           (keep (fn [attempt]
+                   (row (:provider attempt)
+                        (:model attempt)
+                        (image-rejection-scope {:data attempt :message (:error attempt)}))))
+           (:attempts data))]
+
+    (cond-> attempted
+      (:provider-id data)
+      (into (keep identity
+                  [(row (:provider-id data) (:model data) (image-rejection-scope err))])))))
 (defn output-budget-too-small-error?
   "True when a provider rejected the request because the OUTPUT-token budget it
    was given is below that model's minimum — e.g. `gpt-5.6-terra` 400s on

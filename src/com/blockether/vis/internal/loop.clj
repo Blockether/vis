@@ -1226,6 +1226,15 @@
      provider-failure
      (provider-failure-cause e)
 
+     ;; The WIRE just answered a question no capability table can: whether this
+     ;; endpoint can carry an image content part at all, or whether only that one
+     ;; model cannot read pixels. Remember it at the scope it proves, while the
+     ;; failure is in hand, so the next request degrades to a description instead
+     ;; of repeating the same 400 on every replay of that attachment.
+     _
+     (run! vision-describe/remember-image-refusal!
+           (mapcat perr/image-rejections (bounded-cause-chain e)))
+
      non-correctable?
      (some? provider-failure)
 
@@ -2347,17 +2356,21 @@
     msgs))
 
 (defn- replay-context
-  "Small identity map for deciding whether preserved-thinking can be
-   replayed into the next provider call. Provider-native thinking
-   signatures are not portable: z.ai stores reasoning text under
-   `:thinking-signature`, Anthropic expects an HMAC signature, and
-   OpenAI Responses stores a JSON reasoning item. Replaying across a
-   provider/model switch corrupts the next request (Anthropic 400:
-   invalid signature in thinking block)."
+  "Small identity map for the model the next provider call will run against:
+   provider, model name, and the `:capabilities` its config entry declared.
+
+   Thinking replay reads the first two. Provider-native thinking signatures are
+   not portable: z.ai stores reasoning text under `:thinking-signature`,
+   Anthropic expects an HMAC signature, and OpenAI Responses stores a JSON
+   reasoning item. Replaying across a provider/model switch corrupts the next
+   request (Anthropic 400: invalid signature in thinking block).
+
+   The image gate reads all three — see `target-supports-vision?`."
   [resolved-model]
   {:provider (:provider resolved-model)
    :model (some-> (:name resolved-model)
-                  str)})
+                  str)
+   :capabilities (:capabilities resolved-model)})
 
 (defn- anthropic-replay-context?
   [{:keys [provider model]}]
@@ -3551,12 +3564,31 @@
    :image_url {:url (str "data:" (or (not-empty (str media-type)) "image/png") ";base64," base64)}})
 
 (defn- target-supports-vision?
-  "True when the replay `target` model advertises `:vision` in svar's per-model
-   capability registry. Gates generated-figure replay so a text-only model is
-   never handed image blocks (Copilot without vision, glm-5-turbo, deepseek …)."
+  "True when THIS PROVIDER's serving of the replay `target` takes image input.
+
+   Provider-scoped on purpose. The model NAME is not the answer: Copilot proxies
+   vision-capable Claude/GPT under names svar's static table never learned, every
+   OpenRouter model is a namespaced slug, and `gpt-4o-search-preview` matches the
+   `gpt-4o` vision pattern while serving text only — an image block sent there is a
+   400 that repeats on every later turn, because attachments replay. So the question
+   goes to `provider-model-metadata`, which reads models.dev's per-provider input
+   modalities and lets a `:capabilities` set written in config override them.
+
+   A provider that already ANSWERED the question outranks every table, at the scope
+   its answer proves: an endpoint whose WIRE refused an image content part outright
+   is blind for everything it serves (`vision-describe/image-blind-provider?`), while
+   a model that answered it cannot read pixels is blind by NAME wherever it is served
+   from (`vision-describe/image-blind-model?`) and leaves its provider's other models
+   seeing."
   [target]
-  (contains? (:capabilities (svar-router/infer-model-metadata {:name (str (:model target))}))
-             :vision))
+  (and (not (vision-describe/image-blind-provider? (:provider target)))
+       (not (vision-describe/image-blind-model? (:model target)))
+       (contains? (:capabilities (svar-router/provider-model-metadata
+                                   (:provider target)
+                                   (cond-> {:name (str (:model target))}
+                                     (seq (:capabilities target))
+                                     (assoc :capabilities (:capabilities target)))))
+                  :vision)))
 
 (defn- wire-image-attachment
   "One stored iteration attachment as the wire will carry it, or nil.

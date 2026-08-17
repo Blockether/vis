@@ -31,6 +31,7 @@
             [com.blockether.svar.core :as svar]
             [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.attachments :as attachments]
+            [com.blockether.vis.internal.provider-error :as perr]
             [com.blockether.vis.internal.runtime-settings :as rt]
             [com.blockether.vis.internal.strutil :refer [truncate]]
             [com.blockether.vis.internal.toggles :as toggles]
@@ -71,11 +72,22 @@
   4000)
 
 (def ^:private MAX_DESCRIBE_ROUNDS
-  "How many providers one image may be offered to inside a single pass. A fleet
-   commonly holds several members of the SAME broken family — two Copilot entries
-   sharing one absent credential — so one retry is not enough, while a hopeless
-   fleet must not spend the deadline discovering that."
-  3)
+  "Hard ceiling on how many providers one image may be offered to inside a single
+   pass, before the fleet's own size lowers it.
+
+   Measured on a seven-provider fleet, three was not enough: the first offer hit a
+   20s stream timeout, the second a 400, the third a plan whose credential the
+   process could not resolve — and the pass gave up two providers short of one that
+   could actually see. Every round removes at least one provider, so the real bound
+   is the fleet, and the wall clock is what keeps a hopeless one honest."
+  6)
+
+(def ^:private DESCRIBE_NETWORK
+  "Network policy for the side-channel. One HTTP attempt, and a provider that has not
+   even answered with headers inside `:ttft-timeout-ms` is abandoned so the pass can
+   still afford the next one — svar's 20s default spends nearly half the pass deadline
+   on ONE hung provider."
+  {:max-retries 1 :ttft-timeout-ms 8000 :idle-timeout-ms 15000})
 
 (def ^:private MAX_CACHE_ENTRIES 256)
 
@@ -103,16 +115,165 @@
   [router]
   (-> router
       (assoc :rate-limit DESCRIBE_RATE_LIMIT_POLICY)
-      (update :network merge {:max-retries 1})))
+      (update :network merge DESCRIBE_NETWORK)))
 
 (defn enabled?
   "Whether the vision-description fallback may run at all."
   []
   (toggles/enabled? TOGGLE_ID))
 
+;; ── Learned wire facts ───────────────────────────────────────────────────────
+
+(defonce ^:private image-blind-providers
+  ;; #{provider-id} — providers whose WIRE refused an image content part outright
+  ;; (HTTP 400 `unknown variant image_url, expected text`). Catalog and config both
+  ;; describe the MODEL; only a request settles what the endpoint in front of it
+  ;; accepts, so the answer it gave is remembered for the rest of the process and
+  ;; no later image is offered there again.
+  (atom #{}))
+
+(defonce ^:private image-blind-models
+  ;; {model-name #{provider-id …}} — models whose provider answered "this model
+  ;; does not support image input" while carrying pixels for its OTHER models.
+  ;; That is a fact about the MODEL, so the NAME is out wherever it is served
+  ;; from; the provider ids are kept only to say where it was learned.
+  (atom {}))
+
+(defonce ^:private proven-eye
+  ;; {:provider-id :opencode-go :model "mimo-v2.5"} — the pair that last ANSWERED with a
+  ;; description, or nil. Capability metadata only says who COULD look; a 200 says who did.
+  ;; Without this the cheapest sighted candidate is re-offered first on every pass, so a fleet
+  ;; whose cheapest eyes are broken pays their failures again for every new image — measured on a
+  ;; live 7-provider fleet: two Copilot providers, ~20s of TTFT timeout each, in front of the
+  ;; model that actually answered.
+  (atom nil))
+
+(defn remember-working-eye!
+  "Remember the provider/model pair that just described an image. Idempotent.
+
+   The id is kept exactly as svar reported it — provider ids travel as keywords through routing,
+   and a stringified one would silently never match a preference or an exclusion."
+  [provider-id model]
+  (when-not (str/blank? (str provider-id))
+    (reset! proven-eye {:provider-id provider-id
+                        :model (some-> model
+                                       str
+                                       not-empty)}))
+  nil)
+
+(defn forget-working-eye!
+  "Drop the remembered eye when it is the one that just failed.
+
+   Called for EVERY failure, not only a permanent refusal: an expired credential is no fact about
+   the model, but it does mean this provider is not the one to try FIRST any more. Whoever answers
+   the next image is remembered in its place."
+  [{:keys [provider-id model]}]
+  (swap! proven-eye (fn [eye]
+                      (when-not (or (and provider-id (= provider-id (:provider-id eye)))
+                                    (and model (= model (:model eye))))
+                        eye)))
+  nil)
+
+(defn working-eye
+  "The provider/model pair that last described an image in this process, or nil."
+  []
+  @proven-eye)
+
+(defn- describe-routing
+  "`DESCRIBE_ROUTING` narrowed by everything this session already learned: providers whose wire
+   refused pixels and model NAMES that cannot read them are excluded, and the provider that last
+   ANSWERED is preferred.
+
+   The preference names a PROVIDER, never a forced model — svar still optimizes for cost and speed
+   within it, the capability filter still holds, and the preference disappears the moment that
+   provider is excluded, so nothing learned here can pin a pass to a broken endpoint."
+  [excluded excluded-models]
+  (let [preferred (:provider-id @proven-eye)]
+    (cond-> DESCRIBE_ROUTING
+      (seq excluded)
+      (assoc :exclude-providers excluded)
+
+      (seq excluded-models)
+      (assoc :exclude-models excluded-models)
+
+      (and preferred (not (contains? (set excluded) preferred)))
+      (assoc :prefer-providers [preferred]))))
+
+(defn remember-image-blind!
+  "Record `provider-id` as unable to carry an image content part at all. Idempotent."
+  [provider-id]
+  (when provider-id
+    (when-not (contains? @image-blind-providers provider-id)
+      (tel/log! {:level :warn :id ::provider-image-blind :data {:provider provider-id}}
+                (str "Provider " provider-id
+                     " rejected an image content part; "
+                     "sending it text only for the rest of this process")))
+    (forget-working-eye! {:provider-id provider-id})
+    (swap! image-blind-providers conj provider-id))
+  provider-id)
+
+(defn remember-image-blind-model!
+  "Record `model` as unable to READ pixels, as learned on `provider-id`. Idempotent.
+
+   Deliberately NOT a provider verdict: the same endpoint keeps serving whatever
+   else it has eyes for, and the name stays out everywhere it is offered."
+  [model provider-id]
+  (when-let
+    [name (some-> model
+                  str
+                  not-empty)]
+    (when-not (contains? @image-blind-models name)
+      (tel/log! {:level :warn :id ::model-image-blind :data {:model name :provider provider-id}}
+                (str "Model " name
+                     " rejected image input; "
+                     "no image is offered to that model for the rest of this process")))
+    (forget-working-eye! {:model name})
+    (swap! image-blind-models update name (fnil conj #{}) provider-id)
+    name))
+
+(defn remember-image-refusal!
+  "Learn ONE `provider-error/image-rejections` row at the scope it actually proves:
+   a wire that has no image variant blinds the PROVIDER, a model that cannot read
+   pixels blinds only that NAME."
+  [{:keys [provider model scope]}]
+  (case scope
+    :wire
+    (remember-image-blind! provider)
+
+    :model
+    (remember-image-blind-model! model provider)
+
+    nil))
+
+(defn image-blind-provider?
+  "True when `provider-id` already proved its wire cannot carry an image."
+  [provider-id]
+  (contains? @image-blind-providers provider-id))
+
+(defn image-blind-model?
+  "True when `model` already proved it cannot read pixels, on any provider."
+  [model]
+  (contains? @image-blind-models
+             (some-> model
+                     str
+                     not-empty)))
+
+(defn blind-model-names
+  "Model NAMES no request may show an image to."
+  []
+  (set (keys @image-blind-models)))
+
+(defn clear-image-blind!
+  "Forget everything this session learned about which eyes work. Tests only."
+  []
+  (reset! image-blind-providers #{})
+  (reset! image-blind-models {})
+  (reset! proven-eye nil))
+
 (defn sighted-model
   "Descriptor of the model this fleet would use to LOOK at an image, or nil when no
-   configured provider carries `:vision`. Cheap: router arithmetic, no I/O.
+   configured provider carries `:vision` — one that already refused pixels, on the
+   wire or by name, does not count. Cheap: router arithmetic, no I/O.
 
    TOTAL BY CONTRACT. The probe runs INSIDE request assembly and its answer is only
    ever an OFFER — nil means the caller keeps today's blind behaviour, so nothing
@@ -123,11 +284,18 @@
    propagated would abort turns that carry no images at all."
   [router]
   (when (map? router)
-    (try (svar-router/resolve-effective-model router DESCRIBE_ROUTING)
-         (catch Throwable t
-           (tel/log! {:level :debug :id ::sight-probe-failed :data {:error (ex-message t)}}
-                     "Vision-capability probe failed; treating the fleet as blind")
-           nil))))
+    (let
+      [blind
+       @image-blind-providers
+
+       blind-models
+       (blind-model-names)]
+
+      (try (svar-router/resolve-effective-model router (describe-routing blind blind-models))
+           (catch Throwable t
+             (tel/log! {:level :debug :id ::sight-probe-failed :data {:error (ex-message t)}}
+                       "Vision-capability probe failed; treating the fleet as blind")
+             nil)))))
 
 (defn available?
   "True when the fallback is on AND some configured model can actually see."
@@ -249,10 +417,11 @@
   "ONE parallel round of asks over `pairs` (`[[idx image] …]`), all sharing the
    `deadline-at` wall clock.
 
-   Returns `{:done {idx description} :failed [[idx image] …] :broken #{provider-id}}`.
-   `:failed` collects only calls that ERRORED — a refusal and a deadline are answers
-   about the image, a broken provider is not — and `:broken` names the providers
-   those errors came from, which is exactly what the next round excludes."
+   Returns `{:done {idx description} :failed [[idx image] …] :broken #{provider-id}
+   :blinded #{model-name}}`. `:failed` collects only calls that ERRORED — a refusal
+   and a deadline are answers about the image, a broken provider is not — while
+   `:broken` names the providers to drop for the next round and `:blinded` the model
+   NAMES that answered they cannot read pixels, which their provider survives."
   [router routing context deadline-at fallback-model pairs]
   (reduce (fn [acc [idx fut image]]
             (let
@@ -270,27 +439,70 @@
                            :data {:deadline-ms DESCRIBE_HARD_DEADLINE_MS :model fallback-model}}
                           "Vision description exceeded its hard deadline; image stays undescribed")
                         acc)
-                    (:error outcome) (let [provider-id (:provider-id (ex-data (:error outcome)))]
-                                       (tel/log!
-                                         {:level :warn
-                                          :id ::describe-failed
-                                          :data {:error (ex-message (:error outcome))
-                                                 :provider provider-id
-                                                 :model fallback-model}}
-                                         "Vision description call failed; image stays undescribed")
-                                       (cond-> (update acc :failed conj [idx image])
-                                         provider-id
-                                         (update :broken conj provider-id)))
+                    (:error outcome)
+                    (let
+                      [err
+                       (:error outcome)
+
+                       provider-id
+                       (:provider-id (ex-data err))
+
+                       ;; A wire with no image part and a model that cannot read
+                       ;; pixels are both permanent, but they generalize
+                       ;; differently: learn each row at the scope it proves
+                       ;; instead of taking the whole endpoint down for either.
+                       learned
+                       (perr/image-rejections err)
+
+                       blinded
+                       (into #{} (comp (filter #(= :model (:scope %))) (keep :model)) learned)]
+
+                      (run! remember-image-refusal! learned)
+                      (forget-working-eye! {:provider-id provider-id})
+                      (tel/log! {:level :warn
+                                 :id ::describe-failed
+                                 :data {:error (ex-message err)
+                                        :provider provider-id
+                                        :model fallback-model
+                                        :learned learned}}
+                                "Vision description call failed; image stays undescribed")
+                      (cond-> (update acc :failed conj [idx image])
+                        (seq blinded)
+                        (update :blinded into blinded)
+
+                        ;; A NAMED model's blindness leaves its provider working, so
+                        ;; the next round stays there and asks its other eyes. Any
+                        ;; other failure — credentials, a 5xx, a wire refusal — is the
+                        ;; provider's, and the next round goes elsewhere.
+                        (and provider-id (empty? blinded))
+                        (update :broken conj provider-id)))
                     :else (if-let [description (outcome->description outcome fallback-model)]
-                            (assoc-in acc [:done idx] description)
+                            (do (remember-working-eye! (:routed/provider-id (:ok outcome))
+                                                       (:routed/model (:ok outcome)))
+                                (assoc-in acc [:done idx] description))
                             acc))))
-          {:done {} :failed [] :broken #{}}
+          {:done {} :failed [] :broken #{} :blinded #{}}
           ;; Eager on purpose: every ask of a round is in flight before the first deref.
           (mapv (fn [[idx image]]
                   [idx
                    (describe-future router routing context (attachments/image-label image) image)
                    image])
                 pairs)))
+
+(defn- fleet-offers
+  "How many distinct OFFERS this fleet can make: one per provider/model pair.
+
+   Every round of a pass removes at least one provider (its wire broke) or one
+   model NAME (it cannot read pixels), so this is the loop's own bound. Counting
+   providers alone was wrong the moment a refusal could be model-scoped: a single
+   provider serving a small blind model in front of a seeing one got no second
+   round and the image stayed undescribed."
+  [router]
+  (reduce +
+          0
+          (map (fn [provider]
+                 (max 1 (count (:models provider))))
+               (:providers router))))
 
 (defn describe-images
   "Descriptions for already-wired images (the `attachments/wire-image` shape:
@@ -332,37 +544,49 @@
          ;; what they dropped to the next-best model. Proven live: two Copilot
          ;; providers failed in a row on one absent credential, and the image was
          ;; only described because a third provider got the offer.
-         by-index
-         (loop
-           [pairs (mapv (juxt :idx :image) pending)
-            excluded #{}
-            round 0
-            done {}]
+         by-index (loop
+                    [pairs (mapv (juxt :idx :image) pending)
+                     ;; Start from what earlier passes already learned: a wire that has no
+                     ;; image part never grows one mid-session, and a model that cannot read
+                     ;; pixels does not learn to.
+                     excluded @image-blind-providers
+                     excluded-models (blind-model-names)
+                     round 0
+                     done {}]
 
-           (if (or (empty? pairs)
-                   (>= (long round) (long MAX_DESCRIBE_ROUNDS))
-                   ;; Every provider in the fleet already broke: there is nobody left
-                   ;; to offer the image to, and svar would only throw locally.
-                   (empty? (remove #(contains? excluded (:id %)) (:providers router)))
-                   (<= (- (long deadline-at) (System/currentTimeMillis)) 0))
-             done
-             (let
-               [outcome (describe-round router
-                                        (cond-> DESCRIBE_ROUTING
-                                          (seq excluded)
-                                          (assoc :exclude-providers excluded))
-                                        context
-                                        deadline-at
-                                        (:name model)
-                                        pairs)
-                learned (into #{} (remove excluded) (:broken outcome))
-                described (merge done (:done outcome))]
+                    (if (or (empty? pairs)
+                            ;; Bounded by the FLEET, not by a fixed number: every round removes
+                            ;; at least one provider or one model, and a bigger fleet is exactly
+                            ;; the case where a broken family sits in front of a working pair of
+                            ;; eyes.
+                            (>= (long round)
+                                (min (long MAX_DESCRIBE_ROUNDS) (long (fleet-offers router))))
+                            ;; Every provider in the fleet already broke: there is nobody left
+                            ;; to offer the image to, and svar would only throw locally.
+                            (empty? (remove #(contains? excluded (:id %)) (:providers router)))
+                            (<= (- (long deadline-at) (System/currentTimeMillis)) 0))
+                      done
+                      (let
+                        [outcome (describe-round router
+                                                 (describe-routing excluded excluded-models)
+                                                 context
+                                                 deadline-at
+                                                 (:name model)
+                                                 pairs)
+                         learned (into #{} (remove excluded) (:broken outcome))
+                         learned-models (into #{} (remove excluded-models) (:blinded outcome))
+                         described (merge done (:done outcome))]
 
-               ;; Nothing NEW broke: another round would call the same provider with
-               ;; the same result, so stop and let the caller degrade.
-               (if (seq learned)
-                 (recur (:failed outcome) (into excluded learned) (inc (long round)) described)
-                 described))))
+                        ;; Nothing NEW is out: another round would call the same provider with
+                        ;; the same model and the same result, so stop and let the caller
+                        ;; degrade.
+                        (if (or (seq learned) (seq learned-models))
+                          (recur (:failed outcome)
+                                 (into excluded learned)
+                                 (into excluded-models learned-models)
+                                 (inc (long round))
+                                 described)
+                          described))))
          ;; Keyed by payload, not position: every entry sharing a digest with a
          ;; described one gets the same text, cached once.
          by-digest (into {}

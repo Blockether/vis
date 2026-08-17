@@ -666,6 +666,12 @@
      explicit-stateless
      (:stateless-items? provider)
 
+     ;; `is_image_input: false` — this endpoint refuses image content parts
+     ;; outright (a gateway answering `unknown variant image_url, expected text`
+     ;; with HTTP 400), whatever image input the catalog claims for its models.
+     explicit-image-input
+     (:image-input? provider)
+
      ;; Provider-default request-body params (e.g. LM Studio sampler
      ;; defaults from the preset). svar merges these as the lowest
      ;; precedence layer, so an explicit per-provider config override
@@ -708,6 +714,9 @@
           (some? explicit-stateless)
           (assoc :stateless-items? (boolean explicit-stateless))
 
+          (some? explicit-image-input)
+          (assoc :image-input? (boolean explicit-image-input))
+
           merged-headers
           (assoc :llm-headers merged-headers)
 
@@ -728,6 +737,9 @@
 
         (some? explicit-stateless)
         (assoc :stateless-items? (boolean explicit-stateless))
+
+        (some? explicit-image-input)
+        (assoc :image-input? (boolean explicit-image-input))
 
         explicit-headers
         (assoc :llm-headers explicit-headers)
@@ -757,7 +769,8 @@
    "is_check_context" :check-context?
    "is_respect_retry_after" :respect-retry-after?
    "is_fallback_provider" :fallback-provider?
-   "is_stateless" :stateless-items?})
+   "is_stateless" :stateless-items?
+   "is_image_input" :image-input?})
 
 (def ^:private runtime->svar-yaml
   "Write-path inverse of `svar-wire->runtime`."
@@ -765,7 +778,8 @@
    :check-context? "is_check_context"
    :respect-retry-after? "is_respect_retry_after"
    :fallback-provider? "is_fallback_provider"
-   :stateless-items? "is_stateless"})
+   :stateless-items? "is_stateless"
+   :image-input? "is_image_input"})
 
 (def ^:private runtime-keywords
   "Finite YAML key vocabulary used by internal keyword-keyed domain maps.

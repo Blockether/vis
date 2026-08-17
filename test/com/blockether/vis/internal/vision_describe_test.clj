@@ -6,7 +6,12 @@
             [com.blockether.vis.internal.runtime-settings :as rt]
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.vision-describe :as vd]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
+
+;; The learned image-blind registry is a PROCESS fact — a wire that refuses image
+;; parts does not grow one mid-session — and the suite may run in any order, so
+;; every test starts from a clean slate and leaves one even when it fails.
+(set-ns-context! [(around-each [f] (vd/clear-image-blind!) (f) (vd/clear-image-blind!))])
 
 ;; 1x1 red PNG — REAL pixels. Every image this side-channel sends crosses the same
 ;; send-time gate as a wire image, so a placeholder payload is (correctly) refused.
@@ -113,6 +118,26 @@
                                 :pricing {:input 1.0 :output 2.0}
                                 :capabilities #{:chat :vision}}]}]))
 
+(defn- two-eyes-fleet
+  "ONE provider serving two seeing models. The cheap one is what
+   `:optimize [:cost :speed]` reaches for first; the other is what a refusal that
+   names only the MODEL has to fall through to, on the same endpoint."
+  []
+  (svar/make-router [{:id :seeing
+                      :api-key "k"
+                      :base-url "http://seeing.invalid"
+                      :api-style :openai
+                      :models [{:name "cheap-seer"
+                                :pricing {:input 0.1 :output 0.2}
+                                :intelligence :low
+                                :speed :fast
+                                :capabilities #{:chat :vision}}
+                               {:name "big-seer"
+                                :pricing {:input 2.0 :output 5.0}
+                                :intelligence :high
+                                :speed :medium
+                                :capabilities #{:chat :vision}}]}]))
+
 (defn- with-asks
   "Run `f` with `svar/ask!` answering `reply` (a fn of the ask opts) and every call
    recorded. Returns `{:result … :calls [{:router … :opts …}]}`."
@@ -192,7 +217,11 @@
         (expect (= [] (:same-provider-delays-ms (:rate-limit router))))
         (expect (false? (:fallback-provider? (:rate-limit router))))
         (expect (false? (:respect-retry-after? (:rate-limit router))))
-        (expect (= 1 (:max-retries (:network router))))))
+        (expect (= 1 (:max-retries (:network router))))
+        ;; And a provider that never sends headers must not eat the pass: svar's 20s
+        ;; default spends nearly half the deadline on ONE hung provider. Measured live.
+        (expect (= 8000 (:ttft-timeout-ms (:network router))))
+        (expect (= 15000 (:idle-timeout-ms (:network router))))))
   (it "sends the pixels and the user's request to the describing model"
       (let
         [{:keys [calls]}
@@ -488,9 +517,11 @@
                                         {:status 500 :provider-id (keyword (str "broken-" n))}))))
                     #(vd/describe-images (rescue-fleet) "ctx" [(distinct-image "hopeless")]))]
 
-        ;; A fleet that keeps naming NEW broken providers must not spin: the pass is
-        ;; bounded by rounds as well as by the deadline.
-        (expect (= 3 (count calls)))
+        ;; A fleet that keeps naming NEW broken providers must not spin — but the bound
+        ;; is the FLEET, not a constant: a seven-provider fleet put a stream timeout, a
+        ;; 400 and an unresolvable credential in front of the model that could see.
+        (expect (= 4 (count calls)))
+        (expect (= 4 (count (:providers (:router (first calls))))))
         (expect (= [nil] result))))
   (it "does not retry a REFUSAL — only a broken provider earns a second offer"
       (let
@@ -540,3 +571,191 @@
            #(vd/describe-images (mixed-fleet) "ctx" [(assoc (image "/tmp/empty.png") :base64 "")]))]
         (expect (empty? calls))
         (expect (= [nil] result)))))
+
+;; The one fact no capability table can hold: a provider whose WIRE has no image part.
+;; Proven live against the user's own fleet — every :opencode-go model models.dev lists
+;; as taking image input answers HTTP 400 `unknown variant image_url, expected text`,
+;; because the GATEWAY in front of those models is text-only. Config or catalog can say
+;; what they like; the request settled it, and the answer has to outlive the request.
+(defdescribe
+  image-blind-learning-test
+  "A provider that refuses image content parts is remembered and never offered
+   another picture in this process."
+  (it "remembers the provider whose wire refused the image part"
+      (with-asks (fn [_]
+                   (throw (ex-info (str
+                                     "Exceptional status code: 400 — Error from provider "
+                                     "(Console Go): unknown variant `image_url`, expected `text`")
+                                   {:status 400
+                                    :provider-id :seeing-broken
+                                    :body (str "{\"error\":\"unknown variant `image_url`, "
+                                               "expected `text`\"}")})))
+                 #(vd/describe-images (rescue-fleet) "ctx" [(distinct-image "refused-part")]))
+      (expect (vd/image-blind-provider? :seeing-broken)))
+  ;; The other direction, and the important one: a plain outage must NOT cost a provider
+  ;; its eyes for the rest of the process.
+  (it "does not blind a provider that merely failed"
+      (with-asks (fn [_]
+                   (throw (ex-info
+                            "Exceptional status code: 503"
+                            {:status 503 :provider-id :seeing-broken :body "upstream down"})))
+                 #(vd/describe-images (rescue-fleet) "ctx" [(distinct-image "transient")]))
+      (expect (not (vd/image-blind-provider? :seeing-broken))))
+  (it "excludes a learned-blind provider from the FIRST offer of a later pass"
+      (vd/remember-image-blind! :seeing-broken)
+      (let
+        [{:keys [calls]} (with-asks
+                           descriptions
+                           #(vd/describe-images (rescue-fleet) "ctx" [(distinct-image "later")]))]
+        (expect (= 1 (count calls)))
+        (expect (= #{:seeing-broken} (get-in (first calls) [:opts :routing :exclude-providers])))))
+  ;; With the fleet's only pair of eyes proven blind, the pass must cost NOTHING: no
+  ;; probe answer, no ask, and the caller falls back to today's behaviour.
+  (it "describes nothing and calls nobody once every seeing provider refused pixels"
+      (vd/remember-image-blind! :seeing)
+      (let
+        [fleet
+         (lone-seer-fleet)
+
+         {:keys [result calls]}
+         (with-asks descriptions #(vd/describe-images fleet "ctx" [(distinct-image "nobody")]))]
+
+        (expect (nil? (vd/sighted-model fleet)))
+        (expect (false? (vd/available? fleet)))
+        (expect (empty? calls))
+        (expect (nil? result))))
+  (it "keeps the OTHER providers' eyes when one is blinded"
+      (vd/remember-image-blind! :seeing-broken)
+      (expect (= "second-seer" (:name (vd/sighted-model (rescue-fleet))))))
+  ;; The costly over-generalization: a provider serving one small text-only model
+  ;; beside its seeing ones would lose ALL its eyes if a refusal that names the
+  ;; MODEL were charged to the wire. The endpoint keeps working; the name is out.
+  (it "blinds only the NAME when the refusal is about the model"
+      (let
+        [{:keys [result calls]}
+         (with-asks (fn [opts]
+                      (if (contains? (set (:exclude-models (:routing opts))) "cheap-seer")
+                        (descriptions opts)
+                        (throw (ex-info "The model cheap-seer does not support image input"
+                                        {:status 400 :provider-id :seeing :model "cheap-seer"}))))
+                    #(vd/describe-images (two-eyes-fleet) "ctx" [(distinct-image "model-blind")]))]
+        (expect (= 2 (count calls)))
+        ;; Round 1 offers the cheap model with nothing excluded; round 2 excludes the
+        ;; NAME and stays on the same provider instead of walking the fleet.
+        (expect (nil? (:exclude-models (:routing (:opts (first calls))))))
+        (expect (= #{"cheap-seer"} (:exclude-models (:routing (:opts (second calls))))))
+        (expect (nil? (:exclude-providers (:routing (:opts (second calls))))))
+        (expect (= ["seen: model-blind"] (mapv :text result)))
+        (expect (vd/image-blind-model? "cheap-seer"))
+        (expect (not (vd/image-blind-provider? :seeing)))))
+  (it "asks the provider's OTHER eyes on the next pass"
+      (vd/remember-image-blind-model! "cheap-seer" :seeing)
+      (expect (= #{"cheap-seer"} (vd/blind-model-names)))
+      ;; Real router arithmetic: the descriptor is what the next pass would offer.
+      (expect (= "big-seer" (:name (vd/sighted-model (two-eyes-fleet)))))
+      (let
+        [{:keys [calls]}
+         (with-asks descriptions
+                    #(vd/describe-images (two-eyes-fleet) "ctx" [(distinct-image "next-pass")]))]
+        (expect (= 1 (count calls)))
+        (expect (= #{"cheap-seer"} (:exclude-models (:routing (:opts (first calls))))))))
+  (it "goes blind only when EVERY name of the lone provider is out"
+      (vd/remember-image-blind-model! "cheap-seer" :seeing)
+      (vd/remember-image-blind-model! "big-seer" :seeing)
+      (let [fleet (two-eyes-fleet)]
+        (expect (nil? (vd/sighted-model fleet)))
+        (expect (false? (vd/available? fleet))))))
+
+;; =============================================================================
+;; The proven eye
+;; =============================================================================
+
+(defn- answered-by
+  "`ask!` answering like `descriptions`, but ROUTED: svar names the provider and model
+   that really served the call, which is the only proof of working eyes there is."
+  [provider-id model]
+  (fn [opts]
+    (assoc (descriptions opts)
+      :routed/provider-id provider-id
+      :routed/model model)))
+
+(defdescribe
+  proven-eye-test
+  "Capability metadata says which models COULD look; only a 200 says which ones do.
+   The pair that answered is offered the next image FIRST, and dropped the moment it fails."
+  ;; Measured on a live 7-provider fleet: the two cheapest sighted providers held Copilot
+  ;; credentials this process could not mint, so every pass burned their ~20s TTFT timeout
+  ;; before reaching the model that answers — with nothing about the fleet having changed
+  ;; since the previous image.
+  (it "offers the next image to the provider that ANSWERED the last one"
+      (let
+        [first-pass
+         (with-asks (answered-by :seeing-backup "backup-seer")
+                    #(vd/describe-images (rescue-fleet) "ctx" [(distinct-image "one")]))
+
+         second-pass
+         (with-asks (answered-by :seeing-backup "backup-seer")
+                    #(vd/describe-images (rescue-fleet) "ctx" [(distinct-image "two")]))]
+
+        (expect (nil? (:prefer-providers (:routing (:opts (first (:calls first-pass)))))))
+        (expect (= {:provider-id :seeing-backup :model "backup-seer"} (vd/working-eye)))
+        (expect (= [:seeing-backup]
+                   (:prefer-providers (:routing (:opts (first (:calls second-pass)))))))))
+  ;; A preference, never a pin: the capability filter and the cost optimization still decide
+  ;; WHICH of that provider's eyes gets the image.
+  (it "prefers the provider without forcing its model"
+      (vd/remember-working-eye! :seeing-backup "backup-seer")
+      (let
+        [{:keys [calls]}
+         (with-asks (answered-by :seeing-backup "backup-seer")
+                    #(vd/describe-images (rescue-fleet) "ctx" [(distinct-image "shape")]))
+
+         routing
+         (:routing (:opts (first calls)))]
+
+        (expect (= #{:vision} (:capabilities routing)))
+        (expect (= [:cost :speed] (:optimize routing)))
+        (expect (nil? (:model routing)))
+        (expect (nil? (:provider routing)))))
+  (it "drops the eye when that provider fails, however transiently"
+      (with-asks (answered-by :seeing-broken "cheap-seer")
+                 #(vd/describe-images (rescue-fleet) "ctx" [(distinct-image "worked")]))
+      (expect (= :seeing-broken (:provider-id (vd/working-eye))))
+      (with-asks (fn [_]
+                   (throw (ex-info "Exceptional status code: 503"
+                                   {:status 503 :provider-id :seeing-broken})))
+                 #(vd/describe-images (rescue-fleet) "ctx" [(distinct-image "broke")]))
+      (expect (nil? (vd/working-eye)))
+      ;; And the pass after that starts from the fleet again, not from a corpse.
+      (let
+        [{:keys [calls]} (with-asks
+                           (answered-by :seeing-backup "backup-seer")
+                           #(vd/describe-images (rescue-fleet) "ctx" [(distinct-image "after")]))]
+        (expect (nil? (:prefer-providers (:routing (:opts (first calls))))))))
+  (it "drops the eye when the model it names is the one that refused pixels"
+      (with-asks (answered-by :seeing "cheap-seer")
+                 #(vd/describe-images (two-eyes-fleet) "ctx" [(distinct-image "model-eye")]))
+      (expect (= {:provider-id :seeing :model "cheap-seer"} (vd/working-eye)))
+      (vd/remember-image-blind-model! "cheap-seer" :seeing)
+      (expect (nil? (vd/working-eye))))
+  (it "never prefers a provider it has already excluded"
+      (with-asks (answered-by :seeing-broken "cheap-seer")
+                 #(vd/describe-images (rescue-fleet) "ctx" [(distinct-image "doomed")]))
+      (vd/remember-image-blind! :seeing-broken)
+      (let
+        [{:keys [calls]}
+         (with-asks (answered-by :seeing-also-broken "second-seer")
+                    #(vd/describe-images (rescue-fleet) "ctx" [(distinct-image "next")]))
+
+         routing
+         (:routing (:opts (first calls)))]
+
+        (expect (= #{:seeing-broken} (:exclude-providers routing)))
+        (expect (nil? (:prefer-providers routing)))))
+  ;; Real router arithmetic, no stub: the probe that decides whether the fleet can see at
+  ;; all has to answer about the SAME provider the next ask is about to prefer.
+  (it "answers the probe about the preferred provider, not the cheapest one"
+      (let [fleet (rescue-fleet)]
+        (expect (= "cheap-seer" (:name (vd/sighted-model fleet))))
+        (vd/remember-working-eye! :seeing-backup "backup-seer")
+        (expect (= "backup-seer" (:name (vd/sighted-model fleet)))))))

@@ -917,3 +917,102 @@
         [err {:message "Provider unavailable"
               :data {:type :svar.llm/provider-unavailable :status 500}}]
         (expect (not= :file-descriptors-exhausted (perr/provider-error-kind err))))))
+
+;; The live wire fact this predicate exists to catch: a gateway proxying six models
+;; models.dev lists as taking image input answers HTTP 400 for every one of them,
+;; because the gateway's OWN request schema has no image variant. The capability
+;; tables describe the model, never the endpoint.
+(defdescribe
+  image-rejection-scope-test
+  "`image-rejection-scope`: whether the image could not be carried at all, and how
+   far that answer generalizes — the endpoint's whole wire, or one model's name."
+  (it "reads a gateway whose request schema has no image variant as :wire"
+      (let
+        [err {:message "Exceptional status code: 400"
+              :data {:status 400
+                     :body (str "{\"error\":{\"message\":\"Error from provider (Console Go): "
+                                "unknown variant `image_url`, expected `text`\"}}")}}]
+        (expect (= :wire (perr/image-rejection-scope err)))
+        (expect (perr/image-input-rejection? err))))
+  ;; The expensive mistake in the other direction: a provider serving one small
+  ;; text-only model alongside its seeing ones would lose the whole fleet's eyes
+  ;; if this read as :wire.
+  (it "reads a refusal that names the MODEL as :model"
+      (expect (= :model
+                 (perr/image-rejection-scope {:message "This model does not support image input"
+                                              :data {:status 400}})))
+      (expect (= :model
+                 (perr/image-rejection-scope {:message "Bad request"
+                                              :data {:status 422
+                                                     :body "image_url is not supported here"}})))
+      (expect (= :model
+                 (perr/image-rejection-scope {:message "Vision is not supported for this model"
+                                              :data {:status 400}}))))
+  (it "reads it from a bare ex-info, not just the trace-entry shape"
+      (expect (= :wire
+                 (perr/image-rejection-scope (ex-info "unknown variant `image_url`, expected `text`"
+                                                      {:status 400})))))
+  ;; A false positive costs a provider its eyes for the whole process, so an
+  ;; ordinary 400 and an outage carrying the same words must not match.
+  (it "ignores a 400 that is about something else"
+      (expect (nil? (perr/image-rejection-scope
+                      {:message "Exceptional status code: 400"
+                       :data {:status 400
+                              :body "{\"error\":\"messages: at least one required\"}"}}))))
+  (it "ignores a rejected image that is merely too large"
+      (expect (nil? (perr/image-rejection-scope {:message "image exceeds the 5MB limit"
+                                                 :data {:status 400}}))))
+  (it "ignores the same wording on a 5xx, which is an outage, not a schema"
+      (expect (nil? (perr/image-rejection-scope {:message "unknown variant `image_url`"
+                                                 :data {:status 500}}))))
+  (it "ignores an empty error"
+      (expect (nil? (perr/image-rejection-scope {})))
+      (expect (not (perr/image-input-rejection? {})))
+      (expect (nil? (perr/image-rejection-scope {:message "" :data {:status 400}})))))
+
+;; The `all-providers-exhausted` shape: the turn's own ask fails as the SECOND
+;; provider, so the rejection is one row among several and only its row counts.
+(defdescribe
+  image-rejections-test
+  "`image-rejections`: what a failure proves about carrying images, per row."
+  (it "picks the rejecting provider out of an exhausted attempt list"
+      (let
+        [err {:message "All providers exhausted"
+              :data {:type :svar.llm/all-providers-exhausted
+                     :attempts [{:provider "opencode-go"
+                                 :model "mimo-v2.5"
+                                 :status 400
+                                 :error (str "Error from provider (Console Go): unknown variant "
+                                             "`image_url`, expected `text`")}
+                                {:provider "anthropic"
+                                 :model "claude-opus-4-8"
+                                 :status 429
+                                 :error "rate limited"}]}}]
+        (expect (= #{{:provider :opencode-go :model "mimo-v2.5" :scope :wire}}
+                   (perr/image-rejections err)))))
+  (it "keeps a model-shaped refusal off its provider's account"
+      (let
+        [err
+         {:message "All providers exhausted"
+          :data {:type :svar.llm/all-providers-exhausted
+                 :attempts [{:provider "openai"
+                             :model "gpt-5.4-nano"
+                             :status 400
+                             :error "The model gpt-5.4-nano does not support image input"}]}}
+
+         rows
+         (perr/image-rejections err)]
+
+        (expect (= #{{:provider :openai :model "gpt-5.4-nano" :scope :model}} rows))
+        ;; The provider is NOT named as blind anywhere in the row set.
+        (expect (empty? (filter #(= :wire (:scope %)) rows)))))
+  (it "picks a lone provider that names itself"
+      (expect (= #{{:provider :opencode-go :model "mimo-v2.5" :scope :wire}}
+                 (perr/image-rejections
+                   (ex-info "unknown variant `image_url`, expected `text`"
+                            {:status 400 :provider-id :opencode-go :model "mimo-v2.5"})))))
+  (it "answers nothing for failures that are not about image parts"
+      (expect (empty? (perr/image-rejections (ex-info "rate limited"
+                                                      {:status 429 :provider-id :anthropic}))))
+      (expect (empty? (perr/image-rejections {})))
+      (expect (empty? (perr/image-rejections exhausted-err)))))

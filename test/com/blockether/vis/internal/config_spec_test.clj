@@ -33,7 +33,9 @@
                  "responses_path" "/v1/messages"
                  "llm_headers" {"X-Test" "yes"}
                  "extra_body" {"temperature" 0}
-                 "is_stateless" true}]
+                 "is_stateless" true
+                 ;; Provider-level veto: this endpoint refuses image content parts.
+                 "is_image_input" false}]
    "router" {"rate_limit" {"same_provider_delays_ms" [1000 2000]
                            "fallback_after_ms" 30000
                            "is_respect_retry_after" true

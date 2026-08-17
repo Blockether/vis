@@ -313,6 +313,8 @@
 
 (def ^:private conversation-suffix (deref #'lp/conversation-suffix))
 
+(def ^:private target-supports-vision? (deref #'lp/target-supports-vision?))
+
 (def ^:private max-tokens-exceeded-error? (deref #'lp/max-tokens-exceeded-error?))
 
 
@@ -1839,6 +1841,148 @@
            suffix (conversation-suffix [(stub-tool-iter {:id 1})] target)]
 
           (expect (= 2 (count suffix)))))))
+
+(defdescribe
+  target-vision-is-provider-scoped-test
+  "Whether the target can SEE is a question about this provider's serving of the
+   model, not about the model's name."
+  ;; Regression: the gate asked svar for name-only metadata, so it read a curated
+  ;; table plus a regex over the name. On a real fleet that mislabels one model in
+  ;; four: every namespaced OpenRouter slug, Copilot's proxied upstreams, mistral's
+  ;; whole line and `o3` were called blind and lost their pixels, while
+  ;; `gpt-4o-search-preview` — text-only upstream — was handed image blocks and 400'd
+  ;; on every replay of that attachment.
+  (let [att {:tool-call-id "tc-1"
+             :media-type "image/png"
+             :base64 replay-png-b64
+             :filename "plot.png"
+             :size 67}]
+
+    (it "believes the catalog over the model name, in both directions"
+      ;; Sighted upstream, name says nothing.
+      (expect (target-supports-vision? {:provider :openrouter :model "qwen/qwen2.5-vl-72b-instruct"}))
+      (expect (target-supports-vision? {:provider :mistral :model "mistral-medium-latest"}))
+      ;; Text-only upstream behind a name that matches the gpt-4o vision pattern.
+      (expect (not (target-supports-vision? {:provider :openrouter :model "openai/gpt-4o-search-preview"})))
+      ;; Unchanged: a coding-plan text model stays blind.
+      (expect (not (target-supports-vision? {:provider :zai-coding-plan :model "glm-5-turbo"}))))
+
+    (it "reads a provider the curated table never mentions"
+      ;; models.dev carries `opencode-go`; svar's own KNOWN_PROVIDERS does not, and
+      ;; the name heuristic has no idea what `mimo-v2.5` is.
+      (expect (target-supports-vision? {:provider :opencode-go :model "mimo-v2.5"}))
+      (expect (not (target-supports-vision? {:provider :opencode-go :model "deepseek-v4-flash"}))))
+
+    (it "lets config speak for a model no catalog carries"
+      ;; The escape hatch for local runtimes: nothing else can know a local
+      ;; llava reads images.
+      (expect (target-supports-vision? {:provider :ollama :model "llava:13b"
+                                        :capabilities #{:chat :vision}}))
+      (expect (not (target-supports-vision? {:provider :ollama :model "llava:13b"}))))
+
+    (it "answers nothing for a target with no provider but keeps the name's word"
+      (expect (target-supports-vision? {:model "claude-opus-4-8"}))
+      (expect (not (target-supports-vision? {:model "glm-5-turbo"}))))
+
+    (it "replays PIXELS to a catalog-sighted target instead of paying for a description"
+      (let [asked (atom 0)
+            describer (fn [images]
+                        (swap! asked inc)
+                        (mapv (fn [_] {:text "a plot" :model "seer-1"}) images))
+            suffix (conversation-suffix [(stub-tool-iter {:id 1 :attachments [att]})]
+                                        {:provider :opencode-go :model "mimo-v2.5"}
+                                        {:describe-images describer})]
+        (expect (= 3 (count suffix)))
+        (expect (= ["image_url"] (mapv :type (:content (last suffix)))))
+        (expect (zero? @asked))))))
+
+(defdescribe
+  target-vision-follows-the-live-router-test
+  "The gate's verdict rides the LIVE router, so a provider-level veto reaches it."
+  ;; Regression: a real gateway proxies models models.dev lists as multimodal, but
+  ;; its own request schema has no image content part — six of the fleet's models
+  ;; answered an attached screenshot with HTTP 400 `unknown variant image_url,
+  ;; expected text`. Trusting the catalog alone would have sent pixels into that
+  ;; 400 on every turn that carried an image.
+  (let [router-for (fn [veto?]
+                     (svar/make-router
+                       [(cond-> {:id :openrouter :api-key "k"
+                                 :models [{:name "qwen/qwen2.5-vl-72b-instruct"}]}
+                          veto? (assoc :image-input? false))]))
+        target-for (fn [veto?]
+                     ((deref #'lp/replay-context)
+                      (svar-router/resolve-effective-model (router-for veto?) {})))]
+
+    (it "carries the router's capabilities into the replay target"
+      (expect (contains? (:capabilities (target-for false)) :vision))
+      (expect (not (contains? (:capabilities (target-for true)) :vision))))
+
+    (it "sends pixels only while the provider's wire accepts them"
+      (expect (target-supports-vision? (target-for false)))
+      (expect (not (target-supports-vision? (target-for true)))))))
+
+;; Regression: the wire's own answer died with the request. A gateway that refuses
+;; image content parts (HTTP 400 `unknown variant image_url, expected text`) was asked
+;; again on the very next turn, because every later decision re-read the catalog —
+;; which describes the MODEL and knows nothing about the endpoint in front of it.
+(defdescribe image-blind-learning-reaches-the-gate-test
+  "What a failed request taught outranks every capability table, for the rest of the
+   process."
+  (it "stops sending pixels to a provider whose wire refused them"
+      (try
+        (expect (target-supports-vision? {:provider :opencode-go :model "mimo-v2.5"}))
+        (vision-describe/remember-image-blind! :opencode-go)
+        (expect (not (target-supports-vision? {:provider :opencode-go :model "mimo-v2.5"})))
+        ;; Only that provider: the rest of the fleet keeps its eyes.
+        (expect (target-supports-vision? {:provider :openrouter
+                                          :model "qwen/qwen2.5-vl-72b-instruct"}))
+        (finally (vision-describe/clear-image-blind!))))
+  (it "learns from the turn's own failure, not only from the describer's"
+      (try
+        (lp/handle-iteration-exception!
+          (ex-info "All providers exhausted"
+                   {:type :svar.llm/all-providers-exhausted
+                    :attempts [{:provider "opencode-go"
+                                :model "mimo-v2.5"
+                                :status 400
+                                :error (str "Error from provider (Console Go): unknown variant "
+                                            "`image_url`, expected `text`")}
+                               {:provider "anthropic"
+                                :model "claude-opus-4-8"
+                                :status 429
+                                :error "rate limited"}]})
+          {:iteration 1 :messages [] :routing {} :reasoning-level nil})
+        (expect (vision-describe/image-blind-provider? :opencode-go))
+        ;; A provider that merely ran out of quota keeps its eyes.
+        (expect (not (vision-describe/image-blind-provider? :anthropic)))
+        (finally (vision-describe/clear-image-blind!))))
+  (it "teaches nothing when the turn failed for an ordinary reason"
+      (try
+        (lp/handle-iteration-exception!
+          (ex-info "Exceptional status code: 400"
+                   {:status 400 :provider-id :opencode-go :body "messages: at least one required"})
+          {:iteration 1 :messages [] :routing {} :reasoning-level nil})
+        (expect (not (vision-describe/image-blind-provider? :opencode-go)))
+        (finally (vision-describe/clear-image-blind!))))
+  ;; The costly over-generalization in the other direction: one small model that
+  ;; cannot read pixels used to cost its whole provider every pair of eyes it had,
+  ;; because the refusal was charged to the endpoint that carried it.
+  (it "keeps the provider's OTHER models when only one refused pixels"
+      (try
+        (expect (target-supports-vision? {:provider :opencode-go :model "mimo-v2.5"}))
+        (expect (target-supports-vision? {:provider :opencode-go :model "qwen3.7-plus"}))
+        (lp/handle-iteration-exception!
+          (ex-info "Exceptional status code: 400"
+                   {:status 400
+                    :provider-id :opencode-go
+                    :model "mimo-v2.5"
+                    :body "The model mimo-v2.5 does not support image input"})
+          {:iteration 1 :messages [] :routing {} :reasoning-level nil})
+        (expect (not (target-supports-vision? {:provider :opencode-go :model "mimo-v2.5"})))
+        (expect (target-supports-vision? {:provider :opencode-go :model "qwen3.7-plus"}))
+        (expect (not (vision-describe/image-blind-provider? :opencode-go)))
+        (expect (vision-describe/image-blind-model? "mimo-v2.5"))
+        (finally (vision-describe/clear-image-blind!)))))
 
 (defdescribe
   conversation-suffix-blind-description-test
