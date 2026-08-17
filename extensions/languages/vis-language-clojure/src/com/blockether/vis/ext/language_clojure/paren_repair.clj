@@ -3,18 +3,20 @@
 
    Ported from bhauman/clojure-mcp-light (`clojure-mcp-light.delimiter-repair`,
    Apache-2.0): detect a real delimiter error with edamame, then repair via
-   parinferish indent-mode — parinfer trusts the INDENTATION to place the missing
+   parinfer indent-mode — parinfer trusts the INDENTATION to place the missing
    / extra `( [ {`, which matches how the model intended the code to nest. The
    parinfer-rust shell path + stats/json bits from upstream are dropped; this is
-   the pure JVM path only.
+   the pure JVM path only, over `com.blockether/parinferish` — Blockether's
+   linear-time rewrite of parinferish 0.8.0, which re-scanned the rest of the file
+   for every token and cost seconds on a ten-thousand-line namespace.
 
    `fix-delimiters` is the entry point, and it repairs WHOLE Clojure source: `format`
    runs it before cljfmt, and the pack publishes it as the editors' `:balance-fn`, which
    the foundation applies to the whole file an edit would write and keeps only when the
    repair stays on that edit's own lines. Handing it a partial form instead balances the
    fragment into a complete one that means something else."
-  (:require [edamame.core :as e]
-            [parinferish.core :as parinferish]))
+  (:require [com.blockether.parinferish :as parinferish]
+            [edamame.core :as e]))
 
 (defn delimiter-error?
   "True when `s` fails to read specifically because of an unbalanced delimiter
@@ -40,7 +42,7 @@
   "Repair `s` with parinferish indent-mode. Returns `{:success bool :text S?
    :error msg?}`."
   [s]
-  (try {:success true :text (parinferish/flatten (parinferish/parse s {:mode :indent})) :error nil}
+  (try {:success true :text (parinferish/repair s {:mode :indent}) :error nil}
        (catch Exception e {:success false :error (.getMessage e)})))
 
 (defn fix-delimiters

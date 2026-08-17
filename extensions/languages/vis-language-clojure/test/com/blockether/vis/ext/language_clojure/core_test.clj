@@ -11,7 +11,7 @@
             [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
             [com.blockether.vis.ext.language-clojure.test-runner :as test-runner]
             [com.blockether.vis.ext.language-clojure.paren-repair :as repair]
-            [com.blockether.vis.internal.foundation.editing.balance :as balance]
+            [com.blockether.parinferish.balance :as balance]
             [com.blockether.vis.internal.foundation.editing.zipper :as zipper]
             [com.blockether.vis.internal.runtime-settings :as rt]
             [lazytest.core :refer [defdescribe expect it]])

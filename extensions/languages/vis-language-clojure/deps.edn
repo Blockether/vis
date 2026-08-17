@@ -50,9 +50,11 @@
         {:exclusions [com.fasterxml.jackson.core/jackson-databind] :mvn/version "2.22.1"}
         com.fasterxml.jackson.dataformat/jackson-dataformat-cbor
         {:exclusions [com.fasterxml.jackson.core/jackson-databind] :mvn/version "2.22.1"}
-        ;; clj_paren_repair: pure-Clojure delimiter repair, ported from
-        ;; bhauman/clojure-mcp-light (parinferish indent-mode + edamame
-        ;; delimiter-error detection).
-        parinferish/parinferish {:mvn/version "0.8.0"}
+        ;; clj_paren_repair: delimiter repair ported from bhauman/clojure-mcp-light
+        ;; (parinfer indent-mode + edamame delimiter-error detection). The parinfer
+        ;; engine is Blockether's own pure-Java rewrite of parinferish, and the same
+        ;; artifact carries `com.blockether.parinferish.balance`, the decision the
+        ;; foundation asks before a repair is written.
+        com.blockether/parinferish {:mvn/version "0.1.0"}
         borkdude/edamame {:mvn/version "1.6.42"}}
  :paths ["src" "resources"]}

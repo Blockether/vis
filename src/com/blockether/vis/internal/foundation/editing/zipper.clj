@@ -22,7 +22,7 @@
    All native handles (Parser/Tree/Node) are opened and closed inside each call;
    only plain Clojure data escapes."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.foundation.editing.balance :as balance]
+            [com.blockether.parinferish.balance :as balance]
             [com.blockether.vis.internal.foundation.editing.index :as index]
             ;; Side-effecting require: selects + loads the platform native lib.
             [com.blockether.tree-sitter-language-pack])

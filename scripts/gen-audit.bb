@@ -28,21 +28,21 @@
 ;; Module dir-name -> one-line blurb for its inventory section. Unknown modules
 ;; still render (just without a blurb), so a new extension never breaks the doc.
 (def blurbs
-  {"core"                    "_Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._"
-   "vis-persistance-sqlite"  "_Durable session store (SQLite + Flyway migrations)._"
-   "vis-language-clojure"    "_Clojure language pack (format/lint/structural edits)._"
-   "vis-language-python"     "_Python language pack._"
-   "vis-foundation-voice"    "_Local speech (upstream sherpa-onnx; ONNX Runtime rides inside its native jar)._"
-   "vis-foundation-bridge"   "_Bridge verification tool surface._"
-   "vis-foundation-search"   "_Web/code/paper search tool surface._"
-   "vis-channel-tui"         "_Terminal UI (Lanterna)._"})
+  {"core" "_Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._"
+   "vis-persistance-sqlite" "_Durable session store (SQLite + Flyway migrations)._"
+   "vis-language-clojure" "_Clojure language pack (format/lint/structural edits)._"
+   "vis-language-python" "_Python language pack._"
+   "vis-foundation-voice"
+   "_Local speech (upstream sherpa-onnx; ONNX Runtime rides inside its native jar)._"
+   "vis-foundation-bridge" "_Bridge verification tool surface._"
+   "vis-foundation-search" "_Web/code/paper search tool surface._"
+   "vis-channel-tui" "_Terminal UI (Lanterna)._"})
 
 ;; Licenses that POMs express oddly / not at all — pin them explicitly so the
 ;; audit never regresses to UNKNOWN on the ones we've already vetted by hand.
 (def license-overrides
-  {"org.graalvm.python/python-language"  "UPL-1.0 + MIT + PSF"
+  {"org.graalvm.python/python-language" "UPL-1.0 + MIT + PSF"
    "org.graalvm.python/python-resources" "UPL-1.0 + MIT + PSF"
-   "parinferish/parinferish"             "Public-Domain"
    ;; k2-fsa publishes sherpa-onnx through JitPack, which serves an
    ;; install:install-file POM with no <licenses> block. Apache-2.0 is the
    ;; license of the k2-fsa/sherpa-onnx repository these artifacts are built
@@ -51,58 +51,64 @@
    ;; the image and the extension fetches the RUNNING host's on demand — so they
    ;; no longer reach the inventory below. They stay named here because they are
    ;; still shipped, and a license vetted by hand must not silently go UNKNOWN.
-   "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm"                    "Apache-2.0"
-   "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-osx-aarch64"  "Apache-2.0"
-   "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-osx-x64"      "Apache-2.0"
-   "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-linux-x64"    "Apache-2.0"
+   "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-jvm" "Apache-2.0"
+   "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-osx-aarch64" "Apache-2.0"
+   "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-osx-x64" "Apache-2.0"
+   "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-linux-x64" "Apache-2.0"
    "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-linux-aarch64" "Apache-2.0"
-   "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-win-x64"      "Apache-2.0"})
+   "com.github.k2-fsa.sherpa-onnx/sherpa-onnx-native-lib-win-x64" "Apache-2.0"})
 
 ;; ---------------------------------------------------------------- deps parsing
 
 (defn- coords-from-map
   "Pull {sym version} pairs out of a :deps-style map (mvn coords only)."
   [m]
-  (into {} (for [[sym v] m
-                 :when (and (symbol? sym) (map? v) (:mvn/version v))]
-             [sym (:mvn/version v)])))
+  (into {}
+        (for
+          [[sym v]
+           m
+
+           :when (and (symbol? sym) (map? v) (:mvn/version v))]
+
+          [sym (:mvn/version v)])))
 
 (defn- module-coords
   "Every direct mvn coord a deps.edn declares (top :deps + all alias deps)."
   [deps]
   (apply merge
-         (coords-from-map (:deps deps))
-         (for [[_ a] (:aliases deps)]
-           (merge (coords-from-map (:extra-deps a))
-                  (coords-from-map (:replace-deps a))
-                  (coords-from-map (:deps a))))))
+    (coords-from-map (:deps deps))
+    (for [[_ a] (:aliases deps)]
+      (merge (coords-from-map (:extra-deps a))
+             (coords-from-map (:replace-deps a))
+             (coords-from-map (:deps a))))))
 
-(defn- module-label [rel-path]
-  (if (= rel-path "deps.edn")
-    "core"
-    (fs/file-name (fs/parent rel-path))))
+(defn- module-label
+  [rel-path]
+  (if (= rel-path "deps.edn") "core" (fs/file-name (fs/parent rel-path))))
 
 (defn- discover-modules
   "Ordered [label rel-path coords] for every deps.edn with mvn coords, core
    first then the rest by path. e2e scenario fixtures are skipped."
   [root]
-  (let [edns (->> (cons (fs/file root "deps.edn") (fs/glob root "**/deps.edn"))
-                  (map #(str (fs/relativize root %)))
-                  distinct
-                  (remove #(str/includes? % "/e2e/"))
-                  (remove #(str/includes? % "/target/"))
-                  sort
-                  (sort-by #(if (= % "deps.edn") "" %)))]
-    (for [rel edns
-          :let [deps   (edn/read-string (slurp (fs/file root rel)))
-                coords (module-coords deps)]
-          :when (seq coords)]
+  (let
+    [edns (->> (cons (fs/file root "deps.edn") (fs/glob root "**/deps.edn"))
+               (map #(str (fs/relativize root %)))
+               distinct
+               (remove #(str/includes? % "/e2e/"))
+               (remove #(str/includes? % "/target/"))
+               sort
+               (sort-by #(if (= % "deps.edn") "" %)))]
+    (for
+      [rel edns
+       :let [deps (edn/read-string (slurp (fs/file root rel)))
+             coords (module-coords deps)]
+       :when (seq coords)]
+
       [(module-label rel) rel coords])))
 
 ;; ------------------------------------------------------------- artifact lookup
 
-(defn- coord->path [sym]
-  (str (str/replace (namespace sym) "." "/") "/" (name sym)))
+(defn- coord->path [sym] (str (str/replace (namespace sym) "." "/") "/" (name sym)))
 
 (defn- http-ok? [resp] (= 200 (:status resp)))
 
@@ -110,79 +116,103 @@
   "GET/HEAD `f` against each repo, returning the first 200 response body/headers."
   [method sym version]
   (some (fn [repo]
-          (let [ext  (if (= method :pom) "pom" "jar")
-                url  (format "%s/%s/%s/%s-%s.%s"
-                             repo (coord->path sym) version (name sym) version ext)
-                verb (if (= method :pom) http/get http/head)]
-            (try
-              (let [resp (verb url {:throw false :headers {"User-Agent" "vis-audit"}})]
-                (when (http-ok? resp) resp))
-              (catch Exception _ nil))))
+          (let
+            [ext
+             (if (= method :pom) "pom" "jar")
+
+             url
+             (format "%s/%s/%s/%s-%s.%s" repo (coord->path sym) version (name sym) version ext)
+
+             verb
+             (if (= method :pom) http/get http/head)]
+
+            (try (let [resp (verb url {:throw false :headers {"User-Agent" "vis-audit"}})]
+                   (when (http-ok? resp) resp))
+                 (catch Exception _ nil))))
         repos))
 
 (defn- normalize-license
   "Map a raw POM <license><name> string to a short SPDX-ish id."
   [raw]
   (let [s (str/lower-case (str raw))]
-    (cond
-      (str/blank? s)                                     "UNKNOWN"
-      (or (str/includes? s "lesser general public")
-          (str/includes? s "lgpl"))                      "LGPL-3.0"
-      (or (str/includes? s "gnu general public")
-          (re-find #"\bgpl\b" s))                        "GPL"
-      (str/includes? s "eclipse public")
-      (if (str/includes? s "2.0") "EPL-2.0" "EPL-1.0")
-      (str/includes? s "apache")                         "Apache-2.0"
-      (str/includes? s "universal permissive")           "UPL-1.0"
-      (re-find #"\bupl\b" s)                             "UPL-1.0"
-      (str/includes? s "bsd")
-      (cond (str/includes? s "2") "BSD-2-Clause"
-            (str/includes? s "3") "BSD-3-Clause"
-            :else "BSD")
-      (re-find #"\bmit\b" s)                             "MIT"
-      (or (str/includes? s "public domain")
-          (str/includes? s "unlicense")
-          (str/includes? s "cc0"))                       "Public-Domain"
-      (or (str/includes? s "python software")
-          (str/includes? s "psf"))                       "PSF"
-      :else raw)))
+    (cond (str/blank? s) "UNKNOWN"
+          (or (str/includes? s "lesser general public") (str/includes? s "lgpl")) "LGPL-3.0"
+          (or (str/includes? s "gnu general public") (re-find #"\bgpl\b" s)) "GPL"
+          (str/includes? s "eclipse public") (if (str/includes? s "2.0") "EPL-2.0" "EPL-1.0")
+          (str/includes? s "apache") "Apache-2.0"
+          (str/includes? s "universal permissive") "UPL-1.0"
+          (re-find #"\bupl\b" s) "UPL-1.0"
+          (str/includes? s "bsd") (cond (str/includes? s "2") "BSD-2-Clause"
+                                        (str/includes? s "3") "BSD-3-Clause"
+                                        :else "BSD")
+          (re-find #"\bmit\b" s) "MIT"
+          (or (str/includes? s "public domain")
+              (str/includes? s "unlicense")
+              (str/includes? s "cc0"))
+          "Public-Domain"
+          (or (str/includes? s "python software") (str/includes? s "psf")) "PSF"
+          :else raw)))
 
-(defn- pom-license [pom-body]
+(defn- pom-license
+  [pom-body]
   (when pom-body
     (when-let [m (re-find #"(?s)<licenses>.*?<name>(.*?)</name>" pom-body)]
       (normalize-license (str/trim (second m))))))
 
-(defn- pom-url [repo group artifact version]
+(defn- pom-url
+  [repo group artifact version]
   (format "%s/%s/%s/%s/%s-%s.pom"
-          repo (str/replace group "." "/") artifact version artifact version))
+          repo
+          (str/replace group "." "/")
+          artifact
+          version
+          artifact
+          version))
 
 (defn- m2-file
   "The locally cached ~/.m2 artifact, when Maven already resolved this
    coordinate. That cache is exactly what the build consumed, so it is a
    truthful offline source for both the license and the jar size."
   [group artifact version ext]
-  (let [f (fs/file (fs/home) ".m2" "repository"
-                   (str/replace group "." "/") artifact version
-                   (format "%s-%s.%s" artifact version ext))]
+  (let
+    [f (fs/file (fs/home)
+                ".m2"
+                "repository"
+                (str/replace group "." "/")
+                artifact
+                version
+                (format "%s-%s.%s" artifact version ext))]
     (when (fs/exists? f) f)))
 
-(defn- fetch-pom-body [group artifact version]
+(defn- fetch-pom-body
+  [group artifact version]
   (or (some (fn [repo]
-              (try
-                (let [r (http/get (pom-url repo group artifact version)
+              (try (let
+                     [r (http/get (pom-url repo group artifact version)
                                   {:throw false :headers {"User-Agent" "vis-audit"}})]
-                  (when (http-ok? r) (:body r)))
-                (catch Exception _ nil)))
+                     (when (http-ok? r) (:body r)))
+                   (catch Exception _ nil)))
             repos)
-      (some-> (m2-file group artifact version "pom") slurp)))
+      (some-> (m2-file group artifact version "pom")
+              slurp)))
 
 (defn- parent-coords
   "[group artifact version] of the POM's <parent>, if any."
   [pom]
-  (when-let [seg (some-> (re-find #"(?s)<parent>(.*?)</parent>" pom) second)]
-    (let [g (some-> (re-find #"<groupId>(.*?)</groupId>" seg) second str/trim)
-          a (some-> (re-find #"<artifactId>(.*?)</artifactId>" seg) second str/trim)
-          v (some-> (re-find #"<version>(.*?)</version>" seg) second str/trim)]
+  (when-let
+    [seg (some-> (re-find #"(?s)<parent>(.*?)</parent>" pom)
+                 second)]
+    (let
+      [g (some-> (re-find #"<groupId>(.*?)</groupId>" seg)
+                 second
+                 str/trim)
+       a (some-> (re-find #"<artifactId>(.*?)</artifactId>" seg)
+                 second
+                 str/trim)
+       v (some-> (re-find #"<version>(.*?)</version>" seg)
+                 second
+                 str/trim)]
+
       (when (and g a v) [g a v]))))
 
 (defn- resolve-license
@@ -196,19 +226,23 @@
            (when-let [[g a v] (parent-coords pom)]
              (resolve-license g a v (inc depth))))))))
 
-(defn- jar-size-bytes [head-resp]
-  (some-> head-resp :headers (get "content-length") parse-long))
+(defn- jar-size-bytes
+  [head-resp]
+  (some-> head-resp
+          :headers
+          (get "content-length")
+          parse-long))
 
 (defn- fmt-size
   "Human size for one artifact. Locale-INDEPENDENT on purpose: `format` would
    otherwise render `1,1 MB` under a comma-decimal locale and churn the whole
    document (and fail `--check`) on any developer machine that is not en_US."
   [bytes]
-  (cond
-    (nil? bytes)          "—"
-    (>= bytes (* 1024 1024)) (String/format java.util.Locale/ROOT "%.1f MB"
-                                            (into-array Object [(/ bytes 1024.0 1024.0)]))
-    :else                 (format "%d KB" (long (Math/round (/ bytes 1024.0))))))
+  (cond (nil? bytes) "—"
+        (>= bytes (* 1024 1024)) (String/format java.util.Locale/ROOT
+                                                "%.1f MB"
+                                                (into-array Object [(/ bytes 1024.0 1024.0)]))
+        :else (format "%d KB" (long (Math/round (/ bytes 1024.0))))))
 
 (defn- in-house? [sym] (= "com.blockether" (namespace sym)))
 
@@ -224,11 +258,11 @@
       {}
       (into {}
             (keep (fn [line]
-                    (when-let [[_ sym version lic size]
-                               (re-matches #"\|\s+`([^`]+)`\s+\|\s+`([^`]+)`\s+\|([^|]+)\|([^|]+)\|.*"
-                                           line)]
-                      [(str sym " " version)
-                       {:license (str/trim lic) :size (str/trim size)}])))
+                    (when-let
+                      [[_ sym version lic size]
+                       (re-matches #"\|\s+`([^`]+)`\s+\|\s+`([^`]+)`\s+\|([^|]+)\|([^|]+)\|.*"
+                                   line)]
+                      [(str sym " " version) {:license (str/trim lic) :size (str/trim size)}])))
             (str/split-lines (slurp f))))))
 
 (defn- artifact-info
@@ -236,19 +270,28 @@
    `prev` carries what the document already states, so a transient lookup
    failure keeps the vetted cell rather than downgrading it."
   [prev sym version]
-  (binding [*out* *err*] (println "  ·" (str sym) version))
+  (binding [*out* *err*]
+    (println "  ·" (str sym) version))
   (if (contains? #{"RELEASE" "LATEST"} version)
     {:license "(floating)" :size-bytes nil :floating true}
-    (let [head  (fetch-first :head sym version)
-          known (get prev (str sym " " version))
-          bytes (or (jar-size-bytes head)
-                    (some-> (m2-file (namespace sym) (name sym) version "jar") fs/size))]
-      {:license    (or (license-overrides (str sym))
-                       (resolve-license (namespace sym) (name sym) version)
-                       (:license known)
-                       "UNKNOWN")
+    (let
+      [head
+       (fetch-first :head sym version)
+
+       known
+       (get prev (str sym " " version))
+
+       bytes
+       (or (jar-size-bytes head)
+           (some-> (m2-file (namespace sym) (name sym) version "jar")
+                   fs/size))]
+
+      {:license (or (license-overrides (str sym))
+                    (resolve-license (namespace sym) (name sym) version)
+                    (:license known)
+                    "UNKNOWN")
        :size-bytes bytes
-       :size       (when (nil? bytes) (:size known))})))
+       :size (when (nil? bytes) (:size known))})))
 
 ;; ------------------------------------------------------------------- rendering
 
@@ -256,28 +299,34 @@
   "De-duped [module sym version info] rows: each coord under its first module."
   [prev modules]
   (let [seen (atom #{})]
-    (for [[label _ coords] modules
-          [sym version]    (sort-by (comp str first) coords)
-          :when            (not (@seen sym))
-          :let             [_ (swap! seen conj sym)]]
+    (for
+      [[label _ coords] modules
+       [sym version] (sort-by (comp str first) coords)
+       :when (not (@seen sym))
+       :let [_ (swap! seen conj sym)]]
+
       [label sym version (artifact-info prev sym version)])))
 
-(defn- section-header [label]
+(defn- section-header
+  [label]
   (if (= label "core") "### core (deps.edn)" (format "### `%s` extension" label)))
 
-(defn- render-module [label rows]
+(defn- render-module
+  [label rows]
   (str/join "\n"
-            (concat
-             [(section-header label) ""]
-             (when-let [b (blurbs label)] [b ""])
-             ["| Dependency | Version | License | Jar size | Ownership |"
-              "|---|---|---|---|---|"]
-             (for [[_ sym version info] rows]
-               (format "| `%s` | `%s` | %s | %s | %s |"
-                       (str sym) version (:license info)
-                       (or (:size info) (fmt-size (:size-bytes info)))
-                       (if (in-house? sym) "Blockether (in-house)" "3rd-party")))
-             [""])))
+            (concat [(section-header label) ""]
+                    (when-let [b (blurbs label)]
+                      [b ""])
+                    ["| Dependency | Version | License | Jar size | Ownership |"
+                     "|---|---|---|---|---|"]
+                    (for [[_ sym version info] rows]
+                      (format "| `%s` | `%s` | %s | %s | %s |"
+                              (str sym)
+                              version
+                              (:license info)
+                              (or (:size info) (fmt-size (:size-bytes info)))
+                              (if (in-house? sym) "Blockether (in-house)" "3rd-party")))
+                    [""])))
 
 (def ^:private date-placeholder "@@GENERATED-DATE@@")
 
@@ -291,37 +340,69 @@
    identical, and move it (UTC, the zone CI runs in) only when the content
    really changed."
   [root body]
-  (let [f       (fs/file root "audit" "README.md")
-        current (when (fs/exists? f) (slurp f))
-        line    #"(?m)^> Generated (\d{4}-\d{2}-\d{2})\.$"
-        stated  (second (re-find line (or current "")))
-        today   (subs (str (java.time.LocalDate/now java.time.ZoneOffset/UTC)) 0 10)
-        kept?   (and stated
-                     (= body (str/replace current line
-                                          (str "> Generated " date-placeholder "."))))]
+  (let
+    [f
+     (fs/file root "audit" "README.md")
+
+     current
+     (when (fs/exists? f) (slurp f))
+
+     line
+     #"(?m)^> Generated (\d{4}-\d{2}-\d{2})\.$"
+
+     stated
+     (second (re-find line (or current "")))
+
+     today
+     (subs (str (java.time.LocalDate/now java.time.ZoneOffset/UTC)) 0 10)
+
+     kept?
+     (and stated (= body (str/replace current line (str "> Generated " date-placeholder "."))))]
+
     (str/replace body date-placeholder (if kept? stated today))))
 
-(defn- gen [root]
-  (binding [*out* *err*] (println "Discovering modules…"))
-  (let [modules  (discover-modules root)
-        rows     (vec (inventory-rows (previous-rows root) modules))
-        by-mod   (group-by first rows)
-        licenses (frequencies (map (comp :license #(nth % 3)) rows))
-        heavy    (->> rows
-                      (keep (fn [[_ sym v info]]
-                              (when-let [b (:size-bytes info)]
-                                (when (>= b (* 1024 1024)) [sym v b]))))
-                      (sort-by #(- (nth % 2))))
-        total-b  (reduce + 0 (keep #(:size-bytes (nth % 3)) rows))
-        copyleft (filter #(re-find #"GPL" (str (:license (nth % 3)))) rows)
-        ;; The date is a placeholder until `stamp-date` decides whether it may move.
-        today    date-placeholder]
-    (stamp-date
-     root
-     (str
-     "# Vis — Security & Dependency Audit
+(defn- gen
+  [root]
+  (binding [*out* *err*]
+    (println "Discovering modules…"))
+  (let
+    [modules
+     (discover-modules root)
 
-> Generated " today ".
+     rows
+     (vec (inventory-rows (previous-rows root) modules))
+
+     by-mod
+     (group-by first rows)
+
+     licenses
+     (frequencies (map (comp :license #(nth % 3)) rows))
+
+     heavy
+     (->> rows
+          (keep (fn [[_ sym v info]]
+                  (when-let [b (:size-bytes info)]
+                    (when (>= b (* 1024 1024)) [sym v b]))))
+          (sort-by #(- (nth % 2))))
+
+     total-b
+     (reduce + 0 (keep #(:size-bytes (nth % 3)) rows))
+
+     copyleft
+     (filter #(re-find #"GPL" (str (:license (nth % 3)))) rows)
+
+     ;; The date is a placeholder until `stamp-date` decides whether it may move.
+     today
+     date-placeholder]
+
+    (stamp-date
+      root
+      (str
+        "# Vis — Security & Dependency Audit
+
+> Generated "
+        today
+        ".
 
 Vis is a coding agent that writes Python into a sandboxed GraalPy runtime,
 keeps durable state outside the model context window, and inspects and changes
@@ -365,9 +446,17 @@ vulnerable, and what does it do with data.*
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** " (count rows) " unique, across " (count modules) " `deps.edn` modules (root + extensions).
-- **Declared jar footprint (direct coords):** ~" (format "%.0f" (/ total-b 1024.0 1024.0)) " MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
-- **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — " (if (seq copyleft) "**copyleft exception(s) flagged in §6.**" "no copyleft exceptions.") "
+- **Direct dependency coordinates:** "
+        (count rows)
+        " unique, across "
+        (count modules)
+        " `deps.edn` modules (root + extensions).
+- **Declared jar footprint (direct coords):** ~"
+        (format "%.0f" (/ total-b 1024.0 1024.0))
+        " MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
+- **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — "
+        (if (seq copyleft) "**copyleft exception(s) flagged in §6.**" "no copyleft exceptions.")
+        "
 - **Vulnerability posture:** continuous [clj-watson](https://github.com/clj-holmes/clj-watson) SCA on every dependency change, weekly, and on demand — findings publish to the GitHub **Security** tab (§7).
 
 ---
@@ -502,12 +591,17 @@ distinguishes **Blockether in-house** libraries (we control the source and
 release cadence) from **3rd-party** open source.
 
 "
-     (str/join "\n"
-               (for [[label _ _] modules
-                     :let [mrows (by-mod label)]
+        (str/join "\n"
+                  (for
+                    [[label _ _]
+                     modules
+
+                     :let [mrows
+                           (by-mod label)]
                      :when (seq mrows)]
-                 (render-module label mrows)))
-     "
+
+                    (render-module label mrows)))
+        "
 ---
 
 ## 6. Licenses & code ownership
@@ -517,27 +611,31 @@ release cadence) from **3rd-party** open source.
 | License | Count |
 |---|---|
 "
-     (str/join "\n"
-               (for [[lic n] (sort-by (comp - val) licenses)]
-                 (format "| %s | %d |" lic n)))
-     "
+        (str/join "\n"
+                  (for [[lic n] (sort-by (comp - val) licenses)]
+                    (format "| %s | %d |" lic n)))
+        "
 
 All licenses in the graph are **permissive / OSI-approved** (EPL-1.0/2.0, MIT,
 Apache-2.0, BSD, UPL-1.0, PSF, Public Domain) and compatible with shipping vis
 under **Apache-2.0**"
-     (if (seq copyleft)
-       (str " — **with the copyleft exception(s) below that need legal sign-off:**\n\n"
-            (str/join "\n"
-                      (for [[_ sym v info] copyleft]
-                        (format
-                         "> **WARNING — `%s` (`%s`) is %s** (copyleft). LGPL is generally fine for dynamic
+        (if (seq copyleft)
+          (str
+            " — **with the copyleft exception(s) below that need legal sign-off:**\n\n"
+            (str/join
+              "\n"
+              (for [[_ sym v info] copyleft]
+                (format
+                  "> **WARNING — `%s` (`%s`) is %s** (copyleft). LGPL is generally fine for dynamic
 > linking, but **static linking into the GraalVM native image** can trigger
 > relinking obligations. Action: confirm distribution terms with legal, or keep
 > the owning extension as an optional (droppable) jar rather than baking it into
 > the distributed binary (see §4.3)."
-                         (str sym) v (:license info)))))
-       " with no copyleft exceptions.")
-     "
+                  (str sym)
+                  v
+                  (:license info)))))
+          " with no copyleft exceptions.")
+        "
 
 ### Code ownership
 
@@ -611,10 +709,10 @@ Heaviest direct artifacts (>= 1 MB):
 | Dependency | Version | Jar size |
 |---|---|---|
 "
-     (str/join "\n"
-               (for [[sym v b] heavy]
-                 (format "| `%s` | `%s` | %s |" (str sym) v (fmt-size b))))
-     "
+        (str/join "\n"
+                  (for [[sym v b] heavy]
+                    (format "| `%s` | `%s` | %s |" (str sym) v (fmt-size b))))
+        "
 
 Notes:
 - The **GraalPy** runtime (`python-language` + `python-resources`, ~105 MB) is
@@ -707,10 +805,19 @@ Keep the two channels separate: security disclosures stay private
 
 ;; --------------------------------------------------------------------- runner
 
-(let [root   (str (fs/cwd))
-      target (fs/file root "audit" "README.md")
-      md     (gen root)
-      check? (some #{"--check"} *command-line-args*)]
+(let
+  [root
+   (str (fs/cwd))
+
+   target
+   (fs/file root "audit" "README.md")
+
+   md
+   (gen root)
+
+   check?
+   (some #{"--check"} *command-line-args*)]
+
   (if check?
     (let [current (when (fs/exists? target) (slurp target))]
       (if (= current md)

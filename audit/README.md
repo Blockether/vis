@@ -191,9 +191,10 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/anomaly` | `1.0.1` | EPL-1.0 | 4 KB | Blockether (in-house) |
 | `com.blockether/fff` | `0.12.4` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/imaging` | `0.1.9` | MIT | 23 KB | Blockether (in-house) |
+| `com.blockether/parinferish` | `0.1.0` | MIT | 31 KB | Blockether (in-house) |
 | `com.blockether/rift` | `0.0.10-11` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/ruff` | `0.3.5` | MIT | 10 KB | Blockether (in-house) |
-| `com.blockether/svar` | `0.7.118` | Apache-2.0 | 521 KB | Blockether (in-house) |
+| `com.blockether/svar` | `0.7.119` | Apache-2.0 | 521 KB | Blockether (in-house) |
 | `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.39` | MIT | 175 KB | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.041` | MIT | 49 KB | 3rd-party |
 | `com.github.clj-easy/graal-build-time` | `1.0.6` | MIT | 27 KB | 3rd-party |
@@ -274,7 +275,6 @@ _Clojure language pack (format/lint/structural edits)._
 | `com.fasterxml.jackson.dataformat/jackson-dataformat-smile` | `2.22.1` | Apache-2.0 | 95 KB | 3rd-party |
 | `dev.weavejester/cljfmt` | `0.16.5` | EPL-1.0 | 20 KB | 3rd-party |
 | `nrepl/nrepl` | `1.7.0` | EPL-1.0 | 103 KB | 3rd-party |
-| `parinferish/parinferish` | `0.8.0` | Public-Domain | 8 KB | 3rd-party |
 | `zprint/zprint` | `1.3.0` | MIT | 228 KB | 3rd-party |
 
 ### `vis-persistance-sqlite` extension
@@ -301,7 +301,7 @@ _Durable session store (SQLite + Flyway migrations)._
 |---|---|
 | EPL-1.0 | 21 |
 | Apache-2.0 | 15 |
-| MIT | 13 |
+| MIT | 14 |
 | EPL-2.0 | 5 |
 | BSD-2-Clause | 3 |
 | UPL-1.0 | 2 |
@@ -310,7 +310,6 @@ _Durable session store (SQLite + Flyway migrations)._
 | LGPL-3.0 | 2 |
 | BSD | 2 |
 | (floating) | 1 |
-| Public-Domain | 1 |
 
 All licenses in the graph are **permissive / OSI-approved** (EPL-1.0/2.0, MIT,
 Apache-2.0, BSD, UPL-1.0, PSF, Public Domain) and compatible with shipping vis

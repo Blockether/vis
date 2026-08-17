@@ -187,6 +187,10 @@
   ;; mistakes bare upstream versions for newer).
   com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.39"}
   com.blockether/ruff {:mvn/version "0.3.5"}
+  ;; Parinfer for Clojure source in pure Java — Blockether's linear-time rewrite of
+  ;; parinferish 0.8.0 — carrying `com.blockether.parinferish.balance`, the rule that
+  ;; decides whether a language pack's delimiter repair may be written back to a file.
+  com.blockether/parinferish {:mvn/version "0.1.0"}
   org.clojure/core.memoize {:mvn/version "1.2.281"}
   ;; Clojure ITSELF is pinned here, and must stay pinned. The source runtime is
   ;; `clojure -M:vis` on whatever Clojure CLI the user happens to have, and the
