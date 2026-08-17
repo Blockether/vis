@@ -3685,19 +3685,16 @@
    note for the ones the budget pushed out. Possibly empty; always a VECTOR, so
    callers splice rather than branch.
 
-   `describe-images` is the injected describer (`vision-describe/describe-images`
-   bound to this session's router) — injected rather than called directly so this
-   stays a pure function of its inputs under test."
-  [describe-images {:keys [images dropped]}]
+   `descriptions` is the request-wide `{image description}` lookup built by
+   `conversation-suffix` — a LOOKUP, not a describer, so no iteration can start a
+   round trip of its own while the transcript is being rendered."
+  [descriptions {:keys [images dropped]}]
   (let
-    [described (when (seq images)
-                 (into []
-                       (keep identity)
-                       (map (fn [image description]
-                              (when description
-                                (assoc description :label (attachment-recovery-label image))))
-                            images
-                            (or (describe-images images) (repeat nil)))))]
+    [described (into []
+                     (keep (fn [image]
+                             (when-let [description (get descriptions image)]
+                               (assoc description :label (attachment-recovery-label image)))))
+                     images)]
     (cond-> []
       (seq described)
       (conj (vision-describe/descriptions-message described))
@@ -3775,7 +3772,16 @@
       ;; ONE newest-first pass over the whole trailer, so the byte budget is
       ;; decided for the request as a whole rather than per iteration.
       image-plan
-      (when (or vision? describer) (replay-image-plan iters))]
+      (when (or vision? describer) (replay-image-plan iters))
+
+      ;; ONE describe pass for the WHOLE trailer. The deadline and the burst cap
+      ;; belong to the REQUEST: called per iteration, eight figures from eight
+      ;; steps cost eight serial round trips and eight deadlines, all of it inside
+      ;; request assembly with the user waiting.
+      replay-descriptions
+      (when describer
+        (let [planned (into [] (mapcat :images) (vals image-plan))]
+          (when (seq planned) (zipmap planned (or (describer planned) (repeat nil))))))]
 
      (vec
        (mapcat
@@ -3790,7 +3796,8 @@
               ;; iterations the budget pushed out (which contribute a note).
               img
               (cond vision? (iteration-image-messages (get image-plan pos))
-                    describer (iteration-description-messages describer (get image-plan pos))
+                    describer (iteration-description-messages replay-descriptions
+                                                              (get image-plan pos))
                     :else nil)
 
               +img

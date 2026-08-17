@@ -13,6 +13,11 @@
 (def ^:private png-b64
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
 
+;; A SECOND real 1x1 PNG (blue), so a test can put two genuinely different
+;; pictures behind one name and prove the label guard, not the payload cache.
+(def ^:private blue-png-b64
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAEElEQVR4AQEFAPr/AAAA//8DAgH/HjyuSQAAAABJRU5ErkJggg==")
+
 (defn- image
   [label]
   {:path label :filename label :media-type "image/png" :base64 png-b64 :size 68 :size-label "68B"})
@@ -53,6 +58,60 @@
                       :base-url "http://blind.invalid"
                       :api-style :openai
                       :models [{:name "cheap-blind" :capabilities #{:chat}}]}]))
+
+(defn- rescue-fleet
+  "A blind default, the CHEAPEST pair of eyes, and a second pair behind it. Cost
+   order is what `:optimize [:cost :speed]` walks, so a test can break exactly the
+   provider the pass reaches for first."
+  []
+  (svar/make-router
+    [{:id :blind
+      :api-key "k"
+      :base-url "http://blind.invalid"
+      :api-style :openai
+      :models [{:name "cheap-blind"
+                :pricing {:input 0.1 :output 0.2}
+                :intelligence :low
+                :speed :fast
+                :capabilities #{:chat}}]}
+     {:id :seeing-broken
+      :api-key "k"
+      :base-url "http://broken.invalid"
+      :api-style :openai
+      :models [{:name "cheap-seer"
+                :pricing {:input 0.5 :output 1.0}
+                :intelligence :medium
+                :speed :fast
+                :capabilities #{:chat :vision}}]}
+     {:id :seeing-also-broken
+      :api-key "k"
+      :base-url "http://also-broken.invalid"
+      :api-style :openai
+      :models [{:name "second-seer"
+                :pricing {:input 0.7 :output 1.4}
+                :intelligence :medium
+                :speed :fast
+                :capabilities #{:chat :vision}}]}
+     {:id :seeing-backup
+      :api-key "k"
+      :base-url "http://backup.invalid"
+      :api-style :openai
+      :models [{:name "backup-seer"
+                :pricing {:input 3.0 :output 9.0}
+                :intelligence :high
+                :speed :medium
+                :capabilities #{:chat :vision}}]}]))
+
+(defn- lone-seer-fleet
+  "One provider, and it is the only thing in the fleet that can see."
+  []
+  (svar/make-router [{:id :seeing
+                      :api-key "k"
+                      :base-url "http://seeing.invalid"
+                      :api-style :openai
+                      :models [{:name "only-seer"
+                                :pricing {:input 1.0 :output 2.0}
+                                :capabilities #{:chat :vision}}]}]))
 
 (defn- with-asks
   "Run `f` with `svar/ask!` answering `reply` (a fn of the ask opts) and every call
@@ -333,3 +392,151 @@
         (expect (empty? calls))
         (expect (str/includes? (:content user) "NOT attached"))
         (expect (str/includes? (:content user) "PIL")))))
+
+(defdescribe
+  vision-describe-hardening-test
+  "What adversarial passes proved the side-channel has to survive: a payload on
+   two rows, two rows under one name, a runaway answer, a broken provider and a
+   hung one."
+  ;; Regression: the same picture riding two rows paid for two identical calls and
+  ;; burned two burst slots to learn one thing.
+  (it "describes one PAYLOAD once, however many rows carry it"
+      (let
+        [{:keys [result calls]} (with-asks (fn [_]
+                                             {:result {:description "one screenshot"}})
+                                           #(vd/describe-images (mixed-fleet)
+                                                                "ctx"
+                                                                [(image "/tmp/a.png")
+                                                                 (image "/tmp/b.png")
+                                                                 (image "/tmp/a.png")]))]
+        (expect (= 1 (count calls)))
+        (expect (= ["one screenshot" "one screenshot" "one screenshot"] (mapv :text result)))))
+  ;; Regression: two rows the manifest names the same collapsed into ONE entry, so
+  ;; both rendered the SECOND image's report — a description under the wrong
+  ;; picture, which the agent then testifies to as if it were the row's own.
+  (it "never attributes a description to an ambiguous label"
+      (let
+        [{:keys [result calls]}
+         (with-asks descriptions
+                    #(vd/describe-attachments
+                       (mixed-fleet)
+                       "ctx"
+                       [{:filename "shot.png" :media-type "image/png" :base64 png-b64}
+                        {:filename "shot.png" :media-type "image/png" :base64 blue-png-b64}]))]
+        (expect (= {} result))
+        ;; Nothing addressable, nothing to pay for either.
+        (expect (empty? calls))))
+  ;; Regression: a model that answered a dense screenshot with a novel put every
+  ;; character of it into the prompt — and into every later request of the session.
+  (it "caps ONE image's description"
+      (let
+        [{:keys [result]}
+         (with-asks (fn [_]
+                      {:result {:description (apply str (repeat 30000 "0123456789"))}})
+                    #(vd/describe-images (mixed-fleet) "ctx" [(distinct-image "long")]))
+
+         text
+         (:text (first result))]
+
+        (expect (<= (count text) 4000))
+        (expect (< 3000 (count text)))))
+  ;; Regression: one provider answering 400 — stale credentials, a gateway hiccup —
+  ;; returned NOTHING for the whole pass while other vision models in the same fleet
+  ;; sat idle. Proven live against the real fleet: TWO Copilot providers failed in a
+  ;; row on ONE absent credential, so excluding just the first still described
+  ;; nothing — each round must exclude every provider that already broke.
+  (it "keeps offering the image until a provider that can see accepts it"
+      (let
+        [{:keys [result calls]}
+         (with-asks
+           (fn [opts]
+             (let [excluded (get-in opts [:routing :exclude-providers])]
+               (cond (empty? excluded) (throw (ex-info "Exceptional status code: 400"
+                                                       {:status 400 :provider-id :seeing-broken}))
+                     (= #{:seeing-broken} excluded)
+                     (throw (ex-info "Exceptional status code: 400"
+                                     {:status 400 :provider-id :seeing-also-broken}))
+                     :else {:result {:description "rescued"} :routed/model "backup-seer"})))
+           #(vd/describe-images (rescue-fleet) "ctx" [(distinct-image "rescue")]))]
+        (expect (= 3 (count calls)))
+        (expect (nil? (get-in (first calls) [:opts :routing :exclude-providers])))
+        (expect (= #{:seeing-broken} (get-in (second calls) [:opts :routing :exclude-providers])))
+        (expect (= #{:seeing-broken :seeing-also-broken}
+                   (get-in (nth calls 2) [:opts :routing :exclude-providers])))
+        (expect (= "rescued" (:text (first result))))
+        ;; Attributed to the model that ACTUALLY looked, not to the probe's guess.
+        (expect (= "backup-seer" (:model (first result))))))
+  ;; The other direction: a failure that names NO provider teaches the pass nothing,
+  ;; so another round would call the same broken provider with the same result.
+  (it "stops when the failure names no provider to exclude"
+      (let
+        [{:keys [result calls]}
+         (with-asks (fn [_]
+                      (throw (ex-info "connection reset" {})))
+                    #(vd/describe-images (rescue-fleet) "ctx" [(distinct-image "anonymous")]))]
+        (expect (= 1 (count calls)))
+        (expect (= [nil] result))))
+  (it "gives up after a bounded number of offers"
+      (let
+        [attempts
+         (atom 0)
+
+         {:keys [result calls]}
+         (with-asks (fn [_]
+                      (let [n (swap! attempts inc)]
+                        (throw (ex-info "Exceptional status code: 500"
+                                        {:status 500 :provider-id (keyword (str "broken-" n))}))))
+                    #(vd/describe-images (rescue-fleet) "ctx" [(distinct-image "hopeless")]))]
+
+        ;; A fleet that keeps naming NEW broken providers must not spin: the pass is
+        ;; bounded by rounds as well as by the deadline.
+        (expect (= 3 (count calls)))
+        (expect (= [nil] result))))
+  (it "does not retry a REFUSAL — only a broken provider earns a second offer"
+      (let
+        [{:keys [result calls]}
+         (with-asks (fn [_]
+                      {:result {:description "   "}})
+                    #(vd/describe-images (rescue-fleet) "ctx" [(distinct-image "refused")]))]
+        (expect (= 1 (count calls)))
+        (expect (= [nil] result))))
+  (it "never retries when the fleet has a single provider"
+      (let
+        [{:keys [result calls]}
+         (with-asks (fn [_]
+                      (throw (ex-info "503 from the only seer" {:status 503 :provider-id :seeing})))
+                    #(vd/describe-images (lone-seer-fleet) "ctx" [(distinct-image "lonely")]))]
+        (expect (= 1 (count calls)))
+        (expect (= [nil] result))))
+  ;; Regression: the wait was re-armed per image, so three hung asks spent the whole
+  ;; budget and then another second EACH on top of it, inside request assembly.
+  (it "bounds the WHOLE pass by one deadline, not each image"
+      (let
+        [started
+         (System/currentTimeMillis)
+
+         {:keys [result]}
+         (with-redefs [vd/DESCRIBE_HARD_DEADLINE_MS 1000]
+           (with-asks (fn [_]
+                        (Thread/sleep 30000)
+                        {:result {:description "too late"}})
+                      #(vd/describe-images (mixed-fleet)
+                                           "ctx"
+                                           [(distinct-image "h1") (distinct-image "h2")
+                                            (distinct-image "h3")])))
+
+         elapsed
+         (- (System/currentTimeMillis) started)]
+
+        (expect (= [nil nil nil] result))
+        (expect (< elapsed 2500))))
+  ;; Regression: a row whose payload never materialised was still sent, and every
+  ;; such row hashed to the SAME cache key.
+  (it "never sends an image with no payload"
+      (let
+        [{:keys [result calls]}
+         (with-asks
+           descriptions
+           #(vd/describe-images (mixed-fleet) "ctx" [(assoc (image "/tmp/empty.png") :base64 "")]))]
+        (expect (empty? calls))
+        (expect (= [nil] result)))))

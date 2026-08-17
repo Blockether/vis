@@ -63,6 +63,20 @@
 
 (def ^:private DESCRIBE_CONTEXT_CHARS 600)
 
+(def ^:private MAX_DESCRIPTION_CHARS
+  "Cap on ONE image's description, in characters. The text is quoted verbatim into
+   the prompt and then into every later request of the session, so a model that
+   answers a dense screenshot with a novel must not be able to spend the turn's
+   whole context on one picture."
+  4000)
+
+(def ^:private MAX_DESCRIBE_ROUNDS
+  "How many providers one image may be offered to inside a single pass. A fleet
+   commonly holds several members of the SAME broken family — two Copilot entries
+   sharing one absent credential — so one retry is not enough, while a hopeless
+   fleet must not spend the deadline discovering that."
+  3)
+
 (def ^:private MAX_CACHE_ENTRIES 256)
 
 (def ^:private DESCRIBE_ROUTING
@@ -186,10 +200,19 @@
                        (truncate c DESCRIBE_CONTEXT_CHARS))))
               (svar/image base64 (or (not-empty (str media-type)) "image/png")))])
 
+(defn- distinct-by
+  "`coll` keeping only the FIRST element per `(f element)`, order preserved."
+  [f coll]
+  (second (reduce (fn [[seen out] x]
+                    (let [k (f x)]
+                      (if (contains? seen k) [seen out] [(conj seen k) (conj out x)])))
+                  [#{} []]
+                  coll)))
+
 (defn- describe-future
-  "Async `ask!` for ONE image. The future itself catches, so the caller only ever
-   derefs a value: `{:ok result}` or `{:error t}`."
-  [router context label image]
+  "Async `ask!` for ONE image on `routing`. The future itself catches, so the caller
+   only ever derefs a value: `{:ok result}` or `{:error t}`."
+  [router routing context label image]
   (future (try {:ok (svar/ask! (describe-router router)
                                (rt/with-default-ask-code-idle-timeout
                                  {:messages (describe-messages context label image)
@@ -198,21 +221,76 @@
                                   ;; An agent-initiated call, never a user interaction: the
                                   ;; coding plans bill an unmarked request as user initiated.
                                   :llm-headers rt/AGENT_INITIATOR_HEADERS
-                                  :routing DESCRIBE_ROUTING
+                                  :routing routing
                                   :ttft-timeout-ms DESCRIBE_TTFT_MS
                                   :idle-timeout-ms DESCRIBE_IDLE_MS
                                   :semantic-timeout-ms DESCRIBE_SEMANTIC_MS}))}
                (catch Throwable t {:error t}))))
 
-(defn- outcome->text
-  [outcome]
-  (some-> outcome
-          :ok
-          :result
-          :description
-          str
-          str/trim
-          not-empty))
+(defn- outcome->description
+  "`{:text … :model …}` for a finished ask, or nil when nothing usable came back.
+
+   The model NAMED is the one svar actually routed to, not the one the probe
+   guessed, so an image described after a cross-provider retry is attributed to
+   the model that really looked at it."
+  [outcome fallback-model]
+  (when-let
+    [text (some-> outcome
+                  :ok
+                  :result
+                  :description
+                  str
+                  str/trim
+                  not-empty)]
+    {:text (truncate text MAX_DESCRIPTION_CHARS)
+     :model (or (not-empty (str (:routed/model (:ok outcome)))) (str fallback-model))}))
+
+(defn- describe-round
+  "ONE parallel round of asks over `pairs` (`[[idx image] …]`), all sharing the
+   `deadline-at` wall clock.
+
+   Returns `{:done {idx description} :failed [[idx image] …] :broken #{provider-id}}`.
+   `:failed` collects only calls that ERRORED — a refusal and a deadline are answers
+   about the image, a broken provider is not — and `:broken` names the providers
+   those errors came from, which is exactly what the next round excludes."
+  [router routing context deadline-at fallback-model pairs]
+  (reduce (fn [acc [idx fut image]]
+            (let
+              [remaining
+               (max 0 (- (long deadline-at) (System/currentTimeMillis)))
+
+               outcome
+               (deref fut remaining ::deadline)]
+
+              (cond (= ::deadline outcome)
+                    (do (future-cancel fut)
+                        (tel/log!
+                          {:level :warn
+                           :id ::describe-deadline
+                           :data {:deadline-ms DESCRIBE_HARD_DEADLINE_MS :model fallback-model}}
+                          "Vision description exceeded its hard deadline; image stays undescribed")
+                        acc)
+                    (:error outcome) (let [provider-id (:provider-id (ex-data (:error outcome)))]
+                                       (tel/log!
+                                         {:level :warn
+                                          :id ::describe-failed
+                                          :data {:error (ex-message (:error outcome))
+                                                 :provider provider-id
+                                                 :model fallback-model}}
+                                         "Vision description call failed; image stays undescribed")
+                                       (cond-> (update acc :failed conj [idx image])
+                                         provider-id
+                                         (update :broken conj provider-id)))
+                    :else (if-let [description (outcome->description outcome fallback-model)]
+                            (assoc-in acc [:done idx] description)
+                            acc))))
+          {:done {} :failed [] :broken #{}}
+          ;; Eager on purpose: every ask of a round is in flight before the first deref.
+          (mapv (fn [[idx image]]
+                  [idx
+                   (describe-future router routing context (attachments/image-label image) image)
+                   image])
+                pairs)))
 
 (defn describe-images
   "Descriptions for already-wired images (the `attachments/wire-image` shape:
@@ -232,57 +310,69 @@
   (when (and (seq images) (enabled?))
     (when-let [model (sighted-model router)]
       (let
-        [started (System/currentTimeMillis)
-         entries (mapv (fn [image]
+        [entries (mapv (fn [image]
                          (let [k (content-digest image)]
                            {:image image :key k :cached (get @description-cache k)}))
                        images)
-         ;; Only an image nobody has described yet costs a call.
-         pending (into []
-                       (comp (remove :cached) (take MAX_DESCRIBED_PER_PASS))
-                       (map-indexed (fn [idx entry]
-                                      (assoc entry :idx idx))
-                                    entries))
-         futures (mapv (fn [{:keys [idx image]}]
-                         [idx
-                          (describe-future router context (attachments/image-label image) image)])
-                       pending)
-         texts
-         (into {}
-               (keep
-                 (fn [[idx fut]]
-                   (let
-                     [remaining (max 1000
-                                     (- (long DESCRIBE_HARD_DEADLINE_MS)
-                                        (- (System/currentTimeMillis) (long started))))
-                      outcome (deref fut remaining ::deadline)]
+         ;; ONE ask per distinct payload. The same picture attached twice, or a
+         ;; figure replayed under a second name, otherwise pays twice and burns
+         ;; two of the burst slots for one description.
+         pending (->> entries
+                      (map-indexed (fn [idx entry]
+                                     (assoc entry :idx idx)))
+                      (remove :cached)
+                      (remove #(str/blank? (str (:base64 (:image %)))))
+                      (distinct-by :key)
+                      (take MAX_DESCRIBED_PER_PASS)
+                      vec)
+         deadline-at (+ (System/currentTimeMillis) (long DESCRIBE_HARD_DEADLINE_MS))
+         ;; A provider that ERRORS — stale credentials, a gateway 400, a 5xx — must
+         ;; not take the whole fleet's eyes down with it. Every round excludes the
+         ;; providers that already broke (the error itself names them) and offers
+         ;; what they dropped to the next-best model. Proven live: two Copilot
+         ;; providers failed in a row on one absent credential, and the image was
+         ;; only described because a third provider got the offer.
+         by-index
+         (loop
+           [pairs (mapv (juxt :idx :image) pending)
+            excluded #{}
+            round 0
+            done {}]
 
-                     (cond
-                       (= ::deadline outcome)
-                       (do
-                         (future-cancel fut)
-                         (tel/log!
-                           {:level :warn
-                            :id ::describe-deadline
-                            :data {:deadline-ms DESCRIBE_HARD_DEADLINE_MS :model (:name model)}}
-                           "Vision description exceeded its hard deadline; image stays undescribed")
-                         nil)
-                       (:error outcome)
-                       (do (tel/log! {:level :warn
-                                      :id ::describe-failed
-                                      :data {:error (ex-message (:error outcome))
-                                             :model (:name model)}}
-                                     "Vision description call failed; image stays undescribed")
-                           nil)
-                       :else (when-let [text (outcome->text outcome)]
-                               [idx text])))))
-               futures)]
+           (if (or (empty? pairs)
+                   (>= (long round) (long MAX_DESCRIBE_ROUNDS))
+                   ;; Every provider in the fleet already broke: there is nobody left
+                   ;; to offer the image to, and svar would only throw locally.
+                   (empty? (remove #(contains? excluded (:id %)) (:providers router)))
+                   (<= (- (long deadline-at) (System/currentTimeMillis)) 0))
+             done
+             (let
+               [outcome (describe-round router
+                                        (cond-> DESCRIBE_ROUTING
+                                          (seq excluded)
+                                          (assoc :exclude-providers excluded))
+                                        context
+                                        deadline-at
+                                        (:name model)
+                                        pairs)
+                learned (into #{} (remove excluded) (:broken outcome))
+                described (merge done (:done outcome))]
 
-        (mapv (fn [idx {:keys [key cached]}]
-                (or cached
-                    (when-let [text (get texts idx)]
-                      (cache-put! key {:text text :model (str (:name model))}))))
-              (range)
+               ;; Nothing NEW broke: another round would call the same provider with
+               ;; the same result, so stop and let the caller degrade.
+               (if (seq learned)
+                 (recur (:failed outcome) (into excluded learned) (inc (long round)) described)
+                 described))))
+         ;; Keyed by payload, not position: every entry sharing a digest with a
+         ;; described one gets the same text, cached once.
+         by-digest (into {}
+                         (keep (fn [{:keys [idx key]}]
+                                 (when-let [description (get by-index idx)]
+                                   [key (cache-put! key description)])))
+                         pending)]
+
+        (mapv (fn [{:keys [key cached]}]
+                (or cached (get by-digest key)))
               entries)))))
 
 (defn describe-attachments
@@ -293,21 +383,32 @@
    configured model can see, or when nothing describable came out of the gate.
    Human-only rows never reach the describer: `wire-images` skips them first, and
    bytes the caller deliberately kept off the wire are not this side-channel's
-   business either."
+   business either.
+
+   An AMBIGUOUS label (two rows the manifest names the same) is dropped before the
+   call. The map can hold one text per label, so the second row would silently
+   inherit the first row's report — and an agent reading a description under the
+   wrong picture testifies to something nobody saw."
   [router context attachments]
   (let
     [wired
      (:attached (attachments/wire-images attachments))
 
+     label-counts
+     (frequencies (map attachments/image-label wired))
+
+     addressable
+     (filterv #(= 1 (get label-counts (attachments/image-label %))) wired)
+
      descriptions
-     (describe-images router context wired)]
+     (describe-images router context addressable)]
 
     (if (seq descriptions)
       (into {}
             (keep identity)
             (map (fn [image description]
                    (when description [(attachments/image-label image) description]))
-                 wired
+                 addressable
                  descriptions))
       {})))
 

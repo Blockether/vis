@@ -1897,6 +1897,27 @@
         (let [suffix (suffix-for blind-target {:describe-images (fn [_] nil)})]
           (expect (= 2 (count suffix)))))
 
+    ;; Regression: the describer ran per ITERATION, so a turn that produced a figure
+    ;; in each of three steps paid three SERIAL round trips — and three separate
+    ;; hard deadlines — inside request assembly, with the user waiting on all of it.
+    (it "describes the WHOLE trailer in one pass"
+        (let [passes (atom [])
+              trailer (mapv (fn [i]
+                              (stub-tool-iter {:id (inc i)
+                                               :attachments [(assoc att
+                                                               :filename (str "plot-" i ".png")
+                                                               :tool-call-id (str "tc-" (inc i)))]}))
+                            (range 3))
+              suffix (conversation-suffix trailer
+                                          blind-target
+                                          {:describe-images (fn [images]
+                                                              (swap! passes conj (mapv :filename images))
+                                                              (describer images))})
+              reports (filter #(str/includes? (str (:content %)) "a plot of") suffix)]
+          (expect (= 1 (count @passes)))
+          (expect (= #{"plot-0.png" "plot-1.png" "plot-2.png"} (set (first @passes))))
+          ;; Each iteration still gets ITS figure's report, in its own place.
+          (expect (= 3 (count reports)))))
     (it "describes only the images the replay budget kept"
         (let [seen (atom [])
               suffix (suffix-for blind-target
