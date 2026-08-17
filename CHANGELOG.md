@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- feat(clj-test): `run_tests` runs the clojure namespace a call names — `ns` / `nses` / `namespace` / `namespaces` and `var` / `vars` / `only` select instead of being refused
 - fix(extensions): make `vis.state` a whole mapping — `pop`, `setdefault`, `update`, `clear`, keys and iteration
 - refactor(editing): remove structural editing — `struct_index`, `struct_nodes` and `struct_patch` are gone; `grep` → `cat` → `patch` is the whole editing surface
 - feat(python): cover asyncio queues, locks, futures and timeouts in the sandbox shim

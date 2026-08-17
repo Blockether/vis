@@ -41,18 +41,20 @@
                           {:paths ["test/a/core_test.clj" "extensions/b/test"] :exclude ["slow"]})))
     (it "accepts the empty selector map (all keys optional)"
         (expect (s/valid? ::contract/selectors {})))
-    ;; The test-NAME selector is gone the same way the namespace one was: a
-    ;; name rides INSIDE a path entry (`file::name`), so no second key can
-    ;; disagree with it about what the call selected.
-    (it "no longer publishes a test-name selector beside :paths"
+    ;; The shared map publishes ONE selector vocabulary, and a test NAME rides
+    ;; INSIDE a path entry (`file::name`). A pack may read spellings of its own —
+    ;; clojure resolves `ns` / `only` against its own workspace — but nothing
+    ;; else reaches THIS map to disagree about what the call selected.
+    (it "publishes no test-name selector beside :paths"
         (expect (not (some #{:only :filter :var :vars} contract/selector-keys))))
     (it "rejects :paths that is not a coll of strings"
         (expect (not (s/valid? ::contract/selectors {:paths 42})))
         (expect (not (s/valid? ::contract/selectors {:paths [42]}))))
-    ;; The namespace selector is GONE - paths are the one way to name what runs,
-    ;; and `s/keys` ignores unknown keys, so this pins the DERIVED key vector
-    ;; rather than the map's validity.
-    (it "no longer publishes a namespace selector"
+    ;; A namespace is a CLOJURE fact, never a shared one: that pack resolves its
+    ;; own `ns` spellings and carries the result in its OWN key. `s/keys` ignores
+    ;; unknown keys, so this pins the DERIVED key vector rather than the map's
+    ;; validity.
+    (it "publishes no namespace selector"
         (expect (not (some #{:ns :namespace :namespaces} contract/selector-keys))))))
 
 (defdescribe

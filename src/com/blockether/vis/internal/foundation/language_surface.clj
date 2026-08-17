@@ -427,24 +427,40 @@
 
 (defn- input-list
   "Comma-joined non-blank entries of list-ish call key `k`, else nil — how a
-   multi-value selection reads on one line."
+   multi-value selection reads on one line. A bare string is ONE entry, never a
+   sequence of characters."
   [input k]
-  (some->> (get input k)
-           (keep #(some-> %
-                          str
-                          str/trim
-                          not-empty))
-           seq
-           (str/join ", ")))
+  (let
+    [xs (let [v (get input k)]
+          (cond (nil? v) nil
+                (sequential? v) v
+                :else [v]))]
+    (some->> xs
+             (keep #(some-> %
+                            str
+                            str/trim
+                            not-empty))
+             seq
+             (str/join ", "))))
+
+;; Every spelling a call can select WITH: `paths` in every language, plus the
+;; namespace / var vocabulary the clojure pack resolves (`clojure -M:test`'s own
+;; `--namespace` / `--var`). A selection rendered as "full suite" would make a
+;; one-namespace run read like the whole workspace.
+(def ^:private selection-keys ["paths" "ns" "nses" "namespace" "namespaces" "var" "vars" "only"])
 
 (defn- test-target
-  "WHAT a run_tests call selected, as one line: its `paths` entries — files,
-   directories, or `<path>::<test-name>` node ids, the ONE selector — else the
-   whole suite. The pending card and the finished headline read the SAME string
-   off the call, because a runner reports only what it RAN — two runs that
-   selected different tests must never render the same summary."
+  "WHAT a run_tests call selected, as one line: its selector entries — files,
+   directories, `<path>::<test-name>` node ids, or the namespaces a clojure call
+   named — else the whole suite. The pending card and the finished headline read
+   the SAME string off the call, because a runner reports only what it RAN — two
+   runs that selected different tests must never render the same summary."
   [input]
-  (or (input-list input "paths") "full suite"))
+  (or (some->> selection-keys
+               (keep (partial input-list input))
+               seq
+               (str/join ", "))
+      "full suite"))
 
 (defn format-code
   "Format through a pack: `format_code(language,arg)`; omit `language` only for paths-based inference. Source/`{\"code\":...}` returns changed + char-delta, never text. `{\"paths\":[...]}` (always a list) recursively formats files/dirs in place and returns per-file changes, never text. Omit code/paths for default source paths recursively."
@@ -457,7 +473,7 @@
   (dispatch! env :lint-fn args))
 
 (defn run-tests
-  "Run through a pack: `run_tests(language,arg)`. `arg` is a path string or map: `paths` (files, directories, or `<path>::<test-name>` node ids — the ONE way to choose what runs, in every language; `::<test-name>` alone finds that test wherever it lives) selects; `include` / `exclude` narrow by metadata tag; `cwd` chooses the project; `environment` picks the python backend (`project` for the project interpreter's own pytest, else the hermetic sandbox). List selectors stay lists, even one. Omit `arg` for all tests."
+  "Run through a pack: `run_tests(language,arg)`. `arg` is a path string or map: `paths` (files, directories, or `<path>::<test-name>` node ids — the selector every language shares; `::<test-name>` alone finds that test wherever it lives) selects; clojure ALSO takes `ns` / `nses` (a namespace name, or `ns/var` for one test) and resolves it the same way; `include` / `exclude` narrow by metadata tag; `cwd` chooses the project; `environment` picks the python backend (`project` for the project interpreter's own pytest, else the hermetic sandbox). List selectors stay lists, even one. Omit `arg` for all tests."
   [env & args]
   (let
     [started-at
@@ -578,10 +594,13 @@
      (str
        "Run the pack's tests — `run_tests({\"paths\": [\"test/foo_test.clj\"]})`, or "
        "`run_tests(\"python\", {\"paths\": [...]})`. `language` leads the call and is optional "
-       "(inferred from the paths and the workspace). Prefer the smallest target: `paths` is the ONE "
-       "selector and each entry is a file, a directory, or `<path>::<test-name>` for a single test; "
+       "(inferred from the paths and the workspace). Prefer the smallest target: `paths` is the "
+       "shared selector and each entry is a file, a directory, or `<path>::<test-name>` for a "
+       "single test; clojure also takes `ns` — a namespace name, or `ns/var` for one test. "
        "`include`/`exclude` narrow by tag, `cwd` chooses the project. Omit `paths` to run everything.")
-     :params [{:name "language"} {:name "paths"} {:name "include"} {:name "exclude"} {:name "cwd"}]
+     :params [{:name "language"} {:name "paths"}
+              {:name "ns" :note "clojure — namespace or `ns/var`"} {:name "include"}
+              {:name "exclude"} {:name "cwd"}]
      :call {:lead-opt "language" :rest :always}
      ;; run_tests can exceed the generic Python eval watchdog; dispatch it
      ;; directly in Clojure so the language pack's own timeout budget wins.

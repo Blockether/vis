@@ -585,22 +585,85 @@
                    (keep test-ns))))
           :else [])))
 
+(defn- clj-file-name?
+  "True when `s` names a Clojure FILE rather than a namespace — the one syntactic
+   tell that separates `test/a/core_test.clj` from `a.core-test` when a path
+   arrives under a namespace key."
+  [s]
+  (boolean (re-find #"\.clj[cs]?$" (str s))))
+
+(defn- ns->test-nses
+  "Resolve ONE namespace NAME to the test namespaces it selects: a test namespace
+   is itself, a SOURCE namespace becomes its `*-test` namespace — the same
+   translation a source PATH gets. A name the workspace index does not know is
+   passed through unchanged, because that index sees only `*_test.clj` files
+   under root: a namespace that lives elsewhere on the test classpath still runs,
+   and a misspelled one fails loudly at require time instead of quietly selecting
+   nothing."
+  [ns-str test-index]
+  (let [tn (source-ns->test-ns ns-str)]
+    (cond (contains? @test-index ns-str) [ns-str]
+          (contains? @test-index tn) [tn]
+          :else [ns-str])))
+
+(defn- resolve-ns-entry
+  "Resolve ONE namespace-selector entry `{:ns :var}` into `{:nses :var}`. The
+   entry names a namespace (`a.core-test`), a namespace and ONE var in the
+   spelling `clojure -M:test --var` takes (`a.core-test/adds-test`), or a PATH
+   that arrived under a namespace key — read as the path it obviously is, rather
+   than as a namespace that could never load."
+  [root {ns-str :ns var-name :var} test-index]
+  (if (nil? ns-str)
+    {:nses [] :var var-name}
+    (let
+      [pf
+       (io/file (str ns-str))
+
+       ^java.io.File f
+       (if (.isAbsolute pf) pf (io/file root (str ns-str)))]
+
+      (cond (or (clj-file-name? ns-str) (.exists f)) {:nses (vec (path->nses f test-index))
+                                                      :var var-name}
+            (and (nil? var-name) (str/includes? ns-str "/")) (let [[n v] (str/split ns-str #"/" 2)]
+                                                               {:nses (ns->test-nses n test-index)
+                                                                :var (not-empty v)})
+            :else {:nses (ns->test-nses ns-str test-index) :var var-name}))))
+
 (defn- resolve-selection
-  "Resolve the CALL's node-id entries (`{:path :var}`, from
-   `contract/split-node-id`) into what a run needs: `:nses`, the test namespaces
-   to load, and `:vars`, the var filter to apply inside them
-   (`{:ns <ns-or-nil> :name <test-name>}`).
+  "Resolve the CALL's selector entries into what a run needs: `:nses`, the test
+   namespaces to load, `:vars`, the var filter to apply inside them
+   (`{:ns <ns-or-nil> :name <test-name>}`), and `:files`, the test file each
+   NAMESPACE entry resolved to — a path entry already names its own location,
+   a namespace entry does not, and the run must still be rooted at the project
+   the tests live in.
+   `path-entries` are the node-id maps from `:paths` (`{:path :var}`, from
+   `contract/split-node-id`); `ns-entries` are the namespace/var spellings
+   (`{:ns :var}`, from `split-selector-entry`).
    Each entry is resolved ON ITS OWN, so `a_test.clj::x` and `b_test.clj::y`
    pair each name with its OWN file instead of cross-producting into both. An
-   entry with no path (`::x`) names a var wherever it lives — nil :ns, and no
-   namespace of its own, so the other entries (or the whole-workspace default)
-   decide where to look. Paths are relative to root or absolute; files AND
-   directories are accepted, and SOURCE files/dirs map to their *_test
-   namespaces."
-  [root entries]
+   entry with no location (`::x`, or a bare `only` name) names a var wherever it
+   lives — nil :ns, and no namespace of its own, so the other entries (or the
+   whole-workspace default) decide where to look. Paths are relative to root or
+   absolute; files AND directories are accepted, and SOURCE files/dirs map to
+   their *_test namespaces."
+  [root path-entries ns-entries]
   (let
     [test-index
      (delay (all-test-files root))
+
+     ;; One entry's resolved namespaces plus the name it narrows to. A name with
+     ;; no namespace of its own stays `{:ns nil}` — 'wherever it lives'.
+     add
+     (fn [acc nses var]
+       (cond-> (update acc :nses into nses)
+         var
+         (update :vars
+                 into
+                 (if (seq nses)
+                   (map (fn [n]
+                          {:ns n :name var})
+                        nses)
+                   [{:ns nil :name var}]))))
 
      acc
      (reduce (fn [acc {:keys [path var]}]
@@ -611,85 +674,113 @@
                             f (if (.isAbsolute pf) pf (io/file root (str path)))]
 
                            (vec (path->nses f test-index))))]
-                 (cond-> (update acc :nses into nses)
-                   var
-                   (update :vars
-                           into
-                           (if (seq nses)
-                             (map (fn [n]
-                                    {:ns n :name var})
-                                  nses)
-                             [{:ns nil :name var}])))))
-             {:nses [] :vars []}
-             entries)]
+                 (add acc nses var)))
+             {:nses [] :vars [] :files []}
+             path-entries)
 
-    {:nses (vec (sort (distinct (:nses acc)))) :vars (vec (distinct (:vars acc)))}))
+     acc
+     (reduce (fn [acc entry]
+               (let [{:keys [nses var]} (resolve-ns-entry root entry test-index)]
+                 (-> (add acc nses var)
+                     (update :files into (keep @test-index nses)))))
+             acc
+             ns-entries)]
 
-(def ^:private removed-selector-replacements
-  "What a caller should say instead of each dead selector spelling. PATHS are the
-   only way to name what runs, so a location key becomes a path and a NAME key
-   becomes a node id inside that path."
-  {:paths (str "name the FILE or DIRECTORY instead. {\"paths\": [\"test/a/core_test.clj\"]}"
-               " runs the namespace that file declares, a SOURCE file runs its *-test"
-               " namespace, and a directory runs every *_test.clj under it.")
-   :var (str "put the test name IN the path as a node id instead."
-             " {\"paths\": [\"test/a/core_test.clj::adds-test\"]} runs that one var,"
-             " \"src/a/core.clj::adds\" runs the *-test var covering it, and"
-             " \"::adds-test\" finds it wherever it lives.")})
+    {:nses (vec (sort (distinct (:nses acc))))
+     :vars (vec (distinct (:vars acc)))
+     :files (vec (distinct (:files acc)))}))
 
-(def ^:private removed-selector-keys
-  "Selector spellings that no longer exist, in message order, each paired with the
-   replacement it wants. A key that quietly stopped selecting would silently turn
-   ONE namespace's run into the whole workspace's — or ONE var's into its whole
-   namespace — so every dead spelling is refused BY NAME."
-  [["ns" :paths] ["namespace" :paths] ["namespaces" :paths] ["path" :paths] ["only" :var]])
+(def ^:private namespace-selector-keys
+  "Selector spellings whose value names a NAMESPACE. `clojure -M:test` takes
+   `--namespace`, so this is what a model reaches for when it does not name a
+   file; every one of them SELECTS instead of being refused, and
+   `resolve-ns-entry` decides what each entry really names."
+  ["ns" "nses" "namespace" "namespaces"])
 
-(defn- refuse-removed-selectors!
-  "Throw when `arg` carries a removed selector key, naming what replaced it."
+(def ^:private var-selector-keys
+  "Selector spellings whose value names a TEST VAR: `--var`'s `ns/var`, or a bare
+   test name that narrows wherever it lives."
+  ["var" "vars" "only"])
+
+(defn- split-selector-entry
+  "Split ONE namespace/var selector entry into `{:ns :var}`. `bare` says what a
+   token carrying no separator means — `:ns` under a namespace key, `:var` under
+   a var key. `a.core-test/adds-test` (the `--var` spelling) and
+   `a.core-test::adds-test` (the node-id one) both split into both halves; a
+   `.clj` entry keeps its slashes, because `resolve-ns-entry` reads it as the
+   path it obviously is."
+  [bare entry]
+  (let
+    [{:keys [path var]}
+     (contract/split-node-id entry)
+
+     [head v]
+     (if (and path (nil? var) (not (clj-file-name? path)) (str/includes? path "/"))
+       (let [[a b] (str/split path #"/" 2)]
+         [(not-empty a) (not-empty b)])
+       [path var])]
+
+    (if (and (= :var bare) (nil? v)) {:ns nil :var head} {:ns head :var v})))
+
+(defn- selector-entries
+  "Every namespace/var selector entry a map arg carries, as `{:ns :var}` maps in
+   key order."
   [arg]
-  (when-let
-    [removed (seq (filter (fn [[k _]]
-                            (contains? arg k))
-                          removed-selector-keys))]
-    (throw (ex-info (str "run_tests(clojure) no longer takes " (str/join " / " (map first removed))
-                         " — " (str/join " "
-                                         (distinct (map (comp removed-selector-replacements second)
-                                                        removed))))
-                    {:type :clj/bad-args :got arg}))))
+  (vec (concat (for
+                 [k
+                  namespace-selector-keys
+
+                  e
+                  (contract/->str-vec (get arg k))]
+
+                 (split-selector-entry :ns e))
+               (for
+                 [k
+                  var-selector-keys
+
+                  e
+                  (contract/->str-vec (get arg k))]
+
+                 (split-selector-entry :var e)))))
 
 (defn- normalize-arg
   "Coerce the raw run_tests arg (a path string or an opts dict) into the
-   canonical selector map via the shared test-contract:
-   `{:paths [{:path :var}] :include [str] :exclude [str]}`. The model arg is
-   STRING-keyed (strings-only boundary); this is the external->internal seam that
-   translates its `\"paths\"/\"include\"/\"exclude\"` keys into the keyword
-   vocabulary `normalize-selectors` reads, splitting each path entry on its
-   `::` (see `contract/split-node-id`).
+   canonical selector map
+   `{:paths [{:path :var}] :ns-selectors [{:ns :var}] :include [str] :exclude [str]}`.
+   The model arg is STRING-keyed (strings-only boundary); this is the
+   external->internal seam that translates its keys into the keyword vocabulary
+   the resolvers read, splitting each path entry on its `::` (see
+   `contract/split-node-id`).
 
-   PATHS are the only way in — a bare string is ONE entry, and no second key
-   names a namespace or a test to disagree with it. `clj-test-fn` resolves each
-   path half to the test namespaces declared under it, so naming a SOURCE file
-   runs its `*-test` namespace, and the `::name` half narrows to ONE var."
+   PATHS are the primary spelling — one entry says WHERE and WHICH, and
+   `clj-test-fn` resolves each path half to the test namespaces declared under
+   it, so naming a SOURCE file runs its `*-test` namespace. A model that instead
+   names a NAMESPACE is speaking `clojure -M:test --namespace` / `--var`, which
+   is a real selection and not a mistake: `ns` / `nses` / `namespace` /
+   `namespaces` and `var` / `vars` / `only` carry into `:ns-selectors` and run,
+   and `path` is read alongside `paths`."
   [arg]
-  (when (map? arg) (refuse-removed-selectors! arg))
-  (contract/normalize-selectors
-    (cond
-      (string? arg) {:paths [arg]}
-      (symbol? arg) {:paths [(str arg)]}
-      (map? arg)
-      {:paths (get arg "paths") :include (get arg "include") :exclude (get arg "exclude")}
-      :else
-      (throw
-        (ex-info
-          "run_tests(clojure) expects a path string, or a dict with a \"paths\" key"
-          {:type :clj/bad-args
-           :got arg
-           :examples
-           ["run_tests(\"clojure\", \"test/com/example/thing_test.clj\")"
-            "run_tests(\"clojure\", {\"paths\": [\"src/com/example/thing.clj\"]})"
-            "run_tests(\"clojure\", {\"paths\": [\"test/com/example/thing_test.clj::adds-test\"]})"
-            "run_tests(\"clojure\", {\"paths\": [\"::adds-test\"]})"
-            "run_tests(\"clojure\", {\"paths\": [\"test\"], \"exclude\": [\"slow\"]})"]})))))
+  (cond
+    (or (string? arg) (symbol? arg)) (contract/normalize-selectors {:paths [(str arg)]})
+    (map? arg) (assoc (contract/normalize-selectors {:paths (into
+                                                              (contract/->str-vec (get arg "paths"))
+                                                              (contract/->str-vec (get arg "path")))
+                                                     :include (get arg "include")
+                                                     :exclude (get arg "exclude")})
+                 :ns-selectors (selector-entries arg))
+    :else
+    (throw
+      (ex-info
+        "run_tests(clojure) expects a path string, or a dict with a \"paths\" key"
+        {:type :clj/bad-args
+         :got arg
+         :examples
+         ["run_tests(\"clojure\", \"test/com/example/thing_test.clj\")"
+          "run_tests(\"clojure\", {\"paths\": [\"src/com/example/thing.clj\"]})"
+          "run_tests(\"clojure\", {\"paths\": [\"test/com/example/thing_test.clj::adds-test\"]})"
+          "run_tests(\"clojure\", {\"paths\": [\"::adds-test\"]})"
+          "run_tests(\"clojure\", {\"ns\": \"com.example.thing-test\"})"
+          "run_tests(\"clojure\", {\"paths\": [\"test\"], \"exclude\": [\"slow\"]})"]}))))
 
 (defn- ns->source-relpath
   [ns-str]
@@ -1043,17 +1134,23 @@
 
 (defn clj-test-fn
   "Run clojure tests. The arg names PATHS — files, directories, or
-   `<path>::<test-name>` node ids — and nothing else: this is where a path
-   becomes a test namespace and a name becomes ONE var. A *_test.clj file is read
-   for the ns it declares, a SOURCE file maps to its `*-test` ns when that test
-   file exists, and a directory is walked for both; the `::name` half then keeps
-   just that var, matching the test var itself (`adds-test`) or the SOURCE var it
-   covers (`adds`), and `::name` with no path finds it wherever it lives. When NO
-   LOCATION is requested the whole workspace is scanned for *_test.clj and every
-   test namespace runs — empty selectors mean 'run everything', not 'run
-   nothing'. The one case that still errors is explicit-but-empty: a path was
-   given yet no *_test.clj was found under it (a real 'nothing to run there', not
-   a 'run all' intent), and likewise a `::name` that matched no var.
+   `<path>::<test-name>` node ids: this is where a path becomes a test namespace
+   and a name becomes ONE var. A *_test.clj file is read for the ns it declares,
+   a SOURCE file maps to its `*-test` ns when that test file exists, and a
+   directory is walked for both; the `::name` half then keeps just that var,
+   matching the test var itself (`adds-test`) or the SOURCE var it covers
+   (`adds`), and `::name` with no path finds it wherever it lives.
+   A NAMESPACE may be named instead — `ns` / `nses` / `namespace` / `namespaces`,
+   and `var` / `vars` / `only` for a test name — because that is the vocabulary
+   `clojure -M:test` itself takes; each entry gets the same translation (a source
+   ns resolves to its `*-test` ns) and roots the run at the project its test file
+   lives in, so the spelling a model reaches for RUNS instead of being refused.
+   When NO LOCATION is requested the whole workspace is scanned for *_test.clj
+   and every test namespace runs — empty selectors mean 'run everything', not
+   'run nothing'. The one case that still errors is explicit-but-empty: a
+   location was given yet no *_test.clj was found under it (a real 'nothing to
+   run there', not a 'run all' intent), and likewise a `::name` that matched no
+   var.
    The run is rooted at the tests' OWN project — the nearest deps.edn / project.clj /
    bb.edn at or below the workspace root — so a NESTED project is tested against its
    own build file. run_tests NEVER starts a REPL: it reuses THIS session's REPL for
@@ -1080,32 +1177,39 @@
           (let [f (io/file (str req-dir))]
             (.getPath (if (.isAbsolute f) f (io/file wsroot (str req-dir)))))))
 
-      {:keys [paths] :as norm}
+      {:keys [paths ns-selectors] :as norm}
       (normalize-arg arg)
+
+      ;; The ONE translation: requested entries -> the test namespaces declared
+      ;; under them (:nses), the var filter their `::name` / `ns/var` halves name
+      ;; (:vars), and the test FILE a namespace entry resolved to (:files), which
+      ;; is the only location a `{"ns": ...}` call carries.
+      resolved
+      (resolve-selection root paths ns-selectors)
 
       ;; Locations the caller EXPLICITLY asked for — used ONLY to find the tests'
       ;; own project root. Empty for a bare "run everything" call (and for a
       ;; pathless `::name` id), which stays rooted at the workspace so it never
       ;; file-seqs per namespace.
       req-locations
-      (keep (fn [{:keys [path]}]
-              (when path
-                (let [pf (io/file (str path))]
-                  (if (.isAbsolute pf) pf (io/file root (str path))))))
-            paths)
+      (into (vec (keep (fn [{:keys [path]}]
+                         (when path
+                           (let [pf (io/file (str path))]
+                             (if (.isAbsolute pf) pf (io/file root (str path))))))
+                       paths))
+            (:files resolved))
 
-      ;; The ONE translation: requested entries -> the test namespaces declared
-      ;; under them (:nses) plus the var filter their `::name` halves name
-      ;; (:vars). No LOCATION at all = "run everything", so every *_test ns in
-      ;; the workspace runs and a bare `::name` narrows inside it; a path that
+      ;; No LOCATION at all = "run everything", so every *_test ns in the
+      ;; workspace runs and a bare `::name` narrows inside it; a location that
       ;; resolves to nothing is explicit-but-empty and stays an error below. An
       ;; empty list [] counts as "not given" (empty? is total on nil), so [] and
       ;; nil behave identically here.
       {:keys [nses] :as norm}
-      (let [{:keys [nses vars]} (resolve-selection root paths)]
-        (assoc norm
-          :vars vars
-          :nses (if (some :path paths) nses (sort (keys (all-test-files root))))))
+      (assoc norm
+        :vars (:vars resolved)
+        :nses (if (or (some :path paths) (some :ns ns-selectors))
+                (:nses resolved)
+                (sort (keys (all-test-files root)))))
 
       sel
       (select-keys norm [:vars :include :exclude])
@@ -1125,13 +1229,13 @@
       (:port (repl-manager/live-repl-for-dir (:session-id env) eff-root))]
 
      (when (empty? nses)
-       (throw
-         (ex-info
-           (if (some :path paths)
-             (str "run_tests(clojure) found no *_test.clj namespaces under "
-                  (pr-str (vec (keep :path paths))))
-             "run_tests(clojure) found no *_test.clj namespaces anywhere under the workspace root")
-           {:type :clj/bad-args :got arg})))
+       (let [named (into (vec (keep :path paths)) (keep :ns ns-selectors))]
+         (throw
+           (ex-info
+             (if (seq named)
+               (str "run_tests(clojure) found no *_test.clj namespaces under " (pr-str named))
+               "run_tests(clojure) found no *_test.clj namespaces anywhere under the workspace root")
+             {:type :clj/bad-args :got arg}))))
      (let
        [result
         (if port

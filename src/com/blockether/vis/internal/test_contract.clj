@@ -59,9 +59,11 @@
 ;; Selector specs
 
 ;; WHERE the tests are - files, directories, or `<path>::<test-name>` node ids.
-;; The only way in: no second key ever names a test beside them. This is the WIRE
-;; shape (plain strings off the Python boundary); `normalize-selectors` SPLITS
-;; each entry into {:path :var} for the pack that resolves it.
+;; The vocabulary every pack SHARES, and the only one this map carries: a pack
+;; with a location kind of its OWN (clojure names namespaces) resolves that
+;; itself and keeps the result in its own key. This is the WIRE shape (plain
+;; strings off the Python boundary); `normalize-selectors` SPLITS each entry
+;; into {:path :var} for the pack that resolves it.
 (s/def ::paths (s/coll-of string?))
 
 (s/def ::include (s/coll-of string?))
@@ -149,10 +151,12 @@
 
 ;; Normalization + selection (the shared runtime helpers)
 
-(defn- ->str-vec
+(defn ->str-vec
   "Coerce nil / a single scalar / a sequential into a vec of trimmed,
    non-blank strings. Selector values arrive as strings (strings-only
-   boundary), so `str` is total - no keyword branch."
+   boundary), so `str` is total - no keyword branch. Public because a pack that
+   reads selector spellings of its OWN (clojure resolves namespaces) needs the
+   same coercion `normalize-selectors` applies to `:paths`."
   [x]
   (let
     [xs (cond (nil? x) []

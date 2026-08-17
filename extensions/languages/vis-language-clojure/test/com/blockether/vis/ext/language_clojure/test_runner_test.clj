@@ -216,8 +216,8 @@
 (defn- with-project
   "Build a throwaway project tree from `files` ({relpath contents}) and hand its
    root PATH to `f`, deleting the tree afterwards. Every clj-test-fn case needs
-   one: PATHS are the only selector, so nothing can be chosen without files on
-   disk to walk."
+   one: selection is resolved against the workspace, so nothing can be chosen
+   without files on disk to walk."
   [files f]
   (let
     [root (.toFile (java.nio.file.Files/createTempDirectory
@@ -269,8 +269,9 @@
                     (fn [root]
                       (expect (= root (:root (run-capturing root {"paths" ["test"]}))))))))
 
-;; PATHS are the whole selector vocabulary: clj-test-fn is WHERE a file becomes a
-;; namespace, and nothing else may name what runs.
+;; PATHS are the primary selector — clj-test-fn is WHERE a file becomes a
+;; namespace — and a call that names the NAMESPACE itself resolves through the
+;; same translation.
 (defdescribe
   clj-test-fn-path-discovery-test
   (it "resolves a test FILE to the namespace it declares"
@@ -305,22 +306,52 @@
                                 (catch clojure.lang.ExceptionInfo e e))]
                         (expect (= :clj/bad-args (:type (ex-data e))))
                         (expect (re-find #"no \*_test\.clj namespaces under" (ex-message e)))))))
-  (it "refuses the REMOVED namespace selector instead of running the whole suite"
-      ;; `ns` / `namespace` / `namespaces` / `path` used to select. Ignoring the
-      ;; old spelling would turn one namespace's run into the whole workspace's,
-      ;; so it is an ERROR that names what replaced it.
+  ;; Regression, user report (paraphrased: the model kept naming a NAMESPACE, the
+  ;; runner refused the call by that key's name, and the turn went into the
+  ;; spelling instead of into the tests).
+  (it "runs the NAMESPACE a call names, in every spelling"
       (with-project thing-test-file
                     (fn [root]
-                      (doseq [k ["ns" "namespace" "namespaces" "path"]]
-                        (let
-                          [e (try (run-capturing root {k "com.example.thing-test"})
-                                  (catch clojure.lang.ExceptionInfo e e))]
-                          (expect (= :clj/bad-args (:type (ex-data e))))
-                          (expect (re-find #"paths" (ex-message e)))))))))
+                      (doseq [k ["ns" "nses" "namespace" "namespaces"]]
+                        (expect (= ["com.example.thing-test"]
+                                   (:nses (run-capturing root {k "com.example.thing-test"}))))))))
+  (it "takes a LIST of namespaces, and maps a SOURCE namespace to its *-test ns"
+      (with-project (assoc thing-test-file "src/com/example/thing.clj" "(ns com.example.thing)\n")
+                    (fn [root]
+                      (expect (= ["com.example.thing-test"]
+                                 (:nses (run-capturing root {"nses" ["com.example.thing"]})))))))
+  (it "narrows to ONE var through the `ns/var` spelling `clojure -M:test` takes"
+      (with-project thing-test-file
+                    (fn [root]
+                      (let [seen (run-capturing root {"ns" "com.example.thing-test/adds-test"})]
+                        (expect (= ["com.example.thing-test"] (:nses seen)))
+                        (expect (= [{:ns "com.example.thing-test" :name "adds-test"}]
+                                   (:vars (:sel seen))))))))
+  (it "reads a PATH handed to a namespace key as the path it obviously is"
+      (with-project
+        thing-test-file
+        (fn [root]
+          (expect (= ["com.example.thing-test"]
+                     (:nses (run-capturing root {"ns" "test/com/example/thing_test.clj"})))))))
+  (it "reads `path`, the singular spelling, alongside `paths`"
+      (with-project thing-test-file
+                    (fn [root]
+                      (expect (= ["com.example.thing-test"]
+                                 (:nses (run-capturing root {"path" "test"})))))))
+  (it "roots the run at the project the named NAMESPACE lives in"
+      ;; A namespace carries no location, so its own test FILE is the location:
+      ;; a nested project must still be tested against its own deps.edn.
+      (with-project {"deps.edn" "{}"
+                     "sub/deps.edn" "{}"
+                     "sub/test/com/example/thing_test.clj" "(ns com.example.thing-test)\n"}
+                    (fn [root]
+                      (expect (= (str root java.io.File/separator "sub")
+                                 (:root (run-capturing root {"ns" "com.example.thing-test"}))))))))
 
 ;; A path may carry the TEST NAME too — `<path>::<name>`, pytest's node-id
-;; grammar — so the one selector says where AND which. `only` used to be that
-;; second key.
+;; grammar — so one selector says where AND which. `only` / `var` say the same
+;; thing in the spelling `clojure -M:test` and lein take, and resolve the same
+;; way.
 (defdescribe
   clj-test-fn-node-id-test
   (it "narrows a test FILE to the one var its node id names"
@@ -360,14 +391,22 @@
             (expect (= [{:ns "com.example.thing-test" :name "adds-test"}
                         {:ns "com.example.other-test" :name "subs-test"}]
                        (:vars (:sel seen))))))))
-  (it "refuses the REMOVED only selector, naming the node id that replaced it"
-      (with-project thing-test-file
-                    (fn [root]
-                      (let
-                        [e (try (run-capturing root {"paths" ["test"] "only" ["adds-test"]})
-                                (catch clojure.lang.ExceptionInfo e e))]
-                        (expect (= :clj/bad-args (:type (ex-data e))))
-                        (expect (re-find #"::adds-test|node id" (ex-message e))))))))
+  (it "narrows by a bare `only` name, wherever it lives"
+      ;; The same thing a pathless `::name` says: no location, so every test ns
+      ;; runs and the var filter does the narrowing.
+      (with-project
+        (assoc thing-test-file "test/com/example/other_test.clj" "(ns com.example.other-test)\n")
+        (fn [root]
+          (let [seen (run-capturing root {"only" ["adds-test"]})]
+            (expect (= ["com.example.other-test" "com.example.thing-test"] (:nses seen)))
+            (expect (= [{:ns nil :name "adds-test"}] (:vars (:sel seen))))))))
+  (it "pairs `only`'s `ns/var` spelling with that ONE namespace"
+      (with-project
+        (assoc thing-test-file "test/com/example/other_test.clj" "(ns com.example.other-test)\n")
+        (fn [root]
+          (let [seen (run-capturing root {"only" "com.example.thing-test/adds-test"})]
+            (expect (= ["com.example.thing-test"] (:nses seen)))
+            (expect (= [{:ns "com.example.thing-test" :name "adds-test"}] (:vars (:sel seen)))))))))
 
 (defn- run-form-selecting
   "Evaluate `run-form` over a throwaway namespace holding `var-names` as
@@ -555,9 +594,10 @@
         (expect (nil? (ns-of-file (io/file root "test/vis/fixture/none_test.clj"))))))
   (it "SELECTS the namespace when its own test file is named"
       (let [root (temp-project! {"test/vis/fixture/core_test.clj" metadata-test-source})]
-        (expect (= {:nses ["vis.fixture.core-test"] :vars []}
+        (expect (= {:nses ["vis.fixture.core-test"] :vars [] :files []}
                    (resolve-selection (.getPath root)
-                                      [{:path "test/vis/fixture/core_test.clj" :var nil}])))))
+                                      [{:path "test/vis/fixture/core_test.clj" :var nil}]
+                                      [])))))
   (it
     "SELECTS it from the SOURCE file it covers, metadata on both"
     (let
@@ -568,7 +608,8 @@
           "(ns ^{:clj-kondo/config '{:linters {:unused-public-var {:level :off}}}}\n    vis.fixture.core)\n"})]
       (expect (= ["vis.fixture.core-test"]
                  (:nses (resolve-selection (.getPath root)
-                                           [{:path "src/vis/fixture/core.clj" :var nil}]))))))
+                                           [{:path "src/vis/fixture/core.clj" :var nil}]
+                                           []))))))
   (it "finds a namespace declared after a leading form"
       (let
         [root (temp-project! {"test/vis/fixture/late_test.clj"
