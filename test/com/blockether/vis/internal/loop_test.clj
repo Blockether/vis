@@ -549,6 +549,52 @@
                       (finally (try (.close ^org.graalvm.polyglot.Context pc true)
                                     (catch Throwable _ nil)))))))
 
+(defdescribe python-block-runs-in-the-session-context-test
+             ;; REGRESSION: the eval worker thread bound only the per-block sinks, so the
+             ;; block itself ran with NO session context. A sandbox SHIM bridge reads the
+             ;; AMBIENT context (an extension SYMBOL installs its own around every call),
+             ;; so `ls` saw an EMPTY `workspace/*filesystem-roots*` and refused every bound
+             ;; extra filesystem root — "escapes the allowed workspace roots" — while
+             ;; `cat`/`grep` on the very same path answered normally.
+             (it
+               "gives a shim bridge the filesystem roots the session actually bound"
+               (let
+                 [pc
+                  (:python-context (env/create-python-context {}))
+
+                  ;; Outside the primary cwd and outside every always-on root
+                  ;; (temp dirs, `~/.vis`) — reachable ONLY as a bound root.
+                  outside
+                  (System/getProperty "user.home")
+
+                  code
+                  (str "try:\n"
+                       "    rows = ls(" (pr-str outside) ")\n"
+                       "    print('listed', isinstance(rows, list))\n"
+                       "except Exception as e:\n"
+                       "    print('refused', e)\n")
+
+                  env-with
+                  (fn [roots]
+                    {:workspace/root (System/getProperty "user.dir")
+                     :workspace {:repo-root (System/getProperty "user.dir")
+                                 :root (System/getProperty "user.dir")}
+                     :security-policy {:jail-enabled true}
+                     :security/filesystem-roots roots
+                     :security/no-search-roots []})
+
+                  listing
+                  (fn [roots]
+                    (str (:stdout ((deref #'lp/run-python-code) pc code :env (env-with roots)))))]
+
+                 (try
+                   ;; The path is genuinely outside what confinement grants by itself...
+                   (expect (str/starts-with? (listing []) "refused"))
+                   ;; ...and the moment the session binds it, the block's own `ls` reaches it.
+                   (expect (str/starts-with? (listing [outside]) "listed True"))
+                   (finally (try (.close ^org.graalvm.polyglot.Context pc true)
+                                 (catch Throwable _ nil)))))))
+
 (defdescribe parallel-sub-loops-child-error-isolation-test
              ;; REGRESSION: the settle loop only cancelled siblings on InterruptedException,
              ;; and nothing guarded the child body beyond `run-spec!`'s own catch. An Error

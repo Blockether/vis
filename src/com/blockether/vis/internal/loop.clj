@@ -799,27 +799,38 @@
      (cancellation/worker-future
        "vis-python-eval"
        (fn []
-         (try (binding
-                [rt/*blocking-wall-park*
-                 eval-park
+         (try
+           ;; THE session context, installed on the thread the guest actually runs
+           ;; on. A sandbox SHIM bridge (`ls`, `attach`, …) reads the AMBIENT
+           ;; context — only an extension SYMBOL installs its own around every
+           ;; call — and this worker future starts bare, so without this the
+           ;; block's shims ran session-less: `workspace/*filesystem-roots*` empty
+           ;; (`ls` refusing a bound extra filesystem root that `cat`/`grep` on the
+           ;; same path accept) and a nil environment reaching the `:fs/access`
+           ;; gate that is supposed to hide a tree from the listing too.
+           (extension/with-context
+             {:env env}
+             (binding
+               [rt/*blocking-wall-park*
+                eval-park
 
-                 extension/*tool-event-sink*
-                 record-tool-event
+                extension/*tool-event-sink*
+                record-tool-event
 
-                 mpl-capture/*attachment-reader*
-                 attachment-reader
+                mpl-capture/*attachment-reader*
+                attachment-reader
 
-                 mpl-capture/*attachment-reinspection-sink*
-                 reinspection-sink]
+                mpl-capture/*attachment-reinspection-sink*
+                reinspection-sink]
 
-                ;; One persistent interpreter per session: globals (defs,
-                ;; imports, vars) carry across calls/turns NATURALLY.
-                (assoc (env/run-python-block python-context code {:form-cap (:form-cap env)})
-                  :lru {}
-                  :reinspect-attachments (mpl-capture/drain-reinspections reinspection-sink)))
-              (catch Throwable e
-                (reset! thrown e)
-                {:result nil :lru {} :forms [] :error (python-op-error python-context e code)}))))
+               ;; One persistent interpreter per session: globals (defs,
+               ;; imports, vars) carry across calls/turns NATURALLY.
+               (assoc (env/run-python-block python-context code {:form-cap (:form-cap env)})
+                 :lru {}
+                 :reinspect-attachments (mpl-capture/drain-reinspections reinspection-sink))))
+           (catch Throwable e
+             (reset! thrown e)
+             {:result nil :lru {} :forms [] :error (python-op-error python-context e code)}))))
 
      dispose-cancel-hook
      (when cancel-token
