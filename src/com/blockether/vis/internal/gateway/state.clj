@@ -690,6 +690,13 @@
 
 ;; Per-session model preference
 
+(defn- model-wire-label
+  "Provider/model/reason as the plain string every client reads, or nil when absent."
+  [v]
+  (cond (nil? v) nil
+        (keyword? v) (name v)
+        :else (not-empty (str v))))
+
 (defn set-session-model!
   "Set (or clear, with blank model) the per-session PROVIDER + MODEL
    preference. Every turn submitted for `sid` routes through it (the engine
@@ -705,12 +712,7 @@
   ;; counter below a live client's cursor and silently kills its stream.
   (update-session! sid #(assoc (or % (fresh-entry sid)) :last-active (System/currentTimeMillis)))
   (let
-    [label
-     #(cond (nil? %) nil
-            (keyword? %) (name %)
-            :else (not-empty (str %)))
-
-     db
+    [db
      (lp/db-info)
 
      before
@@ -720,17 +722,32 @@
      (smodel/set-model! db sid provider model)]
 
     (smodel/record-switch! db sid before result :gateway)
-    ;; BROADCAST the pick. The store is shared, but every attached channel keeps
-    ;; its own display copy (the TUI footer chip, the web rail), and without an
-    ;; event a change made in one channel stayed invisible in the others until
-    ;; they happened to re-read - the "I switched the model and nothing moved"
-    ;; desync. Live-only: the pref is persisted, so a cursor replay must not
-    ;; re-apply an old pick over a newer one.
-    (append-event! sid
-                   "session.model_updated"
-                   {:provider (label provider) :model (label model)}
-                   {:store? false})
     result))
+
+(defn- broadcast-model-event!
+  "Turn one pick change into a live `session.model_updated` frame.
+
+   Registered on the session-model STORE, not called from the writer above, so every
+   writer broadcasts through one path — the web picker, the TUI, an embedded caller,
+   and the engine's own auth rescue, which repoints a session off a dead credential
+   without ever touching this facade (loop.clj `reseat-pick-after-auth-rescue!`).
+   Without it a change made in one surface stayed invisible in the others until they
+   happened to re-read - the \"I switched the model and nothing moved\" desync.
+
+   Live-only: the pref is persisted, so a cursor replay must not re-apply an old pick
+   over a newer one. `reason` is present only for a NON-manual move, so a surface can
+   say why the chip changed under the user's hands."
+  [sid {:keys [provider model reason]}]
+  (append-event! sid
+                 "session.model_updated"
+                 (cond-> {:provider (model-wire-label provider) :model (model-wire-label model)}
+                   (some? reason)
+                   (assoc :reason (model-wire-label reason)))
+                 {:store? false}))
+
+(defonce model-listener
+  ;; Registered ONCE at namespace load, mirroring `title-listener` below.
+  (smodel/add-model-listener! #'broadcast-model-event!))
 
 (defn session-model
   "The session's persisted model preference as `{:provider :model}`

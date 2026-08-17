@@ -2433,9 +2433,12 @@
      (vec (or (:llm-routing-trace iteration-result) []))
 
      fallback-ev
-     (first (filter #(contains? #{:llm.routing/provider-fallback :llm.routing/model-fallback
-                                  :llm.routing/format-fallback}
-                                (:event/type %))
+     ;; A `:session-pick` event records that the SESSION was repointed, not how THIS
+     ;; turn was routed; anchoring on it would relabel the turn's own route.
+     (first (filter #(and (contains? #{:llm.routing/provider-fallback :llm.routing/model-fallback
+                                       :llm.routing/format-fallback}
+                                     (:event/type %))
+                          (not= :session-pick (:scope %)))
                     routing-trace))
 
      ;; The authoritative anchors are the fallback event's from/to when a
@@ -5414,7 +5417,7 @@
   (atom {}))
 
 (def ^:private AUTH_COOLDOWN_MS
-  "How long (ms) a provider stays EXCLUDED from routing after its credentials were
+  "BASE window (ms) a provider stays EXCLUDED from routing after its credentials were
    rejected and the turn had to rescue itself on another provider.
 
    The rescue route itself is per-ITERATION state, so without a process-wide
@@ -5423,11 +5426,30 @@
    progress chunk until the user re-authenticates."
   300000)
 
+(def ^:private AUTH_COOLDOWN_MAX_MS
+  "Ceiling for the escalating auth cooldown, and how long a lapsed strike record is
+   kept before the streak is forgotten. A credential nobody has repaired for hours
+   must not buy a fresh 401 + refresh + fallback dance every five minutes for the
+   rest of the day (issue #154)."
+  3600000)
+
+(defn- auth-cooldown-window-ms
+  "Window (ms) for the Nth UNBROKEN credential rejection: the base window doubled per
+   strike, capped at [[AUTH_COOLDOWN_MAX_MS]]. One accepted request clears the streak
+   (`note-provider-request-ok!`), so a re-authenticated provider never serves an
+   escalated window — only a provider that keeps rejecting is probed ever less often."
+  ^long [strikes]
+  (let [n (max 0 (dec (long (or strikes 1))))]
+    (min (long AUTH_COOLDOWN_MAX_MS) (bit-shift-left (long AUTH_COOLDOWN_MS) (min 8 n)))))
+
 (defonce ^:private provider-auth-cooldown
-  ;; provider-id -> {:until <epoch-ms>, :since <epoch-ms>, :hits <long>}. Opened by
-  ;; `note-provider-auth-cooldown!` when auth recovery is exhausted and the turn
-  ;; falls back to another provider; closed by `note-provider-request-ok!` as soon
-  ;; as the provider accepts a request again (fresh login / rotated key).
+  ;; provider-id -> {:until <epoch-ms>, :since <epoch-ms>, :hits <long>, :strikes <long>}.
+  ;; Opened by `note-provider-auth-cooldown!` when auth recovery is exhausted and the
+  ;; turn falls back to another provider; closed by `note-provider-request-ok!` as soon
+  ;; as the provider accepts a request again (fresh login / rotated key). `:hits` counts
+  ;; the fallbacks inside the CURRENT window, `:strikes` the unbroken rejections across
+  ;; windows — the escalation reads the latter, so a lapsed window that fails again does
+  ;; not restart at the base window.
   (atom {}))
 
 (defn- note-provider-auth-cooldown!
@@ -5448,18 +5470,23 @@
                                             (get m pid)
 
                                             live?
-                                            (and prev (> (long (:until prev)) now))]
+                                            (and prev (> (long (:until prev)) now))
+
+                                            strikes
+                                            (inc (long (or (:strikes prev) 0)))]
 
                                            (assoc m
-                                             pid {:until (+ now (long AUTH_COOLDOWN_MS))
-                                                  :since (if live? (:since prev) now)
+                                             pid {:until (+ now (auth-cooldown-window-ms strikes))
+                                                  :since (if prev (:since prev) now)
+                                                  :strikes strikes
                                                   :hits (if live? (inc (long (:hits prev))) 1)}))))]
 
         (= 1 (long (:hits (get after pid))))))))
 
 (defn- clear-provider-auth-cooldown!
   "Close the auth cooldown for `pid`; called once the provider accepts a request.
-   Returns true when a cooldown was actually cleared."
+   Drops the strike streak with it, so a repaired credential starts from the base
+   window again. Returns true when a cooldown was actually cleared."
   [pid]
   (boolean (when (and pid (contains? @provider-auth-cooldown pid))
              (swap! provider-auth-cooldown dissoc pid)
@@ -5467,22 +5494,36 @@
 
 (defn- auth-cooled-providers
   "Set of providers whose credentials are still inside their auth cooldown. Prunes
-   expired entries on the way so the map cannot grow without bound."
+   records whose window lapsed more than [[AUTH_COOLDOWN_MAX_MS]] ago on the way, so
+   the map cannot grow without bound while a recent streak still outlives its own
+   window and keeps the escalation honest."
   []
-  (let [now (System/currentTimeMillis)]
-    (set (keys (swap! provider-auth-cooldown (fn [m]
-                                               (into {}
-                                                     (filter (fn [[_ v]]
-                                                               (> (long (:until v)) now)))
-                                                     m)))))))
+  (let
+    [now
+     (System/currentTimeMillis)
+
+     live
+     (swap! provider-auth-cooldown (fn [m]
+                                     (into {}
+                                           (filter (fn [[_ v]]
+                                                     (> (+ (long (:until v))
+                                                           (long AUTH_COOLDOWN_MAX_MS))
+                                                        now)))
+                                           m)))]
+
+    (set (keep (fn [[k v]]
+                 (when (> (long (:until v)) now) k))
+               live))))
 
 (defn auth-cooldown-metrics
-  "Observability snapshot of the per-provider auth cooldown: the window length and
-   the providers still excluded, with the epoch-ms the exclusion lifts and how many
-   fallbacks landed inside the window."
+  "Observability snapshot of the per-provider auth cooldown: the BASE window, the
+   ceiling it escalates to, and the providers still excluded — each with the epoch-ms
+   the exclusion lifts, how many fallbacks landed inside the window and how many
+   unbroken strikes set its length."
   []
   (let [cooled (auth-cooled-providers)]
     {:cooldown-ms AUTH_COOLDOWN_MS
+     :cooldown-max-ms AUTH_COOLDOWN_MAX_MS
      :cooled-providers cooled
      :cooldowns (select-keys @provider-auth-cooldown cooled)}))
 
@@ -5667,6 +5708,127 @@
                  :else (:provider resolved-model)))]
     (when (contains? @auth-last-refreshed pid) (swap! auth-last-refreshed dissoc pid))
     (clear-provider-auth-cooldown! pid)))
+
+(defn- auth-provider-key
+  "Provider id as a keyword, or nil when there is none. Picks arrive as strings from
+   the DB and as keywords from the router, and both name the same provider."
+  [pid]
+  (cond (keyword? pid) pid
+        (string? pid) (some-> (not-empty (str/trim pid))
+                              keyword)
+        (some? pid) (keyword (str pid))))
+
+(defn- auth-rescue-pick-move
+  "The session-pick move a rescued turn owes the human: `{:from {:provider :model}
+   :to {:provider :model}}` when the pick names a provider whose credentials are
+   PROVEN dead (it is serving an auth cooldown) and this iteration was answered by a
+   different, healthy provider. nil for every other shape.
+
+   Only a pick actually pinned to the dead provider moves: an unpinned session shows
+   no wrong model to correct, a peer that is itself cooled is no place to land, and a
+   route with no model name would CLEAR the pick instead of moving it."
+  [pick iteration-result cooled]
+  (let
+    [from-pid
+     (auth-provider-key (:provider pick))
+
+     from-model
+     (some-> (:model pick)
+             str
+             str/trim
+             not-empty)
+
+     to-pid
+     (auth-provider-key (:llm-provider iteration-result))
+
+     to-model
+     (some-> (:llm-model iteration-result)
+             str
+             str/trim
+             not-empty)]
+
+    (when (and from-pid
+               from-model
+               to-pid
+               to-model
+               (contains? cooled from-pid)
+               (not= from-pid to-pid)
+               (not (contains? cooled to-pid)))
+      {:from {:provider (name from-pid) :model from-model}
+       :to {:provider (name to-pid) :model to-model}})))
+
+(defn- pick-move-event
+  "The routing-trace event for a session pick that moved off a dead credential.
+
+   Rides the turn's OWN `:llm-routing-trace`, which every surface already carries end
+   to end (CLI bracket, TUI bubble footer, companion, `read_session` usage), so the
+   note under the answer can say why the model chip changed without a new wire key.
+   `:scope :session-pick` marks it as a SESSION-level change rather than this turn's
+   route, which the summary and the note both anchor on separately."
+  [{:keys [from to]}]
+  {:event/type :llm.routing/provider-fallback
+   :reason :authentication-fallback
+   :scope :session-pick
+   :from-provider (:provider from)
+   :from-model (:model from)
+   :to-provider (:provider to)
+   :to-model (:model to)})
+
+(defn- pick-moved-chunk
+  "Live-progress chunk announcing that a session pick moved off a dead credential. The
+   `:provider-fallback` shape every channel already draws, so the CLI trace names the
+   swap and the gateway forwards the routing event unchanged."
+  [iteration-position {:keys [from to] :as move}]
+  {:phase :provider-fallback
+   :iteration iteration-position
+   :reason :authentication-fallback
+   :failed-provider (str (:provider from) "/" (:model from))
+   :new-provider (str (:provider to) "/" (:model to))
+   :event (pick-move-event move)})
+
+(defn- reseat-pick-after-auth-rescue!
+  "Repoint the session's model pick onto the provider that actually answered, once the
+   pinned provider's credentials are proven dead. Returns the move it made as
+   `{:from {…} :to {…}}` for the caller to announce, or nil when nothing moved.
+
+   The pick is what the TUI footer chip and the companion header show, and what
+   `prepare-turn-context` re-pins on EVERY later turn — so leaving it on a dead
+   provider is not cosmetic. The human reads a model the session is not running on,
+   and each lapsed cooldown buys another 401, another forced refresh and another
+   fallback before the same rescue lands again (issue #154). Moving the pick makes the
+   rescue hold for the whole session instead of being rediscovered per turn.
+
+   Prompt-cache continuity is already gone by the time this runs — the peer never saw
+   the pinned provider's cache — so the move does not restore it; it stops the session
+   from paying for the same discovery over and over. `set-model!` carries the reason,
+   which rides the `session.model_updated` broadcast to every attached surface."
+  [env iteration-result]
+  (let
+    [db
+     (:db-info env)
+
+     sid
+     (:session-id env)]
+
+    ;; Cooled providers first: on a healthy turn the set is empty and the session's
+    ;; pick is never read, so the common path costs one atom deref, not a DB read per
+    ;; iteration.
+    (when-let [cooled (and db sid (not-empty (auth-cooled-providers)))]
+      (when-let
+        [move (auth-rescue-pick-move (session-model/model-of db sid) iteration-result cooled)]
+        (session-model/set-model! db
+                                  sid
+                                  (:provider (:to move))
+                                  (:model (:to move))
+                                  :authentication-fallback)
+        (session-model/record-switch! db sid (:from move) (:to move) :authentication-fallback)
+        (tel/log!
+          {:level :warn
+           :id ::auth-rescue-pick-moved
+           :data
+           {:session-id (str sid) :from (:from move) :to (:to move) :cooldown-ms AUTH_COOLDOWN_MS}}
+          "Session model repointed: the pinned provider's credentials were rejected")
+        move))))
 
 (defn- auth-refreshable-error?
   "True when Svar classified `e` as authentication and Vis can produce a new
@@ -7543,6 +7705,22 @@
                      ;; the pre-call guess: a turn rescued on a peer used to re-admit the
                      ;; dead credential and the next iteration re-probed it (issue #114).
                      _ (note-provider-request-ok! resolved-model iteration-result)
+                     ;; …and when the pin is the credential that died, the SESSION
+                     ;; follows the rescue: the picker chip stops naming a provider
+                     ;; this session cannot reach, and the next turn no longer re-pins
+                     ;; it just to pay another 401 (issue #154).
+                     pick-move (reseat-pick-after-auth-rescue! environment iteration-result)
+                     _ (when pick-move
+                         (emit-hook! on-chunk
+                                     (pick-moved-chunk (inc (long iteration)) pick-move)
+                                     "Auth rescue pick-move hook failed"))
+                     ;; The move rides this turn's OWN routing trace, which every surface
+                     ;; already carries, so the note under the answer explains the chip that
+                     ;; changed by itself instead of leaving it a mystery.
+                     iteration-result
+                     (cond-> iteration-result
+                       pick-move
+                       (update :llm-routing-trace (fnil conj []) (pick-move-event pick-move)))
                      {:keys [thinking assistant-prose blocks final-result]} iteration-result
                      block (first blocks)
                      ;; Phase 7: merge per-iteration `:lru` stamps

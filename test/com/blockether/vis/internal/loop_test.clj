@@ -4098,8 +4098,13 @@
          now (System/currentTimeMillis)]
 
         (try
-          ;; Expired entries are pruned, and routing passes through untouched.
-          (reset! cooldown {:rbi-genai {:until (- now 1) :since (- now 60000) :hits 3}})
+          ;; A lapsed window releases routing, but the STRIKE record survives it: the
+          ;; next rejection has to escalate rather than restart at the base window
+          ;; (issue #154). Only a record lapsed for longer than the ceiling is pruned.
+          (reset! cooldown {:rbi-genai {:until (- now 1) :since (- now 60000) :hits 3 :strikes 3}})
+          (expect (= {} (apply-cooldown {})))
+          (expect (= 3 (:strikes (get @cooldown :rbi-genai))))
+          (reset! cooldown {:rbi-genai {:until (- now 7200000) :since (- now 7260000) :hits 3 :strikes 3}})
           (expect (= {} (apply-cooldown {})))
           (expect (= {} @cooldown))
           ;; A pin does NOT outrank the cooldown: every main turn is pinned, so the
@@ -4123,7 +4128,11 @@
              (let [metrics (lp/auth-cooldown-metrics)]
                (expect (= #{:rbi-genai} (:cooled-providers metrics)))
                (expect (= 300000 (:cooldown-ms metrics)))
-               (expect (= 1 (:hits (get (:cooldowns metrics) :rbi-genai)))))
+             (expect (= 1 (:hits (get (:cooldowns metrics) :rbi-genai))))
+             ;; The ceiling is part of the snapshot: an escalating window is only
+             ;; readable if the reader knows where it stops.
+             (expect (= 3600000 (:cooldown-max-ms metrics)))
+             (expect (= 1 (:strikes (get (:cooldowns metrics) :rbi-genai)))))
              (finally (reset! cooldown {}))))))
 
 ;; Regression, issue #114: vis logged `Provider auth recovery exhausted; falling back
@@ -4242,6 +4251,171 @@
                (expect (= {} (@#'lp/apply-auth-cooldown-routing {})))
                (finally (reset! cooldown {})))))))
 
+;; Regression, issue #154: a provider whose credentials had been dead for hours was
+;; re-probed every five minutes forever, and the session's PICK never moved off it — so
+;; the picker chip named a provider the session could not reach, every later turn re-pinned
+;; it, and each turn paid a 401, a forced refresh and a fallback before rescuing itself.
+(defdescribe
+  auth-rescue-pick-move-test
+  "A rescued turn must MOVE the session, not just survive: the pick follows the provider
+   that actually answered, the surfaces are told why, and the dead credential is probed
+   ever less often instead of on a fixed five-minute loop."
+  (let
+    [cooldown @#'lp/provider-auth-cooldown
+
+     note! @#'lp/note-provider-auth-cooldown!
+
+     request-ok! @#'lp/note-provider-request-ok!
+
+     window @#'lp/auth-cooldown-window-ms
+
+     cooled @#'lp/auth-cooled-providers
+
+     move @#'lp/auth-rescue-pick-move
+
+     reseat! @#'lp/reseat-pick-after-auth-rescue!
+
+     ;; Exactly the shape the DB hands back: provider and model as strings.
+     pinned {:provider "rbi-genai" :model "gpt-5"}
+
+     served {:llm-provider :openai :llm-model "gpt-5.4"}]
+
+    (it "moves the pick onto the provider that answered once the pinned one is cooled"
+        (expect (= {:from {:provider "rbi-genai" :model "gpt-5"}
+                    :to {:provider "openai" :model "gpt-5.4"}}
+                   (move pinned served #{:rbi-genai}))))
+    (it "leaves a pick alone when its provider is not the one that died"
+        ;; A model-level or transient fallback is not a verdict on the credential; the
+        ;; session keeps the pick the human made.
+        (expect (nil? (move pinned served #{})))
+        (expect (nil? (move pinned served #{:openai}))))
+    (it "moves nothing when the session never pinned a provider"
+        ;; Nothing on screen is wrong yet, and adopting a rescue as a pin would silently
+        ;; narrow a session that had the whole fleet.
+        (expect (nil? (move nil served #{:rbi-genai})))
+        (expect (nil? (move {:provider "rbi-genai"} served #{:rbi-genai}))))
+    (it "refuses to land on a peer that is itself serving a cooldown"
+        (expect (nil? (move pinned served #{:rbi-genai :openai}))))
+    (it "refuses a rescue route that names no model, which would CLEAR the pick"
+        (expect (nil? (move pinned {:llm-provider :openai} #{:rbi-genai})))
+        (expect (nil? (move pinned {:llm-provider :openai :llm-model "  "} #{:rbi-genai}))))
+    (it "writes the new pick with its reason and returns the chunk that says why"
+        (let
+          [set-args
+           (atom nil)
+
+           switch-args
+           (atom nil)]
+
+          (try
+            (reset! cooldown {})
+            (note! :rbi-genai)
+            (with-redefs
+              [session-model/model-of (fn [& _]
+                                        pinned)
+
+               session-model/set-model! (fn [& args]
+                                          (reset! set-args (vec args)))
+
+               session-model/record-switch! (fn [& args]
+                                              (reset! switch-args (vec args)))]
+
+              (expect (= {:from {:provider "rbi-genai" :model "gpt-5"}
+                          :to {:provider "openai" :model "gpt-5.4"}}
+                         (reseat! {:db-info :db :session-id "sess-1"} served)))
+              ;; The reason rides the write, so the broadcast can tell the surfaces why
+              ;; the chip changed under the user's hands.
+              (expect (= [:db "sess-1" "openai" "gpt-5.4" :authentication-fallback] @set-args))
+              (expect (= [:db
+                          "sess-1"
+                          {:provider "rbi-genai" :model "gpt-5"}
+                          {:provider "openai" :model "gpt-5.4"}
+                          :authentication-fallback]
+                         @switch-args)))
+            (finally (reset! cooldown {})))))
+    (it "touches nothing when the pick was never on the dead provider"
+        (let [set-args (atom nil)]
+          (try
+            (reset! cooldown {})
+            (note! :some-other-provider)
+            (with-redefs
+              [session-model/model-of (fn [& _]
+                                        pinned)
+
+               session-model/set-model! (fn [& args]
+                                          (reset! set-args (vec args)))
+
+               session-model/record-switch! (fn [& _])]
+
+              (expect (nil? (reseat! {:db-info :db :session-id "sess-1"} served)))
+              (expect (nil? @set-args)))
+            (finally (reset! cooldown {})))))
+    (it "announces the move on the live stream and in the turn's own routing trace"
+        ;; Two different readers: the progress chunk is what a channel draws while the
+        ;; turn runs, the trace event is what the finished turn's note explains from.
+        (let [move {:from {:provider "rbi-genai" :model "gpt-5"}
+                    :to {:provider "openai" :model "gpt-5.4"}}]
+          (expect (= {:phase :provider-fallback
+                      :iteration 3
+                      :reason :authentication-fallback
+                      :failed-provider "rbi-genai/gpt-5"
+                      :new-provider "openai/gpt-5.4"
+                      :event {:event/type :llm.routing/provider-fallback
+                              :reason :authentication-fallback
+                              :scope :session-pick
+                              :from-provider "rbi-genai"
+                              :from-model "gpt-5"
+                              :to-provider "openai"
+                              :to-model "gpt-5.4"}}
+                     (@#'lp/pick-moved-chunk 3 move)))
+          ;; `:scope :session-pick` keeps it out of the turn's own route summary: the
+          ;; turn is still reported as having run where it ran.
+          (expect (= {:selected {:provider "rbi-genai" :model "gpt-5"}
+                      :actual {:provider "openai" :model "gpt-5.4"}
+                      :fallback? true
+                      :trace [(@#'lp/pick-move-event move)]}
+                     (@#'lp/llm-routing-summary {:provider :rbi-genai :name "gpt-5"}
+                                                {:llm-provider :openai
+                                                 :llm-model "gpt-5.4"
+                                                 :llm-routing-trace [(@#'lp/pick-move-event move)]})))))
+    (it "probes a credential that keeps failing ever less often, up to an hour"
+        ;; The point of the escalation: a key nobody has fixed stops costing a 401 +
+        ;; refresh + fallback every five minutes for the rest of the day.
+        (expect (= [300000 600000 1200000 2400000] (mapv window [1 2 3 4])))
+        (expect (= 3600000 (window 9)))
+        (expect (= 3600000 (window 99)))
+        ;; A first rejection, and anything malformed, still gets the base window.
+        (expect (= 300000 (window nil))))
+    (it "escalates across UNBROKEN strikes and forgets the streak once a request lands"
+        (try
+          (reset! cooldown {})
+          (note! :rbi-genai)
+          (expect (= 1 (:strikes (get @cooldown :rbi-genai))))
+          ;; A window that lapsed without any success is still a strike: re-probing
+          ;; found the credential just as dead.
+          (swap! cooldown assoc-in [:rbi-genai :until] (- (System/currentTimeMillis) 1000))
+          (expect (= #{} (cooled)))
+          (note! :rbi-genai)
+          (let [entry (get @cooldown :rbi-genai)]
+            (expect (= 2 (:strikes entry)))
+            (expect (= #{:rbi-genai} (cooled)))
+            ;; Doubled, not restarted at the base window.
+            (expect (< (+ (System/currentTimeMillis) 300000) (long (:until entry)))))
+          ;; One accepted request is proof the credential works again: back to base.
+          (request-ok! {:provider :rbi-genai :name "gpt-5"} {:llm-provider :rbi-genai})
+          (note! :rbi-genai)
+          (let [entry (get @cooldown :rbi-genai)]
+            (expect (= 1 (:strikes entry)))
+            (expect (>= (+ (System/currentTimeMillis) 300000) (long (:until entry)))))
+          (finally (reset! cooldown {}))))
+    (it "forgets a record whose window lapsed long ago instead of hoarding it"
+        (try
+          (reset! cooldown {})
+          (note! :rbi-genai)
+          (swap! cooldown assoc-in [:rbi-genai :until] (- (System/currentTimeMillis) 7200000))
+          (expect (= #{} (cooled)))
+          (expect (nil? (get @cooldown :rbi-genai)))
+          (finally (reset! cooldown {}))))))
 (defdescribe
   router-with-pinned-model-test
   "A session pick naming a model only the provider's LIVE catalog lists must still

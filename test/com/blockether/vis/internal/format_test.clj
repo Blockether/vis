@@ -83,9 +83,21 @@
 
 (defdescribe
   meta-fallback-note-test
-  (it "tells the routing story: from <selected> — <status>, retried N×"
-      (expect (= "↳ from blockether/glm-5.1 — 429, retried 3×"
+  ;; Regression, issue #154: a 401 fallback moved the turn onto a peer that had never
+  ;; seen the pinned route's prompt cache, so every following request re-sent the whole
+  ;; context at ~4× the cost — and nothing on screen said so.
+  (it "tells the routing story: from <selected> — <status>, retried N×, cache lost"
+      (expect (= "↳ from blockether/glm-5.1 — 429, retried 3×, prompt cache lost"
                  (fmt/meta-fallback-note fallback-result))))
+  (it "keeps quiet about the cache when the route never changed"
+      ;; Retries hit the SAME provider and model: the cache is still warm, and crying
+      ;; wolf here would train the reader to ignore the line that matters.
+      (expect (= "↳ from anthropic/claude-opus-5 — 529, retried 2×"
+                 (fmt/meta-fallback-note
+                   {:llm-selected {:provider :anthropic :model "claude-opus-5"}
+                    :llm-routing-trace
+                    [{:event/type :llm.routing/provider-retry :status 529 :reason :rate-limit}
+                     {:event/type :llm.routing/provider-retry :status 529 :reason :rate-limit}]}))))
   (it "surfaces the final provider error for retry-only traces"
       (expect (= "↳ from anthropic/claude-opus-5 — 529, retried 2×"
                  (fmt/meta-fallback-note
@@ -93,6 +105,40 @@
                     :llm-routing-trace
                     [{:event/type :llm.routing/provider-retry :status 529 :reason :rate-limit}
                      {:event/type :llm.routing/provider-retry :status 529 :reason :rate-limit}]}))))
+  ;; Regression, issue #154: a session rescued off a dead credential had its model chip
+  ;; silently repointed — the note said how the TURN was routed and never that the
+  ;; SESSION had moved, so the picker named a model the human never chose with no
+  ;; explanation anywhere.
+  (it "says the SESSION moved when the rescue repointed the pick"
+      (expect (= "↳ from blockether/glm-5.1 — 401, prompt cache lost, session now on openai/gpt-4o"
+                 (fmt/meta-fallback-note {:llm-selected {:provider :blockether :model "glm-5.1"}
+                                          :llm-fallback? true
+                                          :llm-routing-trace
+                                          [{:event/type :llm.routing/provider-fallback
+                                            :status 401
+                                            :reason :authentication}
+                                           {:event/type :llm.routing/provider-fallback
+                                            :scope :session-pick
+                                            :reason :authentication-fallback
+                                            :from-provider "blockether"
+                                            :from-model "glm-5.1"
+                                            :to-provider "openai"
+                                            :to-model "gpt-4o"}]}))))
+  (it "never anchors `from` on the session move, only on this turn's route"
+      ;; The pick event names the same pair; reading it as the turn's fallback would
+      ;; report the session change as the reason the turn was routed elsewhere.
+      (expect (= (str "↳ from blockether/glm-5.1 — 429, retried 3×, prompt cache lost, "
+                      "session now on openai/gpt-4o")
+                 (fmt/meta-fallback-note (update fallback-result
+                                                 :llm-routing-trace
+                                                 conj
+                                                 {:event/type :llm.routing/provider-fallback
+                                                  :scope :session-pick
+                                                  :reason :authentication-fallback
+                                                  :from-provider "blockether"
+                                                  :from-model "glm-5.1"
+                                                  :to-provider "openai"
+                                                  :to-model "gpt-4o"})))))
   (it "is nil when there was no fallback or retry"
       (expect (nil? (fmt/meta-fallback-note normal-result)))))
 

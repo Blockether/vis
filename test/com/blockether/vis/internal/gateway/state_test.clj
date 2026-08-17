@@ -52,39 +52,82 @@
                      (expect (= after (state/set-session-model! "audit-session" "openai" "gpt-5")))
                      (expect (= [:db "audit-session" before after :gateway] @recorded))))))
 
-(defdescribe session-model-broadcast-test
-             ;; The pin is shared, but every attached surface renders its OWN copy: the TUI
-             ;; footer chip (`chat/gateway-event->chunk` -> `:sync-session-model`) and the
-             ;; companion's header chip (`SessionScreen` -> `client.noteSessionModel`) both
-             ;; follow THIS frame. Without it, switching the model in one surface leaves
-             ;; every other surface naming the model it no longer runs on.
-             (let
-               [broadcasts (fn [provider model]
-                             (let [appended (atom [])]
-                               (with-redefs
-                                 [lp/db-info (constantly :db)
-                                  smodel/model-of (constantly nil)
-                                  smodel/set-model! (fn [_db _sid p m]
-                                                      {:provider p :model m})
-                                  smodel/record-switch! (fn [& _])
-                                  state/append-event! (fn [& args]
-                                                        (swap! appended conj (vec args)))]
+(defdescribe
+  session-model-broadcast-test
+  ;; The pin is shared, but every attached surface renders its OWN copy: the TUI
+  ;; footer chip (`chat/gateway-event->chunk` -> `:sync-session-model`) and the
+  ;; companion's header chip (`SessionScreen` -> `client.noteSessionModel`) both
+  ;; follow THIS frame. Without it, switching the model in one surface leaves
+  ;; every other surface naming the model it no longer runs on.
+  ;;
+  ;; Regression, issue #154: the frame was appended by THIS facade, so a pick moved
+  ;; by a writer that never calls it — the engine repointing a session off a
+  ;; credential whose 401 it just survived — changed the DB while every chip kept
+  ;; naming the dead provider. The broadcast hangs off the session-model store now.
+  (let
+    [broadcasts
+     (fn [pick]
+       (let [appended (atom [])]
+         (with-redefs
+           [state/append-event! (fn [& args]
+                                  (swap! appended conj (vec args)))]
+           (#'state/broadcast-model-event! "sess-1" pick)
+           @appended)))
 
-                                 (state/set-session-model! "sess-1" provider model)
-                                 @appended)))]
-               (it "broadcasts the new pin live-only, so a cursor replay cannot re-apply it"
-                   (expect (= [["sess-1" "session.model_updated" {:provider "openai" :model "gpt-5"}
-                                {:store? false}]]
-                              (broadcasts "openai" "gpt-5"))))
-               (it "a CLEARED override broadcasts too, as a blank pair rather than silence"
-                   ;; Blank fields are how every client learns to fall back to the router
-                   ;; default; dropping the event would freeze the last pick on their chips.
-                   (expect (= [["sess-1" "session.model_updated" {:provider nil :model nil}
-                                {:store? false}]]
-                              (broadcasts nil ""))))
-               (it "a keyword provider still crosses the wire as its bare name"
-                   (expect (= {:provider "anthropic" :model "claude-opus-5"}
-                              (nth (first (broadcasts :anthropic "claude-opus-5")) 2))))))
+     payload
+     (fn [pick]
+       (nth (first (broadcasts pick)) 2))]
+
+    (it "broadcasts the new pin live-only, so a cursor replay cannot re-apply it"
+        (expect (= [["sess-1" "session.model_updated" {:provider "openai" :model "gpt-5"}
+                     {:store? false}]]
+                   (broadcasts {:provider "openai" :model "gpt-5"}))))
+    (it "a CLEARED override broadcasts too, as a blank pair rather than silence"
+        ;; Blank fields are how every client learns to fall back to the router
+        ;; default; dropping the event would freeze the last pick on their chips.
+        (expect (= [["sess-1" "session.model_updated" {:provider nil :model nil} {:store? false}]]
+                   (broadcasts {:provider nil :model ""}))))
+    (it "a keyword provider still crosses the wire as its bare name"
+        (expect (= {:provider "anthropic" :model "claude-opus-5"}
+                   (payload {:provider :anthropic :model "claude-opus-5"}))))
+    (it "names the REASON when something other than the human moved the pick"
+        ;; The surfaces cannot explain a chip that changed by itself unless the
+        ;; frame says why it changed.
+        (expect (= {:provider "openai" :model "gpt-5.4" :reason "authentication-fallback"}
+                   (payload
+                     {:provider "openai" :model "gpt-5.4" :reason :authentication-fallback}))))
+    (it "carries no reason for a pick the human made"
+        (expect (= [:model :provider] (sort (keys (payload {:provider "openai" :model "gpt-5"}))))))
+    (it "is registered on the STORE, so every writer broadcasts through one path"
+        (expect (contains? @@#'smodel/model-listeners #'state/broadcast-model-event!)))
+    (it "still persists the pick and records the switch"
+        (let
+          [recorded
+           (atom nil)
+
+           after
+           {:provider "openai" :model "gpt-5"}]
+
+          (with-redefs
+            [lp/db-info
+             (constantly :db)
+
+             smodel/model-of
+             (constantly nil)
+
+             smodel/set-model!
+             (fn [& _]
+               after)
+
+             smodel/record-switch!
+             (fn [& args]
+               (reset! recorded (vec args)))
+
+             state/append-event!
+             (fn [& _])]
+
+            (expect (= after (state/set-session-model! "sess-1" "openai" "gpt-5")))
+            (expect (= [:db "sess-1" nil after :gateway] @recorded)))))))
 
 (defdescribe
   soul-model-pin-test
@@ -260,7 +303,7 @@
                    (let [turn (first (state/transcript :session-1))]
                      (expect (= "openai/gpt-5.4  ·  11.5k→35 (cached 4.1k)  ·  ~$0.0070  ·  2.3s"
                                 (get turn "meta_summary")))
-                     (expect (= "↳ from anthropic/claude-opus — 429, retried 1×"
+                     (expect (= "↳ from anthropic/claude-opus — 429, retried 1×, prompt cache lost"
                                 (get turn "meta_fallback_note")))))))
 
 (defdescribe transcript-in-flight-footer-test

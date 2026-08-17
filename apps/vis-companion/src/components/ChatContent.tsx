@@ -945,18 +945,39 @@ function turnFallbackNote(turn: TranscriptTurn): string | null {
     "llm.routing/provider-fallback",
     "llm.routing/format-fallback",
   ]);
+  const cacheBreakingTypes = new Set([
+    "llm.routing/provider-fallback",
+    "llm.routing/model-fallback",
+  ]);
   // `wire/->wire` transforms Clojure's `:event/type` into `event_type`.
   // Accept `type` too so old persisted traces remain legible.
   const eventType = (item: Record<string, JsonValue>) =>
     String(item.event_type ?? item.type ?? "");
+  const scopeOf = (item: Record<string, JsonValue>) =>
+    String(item.scope ?? "").replace(/^:/, "");
   const retryEvents = routing.trace.filter(
     (item) => eventType(item) === "llm.routing/provider-retry",
   );
   if (!routing.fallback && !retryEvents.length) return null;
 
-  const fallbackEvent = routing.trace.find((item) =>
-    fallbackTypes.has(eventType(item)),
+  // A `session-pick` event records that the SESSION was repointed off a dead
+  // credential, not how this turn was routed: it is reported at the end of the line,
+  // never as the reason the turn moved (issue #154).
+  const pickMove = routing.trace.find((item) => scopeOf(item) === "session-pick");
+  const fallbackEvent = routing.trace.find(
+    (item) => fallbackTypes.has(eventType(item)) && scopeOf(item) !== "session-pick",
   );
+  // A changed provider or model means the peer never saw the cache the previous route
+  // built, so every following request re-sends the whole context.
+  const cacheLost = routing.trace.some((item) =>
+    cacheBreakingTypes.has(eventType(item)),
+  );
+  const movedTo = pickMove
+    ? modelPair({
+        provider: pickMove.to_provider,
+        model: pickMove.to_model,
+      })
+    : null;
   const event = fallbackEvent ?? retryEvents.at(-1);
   const retries = retryEvents.length;
   const from = modelPair(routing.selected) ?? "previous model";
@@ -973,9 +994,12 @@ function turnFallbackNote(turn: TranscriptTurn): string | null {
             ? error
             : jsonText(error)
           : null;
-  const tail = [why, retries > 0 ? `retried ${retries}×` : null].filter(
-    (part): part is string => Boolean(part),
-  );
+  const tail = [
+    why,
+    retries > 0 ? `retried ${retries}×` : null,
+    cacheLost ? "prompt cache lost" : null,
+    movedTo ? `session now on ${movedTo}` : null,
+  ].filter((part): part is string => Boolean(part));
   return `↳ from ${from}${tail.length ? ` — ${tail.join(", ")}` : ""}`;
 }
 

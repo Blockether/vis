@@ -375,10 +375,21 @@
 
 (defn meta-fallback-note
   "Faint routing note when a turn fell back or retried a provider:
-     ↳ from <selected-model> — <reason>, retried N×
+     ↳ from <selected-model> — <reason>, retried N×, prompt cache lost, session now on <model>
    `reason` prefers the HTTP status (429) on a fallback event, then the reason
    keyword, then the free-form error. Retry-only traces use their final retry
    event, so a provider failure is never rendered as merely `retried N×`.
+
+   A `:scope :session-pick` event means the rescue also MOVED the session's pick, so
+   the model chip in every surface now names a provider the human never chose: the
+   note is the one line that says why it changed (issue #154). It is never the
+   anchor for `from`, which stays this turn's own route.
+
+   A route that CHANGED provider or model also lost prompt-cache continuity: the peer
+   never saw the cache the pinned route built, so every following request re-sends the
+   whole context. That silent 4× cost step is the reported half of issue #154 the
+   numbers never showed, so the note says it in words on the turn it happens.
+
    Returns nil when the trace has neither a fallback nor retries. Shared so the
    TUI can float it on its own faint row while the CLI folds it inline."
   [{:keys [llm-selected llm-fallback? llm-routing-trace]}]
@@ -386,9 +397,11 @@
     (when (or llm-fallback? (seq retry-events))
       (let
         [from (or (model-pair-label llm-selected) "previous model")
-         fallback-event (first (filter #(contains? #{:llm.routing/provider-fallback
-                                                     :llm.routing/format-fallback}
-                                                   (:event/type %))
+         pick-move (first (filter #(= :session-pick (:scope %)) llm-routing-trace))
+         fallback-event (first (filter #(and (contains? #{:llm.routing/provider-fallback
+                                                          :llm.routing/format-fallback}
+                                                        (:event/type %))
+                                             (not= :session-pick (:scope %)))
                                        llm-routing-trace))
          ev (or fallback-event (last retry-events))
          retries (count retry-events)
@@ -397,7 +410,16 @@
                    (some? (:reason ev)) (name (:reason ev))
                    (seq (str (:error ev))) (str (:error ev))
                    :else nil)
-         tail (->> [why (when (pos? retries) (str "retried " retries "×"))]
+         cache-lost? (boolean (some #(contains? #{:llm.routing/provider-fallback
+                                                  :llm.routing/model-fallback}
+                                                (:event/type %))
+                                    llm-routing-trace))
+         moved-to (when pick-move
+                    (model-pair-label {:provider (:to-provider pick-move)
+                                       :model (:to-model pick-move)}))
+         tail (->> [why (when (pos? retries) (str "retried " retries "×"))
+                    (when cache-lost? "prompt cache lost")
+                    (when moved-to (str "session now on " moved-to))]
                    (remove (fn [s]
                              (or (nil? s) (str/blank? (str s))))))]
 

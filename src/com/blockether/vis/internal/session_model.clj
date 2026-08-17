@@ -19,7 +19,8 @@
    Values are `{:provider <id-string-or-nil> :model <name>}` or nil. Keyed by
    the session-soul id (the gateway's `sid` and the engine env's `:session-id`)."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.persistance :as persistance])
+            [com.blockether.vis.internal.persistance :as persistance]
+            [taoensso.telemere :as tel])
   (:import (java.util.concurrent Executors
                                  ScheduledExecutorService
                                  ScheduledFuture
@@ -109,46 +110,95 @@
               (swap! display-cache assoc k {:v v :at now})
               v)))))))
 
+;; ── Change listeners ────────────────────────────────────────────────────────
+;; The store is shared, but every attached surface keeps its OWN display copy (the
+;; TUI footer chip, the companion header, the web rail). A pick set by the ENGINE —
+;; the auth rescue in loop.clj repointing a session off a dead credential — has to
+;; reach those surfaces the same way a picker change does, so EVERY writer funnels
+;; through `set-model!` and `set-model!` broadcasts. Keeping the listener here (and
+;; not an `append-event!` call in the gateway) is what makes that true for writers
+;; that never touch the gateway facade.
+
+(defonce ^:private model-listeners
+  ;; #{listener-fn ...} - fns of [sid {:provider :model :reason}], fired on EVERY
+  ;; session's pick change.
+  (atom #{}))
+
+(defn add-model-listener!
+  "Register `listener-fn` to observe pick changes across ALL sessions. It is invoked
+   with the session id and `{:provider :model :reason}` — provider/model blank when the
+   override was cleared, `:reason` naming why a NON-manual writer moved the pick.
+
+   Returns the listener fn so callers can pass it to `remove-model-listener!` later."
+  [listener-fn]
+  (swap! model-listeners conj listener-fn)
+  listener-fn)
+
+(defn remove-model-listener!
+  "Deregister a previously added model listener. Idempotent."
+  [listener-fn]
+  (swap! model-listeners disj listener-fn)
+  nil)
+
+(defn- broadcast-model-change!
+  "Fire every registered listener with `sid` and the new pick. Listeners that throw are
+   swallowed and logged — a misbehaving channel must never reject a model change."
+  [sid pick]
+  (doseq [f @model-listeners]
+    (try (f sid pick)
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::model-listener-failed
+                      :data {:session-id (str sid) :error (ex-message t)}}
+                     (str "Session-model listener threw: " (ex-message t)))))))
 (defn set-model!
   "Set (or clear, with blank model) the PROVIDER + MODEL preference for session
    `sid`. Takes effect IMMEDIATELY for reads; the DB write is debounced so
-   rapid cycling coalesces to one write. Returns `{:provider :model}` (or nil)."
-  [db-info sid provider model]
-  (when (and db-info sid)
-    (let
-      [model
-       (some-> model
-               str
-               str/trim
-               not-empty)
+   rapid cycling coalesces to one write. Returns `{:provider :model}` (or nil).
 
-       provider
-       (some-> provider
-               str
-               str/trim
-               not-empty)
+   `reason` names why a writer that is NOT the human moved the pick (the engine's
+   `:authentication-fallback` rescue); it rides the broadcast so a surface can say
+   why the chip changed under the user's hands. nil for a manual pick."
+  ([db-info sid provider model] (set-model! db-info sid provider model nil))
+  ([db-info sid provider model reason]
+   (when (and db-info sid)
+     (let
+       [model
+        (some-> model
+                str
+                str/trim
+                not-empty)
 
-       k
-       (str sid)]
+        provider
+        (some-> provider
+                str
+                str/trim
+                not-empty)
 
-      (swap! pending assoc k {:db-info db-info :provider provider :model model})
-      (swap! display-cache dissoc k)
-      (when-let [^ScheduledFuture old (get @flush-futures k)]
-        (.cancel old false))
-      (let
-        [^ScheduledExecutorService s
-         scheduler
+        k
+        (str sid)]
 
-         f
-         (.schedule s
-                    ^Runnable
-                    (fn []
-                      (flush-one! k))
-                    (long debounce-ms)
-                    TimeUnit/MILLISECONDS)]
+       (swap! pending assoc k {:db-info db-info :provider provider :model model})
+       (swap! display-cache dissoc k)
+       (when-let [^ScheduledFuture old (get @flush-futures k)]
+         (.cancel old false))
+       (let
+         [^ScheduledExecutorService s
+          scheduler
 
-        (swap! flush-futures assoc k f))
-      (when model {:provider provider :model model}))))
+          f
+          (.schedule s
+                     ^Runnable
+                     (fn []
+                       (flush-one! k))
+                     (long debounce-ms)
+                     TimeUnit/MILLISECONDS)]
+
+         (swap! flush-futures assoc k f))
+       ;; Broadcast AFTER the in-memory value is live, so a listener that re-reads
+       ;; the pick sees the new one.
+       (broadcast-model-change! sid {:provider provider :model model :reason reason})
+       (when model {:provider provider :model model})))))
 
 (defn record-switch!
   "Persist one manual model-preference transition for the session-usage routing
