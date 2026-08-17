@@ -3,9 +3,9 @@
    `com.blockether.vis.internal.voice` — the mirror of `engine.clj`, which does
    the same for listening.
 
-   Two engines, not one, because they are two different bargains: Piper is a
-   public-domain voice Vis may ship and fetch for you, pocket-tts is better at
-   cloning a clip but arrives only when its owner asks for it. Every surface —
+   Two engines, not one, because a voice means two different things: a Piper voice
+   is a MODEL per speaker, while pocket-tts clones a reference CLIP. Vis fetches
+   both. Every surface —
    the gateway, the TUI, the companion — sees the same
    `{:id :label :synthesize :voices :model-state :start-download}` and needs to
    know neither fact. pocket-tts declares two more, because a voice it can speak
@@ -23,8 +23,8 @@
 
 (defn register!
   "Idempotent — [[voice/register-engine!]] replaces by id. Piper registers FIRST
-   and so is the default engine: it is the one whose model Vis is allowed to
-   fetch without asking."
+   and so is the default engine: it speaks a baked speaker with no clip to choose,
+   which is the least a caller that named no voice has to know."
   []
   (voice/register-engine! :synthesize
                           {:id piper-engine-id

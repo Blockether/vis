@@ -124,7 +124,7 @@
                  (:state (#'tts/combined-state
                           [{:state :failed :error "refused"}
                            {:state :downloading :progress 10}])))))
-  (it "refuses an opt-in family BY NAME instead of reporting absent forever"
+  (it "refuses a licence-gated VOICE by name instead of reporting absent forever"
       ;; `:absent` with nothing downloading is the one answer a user cannot act
       ;; on, so the refusal carries the command that installs it.
       ;; The phoneme tables are a PRECONDITION of this refusal, not its subject:
@@ -137,17 +137,13 @@
          assets/installed?
          (constantly false)]
 
-        (let [state (tts/start-download! :pocket-tts)]
-          (expect (= :failed (:state state)))
-          (expect (re-find #"pocket-tts-int8" (:error state)))
-          (expect (re-find #"--pocket-tts" (:error state))))
         (let [state (tts/start-download! :piper "ryan")]
           (expect (= :failed (:state state)))
           (expect (re-find #"piper-en_US-ryan-high" (:error state)))
           ;; the family alone would install the DEFAULT voice, so the refusal names the
           ;; voice that was actually asked for
           (expect (re-find #"--piper --voice ryan" (:error state))))))
-  (it "starts the download of a family Vis does fetch by itself"
+  (it "starts the download of every family Vis fetches by itself"
       (let [started (atom [])]
         ;; espeak-ng belongs to the SYSTEM, so its absence must not decide whether the
         ;; download of a voice starts, and `installed?` answers from what `install!`
@@ -163,16 +159,19 @@
 
           (let [state (tts/start-download! :piper)]
             (expect (contains? #{:downloading :ready} (:state state))))
-          ;; Settle that install INSIDE the redefs: a future outliving them would call
+          ;; pocket-tts is Vis' own export, so it starts here too instead of refusing
+          (let [state (tts/start-download! :pocket-tts)]
+            (expect (contains? #{:downloading :ready} (:state state))))
+          ;; Settle those installs INSIDE the redefs: a future outliving them would call
           ;; the REAL installer and reach the network.
           (loop [n 0]
-            (when (and (empty? @started) (< n 300)) (Thread/sleep 10) (recur (inc n))))
-          (expect (= ["piper-en_US-kristin-medium"] @started))))))
+            (when (and (< (count @started) 2) (< n 300)) (Thread/sleep 10) (recur (inc n))))
+          (expect (= #{"piper-en_US-kristin-medium" "pocket-tts-int8"} (set @started)))))))
 
 (defdescribe install-model-test
-             (it "installs an opt-in model when the CLI asks for it by name"
-                 ;; `assets/ensure!` refuses pocket-tts on the user's behalf; typing the
-                 ;; flag IS the ask, so this path must accept it.
+             (it "installs everything the named family needs, in one blocking call"
+                 ;; The CLI download path is the blocking one: it installs what the family
+                 ;; needs and reports the directory it wrote for each asset.
                  (let [installed (atom [])]
                    (with-redefs
                      [sherpa/ensure-native! (constantly nil)

@@ -33,11 +33,11 @@
         (expect (= ["file"] (mapv :name (:cmd/args (get by-name "transcribe")))))
         ;; every leaf runs something: a subcommand that only prints help is a dead end
         (expect (every? #(or (:cmd/run-fn %) (seq (:cmd/subcommands %))) (:cmd/subcommands cli)))))
-  (it "downloads what Vis fetches by itself unless an opt-in model is NAMED"
-      ;; pocket-tts ships as an engine without its weights: neither `--all` nor
-      ;; a bare `download` may accept its terms for the user.
-      (expect (= [:parakeet :piper] (#'voice/download-families {})))
-      (expect (= [:parakeet :piper] (#'voice/download-families {"all" true})))
+  (it "downloads every family it may fetch, whether or not one was named"
+      ;; A bare `download` that skipped pocket-tts left the engine registered and
+      ;; silent; its size was never a reason to make the user ask a second time.
+      (expect (= [:parakeet :piper :pocket-tts] (#'voice/download-families {})))
+      (expect (= [:parakeet :piper :pocket-tts] (#'voice/download-families {"all" true})))
       (expect (= [:pocket-tts] (#'voice/download-families {"pocket-tts" true})))
       (expect (= [:parakeet :piper] (#'voice/download-families {"parakeet" true "piper" true}))))
   (it "contributes voice-specific doctor diagnostics"
@@ -45,7 +45,7 @@
         [voice/model-status
          (constantly {:parakeet {:installed? true}
                       :espeak {:is-installed true}
-                      :speech {:piper {:state :ready} :pocket-tts {:state :absent}}})
+                      :speech {:piper {:state :ready} :pocket-tts {:state :ready}}})
 
          com.blockether.vis.ext.foundation-voice.core/executable?
          (constantly true)
@@ -57,12 +57,13 @@
              identity))]
 
         (let [msgs ((:ext/doctor-fn voice/voice-extension) {})]
-          (expect (= [::voice/runtime ::voice/ffmpeg ::voice/parakeet ::voice/espeak ::voice/speech]
+          (expect (= [::voice/runtime ::voice/ffmpeg ::voice/parakeet ::voice/espeak ::voice/speech
+                      ::voice/pocket-speech]
                      (mapv :check-id msgs)))
           (expect (every? #(= :info (:level %)) msgs)))))
-  (it "warns about the speech voice it installs, never about the opt-in one"
-      ;; pocket-tts staying absent is the DESIGNED state, and a warning nobody
-      ;; is meant to act on teaches the user to ignore doctor.
+  (it "warns about every speech family that is not on the machine"
+      ;; `models download` fetches both families, so an absent pocket-tts is a state
+      ;; to act on and its warning carries the flag that installs it.
       (with-redefs
         [voice/model-status
          (constantly {:parakeet {:installed? true}
@@ -83,7 +84,9 @@
            (into {} (map (juxt :check-id identity)) ((:ext/doctor-fn voice/voice-extension) {}))]
           (expect (= :warn (:level (::voice/speech by-id))))
           (expect (re-find #"--piper" (:remediation (::voice/speech by-id))))
-          (expect (= 5 (count by-id))))))
+          (expect (= :warn (:level (::voice/pocket-speech by-id))))
+          (expect (re-find #"--pocket-tts" (:remediation (::voice/pocket-speech by-id))))
+          (expect (= 6 (count by-id))))))
   (it
     "says WHY a speech family failed, not just that it did"
     ;; A voice downloaded onto a machine without espeak-ng printed a bare
@@ -106,7 +109,7 @@
         (#'voice/print-status!)
         (expect (some #(= "Speech (piper): failed" %) @lines))
         (expect (some #(re-find #"brew install espeak-ng" %) @lines))
-        ;; an absent opt-in model has no reason to give and must not grow a blank line
+        ;; a merely absent model has no reason to give and must not grow a blank line
         (expect (some #(= "Speech (pocket-tts): absent" %) @lines)))))
   (it "defers voice input namespace until the /voice slash run-fn fires (K10)"
       ;; The declarative `/voice` slash spec lazily requiring-resolves

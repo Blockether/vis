@@ -88,7 +88,11 @@
           (when is-mirrored (expect (true? (:is-commercial-ok entry))))
           (when-not (:is-commercial-ok entry)
             (expect (true? (:is-opt-in entry)))
-            (expect (seq (:notice entry)))))))
+            (expect (seq (:notice entry))))
+          ;; Opt-in is a LICENCE gate and nothing else: size never earns one, or
+          ;; `download` would leave a model unfetched and an engine silent.
+          (when (:is-opt-in entry)
+            (expect (false? (boolean (:is-commercial-ok entry))) (:id entry))))))
   (it "leaves every asset reachable WITHOUT a Hugging Face token"
       ;; A token changes where the bytes come from, never whether they can be
       ;; had: a gated source is dropped when there is none and moves to the
@@ -213,11 +217,17 @@
 (defdescribe ensure-test
              (it "refuses to accept an opt-in asset's terms on the user's behalf"
                  (with-redefs [assets/installed? (constantly false)]
-                   (let [data (ex-data-of #(assets/ensure! (assets/entry "pocket-tts-int8")))]
+                   (let [data (ex-data-of #(assets/ensure! (assets/entry "piper-en_US-ryan-high")))]
                      (expect (= :voice-assets/opt-in-required (:type data)))
-                     (expect (= "pocket-tts-int8" (:id data)))
+                     (expect (= "piper-en_US-ryan-high" (:id data)))
                      (expect (seq (:notice data)))
                      (expect (seq (:source-url data))))))
+             (it "never asks twice for a model Vis may host itself"
+                 ;; pocket-tts is our own CC BY 4.0 export, so the AUTOMATIC path installs
+                 ;; it like any other asset instead of demanding that it be named.
+                 (with-redefs [assets/installed? (constantly true)]
+                   (expect (str/ends-with? (assets/ensure! (assets/entry "pocket-tts-int8"))
+                                           "sherpa-onnx-pocket-tts-int8"))))
              (it "mirrors nothing it may not host, and hosts nothing it did not make"
                  ;; The pack is a release of ASSETS WE OWN: our own exports and the
                  ;; models we may mirror outright. A voice is never in it - each comes

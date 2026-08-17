@@ -9,7 +9,7 @@ This file is generated: it is `extensions/common/vis-foundation-voice/resources/
 | model | licence | commercial use | comes from | installed |
 | --- | --- | --- | --- | --- |
 | `parakeet-tdt-0.6b-v3-int8` | CC-BY-4.0 | yes | the Vis assets release | automatically |
-| `pocket-tts-int8` | CC-BY-4.0 | yes | the Vis assets release | only when asked for by name |
+| `pocket-tts-int8` | CC-BY-4.0 | yes | the Vis assets release | automatically |
 | `piper-en_US-kristin-medium` | LicenseRef-public-domain | yes | its publisher | automatically |
 | `piper-en_GB-cori-high` | LicenseRef-public-domain | yes | its publisher | automatically |
 | `piper-en_US-john-medium` | LicenseRef-public-domain | yes | its publisher | automatically |
@@ -39,7 +39,6 @@ pocket-tts by Kyutai (https://huggingface.co/kyutai/pocket-tts), CC BY 4.0, chec
 - Upstream: <https://huggingface.co/kyutai/pocket-tts>
 - Voices: Kristin (en-US), Cori (en-GB), John (en-US)
 - Installs into: `~/.vis/models/sherpa-onnx-pocket-tts-int8`
-- Opt-in: Vis never fetches this on its own; it is installed only when asked for by name.
 - Downloaded from, in order:
   - the Vis voice assets release, 96 MB - <https://github.com/Blockether/vis/releases/download/voice-assets-pack/pocket-tts-onnx.tar.bz2>
 

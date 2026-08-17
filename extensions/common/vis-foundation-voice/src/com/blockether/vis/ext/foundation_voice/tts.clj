@@ -10,8 +10,8 @@
                   a machine without espeak-ng is told so instead of failing.
      :pocket-tts  a voice is a reference CLIP the model clones, so the catalogue
                   is a WAV per voice: the clips the bundle ships and the ones
-                  somebody imported through `voices.clj`. Opt-in for its size,
-                  not its licence - Vis exports those weights itself.
+                   somebody imported through `voices.clj`. Vis exports those
+                   weights itself, so they arrive with every other model.
 
    Which assets exist, where they come from and what they are licensed under is
    `assets.clj`'s question; this namespace only asks for them by id."
@@ -254,10 +254,11 @@
      (combined-state (mapv asset-state (required-assets family voice-id))))))
 
 (defn start-download!
-  "Begin (or report) the download every surface polls. An OPT-IN model is never
-   started here, and neither is a Piper voice on a machine without espeak-ng:
-   the refusal names the command that fixes it, because a silent `:absent`
-   forever is the one answer a user cannot act on."
+  "Begin (or report) the download every surface polls. A LICENCE-gated model - one
+   whose terms Vis will not accept for a user - is never started here, and neither
+   is a Piper voice on a machine without espeak-ng: the refusal names the command
+   that fixes it, because a silent `:absent` forever is the one answer a user
+   cannot act on."
   ([family] (start-download! family nil))
   ([family voice-id]
    (if (and (= :piper family) (not (espeak-data-dir)))

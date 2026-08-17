@@ -136,15 +136,24 @@
     #(:installed? (:parakeet %))
     "Run `vis-agent extension voice models download --parakeet` or set VIS_PARAKEET_MODEL_DIR."))
 
-(defn- speech-message
-  "Piper only, because it is the family Vis installs by itself. pocket-tts
-   staying absent is the DESIGNED state - see its manifest entry - so warning
-   about it would only teach the user to ignore doctor."
+(def ^:private speech-checks
+  "One doctor line per SPEAKING family. Both families come down with `models
+   download`, so an absent one names the flag that fixes it instead of being a
+   silence somebody designed."
+  [{:check-id ::speech
+    :family :piper
+    :label "Piper speech voice"
+    :remediation "Run `vis-agent extension voice models download --piper`."}
+   {:check-id ::pocket-speech
+    :family :pocket-tts
+    :label "pocket-tts speech voice"
+    :remediation "Run `vis-agent extension voice models download --pocket-tts`."}])
+
+(defn- speech-messages
   []
-  (model-message ::speech
-                 "Piper speech voice"
-                 #(= :ready (:state (:piper (:speech %))))
-                 "Run `vis-agent extension voice models download --piper`."))
+  (mapv (fn [{:keys [check-id family label remediation]}]
+          (model-message check-id label #(= :ready (:state (get (:speech %) family))) remediation))
+        speech-checks))
 
 (defn- espeak-message
   "A machine without espeak-ng gets NO Piper voice, however many are installed,
@@ -158,7 +167,8 @@
 
 (defn doctor-fn
   [_environment]
-  [(voice-runtime-message) (ffmpeg-message) (parakeet-message) (espeak-message) (speech-message)])
+  (into [(voice-runtime-message) (ffmpeg-message) (parakeet-message) (espeak-message)]
+        (speech-messages)))
 
 (defn- status-word
   [{:keys [is-installed is-opt-in]}]
@@ -212,10 +222,12 @@
 
 (defn- download-families
   "Which families the flags asked for. `--all` and a bare `download` both mean
-   everything Vis fetches on its own; an opt-in model is only ever NAMED."
+   EVERYTHING: every family Vis may fetch on a user's behalf, big ones included.
+   Only a licence-gated VOICE still has to be asked for, and it is asked for with
+   `--voice`, never with a family flag."
   [parsed]
   (let [named (filterv #(get parsed (name %)) [:parakeet :piper :pocket-tts])]
-    (if (or (get parsed "all") (empty? named)) [:parakeet :piper] named)))
+    (if (or (get parsed "all") (empty? named)) [:parakeet :piper :pocket-tts] named)))
 
 (defn- download-family!
   [family voice]
@@ -379,11 +391,11 @@
             {:name "pocket-tts"
              :kind :flag
              :type :boolean
-             :doc "Download/check pocket-tts (opt-in; see `models licenses`)."}
+             :doc "Download/check pocket-tts speech only."}
             {:name "all"
              :kind :flag
              :type :boolean
-             :doc "Download/check every model Vis fetches by itself."}
+             :doc "Download/check every model - what a bare `download` already does."}
             {:name "voice"
              :kind :flag
              :type :string
