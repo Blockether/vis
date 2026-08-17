@@ -19,6 +19,7 @@
             [clojure.string :as str]
             [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
             [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
+            [com.blockether.vis.ext.language-clojure.shadow-cljs :as shadow]
             [com.blockether.vis.internal.test-contract :as contract]
             [com.blockether.vis.internal.foundation.surface-contract :as surface]
             [com.blockether.vis.internal.extension :as extension]
@@ -546,16 +547,33 @@
   [ns-str]
   (when ns-str (if (str/ends-with? ns-str "-test") ns-str (str ns-str "-test"))))
 
-(def ^:private test-file-exts
+(def ^:private jvm-test-exts
   "Extensions a JVM Clojure namespace lives in. `.cljc` is loaded and run by
    `clojure -M:test` exactly like `.clj`, so `foo_test.cljc` IS a test file —
    skipping it makes a path the caller spelled CORRECTLY look like a location
-   with no tests under it. `.cljs` never loads on the JVM and is absent by
-   design."
+   with no tests under it."
   [".clj" ".cljc"])
 
+(def ^:private cljs-test-ext
+  "The extension that NEVER loads on the JVM: `*_test.cljs` is a ClojureScript
+   test, and the project's shadow-cljs build is the only runtime that can run it.
+   Indexed exactly like a JVM test file — a path, a directory and a namespace
+   name all still select it — because the FILE a namespace was read from is what
+   says which runner the selection needs."
+  ".cljs")
+
+(def ^:private test-file-exts
+  "Every extension a test namespace can be declared in, JVM and ClojureScript."
+  (conj jvm-test-exts cljs-test-ext))
+
+(defn- cljs-file?
+  "True when `f` is ClojureScript-only source — the ONE fact that routes a run to
+   shadow-cljs instead of the JVM."
+  [^java.io.File f]
+  (boolean (and f (str/ends-with? (.getName f) cljs-test-ext))))
+
 (defn- clj-source-file?
-  "True when `f` is a Clojure source file this JVM test run can load."
+  "True when `f` is a Clojure source file a test run can load."
   [^java.io.File f]
   (boolean (and (.isFile f)
                 (some (fn [^String ext]
@@ -563,7 +581,7 @@
                       test-file-exts))))
 
 (defn- test-source-file?
-  "True when `f` is a TEST file: a `_test` source file in a JVM Clojure extension."
+  "True when `f` is a TEST file: a `_test` source file in a Clojure extension."
   [^java.io.File f]
   (boolean (and (.isFile f)
                 (some (fn [^String ext]
@@ -572,7 +590,9 @@
 
 (defn- all-test-files
   "Index every test file under root by its declared ns string, built once per
-   run so SOURCE paths can be resolved to their corresponding test namespace."
+   run so SOURCE paths can be resolved to their corresponding test namespace —
+   and so a namespace NAME can be traced back to the file that decides which
+   runtime runs it."
   [root]
   (into {}
         (keep (fn [^java.io.File f]
@@ -582,25 +602,35 @@
         (file-seq (io/file root))))
 
 (defn- path->nses
-  "Resolve ONE file/dir to test namespace strings. A test file -> its own ns. A
+  "Resolve ONE file/dir to `{:ns :file}` entries. A test file -> its own ns. A
    plain source file -> its matching *-test ns (when that test file exists). A
    directory -> every test file under it; a pure source dir maps each source ns
    to its existing *-test ns. `test-index` is a DELAY over {ns-str file} —
-   naming test files never pays for the workspace walk a source file needs."
+   naming test files never pays for the workspace walk a source file needs.
+   Every entry carries the FILE it was read from, because that file's extension
+   is what decides whether the namespace runs on the JVM or in shadow-cljs."
   [^java.io.File f test-index]
   (let
-    [test-ns (fn [src-ns]
-               (let [tn (source-ns->test-ns src-ns)]
-                 (when (contains? @test-index tn) tn)))]
-    (cond (test-source-file? f) (keep identity [(ns-of-file f)])
-          (clj-source-file? f) (keep test-ns [(ns-of-file f)])
+    [entry
+     (fn [^java.io.File file]
+       (when-let [n (ns-of-file file)]
+         {:ns n :file file}))
+
+     test-entry
+     (fn [^java.io.File file]
+       (when-let [src-ns (ns-of-file file)]
+         (let [tn (source-ns->test-ns src-ns)]
+           (when-let [tf (get @test-index tn)]
+             {:ns tn :file tf}))))]
+
+    (cond (test-source-file? f) (keep identity [(entry f)])
+          (clj-source-file? f) (keep identity [(test-entry f)])
           (.isDirectory f) (let [test-files (filter test-source-file? (file-seq f))]
                              (if (seq test-files)
-                               (keep ns-of-file test-files)
+                               (keep entry test-files)
                                (->> (file-seq f)
                                     (filter clj-source-file?)
-                                    (keep ns-of-file)
-                                    (keep test-ns))))
+                                    (keep test-entry))))
           :else [])))
 
 (defn- clj-file-name?
@@ -661,29 +691,39 @@
           :else [ns-str])))
 
 (defn- resolve-ns-entry
-  "Resolve ONE namespace-selector entry `{:ns :var}` into `{:nses :var}`. The
-   entry names a namespace (`a.core-test`), a namespace and ONE var in the
-   spelling `clojure -M:test --var` takes (`a.core-test/adds-test`), or a PATH
-   that arrived under a namespace key — read as the path it obviously is, rather
-   than as a namespace that could never load."
+  "Resolve ONE namespace-selector entry `{:ns :var}` into `{:entries :var}`, each
+   entry being `{:ns <ns-str> :file <file or nil>}`. The entry names a namespace
+   (`a.core-test`), a namespace and ONE var in the spelling `clojure -M:test
+   --var` takes (`a.core-test/adds-test`), or a PATH that arrived under a
+   namespace key — read as the path it obviously is, rather than as a namespace
+   that could never load. A name the workspace index does not know keeps a nil
+   :file: it still runs, on the JVM path that has always required it."
   [root {ns-str :ns var-name :var} test-index]
-  (if (nil? ns-str)
-    {:nses [] :var var-name}
-    (let [^java.io.File f (under-root root ns-str)]
-      (cond (or (clj-file-name? ns-str) (.exists f)) {:nses (vec (path->nses f test-index))
-                                                      :var var-name}
-            (and (nil? var-name) (str/includes? ns-str "/")) (let [[n v] (str/split ns-str #"/" 2)]
-                                                               {:nses (ns->test-nses n test-index)
-                                                                :var (not-empty v)})
-            :else {:nses (ns->test-nses ns-str test-index) :var var-name}))))
+  (let
+    [with-files (fn [nses]
+                  (mapv (fn [n]
+                          {:ns n :file (get @test-index n)})
+                        nses))]
+    (if (nil? ns-str)
+      {:entries [] :var var-name}
+      (let [^java.io.File f (under-root root ns-str)]
+        (cond (or (clj-file-name? ns-str) (.exists f)) {:entries (vec (path->nses f test-index))
+                                                        :var var-name}
+              (and (nil? var-name) (str/includes? ns-str "/"))
+              (let [[n v] (str/split ns-str #"/" 2)]
+                {:entries (with-files (ns->test-nses n test-index))
+                 :var (not-empty v)})
+              :else {:entries (with-files (ns->test-nses ns-str test-index)) :var var-name})))))
 
 (defn- resolve-selection
   "Resolve the CALL's selector entries into what a run needs: `:nses`, the test
    namespaces to load, `:vars`, the var filter to apply inside them
-   (`{:ns <ns-or-nil> :name <test-name>}`), and `:files`, the test file each
-   NAMESPACE entry resolved to — a path entry already names its own location,
-   a namespace entry does not, and the run must still be rooted at the project
-   the tests live in.
+   (`{:ns <ns-or-nil> :name <test-name>}`), `:files`, the test file each
+   NAMESPACE entry resolved to — a path entry already names its own location, a
+   namespace entry does not, and the run must still be rooted at the project the
+   tests live in — and `:ns-files`, the file EVERY selected namespace was read
+   from (nil when the index does not know it), which is what says whether that
+   namespace runs on the JVM or in shadow-cljs.
    `path-entries` are the node-id maps from `:paths` (`{:path :var}`, from
    `contract/split-node-id`); `ns-entries` are the namespace/var spellings
    (`{:ns :var}`, from `split-selector-entry`).
@@ -702,35 +742,40 @@
      ;; One entry's resolved namespaces plus the name it narrows to. A name with
      ;; no namespace of its own stays `{:ns nil}` — 'wherever it lives'.
      add
-     (fn [acc nses var]
-       (cond-> (update acc :nses into nses)
-         var
-         (update :vars
-                 into
-                 (if (seq nses)
-                   (map (fn [n]
-                          {:ns n :name var})
-                        nses)
-                   [{:ns nil :name var}]))))
+     (fn [acc entries var]
+       (let [nses (mapv :ns entries)]
+         (cond->
+           (-> acc
+               (update :nses into nses)
+               (update :ns-files into (map (juxt :ns :file) entries)))
+           var
+           (update :vars
+                   into
+                   (if (seq nses)
+                     (map (fn [n]
+                            {:ns n :name var})
+                          nses)
+                     [{:ns nil :name var}])))))
 
      acc
      (reduce (fn [acc {:keys [path var]}]
-               (let [nses (when path (vec (path->nses (under-root root path) test-index)))]
-                 (add acc nses var)))
-             {:nses [] :vars [] :files []}
+               (let [entries (when path (vec (path->nses (under-root root path) test-index)))]
+                 (add acc entries var)))
+             {:nses [] :vars [] :files [] :ns-files {}}
              path-entries)
 
      acc
      (reduce (fn [acc entry]
-               (let [{:keys [nses var]} (resolve-ns-entry root entry test-index)]
-                 (-> (add acc nses var)
-                     (update :files into (keep @test-index nses)))))
+               (let [{:keys [entries var]} (resolve-ns-entry root entry test-index)]
+                 (-> (add acc entries var)
+                     (update :files into (keep :file entries)))))
              acc
              ns-entries)]
 
     {:nses (vec (sort (distinct (:nses acc))))
      :vars (vec (distinct (:vars acc)))
-     :files (vec (distinct (:files acc)))}))
+     :files (vec (distinct (:files acc)))
+     :ns-files (:ns-files acc)}))
 
 (def ^:private namespace-selector-keys
   "Selector spellings whose value names a NAMESPACE. `clojure -M:test` takes
@@ -800,7 +845,8 @@
    names a NAMESPACE is speaking `clojure -M:test --namespace` / `--var`, which
    is a real selection and not a mistake: `ns` / `nses` / `namespace` /
    `namespaces` and `var` / `vars` / `only` carry into `:ns-selectors` and run,
-   and `path` is read alongside `paths`."
+   and `path` is read alongside `paths`. `build` names ONE shadow-cljs build
+   when a ClojureScript run could pick from several."
   [arg]
   (cond
     (or (string? arg) (symbol? arg)) (contract/normalize-selectors {:paths [(str arg)]})
@@ -809,7 +855,8 @@
                                                               (contract/->str-vec (get arg "path")))
                                                      :include (get arg "include")
                                                      :exclude (get arg "exclude")})
-                 :ns-selectors (selector-entries arg))
+                 :ns-selectors (selector-entries arg)
+                 :build (not-empty (str/trim (str (get arg "build")))))
     :else
     (throw
       (ex-info
@@ -839,7 +886,7 @@
   [root ns-str]
   (let
     [rels
-     (mapv (partial str (ns->source-relpath ns-str)) test-file-exts)
+     (mapv (partial str (ns->source-relpath ns-str)) jvm-test-exts)
 
      root-file
      (io/file root)]
@@ -956,6 +1003,19 @@
   (let [lines (str/split-lines (strip-ansi (or s "")))]
     (str/join "\n" (take-last 40 lines))))
 
+(defn- summary-counts
+  "The tally a shelled runner prints. clojure.test, lazytest and cljs.test all
+   close on `Ran N test…` plus an `F failures, E errors.` line — the only count a
+   CLI run offers, and the one every mode reports. A nil `:cases` means NO
+   summary was printed at all, which is a different fact from zero tests."
+  [^String out]
+  (let
+    [n (fn [re]
+         (some-> (re-find re (str out))
+                 second
+                 parse-long))]
+    {:cases (n #"Ran (\d+) test") :fails (n #"(\d+) failures?") :errs (n #"(\d+) errors?")}))
+
 (defn- lazytest-selector-args
   "Translate resolved selectors into lazytest.main CLI flags.
    :vars — what the call's `<path>::<name>` node ids resolved to — becomes --var
@@ -1058,15 +1118,7 @@
          ;; "F failures, E errors." line — the only tally a shelled runner
          ;; offers, and the cli path reports it as the SAME counts the repl
          ;; path does.
-         cases (some-> (re-find #"Ran (\d+) test" out)
-                       second
-                       parse-long)
-         fails (some-> (re-find #"(\d+) failures?" out)
-                       second
-                       parse-long)
-         errs (some-> (re-find #"(\d+) errors?" out)
-                      second
-                      parse-long)
+         {:keys [cases fails errs]} (summary-counts out)
          ;; A PASS demands a "Ran N test…" summary, not merely a 0 exit: a
          ;; deps.edn with no :test alias drops `clojure -M:test` into a bare
          ;; REPL that reads EOF and exits 0 having run ZERO tests. Counting
@@ -1081,7 +1133,7 @@
            "tool" (name tool)
            "command" (str/join " " cmd)
            "exit" exit
-           "is_pass" (and (zero? exit) ran?)
+           "is_pass" (and (zero? exit) ran? (zero? (+ (long (or fails 0)) (long (or errs 0)))))
            "output" (cli-tail out)}
           cases
           (assoc "total" cases)
@@ -1107,6 +1159,106 @@
        "error" (str "no nREPL reachable, and no deps.edn / project.clj / bb.edn in "
                     root
                     " to run tests via CLI")})))
+
+(defn- shadow-tail
+  "shadow-cljs boots a JVM whose Unsafe/deprecation warnings are four lines of
+   pure noise on EVERY run — dropped here so the tail the caller reads is the
+   test report itself."
+  [^String out]
+  (cli-tail
+    (str/join
+      "\n"
+      (remove (fn [line]
+                (re-find
+                  #"^WARNING: (A terminally deprecated|sun\.misc\.Unsafe|Please consider reporting)"
+                  line))
+        (str/split-lines (str out))))))
+
+(defn- run-via-shadow
+  "Run ClojureScript test namespaces through the project's own shadow-cljs build —
+   the only runtime that can run a `*_test.cljs`, since the JVM cannot load one.
+   Each step's argv is shelled in order and the run stops at the first non-zero
+   exit. The verdict is the COUNTS, not the exit code: shadow-cljs exits ZERO
+   even when tests fail and even when its CLI rejected an argument, so an
+   exit-code verdict would report a red suite — or a suite that never ran — as
+   green. Compiling but running NOTHING is likewise an error, because that is
+   what a namespace outside the build's `:source-paths` looks like.
+   `shadow-cljs/run-steps` answers `{:error …}` for every project this cannot
+   run (no build, no installed shadow-cljs, a browser build with no runtime), and
+   that error is REPORTED — never thrown, never silently passed."
+  [root nses norm]
+  (let
+    [{:keys [error steps build]}
+     (shadow/run-steps root {:nses nses :build (:build norm)})
+
+     base
+     {"mode" "cli" "tool" "shadow-cljs" "framework" "cljs.test" "ns" (str/join " " nses)}]
+
+    (if error
+      (assoc base
+        "error" error
+        "is_pass" false)
+      (let
+        [ran
+         (reduce (fn [acc {:keys [argv]}]
+                   (let
+                     [res
+                      (try (apply shell/sh (concat argv [:dir (str root)]))
+                           (catch Throwable t {:exit -1 :out "" :err (str (.getMessage t))}))
+
+                      acc
+                      (-> acc
+                          (update :out str (:out res) (:err res))
+                          (update :cmds conj (str/join " " argv))
+                          (assoc :exit (long (or (:exit res) -1))))]
+
+                     (if (zero? (long (:exit acc))) acc (reduced acc))))
+                 {:out "" :exit 0 :cmds []}
+                 steps)
+
+         exit
+         (long (:exit ran))
+
+         {:keys [cases fails errs]}
+         (summary-counts (:out ran))
+
+         faults
+         (+ (long (or fails 0)) (long (or errs 0)))]
+
+        (cond->
+          (assoc base
+            "build" build
+            "command" (str/join " && " (:cmds ran))
+            "exit" exit
+            "output" (shadow-tail (:out ran))
+            "is_pass" (and (zero? exit) (pos? (long (or cases 0))) (zero? faults)))
+          cases
+          (assoc "total" cases)
+
+          (or fails errs)
+          (assoc "fail" faults)
+
+          errs
+          (assoc "errored" errs)
+
+          (seq (:vars norm))
+          (assoc "note"
+            (str "shadow-cljs narrows by NAMESPACE — the name filter selected"
+                 " the namespaces it lives in, not that single var."))
+
+          (and (zero? exit) (nil? cases))
+          (assoc "error"
+            (str "shadow-cljs exited 0 but printed no \"Ran N test…\" summary — nothing ran."
+                 " Its CLI exits 0 after printing help for an argument it rejected, so this is"
+                 " reported as NOT passing to avoid a false green."))
+
+          (and (some? cases) (zero? (long cases)) (seq nses))
+          (assoc "error"
+            (str "shadow-cljs ran 0 tests for "
+                 (count nses)
+                 " selected namespace(s) — are they on build "
+                 build
+                 "'s :source-paths in shadow-cljs.edn?")))))))
 
 (defn- recover-if-unusable
   "Recovery seam for run_tests: what happens when the REUSED nREPL lets a run down.
@@ -1178,10 +1330,35 @@
   (let [roots (distinct (map #(nearest-build-root root %) locations))]
     (if (= 1 (count roots)) (first roots) root)))
 
+(defn- nearest-shadow-root
+  "Closest ancestor directory of `start`, at or below `root`, that holds a
+   `shadow-cljs.edn` — the project a ClojureScript run belongs to. A shadow
+   project is often npm-only, with no deps.edn / project.clj / bb.edn anywhere in
+   it, so the JVM build-file search would climb straight past it to a parent that
+   cannot run the tests at all."
+  ^java.io.File [^java.io.File root ^java.io.File start]
+  (let [root-canon (try (.getCanonicalPath root) (catch Throwable _ (.getPath root)))]
+    (loop [d (if (.isDirectory start) start (.getParentFile start))]
+      (cond (or (nil? d) (not (within-root? root-canon d))) root
+            (.isFile (io/file d "shadow-cljs.edn")) d
+            :else (recur (.getParentFile d))))))
+
+(defn- effective-shadow-root
+  "The shadow-cljs project the requested ClojureScript tests belong to: the
+   nearest `shadow-cljs.edn` ancestor SHARED by every selected test file.
+   Returns `root` when they disagree or none is nested."
+  ^java.io.File [^java.io.File root locations]
+  (let
+    [roots (distinct (map (fn [location]
+                            (nearest-shadow-root root location))
+                          locations))]
+    (if (= 1 (count roots)) (first roots) root)))
+
 (defn clj-test-fn
   "Run clojure tests. The arg names PATHS — files, directories, or
    `<path>::<test-name>` node ids: this is where a path becomes a test namespace
-   and a name becomes ONE var. A test file (`*_test.clj` / `*_test.cljc`) is read
+   and a name becomes ONE var. A test file (`*_test.clj` / `*_test.cljc` /
+   `*_test.cljs`) is read
    for the ns it declares, a SOURCE file maps to its `*-test` ns when that test
    file exists, and a
    directory is walked for both; the `::name` half then keeps just that var,
@@ -1199,8 +1376,13 @@
    exist rather than with 'no tests under it', and explicit-but-empty is a
    location that IS there yet holds no test namespace (a real 'nothing to run
    there', not a 'run all' intent) — likewise a `::name` that matched no var.
+   The FILE each namespace was read from picks the RUNTIME: a selection that is
+   all ClojureScript runs in the project's own shadow-cljs build (`build` names
+   which one when several could), and any selection the JVM can load takes the
+   JVM path, dropping the `.cljs` namespaces it could never require.
    The run is rooted at the tests' OWN project — the nearest deps.edn / project.clj /
-   bb.edn at or below the workspace root — so a NESTED project is tested against its
+   bb.edn at or below the workspace root, or the nearest shadow-cljs.edn for a
+   ClojureScript run — so a NESTED project is tested against its
    own build file. run_tests NEVER starts a REPL: it reuses THIS session's REPL for
    that project when one is already up, and otherwise shells the project's own test
    command in a clean JVM.
@@ -1230,8 +1412,9 @@
 
       ;; The ONE translation: requested entries -> the test namespaces declared
       ;; under them (:nses), the var filter their `::name` / `ns/var` halves name
-      ;; (:vars), and the test FILE a namespace entry resolved to (:files), which
-      ;; is the only location a `{"ns": ...}` call carries.
+      ;; (:vars), the test FILE a namespace entry resolved to (:files), which is
+      ;; the only location a `{"ns": ...}` call carries, and :ns-files, the file
+      ;; behind EVERY selected namespace.
       resolved
       (resolve-selection root paths ns-selectors)
 
@@ -1250,29 +1433,54 @@
       ;; resolves to nothing is explicit-but-empty and stays an error below. An
       ;; empty list [] counts as "not given" (empty? is total on nil), so [] and
       ;; nil behave identically here.
+      selection
+      (if (or (some :path paths) (some :ns ns-selectors))
+        (select-keys resolved [:nses :ns-files])
+        (let [index (all-test-files root)]
+          {:nses (vec (sort (keys index))) :ns-files index}))
+
+      ;; ONE run, ONE runtime. `.cljs` namespaces are the shadow-cljs run;
+      ;; everything else (including a namespace no index knows) is the JVM's. A
+      ;; selection holding both takes the JVM path and drops the ClojureScript
+      ;; namespaces it could never require, instead of failing the whole run on
+      ;; the first `require` of a file the JVM cannot read.
+      cljs-nses
+      (filterv (fn [n]
+                 (cljs-file? (get (:ns-files selection) n)))
+        (:nses selection))
+
+      jvm-nses
+      (vec (remove (set cljs-nses) (:nses selection)))
+
+      cljs?
+      (and (seq cljs-nses) (empty? jvm-nses))
+
       {:keys [nses] :as norm}
       (assoc norm
         :vars (:vars resolved)
-        :nses (if (or (some :path paths) (some :ns ns-selectors))
-                (:nses resolved)
-                (sort (keys (all-test-files root)))))
+        :nses (if cljs? cljs-nses jvm-nses))
 
       sel
       (select-keys norm [:vars :include :exclude])
 
       ;; Root the run where the tests' OWN build file lives (nearest deps.edn /
-      ;; project.clj / bb.edn at or below the workspace root), so a nested
-      ;; project's deps.edn is honored. Falls back to the workspace root when the
+      ;; project.clj / bb.edn at or below the workspace root; nearest
+      ;; shadow-cljs.edn when the run is ClojureScript), so a nested project's
+      ;; build file is honored. Falls back to the workspace root when the
       ;; request is at the top level or spans several projects.
       eff-root
-      (if (seq req-locations) (.getPath (effective-test-root (io/file root) req-locations)) root)
+      (cond cljs? (.getPath (effective-shadow-root (io/file root)
+                                                   (keep (:ns-files selection) cljs-nses)))
+            (seq req-locations) (.getPath (effective-test-root (io/file root) req-locations))
+            :else root)
 
       ;; REUSE, never spawn. `live-repl-for-dir` answers THIS session's REPL for the
       ;; project only while it ANSWERS, nil otherwise — run_tests starts nothing. With
       ;; no REPL up the suite runs in a clean JVM through the build tool's own test
-      ;; command, which is also what a fresh session gets.
+      ;; command, which is also what a fresh session gets. A ClojureScript run never
+      ;; asks: a JVM nREPL cannot load a `.cljs` namespace.
       port
-      (:port (repl-manager/live-repl-for-dir (:session-id env) eff-root))]
+      (when-not cljs? (:port (repl-manager/live-repl-for-dir (:session-id env) eff-root)))]
 
      ;; An explicit location that is NOT THERE is a misspelling, not an empty
      ;; suite: answering "no test namespaces under <path>" for a path that does
@@ -1293,21 +1501,26 @@
          (throw
            (ex-info
              (if (seq named)
-               (str "run_tests(clojure) found no test namespaces (*_test.clj / *_test.cljc) under "
-                    (pr-str named))
-               (str "run_tests(clojure) found no test namespaces (*_test.clj / *_test.cljc) "
-                    "anywhere under the workspace root"))
+               (str
+                 "run_tests(clojure) found no test namespaces (*_test.clj / *_test.cljc / *_test.cljs) under "
+                 (pr-str named))
+               (str
+                 "run_tests(clojure) found no test namespaces (*_test.clj / *_test.cljc / *_test.cljs) "
+                 "anywhere under the workspace root"))
              {:type :clj/bad-args :got arg}))))
      (let
        [result
-        (if port
+        (cond
+          ;; ClojureScript: the project's shadow-cljs build, shelled. There is no
+          ;; JVM path to fall back to.
+          cljs? (run-via-shadow eff-root nses norm)
           ;; A REPL this session already keeps up for the project — the fast inner
           ;; loop. It reloads only the namespaces it RUNS, so production Vars the
           ;; caller edited stay as that REPL holds them (`repl_eval` `:reload`, or
           ;; stop the REPL and let the clean JVM run it).
-          (run-via-repl eff-root nses sel port)
+          port (run-via-repl eff-root nses sel port)
           ;; The default: the build tool's own test command, in a clean JVM.
-          (run-via-cli eff-root norm))
+          :else (run-via-cli eff-root norm))
 
         result
         (recover-if-unusable eff-root norm result)

@@ -473,7 +473,7 @@
   (dispatch! env :lint-fn args))
 
 (defn run-tests
-  "Run through a pack: `run_tests(language,arg)`. `arg` is a path string or map: `paths` (files, directories, or `<path>::<test-name>` node ids — the selector every language shares; `::<test-name>` alone finds that test wherever it lives) selects; clojure ALSO takes `ns` / `nses` (a namespace name, or `ns/var` for one test) and resolves it the same way; `include` / `exclude` narrow by metadata tag; `cwd` chooses the project; `environment` picks the python backend (`project` for the project interpreter's own pytest, else the hermetic sandbox). List selectors stay lists, even one. Omit `arg` for all tests."
+  "Run through a pack: `run_tests(language,arg)`. `arg` is a path string or map: `paths` (files, directories, or `<path>::<test-name>` node ids — the selector every language shares; `::<test-name>` alone finds that test wherever it lives) selects; clojure ALSO takes `ns` / `nses` (a namespace name, or `ns/var` for one test) and resolves it the same way, and runs `*_test.cljs` through the project's own shadow-cljs build (`build` names which one when several could); `include` / `exclude` narrow by metadata tag; `cwd` chooses the project; `environment` picks the python backend (`project` for the project interpreter's own pytest, else the hermetic sandbox). List selectors stay lists, even one. Omit `arg` for all tests."
   [env & args]
   (let
     [started-at
