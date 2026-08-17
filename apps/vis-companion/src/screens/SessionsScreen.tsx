@@ -2559,7 +2559,7 @@ const SessionRow = memo(function SessionRow({
   onCancelDelete: () => void;
 }) {
   const status = statusLabel(session);
-  const timestamp = session.modified_at ?? session.last_active_at ?? session.created_at;
+  const timestamp = session.modified_at ?? session.created_at;
   // DIRTY: this device is holding composer content nobody has sent — words, a
   // picture, a file. When the session has no title of its own, that content names
   // the row, which otherwise reads "Untitled session" with nothing on screen to
@@ -3061,7 +3061,6 @@ function sessionViewFingerprint(session: Session): string {
     session.current_turn_id,
     session.turn_count,
     session.modified_at,
-    session.last_active_at,
     session.created_at,
     session.project_id,
     session.project_name,

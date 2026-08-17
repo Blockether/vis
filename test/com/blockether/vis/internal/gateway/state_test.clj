@@ -2032,11 +2032,40 @@
                     [{"id" "idle-new" "live" false "modified_at" 4000}
                      {"id" "live-old" "live" true "modified_at" 1000}
                      {"id" "idle-old" "live" false "modified_at" 2000}
-                     {"id" "live-new" "live" true "last_active_at" (java.util.Date. 3000)}]]
+                     {"id" "live-new" "live" true "modified_at" (java.util.Date. 3000)}]]
 
                    (expect (= ["live-new" "live-old" "idle-new" "idle-old"]
                               (mapv #(get % "id") (order-summaries sessions)))))))
 
+;; Regression, user report (paraphrased: "clicking a session suddenly makes it the
+;; freshest thing and it jumps to the top, and after the gateway restarts the empty
+;; sessions sit above the one I actually worked in"): the navigator key read
+;; `last_active_at` / the registry's `:last-active`, which is a TOUCH clock -
+;; `append-event!` and `set-session-model!` bump it, and a daemon start stamps every
+;; session with one hydration time.
+(defdescribe gateway-session-touch-order-test
+             (it "ignores last_active_at, so touching a row cannot move it"
+                 (let
+                   [ids
+                    (fn [rows]
+                      (mapv #(get % "id") (#'state/order-session-summaries rows)))
+
+                    worked
+                    [{"id" "worked" "created_at" 1000 "modified_at" 2000}
+                     {"id" "turnless" "created_at" 1500}]
+
+                    touched
+                    [{"id" "worked" "created_at" 1000 "modified_at" 2000}
+                     {"id" "turnless" "created_at" 1500 "last_active_at" 9000}]]
+
+                   (expect (= ["worked" "turnless"] (ids worked)))
+                   ;; The two payloads differ ONLY in the touch, so the sequence must
+                   ;; be identical: no motion without a change of content.
+                   (expect (= (ids worked) (ids touched)))))
+             (it "ranks a turnless session by creation, never by the last touch"
+                 (let [recency #'state/record-recency-ms]
+                   (expect (= 2000 (recency {:created-at 1000} {:latest-turn-at 2000})))
+                   (expect (= 1000 (recency {:created-at 1000} nil))))))
 (defdescribe
   gateway-prewarm-pool-test
   (it

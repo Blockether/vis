@@ -72,6 +72,11 @@ export interface Session {
   turn_count?: number;
   created_at?: string;
   modified_at?: string;
+  /**
+   * The gateway's TOUCH clock: any event, a model switch, and a daemon start
+   * stamping every session at once. NEVER an ordering or freshness key - use
+   * `modified_at` (last turn) and `created_at`.
+   */
   last_active_at?: string;
   workspace?: {
     root?: string;

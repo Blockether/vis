@@ -4346,6 +4346,10 @@
            ;; gateway's own list all say INPUT NEEDED about the same session.
            :is_awaiting_input (bus/session-waiting? sid)
            :current_turn_id current-turn-id
+           ;; A TOUCH clock, not a content clock: `append-event!` and
+           ;; `set-session-model!` bump it, and it is PROCESS state that a daemon
+           ;; start re-stamps for every session at once. Report it, never order by
+           ;; it - see `session-recency-ms`.
            :last_active_at (:last-active entry)
            :turn_count (long (or (:turn-count stats) 0))
            :server_time_ms server-time-ms}
@@ -4418,17 +4422,24 @@
         :else 0))
 
 (defn- session-recency-ms
+  "How fresh a DECORATED session is, for ORDERING only.
+
+   Two clocks reach a client and only one of them is content: `modified_at` is the
+   last turn, `created_at` never moves. `last_active_at` is deliberately NOT here.
+   It is a TOUCH (`append-event!`, `set-session-model!`, a registry hydrated at
+   daemon start), so reading it would let merely opening a session - or restarting
+   the gateway, which re-stamps the whole fleet with one hydration time - reorder
+   the navigator under the reader's finger."
   [session]
-  (->epoch-ms
-    (or (get session "modified_at") (get session "last_active_at") (get session "created_at"))))
+  (->epoch-ms (or (get session "modified_at") (get session "created_at"))))
 
 (defn- record-recency-ms
-  "`session-recency-ms` for an UNDECORATED session: the same three sources
-   (`latest-turn-at` from the grouped stats, the registry's `last-active`, the
-   record's `created-at`) that `soul` copies into `modified_at`/`last_active_at`/
-   `created_at`, read straight from the cheap facts."
-  ^long [record entry st]
-  (->epoch-ms (or (:latest-turn-at st) (:last-active entry) (:created-at record))))
+  "`session-recency-ms` for an UNDECORATED session: the same two sources
+   (`latest-turn-at` from the grouped stats, the record's `created-at`) that
+   `soul` copies into `modified_at`/`created_at`, read straight from the cheap
+   facts."
+  ^long [record st]
+  (->epoch-ms (or (:latest-turn-at st) (:created-at record))))
 
 (defn- session-order
   "Session ids for `channel` in navigator order, computed from CHEAP facts only:
@@ -4464,7 +4475,7 @@
                       [(cond (seq (get waiting (str id))) 0
                              (or (:current-turn entry) (get live (str id))) 1
                              :else 2)
-                       (unchecked-negate (record-recency-ms record entry (get stats (str id))))
+                       (unchecked-negate (record-recency-ms record (get stats (str id))))
                        (str id)])))
          (mapv :id))))
 

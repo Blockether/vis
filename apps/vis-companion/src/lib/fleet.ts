@@ -511,8 +511,15 @@ function dateMillis(value?: string): number {
   return Number.isFinite(millis) ? millis : 0;
 }
 
+/**
+ * When a row last moved, for ORDERING: content time only.
+ *
+ * `last_active_at` is deliberately not read. It is the gateway's TOUCH clock (any
+ * event, a model switch, a daemon start re-stamping the whole fleet), so ranking by
+ * it made merely opening a session the freshest thing on the list.
+ */
 function sessionMillis(session: Session): number {
-  return dateMillis(session.modified_at ?? session.last_active_at ?? session.created_at);
+  return dateMillis(session.modified_at ?? session.created_at);
 }
 
 /**
@@ -694,7 +701,7 @@ export function machineProject(machine: FleetMachine | null): MachineProject | n
       best = {
         path,
         whenMs,
-        when: session.modified_at ?? session.last_active_at ?? session.created_at ?? null,
+        when: session.modified_at ?? session.created_at ?? null,
       };
   }
   if (!best) return null;
