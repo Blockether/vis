@@ -94,6 +94,19 @@
       (expect (nil? (vd/sighted-model (blind-fleet))))
       (expect (false? (vd/available? (blind-fleet))))
       (expect (true? (vd/available? (mixed-fleet)))))
+  ;; Regression: Vis passes router-SHAPED config maps around (its own
+  ;; `resolve-effective-model` is structural for exactly that reason), but this probe
+  ;; went straight to svar's stateful resolver — a router with no live provider state
+  ;; threw an NPE from inside request assembly and killed the whole turn, images or no
+  ;; images.
+  (it "treats a router it cannot resolve as a blind fleet instead of throwing"
+      (let [config-shaped {:providers [{:id :zai-coding-plan :models [{:name "glm-5-turbo"}]}]}]
+        (expect (nil? (vd/sighted-model config-shaped)))
+        (expect (false? (vd/available? config-shaped)))
+        (expect (nil? (vd/describe-images config-shaped "ctx" [(image "/tmp/a.png")])))
+        (expect (= {} (vd/describe-attachments config-shaped "ctx" [(image "/tmp/a.png")])))
+        (expect (nil? (vd/sighted-model nil)))
+        (expect (false? (vd/available? nil)))))
   (it "asks with a vision-required routing and an agent-initiated header"
       (let
         [{:keys [calls]}

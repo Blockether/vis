@@ -98,9 +98,22 @@
 
 (defn sighted-model
   "Descriptor of the model this fleet would use to LOOK at an image, or nil when no
-   configured provider carries `:vision`. Cheap: pure router arithmetic, no I/O."
+   configured provider carries `:vision`. Cheap: router arithmetic, no I/O.
+
+   TOTAL BY CONTRACT. The probe runs INSIDE request assembly and its answer is only
+   ever an OFFER — nil means the caller keeps today's blind behaviour, so nothing
+   here is worth failing a turn over. Two ways it can fail on a healthy session:
+   svar's resolver reads live provider state and throws on provider/model
+   combinations it rejects, and Vis passes router-SHAPED config maps around (its own
+   `resolve-effective-model` is structural for exactly that reason). A probe that
+   propagated would abort turns that carry no images at all."
   [router]
-  (when router (svar-router/resolve-effective-model router DESCRIBE_ROUTING)))
+  (when (map? router)
+    (try (svar-router/resolve-effective-model router DESCRIBE_ROUTING)
+         (catch Throwable t
+           (tel/log! {:level :debug :id ::sight-probe-failed :data {:error (ex-message t)}}
+                     "Vision-capability probe failed; treating the fleet as blind")
+           nil))))
 
 (defn available?
   "True when the fallback is on AND some configured model can actually see."

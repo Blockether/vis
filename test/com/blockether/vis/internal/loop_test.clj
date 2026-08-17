@@ -1965,6 +1965,15 @@
                                          :models [{:name "seer" :capabilities #{:chat :vision}}]}])]
           (expect (fn? ((describer) {:router router} "ctx")))))
 
+    ;; Regression: a router-SHAPED config map (no live provider state) made the sight
+    ;; probe throw an NPE out of svar's resolver, so a plain text turn — no images
+    ;; anywhere near it — died on the way into the request.
+    (it "is nil for a router-shaped config map, and never throws"
+        (expect (nil? ((describer)
+                       {:router {:providers [{:id :zai-coding-plan
+                                              :models [{:name "glm-5-turbo"}]}]}}
+                       "ctx"))))
+
     (it "is nil while the vision_fallback_describe toggle is off"
         (let [router (svar/make-router [{:id :seeing
                                          :api-key "k"
