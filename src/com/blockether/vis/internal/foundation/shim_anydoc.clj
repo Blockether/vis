@@ -34,11 +34,15 @@
    What this namespace does own is the CACHE. Converting a PDF costs orders of
    magnitude more than searching it, and a corpus gets asked more than one
    question, so every conversion is memoized on the CONTENT hash of the bytes
-   plus the options — an LRU with a per-entry budget, the same shape as
-   `internal/fff-index`'s pool. Two questions about the same 200-file corpus
+   plus the options - an LRU bounded three ways: how many documents stay
+   resident, how large one payload may be, and how many characters the WHOLE
+   cache may hold, the same shape as `internal/fff-index`'s pool. Two questions
+   about the same 200-file corpus
    convert it once. The sandbox never sees that cache: there is no info door and
-   no clear door in the Python surface — it evicts least-recently-used and keeps
-   itself in budget."
+   no clear door in the Python surface - it evicts least-recently-used and keeps
+   itself inside every budget it declares. That is what bounds the host's
+   resident set: the cache outlives the session that filled it, so a bound on the
+   ENTRY COUNT alone would not be a bound on memory at all."
   (:require [clojure.string :as str]
             [com.blockether.imaging :as im]
             [com.blockether.vis.core :as vis])
@@ -63,20 +67,34 @@
   32)
 
 (def ^:private cache-entry-budget
-  "Largest wire payload (Markdown + plain text + base64 assets, in characters)
-   worth keeping. A 40 MB scanned PDF is converted and answered, never cached —
-   one of those would evict the whole corpus around it."
+  "Largest wire payload worth keeping, in characters - every string it holds:
+   Markdown, plain text, the block structure and the base64 of each embedded
+   binary. A 40 MB scanned PDF is converted and answered, never cached - one of
+   those would evict the whole corpus around it."
   4000000)
+
+(def ^:private cache-total-budget
+  "How many characters stay resident across the WHOLE cache. The cache is a
+   `defonce` that outlives every session feeding it, and one document's payload
+   can be its embedded binaries rather than its prose, so entry COUNT is not a
+   memory bound: thirty-two image-heavy PDFs would be gigabytes. Past this, the
+   least-recently-used tail is dropped and re-converted on demand."
+  32000000)
 
 ;; Nothing outside this namespace can see the cache: the sandbox has no door that
 ;; reports or empties it, so it carries no counters for anybody to read - only
 ;; what eviction itself needs.
-(defonce ^:private conversion-cache (atom {:entries {} :order []}))
+(defonce ^:private conversion-cache (atom {:entries {} :order [] :chars {}}))
 
 (defn- entry-chars
-  "Approximate resident cost of one wire payload, in characters."
+  "Approximate resident cost of one wire payload, in characters: every string it
+   holds, so the block structure and the base64 of each embedded binary - the
+   part that actually fills the heap - weigh what they cost."
   ^long [payload]
-  (long (reduce + 0 (map #(count (str (get payload %))) ["markdown" "text"]))))
+  (long (cond (string? payload) (count payload)
+              (map? payload) (reduce + 0 (map entry-chars (vals payload)))
+              (sequential? payload) (reduce + 0 (map entry-chars payload))
+              :else 0)))
 
 (defn- cache-take
   "Move `key` to the most-recently-used end."
@@ -84,24 +102,23 @@
   (assoc state :order (conj (vec (remove #(= % key) (:order state))) key)))
 
 (defn- cache-put
-  "Store `payload` under `key`, then evict the least-recently-used entries down
-   to `cache-entries`."
+  "Store `payload` under `key`, then evict least-recently-used entries until the
+   cache is inside BOTH bounds: at most `cache-entries` documents, holding at
+   most `cache-total-budget` characters between them."
   [state key payload]
-  (let
-    [state
-     (-> state
-         (assoc-in [:entries key] payload)
-         (cache-take key))
-
-     over
-     (- (count (:order state)) (long cache-entries))]
-
-    (if (pos? over)
-      (let [evicted (take over (:order state))]
-        (-> state
-            (update :entries #(apply dissoc % evicted))
-            (update :order #(vec (drop over %)))))
-      state)))
+  (loop
+    [state (-> state
+               (assoc-in [:entries key] payload)
+               (assoc-in [:chars key] (entry-chars payload))
+               (cache-take key))]
+    (if (and (<= (count (:order state)) (long cache-entries))
+             (<= (long (reduce + 0 (vals (:chars state)))) (long cache-total-budget)))
+      state
+      (recur (let [oldest (first (:order state))]
+               (-> state
+                   (update :entries dissoc oldest)
+                   (update :chars dissoc oldest)
+                   (update :order #(vec (rest %)))))))))
 
 (defn- cached
   "`(f)`, memoized on `key`. Misses that fit the budget become the new MRU entry."
@@ -243,7 +260,7 @@
           "corpus that cites page, section, line and a snippet. "
           "Conversions are cached on the content hash, so a second question about a corpus "
           "converts nothing.")
-     :ext/version "0.3.0"
+     :ext/version "0.3.1"
      :ext/author "Blockether"
      :ext/owner "vis"
      :ext/license "Apache-2.0"
@@ -280,6 +297,7 @@
             "why each document scored; `results.suggestions` answers a typo; `results.skipped` "
             "names files that could not be read; `results.total_matches`/`.is_truncated` never "
             "lie about a capped search. Conversions are cached in the host on the content "
+            "hash - a bounded LRU that evicts itself, with no door of its own - so "
             "`doc.search(...)` and a second corpus question cost no conversion. "
             "Errors are typed and catchable: `QueryError` (with the offending column), "
             "`DocumentError` (with `.document_id`), `SourceError`, all under `AnydocError`. "

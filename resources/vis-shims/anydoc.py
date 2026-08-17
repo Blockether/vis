@@ -1350,13 +1350,26 @@ def __vis_install_anydoc__():
 
     _documents = {}
     _DOCUMENT_CACHE = 64
+    _DOCUMENT_CACHE_CHARS = 16000000
+
+    def _remember(key, document):
+        """Keep `document` under `key` as the most recent entry, inside both bounds."""
+        _documents.pop(key, None)
+        _documents[key] = (document, len(document.markdown) + len(document.text or ""))
+        while (
+            len(_documents) > _DOCUMENT_CACHE
+            or sum(cost for _, cost in _documents.values()) > _DOCUMENT_CACHE_CHARS
+        ):
+            _documents.pop(next(iter(_documents)))
 
     def _cached_read(path, format):
         """`to_document` memoized on (path, mtime, size) for THIS sandbox session.
 
         The host caches the conversion itself; this also skips re-reading and
         re-encoding the bytes, which is what makes a second question about a
-        directory of PDFs instant.
+        directory of PDFs instant. Bounded by how many documents it holds AND by
+        how many characters they weigh: a corpus of big PDFs must not grow the
+        sandbox without limit.
         """
         try:
             stat = os.stat(path)
@@ -1364,12 +1377,12 @@ def __vis_install_anydoc__():
         except OSError:
             key = None
         if key is not None and key in _documents:
-            return _documents[key], True
+            document = _documents[key][0]
+            _remember(key, document)
+            return document, True
         document = to_document(path, format=format, max_assets=0, blocks=True)
         if key is not None:
-            if len(_documents) >= _DOCUMENT_CACHE:
-                _documents.pop(next(iter(_documents)))
-            _documents[key] = document
+            _remember(key, document)
         return document, False
 
     def _load_path(path, format):

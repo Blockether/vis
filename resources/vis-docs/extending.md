@@ -1112,10 +1112,11 @@ caught anyway. A file merely FOUND under a directory never ends a search: it
 lands in `results.skipped` with its reason. A term nothing matched comes back in
 `results.suggestions` (`{"marhc": ["march"]}`), which is how a typo answers.
 
-Conversions are cached in the host on the content HASH (LRU, byte-budgeted), so
-`doc.search(…)` and a second question about the same corpus convert nothing. The
-cache has no door of its own: it evicts least-recently-used and stays in budget
-without anybody asking.
+Conversions are cached in the host on the content HASH, so `doc.search(…)` and a
+second question about the same corpus convert nothing. The cache has no door of
+its own: it evicts least-recently-used down to how many documents it may hold,
+how large one may be and how many characters they weigh TOGETHER - assets and
+block structure included, since that is what a scanned PDF actually costs.
 
 ---
 

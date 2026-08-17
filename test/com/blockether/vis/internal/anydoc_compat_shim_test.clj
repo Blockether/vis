@@ -553,7 +553,41 @@
                    (dotimes [n (* 4 (long @#'shim-anydoc/cache-entries))]
                      (convert-once n))
                    (expect (>= (long @#'shim-anydoc/cache-entries)
-                               (count (:entries @@#'shim-anydoc/conversion-cache)))))))
+                               (count (:entries @@#'shim-anydoc/conversion-cache))))))
+             ;; The heavy part of a payload is its base64 assets and its blocks, and a
+             ;; budget that weighed only the Markdown let an image-heavy corpus stay
+             ;; resident without any bound at all.
+             (it "weighs every string in a payload, not just its prose"
+                 (let
+                   [asset-heavy
+                    {"markdown" "tiny"
+                     "text" ""
+                     "blocks" [{"text" (apply str (repeat 100 "b"))}]
+                     "assets" [{"bytes" (apply str (repeat 4000 "A"))}]}
+
+                    key
+                    ["vis-anydoc-asset-weight"]]
+
+                   (expect (= 4104 (long (@#'shim-anydoc/entry-chars asset-heavy))))
+                   (with-redefs [shim-anydoc/cache-entry-budget 1000]
+                     (expect (= asset-heavy (@#'shim-anydoc/cached key (constantly asset-heavy))))
+                     (expect (not (contains? (:entries @@#'shim-anydoc/conversion-cache) key))))))
+             ;; An entry count is not a memory bound: the cache outlives the session that
+             ;; filled it, so thirty-two asset-heavy documents would sit in the host for
+             ;; the rest of the day.
+             (it "evicts down to the character budget, not just the entry count"
+                 (with-redefs [shim-anydoc/cache-total-budget 5000]
+                   (let
+                     [payload (fn [n]
+                                {"markdown" (apply str (repeat 2000 (str n))) "text" ""})
+                      state (reduce (fn [state n]
+                                      (@#'shim-anydoc/cache-put state [n] (payload n)))
+                                    {:entries {} :order [] :chars {}}
+                                    (range 10))]
+
+                     (expect (= 2 (count (:entries state))))
+                     (expect (= [[8] [9]] (:order state)))
+                     (expect (>= 5000 (long (reduce + 0 (vals (:chars state))))))))))
 
 (defdescribe anydoc-refusal-test
              (it "names the document, the source and the format when a document cannot be read"
@@ -578,6 +612,43 @@
                                   "except TypeError as err:" "    out.append(type(err).__name__)"
                                   "    out.append('not int' in str(err) or 'not 42' in str(err))"
                                   "out"))))))))
+
+;; The sandbox keeps its OWN memo of the documents it has read, and it was bounded
+;; only by how many it held: sixty-four scanned PDFs stayed in the context whatever
+;; they weighed. There is no door on it by design, so the bound is proven where it
+;; lives - through the closure the shim builds it in.
+(defdescribe
+  anydoc-sandbox-cache-test
+  (it "bounds its own document memo by weight and keeps the most recently used"
+      (let
+        [dir (corpus (into {}
+                           (for [n (range 70)]
+                             [(str "city-" n ".csv")
+                              (.getBytes ^String (str "city,people\nOslo," n "\n"))])))]
+        (with-fs-context
+          dir
+          (expect
+            (= [true true true true true]
+               (ev python-context
+                   (py "import anydoc"
+                       "def cell(fn, name):"
+                       "    cells = dict(zip(fn.__code__.co_freevars, fn.__closure__))"
+                       "    return cells[name].cell_contents"
+                       "sources = cell(anydoc.search, '_sources')"
+                       "reader = cell(cell(sources, '_load_path')('unused', None), '_cached_read')"
+                       "remember = cell(reader, '_remember')"
+                       "documents = cell(remember, '_documents')"
+                       "limit = cell(remember, '_DOCUMENT_CACHE')"
+                       "budget = cell(remember, '_DOCUMENT_CACHE_CHARS')"
+                       (str "anydoc.search('Oslo', '" dir "')")
+                       "held = len(documents)"
+                       (str "anydoc.search('Oslo', '" dir "')")
+                       "oldest = list(documents)[0]"
+                       "anydoc.search('Oslo', oldest[0])" "[held == limit,"
+                       " len(documents) == held,"
+                       " all(cost > 0 for _, cost in documents.values()),"
+                       " sum(cost for _, cost in documents.values()) <= budget,"
+                       " list(documents)[-1] == oldest and list(documents)[0] != oldest]"))))))))
 
 ;; Regression, session 5c1a7e9f-30cc-443f-903a-9545a7c84704: `to_document(path)`
 ;; refused the path as "not bytes-like" and `to_markdown(raw_bytes)` handed the
