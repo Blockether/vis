@@ -935,6 +935,41 @@
                  (expect (< elapsed 15000)
                          (str "collect-garbage! blocked on the GIL for " elapsed "ms")))))
 
+(defdescribe persist-session-defs-budget-test
+             ;; Regression: `persist-session-defs!` runs on the turn thread right after EVERY
+             ;; block and one line BEFORE the turn's outcome is persisted, and "best effort"
+             ;; covered only a THROW. A context whose guest snapshot never comes back - in
+             ;; production a GIL leaked by a block cancelled at a GIL boundary, where the eval
+             ;; parks in `PythonContext.acquireGil` - held the turn worker forever: no terminal
+             ;; ever reached the durable turn row, the turn stayed `:running` in every listing,
+             ;; and the next cancel was refused as `:not-running`, so pressing stop did nothing.
+             (it "returns within its budget when the guest snapshot never returns"
+                 (let
+                   [ctx
+                    (:python-context (ep/create-python-context {}))
+
+                    sid
+                    (str "vis-test-defs-budget-" (System/nanoTime))
+
+                    _
+                    (ep/run-python-block ctx
+                                         (str "import time\n" "def __vis_defs_snapshot__():\n"
+                                              "    time.sleep(30)\n" "    return ''\n"))
+
+                    started
+                    (System/currentTimeMillis)
+
+                    out
+                    (ep/persist-session-defs! ctx sid)
+
+                    elapsed
+                    (- (System/currentTimeMillis) started)]
+
+                   (try (expect (nil? out))
+                        (expect
+                          (< elapsed 15000)
+                          (str "persist-session-defs! held the turn thread for " elapsed "ms"))
+                        (finally (.delete (io/file (paths/sandbox-defs-file sid))))))))
 (defdescribe
   sandbox-open-flush-test
   ;; GraalPy does NOT refcount, so the CPython idiom

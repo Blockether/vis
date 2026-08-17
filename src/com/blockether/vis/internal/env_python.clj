@@ -2583,18 +2583,54 @@
   [python-context code]
   {:source code :result (->clj (.eval ^Context python-context "python" (str code)))})
 
-(def ^:private gc-gil-budget-ms
-  "How long [[collect-garbage!]] may wait for the Python GIL before giving up.
+(def ^:private gil-budget-ms
+  "How long best-effort guest work may wait for the Python GIL before giving up.
 
-   Small on purpose: this runs in `loop/send!`'s `finally`, i.e. AFTER the turn's
-   answer exists and BEFORE the gateway lands the turn's terminal event."
+   Small on purpose: [[collect-garbage!]] runs in `loop/send!`'s `finally` and
+   [[persist-session-defs!]] right after EVERY block, i.e. AFTER the turn's answer
+   exists and BEFORE the gateway lands the turn's terminal event."
   2000)
 
-(def ^:private gc-in-flight
-  "Context identities with an abandoned [[collect-garbage!]] thread still parked on
-   the GIL. Without it every subsequent turn of that session would add another
-   parked thread to a GIL its dead owner will never release."
+(def ^:private detached-guest-work
+  "Keys - `[context-identity purpose]` - whose best-effort guest thread was abandoned
+   still parked on the GIL. Without it every subsequent turn of that session would add
+   another parked thread to a GIL its dead owner will never release."
   (java.util.concurrent.ConcurrentHashMap/newKeySet))
+
+(defn- run-detached-guest-work!
+  "Run `work-fn` on a daemon thread named `thread-name` and wait at most
+   [[gil-budget-ms]] for its value; nil when the budget expires or an earlier run for
+   `key` is still parked.
+
+   THE guard for best-effort guest work that sits between the engine unwinding and
+   `gateway.state/run-turn!` appending the turn's terminal event. `.eval` first acquires
+   this context's Python GIL. In-flight guest work is NOT what holds it up - GraalPy
+   releases the GIL around foreign calls (`PythonContext.releaseGilAroundForeignCall`;
+   `PythonLanguage.shouldGilBeLockedDuringForeignCalls` defaults to false), which is why
+   a sibling thread keeps ticking through a whole `sh.wait`. What blocks here is a
+   LEAKED GIL: a guest thread `Thread.interrupt`-ed at a GIL boundary and then abandoned
+   dies inside `PythonContext.ensureGilAfterFailure`, which takes the lock
+   UNINTERRUPTIBLY, and a `ReentrantLock` whose owner is dead is never released by
+   anyone. Waiting for that is unbounded AND uninterruptible: a cancelled token does not
+   unpark `PythonContext.acquireGil`. One such context wedged a finished turn forever -
+   no `turn.completed` / `turn.cancelled` on the wire, the session pinned to a turn
+   nobody was running, the queued backlog never drained, and every channel showed a live
+   panel that Esc could not close. So give it a budget and walk away; the abandoned
+   daemon thread finishes whenever the GIL frees. `rt/guest-safepoint!` is what keeps a
+   cancel from leaking one in the first place."
+  [key thread-name work-fn]
+  (when (.add ^java.util.Set detached-guest-work key)
+    (let [done (promise)]
+      (doto (Thread. ^Runnable
+                     (fn []
+                       (try (deliver done (work-fn))
+                            (catch Throwable _ nil)
+                            (finally (.remove ^java.util.Set detached-guest-work key)
+                                     (deliver done nil))))
+                     ^String thread-name)
+        (.setDaemon true)
+        (.start))
+      (deref done gil-budget-ms nil))))
 
 (defn collect-garbage!
   "Best-effort GC between turns. Two steps, because GraalPy reclaims
@@ -2606,42 +2642,19 @@
         graalpython IMPLEMENTATION_DETAILS: the guest collect ALONE does not free
         non-cyclic native objects whose only managed ref was just dropped).
    Runs while the interpreter is idle between turns, the cheapest time for a
-   pause. Never throws; a closed/cancelled context is ignored.
-
-   BOUNDED, and that is the whole point. `.eval` first acquires this context's
-   Python GIL. In-flight guest work is NOT what holds it up — GraalPy releases
-   the GIL around foreign calls (`PythonContext.releaseGilAroundForeignCall`;
-   `PythonLanguage.shouldGilBeLockedDuringForeignCalls` defaults to false), which
-   is why a sibling thread keeps ticking through a whole `sh.wait`. What blocks
-   here is a LEAKED GIL: a guest thread `Thread.interrupt`-ed at a GIL boundary
-   and then abandoned dies inside `PythonContext.ensureGilAfterFailure`, which
-   takes the lock UNINTERRUPTIBLY, and a `ReentrantLock` whose owner is dead is
-   never released by anyone. Waiting for that is unbounded AND uninterruptible (a
-   cancelled token does not unpark `PythonContext.acquireGil`), and it sits
-   between the engine unwinding and `gateway.state/run-turn!` appending the
-   terminal event. One such context wedged a finished turn forever: no
-   `turn.completed` / `turn.cancelled` on the wire, the session pinned to a turn
-   nobody was running, the queued backlog never drained, and every channel showed
-   a live panel that Esc could not close. GC is best effort, so give it a budget
-   and walk away; the abandoned daemon thread completes the collect whenever the
-   GIL frees. `rt/guest-safepoint!` is what keeps a cancel from leaking one in
-   the first place."
+   pause. Never throws; a closed/cancelled context is ignored, and a wedged one
+   costs [[run-detached-guest-work!]]'s budget instead of the turn."
   [environment]
   (when-let [python-context (:python-context environment)]
-    (let [k (System/identityHashCode python-context)]
-      (when (.add ^java.util.Set gc-in-flight k)
-        (let [done (promise)]
-          (doto (Thread. ^Runnable
-                         (fn []
-                           (try (.eval ^Context python-context "python" "import gc\ngc.collect()")
-                                (catch Throwable _ nil)
-                                (finally (.remove ^java.util.Set gc-in-flight k)
-                                         (deliver done true))))
-                         "vis-python-gc")
-            (.setDaemon true)
-            (.start))
-          ;; Layer 2 only pays off once the guest collect actually ran.
-          (when (deref done gc-gil-budget-ms nil) (try (System/gc) (catch Throwable _ nil))))))))
+    ;; Layer 2 only pays off once the guest collect actually ran.
+    (when (run-detached-guest-work!
+            [(System/identityHashCode python-context) :gc]
+            "vis-python-gc"
+            (fn []
+              (try (.eval ^Context python-context "python" "import gc\ngc.collect()")
+                   (catch Throwable _ nil))
+              true))
+      (try (System/gc) (catch Throwable _ nil)))))
 
 (defn- prose-leading-syntax-hint
   "When a `:python/syntax` failure came from a reply that OPENED with PROSE — the
@@ -3530,38 +3543,45 @@
 (defn persist-session-defs!
   "Write this session's own `def`s beside the session, for a LATER process.
 
-   Globals persist naturally across turns because the interpreter does — but the
+   Globals persist naturally across turns because the interpreter does - but the
    interpreter dies with the PROCESS. Restart the gateway and every helper the
    session refined is gone while the transcript still shows it, so the next call
    is a NameError against code the model can still read. `__vis_defs_snapshot__`
    renders the module aliases, scalar constants and function sources that
    re-create them; this stores that text at `paths/sandbox-defs-file`.
 
-   Best effort and never in a block's way: any failure is dropped. Returns the
-   file when it wrote one, nil otherwise."
+   Best effort and never in a block's way - which covers BLOCKING, not just throwing:
+   this runs on the turn thread after every block, one line before the turn's outcome
+   is persisted, so it is bounded by [[run-detached-guest-work!]]. Returns the file
+   when it wrote one, nil otherwise."
   [python-context session-id]
   (when (and python-context session-id)
-    (try
-      (let
-        [v
-         (.eval ^Context python-context "python" "__vis_defs_snapshot__()")
+    (run-detached-guest-work!
+      [(System/identityHashCode python-context) :defs]
+      "vis-python-defs"
+      (fn []
+        (try (let
+               [v
+                (.eval ^Context python-context "python" "__vis_defs_snapshot__()")
 
-         src
-         (when (and v (.isString ^Value v)) (.asString ^Value v))
+                src
+                (when (and v (.isString ^Value v)) (.asString ^Value v))
 
-         f
-         (io/file (paths/sandbox-defs-file (str session-id)))]
+                f
+                (io/file (paths/sandbox-defs-file (str session-id)))]
 
-        (cond
-          ;; Nothing defined (or every helper deleted): drop the stale file so a
-          ;; restart restores exactly what the session has now, not what it had.
-          (str/blank? src)
-          (do (swap! last-session-defs dissoc session-id) (when (.exists f) (.delete f)) nil)
-          (> (count src) (long session-defs-max-bytes)) nil
-          (= src (get @last-session-defs session-id)) nil
-          :else
-          (do (io/make-parents f) (spit f src) (swap! last-session-defs assoc session-id src) f)))
-      (catch Throwable _ nil))))
+               (cond
+                 ;; Nothing defined (or every helper deleted): drop the stale file so a
+                 ;; restart restores exactly what the session has now, not what it had.
+                 (str/blank? src)
+                 (do (swap! last-session-defs dissoc session-id) (when (.exists f) (.delete f)) nil)
+                 (> (count src) (long session-defs-max-bytes)) nil
+                 (= src (get @last-session-defs session-id)) nil
+                 :else (do (io/make-parents f)
+                           (spit f src)
+                           (swap! last-session-defs assoc session-id src)
+                           f)))
+             (catch Throwable _ nil))))))
 
 (defn restore-session-defs!
   "Re-create the helper definitions an EARLIER process persisted for `session-id`.
