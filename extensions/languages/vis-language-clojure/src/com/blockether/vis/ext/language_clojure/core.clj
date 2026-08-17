@@ -20,7 +20,6 @@
             [com.blockether.vis.ext.language-clojure.paren-repair :as repair]
             [com.blockether.vis.ext.language-clojure.lint :as lint]
             [com.blockether.vis.ext.language-clojure.reflection :as reflection]
-            [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
             [com.blockether.vis.ext.language-clojure.nrepl-ctx :as nrepl-ctx]
             [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
             [com.blockether.vis.ext.language-clojure.test-runner :as test-runner]
@@ -128,7 +127,8 @@
   ;; shape (keyword keys/values) — that projection is what crosses to the model,
   ;; and its strings-only migration lives in resources.clj (flagged hand-off).
   (when (and session-id
-             (#{"started" "starting" "already-running" "connected"} (get result "result"))
+             (#{"started" "starting" "already-running" "connected" "reconnected"}
+              (get result "result"))
              (or (get result "pid") (get result "port")))
     (let
       [;; Prefer the aliases start! actually booted with (STRING names) so the
@@ -137,8 +137,10 @@
        aliases
        (or (seq (get result "aliases")) (map name (or aliases [])))
 
+       ;; An ATTACHMENT carries its OWN id (`nrepl:~/proj#app`) so it can sit in
+       ;; the registry BESIDE the managed REPL for the same dir.
        id
-       (repl-resource-id dir)
+       (or (get result "id") (repl-resource-id dir))
 
        log-path
        (get result "log")
@@ -150,7 +152,10 @@
        (boolean (get result "external"))
 
        ext-host
-       (get result "host")]
+       (get result "host")
+
+       build
+       (get result "build")]
 
       (vis/register-resource!
         session-id
@@ -158,7 +163,8 @@
          :kind :nrepl
          :label (str "nREPL "
                      (.getName (io/file dir))
-                     (when external? " (external)")
+                     (cond build (str " (shadow-cljs " build ")")
+                           external? " (external)")
                      (when (seq aliases) (apply str (map #(str " :" %) aliases))))
          :status status
          ;; `:detail` is passed THROUGH verbatim by resources.clj/->data (it only
@@ -173,6 +179,11 @@
                      (or ext-host "localhost") "external"
                      true)
 
+                   build
+                   (assoc "build"
+                     build "dialect"
+                     (get result "dialect"))
+
                    (seq aliases)
                    (assoc "aliases" (vec aliases))
 
@@ -183,7 +194,11 @@
          :language :clojure}
         (cond->
           {:stop-fn (fn []
-                      (repl-manager/stop! session-id dir))
+                      ;; vis kills only what it spawned: an attachment is dropped,
+                      ;; never destroyed.
+                      (if external?
+                        (repl-manager/detach! session-id dir)
+                        (repl-manager/stop! session-id dir)))
            ;; Keep a FAILED REPL visible (alive while a failure is on
            ;; record) instead of letting the registry prune it the moment
            ;; the pid dies — the failure + its log tail stay inspectable
@@ -194,7 +209,9 @@
            ;; "alive, but is it WORKING?" — the registry probes this on
            ;; every list/render and flips `status` to reality.
            :health-fn (fn []
-                        (repl-manager/health session-id dir))}
+                        (if external?
+                          (repl-manager/attachment-health session-id dir)
+                          (repl-manager/health session-id dir)))}
           log-path
           (assoc :logs-fn
             (fn []
@@ -218,7 +235,15 @@
      \"start\"   — start a project nREPL subprocess (always allowed)
      \"stop\"    — stop a Vis-managed nREPL / DETACH an external one (always allowed)
      \"connect\" — attach to an EXTERNAL user-started nREPL: opts {\"port\": N,
-                 \"host\"?: S (default localhost)}; vis never spawns/kills it
+                 \"host\"?: S (default localhost), \"build\"?: S}; vis never
+                 spawns/kills it. \"build\" names a shadow-cljs build and makes it
+                 a ClojureScript REPL: that build is selected in the session every
+                 later repl_eval reuses, so the eval lands in its JS runtime. With
+                 a \"build\" and no \"port\", the port is read from the project's own
+                 .shadow-cljs/nrepl.port. An attachment is INDEPENDENT of the
+                 managed REPL for the same \"cwd\" — both live at once, each under
+                 its own id (`nrepl:~/proj` and `nrepl:~/proj#app`), so a
+                 ClojureScript attach never costs you the JVM REPL.
 
    \"cwd\" runs the REPL in a subdir (e.g. an extension) instead of the workspace
    root — that's how MULTIPLE REPLs coexist, each addressed by its id. \"aliases\"
@@ -260,27 +285,35 @@
           (get opts "port")
 
           host
-          (get opts "host")]
+          (get opts "host")
 
-         (when-not port
+          build
+          (get opts "build")]
+
+         (when-not (or port build)
            (throw (ex-info (str "repl \"connect\" needs {\"port\": <the external nREPL's port>}"
-                                " (optional \"host\", \"cwd\") — e.g."
-                                " repl(\"clojure\", \"connect\", {\"port\": 7888})")
+                                " — or {\"build\": \"app\"} to attach to the shadow-cljs watch"
+                                " running under \"cwd\" (it publishes its own port)."
+                                " Optional \"host\", \"cwd\" — e.g."
+                                " repl(\"clojure\", \"connect\", {\"port\": 7888}) /"
+                                " repl(\"clojure\", \"connect\", {\"build\": \"app\"})")
                            {:type :clj/bad-args :got opts})))
          (let
            [r (repl-manager/connect!
                 sid
                 dir
                 {:host host
-                 :port (if (string? port) (Long/parseLong (str/trim port)) (long port))})]
+                 :port (when port (if (string? port) (Long/parseLong (str/trim port)) (long port)))
+                 :build build})]
            (register-repl-resource! sid dir aliases r)
            (extension/success {:result r})))
 
        "stop"
-       (let [r (repl-manager/stop! sid dir)]
+       (let [r (if (get opts "build") (repl-manager/detach! sid dir) (repl-manager/stop! sid dir))]
          ;; Drop the session's resource mirror (best-effort; the thunk
-         ;; already ran the real teardown above).
-         (vis/unregister-resource! sid (repl-resource-id dir))
+         ;; already ran the real teardown above). The result names WHICH repl
+         ;; went — a dir can hold both a managed REPL and an attachment.
+         (vis/unregister-resource! sid (or (get r "id") (repl-resource-id dir)))
          (extension/success {:result r}))
 
        "start"
@@ -423,20 +456,24 @@
       (resolve-repl-dir root (get m "cwd"))
 
       run
-      (fn [h p repl-label]
+      (fn [target repl-label]
         ;; Carry the evaluated FORM back on the result (string key, crosses the
         ;; strings-only boundary) so the repl_eval op-card can show it in the
         ;; collapsed chip / expanded FORM section. `repl` names WHICH nREPL
         ;; actually ran it, so a multi-REPL session reports the target used.
-        (-> (nrepl-client/eval!
-              {:host h :port p :code code :ns ns :pretty? true :timeout-ms (or timeout_ms 30000)})
+        ;; The eval goes through repl-manager, not straight to the client: a
+        ;; target attached to a shadow-cljs BUILD has to have that build selected
+        ;; in the nREPL session first, or the same code answers as JVM Clojure.
+        (-> (repl-manager/eval! sid
+                                (assoc target :host (or (:host target) host))
+                                {:code code :ns ns :pretty? true :timeout-ms (or timeout_ms 30000)})
             strip-blank-repl-fields
             (assoc "code" code
                    "repl" repl-label)))]
 
      (if port
        ;; Explicit port: the escape hatch — dial exactly what was asked.
-       (extension/success {:result (run host port (str host ":" port))})
+       (extension/success {:result (run {:host host :port port} (str host ":" port))})
        ;; Resolve a RUNNING REPL. A missing/unknown REPL is an EXPECTED,
        ;; actionable condition — catch it and return a TIGHT failure envelope
        ;; so the model sees just the one-line message + hint, NOT the raw
@@ -445,8 +482,7 @@
        (try (let [target (repl-manager/resolve-target! sid rid default-dir)]
               ;; An EXTERNAL attachment may live on a non-localhost host — dial ITS
               ;; host, not the caller's default.
-              (extension/success {:result
-                                  (run (or (:host target) host) (:port target) (:id target))}))
+              (extension/success {:result (run target (:id target))}))
             (catch clojure.lang.ExceptionInfo e
               (case (:type (ex-data e))
                 :clj/no-repl

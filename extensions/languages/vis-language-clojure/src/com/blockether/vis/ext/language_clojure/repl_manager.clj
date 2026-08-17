@@ -20,11 +20,21 @@
    wins). Unknown `:dev`/`:test` aliases are silently ignored by tools.deps, so
    this is safe in any project.
 
+   ATTACHMENTS: `connect!` registers an EXTERNAL nREPL the user already runs in a
+   SEPARATE `attachments` atom, never in `processes`. They are different kinds:
+   one is a process we own and must eventually kill, the other is an address we
+   were invited to use. Keeping them apart is what lets ONE project have both at
+   once — the managed JVM REPL `repl start` booted for its `.clj`, and the
+   shadow-cljs nREPL its own `watch` runs for the `.cljs` — instead of the second
+   `connect` answering \"already-running\" about the first and handing back a JVM
+   REPL nobody asked for.
+
    Starting/stopping is CORE and ALWAYS allowed — never gated behind a flag."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
+            [com.blockether.vis.ext.language-clojure.shadow-repl :as shadow-repl]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.core :as vis])
   (:import (java.io RandomAccessFile)
@@ -37,6 +47,15 @@
 ;; defonce so a `(require :reload)` during dev never orphans a live child.
 ;; NO on-disk registry: a managed REPL is bound to THIS vis process + session.
 (defonce ^:private processes (atom {}))
+
+;; { [session-id dir] -> {:id :dir :host :port :dialect kw :build str? :target kw?
+;;                        :session-token str? :started-at ms :last-touch ms} }
+;; EXTERNAL nREPLs this session was explicitly told to attach to. Deliberately a
+;; SECOND registry rather than a flag inside `processes`: an attachment owns no
+;; process (nothing to reap, kill or watch for exit) and must be able to coexist
+;; with the managed REPL for the SAME dir — a project's JVM REPL and its
+;; shadow-cljs watch are two live REPLs, not two claims on one slot.
+(defonce ^:private attachments (atom {}))
 
 ;; { [session-id dir] -> monitor Object }. A stable per-key lock so concurrent
 ;; `start!` calls for the SAME [session-id dir] SERIALIZE: the check-then-spawn
@@ -53,11 +72,11 @@
 (defn- alive? [^Process p] (boolean (and p (.isAlive p))))
 
 (defn- proc-alive?
-  "Registry-entry liveness. A MANAGED entry is alive while its subprocess is; an
-   EXTERNAL attachment owns no process — it stays registered until detached (its
-   REAL liveness is the port probe in `health` / `live-repl-for-dir`)."
+  "Registry-entry liveness. `processes` holds ONLY REPLs vis spawned, so an entry
+   is alive exactly while its subprocess is. Attachments have no process to ask —
+   their liveness is the port probe in `health` / `live-repl-for-dir`."
   [info]
-  (if (:external? info) true (alive? (:process info))))
+  (alive? (:process info)))
 
 ;; { [session-id dir] -> {"exit" int? "at" ms "log" path "log_tail" [lines]} }
 ;; Written when a managed launcher dies UNEXPECTEDLY (a startup failure or a
@@ -87,13 +106,21 @@
 
 (defn- touch!
   "Stamp `[session-id dir]`'s REPL as used just now, so the idle reaper spares an
-   actively-worked REPL. No-op when the session owns no REPL for `dir`."
+   actively-worked REPL. Stamps whichever registry holds it — a managed process,
+   an attachment, or both. No-op when the session has neither for `dir`."
   [session-id dir]
-  (let [k [session-id dir]]
-    (swap! processes (fn [m]
-                       (cond-> m
-                         (contains? m k)
-                         (assoc-in [k :last-touch] (System/currentTimeMillis)))))))
+  (let
+    [k
+     [session-id dir]
+
+     stamp
+     (fn [m]
+       (cond-> m
+         (contains? m k)
+         (assoc-in [k :last-touch] (System/currentTimeMillis))))]
+
+    (swap! processes stamp)
+    (swap! attachments stamp)))
 
 (declare ensure-reaper!)
 
@@ -123,8 +150,7 @@
    boot we must WAIT for — never stop+restart it: a restart throws away real
    boot progress and, repeated across evals, spins an endless restart cycle."
   [info]
-  (boolean (and (not (:external? info))
-                (proc-alive? info)
+  (boolean (and (proc-alive? info)
                 (:started-at info)
                 (< (- (System/currentTimeMillis) (long (:started-at info)))
                    (long start-deadline-ms)))))
@@ -162,6 +188,49 @@
   [dir]
   (let [canon (try (.getCanonicalPath (io/file (str dir))) (catch Throwable _ (str dir)))]
     (str "nrepl:" (home-relativize canon))))
+
+(defn- attachment-id
+  "Session-resource id for an EXTERNAL attachment in `dir`. Suffixed so it can
+   never collide with the MANAGED REPL's id for the same dir (both are live at
+   once), and suffixed with the shadow-cljs BUILD when there is one, because that
+   is what the caller thinks it is talking to: `nrepl:~/proj#app`."
+  [dir build]
+  (str (id-of dir) "#" (or build "external")))
+
+(defn- attachment-entry
+  "Keyword-keyed registry view of an attachment — the shape `session-repls`,
+   `live-repl-for-dir` and `resolve-target!` speak."
+  [att]
+  (cond->
+    {:id (:id att)
+     :dir (:dir att)
+     :port (:port att)
+     :host (or (:host att) "localhost")
+     :external? true
+     :dialect (or (:dialect att) :clj)}
+    (:build att)
+    (assoc :build
+      (:build att) :target
+      (:target att) :session-token
+      (:session-token att))))
+
+(defn- attachment-view
+  "Model-facing STRING-keyed view of an attachment: what it is, where it is, and
+   — for shadow-cljs — which build an eval lands in and what that build targets."
+  [att]
+  (cond->
+    {"id" (:id att)
+     "cwd" (:dir att)
+     "status" "up"
+     "external" true
+     "host" (or (:host att) "localhost")
+     "port" (:port att)
+     "dialect" (name (or (:dialect att) :clj))}
+    (:build att)
+    (assoc "build" (:build att))
+
+    (:target att)
+    (assoc "target" (name (:target att)))))
 
 (defn- as-keywords [aliases] (mapv #(if (keyword? %) % (keyword (name %))) aliases))
 
@@ -420,70 +489,85 @@
               :else :starting)))))
 
 (defn status
-  "Live view of THIS session's managed REPL for `dir`. Always safe. Model-facing:
-   STRING keys + STRING enum values (crosses as a tool `:result`)."
+  "Live view of THIS session's REPLs for `dir`. Always safe. Model-facing: STRING
+   keys + STRING enum values (crosses as a tool `:result`).
+
+   The MANAGED REPL is the subject; an EXTERNAL attachment for the same dir rides
+   along under \"attached\" — and IS the subject when there is no managed REPL,
+   because then it is the only REPL this dir has."
   [session-id dir]
   (let
     [{:keys [id port tool aliases pid] :as info}
      (get @processes [session-id dir])
 
      running?
-     (proc-alive? info)]
+     (proc-alive? info)
 
-    (cond->
-      {"result" "status" "id" (or id (id-of dir)) "cwd" dir "status" (if running? "up" "down")}
-      running?
-      (assoc "running" true)
+     att
+     (get @attachments [session-id dir])]
 
-      (and running? port)
-      (assoc "port" port)
+    (if (and att (not running?))
+      (assoc (attachment-view att) "result" "status")
+      (cond->
+        {"result" "status" "id" (or id (id-of dir)) "cwd" dir "status" (if running? "up" "down")}
+        running?
+        (assoc "running" true)
 
-      (and running? tool)
-      (assoc "tool" (name tool))
+        (and running? port)
+        (assoc "port" port)
 
-      (and running? (seq aliases))
-      (assoc "aliases" (mapv name aliases))
+        (and running? tool)
+        (assoc "tool" (name tool))
 
-      (and running? pid)
-      (assoc "pid" pid)
+        (and running? (seq aliases))
+        (assoc "aliases" (mapv name aliases))
 
-      (:external? info)
-      (assoc "external"
-        true "host"
-        (or (:host info) "localhost"))
+        (and running? pid)
+        (assoc "pid" pid)
 
-      ;; The log path is the one MINTED for this very process at spawn, never
-      ;; recomputed: `log-file` mints a fresh name per call, so a derived path
-      ;; would name a file nothing has ever written.
-      (and running? (not (:external? info)) (:log info))
-      (assoc "log" (:log info)))))
+        ;; The log path is the one MINTED for this very process at spawn, never
+        ;; recomputed: `log-file` mints a fresh name per call, so a derived path
+        ;; would name a file nothing has ever written.
+        (and running? (:log info))
+        (assoc "log" (:log info))
+
+        att
+        (assoc "attached" (attachment-view att))))))
+
+(defn attachment-health
+  "Coarse LIVE health of the EXTERNAL attachment for `dir`: :up while its address
+   answers, :down once it stops (or when nothing is attached). An attachment owns
+   no process to watch, so the probe IS its health — never :starting or :failed."
+  [session-id dir]
+  (let [att (get @attachments [session-id dir])]
+    (if (and att
+             (= :up
+                (:status (nrepl-client/probe! {:host (or (:host att) "localhost")
+                                               :port (:port att)
+                                               :timeout-ms 250}))))
+      :up
+      :down)))
 
 (defn health
   "Coarse LIVE health of THIS session's REPL for `dir`:
-     :up       — process alive (or external attachment) AND the port answers
+     :up       — managed process alive AND the port answers
      :starting — managed process alive, port not answering yet
      :failed   — no live process but an UNEXPECTED death is on record
-     :down     — nothing managed (intentional stop / external gone away)
-   An EXTERNAL attachment has no process to watch, so its health IS the probe:
-   :up or :down, never :starting/:failed. Used as the resource registry's
-   `:health-fn`, so footer/F4/ctx status tracks reality instead of the status
-   frozen at registration time."
+     :down     — nothing managed (intentional stop) and nothing attached
+   With no managed REPL the answer is the ATTACHMENT's health, because for a dir
+   whose only REPL is attached that is the REPL being asked about. Used as the
+   resource registry's `:health-fn`, so footer/F4/ctx status tracks reality
+   instead of the status frozen at registration time."
   [session-id dir]
   (let [info (get @processes [session-id dir])]
-    (cond (:external? info) (if (= :up
-                                   (:status (nrepl-client/probe! {:host (or (:host info)
-                                                                            "localhost")
-                                                                  :port (:port info)
-                                                                  :timeout-ms 250})))
-                              :up
-                              :down)
-          (proc-alive? info) (if (= :up
+    (cond (proc-alive? info) (if (= :up
                                     (:status (nrepl-client/probe! {:host "localhost"
                                                                    :port (:port info)
                                                                    :timeout-ms 250})))
                                :up
                                :starting)
           (last-failure session-id dir) :failed
+          (get @attachments [session-id dir]) (attachment-health session-id dir)
           :else :down)))
 
 (defn start!
@@ -627,39 +711,67 @@
               "message"
               "No deps.edn / project.clj / bb.edn in this directory to start an nREPL."})))))))
 
-(defn stop!
-  "Stop THIS session's REPL for `dir`. A MANAGED subprocess is destroyed
-   (graceful, then forced); an EXTERNAL attachment is only DETACHED — vis never
-   kills a process it did not spawn. The entry is DEREGISTERED FIRST so the
-   `.onExit` watcher reads a managed death as an intentional stop, never a
-   failure; any remembered failure/crash history for `dir` is cleared too.
-   No-op-safe. Model-facing STRING-keyed result."
+(defn detach!
+  "DETACH THIS session's external attachment for `dir`: vis never kills a process
+   it did not spawn, so this drops the address — and evicts the client connection
+   whose socket would otherwise leak — while the user's server keeps running
+   exactly as it was. No-op-safe. Model-facing STRING-keyed result."
   [session-id dir]
   (let
     [k
      [session-id dir]
 
-     {:keys [^Process process external? host port]}
+     {:keys [host port build id]}
+     (get @attachments k)]
+
+    (if-not port
+      {"result" "not-attached"
+       "id" (id-of dir)
+       "cwd" dir
+       "message" "No external nREPL attached to this directory in this session."}
+      (do (swap! attachments dissoc k)
+          ;; The client-side connection cache is keyed by [host port]; a REPL we
+          ;; stop targeting MUST evict it or its transport thread + socket leak
+          ;; for the life of the process.
+          (nrepl-client/evict! (or host "localhost") port)
+          {"result" "detached"
+           "id" id
+           "cwd" dir
+           "message" (str "Detached from external nREPL at "
+                          (or host "localhost")
+                          ":"
+                          port
+                          (when build (str " (shadow-cljs build " build ")"))
+                          " — the process keeps running (vis does not own it).")}))))
+
+(defn stop!
+  "Stop THIS session's REPL for `dir`. A MANAGED subprocess is destroyed (graceful,
+   then forced); the entry is DEREGISTERED FIRST so the `.onExit` watcher reads
+   that death as an intentional stop, never a failure, and any remembered
+   failure/crash history for `dir` is cleared too.
+
+   With no managed REPL but an attachment for `dir`, this DETACHES it: `stop` on
+   the only REPL a dir has must never answer `not-managed` about the one REPL it
+   can see. No-op-safe. Model-facing STRING-keyed result."
+  [session-id dir]
+  (let
+    [k
+     [session-id dir]
+
+     {:keys [^Process process port]}
      (get @processes k)]
 
     (clear-failure! session-id dir)
-    ;; The client-side connection cache is keyed by [host port]; a REPL that
-    ;; goes away MUST evict it or its transport thread + socket leak for the
-    ;; life of the process (ports are per-start, so they never get reused).
-    (when port (nrepl-client/evict! (or host "localhost") port))
-    (cond external? (do (swap! processes dissoc k)
-                        {"result" "detached"
-                         "id" (id-of dir)
-                         "cwd" dir
-                         "message" (str "Detached from external nREPL at "
-                                        (or host "localhost")
-                                        ":"
-                                        port
-                                        " — the process keeps running (vis does not own it).")})
-          process (do (swap! processes dissoc k)
-                      (.destroy process)
-                      (when-not (.waitFor process 3 TimeUnit/SECONDS) (.destroyForcibly process))
-                      {"result" "stopped" "id" (id-of dir) "cwd" dir})
+    (cond process (do
+                    ;; The client-side connection cache is keyed by [host port]; a REPL
+                    ;; that goes away MUST evict it or its transport thread + socket leak
+                    ;; for the life of the process (ports are per-start, never reused).
+                    (when port (nrepl-client/evict! "localhost" port))
+                    (swap! processes dissoc k)
+                    (.destroy process)
+                    (when-not (.waitFor process 3 TimeUnit/SECONDS) (.destroyForcibly process))
+                    {"result" "stopped" "id" (id-of dir) "cwd" dir})
+          (get @attachments k) (detach! session-id dir)
           :else {"result" "not-managed"
                  "id" (id-of dir)
                  "cwd" dir
@@ -667,18 +779,30 @@
 
 (defn connect!
   "Attach THIS session to an EXTERNAL nREPL the USER already runs (their editor
-   jack-in, a `clj -M:nrepl` they launched themselves) — the OPT-IN inverse of
-   `start!`: vis never spawns, never kills, and never reaps the process; it only
-   registers the address so eval/test/ctx target it like a managed REPL.
-   Explicit consent only — nothing ever auto-connects or scans for ports.
+   jack-in, a `clj -M:nrepl`, a `shadow-cljs watch`) — the OPT-IN inverse of
+   `start!`: vis never spawns, never kills and never reaps that process; it only
+   registers the address so eval targets it like a managed REPL. Explicit consent
+   only — nothing ever auto-connects and no port is ever scanned.
 
-   - The address is PROBED FIRST (bounded): a dead host:port is REFUSED
+   Opts `{:host :port :build}`:
+   - `:build` names a shadow-cljs build (\"app\"). It makes this a ClojureScript
+     attachment: the build is SELECTED in the nREPL session every eval reuses, so
+     `repl_eval` lands in that build's JS runtime instead of the JVM the very same
+     server also serves. With no `:port`, the port is read from the project's own
+     `.shadow-cljs/nrepl.port` — the file that watch published, under the dir the
+     caller named.
+   - The address is PROBED first (bounded): a dead host:port is REFUSED
      (\"unreachable\") instead of registered.
-   - An existing live entry for `[session-id dir]` → \"already-running\"
-     (stop/detach it first to switch).
-   - `stop!` on the attachment DETACHES only.
-   Model-facing: STRING keys + STRING enum values."
-  [session-id dir {:keys [host port]}]
+   - An attachment is INDEPENDENT of the MANAGED REPL for the same dir: both stay
+     live, each under its own id. A second connect for the same dir REPLACES the
+     attachment (\"reconnected\"), so changing build or port needs no detach.
+   - `stop!` / `detach!` on it only detaches.
+
+   Every refusal names what to run next: \"no-port\", \"unreachable\",
+   \"not-shadow\" (a plain JVM nREPL has no build to select), \"unknown-build\"
+   (with the ids that server loaded), \"no-watch\" (a build's REPL needs its
+   RUNNING worker), \"select-failed\". Model-facing: STRING keys + STRING enums."
+  [session-id dir {:keys [host port build]}]
   (let
     [host
      (or (some-> host
@@ -686,45 +810,142 @@
                  not-empty)
          "localhost")
 
+     build
+     (some-> build
+             str
+             str/trim
+             not-empty)
+
      port
-     (long port)
+     (or (some-> port
+                 long)
+         (when build (shadow-repl/nrepl-port dir)))
 
      k
-     [session-id dir]]
+     [session-id dir]
 
-    #_{:clj-kondo/ignore [:locking-suspicious-lock]}
-    (locking (start-lock k)
-      (if (proc-alive? (get @processes k))
-        (assoc (status session-id dir) "result" "already-running")
-        (if (= :up (:status (nrepl-client/probe! {:host host :port port :timeout-ms 3000})))
-          (do (swap! processes assoc
-                k
-                {:id (id-of dir)
-                 :process nil
-                 :external? true
-                 :host host
-                 :port port
-                 :dir dir
-                 :started-at (System/currentTimeMillis)
-                 :last-touch (System/currentTimeMillis)})
-              (clear-failure! session-id dir)
-              {"result" "connected"
-               "status" "up"
-               "id" (id-of dir)
+     existing
+     (get @attachments k)]
+
+    (cond
+      (nil? port) {"result" "no-port"
+                   "status" "down"
+                   "cwd" dir
+                   "message" (str "No \"port\" given and no "
+                                  (str/join "/" shadow-repl/port-file-path)
+                                  " under "
+                                  (home-relativize (str dir))
+                                  " — start `shadow-cljs watch "
+                                  build
+                                  "` (it publishes its nREPL port there), or pass {\"port\": N}.")}
+      (not= :up (:status (nrepl-client/probe! {:host host :port port :timeout-ms 3000})))
+      {"result" "unreachable"
+       "status" "down"
+       "cwd" dir
+       "host" host
+       "port" port
+       "message"
+       (str "No nREPL answering at " host ":" port " — is it running? Nothing was registered.")}
+      :else
+      (let
+        [;; Attaching DEFINES this session's starting state, so the cached
+         ;; connection goes first. A connection already SELECTED on a build
+         ;; evaluates everything — including the shadow probe, whose `resolve`
+         ;; does not exist in ClojureScript — inside that build, so a re-connect
+         ;; would misread its own server as \"not shadow-cljs\". A fresh nREPL
+         ;; session is always CLJ, which is exactly what probing and selecting
+         ;; need.
+         _
+         (nrepl-client/evict! host port)
+
+         shadow
+         (when build (shadow-repl/probe! {:host host :port port :build build}))]
+
+        (cond (and build (not (:shadow? shadow)))
+              {"result" "not-shadow"
+               "status" "down"
                "cwd" dir
                "host" host
                "port" port
-               "external" true})
-          {"result" "unreachable"
-           "status" "down"
-           "cwd" dir
-           "host" host
-           "port" port
-           "message" (str "No nREPL answering at "
-                          host
-                          ":"
-                          port
-                          " — is it running? Nothing was registered.")})))))
+               "message"
+               (str "The nREPL at "
+                    host
+                    ":"
+                    port
+                    " is a plain Clojure one — shadow-cljs is not loaded in it, so there is no"
+                    " build to select. Connect without \"build\" for a JVM REPL, or point at the"
+                    " port `shadow-cljs watch "
+                    build
+                    "` published in "
+                    (str/join "/" shadow-repl/port-file-path)
+                    ".")}
+              (and build (not (some #{build} (:builds shadow))))
+              {"result" "unknown-build"
+               "status" "down"
+               "cwd" dir
+               "host" host
+               "port" port
+               "build" build
+               "builds" (:builds shadow)
+               "message" (str "shadow-cljs at " host
+                              ":" port
+                              " knows no build \"" build
+                              "\" — it loaded: " (str/join ", " (:builds shadow))
+                              ". Build ids come from :builds in the shadow-cljs.edn THAT server"
+                              " started with, which need not be the one under this cwd.")}
+              (and build (not (:worker? shadow)))
+              {"result" "no-watch"
+               "status" "down"
+               "cwd" dir
+               "host" host
+               "port" port
+               "build" build
+               "message" (str "shadow-cljs build \""
+                              build
+                              "\" has no watch running. A REPL selects a build's RUNNING worker, so"
+                              " start `shadow-cljs watch "
+                              build
+                              "` first, then connect again.")}
+              :else
+              (let [sel (when build (shadow-repl/select! {:host host :port port :build build}))]
+                (if (and build (not (:selected? sel)))
+                  {"result" "select-failed"
+                   "status" "down"
+                   "cwd" dir
+                   "host" host
+                   "port" port
+                   "build" build
+                   "message" (str "shadow-cljs refused to select build \"" build
+                                  "\": " (:message sel))}
+                  (let
+                    [att {:id (attachment-id dir build)
+                          :dir dir
+                          :host host
+                          :port port
+                          :build build
+                          :target (:target shadow)
+                          :dialect (if build :cljs :clj)
+                          :session-token (:session-token sel)
+                          :started-at (System/currentTimeMillis)
+                          :last-touch (System/currentTimeMillis)}
+                     ;; ONE cheap eval, so the ANSWER to connect already says whether
+                     ;; this build can evaluate at all — a `watch` with no runtime
+                     ;; joined is a perfectly healthy attachment that evaluates
+                     ;; nothing, and finding that out on the next repl_eval reads as
+                     ;; a broken REPL instead of a missing `node`/browser.
+                     ping (when build (shadow-repl/eval! att {:code "1" :timeout-ms 5000}))
+                     att (cond-> att
+                           (:session-token ping)
+                           (assoc :session-token (:session-token ping)))]
+
+                    (swap! attachments assoc k att)
+                    (cond->
+                      (assoc (attachment-view att) "result" (if existing "reconnected" "connected"))
+                      build
+                      (assoc "runtime" (if (:message ping) "none" "connected"))
+
+                      (:message ping)
+                      (assoc "message" (:message ping)))))))))))
 
 (defonce ^:private reaper (atom nil))
 
@@ -743,9 +964,8 @@
          [[[sid dir] info]
           @processes
 
-          ;; An EXTERNAL attachment holds no JVM of ours — never reap it;
-          ;; the user owns that process and chose to connect it.
-          :when (not (:external? info))
+          ;; Only REPLs vis SPAWNED are in here; attachments are the user's own
+          ;; processes and are never reaped, only detached on request.
           :let [t
                 (long (or (:last-touch info) (:started-at info) 0))]
           :when (> (- now t) (long @idle-reap-ms))]
@@ -789,30 +1009,33 @@
 
 (defn session-repls
   "Live REPLs OWNED by (or ATTACHED to) `session-id`, as a vec of
-   `{:id :dir :port :tool :aliases :pid}` (+ `:log` for managed, `:external?
-   :host` for attached) sorted by dir. Prunes dead entries as a side effect.
+   `{:id :dir :port :tool :aliases :pid}` (+ `:log` for managed; `:external? :host
+   :dialect` and, for a shadow-cljs one, `:build :target :session-token` for
+   attached) sorted by dir. Prunes dead managed entries as a side effect.
    This is the SINGLE source of truth for ctx + eval/test targeting — external
-   REPLs enter it ONLY via an explicit `connect!`, never by discovery."
+   REPLs enter it ONLY via an explicit `connect!`, never by discovery.
+
+   Within one dir the MANAGED REPL sorts FIRST, so a dir that has both keeps the
+   JVM REPL as its implicit default and attaching a ClojureScript build never
+   silently redirects an eval that named no target."
   [session-id]
   (prune-dead! session-id)
-  (->> @processes
-       (keep (fn [[[sid _dir] info]]
-               (when (and (= sid session-id) (proc-alive? info))
-                 (cond->
-                   {:id (:id info)
-                    :dir (:dir info)
-                    :port (:port info)
-                    :tool (:tool info)
-                    :aliases (:aliases info)
-                    :pid (:pid info)}
-                   (:external? info)
-                   (assoc :external?
-                     true :host
-                     (or (:host info) "localhost"))
-
-                   (and (not (:external? info)) (:log info))
-                   (assoc :log (:log info))))))
-       (sort-by :dir)
+  (->> (concat (keep (fn [[[sid _dir] info]]
+                       (when (and (= sid session-id) (proc-alive? info))
+                         (cond->
+                           {:id (:id info)
+                            :dir (:dir info)
+                            :port (:port info)
+                            :tool (:tool info)
+                            :aliases (:aliases info)
+                            :pid (:pid info)}
+                           (:log info)
+                           (assoc :log (:log info)))))
+                     @processes)
+               (keep (fn [[[sid _dir] att]]
+                       (when (= sid session-id) (attachment-entry att)))
+                     @attachments))
+       (sort-by (juxt :dir #(if (:external? %) 1 0)))
        vec))
 
 (defn repl-by-id
@@ -827,25 +1050,34 @@
    spawning one behind the caller's back. `repl` `start` is the ONE way a managed
    REPL comes into existence.
 
-   An EXTERNAL attachment is probed on its own host; a MANAGED entry needs a live
-   process AND a describe round-trip inside its remaining cold-boot window
-   (`health-probe-ms`), so a still-booting server counts and a wedged one does not."
+   The MANAGED REPL wins: it needs a live process AND a describe round-trip inside
+   its remaining cold-boot window (`health-probe-ms`), so a still-booting server
+   counts and a wedged one does not. An ATTACHMENT is offered only when it is a
+   JVM one and only while its own probe answers — a session SELECTED on a
+   shadow-cljs build cannot load a `.clj` test namespace, and handing it to a JVM
+   test run would fail as if the tests were broken."
   [session-id dir]
   (let
     [info
      (get @processes [session-id dir])
 
-     live?
-     (cond (nil? info) false
-           (:external? info) (= :up
-                                (:status (nrepl-client/probe! {:host (or (:host info) "localhost")
-                                                               :port (:port info)
-                                                               :timeout-ms 2000})))
-           :else (and (proc-alive? info)
-                      (:port info)
-                      (= :up (wait-until-up (:process info) (:port info) (health-probe-ms info)))))]
+     managed-live?
+     (and info
+          (proc-alive? info)
+          (:port info)
+          (= :up (wait-until-up (:process info) (:port info) (health-probe-ms info))))]
 
-    (when live? (touch! session-id dir) info)))
+    (if managed-live?
+      (do (touch! session-id dir) info)
+      (let [att (get @attachments [session-id dir])]
+        (when (and att
+                   (not= :cljs (:dialect att))
+                   (= :up
+                      (:status (nrepl-client/probe! {:host (or (:host att) "localhost")
+                                                     :port (:port att)
+                                                     :timeout-ms 2000}))))
+          (touch! session-id dir)
+          (attachment-entry att))))))
 
 
 (defn resolve-target!
@@ -898,4 +1130,43 @@
           ;; (the workspace root) when live, else the first (dir-sorted).
           (let [r (or (first (filter #(= (:dir %) default-dir) repls)) (first repls))]
             (touch! session-id (:dir r))
-            (select-keys r [:id :dir :port :host :external?])))))))
+            (select-keys r
+                         [:id :dir :port :host :external? :dialect :build :target
+                          :session-token])))))))
+
+(defn eval!
+  "Evaluate `opts` (an `nrepl-client/eval!` map minus its address) over `target` —
+   `resolve-target!`'s map, or any `{:host :port}`. Returns nrepl-client's
+   STRING-keyed result, and never throws for a shadow-cljs condition.
+
+   A target carrying a shadow-cljs `:build` is the whole reason this exists. The
+   build is (re)SELECTED in the nREPL session whenever that session is no longer
+   the one it was selected in — an evicted socket or a restarted watch otherwise
+   leaves the very same code silently answering as JVM Clojure — and the fresh
+   session token is written back to the attachment. The result carries \"build\",
+   and a build whose JS runtime is not connected answers with the instruction that
+   starts one instead of shadow's bare `No available JS runtime`."
+  [session-id {:keys [host port build dir] :as target} opts]
+  (if-not build
+    (nrepl-client/eval! (assoc opts
+                          :host (or host "localhost")
+                          :port port))
+    (let [r (shadow-repl/eval! target opts)]
+      (when-let [token (:session-token r)]
+        (swap! attachments (fn [m]
+                             (cond-> m
+                               (contains? m [session-id dir])
+                               (assoc-in [[session-id dir] :session-token] token)))))
+      (if (:selected? r)
+        (cond-> (assoc (:result r) "build" build)
+          (:message r)
+          (assoc "message" (:message r)))
+        {"build" build
+         "error_message" (str "shadow-cljs build \"" build
+                              "\" could not be selected: " (:message r))
+         "message" (str "Is `shadow-cljs watch "
+                        build
+                        "` still running? Reattach with"
+                        " repl(\"clojure\", \"connect\", {\"build\": \""
+                        build
+                        "\"}) once it is.")}))))

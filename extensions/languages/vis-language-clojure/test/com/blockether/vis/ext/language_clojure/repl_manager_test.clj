@@ -7,6 +7,7 @@
             [com.blockether.vis.ext.language-clojure.core :as core]
             [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
             [com.blockether.vis.ext.language-clojure.repl-manager :as rm]
+            [com.blockether.vis.ext.language-clojure.shadow-repl :as shadow-repl]
             [com.blockether.vis.internal.process-jail :as process-jail]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.nio.file Files)
@@ -737,7 +738,9 @@
             (expect (= 1 (count repls)))
             (expect (true? (:external? (first repls))))
             (expect (= 59999 (:port (first repls)))))
-          (expect (= "already-running" (get (rm/connect! sid dir {:port 59999}) "result")))
+          ;; A second connect RE-attaches (address, build and all) — it never
+          ;; answers with some other REPL this dir happens to have.
+          (expect (= "reconnected" (get (rm/connect! sid dir {:port 59999}) "result")))
           (expect (= "detached" (get (rm/stop! sid dir) "result")))
           (expect (empty? (rm/session-repls sid))))))
   (it "refuses to register an unreachable address"
@@ -796,3 +799,308 @@
 
           (core/clj-eval-fn {:workspace/root (tmp-dir) :session-id "s"} {"code" "(+ 1 1)"})
           (expect (= ["devbox.internal" 4001] @captured))))))
+
+
+(def ^:private shadow-watching
+  "What `shadow-repl/probe!` answers for a live `shadow-cljs watch app`: the ids
+   the SERVER loaded, a running worker, and that build's target."
+  {:shadow? true :builds ["npm" "app"] :worker? true :target :node-script})
+
+(defn- fake-live-process
+  "A Process that only answers `.isAlive`. Registry liveness asks nothing else, so
+   a MANAGED REPL can be staged beside an attachment without spawning anything."
+  ^Process []
+  (proxy [Process] [] (isAlive [] true)))
+
+(defn- manager-atom
+  "The manager's PRIVATE registry atom named `sym`, resolved at runtime."
+  [sym]
+  @(ns-resolve 'com.blockether.vis.ext.language-clojure.repl-manager sym))
+
+(defn- with-shadow
+  "Call `f` against a STAGED shadow-cljs nREPL: `:probe` decides what the server
+   is, `:select` whether the build selects, `:answer` what every eval — the
+   connect ping included — replies."
+  [{:keys [probe select answer]} f]
+  (with-redefs
+    [nrepl-client/probe!
+     (fn [_]
+       {:status :up})
+
+     shadow-repl/probe!
+     (fn [_]
+       (or probe shadow-watching))
+
+     shadow-repl/select!
+     (fn [_]
+       (or select {:selected? true :session-token "tok-1"}))
+
+     shadow-repl/eval!
+     (fn [_ _]
+       (or answer {:selected? true :result {"value" "1"} :session-token "tok-1"}))]
+
+    (f)))
+
+;; Regression, issue #151: `repl` `connect` on a shadow-cljs project answered
+;; "already-running" with the MANAGED JVM REPL's own port — the address asked for
+;; was never dialled — and nothing could select a build, so every `repl_eval` in a
+;; ClojureScript project silently evaluated as JVM Clojure.
+(defdescribe
+  connect-shadow-build-test
+  (it "attaches to the build and reports which runtime an eval now lands in"
+      (let
+        [sid
+         "s-shadow-attach"
+
+         dir
+         (tmp-dir)]
+
+        (with-shadow {}
+                     (fn []
+                       (let [r (rm/connect! sid dir {:port 9999 :build "app"})]
+                         (expect (= "connected" (get r "result")))
+                         (expect (= "app" (get r "build")))
+                         (expect (= "cljs" (get r "dialect")))
+                         (expect (= "node-script" (get r "target")))
+                         (expect (= "connected" (get r "runtime")))
+                         ;; Its OWN id — the managed REPL for this dir keeps `nrepl:<dir>`.
+                         (expect (str/ends-with? (get r "id") "#app")))))
+        (rm/detach! sid dir)))
+  (it "attaches a watch with no JS runtime too, and says what starts one"
+      (let
+        [sid
+         "s-shadow-noruntime"
+
+         dir
+         (tmp-dir)]
+
+        (with-shadow {:answer {:selected? true
+                               :result {}
+                               :session-token "tok-1"
+                               :message (shadow-repl/runtime-hint "app" :node-script)}}
+                     (fn []
+                       (let [r (rm/connect! sid dir {:port 9999 :build "app"})]
+                         ;; Healthy attachment, missing runtime: the difference has to be
+                         ;; visible HERE, not as a broken-looking eval later.
+                         (expect (= "connected" (get r "result")))
+                         (expect (= "none" (get r "runtime")))
+                         (expect (str/includes? (get r "message") "node")))))
+        (rm/detach! sid dir)))
+  (it "refuses a plain JVM nREPL when a build was named, and registers nothing"
+      (let
+        [sid
+         "s-shadow-plain"
+
+         dir
+         (tmp-dir)]
+
+        (with-shadow {:probe {:shadow? false :builds [] :worker? false}}
+                     (fn []
+                       (let [r (rm/connect! sid dir {:port 9999 :build "app"})]
+                         (expect (= "not-shadow" (get r "result")))
+                         (expect (str/includes? (get r "message") ".shadow-cljs/nrepl.port"))
+                         (expect (empty? (rm/session-repls sid))))))))
+  (it "names the builds the SERVER loaded when the build is unknown"
+      (let
+        [sid
+         "s-shadow-unknown"
+
+         dir
+         (tmp-dir)]
+
+        (with-shadow {}
+                     (fn []
+                       (let [r (rm/connect! sid dir {:port 9999 :build "ap"})]
+                         (expect (= "unknown-build" (get r "result")))
+                         (expect (= ["npm" "app"] (get r "builds")))
+                         (expect (str/includes? (get r "message") "npm, app"))
+                         (expect (empty? (rm/session-repls sid))))))))
+  (it "refuses a build with no watch, naming the command that starts one"
+      (let
+        [sid
+         "s-shadow-nowatch"
+
+         dir
+         (tmp-dir)]
+
+        (with-shadow {:probe (assoc shadow-watching :worker? false)}
+                     (fn []
+                       (let [r (rm/connect! sid dir {:port 9999 :build "app"})]
+                         ;; Same shadow error for an unknown build and an unwatched one —
+                         ;; they are told apart before selecting, because the fixes differ.
+                         (expect (= "no-watch" (get r "result")))
+                         (expect (str/includes? (get r "message") "shadow-cljs watch app"))
+                         (expect (empty? (rm/session-repls sid))))))))
+  (it "refuses without a port and names the file a watch publishes"
+      (let [r (rm/connect! "s-shadow-noport" (tmp-dir) {:build "app"})]
+        (expect (= "no-port" (get r "result")))
+        (expect (str/includes? (get r "message") ".shadow-cljs/nrepl.port"))
+        (expect (str/includes? (get r "message") "shadow-cljs watch app"))))
+  (it "reads the port the watch published when the caller gives none"
+      (let
+        [sid
+         "s-shadow-portfile"
+
+         dir
+         (tmp-dir)
+
+         f
+         (apply io/file dir shadow-repl/port-file-path)]
+
+        (io/make-parents f)
+        (spit f "65432\n")
+        (with-shadow {}
+                     (fn []
+                       (let [r (rm/connect! sid dir {:build "app"})]
+                         (expect (= "connected" (get r "result")))
+                         (expect (= 65432 (get r "port"))))))
+        (rm/detach! sid dir)))
+  (it
+    "lives BESIDE the managed REPL for the same dir, and a repeat connect RE-attaches"
+    (let
+      [sid
+       "s-shadow-both"
+
+       dir
+       (tmp-dir)]
+
+      (try (swap! (manager-atom 'processes) assoc
+             [sid dir]
+             {:id (rm/id-of dir)
+              :dir dir
+              :port 7000
+              :tool :clj
+              :aliases [:dev :test]
+              :pid 4242
+              :process (fake-live-process)})
+           (with-shadow {}
+                        (fn []
+                          (expect (= "connected"
+                                     (get (rm/connect! sid dir {:port 9999 :build "app"})
+                                          "result")))
+                          ;; THE bug: the second connect found the MANAGED process and
+                          ;; answered "already-running" on port 7000, having never
+                          ;; dialled 9999 at all.
+                          (let [again (rm/connect! sid dir {:port 9999 :build "app"})]
+                            (expect (= "reconnected" (get again "result")))
+                            (expect (= 9999 (get again "port"))))
+                          (let [repls (rm/session-repls sid)]
+                            (expect (= 2 (count repls)))
+                            ;; The MANAGED REPL sorts first, so an eval naming no target
+                            ;; still lands in the JVM one.
+                            (expect (= [false true] (mapv #(boolean (:external? %)) repls)))
+                            (expect (= 7000 (:port (first repls))))
+                            (expect (= :cljs (:dialect (second repls)))))
+                          (let [st (rm/status sid dir)]
+                            (expect (= "up" (get st "status")))
+                            (expect (= "app" (get-in st ["attached" "build"]))))
+                          (expect (= "detached" (get (rm/detach! sid dir) "result")))
+                          (expect (= 1 (count (rm/session-repls sid))))))
+           (finally (swap! (manager-atom 'processes) dissoc [sid dir])))))
+  (it "never offers a ClojureScript session to a JVM test run"
+      (let
+        [sid
+         "s-shadow-jvm-run"
+
+         dir
+         (tmp-dir)]
+
+        (with-shadow {}
+                     (fn []
+                       (rm/connect! sid dir {:port 9999 :build "app"})
+                       ;; A session selected on a build cannot load a `.clj` test
+                       ;; namespace: handing it over would read as broken tests.
+                       (expect (nil? (rm/live-repl-for-dir sid dir)))
+                       ;; The same attachment without a build is a JVM REPL, and IS reused.
+                       (rm/connect! sid dir {:port 9999})
+                       (expect (= 9999 (:port (rm/live-repl-for-dir sid dir))))))
+        (rm/detach! sid dir))))
+
+(defdescribe
+  shadow-eval-routing-test
+  (it "routes an attachment's eval through its build and writes the fresh session back"
+      (let
+        [sid
+         "s-shadow-eval"
+
+         dir
+         (tmp-dir)]
+
+        (with-shadow {}
+                     (fn []
+                       (rm/connect! sid dir {:port 9999 :build "app"})
+                       (with-redefs
+                         [shadow-repl/eval! (fn [_ _]
+                                              {:selected? true
+                                               :result {"value" "\"Hello, REPL!\"" "ns" "cljs.user"}
+                                               :session-token "tok-2"})]
+                         (let
+                           [target (rm/resolve-target! sid (str (rm/id-of dir) "#app") dir)
+                            r (rm/eval! sid target {:code "(repro.core/greeting)"})]
+
+                           (expect (= "app" (:build target)))
+                           (expect (= :cljs (:dialect target)))
+                           (expect (= "\"Hello, REPL!\"" (get r "value")))
+                           (expect (= "cljs.user" (get r "ns")))
+                           (expect (= "app" (get r "build")))
+                           ;; The session the eval selected under is the one the NEXT
+                           ;; eval re-checks — stale token, silent JVM answers.
+                           (expect (= "tok-2" (:session-token (first (rm/session-repls sid)))))))))
+        (rm/detach! sid dir)))
+  (it "reports a lost selection as a build problem, with the command that fixes it"
+      (with-redefs
+        [shadow-repl/eval! (fn [_ _]
+                             {:selected? false :message "watch for build not running"})]
+        (let
+          [r (rm/eval! "s-shadow-lost"
+                       {:host "localhost" :port 9999 :build "app" :dir "/p"}
+                       {:code "1"})]
+          (expect (nil? (get r "value")))
+          (expect (str/includes? (get r "error_message") "watch for build not running"))
+          (expect (str/includes? (get r "message") "shadow-cljs watch app")))))
+  (it "sends a target with no build straight to the JVM nREPL, untouched"
+      (let [captured (atom nil)]
+        (with-redefs
+          [nrepl-client/eval! (fn [opts]
+                                (reset! captured opts)
+                                {"value" "2"})
+           shadow-repl/eval! (fn [_ _]
+                               (throw (ex-info "a JVM eval must not go through shadow" {})))]
+
+          (rm/eval! "s-shadow-jvm" {:host "devbox.internal" :port 4001} {:code "(+ 1 1)"})
+          (expect (= ["devbox.internal" 4001] [(:host @captured) (:port @captured)]))))))
+
+(defdescribe
+  cljs-eval-through-core-test
+  (it "clj-eval-fn on a build id lands in its JS runtime, not the JVM the server also serves"
+      (with-redefs
+        [rm/resolve-target!
+         (fn [_sid _rid _default]
+           {:id "nrepl:/p#app"
+            :dir "/p"
+            :host "localhost"
+            :port 4001
+            :external? true
+            :dialect :cljs
+            :build "app"
+            :target :node-script
+            :session-token "tok-1"})
+
+         shadow-repl/eval!
+         (fn [_ _]
+           {:selected? true
+            :result {"value" "\"Hello, REPL!\"" "ns" "cljs.user"}
+            :session-token "tok-1"})
+
+         nrepl-client/eval!
+         (fn [_]
+           (throw (ex-info "a ClojureScript eval must never dial the JVM directly" {})))]
+
+        (let
+          [res (core/clj-eval-fn {:workspace/root (tmp-dir) :session-id "s"}
+                                 {"code" "(repro.core/greeting)" "id" "nrepl:/p#app"})]
+          (expect (:success? res))
+          (expect (= "\"Hello, REPL!\"" (get-in res [:result "value"])))
+          (expect (= "cljs.user" (get-in res [:result "ns"])))
+          (expect (= "app" (get-in res [:result "build"])))
+          (expect (= "nrepl:/p#app" (get-in res [:result "repl"])))))))

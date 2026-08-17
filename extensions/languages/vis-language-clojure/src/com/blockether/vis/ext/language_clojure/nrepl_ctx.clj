@@ -96,7 +96,7 @@
   "Idempotently mirror one owned nREPL into `session-id`'s resource registry so
    the footer badge + stop dialog see it. No-op when already registered.
    Managed REPLs get a stop thunk driving repl-manager — there is no restart."
-  [session-id statuses {:keys [id dir port tool aliases log external? host]}]
+  [session-id statuses {:keys [id dir port tool aliases log external? host build]}]
   (let
     [existing
      (when (and session-id id) (vis/get-resource session-id id))
@@ -133,7 +133,15 @@
        (assoc "form" (:form probe))
 
        (:hint probe)
-       (assoc "hint" (:hint probe)))]
+       (assoc "hint" (:hint probe))
+
+       ;; A shadow-cljs nREPL describes itself as a plain JVM one (no cljs op, no
+       ;; clojurescript version), so the SELECTED BUILD — not the probe — is what
+       ;; says which runtime an eval reaches. It is assoc'd last and wins.
+       build
+       (assoc "build"
+         build "dialect"
+         "cljs"))]
 
     (when (and session-id
                id
@@ -149,7 +157,8 @@
          :language :clojure
          :label (str "nREPL "
                      (.getName (io/file dir))
-                     (when external? " (external)")
+                     (cond build (str " (shadow-cljs " build ")")
+                           external? " (external)")
                      (when (seq aliases) (apply str (map #(str " :" (name %)) aliases))))
          :status status
          ;; STRING-keyed `:detail` — resources.clj/->data passes it through verbatim.
@@ -157,7 +166,11 @@
          :owner :ext/language-clojure}
         (cond->
           {:stop-fn (fn []
-                      (repl-manager/stop! session-id dir))
+                      ;; vis kills only what it spawned: an attachment is dropped,
+                      ;; never destroyed.
+                      (if external?
+                        (repl-manager/detach! session-id dir)
+                        (repl-manager/stop! session-id dir)))
            ;; Keep a FAILED REPL visible (alive while a failure is on
            ;; record) so the crash + its log tail stay inspectable in F4
            ;; instead of being pruned the moment the pid dies.
@@ -167,7 +180,9 @@
            ;; "alive, but is it WORKING?" — probed on every list/render,
            ;; flips the stored `status` to :up/:starting/:failed/:down.
            :health-fn (fn []
-                        (repl-manager/health session-id dir))}
+                        (if external?
+                          (repl-manager/attachment-health session-id dir)
+                          (repl-manager/health session-id dir)))}
           log
           (assoc :logs-fn
             (fn []

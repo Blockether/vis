@@ -514,7 +514,7 @@
   (dispatch-start-repl! env args))
 
 (defn connect-repl
-  "Attach to an external running REPL: `repl_connect(language,{port,host?,cwd?})`. Registers it for eval, tests, and context but never owns or kills its process; stop only detaches."
+  "Attach to an external running REPL: `repl_connect(language,{port|build,host?,cwd?})`. A `build` attaches to the project's `shadow-cljs watch` and selects it, making eval ClojureScript. Registers it for eval, tests, and context but never owns or kills its process; stop only detaches."
   [env & args]
   (let
     [[language more]
@@ -620,7 +620,9 @@
        "Evaluate `code` in an already-running project REPL — "
        "`repl_eval({\"language\": \"clojure\", \"code\": \"(+ 1 1)\"})`. `code` is REQUIRED and "
        "`language` may lead the call; `id`/`repl_id` picks one of several REPLs, `cwd` its project, "
-       "`timeout_ms` its budget. Lifecycle — start, status, stop — is `repl`.")
+       "`timeout_ms` its budget. Lifecycle — start, status, stop — is `repl`. A REPL attached to a "
+       "shadow-cljs `build` evaluates ClojureScript inside that build's JS runtime and the result "
+       "names the `build` it landed in.")
      :params [{:name "language"} {:name "code" :required? true} {:name "id" :note "or `repl_id`"}
               {:name "cwd"} {:name "timeout_ms"}]
      :call {:lead-opt "language" :rest :always}
@@ -639,8 +641,8 @@
      (str
        "String-keyed result stamped with `op`; never a `{resources: [...]}` list. Status: Clojure "
        "`result,id,cwd,status`, Python/Bun `cwd,status`. Start/connect may add "
-       "`running,port,pid,cmd,tool,aliases,external,host,log,message`; stop by id returns "
-       "`{result,id,message}`.")
+       "`running,port,pid,cmd,tool,aliases,external,host,log,message`, and a shadow-cljs attachment "
+       "adds `build,target,dialect,runtime`; stop by id returns `{result,id,message}`.")
      :description
      (str
        "REPL lifecycle — `repl(\"clojure\", {\"op\": \"status\"})`, or `repl({\"language\": ..., "
@@ -649,9 +651,14 @@
        "Nothing lists live REPLs for you: `status` is the only answer — reuse `up`, "
        "recheck `starting`, start when absent/down/failed. There is NO restart op: a wedged REPL is "
        "`stop` then `start`. `status` reports that "
-       "directory's state; `stop` ends a managed REPL; `connect` attaches an external REPL by port and only detaches it.")
+       "directory's state; `stop` ends a managed REPL; `connect` attaches an external REPL by port and only detaches it. "
+       "`connect` with `build` attaches to the `shadow-cljs watch` running under `cwd` — it publishes "
+       "its own port, so `port` is optional — and SELECTS that build, so later `repl_eval` is "
+       "ClojureScript in its JS runtime. It rides BESIDE the managed JVM REPL for the same `cwd`, each "
+       "under its own id (`nrepl:~/proj` and `nrepl:~/proj#app`); `stop` with `build` detaches only it.")
      :params [{:name "language"} {:name "op" :note "start | status | stop | connect"} {:name "cwd"}
-              {:name "id" :note "which REPL a stop ends"} {:name "port"} {:name "host"}]
+              {:name "id" :note "which REPL a stop ends"} {:name "port"} {:name "host"}
+              {:name "build" :note "shadow-cljs build to attach + select (ClojureScript)"}]
      :call {:lead-opt "language" :rest :always}
      :inject-env? true
      :tag :mutation}))
@@ -660,14 +667,19 @@
   (vis/symbol
     #'connect-repl
     {:symbol 'repl_connect
-     :result (str "String-keyed and stamped with `op` — the shape `repl`'s own `connect` answers: "
-                  "`result,id,cwd,status` plus `running,port,host,external,message` when known.")
+     :result (str
+               "String-keyed and stamped with `op` — the shape `repl`'s own `connect` answers: "
+               "`result,id,cwd,status` plus `running,port,host,external,message` when known, and "
+               "`build,target,dialect,runtime` for a shadow-cljs build.")
      :description
      (str
-       "Attach an external running REPL — `repl_connect(\"clojure\", {\"port\": 56428})`. `port` is "
-       "REQUIRED; `host` (default localhost) and `cwd` say where it lives. Vis registers it for eval, "
-       "tests and context but never owns or kills it, so stopping it only detaches.")
-     :params [{:name "language"} {:name "port" :required? true} {:name "host"} {:name "cwd"}]
+       "Attach an external running REPL — `repl_connect(\"clojure\", {\"port\": 56428})`. `port` names "
+       "it, `host` (default localhost) and `cwd` say where it lives. `build` instead attaches to the "
+       "`shadow-cljs watch` under `cwd` — it publishes its own port, so `port` is optional there — and "
+       "selects that build, making `repl_eval` ClojureScript in its JS runtime. Vis registers it for "
+       "eval, tests and context but never owns or kills it, so stopping it only detaches.")
+     :params [{:name "language"} {:name "port" :note "or `build`"} {:name "host"} {:name "cwd"}
+              {:name "build" :note "shadow-cljs build to attach + select"}]
      :call {:lead-opt "language" :rest :always}
      :inject-env? true
      :tag :mutation}))

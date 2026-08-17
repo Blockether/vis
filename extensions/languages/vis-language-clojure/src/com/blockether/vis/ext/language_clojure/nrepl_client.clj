@@ -169,6 +169,18 @@
     (doseq [[_ {:keys [conn]}] m]
       (try (.close ^java.io.Closeable conn) (catch Throwable _ nil)))))
 
+(defn session-token
+  "The id of the LONG-LIVED nREPL session `eval!` reuses for `[host port]`, or nil
+   when none has been opened yet. Read-only: never dials, never clones a session.
+
+   A CHANGED (or nil) token means the previous session is GONE — its socket was
+   evicted, or the server restarted — and every session-LOCAL state that lived in
+   it went with it: `*1`/`*e`, dynamic `set!`s, and (the reason this is public)
+   shadow-cljs' `nrepl-select` build selection. A caller that needs its selection
+   to still hold compares the token it selected under with this one."
+  [host port]
+  (get-in @connections [(key-of host port) :session]))
+
 ;; eval
 
 (defn- terminal-error-output?

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- feat(clj-repl): attach the Clojure REPL to a `shadow-cljs` build — `repl("clojure", "connect", {"build": "app"})` reads the port that watch published, selects the build in the nREPL session every later `repl_eval` reuses, and lives BESIDE the managed JVM REPL for the same cwd under its own id; a build that is unknown, unwatched, on a plain JVM nREPL, or has no JS runtime joined is named as such instead of silently answering as JVM Clojure
 - feat(clj-test): run ClojureScript tests — a selection of `*_test.cljs` compiles and runs through the project's own shadow-cljs build (npm binary, `thheller/shadow-cljs` in `deps.edn`, or lein), narrowed by `:ns-regexp`, with `build` naming the build; the verdict is the printed test counts, since shadow-cljs exits 0 even when tests fail
 - fix(clj-test): answer a `run_tests` path that is NOT on disk with `no such path` plus the deepest part of it that exists, instead of "no tests under it"
 - fix(clj-test): select `*_test.cljc` files — a `.cljc` test namespace was invisible to `run_tests`
