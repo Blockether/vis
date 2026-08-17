@@ -593,6 +593,48 @@
         (expect (= "1970-01-01T00:00:00Z" (get (first (get v "sessions")) "created_at"))))))
 
 (defdescribe
+  boundary-pathlike-test
+  "A path the model spelled as a `pathlib.Path` is still a path: every tool that
+   takes a path string takes the OBJECT too, at any depth."
+  ;; Regression: a `pathlib.Path` argument reached the host as an opaque polyglot
+  ;; value whose `toString` is the Python REPR, so `cat(root / 'q.clj')` refused
+  ;; with `File not found: ~/vis/PosixPath('/…/q.clj')` and `grep` called the
+  ;; same argument a non-string path.
+  (let
+    [seen
+     (atom [])
+
+     ctx
+     (tpc/shared-with! {'pathlike-probe (fn [& args]
+                                          (swap! seen conj (vec args))
+                                          {"ok" true})})
+
+     run
+     (fn [code]
+       (reset! seen [])
+       (ep/run-python-block ctx code))]
+
+    (it "a Path argument reaches the tool as its filesystem string"
+        (run "pathlike_probe(Path('/tmp/vis/q.clj'))")
+        (expect (= [["/tmp/vis/q.clj"]] @seen)))
+    (it "Paths convert at every depth of an options dict"
+        (run (str "pathlike_probe({'paths': [Path('/tmp/vis/a.clj'), '/tmp/vis/b.clj'],\n"
+                  "                'path': Path('/tmp/vis')})"))
+        (expect (= [[{"paths" ["/tmp/vis/a.clj" "/tmp/vis/b.clj"] "path" "/tmp/vis"}]] @seen)))
+    (it "every os.PathLike answers the same duck-type, not just pathlib"
+        (run (str "class VisTestPathLike:\n" "    def __fspath__(self):\n"
+                  "        return '/tmp/vis/duck.clj'\n" "pathlike_probe(VisTestPathLike())"))
+        (expect (= [["/tmp/vis/duck.clj"]] @seen)))
+    (it "a refusing __fspath__ leaves the value alone instead of failing the call"
+        (let
+          [out (run (str "class VisTestBadPathLike:\n"
+                         "    def __fspath__(self):\n" "        raise ValueError('no path here')\n"
+                         "pathlike_probe(VisTestBadPathLike())\n" "print('survived')"))]
+          (expect (str/includes? (:stdout out) "survived"))
+          (expect (= 1 (count @seen)))
+          (expect (not (string? (ffirst @seen))))))))
+
+(defdescribe
   boundary-key-shape-test
   "STRINGS-ONLY boundary: every dict key is a VERBATIM string in BOTH
    directions — no keywordizing, no regex key-shape sniffing. A path, a

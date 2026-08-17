@@ -157,6 +157,19 @@
   [x]
   (->py* x []))
 
+(defn- py-fspath
+  "The filesystem STRING behind a Python `os.PathLike` — `pathlib.Path`,
+   `os.DirEntry`, anything answering `__fspath__` — or nil for every other
+   value. Asks Python's OWN duck-type (the one `os.fspath` asks) over interop
+   instead of sniffing a type name, so a `PurePosixPath`, a subclass and a
+   user-defined PathLike all answer alike. Total: a `__fspath__` that raises or
+   hands back bytes answers nil, and the value stays whatever it was."
+  ^String [^Value v]
+  (try (when (.hasMember v "__fspath__")
+         (let [^Value s (.invokeMember v "__fspath__" (object-array 0))]
+           (when (.isString s) (.asString s))))
+       (catch Throwable _ nil)))
+
 (defn ->clj
   "Polyglot `Value` (a Python value) -> Clojure data. STRINGS-ONLY boundary:
    dicts -> maps with VERBATIM STRING keys (exactly what Python held — no
@@ -164,7 +177,10 @@
    objects (Java values that crossed the boundary, e.g. UUIDs) -> their
    underlying Java value via `asHostObject`, callables/opaque objects -> the
    raw `Value`. A non-string Python dict key (int, tuple, ...) stringifies via
-   its Clojure conversion so the map stays string-keyed and total."
+   its Clojure conversion so the map stays string-keyed and total. An
+   `os.PathLike` (`pathlib.Path`, `os.DirEntry`, ...) crosses as its filesystem
+   STRING at any depth, so `cat(root / 'q.clj')` is the same call as `cat` on
+   the path text — see `py-fspath`."
   [^Value v]
   (cond (nil? v) nil
         (.isNull v) nil
@@ -190,7 +206,13 @@
                                     (recur (assoc m ks (->clj (.getHashValue v k)))))
                                   m)))
         (.isHostObject v) (.asHostObject v)
-        :else v))
+        ;; A `pathlib.Path` is a PATH the model happened to spell as an object,
+        ;; and every tool that takes one takes a string. Left opaque it reached
+        ;; the tool as the raw `Value` whose `toString` is the Python REPR, so
+        ;; `cat(root / 'q.clj')` refused with `File not found:
+        ;; ~/vis/PosixPath('/…/q.clj')` and `grep` called the same argument a
+        ;; non-string path.
+        :else (or (py-fspath v) v)))
 
 (defn boundary-view
   "What a plain-data Clojure value LOOKS LIKE after the GraalPy round trip —
