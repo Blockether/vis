@@ -27,7 +27,6 @@
     com.blockether.vis.internal.config com.blockether.vis.internal.config-spec
     com.blockether.vis.internal.extension com.blockether.vis.internal.external-opener
     com.blockether.vis.internal.file-picker com.blockether.vis.internal.format
-    com.blockether.vis.internal.foundation.editing.balance
     com.blockether.vis.internal.foundation.editing.zipper
     com.blockether.vis.internal.foundation.environment.languages
     com.blockether.vis.internal.foundation.environment.repositories
@@ -50,7 +49,7 @@
     com.blockether.vis.internal.attachments com.blockether.vis.internal.config
     com.blockether.vis.internal.env-python com.blockether.vis.internal.extension
     com.blockether.vis.internal.external-opener com.blockether.vis.internal.file-picker
-    com.blockether.vis.internal.form com.blockether.vis.internal.foundation.editing.balance
+    com.blockether.vis.internal.form
     com.blockether.vis.internal.foundation.editing.zipper
     com.blockether.vis.internal.foundation.gif com.blockether.vis.internal.foundation.shell
     com.blockether.vis.internal.foundation.shim-pytest
