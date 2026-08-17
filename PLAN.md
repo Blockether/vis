@@ -342,6 +342,17 @@ so no key is spelled a second time anywhere.
   its HEAD (50 rows), each saying how many it left behind and that the record still holds them. A
   caller may widen either per call. Truncation is a RENDER decision; nothing here touches the record,
   and neither budget applies to the human's surfaces, which scroll the whole thing.
+- Same file — `parse-markdown`, the INVERSE: markdown back to a view, so the model's surface is
+  two-way rather than exhaust. The law is exact — a picture that elided nothing renders back byte for
+  byte, so `(->markdown view {:result result})` IS the markdown it was parsed from — which is what
+  makes a view authorable as markdown and a rendered view re-readable. Making the inverse exist paid
+  for itself in the render: a description now hugs its title and the verdict stands in a `>` block
+  (nothing else paints one, so a first status node can no longer be mistaken for the verdict), an
+  error is marked `· error:` so a reader tells it from the summary, a table paints its HEADER even
+  with no rows (the columns are the declaration, and `_no rows yet_` goes under them), and a cell is
+  trimmed because a pipe table has no way to paint its own padding. Ids are never painted, so each is
+  derived from the label the eye reads — deterministically, so a patch written against a parsed view
+  still lands on the row it names. What a budget left behind is REPORTED as `:elided`, never guessed.
 - Same file — the `pending` registry entry gains `:kind` (`:form` | `:live`) so `cancel-all!`
   (`:1145-1150`), the turn-interrupt path (`:1251-1255`) and the undeliverable path (`:1220-1235`)
   release both kinds, and `checked-answer` routes to `::answer` or `::live-result` by kind.
@@ -362,6 +373,12 @@ so no key is spelled a second time anywhere.
   dropped, every bound refusing with the node and the bound named, the log window kept while
   `:total-lines` counts the record, and the model's markdown asserted as one GOLDEN document (verdict
   first, the `!` tone column, the widened fence, both budgets, the escaped cell).
+- Same file — the round trip, as laws rather than examples: every node type through
+  `->markdown` → `parse-markdown` → `->markdown` unchanged (including each empty state, the fence
+  inside a log, a pipe and a newline inside a cell, and two nodes sharing a label), every parsed node
+  accepted by `spec/live-node-error`, a truncated log repainting its own note while a truncated table
+  says what it left behind, a HAND-WRITTEN picture patched by the addresses its labels earned, and a
+  refusal per malformed shape naming the line to fix.
 - Same file — a table driven through an INTERLEAVED script (add a, add b, add c, update b, remove a,
   re-add a) asserted row by row under each `:order`: insertion proves the updated row did not move and
   the re-added row went to the END (it is a new arrival, not a resurrection), `:newest-first` proves
@@ -703,6 +720,9 @@ Done:
   `test/com/blockether/vis/internal/human_input/live_test.clj` (the interleaved table script under
   every declared order, every refusal, the budgets, and one golden markdown document). `::live-result`
   now REQUIRES `:markdown`.
+- Phase 1, the model's surface both ways — `parse-markdown` in the same file, with the render changes
+  that made the inverse total (blockquoted verdict, marked error, a table's header always painted,
+  trimmed cells). 37 tests in `live_test.clj`, 162 green across human-input.
 - Its predecessor plan (make every capability an extension declared by one cross-language contract) is
   parked at commit `6ac932db4` and is recoverable from there; its open decisions — the TypeScript
   binding and the publishing identity — are untouched by this work and outlive it.

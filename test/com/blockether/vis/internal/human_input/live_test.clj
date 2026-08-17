@@ -297,7 +297,7 @@
       (expect
         (= (str/join "\n"
                      ["# Watching a CI run" ""
-                      "**interrupted** — this view did not finish · stopped after 18 jobs" ""
+                      "> **interrupted** — this view did not finish · stopped after 18 jobs" ""
                       "[error] **3 of 18 jobs failed**" "_workflow CI on main_" "" "### Jobs"
                       "**100%** · 18/18 done" "" "### Score"
                       "**passed** 15 [ok] · **failed** 3 [error]" "" "### Failing job"
@@ -371,3 +371,186 @@
       (expect (str/includes? (live/->markdown
                                (view {:id "p" :type :progress :label "Scanning" :done 7}))
                              "_working_ · 7 done"))))
+
+;; The model's surface is TWO-WAY. Everything below leans on one law: a picture
+;; that elided nothing renders back exactly, so `->markdown` and
+;; `parse-markdown` cannot drift apart without a test here going red.
+
+(defn- rich-view
+  "One view painting every node type, carrying what breaks a naive render: a pipe
+   and a separator inside a cell, a fence inside a log, two nodes sharing a
+   label, and a row that stops before the last column."
+  []
+  (view {:id "run" :type :status :label "Run" :text "completed" :tone :ok :detail "18 jobs"}
+        {:id "pace" :type :progress :label "Jobs" :value 0.5 :done 9 :total 18}
+        {:id "score"
+         :type :stat
+         :label "Score"
+         :stats [{:id "p" :label "passed" :value-text "18" :tone :ok}
+                 {:id "f" :label "failed" :value-text "0 · none" :tone :warn}]}
+        {:id "phases"
+         :type :steps
+         :label "Phases"
+         :steps [{:id "a" :label "checkout" :tone :ok :detail "12s"}
+                 {:id "b" :label "test" :tone :running :value 0.42}]}
+        {:id "out"
+         :type :log
+         :label "Output"
+         :window-lines 2000
+         :lines ["$ clojure -M:test" "``` fenced inside" "done"]}
+        {:id "jobs"
+         :type :table
+         :label "Jobs"
+         :max-rows 5000
+         :order :insertion
+         :columns [{:id "job" :label "Job"} {:id "took" :label "Took" :align :right}]
+         :rows [{:id "r1" :cells ["tests | ubuntu\nlatest" "13m0s"] :tone :ok}
+                {:id "r2" :cells ["lint"] :tone :warn}]}
+        {:id "links"
+         :type :link
+         :label "Links"
+         :links
+         [{:id "l1" :label "run" :target-kind :url :target "https://example.com/run" :tone :ok}
+          {:id "l2" :label "output" :target-kind :path :target "/tmp/out.txt"}
+          {:id "l3" :label "artifact" :target-kind :attachment :target "att-1"}]}))
+
+(defn- repainted
+  "`view` rendered, read back, and rendered again — the two pictures, so a test
+   compares what the model would actually be handed."
+  ([v] (repainted v nil))
+  ([v result]
+   (let
+     [md
+      (live/->markdown v {:result result})
+
+      back
+      (live/parse-markdown md)]
+
+     {:md md :again (live/->markdown (:view back) {:result (:result back)}) :back back})))
+
+(defdescribe
+  markdown-round-trip-test
+  (it "reads its own picture back as the view that painted it, node for node"
+      (let
+        [{:keys [md again back]} (repainted (rich-view)
+                                            {:view-id "v"
+                                             :is-completed false
+                                             :reason :interrupted
+                                             :markdown "…"
+                                             :summary "the human stopped watching"
+                                             :error "gh exited 1"})]
+        (expect (= md again))
+        (expect (empty? (:elided back)))
+        (expect (= [:status :progress :stat :steps :log :table :link]
+                   (mapv :type (:nodes (:view back)))))
+        (expect (= ["Run" "Jobs" "Score" "Phases" "Output" "Jobs" "Links"]
+                   (mapv :label (:nodes (:view back)))))
+        ;; Two nodes share a label, so the second earns a numbered address rather
+        ;; than colliding with the first.
+        (expect (= ["run" "jobs" "score" "phases" "output" "jobs-2" "links"]
+                   (mapv :id (:nodes (:view back)))))
+        (expect (= "Watching a CI run" (:title (:view back))))))
+  (it "gives every parsed node back to the engine as a node the engine accepts"
+      (let [{:keys [back]} (repainted (rich-view))]
+        (expect (every? nil? (map hs/live-node-error (:nodes (:view back)))))))
+  (it
+    "carries the verdict both ways, telling the summary from what went wrong"
+    (let
+      [{:keys [back]} (repainted (rich-view)
+                                 {:view-id "v"
+                                  :is-completed false
+                                  :reason :failed
+                                  :markdown "…"
+                                  :summary "3 of 18 jobs failed"
+                                  :error "gh exited 1"})]
+      (expect
+        (= {:is-completed false :reason :failed :summary "3 of 18 jobs failed" :error "gh exited 1"}
+           (:result back)))))
+  (it "paints an empty state that names its own type, and a table keeps its columns"
+      (let
+        [{:keys [md again back]} (repainted (view {:id "s" :type :stat :label "Score" :stats []}
+                                                  {:id "t" :type :steps :label "Phases" :steps []}
+                                                  (log-node)
+                                                  (table-node :insertion)
+                                                  {:id "k" :type :link :label "Links" :links []}
+                                                  {:id "p" :type :progress :label "Scanning"}))]
+        (expect (= md again))
+        (expect (= [:stat :steps :log :table :link :progress] (mapv :type (:nodes (:view back)))))
+        ;; A table with no rows still says what it is watching: the header is the
+        ;; declaration, and `_no rows yet_` goes UNDER it.
+        (expect (= ["Name" "N"] (mapv :label (:columns (nth (:nodes (:view back)) 3)))))
+        (expect (= [:right] (keep :align (:columns (nth (:nodes (:view back)) 3)))))))
+  (it "keeps a pipe inside a cell and flattens the newline that would end the row"
+      (let
+        [{:keys [back]}
+         (repainted (rich-view))
+
+         table
+         (nth (:nodes (:view back)) 5)]
+
+        (expect (= ["tests | ubuntu latest" "13m0s"] (:cells (first (:rows table)))))
+        ;; The row that stopped short is painted to the full width, so it reads back that way.
+        (expect (= ["lint" ""] (:cells (second (:rows table)))))
+        (expect (= [:ok :warn] (mapv :tone (:rows table))))))
+  (it "repaints a truncated log exactly, because the count of what scrolled past is stamped"
+      (let
+        [{:keys [md again back]}
+         (repainted (view (assoc (log-node) :lines (mapv #(str "line " %) (range 300)))))
+
+         node
+         (first (:nodes (:view back)))]
+
+        (expect (= md again))
+        (expect (= 300 (:total-lines node)))
+        (expect (= 120 (count (:lines node))))
+        (expect (= [{:node-id "output" :items 180}] (:elided back)))))
+  (it "says which rows a budget left behind rather than pretending it holds them"
+      (let
+        [{:keys [back]} (repainted (view (assoc (table-node :insertion)
+                                           :label "Jobs"
+                                           :max-rows 5000
+                                           :rows (mapv (fn [i]
+                                                         (row (str "r" i) (str i) "1"))
+                                                       (range 60)))))]
+        (expect (= [{:node-id "jobs" :items 10}] (:elided back)))
+        (expect (= 50 (count (:rows (first (:nodes (:view back)))))))))
+  (it "hands a hand-written picture to the engine, addressed by what its labels earn"
+      (let
+        [authored
+         (str
+           "# Deploying\n_three hosts_\n\n" "### Progress\n**0%** · 0/3 done\n\n"
+           "### Hosts\n| Host | State |\n| --- | --- |\n| alpha | queued |\n| beta | queued |\n\n"
+           "### Output\n_no output yet_")
+
+         declared
+         (:view (live/parse-markdown authored))
+
+         running
+         (live/apply-patch (merge (view) declared)
+                           {:view-id "v"
+                            :seq 1
+                            :ops [{:op :append
+                                   :node-id "hosts"
+                                   :rows [{:id "alpha" :cells ["alpha" "done"] :tone :ok}]}
+                                  {:op :append :node-id "output" :lines ["alpha: ok"]}]})]
+
+        (expect (= ["progress" "hosts" "output"] (mapv :id (:nodes declared))))
+        (expect (= "three hosts" (:description declared)))
+        ;; A row is addressed by the cell the eye reads first, so the patch lands
+        ;; ON the row it names instead of appending a second `alpha`.
+        (expect (= ["alpha" "beta"] (mapv :id (:rows (node running "hosts")))))
+        (expect (str/includes? (live/->markdown running) "| ok | alpha | done |"))
+        (expect (str/includes? (live/->markdown running) "alpha: ok"))))
+  (it "refuses a picture no view could have painted, naming the line to fix"
+      (expect (= "a view opens with `# <title>`" (refusal #(live/parse-markdown "not a title"))))
+      (expect (= "no live node paints this: \"not a node at all\""
+                 (refusal #(live/parse-markdown "# T\n\n### X\nnot a node at all"))))
+      (expect (= "a heading with nothing under it paints no node"
+                 (refusal #(live/parse-markdown "# T\n\n### X\n"))))
+      (expect (= "a log's code fence is never closed"
+                 (refusal #(live/parse-markdown "# T\n\n### Out\n```\nstill going"))))
+      (expect (= "a row paints more cells than the table declares: 2 against 1"
+                 (refusal #(live/parse-markdown "# T\n\n### X\n| A |\n| --- |\n| a | b |"))))
+      (expect (str/starts-with? (str (refusal #(live/parse-markdown
+                                                 "# T\n\n> **exploded**\n\n### X\n[ok] **hi**")))
+                                "no view ends \"exploded\""))))

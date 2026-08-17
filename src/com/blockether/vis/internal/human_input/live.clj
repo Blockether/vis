@@ -15,6 +15,11 @@
    the only thing that cannot cross — where a surface paints red, the model
    reads a `[tone]` token.
 
+   [[parse-markdown]] is that rendering read BACK. One markdown form per node
+   type in one direction is one form per node type in the other, so a picture
+   the model was handed can be handed to the engine, and a whole view can be
+   AUTHORED as markdown. What a budget left behind is named, never guessed.
+
    Nothing here evicts the RECORD. Bounds on keyed collections are REFUSALS
    (`spec/item-bounds`) naming the bound and the node, a log's `:window-lines`
    is only how much a surface holds hot, and the model's own budget always says
@@ -338,6 +343,22 @@
    of the story."
   {:log-tail-lines 120 :table-rows 50})
 
+(def ^:private empty-line
+  "The one line each node type paints when it holds nothing. Distinct per type on
+   purpose: it is what tells [[parse-markdown]] which node painted an empty
+   block, so a view survives the trip through the model's surface with its shape
+   intact. A table paints it UNDER its header — the columns are the declaration,
+   and a table with no rows still says what it is watching."
+  {:stat "_nothing counted yet_"
+   :steps "_no steps yet_"
+   :log "_no output yet_"
+   :table "_no rows yet_"
+   :link "_no links_"})
+
+(def ^:private indeterminate-line
+  "A progress node with no fraction: started, size unknown. Not an empty state —
+   a bar nobody has measured still counts what it finished."
+  "_working_")
 (defn- tone-tag
   "How the model reads a colour it cannot see."
   [tone]
@@ -346,12 +367,14 @@
 (defn- percent "A fraction as whole percent." [value] (long (Math/round (* 100.0 (double value)))))
 
 (defn- cell-text
-  "One table cell, made safe for a pipe table: a newline would end the row and a
-   pipe would invent a column."
+  "One table cell, made safe for a pipe table: a newline would end the row, a
+   pipe would invent a column, and padding is the rail's, so it is trimmed off
+   the text before the rail puts its own back."
   [text]
   (-> (str text)
       (str/replace #"\s*\n\s*" " ")
-      (str/replace "|" "\\|")))
+      (str/replace "|" "\\|")
+      str/trim))
 
 (defn- cell-at
   "The cell this row carries for a declared column id."
@@ -441,7 +464,7 @@
   [{:keys [value done total]} _]
   (let
     [head
-     (if value (str "**" (percent value) "%**") "_working_")
+     (if value (str "**" (percent value) "%**") indeterminate-line)
 
      counted
      (when done (str done (when total (str "/" total)) " done"))]
@@ -456,7 +479,7 @@
        (map (fn [{:keys [label value-text tone]}]
               (str "**" label "** " value-text (when tone (str " " (str/trim (tone-tag tone))))))
             stats))]
-    ["_nothing counted yet_"]))
+    [(empty-line :stat)]))
 
 (defmethod node->markdown :steps
   [{:keys [steps]} _]
@@ -468,7 +491,7 @@
                  (when detail (str " — " detail))
                  (when value (str " · " (percent value) "%"))))
           steps)
-    ["_no steps yet_"]))
+    [(empty-line :steps)]))
 
 (defmethod node->markdown :log
   [{:keys [lines total-lines]} {:keys [log-tail-lines]}]
@@ -486,34 +509,49 @@
       (cond-> (vec (fenced shown))
         (pos? behind)
         (conj (str "_… " behind " earlier lines — the view's record keeps them all_"))))
-    ["_no output yet_"]))
+    [(empty-line :log)]))
 
 (defmethod node->markdown :table
   [{:keys [columns] :as node} {:keys [table-rows]}]
-  (let [rows (ordered-rows node)]
-    (if (seq rows)
-      (let
-        [limit (long table-rows)
-         shown (if (> (count rows) limit) (subvec rows 0 limit) rows)
-         toned? (boolean (some :tone rows))
-         header (cond->> (mapv :label columns)
-                  toned?
-                  (into ["!"]))
-         rule (cond->> (mapv #(if (= :right (:align %)) "---:" "---") columns)
-                toned?
-                (into ["---"]))
-         row->cells (fn [row]
-                      (cond->> (mapv #(cell-text (cell-at columns row (:id %))) columns)
-                        toned?
-                        (into [(if (:tone row) (name (:tone row)) "")])))
-         line (fn [cells]
-                (str "| " (str/join " | " cells) " |"))]
+  (let
+    [rows
+     (ordered-rows node)
 
-        (cond-> (into [(line header) (line rule)] (map (comp line row->cells)) shown)
-          (> (count rows) limit)
-          (conj
-            (str "_… " (- (count rows) limit) " more rows — the view's record keeps them all_"))))
-      ["_no rows yet_"])))
+     limit
+     (long table-rows)
+
+     shown
+     (if (> (count rows) limit) (subvec rows 0 limit) rows)
+
+     toned?
+     (boolean (some :tone rows))
+
+     header
+     (cond->> (mapv :label columns)
+       toned?
+       (into ["!"]))
+
+     rule
+     (cond->> (mapv #(if (= :right (:align %)) "---:" "---") columns)
+       toned?
+       (into ["---"]))
+
+     row->cells
+     (fn [row]
+       (cond->> (mapv #(cell-text (cell-at columns row (:id %))) columns)
+         toned?
+         (into [(if (:tone row) (name (:tone row)) "")])))
+
+     line
+     (fn [cells]
+       (str "| " (str/join " | " cells) " |"))]
+
+    (cond-> (into [(line header) (line rule)] (map (comp line row->cells)) shown)
+      (empty? rows)
+      (conj (empty-line :table))
+
+      (> (count rows) limit)
+      (conj (str "_… " (- (count rows) limit) " more rows — the view's record keeps them all_")))))
 
 (defmethod node->markdown :link
   [{:keys [links]} _]
@@ -531,18 +569,20 @@
                    :attachment
                    (str label " — attachment `" target "`"))))
           links)
-    ["_no links_"]))
+    [(empty-line :link)]))
 
 (defn- verdict-line
   "The first thing the model reads: how the view ended, before anything it
-   painted."
+   painted. `->markdown` sets it apart in a `>` block, and the error carries a
+   marker of its own — a reader (and [[parse-markdown]]) can tell a summary from
+   what went wrong."
   [{:keys [is-completed reason summary error]}]
   (str "**"
        (name reason)
        "**"
        (when-not is-completed " — this view did not finish")
        (when summary (str " · " summary))
-       (when error (str " · " error))))
+       (when error (str " · error: " error))))
 
 (defn ->markdown
   "The whole view as markdown — what the MODEL gets, once, when the view ends.
@@ -562,10 +602,10 @@
       head
       (cond-> [(str "# " (:title view))]
         (:description view)
-        (into ["" (str "_" (:description view) "_")])
+        (conj (str "_" (:description view) "_"))
 
         result
-        (into ["" (verdict-line result)]))
+        (into ["" (str "> " (verdict-line result))]))
 
       body
       (mapcat (fn [node]
@@ -576,3 +616,537 @@
               (:nodes view))]
 
      (str/join "\n" (into head body)))))
+
+;; Reading the picture back
+;;
+;; A rendering nobody can read back is a one-way door: the model would be handed
+;; a picture it could not answer with, and a human could not hand the engine one
+;; either. [[parse-markdown]] is [[->markdown]] inverted — the same vocabulary,
+;; read the other way — so markdown is a SURFACE of this engine and not its
+;; exhaust. Every form below is the mirror of the one that painted it, and the
+;; two are written next to each other so neither can drift alone.
+
+(defn- invalid-markdown!
+  "Refuse a picture the way the materializer refuses a patch: one line naming
+   what to fix, and the line it is on."
+  [line-no message]
+  (throw (ex-info (str "Invalid live-view markdown" (when line-no (str " at line " line-no))
+                       ": " message)
+                  {:type :vis/human-input-invalid-markdown :line line-no :reason message})))
+
+(def ^:private tone?
+  "Every colour a surface may paint, as a reader recognizes it. Closed, so text
+   that merely looks like a `[tone]` marker stays text."
+  (set (vals spec/live-tones)))
+
+(def ^:private reason? "Every ending a verdict may name." (set (vals spec/live-reasons)))
+
+(def ^:private type-painting-nothing
+  "[[empty-line]] read backwards: which node painted an empty block."
+  (into {}
+        (map (fn [[type line]]
+               [line type]))
+        empty-line))
+
+(defn- slug
+  "The address a label earns when the picture never painted one: lower case, one
+   dash for every run of anything else."
+  [text]
+  (let
+    [id (-> (str text)
+            str/lower-case
+            (str/replace #"[^\p{L}\p{N}]+" "-")
+            (str/replace #"^-+|-+$" ""))]
+    (when-not (str/blank? id) id)))
+
+(defn- addressed
+  "`items` given the `:id` markdown does not paint: the slug of the text the eye
+   reads, `prefix-N` where that is blank, and a numbered suffix where two would
+   collide. Derived the same way every time, so the same picture yields the same
+   addresses and a patch written against a parsed view still lands."
+  [prefix text-of items]
+  (first (reduce (fn [[acc taken] item]
+                   (let
+                     [base
+                      (or (slug (text-of item)) (str prefix "-" (inc (count acc))))
+
+                      id
+                      (loop [n 1]
+                        (let [candidate (if (= 1 n) base (str base "-" n))]
+                          (if (contains? taken candidate) (recur (inc n)) candidate)))]
+
+                     [(conj acc (assoc item :id id)) (conj taken id)]))
+                 [[] #{}]
+                 items)))
+
+(defn- untoned
+  "`text` without the marker [[tone-tag]] wrote, and the tone it named."
+  [text]
+  (if-let [[marker named] (re-find #"^\[([a-z-]+)\] " text)]
+    (let [tone (keyword named)]
+      (if (tone? tone) [(subs text (count marker)) tone] [text nil]))
+    [text nil]))
+
+(defn- italicized
+  "What a `_…_` line says, or nil when the line is not one."
+  [line]
+  (when line (second (re-matches #"_(.+)_" line))))
+
+(defn- bullet
+  "What one `- ` item says. A list that mixes a bullet with something else is
+   refused rather than half-read."
+  [at line]
+  (or (second (re-matches #"- (.*)" line))
+      (invalid-markdown! at "every line of a list is a `- ` item")))
+
+(defn- counted-behind
+  "How many items a budget note says the picture left behind, or nil when the
+   block carries no note."
+  [pattern line]
+  (some->> (italicized line)
+           (re-matches pattern)
+           second
+           parse-long))
+
+(defn- blocks
+  "The numbered lines below the title, grouped the way [[->markdown]] laid them
+   out: one group per blank line, a fence keeping its own blank lines. Each
+   group carries the line it starts on, so a refusal can point at it."
+  [numbered]
+  (let
+    [{:keys [acc at cur]} (reduce (fn [{:keys [acc at cur fence] :as state} [n line]]
+                                    (cond (and fence (= line fence)) (assoc state
+                                                                       :cur (conj cur line)
+                                                                       :fence nil)
+                                          fence (assoc state :cur (conj cur line))
+                                          (re-matches #"`{3,}" line) (assoc state
+                                                                       :cur (conj (or cur []) line)
+                                                                       :at (or at n)
+                                                                       :fence line)
+                                          (str/blank? line) (if (seq cur)
+                                                              (assoc state
+                                                                :acc (conj acc {:at at :lines cur})
+                                                                :at nil
+                                                                :cur nil)
+                                                              state)
+                                          :else (assoc state
+                                                  :cur (conj (or cur []) line)
+                                                  :at (or at n))))
+                                  {:acc [] :at nil :cur nil :fence nil}
+                                  numbered)]
+    (cond-> acc
+      (seq cur)
+      (conj {:at at :lines cur}))))
+
+(defn- link-item?
+  "True when a bullet is one of the three shapes a `link` node paints."
+  [text]
+  (boolean (or (re-matches #"\[.+\]\(.+\)" text)
+               (re-matches #".+ — attachment `.+`" text)
+               (re-matches #".+ — `.+`" text))))
+
+(defn- block-type
+  "Which node painted this block. Every type paints a shape no other one makes: a
+   fence is a log, a rail is a table, a bullet list is steps or links, a bold
+   percent is progress, a line that is nothing but bold is a status, bold with a
+   value after it is a stat, and each empty state names its own type."
+  [{:keys [at lines]}]
+  (let
+    [head
+     (first lines)
+
+     [text _]
+     (untoned head)]
+
+    (cond (contains? type-painting-nothing head) (type-painting-nothing head)
+          (re-matches #"`{3,}" head) :log
+          (str/starts-with? head "|") :table
+          (str/starts-with? head "- ") (if (every? (fn [line]
+                                                     (link-item? (first (untoned (bullet at
+                                                                                         line)))))
+                                                   lines)
+                                         :link
+                                         :steps)
+          (or (str/starts-with? head indeterminate-line) (re-find #"^\*\*\d+%\*\*" head)) :progress
+          (re-matches #"\*\*[^*]+\*\*" text) :status
+          (re-find #"^\*\*[^*]+\*\* " text) :stat
+          :else (invalid-markdown! at (str "no live node paints this: " (pr-str head))))))
+
+(defmulti ^:private markdown->node
+  "One node per markdown form — [[node->markdown]] read backwards, method for
+   method. The `:id` is not here: it is derived once, for every node at once, by
+   [[addressed]]."
+  (fn [type _block]
+    type))
+
+(defmethod markdown->node :status
+  [_ {:keys [at lines]}]
+  (when (> (count lines) 2)
+    (invalid-markdown! at "a status paints its text and at most one italic detail"))
+  (let
+    [[text tone]
+     (untoned (first lines))
+
+     detail
+     (italicized (second lines))]
+
+    (when (and (second lines) (nil? detail))
+      (invalid-markdown! at "a status' second line is its detail, written `_like this_`"))
+    (cond->
+      {:type :status
+       :text (or (second (re-matches #"\*\*(.+)\*\*" text))
+                 (invalid-markdown! at "a status paints its text in bold"))
+       :tone (or tone :idle)}
+      detail
+      (assoc :detail detail))))
+
+(defmethod markdown->node :progress
+  [_ {:keys [at lines]}]
+  (when (> (count lines) 1) (invalid-markdown! at "a progress paints one line"))
+  (let
+    [[head counted]
+     (str/split (first lines) #" · " 2)
+
+     value
+     (when-let [percent-text (second (re-matches #"\*\*(\d+)%\*\*" head))]
+       (/ (long (parse-long percent-text)) 100.0))
+
+     [_ done total]
+     (some->> counted
+              (re-matches #"(\d+)(?:/(\d+))? done"))]
+
+    (when-not (or value (= indeterminate-line head))
+      (invalid-markdown! at "a progress paints `**N%**` or `_working_`"))
+    (cond-> {:type :progress}
+      value
+      (assoc :value value)
+
+      done
+      (assoc :done (parse-long done))
+
+      total
+      (assoc :total (parse-long total)))))
+
+(defmethod markdown->node :stat
+  [_ {:keys [at lines]}]
+  (when (> (count lines) 1) (invalid-markdown! at "a stat paints one strip"))
+  (if (= (empty-line :stat) (first lines))
+    {:type :stat :stats []}
+    (let [entries (re-seq #"\*\*([^*]+)\*\* ?(.*?)(?= · \*\*|$)" (first lines))]
+      (when (empty? entries) (invalid-markdown! at "a stat paints `**label** value`"))
+      {:type :stat
+       :stats (addressed "stat"
+                         :label
+                         (mapv (fn [[_ label value]]
+                                 (let
+                                   [[_ text named] (re-matches #"(.*?) ?\[([a-z-]+)\]" value)
+                                    tone (when named (keyword named))]
+
+                                   (cond-> {:label label :value-text (if (tone? tone) text value)}
+                                     (tone? tone)
+                                     (assoc :tone tone))))
+                               entries))})))
+
+(defmethod markdown->node :steps
+  [_ {:keys [at lines]}]
+  (if (= (empty-line :steps) (first lines))
+    {:type :steps :steps []}
+    {:type :steps
+     :steps (addressed "step"
+                       :label
+                       (mapv (fn [line]
+                               (let
+                                 [[body tone]
+                                  (untoned (bullet at line))
+
+                                  [_ measured percent-text]
+                                  (re-matches #"(.*) · (\d+)%" body)
+
+                                  text
+                                  (or measured body)
+
+                                  [_ label detail]
+                                  (re-matches #"(.*?) — (.*)" text)]
+
+                                 (cond-> {:label (or label text) :tone (or tone :idle)}
+                                   detail
+                                   (assoc :detail detail)
+
+                                   percent-text
+                                   (assoc :value (/ (long (parse-long percent-text)) 100.0)))))
+                             lines))}))
+
+(defmethod markdown->node :log
+  [_ {:keys [at lines]}]
+  (if (= (empty-line :log) (first lines))
+    {:type :log :lines [] :window-lines (long (:window-lines spec/log-defaults)) :total-lines 0}
+    (let
+      [fence
+       (first lines)
+
+       body
+       (vec (rest lines))
+
+       closing
+       (or (first (keep-indexed (fn [i line]
+                                  (when (= fence line) i))
+                                body))
+           (invalid-markdown! at "a log's code fence is never closed"))
+
+       window
+       (subvec body 0 (long closing))
+
+       behind
+       (long (or (counted-behind #"… (\d+) earlier lines.*" (get body (inc (long closing)))) 0))]
+
+      (with-meta {:type :log
+                  :lines window
+                  :window-lines (long (max (long (:window-lines spec/log-defaults)) (count window)))
+                  :total-lines (+ (count window) behind)}
+        {:elided behind}))))
+
+(defn- table-cells
+  "One painted row, back into cells: split on the pipes that were not escaped,
+   drop the rail on either side, and give an escaped pipe its meaning back."
+  [line]
+  (let
+    [parts
+     (vec (str/split line #"(?<!\\)\|" -1))
+
+     from
+     (if (str/starts-with? (str/triml line) "|") 1 0)
+
+     to
+     (if (str/ends-with? (str/trimr line) "|") (dec (count parts)) (count parts))]
+
+    (mapv (fn [cell]
+            (str/replace (str/trim cell) "\\|" "|"))
+          (subvec parts from (max (long from) (long to))))))
+
+(defmethod markdown->node :table
+  [_ {:keys [at lines]}]
+  (let
+    [noted
+     (italicized (last lines))
+
+     behind
+     (long (or (some->> noted
+                        (re-matches #"… (\d+) more rows.*")
+                        second
+                        parse-long)
+               0))
+
+     painted
+     (mapv table-cells
+           (cond-> lines
+             noted
+             (subvec 0 (dec (count lines)))))
+
+     [header rule]
+     painted
+
+     _
+     (when (or (nil? rule) (not= (count header) (count rule)))
+       (invalid-markdown! at "a table paints a header row and a rule of the same width"))
+
+     toned?
+     (and (= "!" (first header)) (= "---" (first rule)))
+
+     columns
+     (addressed "column"
+                :label
+                (mapv (fn [label align]
+                        (cond-> {:label label}
+                          (str/ends-with? align ":")
+                          (assoc :align :right)))
+                      (cond-> header
+                        toned?
+                        (subvec 1))
+                      (cond-> rule
+                        toned?
+                        (subvec 1))))
+
+     rows
+     (addressed "row"
+                (fn [row]
+                  (first (:cells row)))
+                (mapv
+                  (fn [cells]
+                    (let
+                      [tone
+                       (when (and toned? (not (str/blank? (first cells)))) (keyword (first cells)))
+
+                       painted-cells
+                       (cond-> cells
+                         toned?
+                         (subvec 1))]
+
+                      (when (> (count painted-cells) (count columns))
+                        (invalid-markdown! at
+                                           (str "a row paints more cells than the table declares: "
+                                                (count painted-cells)
+                                                " against " (count columns))))
+                      (cond-> {:cells painted-cells}
+                        (tone? tone)
+                        (assoc :tone tone))))
+                  (drop 2 painted)))]
+
+    (with-meta {:type :table
+                :columns columns
+                :rows rows
+                :max-rows (long (:max-rows spec/table-defaults))
+                :order :insertion}
+      {:elided behind})))
+
+(defmethod markdown->node :link
+  [_ {:keys [at lines]}]
+  (if (= (empty-line :link) (first lines))
+    {:type :link :links []}
+    {:type :link
+     :links (addressed "link"
+                       :label
+                       (mapv (fn [line]
+                               (let
+                                 [[body tone]
+                                  (untoned (bullet at line))
+
+                                  [kind label target]
+                                  (or (some->> (re-matches #"\[(.+)\]\((.+)\)" body)
+                                               rest
+                                               (cons :url))
+                                      (some->> (re-matches #"(.+) — attachment `(.+)`" body)
+                                               rest
+                                               (cons :attachment))
+                                      (some->> (re-matches #"(.+) — `(.+)`" body)
+                                               rest
+                                               (cons :path))
+                                      (invalid-markdown!
+                                        at
+                                        (str
+                                          "a link is `[label](url)`, a path or an attachment, not "
+                                          (pr-str body))))]
+
+                                 (cond-> {:label label :target-kind kind :target target}
+                                   tone
+                                   (assoc :tone tone))))
+                             lines))}))
+
+(defn- verdict
+  "The ending a `>` block states, as much of [[spec/live-result]] as a picture can
+   carry: no `:view-id`, no `:artifact-id` and no `:markdown`, because those are
+   the engine's and a picture holds none of them."
+  [{:keys [at lines]}]
+  (when (> (count lines) 1) (invalid-markdown! at "a verdict is one line"))
+  (let
+    [[_ named tail]
+     (or (re-matches #"> \*\*([a-z-]+)\*\*(.*)" (first lines))
+         (invalid-markdown! at "a verdict opens with `> **<ending>**`"))
+
+     ending
+     (keyword named)
+
+     _
+     (when-not (reason? ending)
+       (invalid-markdown! at
+                          (str "no view ends " (pr-str named)
+                               " — " (str/join ", " (sort (map name reason?))))))
+
+     stated
+     (str/replace tail #"^ — this view did not finish" "")
+
+     marker
+     " · error: "
+
+     at-error
+     (str/index-of stated marker)
+
+     said
+     (if at-error (subs stated 0 (long at-error)) stated)]
+
+    (cond-> {:is-completed (= :completed ending) :reason ending}
+      (str/starts-with? said " · ")
+      (assoc :summary (subs said 3))
+
+      at-error
+      (assoc :error (subs stated (+ (long at-error) (count marker)))))))
+
+(defn parse-markdown
+  "A picture read back: the markdown [[->markdown]] wrote, as the view and the
+   verdict that painted it — `{:view … :result … :elided …}`.
+
+   THE LAW: a picture that elided nothing renders back exactly, so
+   `(->markdown view {:result result})` is the markdown it was parsed from. That
+   is what makes markdown two-way — a view can be AUTHORED as markdown, a
+   rendered view can be re-read, and neither direction invents anything.
+
+   Markdown paints the PICTURE, not the record, so what cannot cross is named
+   here rather than discovered later. Ids are never painted: each is derived
+   from the label the eye reads ([[addressed]]), deterministically, so a patch
+   written against a parsed view still lands. The declaration-only keys
+   (`:window-lines`, `:max-rows`, `:order`) are refilled with their defaults —
+   the render reads none of them. A percent is painted whole, so the fraction
+   that comes back is the one the eye saw. And `:elided` names every node whose
+   picture COUNTED items it did not carry: a log still round-trips (the count is
+   stamped, so the note is repainted), a table holds the rows it was shown.
+
+   Every node is checked against `spec/live-node` before it is answered, so what
+   this returns is a view the engine will run, or a refusal naming the line."
+  [markdown]
+  (let
+    [numbered
+     (map-indexed (fn [i line]
+                    [(inc (long i)) line])
+                  (str/split-lines (str markdown)))
+
+     title
+     (or (second (re-matches #"# (.+)" (str (second (first numbered)))))
+         (invalid-markdown! 1 "a view opens with `# <title>`"))
+
+     described
+     (italicized (second (second numbered)))
+
+     groups
+     (blocks (drop (if described 2 1) numbered))
+
+     ends?
+     (str/starts-with? (str (first (:lines (first groups)))) "> ")
+
+     result
+     (when ends? (verdict (first groups)))
+
+     painted
+     (cond-> groups
+       ends?
+       rest)
+
+     nodes
+     (addressed "node"
+                :label
+                (mapv (fn [{:keys [at lines] :as group}]
+                        (let
+                          [label
+                           (second (re-matches #"### (.+)" (first lines)))
+
+                           block
+                           (if label {:at (inc (long at)) :lines (vec (rest lines))} group)]
+
+                          (when (empty? (:lines block))
+                            (invalid-markdown! at "a heading with nothing under it paints no node"))
+                          (cond-> (markdown->node (block-type block) block)
+                            label
+                            (assoc :label label))))
+                      painted))]
+
+    (when (empty? nodes) (invalid-markdown! 1 "a view paints at least one node"))
+    (doseq [[node group] (map vector nodes painted)]
+      (when-let [problem (spec/live-node-error node)]
+        (invalid-markdown! (:at group) problem)))
+    {:view (cond-> {:title title :nodes nodes}
+             described
+             (assoc :description described))
+     :result result
+     :elided (into []
+                   (keep (fn [node]
+                           (let [items (long (or (:elided (meta node)) 0))]
+                             (when (pos? items) {:node-id (:id node) :items items}))))
+                   nodes)}))
