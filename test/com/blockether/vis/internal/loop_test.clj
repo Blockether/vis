@@ -2263,10 +2263,12 @@
 
 (defdescribe
   ask-code-idle-timeout-test
-  (it "gives the first token 60s and the idle watchdog its own 300s by default"
-      ;; 60s, not svar's two minutes: the first header is the ONE wait Vis can
-      ;; retry for free, and `pre-output-stream-retryable?` now does.
-      (expect (= 60000 rt/ASK_CODE_TTFT_TIMEOUT_MS))
+  (it "gives the first token 200s and the idle watchdog its own 300s by default"
+      ;; 200s, not svar's two minutes: under Vis' pinned provider+model route
+      ;; svar's router has no second candidate to cross to, and the first header
+      ;; is the ONE wait Vis can retry for free — `pre-output-stream-retryable?`
+      ;; does, so a slow queue gets three visible tries instead of one verdict.
+      (expect (= 200000 rt/ASK_CODE_TTFT_TIMEOUT_MS))
       (expect (= 300000 rt/ASK_CODE_IDLE_TIMEOUT_MS))
       (let [{:keys [router opts]} (captured-ask-code-opts {:lang "clojure" :messages []})]
         (expect (= ::router router))

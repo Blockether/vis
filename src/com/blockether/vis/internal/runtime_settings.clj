@@ -48,26 +48,35 @@
 (def ASK_CODE_TTFT_TIMEOUT_MS
   "Default time-to-first-token timeout for Vis `svar/ask-code!` calls (ms).
 
-   60s. The wait for the FIRST response header, and nothing else: no bytes
+   200s. The wait for the FIRST response header, and nothing else: no bytes
    arrived, no tool ran, no output was streamed, so the request can simply be
-   made again. Measured: a pinned zai-coding-plan turn spent its last 120s
-   waiting for headers that never came and died with ten iterations of finished
-   work behind it, because svar's own `router/DEFAULT_TTFT_TIMEOUT_MS` (the same
-   two minutes) is the WHOLE budget when the route is pinned to one
-   provider+model and svar's router has no second candidate to cross to.
+   made again.
 
-   60s halves that one wait without calling a merely slow queue dead: a cold
-   start or a deep provider queue still gets a full minute per try. Shortening
-   it at all is only safe BECAUSE the abort is re-issued while no output exists
-   (`loop/pre-output-stream-retryable?`): the provider gets three 60s chances
-   seconds apart instead of one silent 120s chance, so a healthy slow start
-   survives and a wedged endpoint is named by visible retries instead of a
-   two-minute gap. Never shorten this without that retry in place — alone it
-   would only kill healthy slow-queue turns faster.
+   Deliberately WIDER than svar's own `router/DEFAULT_TTFT_TIMEOUT_MS` (two
+   minutes). That number is tuned for a router holding a second candidate to
+   cross to; Vis pins the route to one provider+model, so the header a cold
+   start or a deep provider queue would have produced at 130s has nowhere
+   else to come from and must not be called dead at 120s. It still sits under
+   svar's `router/DEFAULT_TIMEOUT_MS` (the 300s whole-request cap Vis leaves
+   at its default), so this watchdog — not the HTTP client — is what names the
+   failure and the abort keeps its type (`:svar.core/stream-ttft-timeout`)
+   for the retry below to recognize. A project that lowers `network.timeout_ms`
+   under 200s reaches the client's own timeout first.
+
+   Measured: a pinned zai-coding-plan turn spent its last 120s waiting for
+   headers that never came and died with ten iterations of finished work
+   behind it, because svar's router had no second candidate to cross to. The
+   re-issue is what fixed that; this number only decides how long one try
+   waits. Because the abort is raised while no output exists,
+   `loop/pre-output-stream-retryable?` re-issues it seconds apart up to
+   `MAX_PRE_OUTPUT_STREAM_RETRIES` times, so a wedged endpoint is named by
+   three visible retries — about ten minutes at 200s, where 60s bought three —
+   instead of by one silent gap. Never shorten this without that retry in
+   place: alone it would only kill healthy slow-queue turns faster.
 
    Model-progress silence while keepalives continue is a separate, opt-in
    semantic watchdog below."
-  60000)
+  200000)
 
 (def ASK_CODE_IDLE_TIMEOUT_MS
   "Default inter-chunk idle timeout for Vis `svar/ask-code!` calls (ms).
