@@ -2128,6 +2128,14 @@ export function SectionHeader({
  * shelf holds its height; `flex-wrap` remains for the honest case, a count so long
  * it cannot share the line, because a truncated count is not an option.
  *
+ * Its height is the PAGED height at EVERY page count. Reported from a phone with a
+ * screenshot, while typing in the search field: a project whose hits fit one page
+ * renders no pager at all, so the strip stood 36px there and 40px the moment one
+ * more match spilled onto a second page — the block jumped on every keystroke.
+ * `min-h-10` is `Pager`'s own 32px compact face plus this shelf's `py-1`, so the
+ * pager arriving or leaving changes ink and nothing else (`mouse:min-h-8` is
+ * already that sum for the 24px desktop face).
+ *
  * The count lives here rather than in the header's trailing cluster for the same
  * reason the qualifier moved under the name: measured on a 320px screen, `699
  * sessions`, `3 live`, the amber verb and the `⋯` took the cluster's width first
@@ -2136,7 +2144,7 @@ export function SectionHeader({
 export function SectionShelf({ children }: { children: ReactNode }) {
   return (
     <div
-      className={`sticky top-13 z-9 flex min-h-9 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-dialog-edge bg-level-project py-1 mouse:top-9 mouse:min-h-8 ${LIST_EDGE} ${LIST_EDGE_END}`}
+      className={`sticky top-13 z-9 flex min-h-10 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-dialog-edge bg-level-project py-1 mouse:top-9 mouse:min-h-8 ${LIST_EDGE} ${LIST_EDGE_END}`}
     >
       {children}
     </div>

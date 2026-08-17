@@ -1000,8 +1000,25 @@ describe("SectionShelf", () => {
   });
 
   it("is shorter than the band it hangs from", () => {
-    expect(face).toContain("min-h-9");
+    expect(face).toContain("min-h-10");
     expect(face).toContain("mouse:min-h-8");
+  });
+
+  // Regression, user report with a screenshot of a phone: while typing in the search
+  // field the header block jumped, because a project whose hits fit one page renders
+  // no pager and the shelf then stood 4px shorter than the same shelf one match later.
+  it("holds the paged height even when there is no pager to hold", () => {
+    const unpaged = renderToStaticMarkup(
+      <SectionShelf>
+        <HeaderMeta>
+          <HeaderTally count={3} unit="session" />
+        </HeaderMeta>
+        <Pager page={1} pageCount={1} onPage={() => {}} label="vis sessions" />
+      </SectionShelf>,
+    );
+    const unpagedFace = /^<div class="([^"]*)"/.exec(unpaged)?.[1] ?? "";
+    expect(unpaged).not.toContain("Previous page");
+    expect(unpagedFace).toBe(face);
   });
 
   // Regression, user report with a screenshot of a phone: the shelf wrapped as soon
