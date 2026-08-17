@@ -289,7 +289,15 @@
      auto_compress_above  soft guardrail threshold for request size
      turn_total_tokens    cumulative input this turn (billing, NOT a
                           per-call limit — may exceed the limit safely)
-     hint                 throttled compaction nudge, present ONLY when the
+      cache_hit_rate       share of input tokens the provider served from its
+                           PROMPT CACHE across the last few requests, as a
+                           rounded percentage — a cached token bills at a
+                           fraction of a fresh one, so this is what a fallback
+                           onto a cold peer actually costs; folded in by
+                           `session-view` (`with-cache-hit-rate`) and absent
+                           until a request has been measured
+      cache_hit_window     how many recent requests that share averages
+      hint                 throttled compaction nudge, present ONLY when the
                           handled context has grown past `auto_compress_above`
                           (a bigger task) — the actionable partner to the passive
                           ceiling numbers; added by `session-view` from
@@ -314,6 +322,158 @@
           win "saturation"
           (long (Math/round (* 100.0 (/ (double req) (double win))))) "headroom_tokens"
           (max 0 (- win req)))))))
+
+(def CACHE_RATE_WINDOW
+  "How many recent provider requests the rolling cache-hit rate averages.
+   Short enough that ONE cold provider shows within a couple of iterations —
+   that visibility is the whole point of the number — and long enough that a
+   single cache-missing call does not read as a lost cache."
+  8)
+
+(def cache-samples-key
+  "ctx key holding the bounded ring of recent request measurements
+   (`{\"input\" \"cached\"}`, oldest first). `engine_*` is engine bookkeeping:
+   `session-view` never ships the ring itself, only the rate derived from it."
+  "engine_cache_samples")
+
+(def ^:private MAX_SAMPLE_TOKENS
+  "Ceiling for ONE request's token count. Far above any provider's window, and
+   low enough that a full window of them still sums inside a long — an
+   `ArithmeticException` from a nonsense reading must never reach the render."
+  1000000000000)
+
+(defn- token-count
+  "A provider's usage numbers are not a promise: an OpenAI-compatible gateway
+   may report a count as a string, a double, `Infinity`, or not at all.
+   Anything that is not a finite, positive number reads as NOT MEASURED (0),
+   and an impossible magnitude is capped. This readout must never be the
+   reason a render or a turn dies."
+  ^long [v]
+  (if (number? v)
+    (let [d (double v)]
+      (cond (Double/isNaN d) 0
+            ;; `Infinity` tokens is not a big number, it is a broken reading.
+            (Double/isInfinite d) 0
+            (<= d 0.0) 0
+            (>= d (double MAX_SAMPLE_TOKENS)) (long MAX_SAMPLE_TOKENS)
+            :else (long d)))
+    0))
+
+(defn- sum-tokens
+  "Total of one column across the sampled window, summed as primitives so a
+   nonsense reading cannot overflow into an exception at render time."
+  ^long [rows k]
+  (loop
+    [acc
+     0
+
+     rs
+     (seq rows)]
+
+    (if rs (recur (+ acc (token-count (get (first rs) k))) (next rs)) acc)))
+
+(defn- sample-rows
+  "Only maps inside a sequential ring are samples. A scalar or a string in the
+   slot — a hand-edited ctx, a bad restore — is history nobody can read, not a
+   reason to blow up `session-view`."
+  [samples]
+  (if (sequential? samples) (filterv map? samples) []))
+
+(defn note-cache-sample
+  "Pure: append ONE request's measurement to `samples`, keeping the
+   `CACHE_RATE_WINDOW` newest. A call with no measured input is NOT a sample —
+   an iteration that errored before reaching the provider would otherwise drag
+   the rate to zero and read as a lost cache. `cached` above `input` is clamped:
+   cache reads are normalized as a SUBSET of input tokens, so a provider that
+   reports more is capped at a full hit instead of an impossible percentage.
+   Total on every input — see `token-count`."
+  [samples input-tokens cached-tokens]
+  (let
+    [in
+     (token-count input-tokens)
+
+     cached
+     (token-count cached-tokens)
+
+     rows
+     (sample-rows samples)]
+
+    (if (pos? in)
+      (vec (take-last CACHE_RATE_WINDOW (conj rows {"input" in "cached" (min in cached)})))
+      rows)))
+
+(defn route-label
+  "Pure: `\"provider/model\"` — the identity of ONE endpoint's prompt cache, or nil
+   when either side is unnamed. Half a route names no cache, so it is never
+   compared with one."
+  [provider model]
+  (let
+    [p
+     (some-> provider
+             name
+             str/trim
+             not-empty)
+
+     m
+     (some-> model
+             str
+             str/trim
+             not-empty)]
+
+    (when (and p m) (str p "/" m))))
+
+(defn attribute-cache-samples
+  "Pure: name `route` on the samples nobody had named yet, then keep only the
+   trailing run that belongs to it.
+
+   A prompt cache is the property of ONE provider's model, so a window that mixes
+   the provider a session just LEFT with the one that rescued it publishes the
+   comfortable average of the two: a 95%-warm pin rescued onto a cold peer reads
+   72% in the very turn whose note says the cache was lost. A measurement lands
+   BEFORE anything has said who answered it, which is why attribution is a second
+   step; an unnamed route leaves the window untouched, because a reading nobody
+   could attribute is no evidence of a move."
+  [samples route]
+  (if-let
+    [r (some-> route
+               str
+               str/trim
+               not-empty)]
+    (let [rows (mapv #(if (get % "route") % (assoc % "route" r)) (sample-rows samples))]
+      (vec (reverse (take-while #(= r (get % "route")) (rseq rows)))))
+    (sample-rows samples)))
+(defn cache-hit-rate
+  "Pure: percentage of input tokens served from the provider's prompt cache
+   across `samples`, rounded. nil when the window holds nothing measured — the
+   caller then omits the key instead of publishing a confident 0%, which is
+   exactly what a first, legitimately cold request would look like. Total: a
+   ring of junk answers nil, never an exception."
+  [samples]
+  (let
+    [rows
+     (sample-rows samples)
+
+     total
+     (sum-tokens rows "input")
+
+     cached
+     (sum-tokens rows "cached")]
+
+    (when (pos? total) (min 100 (long (Math/round (* 100.0 (/ (double cached) (double total)))))))))
+
+(defn with-cache-hit-rate
+  "Pure: fold the rolling cache readout — `cache_hit_rate` and the
+   `cache_hit_window` it averages — into a `utilization` map. Kept out of
+   `utilization` itself because the ring spans TURNS while that map is
+   stamped per request: the number worth seeing is the one that keeps falling
+   after a rescue moved the session to a provider whose prefix is cold.
+   Returns `util` untouched when nothing measurable is in the window."
+  [util samples]
+  (if-let [rate (when (map? util) (cache-hit-rate samples))]
+    (assoc util
+      "cache_hit_rate" rate
+      "cache_hit_window" (count (sample-rows samples)))
+    util))
 
 (def served-route-key
   "ctx key holding the provider/model pair that ACTUALLY answered the last
@@ -1052,12 +1212,13 @@
                         (get ctx "engine_overbudget_hint_turn"))
 
       util
-      (cond-> (or (get ctx "engine_utilization") (when (seq budget) {}))
-        (seq budget)
-        (merge budget)
+      (-> (cond-> (or (get ctx "engine_utilization") (when (seq budget) {}))
+            (seq budget)
+            (merge budget)
 
-        hint
-        (assoc "hint" hint))]
+            hint
+            (assoc "hint" hint))
+          (with-cache-hit-rate (get ctx cache-samples-key)))]
 
      (cond-> (select-keys ctx model-facing-keys)
        (seq util)

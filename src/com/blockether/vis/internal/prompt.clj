@@ -301,6 +301,8 @@
     "- Treat context as a budget: in `session[\"utilization\"]` pressure is `last_request_tokens`\n"
     "  against `auto_compress_above`; `saturation`/`headroom_tokens` price the far larger hard per-call\n"
     "  limit and read calm while that budget empties, and `hint` only arms at 75% of it.\n"
+    "- `cache_hit_rate` is the share of recent input a provider served from ITS OWN prompt cache:\n"
+    "  it collapses when a fallback moved the session to another endpoint, not when work grew.\n"
     "- Fold obsolete settled work: `fold_session(key, gist)` — the key is a STRING: `\"t2/i5\"` one step,\n"
     "  `\"t2\"` a turn, `\"t2/i1-i9\"` a range, `\"-t2/i9\"` everything through it, `\"t2/i5-\"` since it, commas\n"
     "  union several. Omitting the gist discards outright, and\n"

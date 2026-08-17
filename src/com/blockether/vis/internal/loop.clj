@@ -2024,23 +2024,25 @@
       nil)))
 
 (defn- previous-request-usage
-  "Return latest persisted provider request before `current-turn-id`.
+  "Return latest persisted provider request before `current-turn-id`, together
+   with the ring of recent per-request cache measurements the rolling hit rate
+   averages.
 
    `:session/utilization` is rendered before the next provider call, so iter 1
    of a new turn cannot use current-turn API usage yet. Seed it from the prior
    persisted iteration instead; once this turn completes one iteration, live
-   `usage-atom` readings take over."
+   `usage-atom` readings take over. The cache samples are seeded the same way,
+   so a session resumed in a fresh daemon reports the hit rate it had earned
+   instead of the cold cache it never measured."
   [environment current-turn-id]
   (try
     (when-let [session-id (:session-id environment)]
       (let
         [db (:db-info environment)
          turns (or (persistance/db-list-session-turns db session-id) [])
-         current-id (str current-turn-id)]
-
-        (some (fn [turn]
-                (let
-                  [iters (try (persistance/db-list-session-turn-iterations db (:id turn))
+         current-id (str current-turn-id)
+         iterations-of (fn [turn]
+                         (try (persistance/db-list-session-turn-iterations db (:id turn))
                               (catch Throwable t
                                 (tel/log!
                                   {:level :warn
@@ -2049,13 +2051,45 @@
                                           :session-turn-id (:id turn)
                                           :error (ex-message t)}}
                                   "Could not load prior turn iterations while seeding utilization")
-                                []))]
-                  (when-let [it (last (filter #(pos? (long (or (:input-tokens %) 0))) iters))]
-                    {:last-request-tokens (long (:input-tokens it))
-                     :last-request-turn-id (:id turn)
-                     :last-request-turn-position (:position turn)
-                     :last-request-iteration (:position it)})))
-              (reverse (remove #(= (str (:id %)) current-id) turns)))))
+                                [])))
+         prior (reverse (remove #(= (str (:id %)) current-id) turns))]
+
+        ;; Walk turns newest-first, but only until the window is full: the rate
+        ;; is ROLLING, so one page of history answers it no matter how long the
+        ;; session is.
+        (loop
+          [remaining prior
+           newest-first []
+           latest nil]
+
+          (let [turn (first remaining)]
+            (if (or (nil? turn)
+                    (and latest (>= (count newest-first) (long ctx-engine/CACHE_RATE_WINDOW))))
+              (when latest
+                (assoc latest
+                  :cache-samples
+                  (reduce (fn [ring row]
+                            (-> (ctx-engine/note-cache-sample ring
+                                                              (:input-tokens row)
+                                                              (:input-cache-read-tokens row))
+                                ;; A persisted row names the endpoint that ACTUALLY served
+                                ;; it, so a resumed session inherits only the measurements
+                                ;; taken against the cache it is about to talk to again.
+                                (ctx-engine/attribute-cache-samples
+                                  (ctx-engine/route-label
+                                    (or (:llm-actual-provider row) (:llm-selected-provider row))
+                                    (or (:llm-actual-model row) (:llm-selected-model row))))))
+                          []
+                          (reverse (take (long ctx-engine/CACHE_RATE_WINDOW) newest-first)))))
+              (let [measured (filter #(pos? (long (or (:input-tokens %) 0))) (iterations-of turn))]
+                (recur (rest remaining)
+                       (into newest-first (reverse measured))
+                       (or latest
+                           (when-let [it (last measured)]
+                             {:last-request-tokens (long (:input-tokens it))
+                              :last-request-turn-id (:id turn)
+                              :last-request-turn-position (:position turn)
+                              :last-request-iteration (:position it)})))))))))
     (catch Throwable t
       (tel/log! {:level :warn
                  :id ::previous-request-usage-failed
@@ -2103,6 +2137,22 @@
                           (not pressured?)
                           (dissoc "engine_overbudget_hint_turn")))))))
 
+(defn- stamp-cache-sample!
+  "Record ONE measured request in the ctx-atom's rolling cache ring — the
+   denominator `session_utilization`'s `cache_hit_rate` is derived from at view
+   time. The ring lives on the per-SESSION ctx rather than the per-turn usage
+   atom because the number worth seeing spans the turns AFTER a rescue moved
+   the session to a provider whose prefix is cold. A call that measured no
+   input leaves the ring untouched (`ctx-engine/note-cache-sample`)."
+  [ctx-atom input-tokens cached-tokens]
+  (when ctx-atom
+    (swap! ctx-atom (fn [ctx]
+                      (let
+                        [ring (ctx-engine/note-cache-sample (get ctx ctx-engine/cache-samples-key)
+                                                            input-tokens
+                                                            cached-tokens)]
+                        (if (seq ring) (assoc ctx ctx-engine/cache-samples-key ring) ctx))))))
+
 (defn- stamp-served-route!
   "Record the provider/model that ACTUALLY answered this iteration on the ctx-atom.
 
@@ -2111,12 +2161,27 @@
    peer therefore reported the pin's context window while talking to the peer's — a
    1M-window pin rescued onto a 128K peer read ~90% free right up to the provider's
    rejection. The stamp carries the turn it belongs to, so it can never be read as
-   the next turn's plan (`ctx-engine/served-route`)."
+   the next turn's plan (`ctx-engine/served-route`).
+
+   The same stamp NAMES the cache measurements this iteration produced. A sample is
+   recorded while the request is still in flight, when nobody can yet say who will
+   answer it; only here is the endpoint known, and a hit rate may only average
+   samples taken against the SAME provider's cache."
   [env iteration-result]
   (when-let [ctx-atom (:ctx-atom env)]
-    (swap! ctx-atom ctx-engine/stamp-served-route
-      (:llm-provider iteration-result)
-      (:llm-model iteration-result))))
+    (let
+      [provider (:llm-provider iteration-result)
+       model (:llm-model iteration-result)
+       route (ctx-engine/route-label provider model)]
+
+      (swap! ctx-atom
+        (fn [ctx]
+          (let
+            [stamped (ctx-engine/stamp-served-route ctx provider model)
+             ring (ctx-engine/attribute-cache-samples (get stamped ctx-engine/cache-samples-key)
+                                                      route)]
+
+            (if (seq ring) (assoc stamped ctx-engine/cache-samples-key ring) stamped)))))))
 (defn- stamp-iter-universe!
   "Record the raw iteration universe while pricing only `wire-iters` — the
    CURRENT provider-visible projection. `wire-iters` defaults to
@@ -6268,6 +6333,25 @@
     (when-let [served (ctx-engine/served-route @ctx-atom)]
       (resolve-model-info (:router env) (get served "provider") (get served "model")))))
 
+(defn- token-limit
+  "One context-window candidate as a usable ceiling, or nil.
+
+   Candidates come from provider catalogs and from config a human edits, so a window
+   can arrive as `\"128000\"`, as 0, or as something that is not a number at all. A
+   ceiling that is not a positive number is not a smaller budget — it is a reading
+   that would carry nonsense into every saturation the session prints — so it is
+   skipped in favour of the next source rather than trusted."
+  [v]
+  (let
+    [n (cond (number? v) (double v)
+             (string? v) (some-> v
+                                 str/trim
+                                 not-empty
+                                 parse-double)
+             :else nil)]
+    (when n
+      (let [d (double n)]
+        (when (and (not (Double/isNaN d)) (not (Double/isInfinite d)) (pos? d)) (long d))))))
 (defn- iteration-context-limit
   "Per-call input ceiling the pressure hint and `session_utilization` measure
    against. Walks four sources in priority order:
@@ -6283,13 +6367,16 @@
    the model too early on a 1M-context Anthropic native call or, worse, under-warned
    on a 128K Copilot call. The SERVED model outranks the pin because a rescued turn
    keeps talking to the peer for the rest of the turn: measuring it against the
-   window it left is how a session reads `90% headroom` into a hard rejection."
+    window it left is how a session reads `90% headroom` into a hard rejection.
+
+   Every candidate is coerced by `token-limit`: a source that cannot name a positive
+   number is skipped, never published."
   [max-context-tokens served-model pinned-model]
-  (or max-context-tokens
-      (:input-limit served-model)
-      (:context served-model)
-      (:input-limit pinned-model)
-      (:context pinned-model)
+  (or (token-limit max-context-tokens)
+      (token-limit (:input-limit served-model))
+      (token-limit (:context served-model))
+      (token-limit (:input-limit pinned-model))
+      (token-limit (:context pinned-model))
       200000))
 (defn router-for-model
   "Return a router variant whose provider/model ORDER reflects a model PREFERENCE,
@@ -6997,6 +7084,16 @@
                                 "headroom_tokens" (long initial-context-limit)
                                 "measured" false}))))))
 
+     ;; A resumed session has its earned hit rate on disk, not in this process.
+     ;; Seed the ring once, and never over a ring this process already filled.
+     _seeded-cache-ring
+     (when-let [ctx-atom (:ctx-atom environment)]
+       (when-let [seeded (not-empty (:cache-samples previous-usage))]
+         (swap! ctx-atom (fn [ctx]
+                           (if (seq (get ctx ctx-engine/cache-samples-key))
+                             ctx
+                             (assoc ctx ctx-engine/cache-samples-key seeded))))))
+
      turn-context
      (ctx-loop/render-block! environment ctx-renderer/render-turn-boundary)
 
@@ -7066,6 +7163,12 @@
      accumulate-usage!
      (fn [api-usage]
        (when api-usage
+         ;; Stamped where a request's usage actually LANDS, so one request
+         ;; contributes exactly one cache sample no matter how many times the
+         ;; iteration re-renders utilization.
+         (stamp-cache-sample! (:ctx-atom environment)
+                              (:input-tokens api-usage)
+                              (get-in api-usage [:input-tokens-details :cache-read]))
          (swap! usage-atom
            (fn [acc]
              (let
@@ -8056,23 +8159,28 @@
                                        ;; not only after it ends.
                                        :done? true}))
                           (let
-                            [result
-                             (-> (merge {:answer (:answer final-result)
-                                         :trace (conj trace trace-entry)
-                                         :iteration-count (inc (long iteration))
-                                         :utilization (let
-                                                        [u @usage-atom
-                                                         req (if (pos? (long (:iter-count u)))
-                                                               (long (:last-iter-input u))
-                                                               (long (:previous-request-input u)))]
+                            [result (-> (merge {:answer (:answer final-result)
+                                                :trace (conj trace trace-entry)
+                                                :iteration-count (inc (long iteration))
+                                                :utilization
+                                                (let
+                                                  [u @usage-atom
+                                                   req (if (pos? (long (:iter-count u)))
+                                                         (long (:last-iter-input u))
+                                                         (long (:previous-request-input u)))]
 
-                                                        (ctx-engine/utilization
-                                                          req
-                                                          effective-context-limit
-                                                          (:input-tokens u)
-                                                          ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))}
-                                        (finalize-cost))
-                                 (attach-llm-routing-summary pre-resolved-model iteration-result))]
+                                                  (ctx-engine/with-cache-hit-rate
+                                                    (ctx-engine/utilization
+                                                      req
+                                                      effective-context-limit
+                                                      (:input-tokens u)
+                                                      ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS)
+                                                    (some-> (:ctx-atom environment)
+                                                            deref
+                                                            (get ctx-engine/cache-samples-key))))}
+                                               (finalize-cost))
+                                        (attach-llm-routing-summary pre-resolved-model
+                                                                    iteration-result))]
                             (auto-archive-hot-symbols! environment)
                             result))
                       :else
@@ -8115,11 +8223,15 @@
                                                    (long (:last-iter-input u))
                                                    (long (:previous-request-input u)))]
 
-                                            (ctx-engine/utilization
-                                              req
-                                              effective-context-limit
-                                              (:input-tokens u)
-                                              ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))}
+                                            (ctx-engine/with-cache-hit-rate
+                                              (ctx-engine/utilization
+                                                req
+                                                effective-context-limit
+                                                (:input-tokens u)
+                                                ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS)
+                                              (some-> (:ctx-atom environment)
+                                                      deref
+                                                      (get ctx-engine/cache-samples-key))))}
                                          (finalize-cost))
                                   (attach-llm-routing-summary pre-resolved-model iteration-result)))
                             ;; Transparent auto-continue: re-invoke so a mid-task
