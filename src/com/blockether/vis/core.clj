@@ -169,7 +169,8 @@
              [gateway-provider-auth-submit-key! gateway-client/provider-auth-submit-key!]
              [gateway-provider-auth-poll! gateway-client/provider-auth-poll!]
              [gateway-provider-auth-cancel! gateway-client/provider-auth-cancel!]
-             [gateway-provider-logout! gateway-client/provider-logout!])
+             [gateway-provider-logout! gateway-client/provider-logout!]
+             [gateway-provider-remove! gateway-client/provider-remove!])
 ;; MCP lives on the GATEWAY: it owns the pool, the child processes, and the OAuth
 ;; tokens. Channels inspect, kill/start, and drive headless auth through these.
 (import-vars [gateway-mcp-servers gateway-client/mcp-servers]

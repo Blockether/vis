@@ -932,6 +932,15 @@
   [provider-id]
   (send-json! "POST" (str "/v1/providers/" (enc (name provider-id)) "/logout")))
 
+(defn provider-remove!
+  "DELETE /v1/providers/:id — drop `provider-id` from the fleet IN THE DAEMON,
+   credential included. Removal is the daemon's to do because it owns BOTH the
+   config file and the token file: a row dropped while its credential stays on
+   disk comes straight back as an authenticated preset. Idempotent — `is_removed`
+   is false when the id was not in the persisted fleet."
+  [provider-id]
+  (send-json! "DELETE" (str "/v1/providers/" (enc (name provider-id)))))
+
 ;; ── MCP servers ────────────────────────────────────────────────────────────────
 ;; MCP is configured and RUN on the gateway: it owns the connection pool, the
 ;; child processes, and the OAuth tokens. A channel only inspects that inventory,

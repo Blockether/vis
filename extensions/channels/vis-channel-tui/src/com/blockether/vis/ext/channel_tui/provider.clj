@@ -948,21 +948,25 @@
       auth-label
       (if is-authenticated "Re-authenticate" "Authenticate")]
 
-     (cond-> [{:id :default :label "Set as Default..." :key \d}]
-       (not is-default)
-       (conj {:id :fallback :label "Set as Fallback..." :key \f})
+     (->
+       (cond-> [{:id :default :label "Set as Default..." :key \d}]
+         (not is-default)
+         (conj {:id :fallback :label "Set as Fallback..." :key \f})
 
-       is-fallback
-       (conj {:id :clear-fallback :label "Clear Fallback" :key \c})
+         is-fallback
+         (conj {:id :clear-fallback :label "Clear Fallback" :key \c})
 
-       (provider-supports-auth? provider)
-       (conj {:id :authenticate :label auth-label :key \a :force? is-authenticated})
+         (provider-supports-auth? provider)
+         (conj {:id :authenticate :label auth-label :key \a :force? is-authenticated})
 
-       (or (:provider/status-fn registered) (:provider/detect-fn registered) (:api-key provider))
-       (conj {:id :status :label "Show Status + Limits" :key \s})
+         (or (:provider/status-fn registered) (:provider/detect-fn registered) (:api-key provider))
+         (conj {:id :status :label "Show Status + Limits" :key \s})
 
-       (or (:provider/logout-fn registered) (:api-key provider))
-       (conj {:id :logout :label "Log Out" :key \l})))))
+         (or (:provider/logout-fn registered) (:api-key provider))
+         (conj {:id :logout :label "Log Out" :key \l}))
+       ;; Every row can be dropped — a fleet you can only ADD to is how a
+       ;; provider nobody wants stays on the screen forever.
+       (conj {:id :remove :label "Remove Provider" :key \x})))))
 
 (def ^:private routing-action-ids
   "The actions that re-point the ROUTER. Magit groups a popup's commands by what
@@ -1299,6 +1303,35 @@
                                     "Provider stays configured; sign in again anytime."])
             true)))))
 
+(defn- perform-remove!
+  "Fleet removal for `provider` THROUGH THE GATEWAY. No dialogs — the caller owns
+   confirmation and feedback.
+
+   The daemon owns BOTH halves of a provider: its config entry and its credential.
+   Dropping the entry locally while the token stays on disk is why a removed
+   OAuth provider used to come back on the next open — it re-surfaced as an
+   authenticated preset. Returns nil on success, or a human-readable failure."
+  [provider]
+  (try (vis/gateway-provider-remove! (:id provider))
+       nil
+       (catch Throwable t (or (not-empty (str (ex-message t))) (str t)))))
+
+(defn remove-provider!
+  "Confirm, then drop `provider` from the fleet through the gateway — config entry
+   and credential both. Returns true when the removal ran."
+  [^TerminalScreen screen provider]
+  (let [provider-id (:id provider)]
+    (when (dlg/confirm-dialog! screen
+                               (str (vis/display-label provider-id) " — remove")
+                               [(str "Remove " (vis/display-label provider-id) " from the fleet?")
+                                "Its credential is dropped too; add it back anytime."])
+      (if-let [err (perform-remove! provider)]
+        (do (dlg/text-view-dialog! screen
+                                   (str (vis/display-label provider-id) " — remove")
+                                   [(str "Remove failed: " err)])
+            false)
+        true))))
+
 (defn- choose-router-model!
   "Pick the model that completes a routing tag for `provider` and hand the pair to
    the daemon: `:primary` re-points the default root, `:fallback` the second one.
@@ -1429,6 +1462,9 @@
 
           :logout
           (boolean (logout-provider! screen provider))
+
+          :remove
+          (boolean (remove-provider! screen provider))
 
           false)))))
 
@@ -1612,6 +1648,25 @@
       (boolean (authenticate-provider! screen {:id (:provider/id provider)})))))
 
 (def ^:private provider-dialog-title "Providers")
+
+(defn- pending-remove
+  "The manager frame's inline `y / n` confirm that removes the SELECTED provider:
+   the gateway drops config entry and credential, then the card leaves the list.
+   One definition, because the list's `d` and a card's `Remove Provider` must not
+   be able to mean two different things."
+  [^TerminalScreen screen {:keys [items statuses limits selected]}]
+  (let [provider (nth @items @selected)]
+    {:prompt (str "Remove " (vis/display-label (:id provider)) "?  y / n")
+     :run (fn []
+            (if-let [err (perform-remove! provider)]
+              (dlg/text-view-dialog! screen
+                                     (str (vis/display-label (:id provider)) " — remove")
+                                     [(str "Remove failed: " err)])
+              (let [sel (long @selected)]
+                (swap! items #(vec (concat (subvec % 0 sel) (subvec % (inc sel)))))
+                (swap! statuses dissoc (:id provider))
+                (swap! limits dissoc (:id provider))
+                (swap! selected #(p/clamp % 0 (max 0 (dec (count @items))))))))}))
 
 (defn show-provider-dialog!
   "Provider manager dialog.
@@ -2100,6 +2155,14 @@
                                       (refresh-provider-diagnostics! provider statuses limits))))})
                              (reset! mode :confirm))
 
+                           :remove
+                           (do (reset! pending (pending-remove screen
+                                                               {:items items
+                                                                :statuses statuses
+                                                                :limits limits
+                                                                :selected selected}))
+                               (reset! mode :confirm))
+
                            nil)
                          (when-let [provider* (get @items @selected)]
                            (refresh-provider-diagnostics! provider* statuses limits))))
@@ -2122,23 +2185,14 @@
                                       (refresh-provider-diagnostics! p statuses limits)
                                       (reset! selected (dec (count @items))))
                                     (recur))
-                       ;; D - delete provider (inline confirm, no popup)
-                       (= c \d)
-                       (do (when (pos? total)
-                             (let
-                               [sel @selected
-                                provider-id (:id (nth @items sel))]
-
-                               (reset! pending
-                                 {:prompt (str "Remove " (vis/display-label provider-id) "?  y / n")
-                                  :run
-                                  (fn []
-                                    (swap! items #(vec (concat (subvec % 0 sel)
-                                                               (subvec % (inc (long sel))))))
-                                    (swap! statuses dissoc provider-id)
-                                    (swap! limits dissoc provider-id)
-                                    (swap! selected #(p/clamp % 0 (max 0 (dec (count @items))))))})
-                               (reset! mode :confirm)))
-                           (recur))
+                       ;; D - remove provider (inline confirm, no popup)
+                       (= c \d) (do (when (pos? total)
+                                      (reset! pending (pending-remove screen
+                                                                      {:items items
+                                                                       :statuses statuses
+                                                                       :limits limits
+                                                                       :selected selected}))
+                                      (reset! mode :confirm))
+                                    (recur))
                        :else (recur)))
                    :else (recur)))))))))))

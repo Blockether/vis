@@ -413,23 +413,23 @@
        (fn [provider-id]
          (if (= :openai provider-id) {"is_authenticated" true} {"is_authenticated" false}))]
 
-      (expect (= [:default :fallback :authenticate :status :logout]
+      (expect (= [:default :fallback :authenticate :status :logout :remove]
                  (mapv :id (provider/provider-action-items {:id :openai :api-key "sk-test"}))))
       (expect (= ["Set as Default..." "Set as Fallback..." "Re-authenticate" "Show Status + Limits"
-                  "Log Out"]
+                  "Log Out" "Remove Provider"]
                  (mapv :label (provider/provider-action-items {:id :openai :api-key "sk-test"}))))
       ;; Only the row that ALREADY carries the fallback tag can drop it.
-      (expect (= [:default :fallback :clear-fallback :authenticate :status :logout]
+      (expect (= [:default :fallback :clear-fallback :authenticate :status :logout :remove]
                  (mapv :id
                        (provider/provider-action-items {:id :openai :api-key "sk-test"}
                                                        {"is_authenticated" true}
                                                        true))))
-      (expect (= [:default :fallback :status]
+      (expect (= [:default :fallback :status :remove]
                  (mapv :id (provider/provider-action-items {:id :ollama}))))
       ;; The PRIMARY's own card never offers the fallback tag: the daemon refuses
       ;; a fallback naming the primary's provider, so the action could only ever
       ;; produce a rejection dialog.
-      (expect (= [:default :authenticate :status :logout]
+      (expect (= [:default :authenticate :status :logout :remove]
                  (mapv :id
                        (provider/provider-action-items {:id :openai :api-key "sk-test"}
                                                        {"is_authenticated" true}
@@ -437,7 +437,7 @@
                                                        true))))
       ;; A stale config naming ONE provider for both roles still drops `:fallback`
       ;; while keeping the escape hatch that clears the tag.
-      (expect (= [:default :clear-fallback :authenticate :status :logout]
+      (expect (= [:default :clear-fallback :authenticate :status :logout :remove]
                  (mapv :id
                        (provider/provider-action-items {:id :openai :api-key "sk-test"}
                                                        {"is_authenticated" true}
@@ -512,6 +512,62 @@
           (expect (= false (provider/logout-provider! nil {:id :anthropic-coding-plan})))
           (expect (nil? @removed))
           (expect (str/includes? (str @message) "Logout failed"))))))
+
+(defdescribe remove-provider-test
+             ;; Regression (user report, screenshot of Settings -> Providers): a Copilot row
+             ;; the user never added could not be removed. Settings offered no removal at
+             ;; all, and the manager's `d` dropped the CARD while the daemon kept the
+             ;; credential - so the provider came back as an authenticated preset on the
+             ;; next open.
+             (it "drops config entry AND credential through the gateway"
+                 (let
+                   [removed
+                    (atom nil)
+
+                    message
+                    (atom nil)]
+
+                   (with-redefs
+                     [vis/gateway-provider-remove!
+                      (fn [provider-id]
+                        (reset! removed provider-id)
+                        {"is_removed" true})
+
+                      dlg/confirm-dialog!
+                      (fn [& _]
+                        true)
+
+                      dlg/text-view-dialog!
+                      (fn [& args]
+                        (reset! message args))]
+
+                     (expect (= true
+                                (provider/remove-provider! nil {:id :github-copilot-individual})))
+                     (expect (= :github-copilot-individual @removed))
+                     (expect (nil? @message)))))
+             (it "keeps the row when the user declines"
+                 (let [removed (atom nil)]
+                   (with-redefs
+                     [vis/gateway-provider-remove! (fn [provider-id]
+                                                     (reset! removed provider-id))
+                      dlg/confirm-dialog! (fn [& _]
+                                            false)]
+
+                     (expect (nil? (provider/remove-provider! nil {:id :openai})))
+                     (expect (nil? @removed)))))
+             (it "reports a gateway refusal instead of letting it escape as a fatal error"
+                 (let [message (atom nil)]
+                   (with-redefs
+                     [vis/gateway-provider-remove! (fn [_]
+                                                     (throw (ex-info "provider remove failed: 400"
+                                                                     {:status 400})))
+                      dlg/confirm-dialog! (fn [& _]
+                                            true)
+                      dlg/text-view-dialog! (fn [& args]
+                                              (reset! message args))]
+
+                     (expect (= false (provider/remove-provider! nil {:id :openai})))
+                     (expect (str/includes? (str @message) "Remove failed"))))))
 
 (defdescribe
   api-key-auth-prompt-test
