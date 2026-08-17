@@ -84,6 +84,30 @@
           (expect (= :warn (:level (::voice/speech by-id))))
           (expect (re-find #"--piper" (:remediation (::voice/speech by-id))))
           (expect (= 5 (count by-id))))))
+  (it
+    "says WHY a speech family failed, not just that it did"
+    ;; A voice downloaded onto a machine without espeak-ng printed a bare
+    ;; `Speech (piper): failed`, hiding the one line that names the fix.
+    (let [lines (atom [])]
+      (with-redefs
+        [voice/model-status
+         (constantly
+           {:parakeet {:installed? true}
+            :speech
+            {:piper
+             {:state :failed
+              :error
+              "espeak-ng's phoneme tables are not on this system, and Piper cannot speak without them. Install espeak-ng: `brew install espeak-ng`."}
+             :pocket-tts {:state :absent}}
+            :assets []})
+         com.blockether.vis.ext.foundation-voice.core/cli-out! (fn [s]
+                                                                 (swap! lines conj (str s)))]
+
+        (#'voice/print-status!)
+        (expect (some #(= "Speech (piper): failed" %) @lines))
+        (expect (some #(re-find #"brew install espeak-ng" %) @lines))
+        ;; an absent opt-in model has no reason to give and must not grow a blank line
+        (expect (some #(= "Speech (pocket-tts): absent" %) @lines)))))
   (it "defers voice input namespace until the /voice slash run-fn fires (K10)"
       ;; The declarative `/voice` slash spec lazily requiring-resolves
       ;; `toggle-recording!` from the input ns so the host doesn't pay

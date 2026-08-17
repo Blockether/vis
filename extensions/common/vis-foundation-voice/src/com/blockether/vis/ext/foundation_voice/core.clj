@@ -171,7 +171,11 @@
   (let [{:keys [parakeet speech assets]} (model-status)]
     (cli-out! (str "Parakeet ASR model: " (if (:installed? parakeet) "installed" "missing")))
     (doseq [family [:piper :pocket-tts]]
-      (cli-out! (str "Speech (" (name family) "): " (name (:state (get speech family))))))
+      (let [{:keys [state error]} (get speech family)]
+        (cli-out! (str "Speech (" (name family) "): " (name state)))
+        ;; A bare `failed` is unactionable: the reason (missing espeak-ng tables,
+        ;; an opt-in model) already carries the command that fixes it.
+        (when error (cli-out! (str "  " error)))))
     (cli-out! "")
     (doseq [asset assets]
       (cli-out! (format "  %-30s %-22s %s" (:id asset) (status-word asset) (:license asset))))))
