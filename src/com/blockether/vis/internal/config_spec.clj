@@ -712,6 +712,44 @@
         (not (map? config)) ["config: expected a YAML map with string keys"]
         :else (vec (schema-problems config-schema #{} [] config))))
 
+(def derived-machine-keys
+  "Top-level keys of the machine store `~/.vis/state.yml` that Vis DERIVES and can
+   rebuild from nothing — a cache of what earlier sessions learned about the
+   fleet, never something a person typed."
+  #{"vision_memory"})
+
+(defn- problem-key
+  "The top-level key one `explain-problems` line blames: the first segment of its
+   dotted field path."
+  [line]
+  (-> (str line)
+      (str/split #":" 2)
+      first
+      (str/split #"[.\[]" 2)
+      first
+      str/trim))
+
+(defn without-invalid-derived
+  "`config` with every DERIVED machine key the contract rejects dropped, plus the
+   set that was dropped: `[config dropped]`.
+
+   Every writer of the machine store read-modify-writes the WHOLE map and
+   `assert-config!` judges the whole map, so ONE malformed row inside a cache Vis
+   wrote itself would also refuse the human's next provider, toggle or model pick
+   — the store would stay read-only until somebody hand-edited YAML. A derived
+   cache is discardable by definition, and dropping it here heals the file on the
+   next write. A key a person authored is never dropped: that one has to keep
+   refusing loudly, because silently deleting a provider is worse than refusing
+   to write."
+  [config]
+  (if (or (not (map? config)) (valid? config))
+    [config #{}]
+    (let
+      [dropped
+       (into #{}
+             (comp (map problem-key) (filter derived-machine-keys) (filter #(contains? config %)))
+             (explain-problems config))]
+      [(apply dissoc config dropped) dropped])))
 (defn config-error-panel
   "Caller-facing screen for an invalid config: the offending field lines and
    nothing else. Entry points print `:vis/panel` verbatim, so a bad YAML key

@@ -13,7 +13,9 @@
             [com.blockether.vis.internal.registry :as registry]
             [lazytest.core :refer [defdescribe it expect]]
             [taoensso.telemere :as tel]
-            [taoensso.trove :as trove]))
+            [taoensso.trove :as trove])
+  (:import (java.nio.file Files LinkOption)
+           (java.nio.file.attribute PosixFilePermissions)))
 
 (defdescribe
   router-opts-test
@@ -132,6 +134,220 @@
         (expect (= "Provider" (config/display-label nil))))))
 
 (defn- rm-rf! [^java.io.File f] (when (.exists f) (run! rm-rf! (.listFiles f)) (.delete f)))
+
+(defdescribe
+  atomic-store-write-test
+  "`~/.vis/state.yml` is the machine store carrying every provider, the model pick
+   and the learned routing memory, and Vis rewrites it whenever any of the three
+   moves — a settings toggle, a provider edit, a learned blind eye. That write has
+   to REPLACE the file, never delete it and create it again: for the length of
+   such a window the store does not exist, so a parallel session reading it right
+   then finds a fleet with no providers in it, and a crash inside the window
+   leaves nothing on disk to read at all."
+  (it
+    "never lets a concurrent reader see the store missing or half-written"
+    (let
+      [tmp
+       (str (System/getProperty "java.io.tmpdir") "/vis-cfg-atomic-" (System/nanoTime))
+
+       dir
+       (io/file tmp)
+
+       path
+       (str (io/file dir "state.yml"))
+
+       write!
+       @#'config/spit-private!
+
+       body
+       (fn [id]
+         (str "providers:\n" (apply str (repeat 200 (str "  - id: " id "\n")))))
+
+       alpha
+       (body "alpha")
+
+       bravo
+       (body "bravo")]
+
+      (try (.mkdirs dir)
+           (write! path alpha)
+           (let
+             [absent
+              (atom 0)
+
+              torn
+              (atom 0)
+
+              samples
+              (atom 0)
+
+              stop
+              (atom false)
+
+              reader
+              (future (while (not @stop)
+                        (swap! samples inc)
+                        (if-not (.exists (io/file path))
+                          (swap! absent inc)
+                          (let [seen (try (slurp path) (catch Throwable _ ::unreadable))]
+                            (when-not (or (= alpha seen) (= bravo seen)) (swap! torn inc))))))]
+
+             (dotimes [i 60]
+               (write! path (if (even? i) alpha bravo)))
+             (reset! stop true)
+             @reader
+             (expect (pos? @samples))
+             (expect (zero? @absent))
+             (expect (zero? @torn)))
+           (finally (rm-rf! dir)))))
+  (it "keeps the store owner-only across an overwrite"
+      (let
+        [tmp
+         (str (System/getProperty "java.io.tmpdir") "/vis-cfg-atomic-perm-" (System/nanoTime))
+
+         dir
+         (io/file tmp)
+
+         path
+         (str (io/file dir "state.yml"))
+
+         write!
+         @#'config/spit-private!]
+
+        (try (.mkdirs dir)
+             (write! path "providers: []\n")
+             (write! path "providers:\n  - id: alpha\n")
+             (expect (= "rw-------"
+                        (PosixFilePermissions/toString (Files/getPosixFilePermissions
+                                                         (.toPath (io/file path))
+                                                         (make-array LinkOption 0)))))
+             (expect (= "providers:\n  - id: alpha\n" (slurp path)))
+             (finally (rm-rf! dir)))))
+  (it "leaves no temporary file beside the store"
+      (let
+        [tmp
+         (str (System/getProperty "java.io.tmpdir") "/vis-cfg-atomic-tmp-" (System/nanoTime))
+
+         dir
+         (io/file tmp)
+
+         path
+         (str (io/file dir "state.yml"))
+
+         write!
+         @#'config/spit-private!]
+
+        (try (.mkdirs dir)
+             (dotimes [i 5]
+               (write! path (str "providers:\n  - id: p" i "\n")))
+             (expect (= ["state.yml"] (sort (mapv #(.getName ^java.io.File %) (.listFiles dir)))))
+             (finally (rm-rf! dir))))))
+
+(defdescribe
+  derived-memory-never-freezes-the-store-test
+  "`vision_memory` is a cache Vis writes about its OWN fleet — which endpoint
+   refused pixels, which pair answered. Every writer of the machine store
+   read-modify-writes the whole map and the contract judges the whole map, so one
+   malformed row inside that cache also refused the PERSON's next write: adding a
+   provider, flipping a setting or picking a model, all denied, with the store
+   read-only until somebody hand-edited YAML. A cache Vis can rebuild is
+   discardable; a key a person authored is not."
+  (it
+    "drops a malformed memory block on read and lets the human's write through"
+    (let
+      [tmp
+       (str (System/getProperty "java.io.tmpdir") "/vis-cfg-derived-" (System/nanoTime))
+
+       path
+       (str tmp "/state.yml")]
+
+      (try (.mkdirs (io/file tmp))
+           ;; `learned_at` is what makes a learned fact expire, so a row without
+           ;; one is exactly the shape the contract refuses to write.
+           (spit path
+                 (str "providers:\n  - id: prov-a\n    api_key: key-a\n"
+                      "vision_memory:\n  blind_providers:\n    console-go: {}\n"))
+           (with-redefs
+             [config/config-dir
+              (constantly tmp)
+
+              config/state-path
+              (constantly path)
+
+              config/project-config-yaml-paths
+              (constantly [(str tmp "/none/.vis/config.yml")])
+
+              config/project-root-yaml-paths
+              (constantly [])]
+
+             (let [raw (config/load-global-config-raw)]
+               (expect (nil? (get raw "vision_memory")))
+               (expect (= ["prov-a"] (mapv #(get % "id") (get raw "providers"))))
+               (config/save-config! (assoc raw
+                                      "providers" (conj (vec (get raw "providers"))
+                                                        {"id" "prov-b" "api_key" "key-b"})))
+               (let [healed (config/load-global-config-raw)]
+                 (expect (= ["prov-a" "prov-b"] (mapv #(get % "id") (get healed "providers"))))
+                 (expect (not (str/includes? (slurp path) "vision_memory"))))))
+           (finally (rm-rf! (io/file tmp))))))
+  (it "keeps a memory block the contract accepts"
+      (let
+        [tmp
+         (str (System/getProperty "java.io.tmpdir") "/vis-cfg-derived-ok-" (System/nanoTime))
+
+         path
+         (str tmp "/state.yml")]
+
+        (try (.mkdirs (io/file tmp))
+             (spit path
+                   (str "providers:\n  - id: prov-a\n    api_key: key-a\n"
+                        "vision_memory:\n  blind_providers:\n"
+                        "    console-go:\n      learned_at: '2026-08-17T18:00:00Z'\n"))
+             (with-redefs
+               [config/config-dir
+                (constantly tmp)
+
+                config/state-path
+                (constantly path)
+
+                config/project-config-yaml-paths
+                (constantly [(str tmp "/none/.vis/config.yml")])
+
+                config/project-root-yaml-paths
+                (constantly [])]
+
+               (let [raw (config/load-global-config-raw)]
+                 (expect (= {"console-go" {"learned_at" "2026-08-17T18:00:00Z"}}
+                            (get-in raw ["vision_memory" "blind_providers"])))))
+             (finally (rm-rf! (io/file tmp))))))
+  (it "still refuses a write whose HUMAN keys are invalid"
+      (let
+        [tmp
+         (str (System/getProperty "java.io.tmpdir") "/vis-cfg-derived-loud-" (System/nanoTime))
+
+         path
+         (str tmp "/state.yml")]
+
+        (try (.mkdirs (io/file tmp))
+             (with-redefs
+               [config/config-dir
+                (constantly tmp)
+
+                config/state-path
+                (constantly path)
+
+                config/project-config-yaml-paths
+                (constantly [(str tmp "/none/.vis/config.yml")])
+
+                config/project-root-yaml-paths
+                (constantly [])]
+
+               (expect (= :refused
+                          (try (config/save-config! {"providers" [{"id" "prov-a" "api_key" "key-a"}]
+                                                     "router" {"budget" {"max_cost" "free"}}})
+                               :saved
+                               (catch Throwable _ :refused)))))
+             (finally (rm-rf! (io/file tmp)))))))
 
 (defdescribe
   provider-persistence-test
