@@ -188,6 +188,13 @@
   com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.39"}
   com.blockether/ruff {:mvn/version "0.3.5"}
   org.clojure/core.memoize {:mvn/version "1.2.281"}
+  ;; Clojure ITSELF is pinned here, and must stay pinned. The source runtime is
+  ;; `clojure -M:vis` on whatever Clojure CLI the user happens to have, and the
+  ;; CLI install's own deps.edn declares org.clojure/clojure as a TOP-LEVEL dep —
+  ;; so on an older CLI that default (1.11.x) beat the 1.12.5 the extensions pin
+  ;; transitively, and the engine did not compile at all: qualified methods as
+  ;; values (`System/getenv`) are Clojure 1.12 syntax.
+  org.clojure/clojure {:mvn/version "1.12.5"}
   com.blockether/fff {:mvn/version "0.12.4"}
   com.taoensso/telemere {:mvn/version "1.2.1"}
   ;; Version MUST match com.taoensso/telemere.
