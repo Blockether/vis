@@ -5536,3 +5536,69 @@
       (let [{:keys [calls result]} (outcome-writes (constantly true) failed-turn-outcome)]
         (expect (false? result))
         (expect (= 2 (count calls))))))
+
+;; Regression (vis session 26af5650): an upstream stream timeout killed a turn
+;; and the UI showed NOTHING - no answer, no error card, no counters, duration 0.
+;; The failure branch ran the non-answer-shaped fallback through `answer-content`
+;; unguarded, so its validation throw escaped `send!` BEFORE the terminal write
+;; ran: the turn was never recorded and "Final answer must be canonical content
+;; or Markdown prose" masked the provider failure that actually killed it.
+(defdescribe
+  failed-turn-finalization-test
+  "A failed turn ALWAYS records its outcome: content rebuilt from the trace's
+   provider failure, never a throw out of the finalizer."
+  (it "records the outcome and the provider failure when the fallback is not answer-shaped"
+      (let [writes (atom [])
+
+            trace [{:iteration 1}
+                   {:iteration 2
+                    :error {:message "Stream idle timeout (300000ms with no bytes): closed"
+                            :data {:type :svar.core/stream-idle-timeout
+                                   :idle-timeout-ms 300000}}}]
+
+            result (with-redefs-fn {#'persistance/db-update-session-turn!
+                                    (fn [_db _id o] (swap! writes conj o) :written)}
+                     #(#'lp/finalize-turn-result
+                       {:db-info {} :root-model "m" :root-provider :p}
+                       {:session-turn-id "turn-1"
+                        :start-time (System/nanoTime)
+                        :iteration-count 2
+                        :status :error
+                        :trace trace
+                        :answer {:overloaded true :status 529}
+                        :total-tokens-atom (atom {})
+                        :total-cost-atom (atom {})}))
+
+            written (first @writes)
+
+            card (first (:content written))]
+        ;; the terminal write happened at all - the whole point
+        (expect (= 1 (count @writes)))
+        (expect (= :error (:status written)))
+        (expect (= 2 (:iteration-count written)))
+        ;; content is the real provider failure, never the validation string
+        (expect (= "error" (get card "type")))
+        (expect (nil? (re-find #"(?i)canonical content" (pr-str (:content written)))))
+        (expect (some? (:error written)))
+        (expect (= :error (:status result)))))
+  (it "keeps the answer's own blocks when the fallback IS answer-shaped"
+      (let [writes (atom [])
+
+            answer [(content/error "provider_error" "upstream refused" false)]
+
+            _ (with-redefs-fn {#'persistance/db-update-session-turn!
+                               (fn [_db _id o] (swap! writes conj o) :written)}
+                #(#'lp/finalize-turn-result
+                  {:db-info {}}
+                  {:session-turn-id "turn-2"
+                   :start-time (System/nanoTime)
+                   :iteration-count 1
+                   :status :error
+                   :trace []
+                   :answer answer
+                   :total-tokens-atom (atom {})
+                   :total-cost-atom (atom {})}))
+
+            written (first @writes)]
+        (expect (= 1 (count @writes)))
+        (expect (= "upstream refused" (get (first (:content written)) "message"))))))

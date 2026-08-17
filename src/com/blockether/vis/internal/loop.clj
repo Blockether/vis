@@ -591,6 +591,30 @@
   (let [v (:result answer answer)]
     (when (vector? v) (some #(when (= "error" (get % "type")) %) v))))
 
+(defn- failed-turn-content
+  "Content blocks for a turn that ended in FAILURE - never a throw.
+
+   `content/answer-content` VALIDATES, and the fallback answer a failed turn
+   carries is frequently not answer-shaped: a provider-exhaustion turn hands back
+   a raw error value. Unguarded, that validation throw escapes `send!` BEFORE
+   [[persist-turn-outcome!]] runs, so the turn keeps no status, no error and no
+   counters, the UI shows an empty turn, and \"Final answer must be canonical
+   content or Markdown prose\" replaces the provider failure that actually killed
+   it in the log. Measured: an upstream stream timeout turned into a turn with no
+   answer and no error card at all, and the human had to type 'Continue'.
+
+   On a throw the content is rebuilt from the last iteration error in `trace` -
+   the same provider failure the gateway card names."
+  [answer trace]
+  (try (content/answer-content answer)
+       (catch Throwable _
+         (or (try (some-> (some :error (reverse trace))
+                          perr/provider-error-content
+                          seq
+                          vec)
+                  (catch Throwable _ nil))
+             [(content/error "turn_failed" "Turn failed" false)]))))
+
 (defn- persist-turn-outcome!
   "THE terminal write for one turn: the row that says HOW the turn ended.
 
@@ -8915,34 +8939,42 @@
       ;; :error) to the caller. Leaving
       ;; :answer nil here meant the web bubble rendered blank even though
       ;; we had diagnostic text ready.
-      (do (log-stage! :turn/complete
-                      0
-                      {:duration-ms duration-ms :iteration-count iteration-count :status status})
-          (let [fallback-answer (:result answer answer)]
-            (persist-turn-outcome! db-info
-                                   session-turn-id
-                                   {:content (content/answer-content fallback-answer)
-                                    ;; First-class structured error for a failed turn.
-                                    :error (turn-error-data fallback-answer)
-                                    :iteration-count iteration-count
-                                    :duration-ms duration-ms
-                                    :status status
-                                    :tokens @total-tokens-atom
-                                    :cost cost-with-model})
-            (cond->
-              {:answer fallback-answer
-               :status status
-               :status-id status-id
-               :trace trace
-               :iteration-count iteration-count
-               :duration-ms duration-ms
-               :tokens @total-tokens-atom
-               :cost cost-with-model}
-              eval-evidence
-              (assoc :eval eval-evidence)
+      (do
+        (log-stage! :turn/complete
+                    0
+                    {:duration-ms duration-ms :iteration-count iteration-count :status status})
+        (let
+          [fallback-answer
+           (:result answer answer)
 
-              (some? locals)
-              (assoc :locals locals))))
+           failure-content
+           (failed-turn-content fallback-answer trace)]
+
+          (persist-turn-outcome! db-info
+                                 session-turn-id
+                                 {:content failure-content
+                                  ;; First-class structured error for a failed turn.
+                                  :error (or (turn-error-data fallback-answer)
+                                             (turn-error-data failure-content))
+                                  :iteration-count iteration-count
+                                  :duration-ms duration-ms
+                                  :status status
+                                  :tokens @total-tokens-atom
+                                  :cost cost-with-model})
+          (cond->
+            {:answer fallback-answer
+             :status status
+             :status-id status-id
+             :trace trace
+             :iteration-count iteration-count
+             :duration-ms duration-ms
+             :tokens @total-tokens-atom
+             :cost cost-with-model}
+            eval-evidence
+            (assoc :eval eval-evidence)
+
+            (some? locals)
+            (assoc :locals locals))))
       ;; success path
       (do (log-stage! :turn/complete
                       0
