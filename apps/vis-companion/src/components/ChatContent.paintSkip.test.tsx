@@ -16,6 +16,9 @@ import type { TranscriptTurn } from "../lib/types";
 // So the invariant is not "no containment", it is "no size that nobody
 // measured" — and, because a skipped turn is not laid out and can no longer
 // report anything, "nothing changes under a skip without dropping it first".
+// And, because arming a box CONTAINS it, a third: "arming changes nothing" —
+// the box is a formatting context before the skip goes on, or it grows by its
+// own last child's bottom margin at the moment it is armed.
 // Arming on first sight broke the second half on the simulator: a 24-turn
 // transcript that stands 443 315 px measured 100 701 px, frozen at the height
 // it had before its code blocks landed.
@@ -112,6 +115,26 @@ afterEach(() => {
 });
 
 describe("a finished turn is skipped at its own measured height", () => {
+  // Regression, reported as "the part above a new request jumps like anything,
+  // in even steps": arming implies `contain:layout`, so a turn that was not
+  // already a formatting context grows by its last child's bottom margin the
+  // moment it is armed — a turn ending in the notice card that a failed,
+  // interrupted or cancelled turn carries measured 7 620.06 px armed against
+  // 7 612.06 px unarmed in WebKit. The skip read those 8 px as content landing,
+  // dropped, and re-armed a quiet period later, stepping the whole transcript
+  // below it 8 px every ~533 ms for as long as that turn stayed on screen.
+  // jsdom lays nothing out, so what is pinned here is the precondition itself.
+  it("puts the skip on a box arming it cannot resize", () => {
+    const { box } = mount();
+
+    // The look this mount queued is drained before the check: the module keeps
+    // ONE frame in flight, and a test that leaves it queued makes every later
+    // one measure nothing.
+    flushFrames();
+
+    expect(box.className.split(/\s+/u)).toContain("flow-root");
+  });
+
   it("skips nothing during the commit that rendered the turn", () => {
     const { box } = mount();
     layout(box, 390, 4321.5);

@@ -2509,6 +2509,16 @@ const PAINT_SKIP_QUIET_MS = 400;
  * whole difference from the `contain-intrinsic-size` guess this replaced: the
  * engine is never handed a height that nobody measured.
  *
+ * The box has to be its own formatting context BEFORE it is armed — `flow-root`
+ * on the turn's `<article>`. `content-visibility:auto` implies `contain:layout`,
+ * which makes it one, and a box that was not one already GROWS by its last
+ * child's bottom margin the moment it is armed: a turn ending in the notice card
+ * that a failed, interrupted or cancelled turn carries measured 7 620.06 px
+ * armed against 7 612.06 px unarmed. Those 8 px read as content landing, so the
+ * skip drops, the box shrinks back, and one quiet period later it arms again —
+ * measured in WebKit, everything below that turn stepped 8 px every ~533 ms for
+ * as long as the turn stayed on screen.
+ *
  * See the note at the top of this file for what the guess did instead.
  */
 function useMeasuredPaintSkip(live: boolean) {
@@ -2688,11 +2698,12 @@ export const AssistantMessage = memo(function AssistantMessage({
 
   // A finished turn is one skippable paint box, sized by `useMeasuredPaintSkip`
   // from its own measured height. The live turn is never skipped: it is the row
-  // being read, and its height is still moving.
+  // being read, and its height is still moving. The box is a `flow-root` so that
+  // arming it cannot change the height it was armed with.
   const paintSkip = useMeasuredPaintSkip(streaming);
 
   return (
-    <article className="mt-4 w-full" aria-busy={streaming} ref={paintSkip}>
+    <article className="flow-root mt-4 w-full" aria-busy={streaming} ref={paintSkip}>
       <div
         className={`mb-1 font-mono text-meta font-bold ${cancelled ? "text-dialog-hint" : "text-vis-role"}`}
       >
