@@ -156,10 +156,19 @@ export const metricRows = (response) =>
     ),
   }));
 
-/** The body of a crashRateMetricSet/anrRateMetricSet :query over a whole-day timeline. */
-export const timelineBody = ({ metrics, days = DEFAULT_DAYS, now = new Date(), dimensions = [] }) => {
+/**
+ * The body of a crashRateMetricSet/anrRateMetricSet :query over a whole-day timeline.
+ *
+ * `until` is the metric set's own FRESHNESS day (YYYY-MM-DD). The API refuses a
+ * timeline whose end_date is past it — today is always past it, because a day's
+ * metrics are only aggregated after that day closes in America/Los_Angeles — so
+ * the window ends at freshness, not at `now`.
+ */
+export const timelineBody = ({ metrics, days = DEFAULT_DAYS, now = new Date(), until, dimensions = [] }) => {
   const day = (d) => ({ year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate(), timeZone: { id: 'America/Los_Angeles' } });
-  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const fresh = until ? new Date(`${until}T00:00:00Z`) : undefined;
+  const end = fresh && fresh.getTime() < today.getTime() ? fresh : today;
   return {
     // DAILY is fixed to America/Los_Angeles by the API; HOURLY is UTC.
     timelineSpec: { aggregationPeriod: 'DAILY', startTime: day(new Date(end.getTime() - days * 24 * 60 * 60 * 1000)), endTime: day(end) },
@@ -282,7 +291,7 @@ export const main = async (argv = process.argv.slice(2)) => {
   ]) {
     const set = name === 'crash-rate' ? 'crashRateMetricSet' : 'anrRateMetricSet';
     try {
-      const rows = metricRows(await call(token, 'POST', `/apps/${pkg}/${set}:query`, { body: timelineBody({ metrics, days }) }));
+      const rows = metricRows(await call(token, 'POST', `/apps/${pkg}/${set}:query`, { body: timelineBody({ metrics, days, until: check.freshness }) }));
       mkdirSync(join(outDir, 'metrics'), { recursive: true });
       writeJson(join(outDir, 'metrics', `${name}.json`), rows);
       console.log(`✓ ${rows.length} day(s) of ${name}`);

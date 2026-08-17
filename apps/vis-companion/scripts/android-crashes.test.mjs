@@ -79,6 +79,18 @@ describe('Android crash collection', () => {
     expect(body.metrics).toEqual(['crashRate']);
   });
 
+  // Regression: the API refuses `end_date` past the metric set's freshness, so a
+  // window that ended "today" made every crash/ANR timeline a 400.
+  it('ends the timeline at the metric set freshness, never past it', () => {
+    const body = timelineBody({ metrics: ['crashRate'], days: 3, now: new Date('2026-08-17T13:47:12Z'), until: '2026-08-16' });
+    expect(body.timelineSpec.endTime).toEqual({ year: 2026, month: 8, day: 16, timeZone: { id: 'America/Los_Angeles' } });
+    expect(body.timelineSpec.startTime).toEqual({ year: 2026, month: 8, day: 13, timeZone: { id: 'America/Los_Angeles' } });
+  });
+
+  it('keeps today when freshness is not behind it', () => {
+    const body = timelineBody({ metrics: ['anrRate'], days: 1, now: new Date('2026-08-17T13:47:12Z'), until: '2026-08-18' });
+    expect(body.timelineSpec.endTime.day).toBe(17);
+  });
   it('reads the freshest day the metric set admits to, per aggregation period', () => {
     const set = {
       freshnessInfo: {
