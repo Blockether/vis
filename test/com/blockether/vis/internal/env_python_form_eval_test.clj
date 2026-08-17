@@ -869,10 +869,17 @@ await patch({'path': css})" "t1/i1")]
      ;; garbage collector, and a long-lived sandbox still holds references from
      ;; whatever ran in it before.
      (fn []
-       (:python-context (ep/create-python-context {'echo (fn [x]
-                                                           (str "<" x ">"))
-                                                   (symbol "__vis_par__") par
-                                                   (symbol "__vis_par_isolated__") par-isolated})))
+       (:python-context (ep/create-python-context
+                          {'echo (fn [x]
+                                   (str "<" x ">"))
+                           ;; A MAP-returning tool: the shape a
+                           ;; caller subscripts and `json.dumps`,
+                           ;; so a slot that never settled is
+                           ;; visible as a refusal, not a repr.
+                           'row (fn [x]
+                                  {"tool" "row" "arg" x "nested" {"deep" [1 2 3]}})
+                           (symbol "__vis_par__") par
+                           (symbol "__vis_par_isolated__") par-isolated})))
 
      par-threaded
      ;; The sequential stand-in above cannot express a RENDEZVOUS: a lock, an
@@ -1188,7 +1195,34 @@ await patch({'path': css})" "t1/i1")]
                     "          hasattr(asyncio, 'Queue'), hasattr(asyncio, 'to_thread'))")
                "t1/i1")]
           (expect (nil? (:error r)))
-          (expect (= "True False True True" (clojure.string/trim (str (:stdout r)))))))))
+          (expect (= "True False True True" (clojure.string/trim (str (:stdout r)))))))
+    ;; Regression: handing a TOOL ITSELF to the pool — `asyncio.to_thread(row, 'a')`,
+    ;; `loop.run_in_executor(None, row, 'b')` — ran the tool's own shim in the worker,
+    ;; which only BUILT that tool's thunk, so the `gather` slot came back holding an
+    ;; unrun `__vis_Call__`. Binding the slot hid it (statements auto-settle);
+    ;; `json.dumps(res)` did not, and refused an object the caller never created.
+    (it "a tool handed to to_thread / run_in_executor settles inside its gather slot"
+        (let
+          [r (ep/run-python-block
+               (mk)
+               (str "import asyncio, json\n"
+                    "loop = asyncio.get_event_loop()\n"
+                    "res = await gather(asyncio.to_thread(row, 'a'),\n"
+                    "                   loop.run_in_executor(None, row, 'b'),\n"
+                    "                   asyncio.to_thread(echo, 'c'),\n"
+                    "                   asyncio.to_thread(lambda v: v * 2, 21),\n"
+                    "                   asyncio.to_thread(lambda: gather(echo('x'), echo('y'))))\n"
+                    "print([type(v).__name__ for v in res])\n"
+                    "print(json.dumps(res, sort_keys=True))")
+               "t1/i1")]
+          (expect (nil? (:error r)))
+          (expect
+            (= (str
+                 "['__VisDict__', '__VisDict__', '__VisResultStr__', 'int', '__VisResultList__']\n"
+                 "[{\"arg\": \"a\", \"nested\": {\"deep\": [1, 2, 3]}, \"tool\": \"row\"}, "
+                 "{\"arg\": \"b\", \"nested\": {\"deep\": [1, 2, 3]}, \"tool\": \"row\"}, "
+                 "\"<c>\", 42, [\"<x>\", \"<y>\"]]")
+               (clojure.string/trim (str (:stdout r)))))))))
 
 ;; Regression, issue #141: `import ssl` (and `select` / `selectors`) was DELETED
 ;; from the block by the import preprocessor, so the stdlib escape hatch for an

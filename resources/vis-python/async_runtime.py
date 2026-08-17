@@ -855,6 +855,20 @@ def __vis_exec_call__(c):
         # ones this block already dropped. Below the mark this is a no-op.
         __vis_reclaim_fds__()
         c.res = c.fn(*c.a, dict(c.k)) if c.k else c.fn(*c.a)
+        # COLLAPSE a call that answered with ANOTHER deferred call. Handing a TOOL
+        # ITSELF to the pool — `asyncio.to_thread(grep, q)`,
+        # `loop.run_in_executor(None, grep, q)`, `create_task(to_thread(grep, q))` —
+        # only BUILDS grep's own thunk inside the worker, so the value that came back
+        # was an unrun `__vis_Call__`. Binding it hid that (every statement
+        # auto-settles), but a `gather` LIST does not settle its slots, so
+        # `json.dumps(results[0])` refused an object the caller never created.
+        # Collapse HERE: every settle path already funnels through this one call
+        # (`__vis_drive__` for `await`, gather children, statements, `r[k]`,
+        # `print`), and `__vis_settle__` re-enters this frame for the inner call, so
+        # a longer chain unwinds by recursion and a callable that answers with
+        # ITSELF dies on Python's own RecursionError instead of a hand-rolled cap.
+        if type(c.res) is __vis_Call__ or type(c.res) is __vis_Gather__:
+            c.res = __vis_settle__(c.res)
         return c.res
     except BaseException as __vis_exc__:
         # A failed thunk is one-shot too. Do not cache the exception here: a Python
