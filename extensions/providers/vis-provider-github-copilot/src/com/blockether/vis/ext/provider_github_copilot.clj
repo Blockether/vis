@@ -181,12 +181,22 @@
 
 (defn- auth-account-type [] (normalize-account-type (:account-type (load-auth-file))))
 
+(defn- credential-account-type
+  "The tier the credential ON THIS MACHINE belongs to: forced by env, else the
+   tier the device flow recorded in the auth file, else `:individual` for a bare
+   token (env var / Copilot CLI keychain) that names none.
+
+   All three tier providers share ONE OAuth token file, so THIS - never the tier
+   a call happens to be about - decides which single Copilot provider is signed
+   in. Every authentication verdict reads it."
+  []
+  (or (env-account-type) (auth-account-type) :individual))
+
 (defn- configured-account-type
+  "The tier a call is ABOUT: the caller's explicit `:account-type`, else whichever
+   tier the machine's credential belongs to."
   [opts]
-  (or (normalize-account-type (:account-type opts))
-      (env-account-type)
-      (auth-account-type)
-      :individual))
+  (or (normalize-account-type (:account-type opts)) (credential-account-type)))
 
 (defn- delete-auth-file!
   "Remove persisted auth state."
@@ -556,15 +566,26 @@
 (defn status
   "Return a status map describing the current auth state.
    {:is-authenticated bool :source keyword :oauth-token-preview str
-    :account-type keyword :copilot-token-valid? bool :expires-in-ms long}"
+    :account-type keyword :copilot-token-valid? bool :expires-in-ms long}
+
+   Tier-aware, like `make-detect-fn`: one token file holds ONE Copilot account, so
+   a credential authenticates the tier it was minted for and no other. Any other
+   tier reports `:is-authenticated false` and names the live one in
+   `:active-account-type` instead of claiming a sign-in it does not own."
   ([] (status nil))
   ([opts]
    (let
-     [detected
+     [account-type
+      (configured-account-type opts)
+
+      active
+      (credential-account-type)
+
+      credential
       (detect-oauth-token)
 
-      account-type
-      (configured-account-type opts)
+      detected
+      (when (= account-type active) credential)
 
       cached
       @token-cache
@@ -573,13 +594,17 @@
       (System/currentTimeMillis)]
 
      (cond-> {:is-authenticated (some? detected) :account-type account-type}
+       (and credential (not= account-type active))
+       (assoc :active-account-type active)
+
        detected
        (assoc :source
          (:source detected) :oauth-token-preview
          (let [t (:oauth-token detected)]
            (str (subs t 0 (min 8 (count t))) "...")))
 
-       (and cached
+       (and detected
+            cached
             (:token cached)
             (= account-type (or (normalize-account-type (:account-type cached)) :individual)))
        (assoc :copilot-token-valid?
@@ -735,6 +760,10 @@
       (throw (ex-info (str "GitHub Copilot usage request failed: HTTP " status)
                       {:type :provider/github-copilot-usage-error :status status :body body})))))
 
+(def ^:private UNAUTHENTICATED_LIMITS
+  {:status :unauthenticated
+   :dynamic {:limits [] :note "Authenticate GitHub Copilot to fetch dynamic quota data."}})
+
 (defn- dynamic-limits!
   []
   (if-let [{:keys [oauth-token]} (detect-oauth-token)]
@@ -753,8 +782,7 @@
                             (or (response-field usage :copilot_plan)
                                 (response-field usage :access_type_sku)
                                 "unknown"))}})
-    {:status :unauthenticated
-     :dynamic {:limits [] :note "Authenticate GitHub Copilot to fetch dynamic quota data."}}))
+    UNAUTHENTICATED_LIMITS))
 
 (defn- make-status-fn
   [account-type]
@@ -766,11 +794,11 @@
    (individual/business/enterprise) share a single OAuth token file, so a raw
    `detect-oauth-token` would report every tier authenticated and surface all
    three in the picker/router at once (issue #48). Report authenticated only
-   for the tier recorded in the auth file (or forced by env), leaving exactly
-   one Copilot provider live."
+   for the tier the credential was minted for (or the one env forces), leaving
+   exactly one Copilot provider live."
   [account-type]
   (fn []
-    (when (= account-type (configured-account-type nil)) (detect-oauth-token))))
+    (when (= account-type (credential-account-type)) (detect-oauth-token))))
 
 (defn- make-get-token-fn
   [account-type]
@@ -819,9 +847,12 @@
         fresh))))
 
 (defn- make-limits-fn
+  "Quota for THIS tier only. The tiers share one OAuth token, so a tier that does
+   not hold it must not report the signed-in account's quota as its own — a row
+   reading `not signed in` next to someone else's premium balance."
   [account-type]
   (fn []
-    (assoc (dynamic-limits!)
+    (assoc (if (= account-type (credential-account-type)) (dynamic-limits!) UNAUTHENTICATED_LIMITS)
       :provider-id (account-provider-id account-type)
       :static COPILOT_STATIC_LIMITS)))
 
@@ -841,7 +872,13 @@
   "Wrap the multi-step device flow into one fn the CLI / TUI can
    call uniformly. `printer-fn` is invoked for every status line so
    the caller controls the output channel (stdout, TUI dialog, ...).
-   Opts may include `:account-type` = :individual, :business, or :enterprise."
+   Opts may include `:account-type` = :individual, :business, or :enterprise.
+
+   Only a credential minted for the SAME tier short-circuits the flow. One token
+   file holds one Copilot account, so signing into another tier must really run
+   the device flow: that is the only thing that records the new tier, and without
+   it the machine keeps answering for the old one while both tiers claim to be
+   signed in."
   ([printer-fn] (interactive-auth! printer-fn nil))
   ([printer-fn opts]
    (let
@@ -852,9 +889,15 @@
       (configured-account-type opts)
 
       opts
-      (assoc opts :account-type account-type)]
+      (assoc opts :account-type account-type)
 
-     (if (detect-oauth-token)
+      credential
+      (detect-oauth-token)
+
+      active
+      (credential-account-type)]
+
+     (if (and credential (= account-type active))
        (do (print! "  Already authenticated with GitHub Copilot.")
            (print! (str "  Account type: " (name account-type)))
            (print! (str "  Run `vis-agent providers status "
@@ -869,6 +912,9 @@
                                                                                  opts)]
          (print! "")
          (print! (str "  Account type: " (name account-type)))
+         (when credential
+           (print!
+             (str "  Replaces the " (name active) " sign-in - one Copilot account per machine.")))
          (print! (str "  1. Open: " verification-uri))
          (print! (str "  2. Enter code: " user-code))
          (print! "")

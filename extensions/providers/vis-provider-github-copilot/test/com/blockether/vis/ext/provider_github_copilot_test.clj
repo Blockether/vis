@@ -60,13 +60,13 @@
                   ;; only the tier recorded as active detects — the other two report nil,
                   ;; so the picker/router surfaces exactly one Copilot provider.
                   (with-redefs-fn {#'sut/detect-oauth-token (constantly {:oauth-token "tok"})
-                                   #'sut/configured-account-type (constantly :business)}
+                                   #'sut/credential-account-type (constantly :business)}
                     (fn []
                       (expect (detect? :github-copilot-business))
                       (expect (not (detect? :github-copilot-individual)))
                       (expect (not (detect? :github-copilot-enterprise)))))
                   (with-redefs-fn {#'sut/detect-oauth-token (constantly {:oauth-token "tok"})
-                                   #'sut/configured-account-type (constantly :enterprise)}
+                                   #'sut/credential-account-type (constantly :enterprise)}
                     (fn []
                       (expect (detect? :github-copilot-enterprise))
                       (expect (not (detect? :github-copilot-individual)))
@@ -261,3 +261,100 @@
             (expect (< (Math/abs (- (long refresh-at-ms) (- soft margin))) 2000))
             ;; always strictly before the hard expiry too
             (expect (< (long refresh-at-ms) (long expires-at-ms))))))))
+
+(defdescribe
+  copilot-tier-sign-in-test
+  ;; Regression (user report, screenshot of Settings -> Providers): signing in to
+  ;; Copilot ENTERPRISE also lit up "GitHub Copilot (Individual) . signed in", and
+  ;; the extra row could not be removed - it was re-derived from the credential on
+  ;; every read. All three tiers share ONE OAuth token file: `status` answered
+  ;; "signed in" for every tier, and the sign-in short-circuited on ANY credential,
+  ;; so the tier the user picked was never recorded in that file.
+  (describe "status"
+            (it "authenticates ONLY the tier the credential was minted for"
+                (require 'com.blockether.vis.ext.provider-github-copilot :reload)
+                (with-redefs-fn {#'sut/detect-oauth-token (constantly {:oauth-token "ghu_test"
+                                                                       :source :auth-file})
+                                 #'sut/env-account-type (constantly nil)
+                                 #'sut/auth-account-type (constantly :enterprise)}
+                  (fn []
+                    (let
+                      [status-of
+                       (fn [pid]
+                         ((:provider/status-fn (vis/provider-by-id pid))))
+
+                       individual
+                       (status-of :github-copilot-individual)]
+
+                      (expect (true? (:is-authenticated (status-of :github-copilot-enterprise))))
+                      (expect (false? (:is-authenticated individual)))
+                      (expect (false? (:is-authenticated (status-of :github-copilot-business))))
+                      ;; a tier that is not the live one says WHERE the credential lives,
+                      ;; and never leaks the other tier's token preview
+                      (expect (= :enterprise (:active-account-type individual)))
+                      (expect (nil? (:oauth-token-preview individual))))))))
+  (describe "limits"
+            (it "reports no quota for a tier that does not hold the credential"
+                (require 'com.blockether.vis.ext.provider-github-copilot :reload)
+                (with-redefs-fn {#'sut/detect-oauth-token (constantly {:oauth-token "ghu_test"})
+                                 #'sut/env-account-type (constantly nil)
+                                 #'sut/auth-account-type (constantly :enterprise)
+                                 #'sut/fetch-user-usage! (fn [_]
+                                                           {:copilot_plan "enterprise"
+                                                            :quota_snapshots {:premium_interactions
+                                                                              {:remaining 240
+                                                                               :entitlement 300}}})}
+                  (fn []
+                    (let
+                      [limits-of
+                       (fn [pid]
+                         ((:provider/limits-fn (vis/provider-by-id pid))))
+
+                       individual
+                       (limits-of :github-copilot-individual)]
+
+                      (expect (= :ok (:status (limits-of :github-copilot-enterprise))))
+                      (expect (= :unauthenticated (:status individual)))
+                      (expect (= [] (get-in individual [:dynamic :limits]))))))))
+  (describe
+    "sign-in"
+    (it "runs the device flow when the credential belongs to ANOTHER tier"
+        (require 'com.blockether.vis.ext.provider-github-copilot :reload)
+        (let [flows (atom [])]
+          (with-redefs-fn
+            {#'sut/detect-oauth-token (constantly {:oauth-token "ghu_test" :source :auth-file})
+             #'sut/env-account-type (constantly nil)
+             #'sut/auth-account-type (constantly :individual)
+             #'sut/start-device-flow! (fn [opts]
+                                        (swap! flows conj (:account-type opts))
+                                        {:user-code "ABCD-1234"
+                                         :verification-uri "https://example.com/device"
+                                         :device-code "dev-code"
+                                         :interval 5
+                                         :expires-in 900})
+             #'sut/poll-for-token! (fn [& _]
+                                     {:oauth-token "ghu_new"})
+             #'sut/get-copilot-token! (fn [& _]
+                                        {:token "tid=x;exp=1"
+                                         :api-url "https://api.business.githubcopilot.com/v1"})
+             #'sut/enable-known-copilot-models! (fn [_ _]
+                                                  {:attempted 6 :enabled 6})}
+            (fn []
+              (let [auth! (:provider/auth-fn (vis/provider-by-id :github-copilot-enterprise))]
+                (expect (= :ok (auth! (constantly nil))))
+                ;; the flow ran FOR ENTERPRISE, which is what records that tier
+                (expect (= [:enterprise] @flows)))))))
+    (it "still short-circuits when THIS tier already holds the credential"
+        (require 'com.blockether.vis.ext.provider-github-copilot :reload)
+        (let [flows (atom [])]
+          (with-redefs-fn {#'sut/detect-oauth-token (constantly {:oauth-token "ghu_test"
+                                                                 :source :auth-file})
+                           #'sut/env-account-type (constantly nil)
+                           #'sut/auth-account-type (constantly :individual)
+                           #'sut/start-device-flow! (fn [opts]
+                                                      (swap! flows conj (:account-type opts))
+                                                      {})}
+            (fn []
+              (let [auth! (:provider/auth-fn (vis/provider-by-id :github-copilot-individual))]
+                (expect (= :already-authenticated (auth! (constantly nil))))
+                (expect (= [] @flows)))))))))

@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - build(ci): build the macOS asset on our own runner, and watch the queue
 - build(ci): ship JVM-only releases until a native platform is green again
 - feat(voice): download pocket-tts with every other model
+- fix(copilot): authenticate only the tier the credential was minted for
 
 ## [v0.1.40] - 2026-08-16
 
