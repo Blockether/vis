@@ -82,8 +82,14 @@ jobs:
           path: apps/vis-companion/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
+      # The same switch that gates the Play release: no Android build reaches testers while
+      # apps/vis-companion/scripts/android-publish-freeze.mjs is frozen.
+      - name: Android publish freeze
+        id: freeze
+        run: node scripts/android-publish-freeze.mjs --github-output
+
       - name: Distribute to Firebase App Distribution
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.distribute }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.distribute && steps.freeze.outputs.android == 'allowed' }}
         uses: wzieba/Firebase-Distribution-Github-Action@v1
         with:
           appId: ${{ secrets.FIREBASE_ANDROID_APP_ID }}

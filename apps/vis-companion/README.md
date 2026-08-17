@@ -174,6 +174,12 @@ uses it.
 
 ## Release to Google Play (Android)
 
+> **Publishing is frozen.** The submitted build is with Play review and must stay the one
+> testers judge, so nothing newer may reach a Play track or Firebase App Distribution.
+> `scripts/android-publish-freeze.mjs` is the single switch: `release:android:store` refuses
+> before it builds, the `android` job of `mobile-release.yml` is skipped, and
+> `android-companion.yml` skips Firebase distribution. Building still works (`--no-upload`,
+> `--tracks`) and iOS ships as usual. Lift it in that one file, on the release owner's word.
 ```sh
 npm run release:android:store                             # signed .aab → EVERY tester track
 npm run release:android:store -- --track all              # the default, spelled out

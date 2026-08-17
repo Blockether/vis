@@ -21,6 +21,10 @@
  *                       closed track someone created in the Console, which no list here knows
  *   (default)           all
  *
+ * Publishing may be FROZEN: scripts/android-publish-freeze.mjs is the single switch that
+ * refuses every Play write while a submitted build is with review. `--no-upload` and
+ * `--tracks` keep working; anything that would reach the store refuses before the build.
+ *
  * Usage (workflow/store recovery only; normal releases use `npm run release:android`):
  *   npm run release:android:store                          # build + sign + EVERY tester track
  *   npm run release:android:store -- --track internal      # named internal testers only
@@ -41,6 +45,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { androidPublishRefusal } from './android-publish-freeze.mjs';
 import { JDK, jdkHelp, pickJdk } from './jdk.mjs';
 import { planRelease, promoteBundle, publishBundle, tracks as readTracks } from './play.mjs';
 import { buildNotes } from './release-notes.mjs';
@@ -63,6 +68,13 @@ const die = (msg) => {
   process.exit(1);
 };
 
+// Publishing is frozen while a submitted build is with review — one switch, read by this
+// script and by CI alike. A run that never reaches the store stays available, so Android
+// keeps being built and signed while it may not be shipped.
+if (!has('tracks') && !has('no-upload')) {
+  const refusal = androidPublishRefusal('publishing the Vis Companion Android app');
+  if (refusal) die(`${refusal}\n  Build without publishing: npm run release:android:store -- --no-upload`);
+}
 const run = (cmd, cmdArgs, opts = {}) => {
   console.log(`\n$ ${cmd} ${cmdArgs.join(' ')}`);
   const res = spawnSync(cmd, cmdArgs, { stdio: 'inherit', cwd: appDir, ...opts });

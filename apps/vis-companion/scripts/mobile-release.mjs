@@ -9,6 +9,7 @@
  */
 import { spawnSync } from 'node:child_process';
 
+import { androidPublishRefusal } from './android-publish-freeze.mjs';
 import { repoRoot, visVersion } from './version.mjs';
 
 const args = process.argv.slice(2);
@@ -83,6 +84,9 @@ console.log(`Store build:      ${build}`);
 console.log(`Regular release:  ${regularTag} (${regularCommit.slice(0, 10)})`);
 console.log(`Companion trigger: create ${companionTag} -> ${head.slice(0, 10)}`);
 
+const androidFrozen = androidPublishRefusal('the Android leg of this companion release');
+console.log(`Stores:            ${androidFrozen ? 'iOS only (Android publishing is frozen)' : 'iOS + Android'}`);
+if (androidFrozen) console.log(`\n! ${androidFrozen}`);
 if (dryRun) {
   console.log('\nDry run only; no tag changed.');
   process.exit(0);
@@ -98,4 +102,6 @@ command('git', [
 ]);
 command('git', ['push', 'origin', `refs/tags/${companionTag}`]);
 
-console.log(`\n✓ ${companionTag} triggers iOS + Android from ${head.slice(0, 10)}.`);
+console.log(
+  `\n✓ ${companionTag} triggers ${androidFrozen ? 'iOS only — the Play leg is skipped' : 'iOS + Android'} from ${head.slice(0, 10)}.`,
+);

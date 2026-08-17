@@ -13,6 +13,10 @@ name: Mobile release
 # So a tester group or closed track added in a console is served by the next run of this
 # workflow with no change here.
 #
+# Android publishing can be FROZEN: apps/vis-companion/scripts/android-publish-freeze.mjs is
+# the one switch, and while it is set the `android` job below is SKIPPED, not failed — the
+# release still ships iOS. Lifting it there re-enables this workflow with no change here.
+#
 # Store build logic stays in scripts/{ios-release,android-release}.mjs. Public
 # npm release commands only orchestrate the regular/companion tag contract;
 # CI calls the explicit `release:ios:store` / `release:android:store` internals.
@@ -73,6 +77,19 @@ defaults:
     working-directory: apps/vis-companion
 
 jobs:
+  # Whether Android may publish at all is decided in ONE file, read by this workflow and by
+  # the local release scripts: apps/vis-companion/scripts/android-publish-freeze.mjs. The
+  # gate never fails — a frozen store skips the job below and iOS ships alone.
+  android-gate:
+    name: Android publish freeze
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      android: ${{ steps.freeze.outputs.android }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: freeze
+        run: node scripts/android-publish-freeze.mjs --github-output
   ios:
     # A tag ships to TestFlight; a manual run only when iOS was asked for.
     if: ${{ github.event_name == 'push' || inputs.platforms != 'android' }}
@@ -192,7 +209,8 @@ jobs:
         run: echo '::notice::VIS_ASC_KEY is not set — skipping the TestFlight upload'
 
   android:
-    if: ${{ github.event_name == 'push' || inputs.platforms != 'ios' }}
+    needs: android-gate
+    if: ${{ needs.android-gate.outputs.android == 'allowed' && (github.event_name == 'push' || inputs.platforms != 'ios') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
