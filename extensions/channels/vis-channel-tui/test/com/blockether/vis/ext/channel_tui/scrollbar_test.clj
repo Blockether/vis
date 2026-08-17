@@ -98,3 +98,41 @@
     (is (= 80 (scrollbar/scroll-from-mouse-y 17 10 8 100 20 0))))
   (testing "Returns nil when there's no overflow"
     (is (nil? (scrollbar/scroll-from-mouse-y 0 0 8 10 20)))))
+
+(deftest mouse-drag-step-click-on-thumb-arms-grip
+  (let [bar {:col 30 :top 5 :track-h 20 :total-h 100 :inner-h 20 :scroll 40}]
+    ;; scroll 40 / max 80 → thumb-top-rel 9, thumb row 14.
+    (testing "CLICK_DOWN on the thumb arms the grip without scrolling"
+      (is (= {:arm 0}
+             (scrollbar/mouse-drag-step (mouse MouseActionType/CLICK_DOWN 30 14) bar nil))))
+    (testing "CLICK_DOWN off the thumb column is not a scrollbar interaction"
+      (is (nil? (scrollbar/mouse-drag-step (mouse MouseActionType/CLICK_DOWN 10 14) bar nil))))))
+
+(deftest mouse-drag-step-click-on-track-jumps-and-arms
+  (let [bar {:col 30 :top 5 :track-h 20 :total-h 100 :inner-h 20 :scroll 0}]
+    (testing "CLICK_DOWN on the track jumps to the clicked fraction with a centred grip"
+      (is (= {:arm 0 :scroll 42}
+             (scrollbar/mouse-drag-step (mouse MouseActionType/CLICK_DOWN 30 15) bar nil))))
+    (testing "Track bottom row maps to max-scroll"
+      (is (= {:arm 0 :scroll 80}
+             (scrollbar/mouse-drag-step (mouse MouseActionType/CLICK_DOWN 30 24) bar nil))))
+    (testing "CLICK_DOWN above the track is ignored"
+      (is (nil? (scrollbar/mouse-drag-step (mouse MouseActionType/CLICK_DOWN 30 4) bar nil))))))
+
+(deftest mouse-drag-step-drag-follows-cursor-only-while-armed
+  (let [bar {:col 30 :top 5 :track-h 20 :total-h 100 :inner-h 20 :scroll 42}]
+    (testing "DRAG while armed scrolls to the cursor's track fraction"
+      (is (= {:scroll 63} (scrollbar/mouse-drag-step (mouse MouseActionType/DRAG 30 20) bar 0))))
+    (testing "DRAG without a previous CLICK_DOWN is ignored"
+      (is (nil? (scrollbar/mouse-drag-step (mouse MouseActionType/DRAG 30 20) bar nil))))))
+
+(deftest mouse-drag-step-release-and-non-interactions
+  (let [bar {:col 30 :top 5 :track-h 20 :total-h 100 :inner-h 20 :scroll 0}]
+    (testing "CLICK_RELEASE always drops the grip"
+      (is (= :release (scrollbar/mouse-drag-step (mouse MouseActionType/CLICK_RELEASE 0 0) bar 3))))
+    (testing "Wheel is the dialog's business, not the drag's"
+      (is (nil? (scrollbar/mouse-drag-step (mouse MouseActionType/SCROLL_DOWN 30 15) bar nil))))
+    (testing "No overflow → no thumb, no track, nothing to drag"
+      (let [flat {:col 30 :top 5 :track-h 20 :total-h 10 :inner-h 20 :scroll 0}]
+        (is (nil?
+              (scrollbar/mouse-drag-step (mouse MouseActionType/CLICK_DOWN 30 15) flat nil)))))))

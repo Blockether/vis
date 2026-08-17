@@ -16,7 +16,8 @@
    inside the track encodes the scroll fraction."
   (:require [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t])
-  (:import [com.googlecode.lanterna.graphics TextGraphics]
+  (:import [com.googlecode.lanterna TerminalPosition]
+           [com.googlecode.lanterna.graphics TextGraphics]
            [com.googlecode.lanterna.input MouseAction MouseActionType]))
 
 (def ^:const THUMB_H 1)
@@ -209,3 +210,53 @@
           (max 0.0 (min 1.0 (/ (double rel) denom)))]
 
          (long (Math/round (* frac max-scroll))))))))
+
+(defn mouse-drag-step
+  "Fold ONE non-wheel MouseAction into a scrollbar drag interaction.
+
+  `bar` is the scrollbar exactly as `draw!` painted it — `{:col :top :track-h
+  :total-h :inner-h :scroll}` — and `drag-offset` is the grip a previous step
+  armed (nil = not dragging), kept by the caller between events. Wheel actions
+  are NOT this function's business: the whole dialog owns wheel, so they fall
+  through to nil here.
+
+  Returns
+    nil                   not a scrollbar interaction — the caller ignores it
+    {:arm grip}           CLICK_DOWN on the thumb: arm the grip so the row
+                          under the cursor stays glued to the same point on
+                          the thumb
+    {:scroll n :arm grip} CLICK_DOWN on the track off-thumb: jump to that
+                          position (modern macOS behaviour) and arm a centred
+                          grip so a follow-up motion tracks naturally
+    {:scroll n}           DRAG while armed: the thumb follows the cursor
+    :release              CLICK_RELEASE: drop the grip"
+  [^MouseAction ma {:keys [col top track-h total-h inner-h scroll]} drag-offset]
+  (let
+    [action
+     (.getActionType ma)
+
+     ^TerminalPosition pos
+     (.getPosition ma)
+
+     mx
+     (.getColumn pos)
+
+     my
+     (.getRow pos)
+
+     geom
+     (geometry total-h inner-h track-h scroll)]
+
+    (cond (and (= action MouseActionType/CLICK_DOWN)
+               (some? geom)
+               (on-thumb? mx my {:col col :top top} geom))
+          {:arm (- (long my) (+ (long top) (long (:thumb-top-rel geom))))}
+          (and (= action MouseActionType/CLICK_DOWN)
+               (some? geom)
+               (on-track? mx my {:col col :top top :track-h track-h}))
+          (let [grip (long (quot (long (:thumb-h geom)) 2))]
+            {:arm grip :scroll (or (scroll-from-mouse-y my top track-h total-h inner-h grip) 0)})
+          (and (= action MouseActionType/DRAG) (some? drag-offset) (some? geom))
+          {:scroll (or (scroll-from-mouse-y my top track-h total-h inner-h (long drag-offset)) 0)}
+          (= action MouseActionType/CLICK_RELEASE) :release
+          :else nil)))

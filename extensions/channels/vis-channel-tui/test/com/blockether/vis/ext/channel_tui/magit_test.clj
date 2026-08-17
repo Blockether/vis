@@ -10,10 +10,15 @@
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.magit :as magit]
             [com.blockether.vis.ext.channel-tui.transient :as tr]
+            [com.blockether.vis.ext.channel-tui.terminals :as term]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.git :as git]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [java.nio.file Files]
+  (:import [com.googlecode.lanterna TerminalPosition]
+           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
+           [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]
+           [com.googlecode.lanterna.screen TerminalScreen]
+           [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
 ;;; ── Throw-away repo helpers ─────────────────────────────────────────────────
@@ -1611,3 +1616,56 @@
         (expect (:ok? r))
         (expect (= ["new.txt"] (mapv :path (:staged (magit/status-model b)))))
         (expect (empty? (:staged (magit/status-model a))))))))
+
+;; Regression (user report): the magit status buffer painted a scrollbar its
+;; key loop never wired mouse events to, so pressing/dragging the scrollbar
+;; did nothing — only the wheel scrolled the changes view.
+(defdescribe
+  magit-dialog-scrollbar-test
+  (it
+    "CLICK_DOWN on the scrollbar track jumps the status buffer viewport"
+    (let
+      [dir
+       (init-repo!)
+
+       _
+       (doseq [i (range 60)]
+         (spit (format "%s/pad-%03d.txt" dir i) "x\n"))
+
+       {:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+       (term/virtual-screen)
+
+       ;; The same geometry the dialog itself derives on an 80×30 terminal.
+       content-w
+       (max (dialogs/footer-content-width 80 (var-get #'dialogs/magit-hints)) (- 80 4))
+
+       bounds
+       (dialogs/dialog-bounds 80 29 content-w 25)
+
+       {:keys [left inner-w content-top content-h]}
+       (merge bounds (dialogs/dialog-layout bounds))
+
+       click-x
+       (long (+ left inner-w))
+
+       click-y
+       (long (+ content-top content-h -1))
+
+       text
+       (fn []
+         (apply str (map :text (term/painted-rows terminal))))]
+
+      (try (.addInput terminal (KeyStroke. KeyType/Escape))
+           (dialogs/magit-dialog! screen dir)
+           (expect (str/includes? (text) "pad-000"))
+           (expect (not (str/includes? (text) "pad-059")))
+           ;; Click the track's last row: jump the viewport to the bottom.
+           (.addInput terminal
+                      (MouseAction. MouseActionType/CLICK_DOWN
+                                    0
+                                    (TerminalPosition. (int click-x) (int click-y))))
+           (.addInput terminal (KeyStroke. KeyType/Escape))
+           (dialogs/magit-dialog! screen dir)
+           (expect (str/includes? (text) "pad-059"))
+           (expect (not (str/includes? (text) "pad-000")))
+           (finally (.stopScreen screen))))))

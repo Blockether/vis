@@ -2014,3 +2014,36 @@
         (expect (= "● focused"
                    (:status (row "s-quiet" {"id" "s-quiet" "title" "Deploy" "turn_count" 3}))))
         (expect (not (:awaiting-input? (row nil {"id" "s-quiet" "title" "Deploy"})))))))
+
+;; Regression (user report): the fullscreen log viewer a magit RET-visit opens
+;; for a diff painted a scrollbar its key loop never wired mouse events to, so
+;; pressing the scrollbar did nothing — only the wheel scrolled.
+(defdescribe
+  log-view-scrollbar-click-test
+  (it "CLICK_DOWN on the track jumps to that fraction and a DRAG keeps following"
+      (let
+        [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+         (term/virtual-screen)
+
+         lines
+         (mapv #(format "line-%03d" %) (range 200))
+
+         ;; 80×30 fullscreen viewer: body rows 1..28, scrollbar in col 79.
+         bar-x
+         79]
+
+        (try
+          (.addInput
+            terminal
+            (MouseAction. MouseActionType/CLICK_DOWN 0 (TerminalPosition. (int bar-x) (int 20))))
+          ;; drag to the track's last row → scroll ≈ 26/27 of max-scroll 172
+          (.addInput terminal
+                     (MouseAction. MouseActionType/DRAG 0 (TerminalPosition. (int bar-x) (int 27))))
+          (.addInput
+            terminal
+            (MouseAction. MouseActionType/CLICK_RELEASE 0 (TerminalPosition. (int bar-x) (int 27))))
+          (.addInput terminal (KeyStroke. KeyType/Escape))
+          (dlg/log-view-dialog! screen "log" lines :grammar nil)
+          (let [top (str/triml (:text (nth (term/painted-rows terminal) 1)))]
+            (expect (str/starts-with? top "line-166")))
+          (finally (.stopScreen screen))))))
